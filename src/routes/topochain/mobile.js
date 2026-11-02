@@ -708,6 +708,22 @@ async function fetchOwnChallengeActivities(pool, userId, challengeIds) {
   return rows.map((r) => ({ ...r, challenge_id: Number(r.challenge_id) }));
 }
 
+// A First challenge counts every credit on its template, this season's row or
+// an earlier one (challenge-onboarding.js), so its list of what counted needs
+// them too. `activities` stays this row's own: `activities_total` is its sum.
+async function fetchFirstChallengeCredits(pool, userId, templateIds) {
+  if (!templateIds.length) return [];
+  const { rows } = await pool.query(
+    `SELECT ua.challenge_id, credited.challenge_template_id, ua.points, ua.description, ua.activity_at, ua.metadata
+       FROM user_activities ua
+       JOIN challenges credited ON credited.id = ua.challenge_id
+      WHERE ua.user_id = $1 AND credited.challenge_template_id = ANY($2::bigint[])
+      ORDER BY ua.activity_at DESC`,
+    [userId, templateIds]
+  );
+  return rows;
+}
+
 // #3247: the change each of the viewer's credits came from, by the key the
 // scorer stored on it: `merged:<event id>` for an accepted proposal,
 // `session:<id>` for a sent one. Only the viewer's own proposal, and only on a
@@ -1431,19 +1447,25 @@ function topochainMobileRoutes(config) {
         activitiesByChallenge.set(a.challenge_id, list);
       }
 
-      const creditChanges = await resolveCreditChanges(pool, req.user, activityRows);
+      const firstRows = rows.filter((r) => onboarding?.progress.has(Number(r.id)) && r.t_id != null);
+      const firstCredits = await fetchFirstChallengeCredits(pool, req.user.id, firstRows.map((r) => Number(r.t_id)));
+      const creditChanges = await resolveCreditChanges(pool, req.user, [...activityRows, ...firstCredits]);
+      const activityView = (a) => ({
+        points: num(a.points) ?? 0, description: a.description, activity_at: iso(a.activity_at),
+        activity_time_precision: activityTimePrecision(a),
+        // #3247: where it came from, and whether `progress` counts it (a
+        // weekly challenge's earlier weeks do not; marked below).
+        change: creditChanges.get(a.metadata && a.metadata.source_key) || null,
+        counts: true,
+      });
+      const earlierFirstCredits = new Map(firstRows.map((r) => [Number(r.id), firstCredits
+        .filter((a) => Number(a.challenge_template_id) === Number(r.t_id) && Number(a.challenge_id) !== Number(r.id))
+        .map(activityView)]));
 
       let items = rows.map((r) => {
         const list = activitiesByChallenge.get(Number(r.id)) || [];
         return buildMobileChallengeItem(r, {
-          activities: list.map((a) => ({
-            points: num(a.points) ?? 0, description: a.description, activity_at: iso(a.activity_at),
-            activity_time_precision: activityTimePrecision(a),
-            // #3247: where it came from, and whether `progress` counts it (a
-            // weekly challenge's earlier weeks do not; marked below).
-            change: creditChanges.get(a.metadata && a.metadata.source_key) || null,
-            counts: true,
-          })),
+          activities: list.map(activityView),
           // activities_total: this endpoint's own aggregate, summed from
           // the SAME rows `activities` carries (judgment call: mirrors
           // /me/breakdown's challenge_progress.earned_points precedent —
@@ -1464,6 +1486,7 @@ function topochainMobileRoutes(config) {
         item.category = challengeCategory(item.id, item.category, onboarding);
         if (onboarding?.progress.has(item.id)) {
           item.progress = onboarding.progress.get(item.id);
+          item.earlier_activities = earlierFirstCredits.get(item.id) || [];
           continue;
         }
         // Progress used to ride along on the three onboarding rows only,
@@ -2332,4 +2355,4 @@ function topochainMobileRoutes(config) {
   return router;
 }
 
-module.exports = { topochainMobileRoutes, resolveCreditChanges };
+module.exports = { topochainMobileRoutes, resolveCreditChanges, fetchFirstChallengeCredits };

@@ -128,10 +128,14 @@ let nativeCredentialActiveAtWrite;
 let eventBlocks;
 let creditChangeRows = [];
 let creditLookups = [];
+let onboardingRows = [];
+let firstChallengeCredits = [];
 
 function resetFixtures() {
   creditChangeRows = [];
   creditLookups = [];
+  onboardingRows = [];
+  firstChallengeCredits = [];
   userActivities = [
     // carol's existing completion of challenge 1 — the idempotency fixture.
     {
@@ -245,7 +249,8 @@ function handleQuery(rawSql, params = []) {
   if (sql.includes('adult_attested_at IS NOT NULL AS attested FROM users')) {
     return { rows: [{ attested: true }] };
   }
-  if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
+  if (sql.startsWith('/* challenge onboarding */')) return { rows: onboardingRows };
+  if (sql.startsWith('SELECT ua.challenge_id, credited.challenge_template_id')) return { rows: firstChallengeCredits };
 
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
 
@@ -582,6 +587,25 @@ test('GET /challenges: no proposal credit, no lookup; only this week\'s credits 
   } finally {
     template.category = category;
   }
+});
+
+test('GET /challenges: a First challenge also returns the earlier season\'s credits its count holds (#3247)', async () => {
+  const challengeRow = { id: 7, season_event_id: 100, challenge_template_id: 10, display_order: 1, enabled: true, completed: false };
+  onboardingRows = [{ ...challengeRow, metric_type: null, metric_target: null, activity_count: '2', completion_recorded: false, blocks: null }];
+  const earlier = { challenge_template_id: 10, points: '5', description: 'Last season', activity_at: T(-200), metadata: { source_key: 'merged:81' } };
+  firstChallengeCredits = [
+    { ...earlier, challenge_id: 99 },
+    { ...earlier, challenge_id: 7, description: 'This row, listed already' },
+  ];
+  creditChangeRows = [{ source_key: 'merged:81', session_id: 801, pr_number: 8, pr_title: 'Old', id: 1, slug: 'one', view_visibility: 'public', collab_visibility: 'public', moderation_suspended_at: null }];
+  await withServer({}, async (base) => {
+    const res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
+    const body = await res.json();
+    const item = body.data.find((c) => c.id === 7);
+    assert.deepEqual(item.earlier_activities.map((a) => [a.description, a.change?.title, a.counts]), [['Last season', 'Old', true]]);
+    assert.deepEqual(body.data.find((c) => c.id === 1).earlier_activities, undefined, 'not a First challenge');
+    assert.equal(item.activities_total, 0, 'this row\'s own sum stays its own');
+  });
 });
 
 test('GET /challenges: category falls back to OTHER when the template has none', async () => {

@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
-const { resolveCreditChanges } = require('../src/routes/topochain/mobile');
+const { fetchFirstChallengeCredits, resolveCreditChanges } = require('../src/routes/topochain/mobile');
 const { seedStagingCountedCredit } = require('../src/db/migrate');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -122,4 +122,11 @@ test('credits resolve through records the viewer may see, and the staging seed r
     const seeded = await resolveCreditChanges(pool, { id: capture, isAdmin: false }, credits);
     assert.equal(seeded.get(credits[0].metadata.source_key).pr_number, 9043);
     assert.equal(seeded.get(credits[0].metadata.source_key).app_slug, 'homeroom-self');
+
+    // A First challenge's credits, wherever on its template they landed.
+    const first = await fetchFirstChallengeCredits(pool, capture, [900512]);
+    assert.equal(first.length, 1);
+    assert.equal(Number(first[0].challenge_id), 900724);
+    assert.equal(Number(first[0].challenge_template_id), 900512);
+    assert.deepEqual(await fetchFirstChallengeCredits(pool, viewer, [900512]), []);
   });

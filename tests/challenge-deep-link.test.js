@@ -1065,6 +1065,10 @@ test('#3247: the page lists the credits that count, by the change title when it 
   assert.equal(credits[0].precision, 'instant');
   assert.equal(creditsWeekly, false);
 
+  pane._mine = new Map([[900500, { id: 900500, activities: [{ points: 2, description: 'New', activity_at: '2026-10-01T00:00:00Z' }],
+    earlier_activities: [{ points: 1, description: 'Old', activity_at: '2025-10-01T00:00:00Z' }] }]]);
+  assert.deepEqual(Array.from(pane.detailView().credits, (c) => c.text), ['New', 'Old'], 'a First challenge\'s earlier credits, newest first');
+
   pane._mine = new Map();
   assert.equal(pane.detailView().credits.length, 0, 'signed out or nothing credited: no list');
 });

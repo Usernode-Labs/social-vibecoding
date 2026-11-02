@@ -1518,10 +1518,15 @@ const TopochainChallenges = {
   },
 
   // A row an older server sent has no `counts`, and it counts. A change with no
-  // usable address is a plain row under the credit's own words.
+  // usable address is a plain row under the credit's own words. A First
+  // challenge's count also holds its credits from an earlier season.
   _creditsOf(mine) {
     const str = TopochainChallenges.str;
-    const activities = mine && Array.isArray(mine.activities) ? mine.activities : [];
+    const own = mine && Array.isArray(mine.activities) ? mine.activities : [];
+    const earlier = mine && Array.isArray(mine.earlier_activities) ? mine.earlier_activities : [];
+    const activities = earlier.length
+      ? [...own, ...earlier].sort((a, b) => Date.parse(b.activity_at) - Date.parse(a.activity_at))
+      : own;
     return activities.filter((a) => a.counts !== false).map((a) => {
       const c = a.change;
       const linked = c && typeof c.app_slug === 'string' && c.app_slug
