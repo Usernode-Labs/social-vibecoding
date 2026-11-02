@@ -491,6 +491,34 @@
     "text": "Checks running",
     "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: the checks are running now or waiting to start."
   },
+  "session.checks.runningLeft_one": {
+    "text": "Checks running, about {{count}} minute left",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are running and should finish in about {{count}} minute."
+  },
+  "session.checks.runningLeft_other": {
+    "text": "Checks running, about {{count}} minutes left",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are running and should finish in about {{count}} minutes."
+  },
+  "session.checks.runningUnder": {
+    "text": "Checks running, less than a minute left",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are running and should finish in under a minute."
+  },
+  "session.checks.runningLonger": {
+    "text": "Checks running, taking longer than usual",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they have gone past their usual time and are still running."
+  },
+  "session.checks.queuedWait_one": {
+    "text": "Checks waiting, about {{count}} minute until they start",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are waiting for a free slot and should start in about {{count}} minute."
+  },
+  "session.checks.queuedWait_other": {
+    "text": "Checks waiting, about {{count}} minutes until they start",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are waiting for a free slot and should start in about {{count}} minutes."
+  },
+  "session.checks.queuedLonger": {
+    "text": "Checks waiting, longer than usual",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are waiting for a free slot longer than their rough wait suggested."
+  },
   "session.checks.couldNotRun": {
     "text": "Checks couldn’t run",
     "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: the checks hit an error and gave no verdict."

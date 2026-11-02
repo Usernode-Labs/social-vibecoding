@@ -3954,11 +3954,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           ? await require('../services/shots-view')
             .getForSession(pool, detail, detail.app_slug, { viewer: req.user })
           : null;
-        // #4452: how long testing usually takes on this app.
-        detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
         // An update from this version's original, as the proposal read
         // carries it (services/upstream-offers.js changeView); null otherwise.
         detail.upstream = await require('../services/upstream-offers').changeView(pool, session.id);
+      }
+      // #6122: both reads a pending run is shown through carry the usual
+      // time (the checks panel reads /checks; the change page reads /details,
+      // which keeps its estimate whether or not a run is pending).
+      if (req.path.endsWith('/details') || session.check_state === 'pending') {
+        detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).

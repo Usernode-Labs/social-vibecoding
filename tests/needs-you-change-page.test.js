@@ -450,6 +450,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // In flight: the build done, the checks a third of the way, about 6 minutes left.
   const live = testing({
     check_state: 'pending', check_phase: 'testing',
+    checks_checked_at: new Date().toISOString(),
     checks_estimate: { buildMs: 180000, checksMs: 540000, runs: 12 },
     checks_progress: {
       ran: 284, expected: 840, unit: { ran: 6900, expected: 19240, done: false },
@@ -466,6 +467,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // and the time left say the same.
   const unitDone = testing({
     check_state: 'pending', check_phase: 'testing',
+    checks_checked_at: new Date().toISOString(),
     checks_estimate: { buildMs: 180000, checksMs: 540000, runs: 12 },
     checks_progress: {
       ran: 620, expected: 840, unit: { ran: 19240, expected: 19240, done: true },
@@ -483,7 +485,8 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   assert.deepEqual(threeQuarters.note, ['Preview built, checks three quarters done.']);
   // Still building: the build's step, and no checks yet.
   const building = testing({
-    check_state: 'pending', check_phase: 'building', checks_estimate: { buildMs: 180000, checksMs: 540000 },
+    check_state: 'pending', check_phase: 'building', checks_checked_at: new Date().toISOString(),
+    checks_estimate: { buildMs: 180000, checksMs: 540000 },
     checks_progress: { build: { step: 'clone', steps: [{ key: 'source_fetch', ms: 1 }, { key: 'image_build', ms: 1 }] } },
   });
   assert.equal(building.segments[1].pct, 0);
