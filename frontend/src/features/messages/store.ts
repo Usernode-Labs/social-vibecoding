@@ -2231,6 +2231,8 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
         loading: false, error: null, nextBefore: page.nextBefore,
         // #5219: the request's public discussion behind a bot-card thread, merged in by the pane.
         discussion: page.discussion,
+        // B19 follow-up: where it opens, taken once, before the open reads it.
+        firstUnreadId: same && current && current.firstUnreadId !== undefined ? current.firstUnreadId : page.firstUnreadId,
       },
     });
     const newest = known.reduce((top, item) => Math.max(top, item.id), 0);

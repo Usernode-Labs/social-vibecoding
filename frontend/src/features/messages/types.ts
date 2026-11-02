@@ -956,6 +956,12 @@ export interface ReplyThreadState {
    * thread is loading.
    */
   discussion?: DiscussionState | null;
+  /**
+   * B19 follow-up (audit, 2 Nov 2026): the first reply the reader had not
+   * read when the thread was opened, where it opens and its "New" line goes.
+   * Kept while it stays open; null when everything was read.
+   */
+  firstUnreadId?: number | null;
 }
 
 /** One message from the request's public discussion, shown in its bot-card thread (#5219). */

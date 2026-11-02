@@ -2561,6 +2561,25 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     if (el && n !== count.current && pinned.current) el.scrollTop = el.scrollHeight;
     count.current = n;
   }, [thread?.messages.length]);
+  // B19 follow-up (audit, 2 Nov 2026): a thread opens at the first reply
+  // the reader had not read, its "New" line a little below the top, as a
+  // conversation does (./unread-anchor.ts openingScrollTop); with nothing
+  // unread, at its newest reply. Once per open, after the rows are drawn,
+  // and never over a message the thread was opened at (below).
+  const unreadLine = useRef<HTMLDivElement>(null);
+  const openedAt = useRef<string | null>(null);
+  const firstUnread = thread && !thread.loading ? thread.firstUnreadId ?? null : null;
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    const key = `${conversationId}:${rootId}`;
+    if (!el || !thread || thread.loading || openedAt.current === key) return;
+    openedAt.current = key;
+    const line = unreadLine.current;
+    if (!firstUnread || !line || snap.threadFocusId || snap.route.focusMessageId) return;
+    const opening = openingScrollTop({ lineTop: lineTopIn(el, line), scrollHeight: el.scrollHeight, clientHeight: el.clientHeight });
+    el.scrollTop = opening.top;
+    pinned.current = opening.pinned;
+  }, [conversationId, rootId, thread?.loading, thread?.messages.length]);
   // One request, one story: a thread opened at one of its messages (the
   // strip's Needs you button, store.openThreadAt; or a link to a reply)
   // shows it once it is drawn, centred and flashed, and stops following the
@@ -2833,8 +2852,11 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
               { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
             );
           previous = entry;
+          // B19 follow-up: the "New" line above the first reply not read when it opened.
+          const line = firstUnread && message.id === firstUnread
+            ? <NewMessagesDivider key="unread-line" ref={unreadLine} /> : null;
           const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
-          return divider ? <Fragment key={message.clientKey || message.id}>{divider}{row}</Fragment> : row;
+          return divider || line ? <Fragment key={message.clientKey || message.id}>{divider}{line}{row}</Fragment> : row;
         })}
         {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}
         {privateRoot && privateMine && root ? (
