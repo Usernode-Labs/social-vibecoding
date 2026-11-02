@@ -470,7 +470,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   }, [r.number, changeKey, !!threadRead.data]);
   // #6139: the pill and the line say whether a change underway has finished.
   const underwayKey = layout.changes.filter((c) => c.state === 'underway').map((c) => c.id).join(',');
-  useEffect(() => rereadOnChangeNews(window, layout.changes, threadRead.reread), [underwayKey]);
+  useEffect(() => rereadOnChangeNews(window, layout.changes, threadRead.reread, (window as any).SessionState), [underwayKey]);
   // #5987, 31 Oct 2026: Build it with your own Claude Code is a ⋯ row; it
   // opens its panel under the request.
   const agentSlug = r.slug || '';

@@ -23,10 +23,11 @@
  * markup the page first paints is the markup it painted before.
  */
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { FRESH, watch } from '../../../lib/live-reads';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
@@ -67,17 +68,31 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
   const [data, setData] = useState<ThreadPayload | null>(null);
   // Read again after a move changed the thread (./thread-moves.tsx).
   const [revision, setRevision] = useState(0);
+  // #6139: a gap (a dropped socket, a sleeping tab) reads it again, past any saved copy.
+  const freshNext = useRef(false);
   useEffect(() => {
     if (!revision) setData(null);
     const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
       : threadId ? `/api/threads/${threadId}` : null;
     if (!path) return undefined;
     let live = true;
-    fetch(path, { credentials: 'same-origin' })
+    const init: RequestInit = { credentials: 'same-origin', ...(freshNext.current ? FRESH : {}) };
+    freshNext.current = false;
+    // A read again that fails keeps what the page shows.
+    fetch(path, init)
       .then((res) => (res.ok ? res.json() : null))
-      .then((json) => { if (live) setData(json && Array.isArray(json.items) ? json : null); })
-      .catch(() => { if (live) setData(null); });
-    return () => { live = false; };
+      .then((json) => {
+        if (!live) return;
+        if (json && Array.isArray(json.items)) setData(json);
+        else if (!revision) setData(null);
+      })
+      .catch(() => { if (live && !revision) setData(null); });
+    const pathname = path.split('?')[0];
+    const unwatch = watch(() => {
+      freshNext.current = true;
+      setRevision((n) => n + 1);
+    }, { reads: (url) => url.pathname === pathname });
+    return () => { live = false; unwatch(); };
   }, [slug, number, threadId, revision, skip, asChange]);
   return { data, setData, reread: () => setRevision((n) => n + 1) };
 }

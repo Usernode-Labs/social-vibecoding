@@ -194,10 +194,14 @@ test('#6139: an open request page reads its thread again when a change underway 
   let reads = 0;
   const tell = (detail) => target.dispatchEvent(new CustomEvent('change-detail-refresh', { detail }));
   const settle = () => new Promise((resolve) => { setTimeout(resolve, 20); });
-  const stop = rereadOnChangeNews(target, [{ id: 91, state: 'underway' }, { id: 92, state: 'review' }], () => { reads += 1; }, 5);
+  const subs = new Set();
+  const sessionState = { onEvent: (cb) => { subs.add(cb); return () => subs.delete(cb); } };
+  const stateEvent = (payload) => { for (const cb of subs) cb(payload); };
+  const stop = rereadOnChangeNews(target, [{ id: 91, state: 'underway' }, { id: 92, state: 'review' }], () => { reads += 1; }, sessionState, 5);
 
   tell(92);
   tell(99);
+  stateEvent({ sessionId: 92, busy: true });
   await settle();
   assert.equal(reads, 0, 'news of a change up for a vote, or of another change, moves nothing here');
 
@@ -207,16 +211,23 @@ test('#6139: an open request page reads its thread again when a change underway 
   await settle();
   assert.equal(reads, 1, 'a bare id, a patch and a row all count, and a burst is one read');
 
-  tell(91);
+  stateEvent({ sessionId: 91, busy: true, status: 'active' });
   await settle();
-  assert.equal(reads, 2, 'work starting again is heard too');
+  assert.equal(reads, 2, 'a turn starting is a session_state event with the same status: heard');
+  stateEvent({ sessionId: 91, busy: false, status: 'active' });
+  await settle();
+  assert.equal(reads, 3, 'and so is its end');
 
   tell(91);
+  stateEvent({ sessionId: 91, busy: true });
   stop();
+  assert.equal(subs.size, 0);
   await settle();
-  assert.equal(reads, 2, 'a page that has gone reads nothing');
+  assert.equal(reads, 3, 'a page that has gone reads nothing');
 
-  assert.match(read(`${TOPIC}/request-head.tsx`), /useEffect\(\(\) => rereadOnChangeNews\(window, layout\.changes, threadRead\.reread\), \[underwayKey\]\);/);
+  assert.match(read(`${TOPIC}/request-head.tsx`), /useEffect\(\(\) => rereadOnChangeNews\(window, layout\.changes, threadRead\.reread, \(window as any\)\.SessionState\), \[underwayKey\]\);/);
+  const payload = read(`${TOPIC}/thread-items.tsx`);
+  assert.match(payload, /const unwatch = watch\(\(\) => \{\s*freshNext\.current = true;\s*setRevision\(\(n\) => n \+ 1\);\s*\}, \{ reads: \(url\) => url\.pathname === pathname \}\);/, 'a gap reads it again, past a saved copy');
 });
 
 test('D5: a change folded under its ballot has no Vote of its own', () => {
