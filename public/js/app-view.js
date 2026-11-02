@@ -6500,7 +6500,7 @@ const AppView = {
               ? PlatformI18n.t(mergedIds.includedIn, { number: included.number })
               : PlatformI18n.t(mergedIds.includedInAnother))
             : PlatformI18n.t(mergedIds.alone))
-            : item.status === 'closed' ? PlatformI18n.t('changes:page.hero.status.closed')
+            : item.status === 'closed' || item.status === 'archived' ? PlatformI18n.t('changes:page.hero.status.closed')
               : String(item.status || '');
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
     // First-session run-through, 4 Oct 2026: a flatmate's first look at the
@@ -7315,7 +7315,7 @@ const AppView = {
     // card pill would read as a bare tally, and the Votes card under the
     // title already says where those stand. The card's own state wins, so
     // the kind (proposal or gov) and majority stay the card's.
-    const statusState = ['active', 'paused', 'closed'].includes(item.status)
+    const statusState = ['active', 'paused', 'closed', 'archived'].includes(item.status)
       ? null
       : ((card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
     return {
@@ -7411,6 +7411,34 @@ const AppView = {
     return Array.from({ length: total }, (_, i) => ({ weight: 1, pct: i < filled ? 100 : 0, state }));
   },
 
+  // #6100: the reason code a close recorded ('auto-rejected', 'stale-pr', …),
+  // as the whole catalog id that words it. One literal per code, because the
+  // text is translated per message, never assembled from fragments. A code
+  // this build does not know — an older close, a newer reason — maps to
+  // nothing, and the Votes card keeps its plain closed note.
+  CLOSE_REASON_IDS: Object.freeze({
+    'auto-rejected': 'changes:page.votes.note.closedWhy.autoRejected',
+    'admin-no': 'changes:page.votes.note.closedWhy.adminNo',
+    'approver-no': 'changes:page.votes.note.closedWhy.approverNo',
+    'proposal-replaced': 'changes:page.votes.note.closedWhy.replaced',
+    superseded: 'changes:page.votes.note.closedWhy.superseded',
+    'request-closed': 'changes:page.votes.note.closedWhy.requestClosed',
+    'red-checks': 'changes:page.votes.note.closedWhy.redChecks',
+    'stale-pr': 'changes:page.votes.note.closedWhy.stale',
+    'campaign-refused': 'changes:page.votes.note.closedWhy.campaignRefused',
+    'pr-closed': 'changes:page.votes.note.closedWhy.prClosed',
+    'pr-merged': 'changes:page.votes.note.closedWhy.prMerged',
+    'update-skipped': 'changes:page.votes.note.closedWhy.updateSkipped',
+    'update-replaced': 'changes:page.votes.note.closedWhy.updateReplaced',
+    'update-refused': 'changes:page.votes.note.closedWhy.updateRefused',
+    'merged-elsewhere': 'changes:page.votes.note.closedWhy.mergedElsewhere',
+    manual: 'changes:page.votes.note.closedWhy.withdrawn',
+  }),
+  _closeReasonLine(reason) {
+    const id = reason ? AppView.CLOSE_REASON_IDS[reason] : null;
+    return id ? PlatformI18n.t(id) : null;
+  },
+
   // The Votes card: its figure ("Needs 1 more yes", in the accent when the
   // viewer can give it, or "1 of 1 yes"), one part of the bar per yes it
   // needs, and one line under it: who can give it, any yes a newer push
@@ -7428,11 +7456,13 @@ const AppView = {
         note: [mine ? submission.note : PlatformI18n.t('changes:page.votes.note.notAsked')].filter(Boolean),
       };
     }
-    if (item.status === 'closed') {
+    // #6100: a closed change's session row reads 'archived'; its page says
+    // Closed either way, with why.
+    if (item.status === 'closed' || item.status === 'archived') {
       return {
         name: PlatformI18n.t('changes:page.votes.name'), figure: PlatformI18n.t('changes:page.votes.figure.closed'), tone: 'muted', done: false,
         segments: [{ weight: 1, pct: 0, state: 'moving' }], label: PlatformI18n.t('changes:page.votes.label.closed'),
-        note: [PlatformI18n.t('changes:page.votes.note.closed')],
+        note: [PlatformI18n.t('changes:page.votes.note.closed'), AppView._closeReasonLine(item.close_reason)].filter(Boolean),
       };
     }
     const pill = (card && card.pill && card.pill.state) || AppView.statusPillState(item, {}) || {};

@@ -3922,6 +3922,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
                 cs.shots_state, cs.shots_run_id,
                 cs.shots_detail, cs.shots_updated_at,
+                cs.close_reason,
                 cs.app_id, a.slug AS app_slug
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id

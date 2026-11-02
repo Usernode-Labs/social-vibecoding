@@ -8559,6 +8559,70 @@
     "text": "This change was closed without going live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page when the change was closed. \"Change\" is a noun; \"going live\" means being applied to the running app."
   },
+  "page.votes.note.closedWhy.autoRejected": {
+    "text": "It was set aside for now: more No than Yes, and not enough support to carry it.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.adminNo": {
+    "text": "It was set aside: an admin voted No and nobody voted Yes within a week.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.approverNo": {
+    "text": "It was set aside: an approver voted No and nobody voted Yes in time.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.replaced": {
+    "text": "It was replaced by a new one.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.superseded": {
+    "text": "It was withdrawn: another change for the same request covers it.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.requestClosed": {
+    "text": "It was withdrawn: the request it was built for is closed.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.redChecks": {
+    "text": "It was withdrawn: its checks failed and nobody changed it for a few days.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.stale": {
+    "text": "It went quiet and was set aside.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.campaignRefused": {
+    "text": "It could not be put up for a vote. The maintenance campaign can make it again.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.prClosed": {
+    "text": "It was closed on GitHub, so it is closed here too.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.prMerged": {
+    "text": "It was merged on GitHub before it went up for a vote.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.updateSkipped": {
+    "text": "It was skipped. Its original won't offer these changes again.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.updateReplaced": {
+    "text": "The original changed again, and the newer update needs fitting to this version.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.updateRefused": {
+    "text": "It could not be put up for a vote. It will be offered again when the original changes.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.mergedElsewhere": {
+    "text": "It was merged on GitHub into another branch, not into main.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
+  "page.votes.note.closedWhy.withdrawn": {
+    "text": "It was withdrawn.",
+    "description": "One sentence, after \"This change was closed without going live.\" on the Votes card of a change's page, saying why it was closed. The change's name is not repeated."
+  },
   "page.votes.note.saidYes_one": {
     "text": "{{people}} said yes.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page: who voted Yes. {{people}} is one username or a list of them and {{count}} how many people that is."

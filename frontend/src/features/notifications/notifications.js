@@ -1410,6 +1410,8 @@ const Notifications = {
       const proposalKinds = new Set([
         'pr_proposed', 'stale_pr', 'kudos', 'check_failed',
         'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck', 'change_ready',
+        // #6100: the author's news that their change was closed opens it.
+        'change_closed',
         // #4787: a change the viewer voted on going live opens that change,
         // the same way the author's own "Live" row does.
         'voted_change_merged',
@@ -2733,6 +2735,34 @@ function headline(label, subject) {
   };
 }
 
+// #6100: why a closed change was closed, from the reason code the close
+// recorded. One whole catalog id per code (a translated message is never
+// assembled from fragments); a code this build does not know maps to
+// nothing, and the row says only what it always did.
+const CLOSE_REASON_IDS = Object.freeze({
+  'auto-rejected': 'notifications:row.closedWhy.autoRejected',
+  'admin-no': 'notifications:row.closedWhy.adminNo',
+  'approver-no': 'notifications:row.closedWhy.approverNo',
+  'proposal-replaced': 'notifications:row.closedWhy.replaced',
+  superseded: 'notifications:row.closedWhy.superseded',
+  'request-closed': 'notifications:row.closedWhy.requestClosed',
+  'red-checks': 'notifications:row.closedWhy.redChecks',
+  'stale-pr': 'notifications:row.closedWhy.stale',
+  'campaign-refused': 'notifications:row.closedWhy.campaignRefused',
+  'pr-closed': 'notifications:row.closedWhy.prClosed',
+  'pr-merged': 'notifications:row.closedWhy.prMerged',
+  'update-skipped': 'notifications:row.closedWhy.updateSkipped',
+  'update-replaced': 'notifications:row.closedWhy.updateReplaced',
+  'update-refused': 'notifications:row.closedWhy.updateRefused',
+  'merged-elsewhere': 'notifications:row.closedWhy.mergedElsewhere',
+  manual: 'notifications:row.closedWhy.withdrawn',
+});
+
+function closeReasonText(code) {
+  const id = code ? CLOSE_REASON_IDS[code] : null;
+  return id ? t(id) : null;
+}
+
 // #3233: `detail` is "<old>:<new>" (services/app-allowance.js). Say it in
 // words, and which way it moved; a token this build cannot read still says
 // what happened.
@@ -3225,13 +3255,35 @@ function rowView(n) {
       return { ...base, needsYou: false, icon: '\u{1F680}', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.goingLive'), subject) };
     }
     if (n.sessionStatus === 'archived') {
-      return { ...base, needsYou: false, icon: '\u{1F5C2}\uFE0F', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.closed'), subject) };
+      const why = closeReasonText(n.closeReason);
+      const head = headline(t('notifications:row.changeReady.closed'), subject);
+      return {
+        ...base, needsYou: false, icon: '\u{1F5C2}\uFE0F', by: n.sourceUsername || null,
+        ...head,
+        ...(why ? { segments: [...head.segments, { t: 'text', v: why }] } : {}),
+      };
     }
     return {
       ...base,
       icon: '\u{1F440}',
       by: n.sourceUsername || null,
       ...headline(t('notifications:row.changeReady.ready'), subject),
+    };
+  }
+
+  // #6100: the author's own change was closed, with why. Bell-only (no phone
+  // push: the kind is not in any push category). The row opens the change the
+  // same way the author's "Live" row does (proposalKinds).
+  if (n.kind === 'change_closed') {
+    const subject = prLabel || n.sessionTitle || t('notifications:row.changeClosed.aChange');
+    const head = headline(t('notifications:row.changeClosed.label'), subject);
+    const why = closeReasonText(n.closeReason);
+    return {
+      ...base,
+      needsYou: false,
+      icon: '\u{1F5C2}️',
+      ...head,
+      ...(why ? { segments: [...head.segments, { t: 'text', v: why }] } : {}),
     };
   }
 

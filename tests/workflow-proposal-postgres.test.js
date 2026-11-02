@@ -20,6 +20,7 @@ const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const platform = require('../src/workflow/platform.ts');
 const { proposal, sessionKey, MACHINE, WORK } = require('../src/workflow/proposal/machine.ts');
+const { createChangeClosedNotification } = require('../src/workflow/rules/change-notifications.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -597,6 +598,53 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
       else assert.equal(said.length, 0, reason);
       assert.ok(pushed.some((p) => p.data.type === 'issue_update' && p.data.source === 'session_archived' && p.data.appId === s.app_id), reason);
     }
+  });
+
+  await t.test('P13b #6100: a close records why, its author hears once, and a reopen clears it', async () => {
+    defaults();
+    // A close with no pull request keeps the reason too, and says it in its
+    // own thread (it had none before).
+    const s = await session({ status: 'promoted', promotedAgo: 0, pr: false });
+    const id = await send(s, 'Close', { from: 'promoted', reason: 'auto-rejected' });
+    await settle();
+    assert.equal((await outcome(id)).result, 'accepted');
+    assert.equal((await row(s)).close_reason, 'auto-rejected');
+    assert.equal((await pool.query(
+      `SELECT 1 FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1`, [s.id])).rowCount, 1,
+    'a change with no pull request still says in its thread why it closed');
+
+    // The author hears once; a retried close event adds nothing.
+    const closedRows = async () => (await pool.query(
+      `SELECT detail FROM notifications WHERE user_id = $1 AND session_id = $2 AND kind = 'change_closed'`,
+      [s.owner.id, s.id])).rows;
+    const [first] = await closedRows();
+    assert.ok(first, 'the author gets a Closed row');
+    assert.match(first.detail, /^event:\d+$/, 'its detail names the event, so a retry is stopped by it');
+    const again = await createChangeClosedNotification(pool, {
+      userId: s.owner.id, appId: s.app_id, sessionId: s.id, eventId: first.detail.slice('event:'.length),
+    });
+    assert.equal(again.length, 0, 'a retried event doubles nothing');
+    assert.equal((await closedRows()).length, 1);
+
+    // Reopening clears it; closing again records the new reason.
+    const back = await send(s, 'Reopen', { from: 'closed', userId: s.owner.id }, route);
+    await settle();
+    assert.equal((await outcome(back)).result, 'accepted');
+    assert.equal((await row(s)).close_reason, null, 'a reopen clears the reason');
+    const second = await send(s, 'Close', { from: 'active', reason: 'manual', userId: s.owner.id, username: s.owner.username }, route);
+    await settle();
+    assert.equal((await row(s)).close_reason, 'manual');
+    assert.equal((await closedRows()).length, 1, 'a change its author withdrew tells its author nothing new');
+
+    // A synthetic account (Homeroom bot) is told nothing about its own.
+    const bot = await user({ synthetic: true });
+    const b = await session({ status: 'promoted', promotedAgo: 0, owner: bot });
+    const bId = await send(b, 'Close', { from: 'promoted', reason: 'stale-pr' });
+    await settle();
+    assert.equal((await outcome(bId)).result, 'accepted');
+    assert.equal((await pool.query(
+      `SELECT 1 FROM notifications WHERE user_id = $1 AND session_id = $2 AND kind = 'change_closed'`, [bot.id, b.id])).rowCount, 0,
+    'a synthetic author gets no bell row');
   });
 
   await t.test('P14 a close a newer move overtook is refused; merging and merged are past closing', async () => {
