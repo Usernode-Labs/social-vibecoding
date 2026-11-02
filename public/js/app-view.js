@@ -13168,14 +13168,25 @@ const AppView = {
     // Unfiltered on purpose: a vote owed is owed whatever the board is
     // narrowed to. Same predicate as the filter bar's "Waiting on you".
     //
-    // Minus whatever the strip above is already showing. Your own promoted
-    // proposal satisfies "waiting on you" — the predicate asks whether you
-    // have voted, not whose it is — so it appeared in BOTH panes, one under
-    // the other, the same card twice on one screen. "What you are working
-    // on" wins: this pane is about somebody else's work, which is what its
-    // own heading has always said.
-    const mineKeys = new Set(mineItems.map(({ kind, item }) => AppView._workshopItemKey(kind, item)));
-    const notMine = (x) => !mineKeys.has(AppView._workshopItemKey(x.kind, x.item));
+    // Minus your own work: your own promoted proposal satisfies "waiting on
+    // you" (the predicate asks whether you have voted, not whose it is).
+    //
+    // V01 (audit, 2 Nov 2026): minus what the viewer AUTHORED, not minus
+    // everything in Your work. Your work also holds the change Homeroom bot
+    // built from the viewer's own request (#4538), and their vote on it is
+    // still owed: the Communities feed counts it (OWED_PROPOSALS_WHERE in
+    // src/routes/workshop-overview.js), so leaving it out here had the Hub
+    // say "Nothing more to vote on" and Needs you "All caught up" while
+    // Communities said "1 vote waiting on you". This is the server's rule:
+    // your own change is not owed, unless a coding agent submitted it for
+    // you (#6006, it waits on your yes), and nor is a decision you opened.
+    // The pane that drew both strips one under the other is gone, so the
+    // same change in Your work and in Needs you is two questions, not a
+    // duplicate.
+    const authoredByMe = (x) => meId != null && (x.kind === 'proposal'
+      ? String(x.item.user_id) === String(meId) && !x.item.external_agent
+      : x.kind === 'gov' && String(x.item.created_by) === String(meId));
+    const notMine = (x) => !authoredByMe(x);
     const owed = [];
     for (const x of buckets.inReview) {
       if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);

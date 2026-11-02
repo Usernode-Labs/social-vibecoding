@@ -2498,11 +2498,32 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
   assert.ok(!workshopHtml(AppView, 'needs').match(/<span class="dev-ws-tag" data-tone="plain"><svg[^]*?Homeroom bot<\/span>/),
     'the bot\'s other change, in Needs you, wears no bot tag');
 
-  // And the de-dup holds: your vote on it still counts, but it is not
-  // listed a second time among the votes the project needs from you.
-  assert.ok(!plain(v.votes.rows).some((r) => r.key.includes('proposal:71')),
-    'the bot change is not also in the vote deck');
-  assert.equal(v.votes.count, 1, 'only the bot change nobody asked this viewer for');
+  // V01 (audit, 2 Nov 2026): your vote on it is still owed, so it is in
+  // the vote deck and Needs you's queue too, as the Communities feed counts
+  // it (OWED_PROPOSALS_WHERE). Leaving it out had the Hub say "Nothing more
+  // to vote on" while Communities said "1 vote waiting on you".
+  assert.ok(plain(v.votes.rows).some((r) => r.key.includes('proposal:71')),
+    'the bot change from your request is in the vote deck');
+  assert.equal(v.votes.count, 2, 'both bot changes wait on this viewer\'s vote');
+  assert.ok(plain(v.queue).some((r) => r.key.includes('proposal:71')),
+    'and in the Needs you queue the Hub reads');
+  assert.match(workshopHtml(AppView, 'needs'), /Dark mode toggle/, 'Needs you lists it');
+  // Once voted on, it is owed no more.
+  AppView._proposals[0].my_vote = 'yes';
+  assert.ok(!plain(AppView._workshopView().queue).some((r) => r.key.includes('proposal:71')),
+    'a vote cast takes it out');
+  AppView._proposals[0].my_vote = null;
+  // A change the viewer made themselves is still not owed by them.
+  AppView._proposals.push({ id: 73, pr_number: 214, pr_title: 'Mine by hand', status: 'promoted', username: 'me',
+    user_id: 1, created_at: at(0.4), promoted_at: at(0.4), last_message_at: at(0.4), my_vote: null });
+  assert.ok(!plain(AppView._workshopView().queue).some((r) => r.key.includes('proposal:73')),
+    'your own change waits on the group, not on you');
+  // Unless a coding agent submitted it for you (#6006): it waits on your yes,
+  // and the Communities feed counts it (external_agent IS NOT NULL).
+  AppView._proposals[2].external_agent = 'claude_code';
+  assert.ok(plain(AppView._workshopView().queue).some((r) => r.key.includes('proposal:73')),
+    'an agent-submitted change of yours is owed your yes');
+  AppView._proposals.pop();
 
   // Since your last visit does not repeat it while Your work shows it.
   const seen = 'workshopSeen:demo-app';
