@@ -260,6 +260,55 @@ test('a track is read field by field; one in a state the client does not know is
   assert.equal(normalizeBotSlots({ slots: {} }), null, 'no project, no view');
 });
 
+// #6151: after "Filed it as request #14…" in a design thread, what happens
+// next, from the codes the line carries (services/design-threads.js
+// filedNext, pinned in tests/design-plans.test.js), said in the reader's
+// language after the line.
+test('#6151: a filed design\'s line says what happens next: its codes read field by field, worded and drawn after it', () => {
+  const { filedNextLine } = loadTsx(TRACK);
+  const { normalizeBotMeta, normalizeFiledNext } = loadTsx(API);
+  assert.equal(filedNextLine({ say: 'builds', version: 4 }), t('bot.track.filed.builds', { version: '4' }));
+  assert.equal(filedNextLine({ say: 'builds', version: 4 }),
+    'Homeroom bot reads it next and builds it from version 4. Its progress shows here and on the request.');
+  for (const limit of ['slots', 'bot_wide', 'questions', 'allowance']) {
+    assert.equal(filedNextLine({ say: 'held', limit }), t(`bot.track.filed.held.${limit}`), limit);
+  }
+  assert.equal(filedNextLine({ say: 'held', limit: 'slots' }),
+    'Homeroom bot builds it when a slot frees: all of the project\'s are in use. Its progress shows here and on the request.');
+  assert.equal(filedNextLine({ say: 'person' }), t('bot.track.filed.person'));
+  assert.equal(filedNextLine(null), null);
+  assert.equal(filedNextLine({ say: 'held', limit: 'taken' }), null, 'a limit this client does not know says nothing');
+  for (const key of ['builds', 'held.slots', 'held.bot_wide', 'held.questions', 'held.allowance', 'person']) {
+    assert.doesNotMatch(t(`bot.track.filed.${key}`, { version: '4' }), /—/, key);
+  }
+
+  assert.deepEqual(normalizeFiledNext({ say: 'builds', version: 4 }), { say: 'builds', version: 4 });
+  assert.deepEqual(normalizeFiledNext({ say: 'held', limit: 'bot_wide', extra: 1 }), { say: 'held', limit: 'bot_wide' });
+  assert.deepEqual(normalizeFiledNext({ say: 'person' }), { say: 'person' });
+  for (const bad of [null, 'builds', [], { say: 'builds' }, { say: 'builds', version: -1 }, { say: 'held', limit: 'taken' }, { say: 'nonsense' }]) {
+    assert.equal(normalizeFiledNext(bad), null, JSON.stringify(bad));
+  }
+  const meta = { kind: 'design_filed', appSlug: 'ear', appName: 'Ear Trainer', filedNext: { say: 'builds', version: 4 } };
+  assert.deepEqual(normalizeBotMeta({ homeroomBot: meta }).homeroomBot.filedNext, { say: 'builds', version: 4 });
+  assert.equal(normalizeBotMeta({ homeroomBot: { ...meta, filedNext: { say: 'nonsense' } } }).homeroomBot.filedNext, undefined);
+
+  // Drawn after the line, in the design thread.
+  const { MessageRow } = loadTsx('frontend/src/features/messages/message-row.tsx');
+  const line = (metadata) => renderToHtml(createElement(MessageRow, {
+    conversationId: 42, kind: 'direct', botChat: true, inThread: true,
+    message: {
+      id: 901, conversationId: 42, sender: { id: 2, username: 'homeroom_bot', bot: true }, createdAt: NOW.toISOString(),
+      content: 'Filed it as request #14 on Ear Trainer, under your name, with version 4 as its plan.',
+      reply: null, reactions: [], attachments: [], objects: [], deleted: false, threadRootId: 500, ...(metadata ? { metadata } : {}),
+    },
+  }));
+  const filed = line({ homeroomBot: meta });
+  assert.match(filed, /Filed it as request #14 on Ear Trainer, under your name, with version 4 as its plan\.[\s\S]*<p class="messages-markdown gc-msg-content" data-design-filed-next="builds">Homeroom bot reads it next and builds it from version 4\. Its progress shows here and on the request\.<\/p>/);
+  // A line from before, with no codes, is the line alone.
+  assert.doesNotMatch(line(null), /data-design-filed-next/);
+  assert.doesNotMatch(line({ homeroomBot: { ...meta, kind: 'chat' } }), /data-design-filed-next/, 'only the filed line says it');
+});
+
 // ── 5. The bot's slots page ───────────────────────────────────────────────
 
 test('the slots page: what holds each slot, what waits for one in order, and the limits', () => {
