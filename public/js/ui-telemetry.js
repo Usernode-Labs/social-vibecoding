@@ -15,7 +15,7 @@
   'use strict';
   const create = factory();
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { createUITelemetry: create, clientError: create.clientError };
+    module.exports = { createUITelemetry: create, clientError: create.clientError, sessionFence: create.sessionFence };
   }
   if (root && root.document) root.UITelemetry = create(root);
 }(typeof window !== 'undefined' ? window : null, function () {
@@ -81,6 +81,42 @@
   // every 500 ms, up to 30 s, then gives up silently.
   const LOAD_POLL_MS = 500;
   const LOAD_POLLS = 60;
+
+  // ── Reads the session guard cut off, and where an invite page landed ──
+  // (#6002). frontend/src/lib/api-cache-identity.ts reports one fence report
+  // per window of a page load: the reads it cut off, each as a path with no
+  // query and every link code or id replaced, why, and whether the page was
+  // signed in. The invite page reports where it first settled. Keep these
+  // rules identical with src/services/ui-telemetry.js.
+  const FENCE_REASONS = new Set(['epoch', 'scope', 'native']);
+  const FENCE_PATH_RE = /^\/api(?:\/[A-Za-z0-9._~:<>-]{1,64}){0,12}$/;
+  const FENCE_TOKEN_SEGMENT_RE = /\/[A-Za-z0-9_-]{22,}(?=\/|$)/;
+  const MAX_FENCE_ENTRIES = 16;
+  const MAX_FENCE_COUNT = 1000;
+  const INVITE_SETTLED = new Set(['card', 'dead', 'failed', 'timeout']);
+  // A page nobody is signed in to sends only these two kinds, held briefly
+  // and sent once, never retried, with no cookie
+  // (POST /api/ui-telemetry/anonymous).
+  const ANON_HOLD_MS = 2000;
+  const MAX_ANON_HELD = 4;
+  // At most this many sends in any ANON_BUDGET_MS, a rolling budget.
+  const MAX_ANON_SENDS = 3;
+  const ANON_BUDGET_MS = 10 * 60 * 1000;
+
+  /** Pure: a fence report's entries as they may be sent, or null. */
+  function fenceEntries(fences) {
+    if (!Array.isArray(fences) || fences.length < 1 || fences.length > MAX_FENCE_ENTRIES) return null;
+    const out = [];
+    for (const entry of fences) {
+      if (!entry || typeof entry !== 'object') return null;
+      const path = entry.path;
+      if (typeof path !== 'string' || !FENCE_PATH_RE.test(path) || FENCE_TOKEN_SEGMENT_RE.test(path)) return null;
+      if (!FENCE_REASONS.has(entry.reason)) return null;
+      if (!Number.isSafeInteger(entry.count) || entry.count < 1 || entry.count > MAX_FENCE_COUNT) return null;
+      out.push({ path, reason: entry.reason, public: path.startsWith('/api/public/'), count: entry.count });
+    }
+    return out;
+  }
 
   // ── Script errors after boot (`client_error`) ────────────────────────
   //
@@ -343,6 +379,18 @@
     // classified, so an error is either a boot_failure or one of these,
     // never both. Page-scoped like the load: at most MAX_CLIENT_ERRORS per
     // visit, each code once.
+    let anonHeld = [];
+    let anonTimer = null;
+    let anonSentAt = [];
+    const anonBudgetLeft = () => {
+      const at = clock();
+      anonSentAt = anonSentAt.filter((t) => at - t < ANON_BUDGET_MS);
+      return anonSentAt.length < MAX_ANON_SENDS;
+    };
+    // Only while the page is still nobody's and collection is on: a person
+    // who signed in, or opted out, since the report was held sends nothing.
+    const anonymousAllowed = () => !collectionDisabled && !currentUser && !pendingUser && !adminRoute();
+    let inviteSettledOnce = false;
     let booted = false;
     let clientErrorsSent = 0;
     const clientErrorCodes = new Set();
@@ -513,6 +561,81 @@
 
     function screen(screenCode, context) {
       return emit('screen_visit', screenCode, context);
+    }
+
+    // A fence report or an invite landing: through the person's own queue
+    // when somebody is signed in (the opt-in and everything else apply as to
+    // any report), else held for the anonymous send when the page itself was
+    // signed out. A signed-in report with nobody to send it as is dropped.
+    function routeItem(item, signedOut) {
+      if (collectionDisabled || adminRoute()) return null;
+      if (currentUser || pendingUser) return enqueue(item);
+      if (!signedOut || !anonBudgetLeft()) return null;
+      const build = platformBuild();
+      if (build) item.build = build;
+      if (anonHeld.length >= MAX_ANON_HELD) return null;
+      anonHeld.push(item);
+      if (!anonTimer) anonTimer = setTimer(() => { anonTimer = null; sendAnonymous(false); }, ANON_HOLD_MS);
+      return item.id;
+    }
+
+    function sendAnonymous(keepalive) {
+      if (anonTimer) { clearTimer(anonTimer); anonTimer = null; }
+      if (!anonHeld.length || !fetcher || !anonymousAllowed() || !anonBudgetLeft()) { anonHeld = []; return; }
+      const events = anonHeld;
+      anonHeld = [];
+      anonSentAt.push(clock());
+      try {
+        // No cookie rides with it: an anonymous report is nobody's.
+        const request = fetcher('/api/ui-telemetry/anonymous', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'omit',
+          keepalive: keepalive === true,
+          body: JSON.stringify({
+            schemaVersion: SCHEMA_VERSION,
+            batchId: randomId(),
+            events,
+            delivery: { failedBatches: 0, droppedEvents: 0 },
+          }),
+        });
+        if (request && typeof request.catch === 'function') request.catch(() => {});
+      } catch (_) { /* never retried */ }
+    }
+
+    function baseItem(kind, screenCode) {
+      return {
+        id: randomId(),
+        visitId,
+        kind,
+        screen: screenCode,
+        occurredAt: new Date(clock()).toISOString(),
+        sequence: ++sequence,
+      };
+    }
+
+    /** One fence report from the session guard: { signedIn, fences }. */
+    function reportFence(report) {
+      try {
+        if (!report || typeof report.signedIn !== 'boolean') return null;
+        const fences = fenceEntries(report.fences);
+        if (!fences) return null;
+        const item = baseItem('session_fence', currentNav ? currentNav.screen : 'shell_boot');
+        item.signedIn = report.signedIn;
+        item.fences = fences;
+        return routeItem(item, !report.signedIn);
+      } catch (_) { return null; }
+    }
+
+    /** Where the invite page first settled, once per page. */
+    function inviteSettled(settled) {
+      try {
+        if (inviteSettledOnce || !INVITE_SETTLED.has(settled)) return null;
+        inviteSettledOnce = true;
+        const item = baseItem('invite_settlement', 'shell_boot');
+        item.settled = settled;
+        return routeItem(item, true);
+      } catch (_) { return null; }
     }
 
     // One navigation step (#3369). Reported only when the screen root (or the
@@ -931,6 +1054,7 @@
           // browsers slow hidden pages on purpose. A load that already ended
           // keeps the reading it took.
           if (!loadEnded) loadRecorded = true;
+          sendAnonymous(true);
           void flush(true);
         } else if (doc.visibilityState === 'visible') {
           navShown();
@@ -953,6 +1077,7 @@
         // shell_boot (#4965); it rides out in this same flush.
         if (loadEnded) recordPageLoad();
         abandonPending();
+        sendAnonymous(true);
         void flush(true);
       });
       env.addEventListener('online', () => schedule(0));
@@ -967,7 +1092,7 @@
 
     return {
       screen, navigate, markNextVia, attempt, outcome, cancel, setUser, clearUser, flush,
-      contextHeaders, errorCodeFor,
+      contextHeaders, errorCodeFor, reportFence, inviteSettled,
       // Content-free diagnostics for tests and an attached inspector. No
       // queued record body is exposed through the product API.
       diagnostics: () => ({ queued: queue.length, active: attempts.size, droppedEvents, failedBatches }),
@@ -984,6 +1109,14 @@
     normalizeTemplate: normalizeErrorTemplate,
     code: clientErrorCode,
     describe: describeClientError,
+  });
+  // The pure half of session_fence, for tests/session-fence-telemetry.test.js.
+  createUITelemetry.sessionFence = Object.freeze({
+    REASONS: FENCE_REASONS,
+    PATH_RE: FENCE_PATH_RE,
+    MAX_ENTRIES: MAX_FENCE_ENTRIES,
+    INVITE_SETTLED,
+    entries: fenceEntries,
   });
 
   return createUITelemetry;

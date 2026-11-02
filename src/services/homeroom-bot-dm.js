@@ -1894,6 +1894,10 @@ async function relayIssuePost({
       actions: kind === 'spec' && !dm.retry ? [readPlanAction(app.slug, issueNumber)] : null,
     }) : null;
     log.info('homeroom-bot-dm', line ? 'A quiet line in the request\'s thread' : 'On the card, not a message', { app: app.slug, issueNumber, kind });
+    // #6153: its build starting, in the private thread it came from too.
+    if (kind === 'spec' && !dm.retry) {
+      await noteBuildStarted(pool, { bot, requester, app, issueNumber, runId, context, saidIn: line?.threadRootId || null });
+    }
     return {
       conversationId: line?.conversationId || null, messageId: line?.messageId || null, quiet: true,
       userId: requester.userId, username: requester.username,
@@ -2149,6 +2153,145 @@ async function noteStep(pool, { bot = null, userId, app, issueNumber, content, s
     log.warn('homeroom-bot-dm', 'Could not note a step', { app: app?.slug, issueNumber, step, err: err.message });
     return null;
   }
+}
+
+// ── #6153: a request's milestones, in the private thread it came from ────
+//
+// #6126 says a request's plan, and "it's live" when it has no card, in the
+// private thread it started in. A design thread filed as a request (its New
+// request) went quiet from then on: its request's news was said in Main.
+// The two milestones between, its build starting and its change up for a
+// vote, are said there too, one line each, once (their keys, as the plan's
+// and the live notice's), quietly. The thread's head says where the request
+// stands at any moment (frontend private-thread-bar.tsx RequestTrackStrip).
+
+/**
+ * #6153: the private thread of `userId`'s that their request `issueNumber`
+ * on `appId` came from, by its root message, or null: the thread it started
+ * in when that is theirs and no request's card (requestStart, #6126), else a
+ * thread of theirs filed as the request or posted on it as its plan (a
+ * design thread's New request or Propose it: private_threads.result_ref),
+ * the filed one first. Never throws.
+ */
+async function requestThreadOf(pool, { userId, appId, issueNumber }) {
+  try {
+    const started = await requestStart(pool, { userId, appId, issueNumber });
+    if (started) {
+      const { rows: [quoted] = [] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [started]);
+      const root = Number(quoted?.thread_root_id) || null;
+      if (root && !(await isRequestCard(pool, root))) return root;
+    }
+    const { rows: [own] = [] } = await pool.query(
+      `SELECT p.root_message_id
+         FROM private_threads p
+         JOIN conversation_messages m ON m.id = p.root_message_id AND m.deleted_at IS NULL
+        WHERE p.user_id = $1 AND p.app_id = $2 AND p.result_ref = $3 AND p.state IN ('filed', 'posted')
+        ORDER BY (p.state = 'filed') DESC, p.updated_at DESC, p.id DESC
+        LIMIT 1`,
+      [userId, appId, issueNumber],
+    );
+    return Number(own?.root_message_id) || null;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not find the private thread a request came from', { appId, issueNumber, err: err.message });
+    return null;
+  }
+}
+
+/** Pure (#6153): how a milestone names its request: "#14", or a first version by its project. */
+function milestoneName({ issueNumber, appName, firstVersion = false }) {
+  return firstVersion ? `the first version of ${appName}` : `#${Number(issueNumber)}`;
+}
+
+/** Pure (#6153): the line said when a request's build starts, from the design version its plan shows when it does. */
+function buildingLine({ issueNumber, appName, firstVersion = false, version = null }) {
+  const from = Number(version) > 0 ? ` from version ${Number(version)}` : '';
+  return `Homeroom bot is building ${milestoneName({ issueNumber, appName, firstVersion })}${from}.`;
+}
+
+/** Pure (#6153): the line said when a request's change is up for a vote; the Vote button under it opens it. */
+function upForVoteLine({ issueNumber, appName, firstVersion = false }) {
+  const name = milestoneName({ issueNumber, appName, firstVersion });
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)} is up for a vote.`;
+}
+
+/** Pure (#6153): the button under the up-for-a-vote line: the change, where its vote is (change-destination.js). */
+function voteAction(slug, sessionId) {
+  return { id: 'vote', label: 'Vote', style: 'primary', type: 'open', target: changeHrefOf(slug, sessionId) };
+}
+
+/**
+ * #6153: one of a request's milestones (`step` 'building' or 'vote'), said
+ * once (`key`) in the private thread it came from (requestThreadOf): a
+ * quiet line (kind 'step'), ringing nothing, with its button when it has
+ * one. Not said where the request's own news already went (`saidIn`, the
+ * thread root that news was sent in), nor with no such thread. Resolves
+ * what sendDm did, or null. Never throws.
+ */
+async function noteMilestone(pool, {
+  bot, userId, app, issueNumber, step, content, key, actions = null, context = null, saidIn = null,
+}) {
+  try {
+    if (!bot?.id || !userId || !app?.id) return null;
+    const root = await requestThreadOf(pool, { userId, appId: app.id, issueNumber });
+    if (!root || root === Number(saidIn)) return null;
+    return await sendDm(pool, {
+      bot, userId, content, threadRootId: root, idempotencyKey: key, moment: null,
+      metadata: {
+        kind: 'step', step,
+        appSlug: app.slug, appName: context?.appName || app.name || app.slug, issueNumber: Number(issueNumber),
+        ...(context?.issueTitle ? { issueTitle: context.issueTitle } : {}),
+        ...(context?.firstVersion ? { firstVersion: true } : {}),
+        ...(actions?.length ? { actions, status: 'open' } : {}),
+      },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not say a milestone in a request\'s private thread', { app: app?.slug, issueNumber, step, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * #6153: the design version run `runId` builds from, when it builds from a
+ * person's plan (homeroom-bot.js usePersonPlan) that a design thread posted
+ * (design-threads.js planHtml); else null. Never throws.
+ */
+async function builtFromVersion(pool, runId) {
+  try {
+    const { rows: [run] = [] } = await pool.query(
+      `SELECT build_spec_html, build_spec_md, (plan ? 'fromPlan') AS from_plan FROM homeroom_bot_runs WHERE id = $1`,
+      [Number(runId)],
+    );
+    if (!run?.from_plan) return null;
+    const { planDesignVersion } = require('./design-threads');
+    return planDesignVersion(run.build_spec_html) || planDesignVersion(run.build_spec_md);
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not read which version a build is from', { runId, err: err.message });
+    return null;
+  }
+}
+
+/** #6153: a request's build started (its plan said, relayIssuePost 'spec'): said in its private thread, once per run. */
+async function noteBuildStarted(pool, { bot, requester, app, issueNumber, runId, context, saidIn = null }) {
+  if (!runId || !requester?.userId) return null;
+  const version = await builtFromVersion(pool, runId);
+  return noteMilestone(pool, {
+    bot, userId: requester.userId, app, issueNumber, step: 'building', context, saidIn,
+    key: `hrbot-building-${Number(runId)}`,
+    content: buildingLine({ issueNumber, appName: context?.appName || app.name || app.slug, firstVersion: !!context?.firstVersion, version }),
+  });
+}
+
+/** #6153: a request's change is up for a vote (tellReady): said in its private thread, once per change, with Vote. */
+async function noteUpForVote(pool, { bot, requester, app, issueNumber, sessionId, saidIn = null }) {
+  if (!sessionId || !requester?.userId) return null;
+  const appName = app.name || app.slug;
+  const context = { appName, issueTitle: requester.issueTitle || null, firstVersion: !!requester.firstVersion };
+  return noteMilestone(pool, {
+    bot, userId: requester.userId, app, issueNumber, step: 'vote', context, saidIn,
+    key: `hrbot-vote-${Number(sessionId)}`,
+    content: upForVoteLine({ issueNumber, appName, firstVersion: context.firstVersion }),
+    actions: [voteAction(app.slug, sessionId)],
+  });
 }
 
 // ── B6: a first version's plan ───────────────────────────────────────────
@@ -2943,6 +3086,14 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
       },
     },
   });
+  // #6153: up for a vote, in the private thread its request came from, when
+  // the card was not said there itself. A first version has no vote (D1).
+  if (told?.messageId && !noVote) {
+    await noteUpForVote(pool, {
+      bot, requester, app: { id: run.id, slug: run.slug, name: run.name }, issueNumber: Number(run.issue_number),
+      sessionId: id, saidIn: told.threadRootId || null,
+    });
+  }
   // Nobody else is asked to approve a change part of which does not work:
   // its requester's card says what, and the bot's hand-off said so where
   // the group talks about it.
@@ -6335,6 +6486,11 @@ module.exports = {
   quotable,
   requestStart,
   outsideCardThread,
+  requestThreadOf,
+  buildingLine,
+  upForVoteLine,
+  noteBuildStarted,
+  noteUpForVote,
   newestOpenQuestion,
   postOnRequest,
   postOnProposal,

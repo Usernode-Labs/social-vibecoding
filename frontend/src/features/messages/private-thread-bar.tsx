@@ -36,6 +36,12 @@
  *
  * The first render is nothing: where the thread stands is read in an effect
  * (`usePrivateThread`, held by the thread's pane for its head and its foot).
+ *
+ * #6153: once it is filed as a request (or posted on one as its plan), its
+ * head is where that request stands, live from the request's track
+ * (./bot-track.tsx): the track's word and line, its five steps, and Open
+ * request #N. Until the viewer's bot work has a track for it, the line that
+ * says where it went.
  */
 
 import { useEffect, useState } from 'react';
@@ -46,6 +52,8 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { Button } from '@/components/ui/button';
 
 import { MakeSheet } from './bot-make';
+import { TrackBar, trackShort, trackStateWord, useTrackOf } from './bot-track';
+import type { BotTrack } from './types';
 
 export interface PrivateThreadState {
   state: 'open' | 'filed' | 'posted' | 'dropped';
@@ -191,10 +199,52 @@ export function projectChoices(scope: { list: string[] | null; info: Record<stri
   return (scope.list || []).map((slug) => ({ slug, name: scope.info[slug]?.name || slug }));
 }
 
-/** The thread's head: that only they can see it, or where it went. */
+/**
+ * Pure (#6153): the request a thread was filed as, or posted on, with the
+ * page its Open request goes to; null while it went nowhere, or nowhere a
+ * request's track can follow.
+ */
+export function filedRequestOf(where: PrivateThreadState | null): { slug: string; name: string; number: number; href: string } | null {
+  if (!where || (where.state !== 'filed' && where.state !== 'posted') || !where.app?.slug) return null;
+  const number = Number(where.number);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  return {
+    slug: where.app.slug,
+    name: where.app.name || where.app.slug,
+    number,
+    href: where.href || `#app/${encodeURIComponent(where.app.slug)}/dev/issues/${number}`,
+  };
+}
+
+/**
+ * #6153: the one-line strip at the head of a thread filed as a request:
+ * where the request stands, in the track's own words (its status word, then
+ * where it is and why, which a narrow column cuts short), its five steps,
+ * and Open request #N, to its page. Drawn from `track`, which the head reads
+ * live (useTrackOf), so it moves as the request does.
+ */
+export function RequestTrackStrip({ track, number, href }: { track: BotTrack; number: number; href: string }): ReactNode {
+  const t = useMessages('messages');
+  const line = trackShort(track);
+  return (
+    <div className="messages-bot-note items-center gap-2 px-4 py-2" data-private-thread="track" data-private-track={track.state}>
+      <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-200" data-private-track-state="">{trackStateWord(track)}</span>
+      <span className="min-w-0 flex-1 truncate" title={line}>{line}</span>
+      <TrackBar track={track} className="w-16 shrink-0" />
+      <a className="shrink-0 font-semibold text-violet-700 dark:text-violet-300" href={href} data-private-track-open="">
+        {t('messages:privateThread.openRequest', { number })}
+      </a>
+    </div>
+  );
+}
+
+/** The thread's head: that only they can see it, or where it went (#6153: where its request stands). */
 export function PrivateThreadNote({ where }: { where: PrivateThreadState | null }): ReactNode {
   const t = useMessages('messages');
+  const filed = filedRequestOf(where);
+  const track = useTrackOf(filed ? { appSlug: filed.slug, appName: filed.name, issueNumber: filed.number } : null);
   if (!where) return null;
+  if (filed && track) return <RequestTrackStrip track={track} number={filed.number} href={filed.href} />;
   if (where.state === 'filed' || where.state === 'posted') {
     const id = where.state === 'filed' ? 'messages:privateThread.filed' : 'messages:privateThread.posted';
     return (

@@ -170,10 +170,13 @@ selects a skill.
 
 ## Schema changes need a tracked migration
 
-`src/db/migrations/` is the SQL source of truth. Add the next numbered SQL
-file, then run `node scripts/record-schema-migration.js <number-name>` to
-append its checksums. Never edit, reorder or delete applied files or the
-immutable baseline. Reference inserts live once in `src/db/reference-data.js`.
+`src/db/migrations/` is the SQL source of truth. Add a SQL file named for
+what it does (no number: the manifest's order is the history's), then run
+`node scripts/record-schema-migration.js <name>` to append its checksums.
+When `manifest.json` conflicts with main's, never merge it by hand: run
+`node scripts/record-schema-migration.js --onto origin/main` after the merge
+or rebase. Never edit, reorder or delete applied files or the immutable
+baseline. Reference inserts live once in `src/db/reference-data.js`.
 `src/db/schema.sql` is generated and ignored: never edit or commit it.
 `npm run build:schema` regenerates it; npm test/start/dev and image builds do
 this automatically. See `docs/database/schema-migrations.md` for adoption,

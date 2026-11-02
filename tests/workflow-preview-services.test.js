@@ -79,6 +79,24 @@ stub('../src/services/visuals', {
   },
 });
 
+// #6157: a sleeping preview is woken before its checks run. `sleeping.next`
+// is what the wake answers ({ ok: true } unless a test says otherwise), and
+// `sleeping.order` records the wake and the capture in the order they came.
+const sleeping = { next: null, asked: [], order: [] };
+stub('../src/services/preview-sleep', {
+  ...require('../src/services/preview-sleep'),
+  async wakeForRun(config, pool, sessionId) {
+    sleeping.asked.push(sessionId);
+    sleeping.order.push('wake');
+    return sleeping.next || { ok: true, woke: false };
+  },
+});
+const realCapture = require('../src/services/visuals').captureForSession;
+require('../src/services/visuals').captureForSession = async (...args) => {
+  sleeping.order.push('capture');
+  return realCapture(...args);
+};
+
 const captured = [];
 const { previewServices } = require('../src/workflow/preview/services.ts');
 const { WORK } = require('../src/workflow/preview/machine.ts');
@@ -325,4 +343,31 @@ test('a run claimed again asks for its checks slot as of the place the earlier c
   await handlers[WORK.run].run(ctx(input));
   assert.equal(captured[0].queuedSince, null, 'a first claim joins the back of the line');
   delete runs.queuedAt;
+});
+
+test('#6157 a checks run on a sleeping proposal wakes its preview before it starts', async () => {
+  const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-9', trigger: 'promote-kick',
+    runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
+  sleeping.asked.length = 0; sleeping.order.length = 0;
+  sleeping.next = { ok: true, woke: true };
+  assert.deepEqual(await handlers[WORK.run].run(ctx(input)), { outcome: 'verdict', state: 'passing' });
+  assert.deepEqual(sleeping.asked, [5]);
+  assert.deepEqual(sleeping.order, ['wake', 'capture'], 'woken, then checked: same image, nothing rebuilt');
+  sleeping.next = null;
+});
+
+test('#6157 a preview that does not wake in time is the platform\'s fault, never the change\'s', async () => {
+  const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-10', trigger: 'promote-kick',
+    runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
+  sleeping.order.length = 0;
+  sleeping.next = { ok: false, detail: 'The preview was asleep and did not wake in time' };
+  assert.deepEqual(await handlers[WORK.run].run(ctx(input)), {
+    outcome: 'blocked', reason: 'The preview was asleep and did not wake in time', platformFault: true,
+  });
+  assert.deepEqual(sleeping.order, ['wake'], 'nothing is captured against a preview that is not up');
+  sleeping.next = null;
+  // The machine reads a blocked run that says so as the platform's fault: an
+  // 'error' its error lane runs again, with the platform's own allowance.
+  const machine = require('node:fs').readFileSync(require.resolve('../src/workflow/preview/machine.ts'), 'utf8');
+  assert.match(machine, /const platformFault = state === 'error' && \(!!r\?\.platformFault/);
 });

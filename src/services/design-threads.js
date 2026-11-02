@@ -494,6 +494,21 @@ function planHtml({ design, title, notes, before = null, after, version }) {
   ].join('\n');
 }
 
+// What planHtml's tech section says its after side is, in either of its two wordings.
+const PLAN_VERSION_RE = /\bafter is version (\d+)(?:, a mockup| of the design)\b/;
+
+/**
+ * Pure (#6153): the design version a plan made by planHtml shows as its
+ * after side, read back from its words (its HTML or the markdown made from
+ * it), or null for any other plan: what Homeroom bot's line in the design
+ * thread says it builds from ("building #14 from version 4").
+ */
+function planDesignVersion(text) {
+  const match = PLAN_VERSION_RE.exec(String(text || ''));
+  const version = match ? Number(match[1]) : null;
+  return Number.isSafeInteger(version) && version > 0 ? version : null;
+}
+
 // What a design may post from: a thread put away posts nothing.
 const POSTABLE = new Set(['open', 'posted', 'filed']);
 
@@ -718,6 +733,7 @@ module.exports = {
   pinFor,
   screenMarkup,
   planHtml,
+  planDesignVersion,
   planTargetOf,
   filedNext,
   postDesignPlan,

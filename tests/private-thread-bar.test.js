@@ -175,6 +175,81 @@ test('the bot offers File it once a request is ready: the foot has none', () => 
   assert.doesNotMatch(filed, /File it shows only under that offer/, 'not once it is filed');
 });
 
+// #6153 (2 Nov 2026): a design thread filed as request #14 went quiet, its
+// head saying only that it was filed, with a snapshot of the request that
+// never moved. Its head says where the request stands now, from its track.
+test('#6153: once filed, its head says where the request stands, live from its track, with Open request #N', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const track = (extra = {}) => ({
+    key: 'ear trainer|14', appSlug: 'ear-trainer', appName: 'Ear Trainer', iconUrl: null, iconEmoji: null,
+    issueNumber: 14, title: 'Design: Ear Trainer home', firstVersion: false, state: 'building', step: 'build', why: null,
+    waitingOn: null, busy: true, try: 1, tryStartedAt: null, tryStarts: [], since: null, rootId: null, askId: null,
+    proposalId: null, sessionId: null, links: { request: '#app/ear-trainer/dev/issues/14', proposal: null, project: '#app/ear-trainer' },
+    ...extra,
+  });
+  // The viewer's bot work (./bot-work.tsx), which every track on the page reads.
+  let work = { tracks: [track()] };
+  const bar = loadTsx(BAR, { stubs: { './bot-work': { useBotWork: () => ({ work, failed: false }) } } });
+  const where = {
+    state: 'filed', kind: 'design', number: 14, app: { slug: 'ear-trainer', name: 'Ear Trainer' },
+    href: '#app/ear-trainer/dev/issues/14', mine: true,
+  };
+  const head = () => renderToHtml(createElement(bar.PrivateThreadNote, { where }));
+
+  const building = head();
+  assert.match(building, /data-private-thread="track" data-private-track="building"/);
+  assert.match(building, /<span class="[^"]*" data-private-track-state="">Building<\/span>/, 'the track\'s own word');
+  assert.match(building, new RegExp(`title="${message('messages:bot.track.line.building.default')}"`), 'and its line');
+  assert.match(building, /data-bot-track-bar="building"/, 'its five steps');
+  assert.equal((building.match(/data-bot-track-step=/g) || []).length, 5);
+  assert.match(building, /<a class="[^"]*" href="#app\/ear-trainer\/dev\/issues\/14" data-private-track-open="">Open request #14<\/a>/);
+  assert.equal(message('messages:privateThread.openRequest', { number: 14 }), 'Open request #14');
+  assert.doesNotMatch(building, /Filed as request/, 'the strip, not the snapshot');
+
+  // It moves as the track does.
+  work = { tracks: [track({ state: 'vote', step: 'vote', busy: false })] };
+  assert.match(head(), /data-private-track-state="">Up for a vote<\/span>/);
+  // Posted on a request as its plan, the same; with no address, the request's page.
+  assert.match(renderToHtml(createElement(bar.PrivateThreadNote, { where: { ...where, state: 'posted', href: null } })),
+    /href="#app\/ear-trainer\/dev\/issues\/14" data-private-track-open=""/);
+  // No track for it (the bot is not on it, or its work is not read yet): where it went, as before.
+  work = { tracks: [track({ issueNumber: 15, key: 'ear trainer|15' })] };
+  assert.match(head(), /data-private-thread="filed">Filed as request #14 on Ear Trainer\./);
+  work = null;
+  assert.match(head(), /data-private-thread="filed"/);
+  // Still open: only they can see it. Read in an effect: nothing on the first render.
+  assert.match(renderToHtml(createElement(bar.PrivateThreadNote, { where: { state: 'open', kind: 'design', app: where.app, mine: true } })),
+    /data-private-thread="open">Only you can see this thread\./);
+  assert.equal(renderToHtml(createElement(bar.PrivateThreadNote, { where: null })), '');
+
+  const { filedRequestOf } = bar;
+  assert.deepEqual(filedRequestOf(where), { slug: 'ear-trainer', name: 'Ear Trainer', number: 14, href: '#app/ear-trainer/dev/issues/14' });
+  assert.equal(filedRequestOf({ ...where, state: 'open' }), null);
+  assert.equal(filedRequestOf({ ...where, app: null }), null, 'a thread in no project');
+  assert.equal(filedRequestOf({ ...where, number: null }), null);
+  assert.equal(filedRequestOf(null), null);
+});
+
+test('#6153: the Vote under a request\'s up-for-a-vote line goes once its vote is decided, as Read the plan does once it is built', () => {
+  const source = read('frontend/src/features/messages/bot-question.tsx');
+  assert.match(source, /const VOTE_DECIDED: ReadonlySet<string> = new Set\(\['going_live', 'live', 'stopped', 'done_elsewhere', 'closed'\]\);/);
+  assert.match(source, /const pastVote = !!track && VOTE_DECIDED\.has\(track\.state\);/);
+  assert.match(source, /\.filter\(\(action\) => !\(pastPlan && action\.id === 'read_plan'\) && !\(pastVote && action\.id === 'vote'\)\);/);
+  const dm = require('../src/services/homeroom-bot-dm');
+  assert.equal(dm.buildingLine({ issueNumber: 14, appName: 'Ear Trainer', version: 4 }), 'Homeroom bot is building #14 from version 4.');
+  assert.equal(dm.buildingLine({ issueNumber: 14, appName: 'Ear Trainer' }), 'Homeroom bot is building #14.', 'a plan that names no design version');
+  assert.equal(dm.buildingLine({ issueNumber: 3, appName: 'Ear Trainer', firstVersion: true, version: 2 }),
+    'Homeroom bot is building the first version of Ear Trainer from version 2.');
+  assert.equal(dm.upForVoteLine({ issueNumber: 14, appName: 'Ear Trainer' }), '#14 is up for a vote.');
+  const { planHtml, planDesignVersion } = require('../src/services/design-threads');
+  const design = { title: 'Home', route: '/', width: 390, height: 844 };
+  assert.equal(planDesignVersion(planHtml({ design, title: 'Design: Home', notes: '', after: '<p>new</p>', version: 4 })), 4, 'a new screen');
+  assert.equal(planDesignVersion(planHtml({ design, title: 'Design: Home', notes: '', before: '<p>was</p>', after: '<p>new</p>', version: 7 })), 7,
+    'a captured one, beside version 1');
+  assert.equal(planDesignVersion('A plan a person wrote, version 3 of it.'), null);
+  assert.equal(planDesignVersion(null), null);
+});
+
 test('the routes the old doors wrote to stay same-origin writes, and the head\'s copy is unchanged', () => {
   const routes = read('src/routes/conversations.js');
   assert.match(routes, /router\.post\('\/api\/conversations\/homeroom-bot\/threads\/:rootId\/file', conversationActionLimiter, sameOriginBrowserOnly,/);

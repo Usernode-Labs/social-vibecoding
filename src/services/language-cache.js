@@ -76,6 +76,17 @@ async function cachedEntries(pool) {
   return out;
 }
 
+/** One language's cached translations in one namespace: key -> source -> text. */
+async function cachedNamespace(pool, language, namespace) {
+  const { rows } = await pool.query(
+    'SELECT key, source, text FROM language_translations WHERE language = $1 AND namespace = $2 ORDER BY created_at, key',
+    [language, namespace],
+  );
+  const out = {};
+  for (const row of rows) (out[row.key] ||= {})[row.source] = row.text;
+  return out;
+}
+
 /** English messages by namespace, from a materialized root. */
 function englishTexts(directory) {
   const out = {};
@@ -155,6 +166,7 @@ function packsFrom(root) {
     if (!(language in languages)) continue;
     manifest[language] = {};
     for (const [namespace, messages] of Object.entries(byNamespace)) {
+      if (packs.isServerNamespace(namespace)) continue;
       const bytes = Buffer.from(JSON.stringify(messages));
       const digest = packs.hash(bytes);
       const name = `${language}.${namespace}.${digest}.json`;
@@ -165,7 +177,7 @@ function packsFrom(root) {
   const coverage = Object.fromEntries(Object.entries(report).map(([language, tally]) => [
     language, { translated: tally.translated, total: tally.total, ships: !!tally.ships },
   ]));
-  return { languages, namespaces, manifest, files, coverage };
+  return { languages, namespaces: namespaces.filter((namespace) => !packs.isServerNamespace(namespace)), manifest, files, coverage };
 }
 
 let memo = null;
@@ -279,6 +291,7 @@ module.exports = {
   MISS_RECHECK_MS,
   cacheVersion,
   cachedEntries,
+  cachedNamespace,
   live,
   liveRoot,
   overlay,

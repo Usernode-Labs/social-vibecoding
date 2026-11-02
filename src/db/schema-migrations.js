@@ -11,15 +11,19 @@ const MIGRATION_LOCK = 0x5343484d; // SCHM
 const directory = path.join(__dirname, 'migrations');
 const { loadPlan } = require('./schema-source');
 
+// The database's receipts must be exactly this build's first migrations.
+// They are matched by ID, not read in ID order: a migration's ID is its name,
+// and names do not sort in history order. Each receipt's schema checksum
+// names the whole ordered prefix it was applied on top of.
 function pendingMigrations(plan, applied) {
   if (applied.length > plan.length) throw new Error('Database schema is newer than this build');
-  applied.forEach((row, index) => {
-    const migration = plan[index];
-    if (row.id !== migration.id || row.checksum !== migration.sha256
-        || row.schema_sha256 !== migration.schemaSha256) {
+  const receipts = new Map(applied.map(row => [row.id, row]));
+  for (const migration of plan.slice(0, applied.length)) {
+    const row = receipts.get(migration.id);
+    if (!row || row.checksum !== migration.sha256 || row.schema_sha256 !== migration.schemaSha256) {
       throw new Error('Schema migration history differs from this build; never edit applied migrations');
     }
-  });
+  }
   return plan.slice(applied.length);
 }
 
@@ -116,7 +120,7 @@ async function applySchemaWithLockRetry(pool, {
 
     const { rows: [{ journal }] } = await client.query("SELECT to_regclass('public.schema_migrations')::text AS journal");
     const applied = journal
-      ? (await client.query('SELECT id, checksum, schema_sha256 FROM public.schema_migrations ORDER BY id')).rows
+      ? (await client.query('SELECT id, checksum, schema_sha256 FROM public.schema_migrations')).rows
       : [];
     const pending = pendingMigrations(plan, applied);
     for (const migration of pending) {

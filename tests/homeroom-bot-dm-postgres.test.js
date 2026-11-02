@@ -1361,4 +1361,97 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.deepEqual(await conversations.sendMessage(pool, viewer, peopleId, { content: 'x', thread_root_id: first.message.id }),
       { error: 'threads_not_supported' });
   });
+
+  // #6153: a design thread filed as a request (its New request) went quiet:
+  // the request's news was said in Main. Like the plan and "it's live" in
+  // the thread a request started in (#6126), its build starting and its
+  // change up for a vote are said in the thread it came from, one line
+  // each, once (keyed by its run and its change, as those are), quietly.
+  await t.test('#6153: a design thread filed as a request hears its build start and its vote, once each', async () => {
+    const designThreads = require('../src/services/design-threads');
+    const viewer = { id: ada.id, username: ada.username };
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 5014, $2, 'Design: Seed swap home')`,
+      [app.id, ada.id],
+    );
+    const opened = await dm.sendDm(pool, {
+      bot, userId: ada.id, threadRootId: false, content: 'I opened a design thread for Home.', metadata: { kind: 'opened_design', designTitle: 'Home' },
+    });
+    const conversationId = opened.conversationId;
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, result_ref)
+       VALUES ($1, $2, $3, $4, 'design', 'filed', 5014)`,
+      [ada.id, conversationId, opened.messageId, app.id],
+    );
+    assert.equal(await dm.requestThreadOf(pool, { userId: ada.id, appId: app.id, issueNumber: 5014 }), opened.messageId,
+      'the thread it was filed from');
+    assert.equal(await dm.requestThreadOf(pool, { userId: sam.id, appId: app.id, issueNumber: 5014 }), null, 'hers alone');
+    assert.equal(await dm.requestThreadOf(pool, { userId: ada.id, appId: app.id, issueNumber: 5099 }), null, 'and that request\'s alone');
+
+    // Its build starts, from the plan the design posted (its version 4).
+    const plan = designThreads.planHtml({
+      design: { title: 'Home', route: null, width: 390, height: 844 }, title: 'Design: Home', notes: '', after: '<main>v4</main>', version: 4,
+    });
+    assert.equal(designThreads.planDesignVersion(plan), 4);
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_spec_html, plan)
+       VALUES ($1, 5014, 'live', 'ready', $2, '{"fromPlan":{"sessionId":1,"version":1}}'::jsonb) RETURNING id`,
+      [app.id, plan],
+    );
+    const spec = { pool, app, issueNumber: 5014, kind: 'spec', runId: run.id, postId: 50141, bot, dm: { building: true, plan: 'The home screen' } };
+    await dm.relayIssuePost(spec);
+    await dm.relayIssuePost(spec);
+    const lines = async (step) => (await pool.query(
+      `SELECT id, content, idempotency_key, metadata FROM conversation_messages
+        WHERE thread_root_id = $1 AND metadata->'homeroomBot'->>'step' = $2 ORDER BY id`,
+      [opened.messageId, step],
+    )).rows;
+    const [building, ...buildingAgain] = await lines('building');
+    assert.equal(buildingAgain.length, 0, 'once, however often its news is relayed');
+    assert.equal(building.content, 'Homeroom bot is building #5014 from version 4.');
+    assert.equal(building.idempotency_key, `hrbot-building-${run.id}`, 'keyed by its run, as the plan is');
+    assert.deepEqual([building.metadata.homeroomBot.kind, building.metadata.homeroomBot.issueNumber], ['step', 5014]);
+    const rang = async (id) => (await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [id])).rowCount;
+    assert.equal(await rang(building.id), 0, 'a quiet line: it rings nothing');
+    const said = await conversations.getMessage(pool, viewer, conversationId, building.id);
+    assert.equal(said.threadRootId, opened.messageId, 'in the design thread');
+
+    // Its change is up for a vote: said there too, with Vote, once.
+    const { rows: [change] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, check_state)
+       VALUES ($1, $2, 'bot/home', 'promoted', 'Home screen', NOW(), 'passing') RETURNING id`,
+      [app.id, bot.id],
+    );
+    await pool.query('UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1', [run.id, change.id]);
+    const ready = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
+    assert.ok(ready?.messageId, 'its ready card went out');
+    assert.notEqual(ready.threadRootId, opened.messageId, 'the card is said where it always is');
+    await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
+    const [vote, ...voteAgain] = await lines('vote');
+    assert.equal(voteAgain.length, 0, 'once');
+    assert.equal(vote.content, '#5014 is up for a vote.');
+    assert.equal(vote.idempotency_key, `hrbot-vote-${change.id}`, 'keyed by its change, as "it\'s live" is');
+    assert.deepEqual(vote.metadata.homeroomBot.actions, [
+      { id: 'vote', label: 'Vote', style: 'primary', type: 'open', target: require('../src/services/change-destination').changeHref(app.slug, change.id) },
+    ], 'its Vote opens the change, where its vote is');
+    assert.equal(await rang(vote.id), 0, 'quiet too: the ready card is what rings');
+    // Where the request's own news went in that thread, it is not said twice.
+    assert.equal(await dm.noteUpForVote(pool, {
+      bot, requester: await dm.requesterOf(pool, app.id, 5014), app, issueNumber: 5014, sessionId: change.id + 1000, saidIn: opened.messageId,
+    }), null);
+    assert.equal((await lines('vote')).length, 1);
+
+    // A request she started in a thread of her own (#6126) is that thread's
+    // too; with nothing to say where it started, it is no thread's.
+    const inThread = await conversations.sendMessage(pool, viewer, conversationId, { content: 'file this', thread_root_id: opened.messageId });
+    await pool.query('UPDATE conversation_messages SET reply_to_id = $2 WHERE id = $1', [inThread.message.id, inThread.message.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
+       VALUES ($1, $2, $3, 5015, 'file_request', 'Home footer', 'done', $4)`,
+      [ada.id, conversationId, app.id, inThread.message.id],
+    );
+    assert.equal(await dm.requestThreadOf(pool, { userId: ada.id, appId: app.id, issueNumber: 5015 }), opened.messageId);
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5015', [ada.id]);
+    assert.equal(await dm.requestThreadOf(pool, { userId: ada.id, appId: app.id, issueNumber: 5015 }), null);
+  });
 });

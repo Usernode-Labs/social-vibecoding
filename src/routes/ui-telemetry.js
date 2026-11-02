@@ -4,11 +4,12 @@ const express = require('express');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
-const { uiTelemetryLimiter } = require('../middleware/rate-limits');
+const { uiTelemetryLimiter, uiTelemetryAnonLimiter } = require('../middleware/rate-limits');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const telemetry = require('../services/ui-telemetry');
 const languageSync = require('../services/language-sync-runner');
 const log = require('../services/logger');
+const { clientIp } = require('../services/client-ip');
 
 function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
@@ -25,7 +26,7 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
     }
     let batch;
     try {
-      batch = telemetry.parseBatch(req.body);
+      batch = telemetry.parseBatch(req.body, { routes: telemetry.apiRouteTemplates(req.app) });
     } catch (err) {
       if (err instanceof telemetry.TelemetryValidationError) {
         return res.status(400).json({ error: 'invalid_telemetry', message: err.message });
@@ -44,6 +45,35 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
       });
     } catch (err) {
       log.error('ui-telemetry', 'Batch insert failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // A signed-out page's own reports (#6002): the reads the session guard cut
+  // off on a page nobody was signed in to, and where an invite page landed.
+  // Nothing else is taken from a signed-out page, and nothing here names
+  // anybody: the client sends no cookie, the rows keep no account, and a
+  // page sends at most three, never retried. A signed-in request is
+  // answered as discarded: its reports travel on the batch route, under the
+  // person's own choice to share usage analytics.
+  router.post('/api/ui-telemetry/anonymous', uiTelemetryAnonLimiter, sameOriginBrowserOnly, json, async (req, res) => {
+    if (req.user) return res.status(202).json({ ok: true, accepted: 0, submitted: 0, discarded: true });
+    let batch;
+    try {
+      batch = telemetry.parseAnonymousBatch(req.body, { routes: telemetry.apiRouteTemplates(req.app) });
+    } catch (err) {
+      if (err instanceof telemetry.TelemetryValidationError) {
+        return res.status(400).json({ error: 'invalid_telemetry', message: err.message });
+      }
+      log.error('ui-telemetry', 'Anonymous batch validation failed unexpectedly', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    try {
+      const source = telemetry.anonymousSource(clientIp(req), { key: config && config.sessionSecret });
+      const result = await telemetry.insertAnonymous(pool, batch, { source });
+      return res.status(202).json({ ok: true, accepted: result.accepted, submitted: batch.events.length });
+    } catch (err) {
+      log.error('ui-telemetry', 'Anonymous batch insert failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -108,7 +138,8 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   router.use((err, req, res, next) => {
-    if (err?.type === 'entity.too.large' && req.path === '/api/ui-telemetry/batch') {
+    if (err?.type === 'entity.too.large'
+        && (req.path === '/api/ui-telemetry/batch' || req.path === '/api/ui-telemetry/anonymous')) {
       return res.status(413).json({ error: 'telemetry_too_large' });
     }
     return next(err);
