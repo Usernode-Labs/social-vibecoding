@@ -296,7 +296,9 @@ export function communityRowHref(slug: string | null | undefined, owed: number |
   if (!slug) return '#';
   return communityRowPlace(owed) === 'needs'
     ? placeHref(slug, 'needs')
-    : `#app/${encodeURIComponent(slug)}/workshop`;
+    // The Hub's own address (App._placeAddress), so a new tab lands where a
+    // plain tap does: a bare /workshop opens the Workshop.
+    : `#app/${encodeURIComponent(slug)}/dev/hub`;
 }
 
 /**
