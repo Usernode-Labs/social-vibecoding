@@ -151,6 +151,19 @@ test('the tools: offered every turn, strict schemas, and a call that cannot make
   assert.match(lines, /\(ask_questions: up to 4/);
   assert.match(lines, /\(show_table: 2 to 4 columns, up to 12 rows/);
   assert.doesNotMatch(lines, new RegExp(EM));
+
+  // 2 Nov 2026: a request being read was tagged Ready, one waiting its turn
+  // Question. Each tag says what it means, and the in-between states none.
+  const table = cards.TOOLS.find((t) => t.function.name === 'show_table').function;
+  const tag = table.parameters.properties.rows.items.properties.tag;
+  assert.deepEqual(tag.enum, ['ready', 'question', 'done', 'stopped']);
+  for (const meaning of [/ready \(its plan is ready to build, or its change is ready for their yes\)/, /question \(it waits for their answer/,
+    /done \(live, or closed as done\)/, /stopped \(closed or stopped without being built\)/,
+    /Leave the tag out for anything else, such as being read, waiting its turn or being built/]) {
+    assert.match(tag.description, meaning);
+  }
+  assert.match(table.description, /one tag, only when its state is one of the four tags/);
+  assert.match(lines, /a tag only when a row is ready, waits on their answer, is done or stopped, none while it is being\n {2}read, waits its turn or is being built/);
 });
 
 test('a table\'s rows about requests link only to a project the person can see', async () => {
@@ -404,7 +417,10 @@ test('the table card: headings, rows 15 over 13, one tag a row, a request\'s row
   shared(html);
   assert.match(html, />Your requests</);
   assert.match(html, /<div class="-mx-4 mt-1 overflow-x-auto px-4"><table/, 'a wide table scrolls inside the card');
-  assert.match(html, /<th scope="col" class="whitespace-nowrap py-1\.5 pe-3 text-\[0\.75rem\] font-semibold[^"]*">Request<\/th>/);
+  assert.match(html, /<th scope="col" class="py-1\.5 pe-3 align-bottom text-\[0\.75rem\] font-semibold[^"]*">Request<\/th>/);
+  // 2 Nov 2026: headings wrap and words break whole, never mid-word at a phone's width.
+  assert.doesNotMatch(html, /whitespace-nowrap py-1\.5|overflow-wrap:anywhere/);
+  assert.equal((html.match(/ break-words /g) || []).length, 8, 'every cell wraps at a word');
   assert.match(html, /<a href="#app\/gym-3f2a1c\/dev\/issues\/12"[^>]*data-bot-table-request="gym-3f2a1c#12"[^>]*>Dark mode<\/a>/);
   assert.match(html, /title="Open Gym Tracker request #12"/);
   assert.match(html, /<th scope="row" class="py-2 pe-3 text-\[0\.9375rem\] font-\[650\][^"]*">Streaks<\/th><td class="py-2 pe-3 text-\[0\.8125rem\][^"]*text-zinc-500/);
