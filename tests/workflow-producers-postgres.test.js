@@ -13,7 +13,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime, defineMachine, NONE, ok } = require('../src/workflow/kernel/index.ts');
-const { restrictWebWorkflow } = require('../src/services/database-role-grants');
+const { restrictWebWorkflow, awaitWebRestrictionReady, takeWebWorkflowWrites } = require('../src/services/database-role-grants');
 const access = require('../src/services/database-role-access');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -80,6 +80,10 @@ test('web asks for its machines\' events and decides nothing', { timeout: 60000 
     GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${web};
     GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${reader}`);
   await restrictWebWorkflow(platform, web);
+  // Long since: what web appended before then is long decided.
+  const cutoverWasLongAgo = () => platform.query(
+    "UPDATE wf_settings SET value = (now() - interval '1 hour')::text WHERE key = 'web_restricted_at'");
+  await cutoverWasLongAgo();
 
   const make = (pool) => {
     const r = createRuntime({ pool, machines: [door()], services: { 'wp.run': { run: async () => ({}) } }, pollMs: 50 });
@@ -239,12 +243,80 @@ test('web asks for its machines\' events and decides nothing', { timeout: 60000 
     await assert.rejects(check(webPool, 'conductor'), /workflow authority/);
     await check(platform, 'conductor');
     await assert.rejects(check(platform, 'web'), /workflow authority/);
-    for (const grant of [`GRANT UPDATE ON wf_work TO ${web}`, `GRANT INSERT ON wf_events TO ${web}`,
-      `GRANT INSERT (retry_at) ON wf_events TO ${web}`]) {
-      await platform.query(grant);
-      await assert.rejects(check(webPool, 'web'), /workflow authority/, grant);
+    // A kernel table is one by its name: a new one is found, granted or not.
+    const probe = `wf_probe_${id}`;
+    await platform.query(`CREATE TABLE ${probe} (id int)`);
+    try {
+      for (const grant of [`GRANT UPDATE ON wf_work TO ${web}`, `GRANT INSERT ON wf_events TO ${web}`,
+        `GRANT INSERT (retry_at) ON wf_events TO ${web}`, `GRANT UPDATE ON SEQUENCE wf_events_id_seq TO ${web}`,
+        `GRANT INSERT ON ${probe} TO ${web}`]) {
+        await platform.query(grant);
+        await assert.rejects(check(webPool, 'web'), /workflow authority/, grant);
+        await restrictWebWorkflow(platform, web);
+        await check(webPool, 'web');
+      }
+      assert.equal((await webPool.query(`SELECT count(*)::int AS n FROM ${probe}`)).rows[0].n, 0, 'web still reads it');
+    } finally {
+      await platform.query(`DROP TABLE ${probe}`);
+    }
+    await check(platform, 'conductor');
+  });
+
+  await t.test('a request web appended before its writes were taken is still its own to withdraw', async () => {
+    // Before the cutover web could update the stream: its events read as the platform's.
+    await platform.query(`GRANT UPDATE ON wf_events TO ${web}`);
+    const before = await ask(asWeb, 'Asked');
+    const internal = await conductor.append('wp-door', `k${++n}`, { type: 'Settled', payload: {} },
+      { requestKey: `msg-${n}`, source: { kind: 'message', from: { machine: 'wp-door', key: 'x', eventId: before } } });
+    assert.equal((await row(before)).producer, 'platform');
+    try {
       await restrictWebWorkflow(platform, web);
-      await check(webPool, 'web');
+      assert.equal((await asWeb.refuseIfPending(before, 'expired')).status, 'rejected');
+      assert.equal((await asWeb.refuseIfPending(internal, 'expired')).status, 'pending', 'never another machine\'s message');
+      // Once the cutover is past, the platform's requests are its own again.
+      await cutoverWasLongAgo();
+      const later = await ask(conductor, 'Settled');
+      assert.equal((await asWeb.refuseIfPending(later, 'expired')).status, 'pending');
+    } finally {
+      await cutoverWasLongAgo();
+      await conductor.drain();
+    }
+  });
+
+  await t.test('web\'s writes are taken only once no web process of an earlier build serves', async () => {
+    const env = { DATABASE_ROLE_SPLIT: 'true', DATABASE_WEB_USER: web };
+    const wait = (o = {}) => awaitWebRestrictionReady(platform, { waitMs: 300, everyMs: 20, env, ...o });
+    try {
+    await platform.query(`INSERT INTO platform_processes (id, role, web_restriction_ready, heartbeat_at) VALUES
+      ('${id}-ready', 'web', TRUE, now()), ('${id}-conductor', 'conductor', FALSE, now()),
+      ('${id}-gone', 'web', FALSE, now() - interval '10 minutes')`);
+    await wait();
+    await platform.query(`INSERT INTO platform_processes (id, role, heartbeat_at) VALUES ('${id}-earlier', 'web', now())`);
+    await assert.rejects(wait(), { code: 'web_restriction_not_ready' });
+    // One that registered since the wait: the grants' own transaction refuses.
+    const client = await platform.connect();
+    try {
+      await client.query('BEGIN');
+      await assert.rejects(takeWebWorkflowWrites(client, env), { code: 'web_restriction_not_ready' });
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+    // Its rollout ends while the release waits: the process goes right after
+    // the wait's first look has counted it.
+    let looks = 0;
+    const leaving = { query: async (text, values) => {
+      const out = await platform.query(text, values);
+      if (/count\(\*\)/.test(text) && ++looks === 1) {
+        assert.equal(out.rows[0].n, 1, 'the first look counts the earlier build');
+        await platform.query(`DELETE FROM platform_processes WHERE id = '${id}-earlier'`);
+      }
+      return out;
+    } };
+    await awaitWebRestrictionReady(leaving, { waitMs: 5000, everyMs: 20, env });
+    assert.equal(looks, 2, 'the next look finds it gone');
+    } finally {
+      await platform.query(`DELETE FROM platform_processes WHERE id LIKE '${id}-%'`);
     }
   });
 
