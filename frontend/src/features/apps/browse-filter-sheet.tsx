@@ -241,10 +241,16 @@ export function openBrowseFilterSheet(): void {
   if (!controller) return;
   const panel = document.createElement('div');
   let settled = false;
+  // Audit D01 (2 Nov 2026): a move to another address closes it. Back left
+  // it floating over the next screen, where the next tap only closed it.
+  const openedAt = window.location.href;
+  const onNav = () => { if (window.location.href !== openedAt) leave(); };
   const finish = () => {
     if (settled) return;
     settled = true;
     openOnce = null;
+    window.removeEventListener('popstate', onNav);
+    window.removeEventListener('hashchange', onNav);
     unmountLegacyPortal(panel);
   };
   openOnce = finish;
@@ -259,6 +265,8 @@ export function openBrowseFilterSheet(): void {
     handle.el.setAttribute('aria-labelledby', 'browse-filters-title');
   }
   const leave = () => { finish(); handle?.dismiss(); };
+  window.addEventListener('popstate', onNav);
+  window.addEventListener('hashchange', onNav);
   const state = browseStore.get() as any;
   mountLegacyPortal(panel, (
     <BrowseFilterSheet
