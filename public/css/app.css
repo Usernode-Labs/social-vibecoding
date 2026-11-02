@@ -8533,7 +8533,8 @@ span.gc-vote-btn-icon { cursor: default; }
    blue Preview, a green Yes and a red No. Yes and No are the shell's plain
    filled pills here (the accent on hover, as every .gc-vote-btn), and a
    tally still short of its threshold is outlined in the muted ink; green
-   stays for a tally that reached it, which is the good news. */
+   stays for a tally that reached it, which is the good news (the pending
+   tally's rule is beside the tally pill's own tones, below). */
 .gc-vote-inline .gc-vote-btn-yes,
 .gc-vote-inline .gc-vote-btn-no {
   color: var(--text-primary);
@@ -8546,7 +8547,6 @@ span.gc-vote-btn-icon { cursor: default; }
   border-color: var(--accent-light);
   color: var(--accent);
 }
-.gc-vote-inline .gc-vote-count-pending { color: var(--text-muted); }
 /* ── The status band, full width ───────────────────────────
    The state bar, the 💬 count, the Closes-#N pills and the metadata chips
    (priority / assignee / category). These used to ride on the title's own
@@ -8693,6 +8693,9 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-count-attention { color: var(--state-attention); }
 .gc-vote-count-blocked { color: var(--state-blocked); }
 .gc-vote-count-ok { color: var(--state-ok); }
+/* V03: in the chat's vote row a tally short of its threshold is the muted
+   ink, not the purple progress tone (see .gc-vote-inline above). */
+.gc-vote-inline .gc-vote-count-pending { color: var(--text-muted); }
 /* Proportional fill bars: Yes grows from the LEFT, No from the RIGHT, both
    the pill's full height, so the gap between them is what is still
    undecided. They used to be half-height lanes stacked one above the other
