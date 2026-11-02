@@ -203,7 +203,8 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
   assert.match(html, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-channel="preview" data-ws-channel-open="">/,
     'one door, to the Discussion place');
   assert.match(html, />Discussion <span class="dev-ws-foryou-handle">#general<\/span><\/div>/, 'the project\'s channel is its #general');
-  assert.match(html, /<span data-ws-channel-last="">@lin: See you Sunday · [^<]+<\/span>/, 'the newest line, who said it and when');
+  assert.match(html, /<span data-ws-channel-last=""><span data-ws-channel-said="">@lin: See you Sunday<\/span><span data-ws-channel-ago=""> · [^<]+<\/span><\/span>/,
+    'the newest line, who said it and when: the words give way, the time stays whole (audit P04)');
   assert.doesNotMatch(html, /Who has seeds/, 'the rest are the Discussion\'s');
   assert.match(html, /<span class="dev-ws-foryou-pill" data-ws-channel-unread="2">2 new<\/span>/, 'what is new since you last read it, its one pill');
   assert.doesNotMatch(html, /data-ws-channel-compose|<form/, 'no composer on the hub');
@@ -213,7 +214,12 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
   assert.doesNotMatch(homeroom, /data-ws-channel-unread/, 'nothing new, no pill');
   // A multi-line message is one line in the row.
   const long = card(community({ channel: { ...community().channel, recent: [{ id: 3, content: 'one\n\ntwo', created_at: '2026-09-20T10:00:00Z', by: null }] } }));
-  assert.match(long, /<span data-ws-channel-last="">one two · /);
+  assert.match(long, /<span data-ws-channel-last=""><span data-ws-channel-said="">one two<\/span><span data-ws-channel-ago=""> · /);
+  const css = read('public/css/app.css');
+  assert.match(css, /\[data-ws-channel-last\] > \[data-ws-channel-said\] \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/);
+  assert.match(css, /\[data-ws-channel-last\] > \[data-ws-channel-ago\] \{ flex: none;/);
+  // The count is new to read, grey as the sidebar's beside it; the accent is a vote's (audit N04).
+  assert.match(css, /\.dev-ws-foryou-pill\[data-ws-channel-unread\] \{ background: var\(--text-faint, #8e8e93\); \}/);
   // Nothing to draw for a viewer who may not talk here. A project that is
   // just yours has its room from the first day (15 Oct 2026), saying so
   // while nothing is said in it.

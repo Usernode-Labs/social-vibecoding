@@ -18558,8 +18558,17 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
   background: var(--accent); color: #fff;
   font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
+/* The Discussion row's count is NEW TO READ, not waiting on you (#18): the
+   grey the sidebar's "2 unread" beside it wears, where the accent made the
+   same messages read as a vote owed (audit N04, 1 Nov 2026). */
+.dev-ws-foryou-pill[data-ws-channel-unread] { background: var(--text-faint, #8e8e93); }
 .dev-ws-foryou-count { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-foryou-handle { font-weight: 500; color: var(--text-muted); }
+/* The Discussion row's last line: the message gives way, the time stays
+   whole (audit P04, 1 Nov 2026). */
+[data-ws-channel-last]:has(> [data-ws-channel-ago]) { display: flex; min-width: 0; }
+[data-ws-channel-last] > [data-ws-channel-said] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-ws-channel-last] > [data-ws-channel-ago] { flex: none; white-space: pre; }
 /* RECENTLY LIVE (RecentlyLive): three picture cards, each a door to its
    change: its after shot (or a plain tile), its title, who and when. A row
    that scrolls sideways on a phone, three across on a wide window. */

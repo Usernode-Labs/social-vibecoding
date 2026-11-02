@@ -1868,12 +1868,12 @@
     "description": "Title of the row that opens a project's discussion on its Hub. <0></0> draws the channel's name in a lighter weight; {{handle}} is the channel's name without the #, for example general."
   },
   "hub.forYou.discussion.lastBy": {
-    "text": "@{{username}}: {{message}} · {{ago}}",
-    "description": "Second line of the Discussion row on a project's Hub: the last message in the channel, who wrote it and how long ago. {{username}} is the writer, {{message}} the message itself, {{ago}} a time such as \"4h ago\"."
+    "text": "<0>@{{username}}: {{message}}</0><1> · {{ago}}</1>",
+    "description": "Second line of the Discussion row on a project's Hub: the last message in the channel, who wrote it and how long ago. {{username}} is the writer, {{message}} the message itself, {{ago}} a time such as \"4h ago\". <0> wraps the part that is cut short when the line is too long, <1> the time, which is always shown whole."
   },
   "hub.forYou.discussion.last": {
-    "text": "{{message}} · {{ago}}",
-    "description": "Second line of the Discussion row on a project's Hub when the last message in the channel has no writer to name: the message and how long ago it was sent. {{ago}} is a time such as \"4h ago\"."
+    "text": "<0>{{message}}</0><1> · {{ago}}</1>",
+    "description": "Second line of the Discussion row on a project's Hub when the last message in the channel has no writer to name: the message and how long ago it was sent. {{ago}} is a time such as \"4h ago\". <0> wraps the message, which is cut short when the line is too long, <1> the time, which is always shown whole."
   },
   "hub.forYou.discussion.postedBy": {
     "text": "@{{username}} posted · {{ago}}",
