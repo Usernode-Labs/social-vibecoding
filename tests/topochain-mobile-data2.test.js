@@ -126,8 +126,12 @@ let nativeCredentialActiveAtWrite;
 // id (#2492). Block scores are only ever written there, never to the points
 // ledger, so this is where a `blocks_produced` challenge's count comes from.
 let eventBlocks;
+let creditChangeRows = [];
+let creditLookups = [];
 
 function resetFixtures() {
+  creditChangeRows = [];
+  creditLookups = [];
   userActivities = [
     // carol's existing completion of challenge 1 — the idempotency fixture.
     {
@@ -393,6 +397,14 @@ function handleQuery(rawSql, params = []) {
     })) };
   }
 
+  // ── #3247: what a credit's source key resolves to, and who may see it ───
+  if (sql.startsWith("SELECT 'merged:' || e.id AS source_key")) {
+    creditLookups.push(params);
+    return { rows: creditChangeRows };
+  }
+  if (sql.startsWith('SELECT app_id FROM user_app_blocks')) return { rows: [] };
+  if (sql.startsWith('SELECT 1 FROM app_collaborators')) return { rows: [] };
+
   throw new Error(`Unhandled mock query: ${sql}`);
 }
 
@@ -516,6 +528,60 @@ test('GET /challenges: event scope — effective merge, category uppercase, cta_
     assert.equal(item.activities[0].activity_time_precision, 'instant');
     assert.equal(item.activities_total, 10);
   });
+});
+
+test('GET /challenges: each credit says the change it came from, on a project the viewer may see (#3247)', async () => {
+  const credit = (id, challengeId, key) => ({
+    id, user_id: 3, challenge_id: challengeId, points: '500.00', description: `Credit ${id}`,
+    metadata: { source_key: key }, activity_at: T(0), created_at: T(0),
+  });
+  userActivities.push(credit(50, 7, 'merged:71'), credit(51, 7, 'session:72'),
+    credit(52, 7, 'merged:73'), credit(53, 7, 'merged:74'), credit(54, 7, 'feedback:75'));
+  const app = (slug, view) => ({
+    id: view === 'private' ? 2 : 1, slug, view_visibility: view, collab_visibility: view, moderation_suspended_at: null,
+  });
+  creditChangeRows = [
+    { source_key: 'merged:71', session_id: 701, pr_number: 7, pr_title: 'Add a dark mode', ...app('one', 'public') },
+    { source_key: 'session:72', session_id: 702, pr_number: null, pr_title: null, ...app('one', 'public') },
+    { source_key: 'merged:73', session_id: 703, pr_number: 9, pr_title: 'Secret', ...app('closed', 'private') },
+  ];
+  await withServer({}, async (base) => {
+    const res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
+    const body = await res.json();
+    const changes = Object.fromEntries(body.data.find((c) => c.id === 7).activities
+      .map((a) => [a.description, a.change]));
+    assert.deepEqual(changes['Credit 50'], { app_slug: 'one', session_id: 701, pr_number: 7, title: 'Add a dark mode' });
+    assert.deepEqual(changes['Credit 51'], { app_slug: 'one', session_id: 702, pr_number: null, title: null });
+    assert.equal(changes['Credit 52'], null, 'a private project the viewer is not in stays out');
+    assert.equal(changes['Credit 53'], null, 'the source is gone');
+    assert.equal(changes['Credit 54'], null, 'not a proposal');
+    assert.ok(!JSON.stringify(body).includes('Secret'));
+    assert.deepEqual(creditLookups, [[['71', '73', '74'], ['72'], 3]], 'one lookup, of the viewer\'s own');
+  });
+});
+
+test('GET /challenges: no proposal credit, no lookup; only this week\'s credits count on a weekly challenge (#3247)', async () => {
+  const template = CHALLENGE_TEMPLATES.find((t) => t.id === 10);
+  const category = template.category;
+  template.category = 'weekly';
+  try {
+    const THIS_WEEK = new Date().toISOString();
+    const LAST_WEEK = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    userActivities.push(
+      { id: 60, user_id: 3, challenge_id: 7, points: '1', description: 'Now', metadata: null, activity_at: THIS_WEEK, created_at: THIS_WEEK },
+      { id: 61, user_id: 3, challenge_id: 7, points: '1', description: 'Before', metadata: null, activity_at: LAST_WEEK, created_at: LAST_WEEK },
+    );
+    await withServer({}, async (base) => {
+      const res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
+      const body = await res.json();
+      const counts = Object.fromEntries(body.data.find((c) => c.id === 7).activities
+        .map((a) => [a.description, a.counts]));
+      assert.deepEqual(counts, { Now: true, Before: false });
+      assert.deepEqual(creditLookups, []);
+    });
+  } finally {
+    template.category = category;
+  }
 });
 
 test('GET /challenges: category falls back to OTHER when the template has none', async () => {

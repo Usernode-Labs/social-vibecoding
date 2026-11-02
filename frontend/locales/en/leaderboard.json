@@ -227,6 +227,14 @@
     "text": "See your feedback",
     "description": "Link on the page of the feedback challenge: opens the list of feedback the viewer has sent."
   },
+  "challenges.detail.counted": {
+    "text": "What counted",
+    "description": "Heading on a challenge's page over the list of the viewer's own credits that make up its count."
+  },
+  "challenges.detail.countedWeek": {
+    "text": "What counted this week",
+    "description": "The same heading on a weekly challenge's page, whose count starts again every Monday: the list holds this week's credits only."
+  },
   "challenges.detail.requirements": {
     "text": "What counts",
     "description": "Heading on a challenge's page over the organiser's words on what counts towards it and how."
