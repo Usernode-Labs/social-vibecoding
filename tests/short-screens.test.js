@@ -119,3 +119,18 @@ test('M01: on a narrow phone the lit Messages pill clears "Homeroom bot"; the au
   assert.match(APP_CSS, /@media \(max-width: 374\.98px\) \{[\s\S]{0,300}#platform-tabs \{ grid-template-columns: \.85fr 1\.25fr 1\.35fr 1\.1fr \.85fr; \}/);
   assert.match(read('frontend/src/features/workshop/index.tsx'), /className=\{key !== 'all' && !count \? 'hidden' : 'gap-1\.5 px-3'\}/);
 });
+
+test('U03: the header\'s title is on the left from 640px, as on phones and the iPad', () => {
+  // Between 640 and 768 the hook centred; the Duo upright (669px) had Home and
+  // the bot centred and Messages (the drawer's absolutely-laid title,
+  // measured 0px wide) cut to nothing.
+  assert.match(APP_CSS, /@media \(min-width: 640px\) \{\n  #header-title\.is-centered \{\n    position: static;\n    transform: none;\n    flex: 1 1 auto;\n    text-align: left;/);
+  assert.doesNotMatch(APP_CSS, /@media \(min-width: 768px\) \{\n  #header-title\.is-centered \{/);
+  assert.match(read('frontend/src/features/header/use-header-layout.ts'), /const CENTER_MIN_WIDTH_PX = 640;/, 'the hook never centres below it');
+});
+
+test('U02: the Duo strip\'s ✕ is pressed as 32px, and "Communities" fits its lit pill', () => {
+  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x::after \{\n    content: "";\n    position: absolute;\n    inset: -6px;\n  \}/);
+  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x \{[^}]*width: 20px;\n    height: 20px;/, 'drawn as before: 20 + 6 + 6');
+  assert.match(APP_CSS, /html\[data-side-strip\] #platform-tab-workshop \.platform-tab-label \{\n    font-size: 9px;\n    letter-spacing: -\.03em;\n  \}/);
+});

@@ -12536,8 +12536,17 @@ html.web-browser-chrome {
    tests/header-title-centering.test.js and by the measurement contract
    use-header-layout.ts documents, and retiring a measured seam is its own
    change with its own evidence. Worth doing, and named here so it is not
-   forgotten. */
-@media (min-width: 768px) {
+   forgotten.
+
+   FROM 640px, NOT 768 (overnight audit U03, 2 November 2026). Between the
+   two the hook still centred, and only there: on an iPhone Duo held upright
+   (669px) Home, the bot and Discover had their titles in the middle while a
+   conversation, a hub and every phone and iPad screen had theirs on the
+   left, and Messages had none at all. Its title is the phone drawer's
+   animated one, laid out absolutely, so the hook measured it 0px wide,
+   centred it, and the box it was cut to was 0px wide. One rule now: the
+   title is on the left at every width. */
+@media (min-width: 640px) {
   #header-title.is-centered {
     position: static;
     transform: none;
@@ -23145,9 +23154,12 @@ html[data-side-strip="left"] #platform-header {
     font-size: 10px;
     letter-spacing: 0;
   }
+  /* 9px and tighter (overnight audit U02, 2 November 2026): at 9.5px
+     "Communities" was wider than its lit pill in the phone's own font and ran
+     past both its sides. */
   html[data-side-strip] #platform-tab-workshop .platform-tab-label {
-    font-size: 9.5px;
-    letter-spacing: -.02em;
+    font-size: 9px;
+    letter-spacing: -.03em;
   }
   /* The bot's name does not fit a 64px column on one line at any size that
      still reads, so here it takes two, "Homeroom" over "bot": the cell's
@@ -23251,6 +23263,16 @@ html[data-side-strip="left"] #platform-header {
     color: var(--text-muted);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
+  }
+  /* A FINGER'S TARGET, NOT A POINTER'S (overnight audit U02). The ✕ that
+     forgets an app was its 20px glyph box, perched on the tile's corner: it
+     is pressed as 32px now, out over the tile's corner and the cell's edge,
+     and drawn as before. Above the app's own target (z-index 2), so a press
+     near the corner forgets rather than opens. */
+  html[data-side-strip] .platform-side-app-x::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
   }
   html[data-side-strip] #platform-parked {
     display: none;
