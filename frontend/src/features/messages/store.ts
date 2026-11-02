@@ -337,7 +337,20 @@ function errorMessage(error: unknown, fallback: string): string {
     if (error.status === 429) return t('messages:store.error.tooFast');
     return error.message || fallback;
   }
-  return error instanceof Error && error.message ? error.message : fallback;
+  // Anything but the server's answer is said in the screen's own words, never
+  // as the exception: offline, the browser's was "FetchEvent.respondWith
+  // received an error: TypeError: Load failed", drawn in red (offline test,
+  // 2 Nov 2026).
+  return fallback;
+}
+
+/**
+ * Whether a read failed without an answer from the server: offline, a
+ * connection that dropped, a read given up on, the service worker's own
+ * failure. Every answer, a refusal or a server error, is a MessagesApiError.
+ */
+function unreachable(error: unknown): boolean {
+  return !(error instanceof api.MessagesApiError);
 }
 
 /** The sections that can fold from their headings: the bot's never does. */
@@ -576,11 +589,30 @@ export async function loadConversations(force = false): Promise<void> {
     botToTab();
   } catch (error) {
     if (request !== listRequest) return;
+    const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+    // A read with no answer (offline test, 2 Nov 2026) keeps the list on
+    // screen, or draws the one this device kept (api.ts keptConversations),
+    // and says nothing over it: the shell's own banner says it is offline.
+    // With neither, it says so in words, with Try again. A server that is
+    // down draws the kept one too, as an open does (loadThread); any other
+    // answer is the server's word.
+    const noAnswer = unreachable(error);
+    const answered = error instanceof api.MessagesApiError && error.status < 500;
+    const kept = !answered && !state.conversations.length ? api.keptConversations?.() : null;
+    if (kept) {
+      publish({ conversations: sortConversations(kept), loadingList: false, listLoaded: true, online, error: null });
+      noteBotConversation(kept.find((item) => item.homeroomBot && item.kind !== 'channel')?.id);
+      resolvePendingChannel();
+      channelToHub();
+      botToTab();
+      return;
+    }
     publish({
       loadingList: false,
       listLoaded: true,
-      online: typeof navigator === 'undefined' ? true : navigator.onLine,
-      error: errorMessage(error, t('messages:store.error.loadList')),
+      online,
+      error: !noAnswer ? errorMessage(error, t('messages:store.error.loadList'))
+        : state.conversations.length ? null : t('messages:store.error.unreachableList'),
     });
     resolvePendingChannel();
   }
@@ -646,12 +678,7 @@ function pageSize(conversation: Pick<ConversationDetail, 'homeroomBot'> | null):
   return conversation?.homeroomBot === true ? 100 : 50;
 }
 
-/**
- * `offlineCopy` is the retry of an open whose read from the server failed
- * (#4243): the one read that takes the service worker's offline copy while
- * the browser says it is online.
- */
-export async function loadThread(conversationId: number, force = false, offlineCopy = false): Promise<void> {
+export async function loadThread(conversationId: number, force = false): Promise<void> {
   if (!validId(conversationId)) return;
   if (leftConversations.has(conversationId)) {
     threadRequest += 1;
@@ -694,9 +721,9 @@ export async function loadThread(conversationId: number, force = false, offlineC
   // offline copy is the last visit's transcript: on a read slower than the
   // worker's second it was drawn, and the newest messages snapped in under
   // the reader when the worker's correction came. The skeleton stays a beat
-  // longer instead. Offline, or once that read has failed, the open takes
-  // the copy (`offlineCopy`, from the catch below).
-  const fresh = force || (!offlineCopy && !browserOffline());
+  // longer instead. An open that gets no answer draws the copy this device
+  // kept (the catch below).
+  const fresh = force || !browserOffline();
   const read = { fresh };
   try {
     // Invitation metadata is deliberately readable before acceptance, but
@@ -778,22 +805,78 @@ export async function loadThread(conversationId: number, force = false, offlineC
   } catch (error) {
     if (request !== threadRequest) return;
     // An open that failed on the network or the server, not with an answer
-    // like a 404, reads again and takes the offline copy (#4243).
+    // like a 404, draws the conversation as this device kept it (offline
+    // test, 2 Nov 2026). It used to read again for the service worker's
+    // offline copy (#4243), which these reads no longer have: they answer
+    // `private, no-store` (api.ts ReadOptions).
     const answered = error instanceof api.MessagesApiError && error.status < 500;
-    if (fresh && !force && !answered) {
-      await loadThread(conversationId, false, true);
-      return;
-    }
+    if (!answered && !preserveVisibleThread && drawKeptThread(conversationId)) return;
+    const noAnswer = unreachable(error);
     publish({
-      // A failed open says so on its own, as it did before the inbox row
-      // stood in: no header or composer for a conversation that did not load.
-      ...(preserveVisibleThread ? {} : { active: null }),
+      // A failed open says so on its own, with no composer under it
+      // (index.tsx). With no answer at all, the conversation is still named
+      // in the header, as the inbox (or its kept copy) knows it: the reader
+      // tapped a person's name, and a blank header read as a broken screen
+      // (offline test, 2 Nov 2026). An answer, a 404 or a server error,
+      // takes the header away as it did before.
+      ...(preserveVisibleThread ? {} : { active: noAnswer ? listedConversation(conversationId) : null }),
       loadingThread: false,
-      threadError: errorMessage(error, t('messages:store.error.loadThread')),
+      threadError: noAnswer ? t('messages:store.error.unreachableThread') : errorMessage(error, t('messages:store.error.loadThread')),
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });
   }
+}
+
+/** The conversation as the inbox knows it, or as this device kept it; null when neither does. */
+function listedConversation(conversationId: number): ConversationDetail | null {
+  return state.conversations.find((item) => item.id === conversationId)
+    || api.keptConversation?.(conversationId)?.detail
+    || api.keptConversations?.()?.find((item) => item.id === conversationId)
+    || null;
+}
+
+/**
+ * Draw a conversation from the copy this device kept of it (api.ts
+ * keptConversation), when its open got no answer. True when it was drawn,
+ * or when, kept as a channel or as the chat with Homeroom bot, it went to
+ * where those are drawn, as an answered open does.
+ *
+ * Only what was kept is drawn: no read cursor moves (the server is not
+ * there to move it), no "New" line is placed, and the viewer's own sends
+ * that are still on their way stay on the end (withLocalRows). The next
+ * read that has an answer, a reconnect's or Try again's, replaces it all.
+ */
+function drawKeptThread(conversationId: number): boolean {
+  if (state.route.conversationId !== conversationId) return false;
+  const kept = api.keptConversation?.(conversationId);
+  if (!kept) return false;
+  const { detail, page } = kept;
+  const member = detail.membershipStatus === 'member';
+  if (member && !page) return false;
+  if (detail.kind === 'channel' && state.route.open && !state.route.embedded) {
+    publish({ active: detail });
+    if (channelToHub()) return true;
+  }
+  if (detail.homeroomBot && detail.kind !== 'channel') {
+    noteBotConversation(detail.id);
+    if (state.route.open && !state.route.embedded) {
+      publish({ active: detail });
+      if (botToTab()) return true;
+    }
+  }
+  const rows = member && page ? [...page.messages].sort((a, b) => a.id - b.id) : [];
+  publish({
+    active: detail,
+    messages: withLocalRows(conversationId, rows, member),
+    nextBefore: member && page ? page.nextBefore : null,
+    nextAfter: null,
+    loadingThread: false,
+    threadError: null,
+    threadGone: null,
+    unreadMark: null,
+  });
+  return true;
 }
 
 /**
@@ -1659,6 +1742,7 @@ export async function leave(): Promise<void> {
   if (!id) return;
   await api.leaveConversation(id);
   leftConversations.add(id);
+  api.forgetKeptConversation?.(id);
   publish({ conversations: state.conversations.filter((item) => item.id !== id) });
   open(null);
 }
@@ -1671,6 +1755,8 @@ export async function leave(): Promise<void> {
 export async function finishDirectBlock(conversationId: number): Promise<void> {
   if (!validId(conversationId)) return;
   threadRequest += 1;
+  // And the copy this device kept to draw offline (api.ts keptConversation).
+  api.forgetKeptConversation?.(conversationId);
   publish({
     conversations: state.conversations.filter((item) => item.id !== conversationId),
     active: null,

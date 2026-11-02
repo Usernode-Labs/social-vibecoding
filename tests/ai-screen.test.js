@@ -999,5 +999,8 @@ test('the page listens while it is shown: the socket through app.js, the bot\'s 
   assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}\);/);
   assert.match(src, /const init = again \? FRESH : undefined;/);
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
-  assert.match(src, /if \(live && \(data \|\| !again\)\) setNeeds\(/);
+  // A failed read keeps what is drawn (offline test, 2 Nov 2026: and with
+  // nothing drawn, the kept copy or a word of why; tests/messages-offline-kept.test.js).
+  assert.match(src, /if \(drawn\.current\.work\) return null;/);
+  assert.match(src, /if \(drawn\.current\.needs\) return null;/);
 });

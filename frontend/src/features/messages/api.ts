@@ -37,6 +37,7 @@ import type {
 } from './types';
 import { t } from '../../lib/i18n/runtime';
 import { countOf } from './approval-words';
+import { forgetKept, keepCopy, keepRecent, keptCopy } from '../../lib/kept-copies';
 import { releaseOf } from '../../lib/release-eta';
 import type { HomeroomLink } from './homeroom-links';
 import { botRowPreview, plainText } from './plain-text';
@@ -604,8 +605,12 @@ function demoQuery(path: string): string {
  * Opening a conversation reads fresh too while the browser is online
  * (#4243): its offline copy was the last visit's transcript, drawn for a
  * moment before the newest messages snapped in. The open takes the ordinary
- * read, and with it the offline copy, only when the browser is offline or
- * the fresh read failed (store.ts loadThread).
+ * read only when the browser is offline.
+ *
+ * The worker keeps no offline copy of these reads any more: they answer
+ * `private, no-store` (routes/conversations.js), which the worker honours
+ * (#5860). What an open with no answer draws is the copy this device kept
+ * (keptConversation below; store.ts loadThread).
  */
 export interface ReadOptions {
   fresh?: boolean;
@@ -636,13 +641,84 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+// ── What this device keeps to draw offline (../../lib/kept-copies.ts) ───
+//
+// Offline, with nothing kept, Messages and a conversation opened minutes
+// before had nothing to draw (offline test, 2 Nov 2026): these reads answer
+// `private, no-store`, so the service worker keeps no copy of them. The list,
+// and the newest page and detail of the few conversations opened last, are
+// kept here as the server sent them, and normalized again when drawn, so a
+// copy kept by an older build reads like a fresh answer. The store draws one
+// only when its read had no answer (store.ts loadConversations, loadThread).
+
+/** The conversations whose copies are kept: the ones opened most recently. */
+const KEPT_CONVERSATIONS = 6;
+/** The newest messages kept of each: a page, not the history. */
+const KEPT_MESSAGES = 50;
+
+function keepConversation(id: number, part: 'detail' | 'page', data: unknown): void {
+  keepCopy(`conversation:${id}:${part}`, data);
+  keepRecent('conversation', id, KEPT_CONVERSATIONS);
+}
+
+function conversationsOf(data: JsonRecord): ConversationSummary[] {
+  return array(pick(data, 'conversations', 'items')).map(normalizeConversation).filter((item) => item.id);
+}
+
+/** The newest page as kept: at most KEPT_MESSAGES of it, oldest first, and where older messages start. */
+function keptPage(data: JsonRecord): JsonRecord {
+  const rows = array(pick(data, 'messages', 'items'));
+  if (rows.length <= KEPT_MESSAGES) return { messages: rows, nextBefore: pick(data, 'nextBefore', 'next_before') ?? null };
+  const idOf = (row: unknown) => strictId(pick(record(row), 'id', 'messageId', 'message_id')) || 0;
+  const newest = [...rows].sort((a, b) => idOf(a) - idOf(b)).slice(-KEPT_MESSAGES);
+  return { messages: newest, nextBefore: idOf(newest[0]) || null };
+}
+
+/** The inbox as this device last read it, for the person signed in; null when none is kept. */
+export function keptConversations(): ConversationSummary[] | null {
+  const data = keptCopy('conversations');
+  return data ? conversationsOf(record(data)) : null;
+}
+
+/**
+ * A conversation as this device last read it: its detail, and its newest
+ * page when that was kept too (an invitation's never is: it has none).
+ */
+export function keptConversation(id: number): { detail: ConversationDetail; page: { messages: ConversationMessage[]; nextBefore: number | null } | null } | null {
+  const raw = keptCopy(`conversation:${id}:detail`);
+  if (!raw) return null;
+  const data = record(raw);
+  const detail = normalizeConversation(pick(data, 'conversation') ?? data);
+  if (detail.id !== id) return null;
+  const kept = keptCopy(`conversation:${id}:page`);
+  const page = kept ? {
+    messages: array(pick(record(kept), 'messages')).map((message) => normalizeMessage(message, id)),
+    nextBefore: strictId(pick(record(kept), 'nextBefore')),
+  } : null;
+  return { detail, page };
+}
+
+/**
+ * A conversation that is no longer the viewer's (left, or a block that took
+ * it away): its copies go, and its row leaves the kept list.
+ */
+export function forgetKeptConversation(id: number): void {
+  forgetKept(`conversation:${id}:`);
+  const list = keptCopy('conversations');
+  if (!list) return;
+  const rows = array(pick(record(list), 'conversations', 'items'));
+  keepCopy('conversations', { conversations: rows.filter((row) => strictId(pick(record(row), 'id', 'conversationId', 'conversation_id')) !== id) });
+}
+
 export async function listConversations(options?: ReadOptions): Promise<ConversationSummary[]> {
   const data = record(await request<unknown>('/api/conversations', readInit(options)));
-  return array(pick(data, 'conversations', 'items')).map(normalizeConversation).filter((item) => item.id);
+  keepCopy('conversations', data);
+  return conversationsOf(data);
 }
 
 export async function getConversation(id: number, options?: ReadOptions): Promise<ConversationDetail> {
   const data = record(await request<unknown>(`/api/conversations/${id}`, readInit(options)));
+  keepConversation(id, 'detail', data);
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
 
@@ -694,6 +770,8 @@ export async function listMessages(id: number, before?: number | null, options?:
   const params = new URLSearchParams({ limit: String(limit) });
   if (before) params.set('before', String(before));
   const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`, readInit(options)));
+  // The newest page is the one an offline open draws.
+  if (!before) keepConversation(id, 'page', keptPage(data));
   return {
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
     nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
