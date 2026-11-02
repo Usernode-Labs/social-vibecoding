@@ -61,9 +61,10 @@ const SAID_BY_MOMENT = Object.freeze({
   ready: Object.freeze(['ready', 'ready_group', 'ready_first', 'ready_broken']),
   stopped: Object.freeze(['build_time', 'build_restart', 'build_no_change', 'build_not_proposed', 'build_no_start',
     'build_other', 'update_failed', 'needs_look', 'checks', 'first_failed']),
-  // 16 Oct 2026: `slots`, a build held because the project's slots are all
-  // in use (homeroom-bot.js PROPOSALS_PER_APP_CAP), rings once.
-  on_hold: Object.freeze(['allowance', 'paused', 'slots', 'taken']),
+  // 16 Oct 2026: `slots`, a build held because the project's changes waiting
+  // for votes are as many as it may have (homeroom-bot.js WAITING_PER_APP),
+  // rings once; #6156: `builds`, because its builds are (BUILDS_PER_APP).
+  on_hold: Object.freeze(['allowance', 'paused', 'slots', 'builds', 'taken']),
   live: Object.freeze(['live', 'live_soon', 'live_first', 'live_first_soon']),
   done_elsewhere: Object.freeze(['done_elsewhere']),
 });
@@ -194,6 +195,7 @@ function saidFor(moment, metadata = {}) {
     if (kind === 'paused') return 'paused';
     // 16 Oct 2026: a person took on what the bot had promised.
     if (kind === 'request_taken') return 'taken';
+    if (kind === 'held_builds_per_app') return 'builds';
     return /^held_proposals/.test(String(kind || '')) ? 'slots' : 'allowance';
   }
   if (moment === 'done_elsewhere') return 'done_elsewhere';
@@ -362,6 +364,7 @@ function bodyFor(d) {
     case 'allowance': return 'On hold until Monday: your building time for this week is used up.';
     case 'paused': return 'On hold until Monday: I\'ve used my budget for this week.';
     case 'slots': return 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.';
+    case 'builds': return 'Waiting for my turn: I\'m building as much on this project as I may at once. I\'ll start when one is done.';
     case 'taken': return d.takenBy
       ? `On hold: @${d.takenBy} has taken it on, so I'm leaving it to them.`
       : 'On hold: somebody has taken it on, so I\'m leaving it to them.';

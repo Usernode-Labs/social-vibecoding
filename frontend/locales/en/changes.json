@@ -8231,6 +8231,10 @@
     "text": "Homeroom bot will start when one of its changes here is voted in or closed.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it already has as many changes waiting for a vote on this project as it may, so it starts on this request when one of them is approved or closed. \"Here\" is the project."
   },
+  "request.status.lead.botHeldTurn": {
+    "text": "Homeroom bot will start when one of the changes it is building here is done.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it is already building as many changes on this project at once as it may, so it starts on this request when one of those builds is done. \"Here\" is the project."
+  },
   "request.status.lead.upForVote": {
     "text": "Up for a vote.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; used when how many more yes votes it needs is not known."

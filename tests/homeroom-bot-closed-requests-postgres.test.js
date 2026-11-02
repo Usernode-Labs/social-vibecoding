@@ -260,8 +260,10 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     await pool.query('DELETE FROM chat_sessions');
     await pool.query('DELETE FROM homeroom_bot_runs');
     await pool.query('DELETE FROM homeroom_bot_queue');
-    // Five proposals up for a vote, the cap: four for open requests, one for
+    // Five proposals up for a vote, the cap (#6156: the project's own
+    // number of changes waiting for votes): four for open requests, one for
     // #41, closed on GitHub since. #40 is ready and held behind them.
+    const settings = { voiceSession: false, voiceIssue: false, appCaps: { [String(app.id)]: { waiting: 5 } } };
     const live = [];
     for (const n of [42, 43, 44, 45]) {
       const id = await proposal([n]);
@@ -276,7 +278,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cap_suppressed, thread_seen_at)
        VALUES ($1, 40, 'live', 'ready', 'proposals_per_app', $2)`, [app.id, SEEN],
     );
-    const capRoom = await bot.capRoomFor(pool, botUser, app.id);
+    const capRoom = await bot.capRoomFor(pool, botUser, app.id, settings);
     assert.equal(capRoom.proposals_per_app, 0, 'the project is at its cap');
 
     const lifecyclePath = require.resolve('../src/services/session-lifecycle');
@@ -312,12 +314,12 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
         ['a stale list', openList({ note: 'rate limited', stale: true }), capRoom],
         ['a shadow app', openList(), null],
       ]) {
-        await bot.refreshApp(pool, app, { github: list, bot: botUser, capRoom: room });
+        await bot.refreshApp(pool, app, { github: list, bot: botUser, capRoom: room, settings });
         assert.deepEqual(list.github.asked, [], why);
         assert.equal(await statusOf(stale), 'promoted', why);
       }
 
-      const out = await bot.refreshApp(pool, app, { github: openList(), bot: botUser, capRoom });
+      const out = await bot.refreshApp(pool, app, { github: openList(), bot: botUser, capRoom, settings });
       assert.deepEqual(archived, [stale], 'withdrawn, by the system archive');
       for (const id of live) assert.equal(await statusOf(id), 'promoted');
       // Its request's machine (bot-request) is told it is owed a look, in
