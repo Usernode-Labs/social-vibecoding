@@ -265,9 +265,11 @@ function GroupMore({ hidden, open, onClick }: { hidden: number; open: boolean; o
   );
 }
 
-function Section({ list, head, owe = false, lines, quiet = false, empty = null, keep = false, first, heads, top }: {
+function Section({ list, head, owe = false, lines, quiet = false, empty = null, note = null, keep = false, first, heads, top }: {
   /** Which list, for the page's checks: work, next, up, live. */
   list: string;
+  /** Said over the rows, whatever they are: why the lists show less than they should. */
+  note?: ReactNode;
   /** Drawn with no rows too: Needs you's band is in the prerender. */
   keep?: boolean;
   head: ReactNode;
@@ -284,10 +286,11 @@ function Section({ list, head, owe = false, lines, quiet = false, empty = null, 
 }): ReactNode {
   const t = useMessages('messages');
   const [opened, setOpened] = useState<Record<string, boolean>>({});
-  if (!lines.length && !empty && !keep) return null;
+  if (!lines.length && !empty && !note && !keep) return null;
   const label = owe ? 'text-violet-700 dark:text-violet-300' : '';
   const body = (
     <>
+      {note}
       {!lines.length ? empty : null}
       {byProject(lines).map((g) => {
         const key = g.app?.slug || 'none';
@@ -363,7 +366,31 @@ function dayOf(at: string | null, t: (id: string, values?: Record<string, string
   return d.toLocaleDateString(undefined, { weekday: 'short' });
 }
 
-export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread }: {
+/**
+ * Offline test, 2 Nov 2026: the lists could not be read and this device kept
+ * no copy of them, so Needs you says why it shows nothing, in words, with a
+ * way to read them again. Plain, not red: being offline is a state.
+ */
+function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; onRetry: () => void }): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className="py-3" data-ai-failed={failed} role="status">
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        {failed === 'unreachable' ? t('messages:ai.work.unreachable') : t('messages:ai.work.failed')}
+      </p>
+      <button
+        type="button"
+        className="mt-1 inline-flex min-h-[44px] md:min-h-0 items-center py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+        onClick={onRetry}
+        data-ai-retry=""
+      >
+        {t('core:common.tryAgain')}
+      </button>
+    </div>
+  );
+}
+
+export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
@@ -372,6 +399,10 @@ export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, w
   lit?: string | null;
   /** The lists have been read: until then Needs you says nothing, not "nothing needs you". */
   ready: boolean;
+  /** A list could not be read and none was kept: Needs you says so (index.tsx ListsFailure). */
+  failed?: 'unreachable' | 'failed' | null;
+  /** Read the lists again: the note's Try again. */
+  onRetry?: () => void;
   rows: WorkRow[];
   owed: number;
   progress: AiThread[];
@@ -491,7 +522,8 @@ export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, w
           head={owedShown ? t('messages:ai.work.titleCount', { count: owedShown }) : t('messages:ai.work.title')}
           owe={owedShown > 0}
           lines={needLines}
-          empty={ready ? <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.work.empty')}</p> : null}
+          note={failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
+          empty={ready && !failed ? <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.work.empty')}</p> : null}
           first={GROUP_FIRST.needs}
           heads={heads}
         />

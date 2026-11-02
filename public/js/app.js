@@ -257,6 +257,13 @@ const App = {
     // …and the Workshop view the tab returns to (#2776), which names the
     // previous account's app and card in the same way.
     App._forgetWorkshopView();
+    // …and what Messages and the Homeroom bot tab kept to draw offline
+    // (frontend/src/lib/kept-copies.ts): the conversation list, the newest
+    // messages of the last few conversations and the bot tab's lists. The
+    // most private residue of all, so it goes with the session too.
+    try {
+      window.UsernodeReact?.keptCopies?.clear?.();
+    } catch (err) { /* nothing kept, or no storage at all */ }
     try {
       if (apiCache) navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
