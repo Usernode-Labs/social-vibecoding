@@ -128,4 +128,40 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     const first = await threads.threadPage(pool, { thread: await threads.threadForNumber(pool, { appId: app.id, number: 10 }), viewerId: ana.id });
     assert.deepEqual(first.elsewhere, [], 'the first request\'s page has it in its own thread');
   });
+
+  // #6124: a title chosen before the change has a pull request lands in
+  // proposed_pr_title. The request page's rows read it before the session's
+  // old name, so a corrected title is the name on the card — both in the
+  // thread and in a multi-request change's "elsewhere" line.
+  await t.test('a chosen title is the change\'s name before it has a pull request', async () => {
+    const { rows: [fixed] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_title, session_title,
+                                  proposed_pr_title, branch_name)
+       VALUES ($1, $2, 'active', '{10}', NULL, 'Add dark mdoe toggel',
+               'Add a dark mode toggle', 'feature/typo') RETURNING id`,
+      [app.id, dewi.id]);
+    const page = await threads.threadPage(pool, {
+      thread: await threads.threadForNumber(pool, { appId: app.id, number: 10 }), viewerId: dewi.id,
+    });
+    assert.equal(page.items.find((i) => i.type === 'change' && i.id === Number(fixed.id)).title,
+      'Add a dark mode toggle', 'the old session_title does not win over the chosen name');
+
+    // Elsewhere: a change for two requests lives on the first one's page,
+    // and the other names it — with the same chosen title.
+    const { rows: [second] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, view_visibility, collab_visibility)
+       VALUES ('Second club', 'op-club-two', 'running', 'public', 'public') RETURNING id, slug`);
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 20, 'Home', $2), ($1, 21, 'Elsewhere', $2)`,
+      [second.id, ana.id]);
+    const { rows: [moved] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, session_title, proposed_pr_title)
+       VALUES ($1, $2, 'active', '{21,20}', 'Old typo name', 'The corrected name') RETURNING id`,
+      [second.id, dewi.id]);
+    const elsewhere = await threads.threadPage(pool, {
+      thread: await threads.threadForNumber(pool, { appId: second.id, number: 20 }), viewerId: dewi.id,
+    });
+    assert.deepEqual(elsewhere.elsewhere.map((e) => [e.id, e.title]),
+      [[Number(moved.id), 'The corrected name']]);
+  });
 });

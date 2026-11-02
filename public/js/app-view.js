@@ -14555,7 +14555,9 @@ const AppView = {
         // Dev sessions: match the label the card actually shows, and their
         // linked issue numbers (so "#900002" finds the session working on
         // that issue, matching the reverse #N chips on the card).
-        title = it.session_title || it.pr_title || it.branch_name || '';
+        // #6124: same order as _sessionCardLabel, so a search finds the
+        // title the card actually shows.
+        title = it.pr_title || it.proposed_pr_title || it.session_title || it.branch_name || '';
         num = it.pr_number != null ? it.pr_number : null;
       } else {
         // proposal | merged — mirror the card renderers' title fallback.
@@ -15681,7 +15683,10 @@ const AppView = {
   // card. The agent-session Mayor names changes in prose, quotes and all,
   // which is how it surfaced.
   _sessionCardLabel(s) {
-    return String(s.session_title || s.pr_title || s.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id: s.id }));
+    // #6124: a title chosen before the change has a pull request lands in
+    // proposed_pr_title, which outranks the session's old name on every
+    // card. A pull request's own title still comes first.
+    return String(s.pr_title || s.proposed_pr_title || s.session_title || s.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id: s.id }));
   },
 
   // #1038: busy is read live from window.SessionState, falling back to the
@@ -16031,7 +16036,8 @@ const AppView = {
   _sharedSessionCardModel(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
-    const editableTitle = String(s.session_title || s.pr_title || s.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id: s.id }));
+    // #6124: the editor opens on the name the card shows, not a stale one.
+    const editableTitle = label;
     const imported = s.source === 'imported';
     const canEditTitle = !!(noNav && !AppView.readOnly && !imported
       && ['active', 'paused'].includes(s.status)

@@ -218,6 +218,11 @@ async function migrate(config) {
   // such row for the shots' member fixture, so one is seeded, with the news
   // that the same change went live beside it (that row stays after).
   await seedStagingMergedVoteRow(pool, config);
+  // #6124's before/after shots follow a change renamed before it had a pull
+  // request: the correction is in proposed_pr_title and the session still
+  // carries the old name. A fresh clone has no such row for the shots'
+  // member fixture, so one is seeded on the self app.
+  await seedStagingRenamedChange(pool, config);
   // After it: this thread's second speaker is that seed's fake person.
   await seedStagingScrollTestThread(pool);
   // Must run AFTER seedStagingScrollTestThread — it invites the same member fixture.
@@ -3764,6 +3769,56 @@ async function seedStagingMergedVoteRow(pool, config) {
     }
   } catch (err) {
     log.warn('db', 'Staging merged-vote row seeding failed', { message: err.message });
+  }
+}
+
+// #6124: a change renamed before it has a pull request is saved as the name
+// that pull request will take (proposed_pr_title), and the card reads it
+// before the session's old name. A fresh clone has no such row for the
+// shots' member fixture, so one is seeded on the self app, owned by
+// usernode-capture and still Underway. Idempotent through the branch name;
+// strictly a no-op outside staging.
+async function seedStagingRenamedChange(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: people } = await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1"
+    );
+    const member = people[0];
+    if (!member) {
+      log.warn('db', 'Staging renamed-change fixture skipped: fixture user missing');
+      return;
+    }
+    const { rows: appRows } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging renamed-change fixture skipped: self-app row missing', {
+        slug: config.selfAppSlug,
+      });
+      return;
+    }
+    const branch = 'staging-fixture/renamed-change';
+    const { rowCount } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, proposed_pr_title, status,
+          created_at, last_activity_at)
+       SELECT $1::int, $2::int, $3::varchar, $4::text, $5::text, 'active',
+              NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '5 minutes'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = $3)`,
+      [
+        appId, member.id, branch,
+        '[staging fixture] Add dark mdoe toggel to settings',
+        '[staging fixture] Add a dark mode toggle to Settings',
+      ]
+    );
+    if (rowCount) {
+      log.info('db', 'Staging renamed-change fixture seeded', { appId });
+    }
+  } catch (err) {
+    log.warn('db', 'Staging renamed-change fixture seeding failed', { message: err.message });
   }
 }
 

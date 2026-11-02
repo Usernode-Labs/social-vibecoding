@@ -482,7 +482,7 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
  WHERE r.thread_id = $1
 UNION ALL
 SELECT 'change', cs.id::bigint, cs.pr_number,
-       COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''), NULLIF(cs.branch_name, '')),
+       COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, ''), NULLIF(cs.branch_name, '')),
        cs.status, cs.user_id, cs.shared_at, cs.created_at,
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'session' AND m.thread_ref = cs.id
@@ -633,7 +633,7 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
 // play and readable by the viewer, that close one of `numbers` from another
 // thread, each with the request whose page it is on.
 const ELSEWHERE_SQL = `
-SELECT cs.id, cs.pr_number, COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, '')) AS title,
+SELECT cs.id, cs.pr_number, COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, '')) AS title,
        t.number AS home, n.number AS request
   FROM chat_sessions cs
   JOIN threads t ON t.id = cs.thread_id

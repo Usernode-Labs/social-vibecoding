@@ -2527,7 +2527,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // separates that from a genuine fork.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-                cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
+                cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
@@ -2879,7 +2879,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // the distinction a bare agent_backend cannot make — an imported row
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, proposed_pr_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
                 created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
                 -- #2779: the agent session a change was started from, so the
                 -- owner's Build door can lead back to that conversation.
