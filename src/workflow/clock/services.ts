@@ -555,6 +555,22 @@ export const JOBS: readonly Job[] = Object.freeze([
       },
     },
   },
+  {
+    // The translation of text admins write and phones show (#6152,
+    // services/admin-text-translations.js): anything owed is a target, one
+    // pass at a time. Paid, so it shares language-sync's switch and budget.
+    name: 'admin-text-translate', everyMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/admin-text-translations').look({ pool }),
+    item: {
+      concurrency: 1,
+      leaseMs: 10 * MIN,
+      run: async (_ctx: WorkContext, { pool }: JobDeps) => {
+        const out = await legacy('services/admin-text-translations').runOnce({ pool });
+        if (!out?.skipped) legacy('services/logger').info('admin-text-translate', 'Translation pass', out);
+        return out;
+      },
+    },
+  },
 
   // ── Previews: outside facts about the runtimes and the servers ───────
   // (What the preview machine decides about a preview it holds, its idle
