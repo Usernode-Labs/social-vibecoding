@@ -262,7 +262,7 @@ test('the precached document names the platform, and does not guess a theme', ()
   const css = readPublic('css/app.css');
   assert.match(css, /#app-list:not\(\[data-view\]\) \{[^}]*min-height: calc\(2 \* var\(--home-cell-h\) \+ 1\.25rem\)/);
   assert.match(css, /@media \(min-width: 640px\) \{\s*#app-list:not\(\[data-view\]\) \{\s*min-height: calc\(2 \* var\(--home-cell-h\) \+ 1\.75rem\);/);
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'home', 'app-grid.tsx'), 'utf8'), /className="grid grid-cols-4 gap-1\.5 sm:gap-2 p-2 pt-1\.5 sm:p-3 sm:pt-2"/,
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'home', 'app-grid.tsx'), 'utf8'), /className="grid grid-cols-4 gap-1\.5 sm:gap-2 p-2 pt-1\.5 sm:p-3 sm:pt-2 md:max-w-\[40rem\]"/,
     'the padding and gap those two sums are made of');
 });
 
