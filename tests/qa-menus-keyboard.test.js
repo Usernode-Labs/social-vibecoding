@@ -238,13 +238,15 @@ test('Q15: Messages and the group chat never call window.confirm()', () => {
     'frontend/src/features/messages/index.tsx',
     'frontend/src/features/messages/members-dialog.tsx',
     'frontend/src/features/messages/message-row.tsx',
-    'frontend/src/features/messages/create-dialog.tsx',
     'frontend/src/features/group-chat/transcript.tsx',
   ]) {
     const code = read(file).replace(/\/\/.*$/gm, '');
     assert.doesNotMatch(code, /window\.confirm\(/, `${file} asks through lib/confirm.ts`);
     assert.match(code, /confirmAction\(\{/, `${file} uses confirmAction`);
   }
+  // Audit D09: the new-message picker no longer blocks anyone, so it has
+  // nothing to confirm; it still never calls the browser's.
+  assert.doesNotMatch(read('frontend/src/features/messages/create-dialog.tsx').replace(/\/\/.*$/gm, ''), /window\.confirm\(/);
 });
 
 test('Q15: confirmAction goes through ConfirmModal.show and resolves its boolean', async () => {
