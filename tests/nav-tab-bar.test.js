@@ -775,7 +775,7 @@ test('an app\'s channel belongs to its community, and a change to Messages', () 
     'and the back slot agrees with the tab that lights');
   assert.match(appJs, /if \(App\._isChannelThread\(\)\) return \['arrow', App\._hubHref\(App\.currentApp\)\];/,
     'the channel\'s way up is its hub');
-  assert.match(appJs, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#communities';/,
+  assert.match(appJs, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/,
     'a hash, because the back button follows only a hash');
   const appView = read('public/js/app-view.js');
   const branch = appView.slice(appView.indexOf("if (subTab === 'chat') {"));
