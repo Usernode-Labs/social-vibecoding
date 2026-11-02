@@ -18375,6 +18375,19 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
   border-left: 1px solid var(--app-sheet-line);
   border-top-left-radius: 1.75rem;
 }
+/* THE LIST'S HEADING KEEPS ITS LINE WHERE THE LIST IS NARROW (overnight
+   audit B13, 2 November 2026). Between 768 and 1024px the list is 280px at
+   its floor (below), and its heading's mark, name and + left the name about
+   120px: "Homeroom / bot" on two lines and the counts under it a word or two
+   a line. Under 340px of heading the mark steps aside, as a phone's
+   conversation drops its avatar, and the name has the room. */
+#ai-screen [data-ai-hero] { container-type: inline-size; }
+@container (max-width: 340px) {
+  #ai-screen [data-ai-hero] > img { display: none; }
+}
+@container (max-width: 260px) {
+  #ai-screen [data-ai-hero] h1 { font-size: 1.25rem; }
+}
 /* Its name over it, as a conversation's header names a room: the rows' 15
    over 13. The chat fills what is left (as a project page's chat does). */
 #ai-screen .ai-main-head {
@@ -18421,6 +18434,19 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    title ran under the clock and the Wi-Fi ring (1 Nov 2026). */
 #ai-screen .ai-main-pane .messages-thread-header[data-reply-head="main"] {
   padding-right: calc(16px + var(--ai-edge, 0px));
+}
+/* AND THE CHAT UNDER THE HEAD STOPS AT THE DUO'S COLUMN TOO (overnight
+   audit B25, 2 November 2026). Run under it (1 Nov), the chat put its Send
+   button, the "Live ›" row's chevron and the New divider's label inside the
+   84px column, where the system's own apps put nothing but their bars: every
+   other screen, and the column's head above, stop short of it. The sheet
+   still reaches the screen's edge, so no band of another colour is left
+   beside it: the chat's own sheet carries on under the column as padding,
+   and only what is drawn in it stops. A thread opened in the column does the
+   same, its head keeping its own clearance above. */
+html[data-side-strip="right"] #ai-screen .ai-main-pane .messages-layout[data-main-chat] > .messages-thread-pane,
+html[data-side-strip="right"] #ai-screen .ai-main-pane .messages-layout[data-main-chat] > .messages-reply-pane :is(.chat-transcript, .chat-status, .chat-composer-bar) {
+  padding-right: var(--ai-edge, 0px);
 }
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's

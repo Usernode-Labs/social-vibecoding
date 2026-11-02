@@ -54,3 +54,33 @@ test('the layout audit\'s world has a request page and a phone browser\'s instal
   const android = PROFILES.find((p) => p.id === 'android-chrome');
   assert.deepEqual([android.width, android.height, android.native, android.keyboard > 0], [360, 560, false, true]);
 });
+
+test('B25: on the Duo held sideways Main Chat stops at the column; its sheet still runs under it', () => {
+  // Send, the "Live ›" row's chevron and the New label sat in the 84px column.
+  assert.match(APP_CSS, /html\[data-side-strip="right"\] #ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] > \.messages-thread-pane,\nhtml\[data-side-strip="right"\] #ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] > \.messages-reply-pane :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\) \{\n  padding-right: var\(--ai-edge, 0px\);\n\}/);
+  // The column itself still reaches the screen's edge (no band of another colour).
+  assert.match(rule('#ai-screen .ai-main-pane'), /width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
+  assert.match(rule('#ai-screen .ai-main-pane'), /right: 0;/);
+});
+
+test('B13: the bot list\'s heading keeps its line where the list is narrow', () => {
+  assert.match(rule('#ai-screen [data-ai-hero]'), /container-type: inline-size;/);
+  assert.match(APP_CSS, /@container \(max-width: 340px\) \{\n  #ai-screen \[data-ai-hero\] > img \{ display: none; \}\n\}/);
+  assert.match(APP_CSS, /@container \(max-width: 260px\) \{\n  #ai-screen \[data-ai-hero\] h1 \{ font-size: 1\.25rem; \}\n\}/);
+  // The hero is still marked so for the rule to find it.
+  assert.match(read('frontend/src/features/ai/index.tsx'), /<section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">\n\s+<img src=\{BOT_AVATAR\}/);
+});
+
+test('L02: a phone held sideways starts with the rail folded, and turning it decides again', () => {
+  const src = read('frontend/src/features/nav/sidebar-toggle.tsx');
+  assert.match(src, /export const SIDEWAYS_PHONE_QUERY = '\(min-width: 768px\) and \(max-height: 500px\) and \(pointer: coarse\)';/);
+  assert.match(src, /export function SidebarToggle\(\) \{\n  useFoldRailSideways\(\);/);
+  // In an effect, so the first render (aria-pressed from the store's `true`)
+  // still matches the prerendered header.
+  assert.match(src, /function useFoldRailSideways\(\): void \{\n  useEffect\(\(\) => \{/);
+  assert.match(src, /list\.addEventListener\?\.\('change', sync\)/);
+  // Only when the shape changes: a press in between is the reader's.
+  assert.match(src, /if \(list\.matches\) sync\(\);/);
+  // The store still starts open; nothing is remembered across loads.
+  assert.match(read('frontend/src/features/nav/nav-store.js'), /\n  railOpen: true,\n\};/);
+});
