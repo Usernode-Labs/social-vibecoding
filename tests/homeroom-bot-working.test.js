@@ -97,10 +97,11 @@ test('a loop goes on after one only while a round, a nudge and room are left', (
 // ── 2. Main Chat ─────────────────────────────────────────────────────────
 
 const call = (name, args, id = `c${name}`) => ({ id, function: { name, arguments: JSON.stringify(args) } });
-function scripted(steps, seen = []) {
+function scripted(steps, seen = [], choices = []) {
   let i = 0;
   return async (req) => {
     seen.push(structuredClone(req.messages));
+    choices.push(req.toolChoice);
     const step = steps[Math.min(i, steps.length - 1)];
     i += 1;
     return typeof step === 'string' ? { content: step, toolCalls: [] } : { content: step.content || '', toolCalls: step.calls };
@@ -206,6 +207,8 @@ function designTurn(steps, { handoff = true, design = null, current = null } = {
   const sent = [];
   const doings = [];
   const seen = [];
+  const choices = [];
+  const recorded = [];
   const pool = { async query() { return { rows: [] }; } };
   const threads = {
     surfaceFor: () => 'new',
@@ -217,9 +220,11 @@ function designTurn(steps, { handoff = true, design = null, current = null } = {
     async noteVersionMessage() {},
   };
   const deps = {
-    chat: scripted(steps, seen), apiKey: 'sk-test', seesImages: false, sleep: async () => {},
+    chat: scripted(steps, seen, choices), apiKey: 'sk-test', seesImages: false, sleep: async () => {},
     dm: { async sendDm(_pool, args) { sent.push(args); return { messageId: 900 + sent.length }; } },
-    mayor: Object.assign(Object.create(mayor), { async recordTurn() {}, async turnsLastHour() { return 0; } }),
+    mayor: Object.assign(Object.create(mayor), {
+      async recordTurn(_pool, row) { recorded.push(row); }, async turnsLastHour() { return 0; },
+    }),
     designThreads: threads,
     doing: async (what) => { doings.push(what); },
   };
@@ -235,7 +240,7 @@ function designTurn(steps, { handoff = true, design = null, current = null } = {
     brief: handoff ? 'The main screen of Ear Trainer' : null,
     deps,
   });
-  return { run, sent, doings, seen };
+  return { run, sent, doings, seen, choices, recorded };
 }
 
 const SCREEN = { title: 'Main screen', size: 'phone', html: '<main class="keys">Keys</main>', note: 'The main screen' };
@@ -338,6 +343,65 @@ test('a real question back ends the designer\'s turn; words that still claim a d
   assert.equal(stubborn.seen.length, 1 + 2, 'told twice, then it ends');
   assert.equal(stubborn.sent[0].content, designBot.NOT_DRAWN_TEXT, 'never sent as if it drew');
   assert.doesNotMatch(designBot.NOT_DRAWN_TEXT, /—/);
+});
+
+// #6141 (2 Nov 2026): handed Ear Trainer's main screen to draw, the turn read
+// the code round after round and its forced last reply was "placeholder",
+// posted as the answer, with nothing drawn and nothing recorded.
+const READ = { calls: [call('read_source', { path: 'public/index.html' })] };
+const FORCED = (name) => ({ type: 'function', function: { name } });
+
+test('#6141: handed a screen, a turn that only read never posts its last words as the answer', async () => {
+  const turn = designTurn([READ, READ, READ, READ, READ, { calls: [call('reply', { text: 'placeholder' })] }]);
+  await turn.run;
+  assert.equal(turn.seen.length, designBot.MAX_ROUNDS);
+  assert.deepEqual(turn.choices, ['auto', 'auto', 'auto', 'auto', FORCED('write_screen'), FORCED('reply')],
+    'the round before the last draws; the last replies');
+  assert.equal(turn.sent.length, 1);
+  assert.equal(turn.sent[0].content, designBot.NOT_DRAWN_TEXT, 'never "placeholder"');
+  assert.equal(turn.sent[0].metadata, undefined, 'no version');
+  assert.equal(turn.recorded.length, 1);
+  assert.deepEqual(turn.recorded[0].failures, ['d5:draw_forced', 'end:handoff'], 'shown in the admin\'s recent failures');
+  assert.equal(turn.recorded[0].fallback, 'not_drawn');
+
+  // The forced draw came back with an error: the same honest line.
+  const broken = designTurn([READ, READ, READ, READ, { calls: [call('write_screen', { title: 'Main screen', html: '' })] },
+    { calls: [call('reply', { text: 'Here it is, in the app\'s own style.' })] }]);
+  await broken.run;
+  assert.equal(broken.sent[0].content, designBot.NOT_DRAWN_TEXT);
+  assert.ok(broken.recorded[0].failures.includes('end:handoff'));
+});
+
+test('#6141: forced to draw in the round before the last, the turn draws and its reply carries the version', async () => {
+  const turn = designTurn([READ, READ, READ, READ, { calls: [call('write_screen', SCREEN)] },
+    { calls: [call('reply', { text: 'Here it is.' })] }]);
+  await turn.run;
+  assert.equal(turn.choices[4].function.name, 'write_screen');
+  assert.equal(turn.sent.length, 1);
+  assert.equal(turn.sent[0].content, 'Version 1 · The main screen\n\nHere it is.');
+  assert.equal(turn.sent[0].metadata.kind, 'design_version');
+  assert.equal(turn.sent[0].metadata.designVersion, 1);
+  assert.deepEqual(turn.recorded[0].failures, ['d5:draw_forced'], 'it drew: no end failure');
+  assert.equal(turn.recorded[0].fallback, null);
+});
+
+test('#6141: a real question back still goes out, and a design thread\'s own turn is never forced to draw', async () => {
+  const question = 'Which screen, the quiz or the results?';
+  const asks = designTurn([READ, READ, READ, READ, READ, { calls: [call('reply', { text: question })] }]);
+  await asks.run;
+  assert.equal(asks.sent[0].content, question);
+  assert.deepEqual(asks.recorded[0].failures, ['d5:draw_forced']);
+  assert.equal(asks.recorded[0].fallback, null);
+
+  // In a thread that holds a design, the person's message is not a hand-off:
+  // reading until the end is allowed, and an answer that draws nothing is fine.
+  const current = { version: 2, html: '<main>Keys</main>' };
+  const talk = designTurn([READ, READ, READ, READ, READ, { calls: [call('reply', { text: 'The keys use the kit\'s grid.' })] }],
+    { handoff: false, design: { rootId: 500, threadId: 7, state: 'open', latest: 2, title: 'Main screen', surface: 'new' }, current });
+  await talk.run;
+  assert.deepEqual(talk.choices.slice(-2), ['auto', FORCED('reply')]);
+  assert.equal(talk.sent[0].content, 'The keys use the kit\'s grid.');
+  assert.deepEqual(talk.recorded[0].failures, []);
 });
 
 test('why words do not end a design turn yet', () => {
