@@ -8406,21 +8406,24 @@ span.gc-vote-btn-icon { cursor: default; }
   color: var(--text-primary);
   cursor: pointer;
 }
-/* The leading icon column. FIXED width rather than intrinsic: the
-   vocabulary mixes one-em emoji with narrower text glyphs (✕, ↗, @), and
-   an intrinsic column would step every label a pixel or two left or right
-   of its neighbours — the exact scanning cost the icons were added to
-   remove. Decorative, so it carries aria-hidden in the markup. */
+/* The leading icon column, a fixed 16px so every label starts on one
+   line. The icon is a line icon in the row's ink (overnight UI audit D08,
+   features/dev-board/menu-icons.tsx), where it used to be a text glyph or
+   a colour emoji. Decorative, so it carries aria-hidden in the markup. */
 .dev-card-menu-icon {
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 16px;
-  text-align: center;
-  font-size: 12px;
-  line-height: 1;
-  /* Emoji ignore `color`, but the text glyphs don't — holding them a shade
-     back from the label keeps the icon a signpost rather than a shout,
-     while a danger row's red still reads straight through. */
+  height: 16px;
+  /* Held a shade back from the label keeps the icon a signpost rather than
+     a shout, while a danger row's red still reads straight through. */
   opacity: 0.75;
+}
+.dev-card-menu-icon > svg {
+  width: 15px;
+  height: 15px;
 }
 .dev-card-menu-label {
   min-width: 0;
