@@ -598,6 +598,26 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal(listed.shared, true);
     });
 
+    await t.test('a made link is no open seat on the hub until it is copied, shared or used (hasLiveLink, as D03 counts)', async () => {
+      const arena = await app('arena');
+      const ME = as(5, 'seats', true);
+      await pool.query(`INSERT INTO users (id, username, has_platform_access) VALUES (5, 'seats', TRUE) ON CONFLICT DO NOTHING`);
+      await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, 5) ON CONFLICT DO NOTHING', [arena.community_id]);
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), false, 'no link');
+      const made = await invites.createInvite(pool, { app: arena, user: ME, days: 7, maxUses: 25 });
+      assert.ok(made.ok, made.error);
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), false, 'made, as opening the pane makes it: not out');
+      await invites.markShared(pool, { inviteId: made.link.id, user: ME });
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), true, 'copied or shared: out');
+      // Used without the pane saying it went out (copied from the box by hand): out too.
+      await pool.query('UPDATE community_invites SET shared_at = NULL WHERE id = $1', [made.link.id]);
+      await pool.query(
+        `INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, 1, 'queued')`, [made.link.id]);
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), true, 'somebody came through it: out');
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ME });
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), false, 'turned off: not out');
+    });
+
     await t.test('WP-D: a project with no shot yet shows the card of its idea through a live link, and only then', async () => {
       const arena = await app('arena');
       const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 0, maxUses: 0 });
