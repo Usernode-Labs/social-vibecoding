@@ -16,7 +16,7 @@ import type { ConversationKind, ConversationMessage, DiscussionMessage } from '.
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar, senderName } from './format';
 import { issueRefHref } from './channels';
 import { isActivityMessage } from './bot-activity';
-import { BotCardOrTrack } from './bot-track';
+import { BotCardOrTrack, filedNextLine } from './bot-track';
 import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
@@ -363,6 +363,9 @@ export const MessageRow = memo(function MessageRow({
       ? t('messages:row.botBlock.requestLabel', { number: String(head.issueNumber), title: head.title })
       : t('messages:row.botBlock.requestLabelUntitled', { number: String(head.issueNumber) }))
     : null;
+  // #6151: a design filed as a request says what happens to it next, after
+  // its line, in the reader's language (./bot-track.tsx filedNextLine).
+  const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
   const words = !message.content ? null : head
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
     : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
@@ -391,6 +394,12 @@ export const MessageRow = memo(function MessageRow({
       {!editing ? <BotLookedLine message={message} /> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} dir="auto" aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
+      ) : filedNext && words ? (
+        // #6151: a design filed as a request: its line, then what happens next.
+        <>
+          {words}
+          <p className="messages-markdown gc-msg-content" data-design-filed-next={botMeta(message)?.filedNext?.say}>{filedNext}</p>
+        </>
       ) : isThanksMessage(message) ? (
         // #4392: the activity card Build it moved under a plan is the bot's
         // thanks: its words over the app's card and build line.
