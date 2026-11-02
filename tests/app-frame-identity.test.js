@@ -2096,7 +2096,9 @@ test('#2902: the green dot reads the frame store, on Home tiles and the desktop 
   // community's App row in the sidebar carries the dot.
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
   assert.match(rail, /const running = live\.includes\(slug\);/);
-  assert.match(rail, /\{running \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
+  // …the one kept loaded behind another page, not the app on screen (audit N04).
+  assert.match(rail, /const keptOpen = running && onApp !== slug;/);
+  assert.match(rail, /\{keptOpen \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
   const css = read('public/css/app.css');
   assert.match(css, /\.app-launch-host > iframe\[data-kept\] \{[\s\S]{0,200}visibility: hidden;/,
     'a kept frame keeps its box and is hidden by visibility, not display');

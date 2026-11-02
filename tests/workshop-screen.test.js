@@ -636,8 +636,8 @@ test('rowSubtitle: one short fact, members for a community or group, recency for
     '12 members', 'the section\'s order already says which moved last');
   assert.equal(rowSubtitle({ slug: 'x', audience: 'invited', member_count: 1, working: 0, needs: 0 }, now), '1 member');
   assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', member_count: 1, last_active_at: '2026-09-25T11:55:00Z', working: 0, needs: 0 }, now),
-    '5m ago', 'just you: when it last moved, never "1 member"');
-  assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: '2026-09-22T12:00:00Z', working: 0, needs: 0 }, now), '3d ago');
+    'Active 5m ago', 'just you: when it last moved, never "1 member", with a word that says what the time is (audit P04)');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: '2026-09-22T12:00:00Z', working: 0, needs: 0 }, now), 'Active 3d ago');
   assert.equal(rowSubtitle({ slug: 'x', audience: 'open', member_count: 0, working: 0, needs: 0 }, now), '');
   assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: null, working: 0, needs: 0 }, now), '');
 });
@@ -650,8 +650,8 @@ test('15 Oct 2026: a project with an invite link out and nobody in yet says "Inv
     working: 0, needs: 0, ...over,
   });
   assert.equal(mod.rowSubtitle(row({ invite_link_out: true }), now), 'Invite link out', 'in place of when it last moved');
-  assert.equal(mod.rowSubtitle(row({ invite_link_out: false }), now), '5m ago');
-  assert.equal(mod.rowSubtitle(row(), now), '5m ago', 'an older server without the field: as before');
+  assert.equal(mod.rowSubtitle(row({ invite_link_out: false }), now), 'Active 5m ago');
+  assert.equal(mod.rowSubtitle(row(), now), 'Active 5m ago', 'an older server without the field: as before');
   assert.equal(message('communities:row.inviteOut'), 'Invite link out');
   // Which section it sits in is its audience's: a link out is not a member.
   mod.workshopStore.set({ open: true, error: false, tab: 'status', rows: [row({ invite_link_out: true }), row({ slug: 'club', name: 'Club', audience: 'invited', member_count: 3 })] });
