@@ -825,6 +825,9 @@ async function answer(pool, config, {
       ...history,
     ];
     const seenIds = new Set();
+    // A version made, an offer or a card (a comparison, pictures): something
+    // this turn shows, which is an answer in itself.
+    const shownNow = () => (!!html && html !== (current?.html || '')) || !!offered || !!card;
     // 1 Nov 2026: words that end the turn before it drew go back once or
     // twice (notDrawnYet), while the next round still has its tools: the
     // last one only replies.
@@ -842,9 +845,15 @@ async function answer(pool, config, {
     while (rounds < MAX_ROUNDS && !replyText) {
       rounds += 1;
       const last = rounds === MAX_ROUNDS;
+      // #6141: handed a screen to draw, a turn that read the code until its
+      // rounds ran out ended on "placeholder". With nothing shown yet, the
+      // round before the last draws (write_screen); the last still replies.
+      const drawNow = !last && rounds + 1 === MAX_ROUNDS && handoff && !shownNow();
+      if (drawNow) t.failures.push(`d${rounds}:draw_forced`);
       const res = await mayor.askModel(t, {
         messages, tools: TOOLS, where: `d${rounds}`, maxOutputTokens: DESIGN_OUTPUT_TOKENS,
-        toolChoice: last ? { type: 'function', function: { name: 'reply' } } : 'auto',
+        toolChoice: last ? { type: 'function', function: { name: 'reply' } }
+          : drawNow ? { type: 'function', function: { name: 'write_screen' } } : 'auto',
       });
       const calls = mayor.normalizeCalls(res.toolCalls, rounds, seenIds);
       if (!calls.length) {
@@ -972,10 +981,19 @@ async function answer(pool, config, {
     log.warn('design-bot', 'A design turn failed', { userId: user.id, messageId: message.id, code: error });
   }
   const changed = !!html && html !== (current?.html || '');
+  // 1 Nov 2026, #6141: words that end a turn with nothing shown are not sent
+  // as its answer when they say it drew or is about to, ask leave to start,
+  // or, handed a screen to draw, are anything but a real question back (the
+  // "placeholder" a reply forced in the last round came back with). The turn
+  // says it could not draw (NOT_DRAWN_TEXT), recorded as `end:<why>`. A turn
+  // that failed with nothing to say says that instead (BROKEN_TEXT).
+  const shown = changed || (!error && (!!offered || !!card));
+  const unkept = shown || (error && !replyText) ? null : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayor });
+  if (unkept) t.failures.push(`end:${unkept}`);
   await mayor.recordTurn(pool, {
     userId: user.id, conversationId, messageId: message.id, model: t.model, rounds, tools,
     inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd,
-    error, failures: t.failures, fallback: error ? 'design_broken' : null,
+    error, failures: t.failures, fallback: error ? 'design_broken' : unkept ? 'not_drawn' : null,
   });
   if (t.usage.costUsd > 0) {
     try {
@@ -995,9 +1013,6 @@ async function answer(pool, config, {
   const withCard = card && !error ? { card } : {};
   if (!changed) {
     if (error === 'no_key') return say(mayor.KEY_TEXT);
-    // 1 Nov 2026: words that still say it drew, or is about to, with
-    // nothing drawn are not sent as if it had. A card is something shown.
-    const unkept = !withCard.card && ['preamble', 'claimed'].includes(notDrawnYet(replyText, { mayor }));
     return say(unkept ? NOT_DRAWN_TEXT : clip(replyText, MAX_REPLY_CHARS) || BROKEN_TEXT,
       withCard.card ? { metadata: { kind: 'chat', ...withCard } } : {});
   }
