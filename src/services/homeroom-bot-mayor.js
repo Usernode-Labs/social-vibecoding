@@ -336,6 +336,18 @@ const PLAIN_NOTE = [
   'a minute, and set `later` to true: you will be asked again in full.',
 ].join('\n');
 
+// B01 (audit 2 Nov 2026): when the turn will not be asked again (an error
+// a later try cannot help), the plain answer is never told to promise one.
+const PLAIN_NOTE_NO_LATER = PLAIN_NOTE.replace(
+  /If answering needs a lookup or an action, say you will come back to it here in\na minute, and set `later` to true: you will be asked again in full\./,
+  'If answering needs a lookup or an action, say plainly that you could not do it just now and that they can send\n'
+    + 'it again. Never say you will come back to it: nothing asks you again.',
+);
+// B01: a new project's thread whose turn failed asks for what its first
+// screen needs, in the thread, so the conversation goes on there.
+const PROJECT_THREAD_TEXT = 'Let\'s shape it here. What should the first screen show, and who will use it? '
+  + 'Tell me in a line or two and I\'ll draw it.';
+
 function clip(value, max) {
   const text = String(value ?? '').trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
@@ -2956,7 +2968,7 @@ function plainMessage(m) {
  * a message that needs no lookup. Resolves { text, later } (#3772: `later`
  * when the model said it has to come back to it), or null.
  */
-async function plainAnswer(t, history) {
+async function plainAnswer(t, history, { later = true } = {}) {
   if (!t.apiKey || Date.now() - t.startedMs > PLAIN_WITHIN_MS) return null;
   t.route += 1;
   try {
@@ -2970,7 +2982,7 @@ async function plainAnswer(t, history) {
             username: t.user.username, perPerson: t.settings.perPerson, platform: false,
             // 31 Oct 2026: where they wrote it, as the rounds were told.
             thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId ? { draft: t.ctx.deps.threadDraft || null } : null,
-          })}\n\n${PLAIN_NOTE}${t.ctx?.owed ? `\n\n${t.ctx.owed}` : ''}`,
+          })}\n\n${later ? PLAIN_NOTE : PLAIN_NOTE_NO_LATER}${t.ctx?.owed ? `\n\n${t.ctx.owed}` : ''}`,
         },
         ...history.slice(-PLAIN_HISTORY).map(plainMessage),
       ],
@@ -2981,7 +2993,7 @@ async function plainAnswer(t, history) {
     const call = (res.toolCalls || []).find((c) => c?.function?.name === 'reply');
     const args = call ? parseArgs(call.function.arguments) : {};
     const text = clip(cleanReply(call ? args.text : res.content), MAX_REPLY_CHARS);
-    return text ? { text, later: args.later === true } : null;
+    return text ? { text, later: later && args.later === true } : null;
   } catch {
     // Logged and recorded by askModel.
     return null;
@@ -3017,10 +3029,15 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
     ].filter(Boolean).join(' ');
     return { fallback: 'done', text: done, cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
   }
+  // B01 (audit 2 Nov 2026): a new project's thread opened before the model
+  // failed is answered there with the question its first screen needs, now.
+  // A plain answer knows nothing of the thread, and promised to "come back
+  // in a minute" from Main, a promise no later try kept.
+  if (ctx.projectThread) return { fallback: 'project', text: PROJECT_THREAD_TEXT, cards: [], defer: false };
   const fromRecords = await recordsAnswer(pool, ctx);
   if (fromRecords) return { fallback: 'records', ...fromRecords, defer: false };
   if (KEY_ERRORS.has(error) && errorStatus !== 403) return { fallback: 'key', text: KEY_TEXT, cards: [], defer: false };
-  const plain = await plainAnswer(t, history);
+  const plain = await plainAnswer(t, history, { later: deferrable });
   if (plain) return { fallback: 'plain', text: plain.text, cards: [], defer: plain.later && deferrable };
   if (deferrable) return { fallback: 'deferred', text: DEFERRED_TEXT, cards: [], defer: true };
   return { fallback: 'broken', text: BROKEN_TEXT, cards: [], defer: false };
@@ -3156,6 +3173,15 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     checkedProblems: null,
     decisionWithoutOffer: deps.decisionWithoutOffer === true,
   };
+  // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
+  // project's thread, everything this turn says goes in it, whichever way
+  // it is said. A fallback answer used to land in Main beside the thread's
+  // line, as a second reply quoting the question again.
+  const sayOutside = say;
+  say = (content, extra = {}) => sayOutside(content, {
+    ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
+    ...extra,
+  });
   // What one turn's model requests share (askModel). The route is OpenRouter's
   // session, which pins a provider: it is this turn's, not the person's, so
   // one that failed them is not the one every later turn of theirs is sent
@@ -3421,8 +3447,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // 1 Nov 2026: draw_screen. The designer draws it and answers, in this
   // private thread or one it opens from Main Chat (design-bot.js draw).
   if (ctx.drawScreen) {
+    // B01: drawn in the new project's thread when this turn opened one.
+    const where = ctx.projectThread ? { ...deps, threadRootId: ctx.projectThread.rootId, threadRequest: null } : deps;
     return (deps.designBot || require('./design-bot')).draw(pool, config, {
-      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps,
+      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps: where,
     });
   }
   if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
