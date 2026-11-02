@@ -3585,11 +3585,11 @@
   },
   "thread.loadingNewer": {
     "text": "Loading…",
-    "description": "Label of the \"Load newer messages\" button while newer messages load."
+    "description": "Line at the foot of a conversation opened at an older message, while newer messages load after scrolling down."
   },
   "thread.loadNewer": {
     "text": "Load newer messages",
-    "description": "Button at the foot of a conversation opened at an older message: fetches the messages after the ones shown."
+    "description": "Button at the foot of a conversation opened at an older message, shown only after loading newer messages failed: tries again."
   },
   "thread.jumpToPresent": {
     "text": "Jump to present",
@@ -4213,11 +4213,11 @@
   },
   "replies.loadingEarlier": {
     "text": "Loading…",
-    "description": "Label of the \"Load earlier replies\" button while earlier replies load."
+    "description": "Line at the top of a thread's replies in the thread side pane, while earlier replies load after scrolling up."
   },
   "replies.loadEarlier": {
     "text": "Load earlier replies",
-    "description": "Button in the thread side pane: fetches the replies before the ones shown."
+    "description": "Button at the top of a thread's replies in the thread side pane, shown only after loading earlier replies failed: tries again."
   },
   "replies.discussion.from": {
     "text": "In the request's discussion",

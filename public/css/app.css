@@ -2476,8 +2476,28 @@ form.agent-session-composer:focus-within {
   .messages-message-focus { animation: none; background: var(--accent-tint); }
 }
 
-/* A linked page stops short of the present: two ways back to it. */
-.messages-newer { display: flex; justify-content: center; gap: 8px; padding: 8px 0; }
+/* A linked page stops short of the present (#2387). #6148: scrolling down
+   reads the newer pages in, so the row holds the "Loading…" line, or the
+   retry after a failed load, beside Jump to present: muted words on no
+   fill, a quiet way straight to the present for a reader a long way
+   back. The row keeps its height whichever of them it holds. */
+.messages-newer { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 8px 0; }
+.messages-jump-present {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.messages-jump-present:hover,
+.messages-jump-present:focus-visible { color: var(--text-primary); text-decoration: underline; }
 
 /* 16 Oct 2026: the agent chats nobody used this week, and the archived
    ones, behind a quiet link at the foot of Agents. Muted words in the
