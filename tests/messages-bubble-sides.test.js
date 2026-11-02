@@ -127,7 +127,8 @@ test('the other person keeps the avatar, the name and the time above their bubbl
   const html = row({ message: message(ADA, 9, { content: 'Thanks!' }), kind: 'direct' });
   assert.doesNotMatch(html, /messages-message-self/);
   assert.match(html, /<span aria-hidden="true" class="w-9 h-9/, 'the avatar, as before');
-  assert.match(html, /<div class="messages-message-head"><span class="messages-message-author ">ada<\/span><time[\s\S]*?<\/time><\/div><div class="messages-bubble"><div class="messages-markdown gc-msg-content">Thanks!<\/div><\/div>/);
+  // Audit D13: the hover bar ends the name line, beside the bubble.
+  assert.match(html, /<div class="messages-message-head"><span class="messages-message-author ">ada<\/span><time[\s\S]*?<\/time><div class="messages-message-actions\s+msgx-bar[\s\S]*?<\/div><\/div><div class="messages-bubble"><div class="messages-markdown gc-msg-content">Thanks!<\/div><\/div>/);
 });
 
 test('a deleted message keeps its bubble, and the id, data and classes the checks select on', () => {

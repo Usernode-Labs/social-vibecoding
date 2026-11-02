@@ -465,6 +465,13 @@ export const MessageRow = memo(function MessageRow({
     </MessageActionBar>
   ) : null;
 
+  // Audit D13 (2 Nov 2026): on somebody else's bubble the bar hangs at the
+  // end of its name line, beside the message, not at the transcript's far
+  // edge, where on a wide screen it sat 800px from a short bubble and over
+  // the row above. A continuation line has no name line, and your own
+  // bubble and a channel's rows already end where the bar is.
+  const barBesideHead = sided && !mine && !grouped;
+
   const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
 
   // The state word a header carries — edited. A continuation line has no
@@ -508,7 +515,7 @@ export const MessageRow = memo(function MessageRow({
             keeps its @. Your own bubble is already on your side and tinted,
             so its line says only the time, and your name is there for a
             screen reader alone, not in the accent, which marks an action. */}
-        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine && sided ? 'sr-only' : ''}`}>{senderName(message.sender, { bare: true })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine && sided ? 'sr-only' : ''}`}>{senderName(message.sender, { bare: true })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}{barBesideHead ? actions : null}</div>}
         {/* #4564: the dropped card's own label, spoken: a screen reader still
             hears which request these words are about, as the block's top
             shows. */}
@@ -529,7 +536,7 @@ export const MessageRow = memo(function MessageRow({
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
         {failedNote}
       </div>
-      {actions}
+      {barBesideHead ? null : actions}
       <MessageActionSheet
         open={sheet}
         onClose={() => setSheet(false)}

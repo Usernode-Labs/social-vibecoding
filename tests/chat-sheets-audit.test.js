@@ -38,3 +38,15 @@ test('C06: an empty reply box on a request or a channel shows Send faded, as Mes
   assert.match(CSS, /\.messages-composer-card:not\(\[data-gc-files\]\):has\(textarea:placeholder-shown\) \.messages-send \{ opacity: \.35; \}/);
   assert.match(CSS, /\.gc-composer-card:not\(\[data-gc-files\]\):has\(textarea:placeholder-shown\) \.gc-send \{ opacity: \.35; \}/);
 });
+
+test('C04: a desktop conversation with nothing beside it keeps a reading width', () => {
+  assert.match(CSS, /\.messages-layout\.messages-list-in-rail > \.messages-thread-pane:last-child \{\s*max-width: 960px;\s*margin-inline: auto;\s*\}/);
+});
+
+test('D13: the hover bar on somebody else\'s bubble hangs off its name line, beside the message', () => {
+  const row = read('frontend/src/features/messages/message-row.tsx');
+  assert.match(row, /const barBesideHead = sided && !mine && !grouped;/);
+  assert.match(row, /\{status\}\{barBesideHead \? actions : null\}<\/div>\}/);
+  assert.match(row, /\{barBesideHead \? null : actions\}\n\s*<MessageActionSheet/);
+  assert.match(CSS, /\.messages-message-head > \.messages-message-actions \{ top: -10px; right: auto; left: calc\(100% \+ 8px\); \}/);
+});

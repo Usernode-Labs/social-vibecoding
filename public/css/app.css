@@ -1208,6 +1208,12 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message:hover .messages-message-actions,
 .messages-message:focus-within .messages-message-actions,
 .messages-message-actions.msgx-bar-open { display: flex; }
+/* Audit D13: on somebody else's bubble the bar is a child of its name line
+   (message-row.tsx `barBesideHead`), which is as wide as the name and the
+   time, so it hangs just past the time, centred on that line, beside the
+   message it acts on. */
+.messages-message-head:has(> .messages-message-actions) { position: relative; }
+.messages-message-head > .messages-message-actions { top: -10px; right: auto; left: calc(100% + 8px); }
 
 /* The tray of a message still in flight keeps its place but draws nothing
    (#2907) — on touch it is a line of the row, and growing it only once the
@@ -24986,6 +24992,13 @@ section + .workshop-search {
   }
   .messages-layout.messages-list-in-rail > .messages-thread-pane {
     margin-left: 0;
+  }
+  /* AUDIT C04 (2 Nov 2026): a conversation with nothing beside it keeps a
+     reading width, as All messages keeps its column, rather than running
+     about 1500px wide at 1920, its bubbles a screen apart. */
+  .messages-layout.messages-list-in-rail > .messages-thread-pane:last-child {
+    max-width: 960px;
+    margin-inline: auto;
   }
   .messages-layout.messages-list-page > .messages-thread-pane {
     display: none;
