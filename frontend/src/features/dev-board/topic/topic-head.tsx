@@ -1295,20 +1295,22 @@ function RunTrack({ c, busy }: {
 }
 
 /**
- * A failed run's "What went wrong", over its failures: the plain-words
- * sentence the Testing card shows (./failed-checks.ts), once it is read.
- * Nothing until then, and nothing when there is none: the rows under it
- * already say which tests failed and with what.
+ * A failed run's "What went wrong", over its failures: the failure's own
+ * words until the plain-words sentence the Testing card shows
+ * (./failed-checks.ts) is read, that sentence once it is, and the failure's
+ * own words again when there is none. Nothing when the run offers neither.
+ * The rows under it still say which tests failed and with what.
  */
 function WhatWentWrong({ ex }: { ex?: ChecksExplainView | null }): ReactNode {
   const t = useMessages('project');
   const text = useChecksExplanation(ex);
-  if (!ex || !text) return null;
+  const shown = text || (ex && ex.fallback) || null;
+  if (!ex || !shown) return null;
   return (
     <div className="dev-ledger-explain" data-checks-explained="">
       <div className="dev-ledger-unit-k">{t('project:topic.checks.explain.title')}</div>
-      <p className="dev-ledger-explain-text">{text}</p>
-      <div className="dev-ledger-explain-source">{t('project:topic.checks.explain.source')}</div>
+      <p className="dev-ledger-explain-text">{shown}</p>
+      {text ? <div className="dev-ledger-explain-source">{t('project:topic.checks.explain.source')}</div> : null}
     </div>
   );
 }
