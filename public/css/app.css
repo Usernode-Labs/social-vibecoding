@@ -880,6 +880,29 @@ html.un-kb .platform-kb-column .un-kb-avoid {
     display: none;
   }
 }
+/* …AND THE REST OF THE CHROME ABOVE IT, WHEREVER THE KEYS LEAVE LITTLE
+   (overnight audit K01 and L03, 2 November 2026). Folding the conversation's
+   header was not enough: on a request's page the "‹ Workshop" chip and the
+   platform's header stayed, and a phone held sideways showed the chip and
+   the reply box with nothing of the thread between them; an Android phone in
+   Chrome (about 300px left above its keys, and taller than 500px at rest)
+   folded nothing at all. `platform-kb-short` is on while a field holds the
+   keys and less than 400px of the page is left to see
+   (lib/keyboard-open.ts), at any width and in the app as well. Then the
+   page's way back folds with the conversation's header, and in a browser
+   tab the platform's header does too, so the thread and its reply box have
+   the room. Not in the app, whose header is also the band under the status
+   bar. The rail beside a page stays, as the keyboard rule for 768px and up
+   says it must. All of it comes back the moment the keys go. */
+html.platform-kb-short :is(.messages-thread-header, #ai-screen .ai-main-head, .dev-request-back) {
+  display: none;
+}
+html.web-browser-chrome.platform-kb-short #platform-header {
+  display: none;
+}
+html.web-browser-chrome.platform-kb-short {
+  --platform-header-h: 0px;
+}
 .messages-thread-name,
 .messages-thread-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-thread-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
@@ -3354,6 +3377,18 @@ html.platform-page-locked[data-browser-scroller] {
 html.platform-page-locked [data-page-locked] {
   opacity: 0 !important;
 }
+/* THE STRIPS ARE RESERVED ON EVERY SCREEN, NOT ONLY A PAGED ONE (overnight
+   audit L01, 2 Nov 2026). Body padding moves the header down by the strips
+   above it on the fixed shell too (Communities, Messages, the bot, a
+   request), and every fixed layer placed under the header reads this token
+   for them: the sidebar's rail among them. Set only for the paged screens
+   below, it was 0 on the others, so on a phone held sideways (and an iPad in
+   Safari) the rail started a strip's height too high and its Home row was
+   printed over the page's title. Declared before the paged rules, which
+   outrank it and say the same. */
+body.has-install-strip { --browser-banner-h: var(--install-strip-h); }
+body.is-offline { --browser-banner-h: var(--offline-strip-h); }
+body.is-offline.has-install-strip { --browser-banner-h: calc(var(--offline-strip-h) + var(--install-strip-h)); }
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
 html[data-browser-scroller] body.has-install-strip {
@@ -13974,6 +14009,26 @@ body.is-offline.has-install-strip [data-auth-back] {
   top: calc(env(safe-area-inset-top, 0px) + 1rem) !important;
 }
 
+/* THE STRIP GOES WHILE THE KEYS LEAVE LITTLE (overnight audit K01, 2 Nov
+   2026). On an Android phone in Chrome the keys leave about 300px, and the
+   strip took 48 of them over the thread being replied to. While
+   `platform-kb-short` is on (lib/keyboard-open.ts; the header folds with it,
+   near the top of this file) the strip is not drawn and reserves nothing; an
+   offline strip keeps its own place. A short screen does not offer it at
+   all (install-banner.tsx SHORT_SCREEN_QUERY). After the rules above, which
+   these equal or outrank. */
+html.platform-kb-short #mobile-install-banner:not(.hidden) {
+  display: none;
+}
+html.platform-kb-short body.has-install-strip {
+  padding-top: 0;
+  --browser-banner-h: 0px;
+}
+html.platform-kb-short body.is-offline.has-install-strip {
+  padding-top: var(--offline-strip-h);
+  --browser-banner-h: var(--offline-strip-h);
+}
+
 /* Blocks that exist only to explain the offline state. Hidden — and
    inert — the rest of the time. */
 .offline-only {
@@ -17798,9 +17853,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      so the page starts that much lower and this floor has to give the same
      length back. Without it a phone browser showing "Get the app" pushed
      the foot of every Needs you card, its chips and the rail's More, under
-     the tab bar. The token is declared only in the browser-scroller layout,
-     the only layout that reads this number (the native layout's flex chain
-     already sits inside the padded body), hence the 0px fallback. */
+     the tab bar. The token is 0 with no strip up, hence the fallback; since
+     2 Nov 2026 it is declared on every screen (L01), not only the paged ones. */
   --ws-area: calc(
     100dvh - var(--browser-banner-h, 0px)
     - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
@@ -18130,11 +18184,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      at the top (`--platform-safe-top`, 47-62px) and the bar spends part of
      the home indicator at the foot (`--platform-tabs-inset`). Nothing
      parked, the feed still ended 60px under the bar there.
-   - THE "GET THE APP" BANNER in a phone browser. `--browser-banner-h` is
-     declared only on `html[data-browser-scroller]` routes, and this screen is
-     not one (browser-scroll.ts `PAGES`): its root scrolls itself in every
-     layout, so the token read 0 here while the banner pushed the page 48px
-     down.
+   - THE "GET THE APP" BANNER in a phone browser. `--browser-banner-h` was
+     declared only on `html[data-browser-scroller]` routes then, and this
+     screen is not one (browser-scroll.ts `PAGES`): its root scrolls itself in
+     every layout, so the token read 0 here while the banner pushed the page
+     48px down.
 
    And the foot could not be scrolled into view. `.dev-ws-needs-scroll` is
    `overscroll-behavior: contain`, so a drag on the feed moves between items
@@ -18311,7 +18365,7 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
   z-index: 20;
   right: 0;
   bottom: 0;
-  top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
   width: calc(var(--ai-main-w) + var(--ai-edge, 0px));
   display: flex;
   flex-direction: column;
@@ -18414,7 +18468,7 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
   z-index: 21;
   right: 0;
   bottom: 0;
-  top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
   width: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
   padding-right: var(--ai-edge, 0px);
   display: flex;
@@ -25435,7 +25489,7 @@ body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
   --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px) + 8px);
 }
 #ai-main-divider {
-  top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
 }
 .side-panel-divider::after {
   content: "";
