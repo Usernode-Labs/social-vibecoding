@@ -1283,6 +1283,10 @@
     "text": "{{attached}} of {{count}} images attached. Remove one to add another.",
     "description": "Small line under the attach buttons of the \"Suggest an improvement\" dialog when no more images fit. {{attached}} is how many are attached and {{count}} the most a request may carry."
   },
+  "feedback.screenshot.reorderHint": {
+    "text": "Drag a picture to change the order. The first one is shown first.",
+    "description": "Small line under the attached pictures in the \"Suggest an improvement\" dialog, shown once there are two or more. A focused picture can also be moved with the arrow keys."
+  },
   "feedback.screenshot.previewAlt": {
     "text": "Image {{number}} preview",
     "description": "Text alternative of an attached image's thumbnail in the \"Suggest an improvement\" dialog. {{number}} is its position among the attached images, starting at 1."
