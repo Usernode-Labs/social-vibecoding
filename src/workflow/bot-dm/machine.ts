@@ -293,6 +293,9 @@ export function botDm(): Machine<DState, Facts> {
     version: 1,
     events: EVENTS,
     create: CREATE,
+    // What web appends: a person's DM, an action tapped, a greeting a route owes, and the
+    // mail a DM owes (web sends mail itself, so the list gives it nothing new).
+    web: ['Wrote', 'Tapped', 'Greet', 'MailOwed'],
     decode: (row) => ({ name: row.state, data: row.data } as DState),
     facts: (tx: Tx, _state: DState, event: Event<any>) => readFacts(tx, event),
     authorize: { Wrote: route, TryAgain: timer, Tapped: route, Greet: route, MailOwed: route },

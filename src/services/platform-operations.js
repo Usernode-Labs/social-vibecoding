@@ -85,6 +85,8 @@ const OPERATIONS = new Map([
   ['work.share', () => require('./fork-operations')],
   ['work.submit', () => require('./fork-operations')],
   ['work.discard', () => require('./fork-operations')],
+  // an admin's release of a faulted workflow instance
+  ['workflow.release', () => require('./workflow-release-operation')],
 ]);
 
 // The requester as the auth middleware builds `req.user`, read now: an

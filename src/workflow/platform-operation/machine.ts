@@ -24,6 +24,8 @@ export const OPERATIONS: ReadonlySet<string> = new Set([
   'pr.sync',
   // fork flows
   'fork.update', 'work.share', 'work.submit', 'work.discard',
+  // an admin's release of a faulted workflow instance (web may not write one)
+  'workflow.release',
 ]);
 // What an operation's input may weigh: what a route captured, never a file.
 export const MAX_INPUT_BYTES = 64 * 1024;
@@ -107,6 +109,11 @@ export function requested(p: any): Request {
   if ((p.op === 'work.submit' || p.op === 'work.discard') && !id(p.input.taskId)) throw new Error('A submission must name its task');
   if (p.op === 'work.submit' && p.input.mode !== 'patch' && p.input.mode !== 'branch') throw new Error('A submission must say what it carries');
   if (p.op === 'work.discard' && (typeof p.input.branch !== 'string' || !p.input.branch)) throw new Error('A discard must name its branch');
+  // A release names the instance and whether its faulted event is retried or skipped.
+  if (p.op === 'workflow.release' && (p.appId !== null || typeof p.input.machine !== 'string' || !/^[a-z][a-z0-9-]*$/.test(p.input.machine)
+      || typeof p.input.key !== 'string' || !p.input.key || p.input.key.length > 256 || !['retry', 'skip'].includes(p.input.mode))) {
+    throw new Error('A release must name its instance and what it does with the faulted event');
+  }
   return { op: p.op, requestId: p.requestId, appId: p.appId, userId: p.userId, input: p.input };
 }
 
@@ -117,7 +124,8 @@ export function platformOperation() {
     work: [{ kind: workKind(e.payload.op), key: `run:${e.payload.requestId}`, input: e.payload as unknown as Json }] }) };
   return defineMachine<State, Facts>({
     name: MACHINE, version: 1, retainDays: 2,
-    events: { Requested: requested }, create: ['Requested'], terminal: ['done', 'failed'],
+    // A request is a route's (web's): web asks, the conductor runs it.
+    events: { Requested: requested }, create: ['Requested'], web: ['Requested'], terminal: ['done', 'failed'],
     decode: row => ({ name: row.state, data: row.data }) as State,
     // Admission only proves the request is this instance's and its requester
     // and project still exist. Each operation's own authority is read again

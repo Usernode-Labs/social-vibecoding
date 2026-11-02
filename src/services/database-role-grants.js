@@ -5,7 +5,35 @@ const access = require('./database-role-access');
 const { connectionName } = require('../db/connection-options');
 
 const PLATFORM_SCHEMAS = Object.freeze(['public', 'credentials']);
+const { KERNEL_TABLES, WEB_EVENT_COLUMNS } = access;
 
+// What web holds of the kernel's objects once a release takes the rest away:
+// it reads them, and appends a pending event naming only what a producer says
+// (the rest is the kernel's: its status, outcome, retry time). Idempotent; it
+// also takes back what an earlier release granted. A database the bootstrap
+// meets before its first migration has none of them yet.
+async function restrictWebWorkflow(pool, web) {
+  const role = access.identifier(web);
+  const { rows } = await pool.query(`SELECT name FROM unnest($1::text[]) AS name
+    WHERE pg_catalog.to_regclass('public.' || name) IS NOT NULL`, [[...KERNEL_TABLES, 'wf_events', 'wf_events_id_seq']]);
+  const present = new Set(rows.map(r => r.name));
+  const kernel = KERNEL_TABLES.filter(t => present.has(t)).map(t => `public.${t}`).join(', ');
+  if (kernel) {
+    await pool.query(`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE ${kernel} FROM ${role};
+      GRANT SELECT ON TABLE ${kernel} TO ${role}`);
+  }
+  if (present.has('wf_events')) {
+    await pool.query(`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.wf_events FROM ${role};
+      GRANT SELECT, INSERT (${WEB_EVENT_COLUMNS.join(', ')}) ON TABLE public.wf_events TO ${role}`);
+  }
+  if (present.has('wf_events_id_seq')) {
+    await pool.query(`REVOKE UPDATE ON SEQUENCE public.wf_events_id_seq FROM ${role};
+      GRANT USAGE, SELECT ON SEQUENCE public.wf_events_id_seq TO ${role}`);
+  }
+}
+
+// Run it inside one transaction (`pool` a client that began one): a grant
+// another login sees half made is a grant it holds meanwhile.
 async function ensureRuntimeGrants(pool, env = process.env) {
   if (!access.enabled(env)) return;
   const roles = access.names(env);
@@ -59,6 +87,10 @@ async function ensureRuntimeGrants(pool, env = process.env) {
      WHERE n.nspname = ANY($2::text[]) AND p.proowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1)
        AND p.prokind <> 'a'`, [roles.migrator, PLATFORM_SCHEMAS]);
   for (const item of functions) await pool.query(`GRANT EXECUTE ON ROUTINE ${item.name} TO ${runtime}`);
+  // Web keeps its writes on the kernel's tables for this release, so a web
+  // Pod of the build before it can still restart while it rolls out. The
+  // release after it takes them (restrictWebWorkflow), once no web process
+  // of an earlier build serves (platform_processes.web_restriction_ready).
 }
 
 async function withRoleAdmin(fn) {
@@ -74,4 +106,4 @@ async function withRoleAdmin(fn) {
   } finally { await client.end().catch(() => {}); }
 }
 
-module.exports = { PLATFORM_SCHEMAS, ensureRuntimeGrants, withRoleAdmin };
+module.exports = { PLATFORM_SCHEMAS, ensureRuntimeGrants, restrictWebWorkflow, withRoleAdmin };

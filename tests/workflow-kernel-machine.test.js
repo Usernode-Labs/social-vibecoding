@@ -42,6 +42,13 @@ test('a state named as waiting on something outside (`attention`) is a declared 
   assert.throws(() => defineMachine({ ...base(), attention: { waiting: 'x' } }), /attention state waiting is not declared/);
 });
 
+test('the events web may append are declared ones, never a work result', () => {
+  assert.deepEqual([...defineMachine(base()).web], [], 'web appends nothing a machine does not list');
+  assert.deepEqual([...defineMachine({ ...base(), web: ['Open'] }).web], ['Open']);
+  assert.throws(() => defineMachine({ ...base(), web: ['Reopen'] }), /web event Reopen is not declared/);
+  assert.throws(() => defineMachine({ ...base(), web: ['WorkSucceeded'] }), /web event WorkSucceeded is not declared/);
+});
+
 test('every state must handle or ignore every declared event', () => {
   const def = base();
   delete def.transitions.open.Open;

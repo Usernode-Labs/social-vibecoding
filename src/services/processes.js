@@ -173,11 +173,13 @@ function localSnapshot(limit = 50) {
 }
 
 // The row, written again with every beat: a row the process-reap clock
-// reaped while this process was stalled comes back.
+// reaped while this process was stalled comes back. This build serves with
+// web's writes on the workflow kernel's tables taken away
+// (web_restriction_ready: src/db/migrations/0011-workflow-producers.sql).
 function writeRow(db) {
   return q(db,
-    `INSERT INTO platform_processes (id, release, role, host, ip, state, drain_started_at, drain_deadline_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO platform_processes (id, release, role, host, ip, state, drain_started_at, drain_deadline_at, web_restriction_ready)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
      ON CONFLICT (id) DO UPDATE SET heartbeat_at = NOW(), state = EXCLUDED.state,
        drain_started_at = EXCLUDED.drain_started_at, drain_deadline_at = EXCLUDED.drain_deadline_at`,
     [ID, process.env.GIT_SHA || null, role, os.hostname(), process.env.POD_IP || null,
