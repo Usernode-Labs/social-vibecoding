@@ -371,7 +371,30 @@ test('plainSummary: the first paragraph, as plain words', () => {
   assert.equal(plainSummary('- one\n- two'), 'one two');
   assert.equal(plainSummary(''), null);
   assert.equal(plainSummary(null), null);
-  assert.equal(plainSummary('y'.repeat(300)).length, 240);
+  // A single word longer than the limit has no word break: the hard cut stands.
+  const unbroken = plainSummary('y'.repeat(300));
+  assert.equal(unbroken.length, 240);
+  assert.ok(unbroken.endsWith('…'));
+});
+
+test('plainSummary: a long preview ends on a whole word, marker dropped', () => {
+  const { plainSummary } = require('../src/services/public-project');
+  const long = 'alpha beta, '.repeat(40);
+  const preview = plainSummary(long);
+  assert.ok(preview.endsWith('…'), preview);
+  assert.ok(preview.length <= 240, preview);
+  const body = preview.slice(0, -1);
+  assert.match(body[body.length - 1], /[a-z]/, preview); // never ",…" or " …"
+  assert.ok(long.startsWith(body), preview); // nothing invented or reordered
+  assert.ok([' ', ','].includes(long[body.length]), preview); // ends at a word boundary
+});
+
+test('plainSummary: a word ending exactly at the limit is kept whole', () => {
+  const { plainSummary } = require('../src/services/public-project');
+  const word = 'b'.repeat(119);
+  const preview = plainSummary(`${'a'.repeat(119)} ${word} tail`);
+  assert.equal(preview, `${'a'.repeat(119)} ${word}…`);
+  assert.ok(preview.endsWith(`${word}…`), preview);
 });
 
 test('openRequests: titles and a count from the public issues, null when unreadable', async () => {
