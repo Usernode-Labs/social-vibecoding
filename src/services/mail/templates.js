@@ -15,6 +15,8 @@
 
 const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const tracking = require('./tracking');
+const log = require('../logger');
+const { englishFrom, englishTexts } = require('../push-text');
 
 // Minimal HTML escaping — these bodies interpolate an email address, a
 // six-digit code and platform-built URLs, and, since content_report, free
@@ -103,6 +105,8 @@ const FOOTER_STYLE =
 // or waitlist place. A project invite goes to an address somebody ELSE
 // typed, so it says that instead (its template returns `why`); claiming the
 // recipient asked for it would be the one untrue sentence in the frame.
+// This literal is the frame of what only an operator receives, which stays in
+// English; every other kind words it from email:frame.why.
 const WHY_DEFAULT = 'You are receiving this because of activity on your account or your '
   + 'place on the waitlist. We only send mail you asked for.';
 
@@ -128,6 +132,24 @@ const HTML_SHELL = (body, why = WHY_DEFAULT, preheader = null) =>
 
 const p = (s) => `<p>${s}</p>`;
 const link = (url) => `<a href="${esc(url)}" style="color:${BRAND_ACCENT}">${esc(url)}</a>`;
+
+// A catalog's text goes into html through esc(), the whole of it, parameters
+// included, so a translation (untrusted model output) reaches a mail as words.
+// Markup stays here in two shapes, and neither lets a message name an element
+// or an address:
+//
+// A message whose parameter is a link: asked for with LINK_MARK in the
+// parameter's place, then the link is put where the mark landed.
+const LINK_MARK = '\uE000';
+const withLink = (words, url) => esc(words).split(LINK_MARK).join(link(url));
+
+// A message with numbered tags, none with a parameter: each <n>…</n> takes its
+// element from `wrappers`, handed its already escaped inside. Read after
+// escaping, so anything but a tag this message has stays text.
+const rich = (words, wrappers) =>
+  esc(words).replace(/&lt;(\d+)&gt;(.*?)&lt;\/\1&gt;/gs, (whole, n, inner) => (
+    wrappers[Number(n)] ? wrappers[Number(n)](inner) : whole
+  ));
 
 /**
  * The mail's ONE action, as a button (#1540).
@@ -196,16 +218,15 @@ const heroLine = (text) =>
 const codeBlock = (code) =>
   `<p style="font-size:28px;font-weight:600;letter-spacing:4px">${esc(code)}</p>`;
 
-function otp(payload) {
+function otp(payload, t) {
   const code = payload.code;
   return {
-    subject: 'Your Homeroom login code',
-    text: `Your Homeroom login code is ${code}.\n\n`
-      + 'It expires in 10 minutes. If you did not request it, you can ignore this email.',
+    subject: t('email:otp.subject'),
+    text: `${t('email:otp.text.code', { code })}\n\n${t('email:otp.expiry')}`,
     html: (
-      p('Your Homeroom login code is:')
+      p(esc(t('email:otp.html.code')))
       + codeBlock(code)
-      + p('It expires in 10 minutes. If you did not request it, you can ignore this email.')
+      + p(esc(t('email:otp.expiry')))
     ),
   };
 }
@@ -231,7 +252,7 @@ function otp(payload) {
 // addresses the reader as [BRAND NAME], which is BRAND_NAME above — the
 // rename to Homeroom moved every surface at once, and this line moved
 // with the rest.
-function waitlistJoined(payload) {
+function waitlistJoined(payload, t) {
   const confirmUrl = payload.confirmUrl || null;
 
   let text = '';
@@ -250,28 +271,23 @@ function waitlistJoined(payload) {
   // afterwards, so the copy asks for it plainly instead of mentioning it in
   // passing.
   if (payload.code) {
-    text += 'Confirm your email\n'
-      + `Your verification code is ${payload.code}. It works for 15 minutes.\n\n`;
-    html += p('<strong>Confirm your email</strong>')
+    text += `${t('email:waitlistJoined.heading')}\n`
+      + `${t('email:waitlistJoined.text.code', { code: payload.code })}\n\n`;
+    html += p(`<strong>${esc(t('email:waitlistJoined.heading'))}</strong>`)
       + codeBlock(payload.code)
-      + p('It works for 15 minutes.');
+      + p(esc(t('email:waitlistJoined.html.codeLife')));
   }
 
-  text += 'Thanks for joining the Homeroom waitlist.\n\n'
-    + "We'll email you at this address as soon as your access is ready.\n\n"
-    + 'Early access opens in small groups, with more groups opening on a '
-    + 'rolling basis after that.';
-  html += p('Thanks for joining the Homeroom waitlist.')
-    + p("We'll email you at this address as soon as your access is ready.")
-    + p('Early access opens in small groups, with more groups opening on a '
-      + 'rolling basis after that.');
+  const welcome = [t('email:waitlistJoined.thanks'), t('email:waitlistJoined.expectation'), t('email:waitlistJoined.groups')];
+  text += welcome.join('\n\n');
+  html += welcome.map((line) => p(esc(line))).join('');
 
   if (confirmUrl) {
-    text += '\n\nOr confirm in one tap:\n' + confirmUrl;
-    html += button(confirmUrl, 'Confirm my email');
+    text += `\n\n${t('email:waitlistJoined.text.oneTap')}\n${confirmUrl}`;
+    html += button(confirmUrl, t('email:waitlistJoined.button'));
   }
 
-  return { subject: "You're on the Homeroom waitlist 🎉", text, html };
+  return { subject: t('email:waitlistJoined.subject'), text, html };
 }
 
 // A REQUESTED confirmation code (POST /api/public/waitlist/resend, and the
@@ -291,57 +307,53 @@ function waitlistJoined(payload) {
 // status code and its one button carries NO capability token — a code you
 // type is the thing that survives a mail scanner rewriting links (#1545),
 // and moving away from mailed magic links is the direction #1531 wants.
-function waitlistCode(payload) {
+function waitlistCode(payload, t) {
   // Minting failed for an already-confirmed address: there is no code to
   // type, so the useful answer is where to look at where they stand.
   if (!payload.code) {
     const statusUrl = payload.statusUrl || null;
-    let text = 'You asked for a new confirmation code for the Homeroom waitlist.\n\n'
-      + 'This address is already confirmed, so there is nothing left to do. '
-      + "You're on the list and we'll email you when your spot opens.";
-    let html = p('You asked for a new confirmation code for the Homeroom waitlist.')
-      + p('This address is already confirmed, so there is nothing left to do. '
-        + "You're on the list and we'll email you when your spot opens.");
+    const asked = t('email:waitlistCode.done.asked');
+    const nothingLeft = t('email:waitlistCode.done.nothingLeft');
+    let text = `${asked}\n\n${nothingLeft}`;
+    let html = p(esc(asked)) + p(esc(nothingLeft));
     if (statusUrl) {
-      text += `\n\nCheck where you stand: ${statusUrl}`;
-      html += p(`Check where you stand: ${link(statusUrl)}`);
+      text += `\n\n${t('email:waitlistCode.done.status', { url: statusUrl })}`;
+      html += p(withLink(t('email:waitlistCode.done.status', { url: LINK_MARK }), statusUrl));
     }
-    return { subject: 'Your Homeroom waitlist address is already confirmed', text, html };
+    return { subject: t('email:waitlistCode.done.subject'), text, html };
   }
 
   // The status-code shape: same six digits, different errand.
   if (payload.confirmed) {
     const statusUrl = payload.statusUrl || null;
-    let text = `Your Homeroom waitlist status code is ${payload.code}. `
-      + 'It works for 15 minutes.\n\n'
-      + 'Any earlier code has stopped working, so use this one.';
-    let html = p('Your Homeroom waitlist status code is:')
+    let text = `${t('email:waitlistCode.status.text.code', { code: payload.code })}\n\n`
+      + t('email:waitlistCode.status.text.newest');
+    let html = p(esc(t('email:waitlistCode.status.html.code')))
       + codeBlock(payload.code)
-      + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
+      + p(esc(t('email:waitlistCode.status.html.life')));
     if (statusUrl) {
-      text += '\n\nEnter it here:\n' + statusUrl;
-      html += button(statusUrl, 'Check my status');
+      text += `\n\n${t('email:waitlistCode.status.text.enter')}\n${statusUrl}`;
+      html += button(statusUrl, t('email:waitlistCode.status.button'));
     }
-    text += '\n\nIf you did not ask for this, you can ignore this email.';
-    html += p('If you did not ask for this, you can ignore this email.');
-    return { subject: 'Your Homeroom waitlist status code', text, html };
+    text += `\n\n${t('email:waitlistCode.status.ignore')}`;
+    html += p(esc(t('email:waitlistCode.status.ignore')));
+    return { subject: t('email:waitlistCode.status.subject'), text, html };
   }
 
   const confirmUrl = payload.confirmUrl || null;
-  let text = `Your Homeroom waitlist confirmation code is ${payload.code}. `
-    + 'It works for 15 minutes.\n\n'
-    + 'Any earlier code has stopped working, so use this one.';
-  let html = p('Your Homeroom waitlist confirmation code is:')
+  let text = `${t('email:waitlistCode.confirm.text.code', { code: payload.code })}\n\n`
+    + t('email:waitlistCode.confirm.text.newest');
+  let html = p(esc(t('email:waitlistCode.confirm.html.code')))
     + codeBlock(payload.code)
-    + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
+    + p(esc(t('email:waitlistCode.confirm.html.life')));
   if (confirmUrl) {
-    text += '\n\nOr confirm in one tap:\n' + confirmUrl;
-    html += button(confirmUrl, 'Confirm my email');
+    text += `\n\n${t('email:waitlistCode.confirm.text.oneTap')}\n${confirmUrl}`;
+    html += button(confirmUrl, t('email:waitlistCode.confirm.button'));
   }
-  text += '\n\nIf you did not ask for this, you can ignore this email.';
-  html += p('If you did not ask for this, you can ignore this email.');
+  text += `\n\n${t('email:waitlistCode.confirm.ignore')}`;
+  html += p(esc(t('email:waitlistCode.confirm.ignore')));
 
-  return { subject: 'Your Homeroom waitlist confirmation code', text, html };
+  return { subject: t('email:waitlistCode.confirm.subject'), text, html };
 }
 
 // Waitlist release, the "you're in" welcome. #4570 restyled it after the
@@ -351,18 +363,13 @@ function waitlistCode(payload) {
 // address, and opening it asks for a sign-in code straight away, so say so:
 // the recipient should be expecting a second email rather than hunting for a
 // button. The 10-minute figure must match OTP_TTL_MS in
-// src/services/email-signup.js.
+// src/services/email-signup.js (the message is email:waitlistReleased.codeNote).
 //
 // A link WITH the one-time sign-in (#4594, services/release-links.js) gets no
 // note: the button signs them in, and the screen its fallback opens says
 // itself that a code was sent. The link is bound to the released address and
 // the fallback fills it in, so the mail does not ask them to remember which
 // address they joined with either.
-const RELEASE_CODE_NOTE = 'Opening it emails you a 6-digit code to sign in with. '
-  + 'The code expires in 10 minutes.';
-
-const RELEASE_HEADLINE = 'Make and share apps with groups and friends.';
-
 // The landing page's people illustration, the same file that screen draws at
 // /brand/people.png. An absolute URL for the same reason the logo's is: a
 // mail client has no page context to resolve a relative one against. Empty
@@ -375,9 +382,9 @@ const ILLUSTRATION_URL = `${PRODUCTION_ORIGIN}/brand/people.png`;
 // gradients — one solid fill per chip rather than the gradient itself,
 // because mail clients do not draw `radial-gradient` reliably.
 const RELEASE_CAN_DO = [
-  { line: 'Make an app for your group', color: '#3484fc' },
-  { line: 'Use and improve apps together', color: '#8bd669' },
-  { line: 'Suggest, preview and vote on changes', color: '#fc5750' },
+  { id: 'email:waitlistReleased.canDo.make', color: '#3484fc' },
+  { id: 'email:waitlistReleased.canDo.use', color: '#8bd669' },
+  { id: 'email:waitlistReleased.canDo.suggest', color: '#fc5750' },
 ];
 
 // Install notes per platform, one line each with the one step that is a
@@ -385,21 +392,13 @@ const RELEASE_CAN_DO = [
 // (services/mobile-store-links.js), so a platform whose listing is cleared
 // drops out instead of pointing nowhere.
 const RELEASE_MOBILE = [
-  {
-    os: 'ios',
-    name: 'iPhone',
-    line: (a) => `Install TestFlight, then ${a('open the Homeroom invite')}.`,
-  },
-  {
-    os: 'android',
-    name: 'Android',
-    line: (a) =>
-      `${a('Open the Homeroom testing link')} while signed into Google Play with your waitlist email.`,
-  },
+  { os: 'ios', text: 'email:waitlistReleased.mobile.ios.text', html: 'email:waitlistReleased.mobile.ios.html' },
+  { os: 'android', text: 'email:waitlistReleased.mobile.android.text', html: 'email:waitlistReleased.mobile.android.html' },
 ];
 
-const inlineLink = (url, label) =>
-  `<a href="${esc(url)}" style="color:${BRAND_ACCENT}">${esc(label)}</a>`;
+// `inner` is html already (it comes through rich()).
+const inlineLink = (url, inner) =>
+  `<a href="${esc(url)}" style="color:${BRAND_ACCENT}">${inner}</a>`;
 
 // One chip, as the landing rail draws it: a square card, no radius (the
 // corners are the chip's whole character on a page of round pills), a 1px
@@ -407,7 +406,7 @@ const inlineLink = (url, label) =>
 // solid colour block flush into its left edge. Its own table because a
 // floating row needs one, and `border-collapse:separate` so the hairline
 // draws around the card rather than collapsing away.
-const releaseChip = ({ line, color }, top = 0) =>
+const releaseChip = (line, color, top = 0) =>
   '<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
   + ` style="border-collapse:separate;margin:${top}px 0 8px;border:1px solid #0b0b0c;`
   + 'box-shadow:2px 2px 4px rgba(161,152,152,0.25)">'
@@ -416,58 +415,60 @@ const releaseChip = ({ line, color }, top = 0) =>
   + `<td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:${NEUTRAL_INK}">${esc(line)}</td>`
   + '</tr></table>';
 
-function waitlistReleased(payload) {
+function waitlistReleased(payload, t) {
   const url = payload.url;
   const hasAccount = !!payload.hasAccount;
   const mobile = payload.mobile || {};
   const platforms = RELEASE_MOBILE.filter((m) => mobile[m.os]);
 
-  const action = hasAccount ? 'Sign in' : 'Create my account';
-  const how = hasAccount
-    ? 'Your account now has access. Sign in with your waitlist email.'
-    : null;
+  const action = hasAccount ? t('email:waitlistReleased.signIn.button') : t('email:waitlistReleased.create.button');
+  const how = hasAccount ? t('email:waitlistReleased.signIn.how') : null;
   // #1548: a no-account link with no one-time sign-in sends a code the
   // moment it is opened, so say so. Somebody who is not told to expect a
   // SECOND email goes hunting for a button that is not there.
-  const note = !hasAccount && !payload.signInLink ? RELEASE_CODE_NOTE : null;
+  const note = !hasAccount && !payload.signInLink ? t('email:waitlistReleased.codeNote') : null;
+  const headline = t('email:waitlistReleased.headline');
 
   // The text part has no button, so it names the action over the link.
-  let text = `You're in.\n${RELEASE_HEADLINE}\n\n${how || `${action}:`}\n${url}`;
+  let text = `${t('email:waitlistReleased.text.opening')}\n${headline}\n\n`
+    + `${how || t('email:waitlistReleased.create.text')}\n${url}`;
   if (note) text += `\n\n${note}`;
-  text += '\n\n' + RELEASE_CAN_DO.map((c) => `- ${c.line}`).join('\n');
+  text += '\n\n' + RELEASE_CAN_DO.map((c) => `- ${t(c.id)}`).join('\n');
 
   let html = centered(
     `<img src="${ILLUSTRATION_URL}" width="272" height="204" alt=""`
       + ' style="display:block;margin:0 auto;border:0;max-width:100%;height:auto">'
-    + heroEyebrow("You're in", 20)
-    + heroHeadline(RELEASE_HEADLINE)
+    + heroEyebrow(t('email:waitlistReleased.eyebrow'), 20)
+    + heroHeadline(headline)
     + (how ? heroLine(how) : '')
     + pill(url, action)
     + (note ? `<p style="margin:10px 0 0;font-size:13px;`
       + `color:${NEUTRAL_SECONDARY_INK}">${esc(note)}</p>` : '')
   )
-    + RELEASE_CAN_DO.map((c, i) => releaseChip(c, i === 0 ? 24 : 0)).join('');
+    + RELEASE_CAN_DO.map((c, i) => releaseChip(t(c.id), c.color, i === 0 ? 24 : 0)).join('');
 
   if (platforms.length) {
-    text += '\n\nTry it on mobile';
+    const heading = t('email:waitlistReleased.mobile.heading');
+    text += `\n\n${heading}`;
     html += `<p style="margin:24px 0 8px;font-size:12px;font-weight:700;`
       + `letter-spacing:0.06em;text-transform:uppercase;`
-      + `color:${NEUTRAL_SECONDARY_INK}">Try it on mobile</p>`;
+      + `color:${NEUTRAL_SECONDARY_INK}">${esc(heading)}</p>`;
     for (const m of platforms) {
-      const link = mobile[m.os];
-      text += `\n${m.name}: ${m.line((label) => `${label} (${link})`)}`;
-      html += `<p style="margin:0 0 8px"><strong>${esc(m.name)}</strong>: `
-        + m.line((label) => inlineLink(link, label))
+      const store = mobile[m.os];
+      text += `\n${t(m.text, { link: store })}`;
+      html += '<p style="margin:0 0 8px">'
+        + rich(t(m.html), [(inner) => `<strong>${inner}</strong>`, (inner) => inlineLink(store, inner)])
         + '</p>';
     }
   }
 
-  text += '\n\nSee you there,\nEvan from Homeroom';
-  html += p('See you there,<br>Evan from Homeroom');
+  const signoff = t('email:waitlistReleased.signoff');
+  text += `\n\n${signoff}`;
+  html += p(esc(signoff).replace(/\n/g, '<br>'));
 
   return {
-    subject: "You're in. Welcome to Homeroom",
-    preheader: "Make and share apps with groups and friends. Here's how to get started.",
+    subject: t('email:waitlistReleased.subject'),
+    preheader: t('email:waitlistReleased.preheader'),
     text,
     html,
   };
@@ -477,21 +478,17 @@ function waitlistReleased(payload) {
 // tokenized link and nothing else the recipient could be phished with —
 // no username, no code to read back to anyone. The 30-minute figure must
 // match RESET_TOKEN_TTL_MS in src/routes/auth.js.
-function passwordReset(payload) {
+function passwordReset(payload, t) {
   const url = payload.url;
+  const requested = t('email:passwordReset.requested');
+  const expiry = t('email:passwordReset.expiry');
   return {
-    subject: 'Reset your Homeroom password',
-    text: 'Someone asked to reset the password for the Homeroom account with this '
-      + 'email address.\n\n'
-      + `Set a new password here: ${url}\n\n`
-      + 'The link expires in 30 minutes and works once. If you did not request '
-      + 'this, you can ignore it. Your password is unchanged.',
+    subject: t('email:passwordReset.subject'),
+    text: `${requested}\n\n${t('email:passwordReset.link', { url })}\n\n${expiry}`,
     html: (
-      p('Someone asked to reset the password for the Homeroom account with this '
-        + 'email address.')
-      + p(`Set a new password here: ${link(url)}`)
-      + p('The link expires in 30 minutes and works once. If you did not request '
-        + 'this, you can ignore it. Your password is unchanged.')
+      p(esc(requested))
+      + p(withLink(t('email:passwordReset.link', { url: LINK_MARK }), url))
+      + p(esc(expiry))
     ),
   };
 }
@@ -606,28 +603,37 @@ function contentReport(payload) {
 // waitlist, joined with this address. Nothing here grants access; the invite
 // waits on the account and turns into an ordinary one once the address is
 // confirmed on it. Every field is optional so the kind still renders empty.
-function projectInvite(payload) {
-  const inviter = payload.inviter ? `@${payload.inviter}` : 'Someone';
-  const project = payload.project || 'a project';
+// A sentence per what is known about the invite: a stand-in word for somebody
+// or something unnamed takes a different form from a name in many languages.
+const INVITE_WORDS = {
+  named: { subject: 'email:projectInvite.named.subject', lead: 'email:projectInvite.named.lead', headline: 'email:projectInvite.named.headline' },
+  noInviter: { subject: 'email:projectInvite.noInviter.subject', lead: 'email:projectInvite.noInviter.lead', headline: 'email:projectInvite.noInviter.headline' },
+  noProject: { subject: 'email:projectInvite.noProject.subject', lead: 'email:projectInvite.noProject.lead', headline: 'email:projectInvite.noProject.headline' },
+  nothing: { subject: 'email:projectInvite.nothing.subject', lead: 'email:projectInvite.nothing.lead', headline: 'email:projectInvite.nothing.headline' },
+};
+
+function projectInvite(payload, t) {
+  const { inviter, project } = payload;
+  const words = inviter
+    ? (project ? INVITE_WORDS.named : INVITE_WORDS.noProject)
+    : (project ? INVITE_WORDS.noInviter : INVITE_WORDS.nothing);
+  const values = { inviter, project };
   const url = payload.url || '';
-  const lead = `${inviter} invited you to ${project}, a private community on Homeroom, where communities build the apps they use together.`;
-  const how = 'Join the waitlist with this email address. Once you are in, the invite will be waiting for you.';
   return {
-    why: 'You are receiving this because someone on Homeroom invited this address to a project. '
-      + 'You will not hear from us again unless you join, or somebody invites you again.',
-    subject: `${inviter} invited you to ${project} on Homeroom`,
-    text: `${lead}\n\n${how}${url ? `\n\n${url}` : ''}\n\nIf you were not expecting this, you can ignore this email.`,
+    why: t('email:projectInvite.why'),
+    subject: t(words.subject, values),
+    text: `${t(words.lead, values)}\n\n${t('email:projectInvite.text.how')}${url ? `\n\n${url}` : ''}`
+      + `\n\n${t('email:projectInvite.text.unexpected')}`,
     // #5068: the welcome hero, minus the eyebrow's sentence-splitting into
     // headline and line. The text part keeps the whole first sentence.
     html: (
       centered(
-        heroEyebrow("You're invited")
-        + heroHeadline(`${inviter} invited you to ${project}.`, 24, 30)
-        + heroLine("It's a private community on Homeroom, where communities build the "
-          + 'apps they use together. ' + how)
-        + (url ? pill(url, 'Join the waitlist') : '')
+        heroEyebrow(t('email:projectInvite.eyebrow'))
+        + heroHeadline(t(words.headline, values), 24, 30)
+        + heroLine(t('email:projectInvite.html.line'))
+        + (url ? pill(url, t('email:projectInvite.button')) : '')
         + `<p style="margin:16px 0 0;font-size:13px;color:${NEUTRAL_SECONDARY_INK}">`
-          + 'If you were not expecting this, you can ignore this email.</p>'
+          + `${esc(t('email:projectInvite.html.unexpected'))}</p>`
       )
     ),
   };
@@ -644,22 +650,21 @@ function projectInvite(payload) {
 // emails" sits small and grey under the pill. Everything else about the
 // send is untouched: the same words in the text part, the same preheader,
 // the same List-Unsubscribe headers.
-function activityFrame({ subject, lead, url, label, eyebrow = '', unsubscribeUrl }) {
+function activityFrame(t, { subject, lead, url, label, textLink, eyebrow = '', unsubscribeUrl }) {
   const off = unsubscribeUrl
-    ? `To stop these emails: ${unsubscribeUrl}`
+    ? t('email:activity.stop.text', { url: unsubscribeUrl })
     : '';
   return {
-    why: 'You are receiving this because there was news on Homeroom for you and no phone '
-      + 'to send it to. Turn these emails off with the link above.',
+    why: t('email:activity.why'),
     preheader: lead,
     subject,
-    text: `${lead}\n\n${label}: ${url}${off ? `\n\n${off}` : ''}`,
+    text: `${lead}\n\n${textLink}${off ? `\n\n${off}` : ''}`,
     html: centered(
       (eyebrow ? heroEyebrow(eyebrow) : '')
       + heroHeadline(lead, 24, 30)
       + pill(url, label)
       + (unsubscribeUrl ? `<p style="margin:16px 0 0;font-size:13px">`
-        + `<a href="${esc(unsubscribeUrl)}" style="color:${NEUTRAL_SECONDARY_INK}">Stop these emails</a></p>` : '')
+        + `<a href="${esc(unsubscribeUrl)}" style="color:${NEUTRAL_SECONDARY_INK}">${esc(t('email:activity.stop.link'))}</a></p>` : '')
     ),
     headers: unsubscribeUrl ? {
       'List-Unsubscribe': `<${unsubscribeUrl}>`,
@@ -673,35 +678,48 @@ function activityFrame({ subject, lead, url, label, eyebrow = '', unsubscribeUrl
 // request and its project with the body's first sentence ("Dark mode · Plant
 // Pal: Ready to try"), over the push's body. A sender that did not hand the
 // words over gets the same shape from the project's name.
-function buildReady(payload) {
-  const app = String(payload.appName || 'Your project').slice(0, 80);
+function buildReady(payload, t) {
+  const app = String(payload.appName || t('email:buildReady.unnamedProject')).slice(0, 80);
   const lead = typeof payload.lead === 'string' && payload.lead.trim()
     ? payload.lead.trim().slice(0, 300)
-    : (payload.notWorking
-      ? 'Built, but something isn\'t working yet. Try it to see.'
-      : 'Ready to try. Try it, and approve it if you\'re happy.');
+    : (payload.notWorking ? t('email:buildReady.lead.notWorking') : t('email:buildReady.lead.ready'));
   const subject = typeof payload.subject === 'string' && payload.subject.trim()
     ? payload.subject.trim().slice(0, 200)
-    : `${app}: ${payload.notWorking ? 'Built, but something isn\'t working yet' : 'Ready to try'}`;
-  return activityFrame({
+    : (payload.notWorking ? t('email:buildReady.subject.notWorking', { app }) : t('email:buildReady.subject.ready', { app }));
+  const url = payload.url || PRODUCTION_ORIGIN;
+  return activityFrame(t, {
     subject,
     lead,
-    url: payload.url || PRODUCTION_ORIGIN,
-    label: 'Open it',
+    url,
+    label: t('email:buildReady.button'),
+    textLink: t('email:buildReady.text.open', { url }),
     unsubscribeUrl: payload.unsubscribeUrl || null,
     eyebrow: app,
   });
 }
 
 // The people an invite link brought: "@sam joined Run Club through your invite."
-function inviteActivity(payload) {
-  const app = String(payload.appName || 'your project').slice(0, 80);
-  const line = String(payload.line || `Someone joined ${app} through your invite.`).slice(0, 200);
-  return activityFrame({
+const NOTICE_LINES = {
+  first_message: 'email:inviteActivity.firstMessage',
+  member_joined: 'email:inviteActivity.joined',
+  member_joined_someone: 'email:inviteActivity.joinedSomeone',
+};
+
+function inviteActivity(payload, t) {
+  const app = payload.appName ? String(payload.appName).slice(0, 80) : null;
+  // The notice it stands for names its own message; `line` is its English.
+  const noticeId = NOTICE_LINES[payload.notice?.id] || null;
+  const fallback = app ? t('email:inviteActivity.joinedSomeone', { app }) : t('email:inviteActivity.joinedUnnamed');
+  const line = String(
+    (noticeId ? t(noticeId, payload.notice.values) : '') || payload.line || fallback,
+  ).slice(0, 200);
+  const url = payload.url || PRODUCTION_ORIGIN;
+  return activityFrame(t, {
     subject: line.replace(/\.$/, ''),
     lead: line,
-    url: payload.url || PRODUCTION_ORIGIN,
-    label: `Open ${app}`,
+    url,
+    label: app ? t('email:inviteActivity.button', { app }) : t('email:inviteActivity.buttonUnnamed'),
+    textLink: app ? t('email:inviteActivity.text.open', { app, url }) : t('email:inviteActivity.text.openUnnamed', { url }),
     unsubscribeUrl: payload.unsubscribeUrl || null,
     // The eyebrow is the project's name only when the sender gave one; the
     // lowercase fallback reads fine in a sentence, not as a label.
@@ -711,13 +729,15 @@ function inviteActivity(payload) {
 
 // #4396: a project the reader joined while it was made is open
 // (services/project-opened.js), for somebody with no phone to ring.
-function projectOpened(payload) {
-  const app = String(payload.appName || 'A project you joined').slice(0, 80);
-  return activityFrame({
-    subject: `${app} is open`,
-    lead: `${app} is ready to use. Take a look.`,
-    url: payload.url || PRODUCTION_ORIGIN,
-    label: 'Open it',
+function projectOpened(payload, t) {
+  const app = payload.appName ? String(payload.appName).slice(0, 80) : null;
+  const url = payload.url || PRODUCTION_ORIGIN;
+  return activityFrame(t, {
+    subject: app ? t('email:projectOpened.subject', { app }) : t('email:projectOpened.subjectUnnamed'),
+    lead: app ? t('email:projectOpened.lead', { app }) : t('email:projectOpened.leadUnnamed'),
+    url,
+    label: t('email:projectOpened.button'),
+    textLink: t('email:projectOpened.text.open', { url }),
     unsubscribeUrl: payload.unsubscribeUrl || null,
     eyebrow: payload.appName ? String(payload.appName).slice(0, 80) : '',
   });
@@ -734,22 +754,24 @@ function projectOpened(payload) {
  */
 const TEMPLATES = {
   otp,
-  account_email: ({ code }) => ({
-    subject: 'Verify your account email',
-    text: `Your account email verification code is ${code}.\n\nEnter it in Settings → Email & recovery to link this address to your account. It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.`,
-    html: p('Enter this code in Settings → Email & recovery to link this address to your account:')
+  account_email: ({ code }, t) => ({
+    subject: t('email:accountEmail.subject'),
+    text: `${t('email:accountEmail.text.code', { code })}\n\n${t('email:accountEmail.text.instructions')}`,
+    // Its "&" has always gone out bare, and English stays byte for byte. Nothing
+    // here can become markup: only "&amp;" is undone, after every "<" is gone.
+    html: p(esc(t('email:accountEmail.html.lead')).replace(/&amp;/g, '&'))
       + codeBlock(code)
-      + p('It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.'),
+      + p(esc(t('email:accountEmail.html.expiry'))),
   }),
   // #5281: confirms a username change on an account that has no password.
   // It names what the code does, so a code nobody asked for reads as a
   // warning rather than as a sign-in prompt.
-  username_change: ({ code }) => ({
-    subject: 'Confirm your new username',
-    text: `Your code to confirm a username change is ${code}.\n\nEnter it in Settings, Account, Username. It expires in 10 minutes. Never share this code. If you did not ask to change your username, ignore this email and nothing will change.`,
-    html: p('Enter this code in Settings, Account, Username to confirm your new username:')
+  username_change: ({ code }, t) => ({
+    subject: t('email:usernameChange.subject'),
+    text: `${t('email:usernameChange.text.code', { code })}\n\n${t('email:usernameChange.text.instructions')}`,
+    html: p(esc(t('email:usernameChange.html.lead')))
       + codeBlock(code)
-      + p('It expires in 10 minutes. Never share this code. If you did not ask to change your username, ignore this email and nothing will change.'),
+      + p(esc(t('email:usernameChange.html.expiry'))),
   }),
   waitlist_joined: waitlistJoined,
   waitlist_code: waitlistCode,
@@ -763,9 +785,96 @@ const TEMPLATES = {
   project_opened: projectOpened,
 };
 
+// What only an admin or an operator receives is written above in English and
+// never asks for a translation.
+const ENGLISH_ONLY_KINDS = new Set(['admin_test', 'content_report']);
+
+// A line break, a control character or a separator some client treats as one.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\x00-\x1f\x7f\u0085\u2028\u2029]/g;
+const controls = (text) => (text.match(CONTROL) || []).join('');
+
+/**
+ * What a template asks with: `t(id, values)`, English unless `translate` has a
+ * usable answer. An answer that is not text, is empty, or brings line breaks
+ * the English does not have (a translation may not add lines to a mail, or
+ * headers to its subject) costs that one message its translation. `missing`
+ * records an id the English does not have.
+ */
+function wordsWith(translate) {
+  const english = englishFrom(englishTexts(undefined, 'email'));
+  const words = {
+    missing: false,
+    t(id, values) {
+      const inEnglish = english(id, values);
+      if (!inEnglish) words.missing = true;
+      if (!translate) return inEnglish;
+      const answer = translate(id, values);
+      return typeof answer === 'string' && answer.trim() && controls(answer) === controls(inEnglish)
+        ? answer
+        : inEnglish;
+    },
+  };
+  return words;
+}
+
+// The values a mail exists to carry. Its translation must carry every one the
+// English does, or the English goes instead.
+function keepsWhatItCarries(payload, inEnglish, translated) {
+  const carried = [payload.code, payload.url, payload.confirmUrl, payload.statusUrl, payload.unsubscribeUrl, ...Object.values(payload.mobile || {})];
+  return carried.every((value) => {
+    if (value == null || value === '') return true;
+    const plain = String(value);
+    const marked = esc(plain);
+    return (!inEnglish.text.includes(plain) || translated.text.includes(plain))
+      && (!inEnglish.html.includes(marked) || translated.html.includes(marked));
+  });
+}
+
+// With no English at all (a build that lost its catalog), the bare minimum:
+// a login mail must not go out blank. Never in a working build.
+function lastResort(payload, built) {
+  const lines = [payload.code, payload.url, payload.confirmUrl, payload.statusUrl].filter(Boolean).map(String);
+  return {
+    subject: BRAND_NAME,
+    text: [BRAND_NAME, ...lines].join('\n\n'),
+    html: [...(payload.code ? [codeBlock(payload.code)] : []),
+      ...lines.filter((line) => /^https?:/.test(line)).map((line) => p(link(line)))].join(''),
+    why: '',
+    headers: built.headers,
+  };
+}
+
+function render(kind, template, payload, translate) {
+  const words = wordsWith(translate);
+  const built = template(payload, words.t);
+  const message = built.why === undefined && !ENGLISH_ONLY_KINDS.has(kind)
+    ? { ...built, why: words.t('email:frame.why') }
+    : built;
+  return { message, missing: words.missing };
+}
+
+/** A kind's template, worded: its translation where that is usable, its English otherwise. */
+function wordedTemplate(kind, template) {
+  return (payload) => {
+    const { message: inEnglish, missing } = render(kind, template, payload, null);
+    if (missing) return lastResort(payload, inEnglish);
+    if (!payload.translate || ENGLISH_ONLY_KINDS.has(kind)) return inEnglish;
+    try {
+      const { message: translated } = render(kind, template, payload, payload.translate);
+      if (keepsWhatItCarries(payload, inEnglish, translated)) {
+        return { ...translated, subject: translated.subject.replace(CONTROL, ' ').replace(/ {2,}/g, ' ').trim() };
+      }
+    } catch (err) {
+      log.warn('platform-mail', 'A mail\'s translation could not be used', { kind, message: err.message });
+    }
+    return inEnglish;
+  };
+}
+
 function buildMessage(kind, payload = {}) {
   const template = Object.prototype.hasOwnProperty.call(TEMPLATES, kind)
-    ? TEMPLATES[kind]
+    ? wordedTemplate(kind, TEMPLATES[kind])
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
   const { why, preheader, headers, ...message } = template(tracking.attributedPayload(kind, payload));
@@ -782,4 +891,4 @@ function buildMessage(kind, payload = {}) {
 // that want to assert the set didn't quietly shrink.
 const KINDS = Object.keys(TEMPLATES);
 
-module.exports = { buildMessage, KINDS };
+module.exports = { buildMessage, KINDS, ENGLISH_ONLY_KINDS };

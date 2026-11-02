@@ -809,7 +809,7 @@ function profileRoutes(config) {
       express.json({ limit: '4kb' }), async (req, res) => {
         try {
           const result = action === 'request'
-            ? await accountEmail.requestCode(pool, config, req.user.id, req.body?.email, req.body?.currentPassword)
+            ? await accountEmail.requestCode(pool, config, req.user.id, req.body?.email, req.body?.currentPassword, { locale: req.user.locale })
             : await accountEmail.verifyCode(pool, req.user.id, req.body?.code);
           return res.json(result);
         } catch (error) {
@@ -893,7 +893,7 @@ function profileRoutes(config) {
     sameOriginBrowserOnly,
     async (req, res) => {
       try {
-        return res.json(await accountEmail.requestUsernameCode(pool, config, req.user.id));
+        return res.json(await accountEmail.requestUsernameCode(pool, config, req.user.id, { locale: req.user.locale }));
       } catch (error) {
         if (error instanceof accountEmail.AccountEmailError) {
           return res.status(error.status).json({ error: error.message });

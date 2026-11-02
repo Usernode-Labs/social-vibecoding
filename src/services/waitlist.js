@@ -576,7 +576,7 @@ async function releaseRowsForGrant(pool, userId) {
   // Only an address the account proved may claim an unlinked row by email:
   // an unconfirmed one could name somebody else's spot.
   const { rows: users } = await pool.query(
-    'SELECT email, email_confirmed FROM users WHERE id = $1', [userId]);
+    'SELECT email, email_confirmed, locale FROM users WHERE id = $1', [userId]);
   const accountEmail = users[0] && users[0].email_confirmed === true
     ? normalizeEmail(users[0].email) : null;
   const { rows } = await pool.query(
@@ -598,6 +598,7 @@ async function releaseRowsForGrant(pool, userId) {
   return {
     id: listed ? listed.id : null,
     email: accountEmail || (listed && listed.email) || null,
+    ...(users[0] && users[0].locale ? { recipient_locale: users[0].locale } : {}),
     linked_user_id: userId,
     more_token: null,
   };
@@ -658,6 +659,8 @@ async function releaseWaitlistSignup(pool, signupId) {
       WHERE w.id = $1
         AND (w.email IS NOT NULL OR w.released_at IS NOT NULL OR $2::boolean)
       RETURNING w.id, w.email, w.released_at, w.linked_user_id, w.more_token,
+                (SELECT u.locale FROM users u WHERE u.id = w.linked_user_id OR u.email = w.email
+                  ORDER BY (u.id = w.linked_user_id) DESC NULLS LAST LIMIT 1) AS recipient_locale,
                 (SELECT prev.released_at FROM prev) IS NULL AS newly_released`,
     [signupId, phoneReleaseReady()]
   );

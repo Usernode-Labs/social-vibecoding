@@ -1536,6 +1536,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (inviteEmails.length) {
         const byEmail = await emailInvites.inviteByEmail(pool, config, {
           app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+          locale: req.user.locale || mailLanguage.requestLanguage(req),
         });
         invited += byEmail.invited + byEmail.mailed;
       }

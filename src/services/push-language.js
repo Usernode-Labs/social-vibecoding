@@ -21,9 +21,9 @@ const { languageFor } = require('./admin-text-translations');
 const { NAMESPACE, englishTexts, translatorFrom } = require('./push-text');
 
 /** The translations usable for the running English (key -> text), from `source` and the cache's `cached`. */
-function usableMessages(language, source, cached) {
-  const english = englishTexts(source);
-  const committed = source?.files?.[`${language}/${NAMESPACE}.json`] || {};
+function usableMessages(language, source, cached, namespace = NAMESPACE) {
+  const english = englishTexts(source, namespace);
+  const committed = source?.files?.[`${language}/${namespace}.json`] || {};
   const { required, groups } = packs.requiredMessages(english, language);
   const counted = new Set([...groups.values()].flat());
   const messages = {};
@@ -45,11 +45,12 @@ function usableMessages(language, source, cached) {
   return messages;
 }
 
-// language -> { source, at, cached, messages } and, during a read, `reading`.
+// namespace:language -> { source, at, cached, messages } and, during a read, `reading`.
 const memo = new Map();
+const logTag = (namespace) => (namespace === NAMESPACE ? 'mobile-push' : `${namespace}-language`);
 
-function messagesFor(pool, language, source, now) {
-  const held = memo.get(language);
+function messagesFor(pool, language, source, now, namespace) {
+  const held = memo.get(`${namespace}:${language}`);
   if (held?.reading) return held.reading;
   if (held?.messages && held.source === source && now - held.at < languageCache.VERSION_TTL_MS) return held.messages;
   const reading = (async () => {
@@ -58,20 +59,20 @@ function messagesFor(pool, language, source, now) {
     // read before asking again, not one question per push.
     let cached = held?.cached || {};
     try {
-      cached = await languageCache.cachedNamespace(pool, language, NAMESPACE);
+      cached = await languageCache.cachedNamespace(pool, language, namespace);
     } catch (err) {
-      log.warn('mobile-push', 'push translations could not be read', { language, code: typeof err?.code === 'string' ? err.code : 'unknown' });
+      log.warn(logTag(namespace), `${namespace} translations could not be read`, { language, code: typeof err?.code === 'string' ? err.code : 'unknown' });
     }
     let messages = {};
     try {
-      messages = usableMessages(language, source, cached);
+      messages = usableMessages(language, source, cached, namespace);
     } catch (err) {
-      log.warn('mobile-push', 'push translations could not be used', { language, message: err.message });
+      log.warn(logTag(namespace), `${namespace} translations could not be used`, { language, message: err.message });
     }
-    memo.set(language, { source, at: now, cached, messages });
+    memo.set(`${namespace}:${language}`, { source, at: now, cached, messages });
     return messages;
   })();
-  memo.set(language, { ...held, reading });
+  memo.set(`${namespace}:${language}`, { ...held, reading });
   return reading;
 }
 
@@ -80,16 +81,16 @@ function messagesFor(pool, language, source, now) {
  * default English is right: no language, English, one Homeroom does not have,
  * or anything going wrong. Never rejects.
  */
-async function pushTranslator(pool, locale, { source, now = Date.now() } = {}) {
+async function translator(pool, locale, { namespace = NAMESPACE, source, now = Date.now() } = {}) {
   if (!locale) return null;
   try {
     const running = source === undefined ? languageCache.readSource() : source;
     const language = languageFor(locale, undefined, { source: running });
     if (!language) return null;
-    const messages = await messagesFor(pool, language, running, now);
-    return translatorFrom(language, messages, englishTexts(running));
+    const messages = await messagesFor(pool, language, running, now, namespace);
+    return translatorFrom(language, messages, englishTexts(running, namespace));
   } catch (err) {
-    log.warn('mobile-push', 'push language lookup failed', { message: err.message });
+    log.warn(logTag(namespace), `${namespace} language lookup failed`, { message: err.message });
     return null;
   }
 }
@@ -99,4 +100,4 @@ function reset() {
   memo.clear();
 }
 
-module.exports = { pushTranslator, reset, usableMessages };
+module.exports = { pushTranslator: translator, translator, reset, usableMessages };

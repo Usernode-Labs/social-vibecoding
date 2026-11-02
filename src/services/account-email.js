@@ -34,7 +34,8 @@ async function lockUser(client, userId) {
   return rows[0];
 }
 
-async function requestCode(pool, config, userId, rawEmail, currentPassword) {
+// `locale` (both code mails): the signed-in account's users.locale.
+async function requestCode(pool, config, userId, rawEmail, currentPassword, { locale = null } = {}) {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new AccountEmailError(400, 'Enter a valid email address.');
   const result = await transaction(pool, async (client) => {
@@ -68,7 +69,7 @@ async function requestCode(pool, config, userId, rawEmail, currentPassword) {
     );
     return { code };
   });
-  await mail.send(config, { kind: 'account_email', to: email, code: result.code });
+  await mail.send(config, { kind: 'account_email', to: email, code: result.code, ...(locale ? { locale } : {}) });
   return { email };
 }
 
@@ -138,7 +139,7 @@ function usernameCodeRefusal(user) {
   return null;
 }
 
-async function requestUsernameCode(pool, config, userId) {
+async function requestUsernameCode(pool, config, userId, { locale = null } = {}) {
   const result = await transaction(pool, async (client) => {
     const user = await lockUser(client, userId);
     const refusal = usernameCodeRefusal(user);
@@ -162,7 +163,7 @@ async function requestUsernameCode(pool, config, userId) {
     );
     return { code, email: user.email };
   });
-  await mail.send(config, { kind: 'username_change', to: result.email, code: result.code });
+  await mail.send(config, { kind: 'username_change', to: result.email, code: result.code, ...(locale ? { locale } : {}) });
   return { email: result.email };
 }
 

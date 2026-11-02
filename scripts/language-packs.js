@@ -46,10 +46,11 @@ const NAMESPACE = /^[a-z][a-z-]*$/;
 const KEY = /^[A-Za-z][A-Za-z0-9_.-]*$/;
 const PARAMETER = /^[a-z][A-Za-z0-9]*$/;
 const PLURAL_SUFFIX = /_(zero|one|two|few|many|other)$/;
-// Namespaces only the server reads (push: the words of a phone push). They are
+// Namespaces only the server reads (push: the words of a phone push; email: the
+// words of an email). They are
 // translated with the rest and are in .source.json, but no screen shows them,
 // so they stay out of the shell's bundle, its packs and the languages' manifest.
-const SERVER_NAMESPACES = new Set(['push']);
+const SERVER_NAMESPACES = new Set(['push', 'email']);
 const isServerNamespace = (namespace) => SERVER_NAMESPACES.has(namespace);
 
 const parameters = (text) => [...text.matchAll(/{{\s*([^}]*?)\s*}}/g)].map((match) => match[1]).sort();

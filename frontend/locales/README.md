@@ -13,7 +13,7 @@ namespace per surface (`core` and `shell` for what every screen has, then
 language loads only what the screen on show needs.
 
 Outside all of this: user content, an embedded app's own interface, the admin
-console, sentences the server composes (API errors and email text), and
+console, sentences the server composes (API errors), and
 the few standalone pages that load no shell bundle (the CLI and connector
 consent pages among them). Dates and numbers are still formatted as they
 were; only the words around them are catalog entries. Apps still receive the
@@ -240,7 +240,7 @@ second language.
 ## A phone push
 
 `en/push.json` is the fixed wording of the pushes people receive, and the one
-namespace only the server reads (`SERVER_NAMESPACES` in
+namespace only the server reads, with `en/email.json` below (`SERVER_NAMESPACES` in
 `scripts/language-packs.js`). The translation step fills it like any other,
 but it has no pack, is not in the shell's bundle, and does not count towards a
 language's coverage, so its being behind cannot take a language off the screens. `src/services/mobile-push-policy.js` asks for it by id, and
@@ -252,6 +252,33 @@ language, and a problem costs the push its translation, never its delivery.
 `tests/mobile-push-language.test.js` checks these ids against the catalog. Names,
 titles, quoted words and the Homeroom bot's own words go in as they are, and what
 only a full admin receives stays in English in the policy.
+
+## An email
+
+`en/email.json` is the fixed wording of the mail people receive, read the same
+way by the same lookup (`src/services/push-language.js`, asked for this
+namespace by `src/services/mail/language.js`), and a server namespace like
+`push`. `src/services/mail/templates.js` asks for it by id, and
+`tests/mail-language.test.js` checks those ids against the catalog.
+
+- **Which language.** The recipient's `users.locale` where the recipient is an
+  account. An address with no account uses what the flow knows: the browser
+  request that asked for the mail (`requestLanguage`), or an inviter's language
+  for an invite; a released waitlist row with no account stays English. A
+  language is never guessed from an address.
+- **A translation is untrusted text.** It reaches html through `esc()`, the
+  whole message with its parameters. Markup stays in the template: a link in
+  a sentence is a parameter put in place by `withLink`, and anything else is
+  numbered tags read by `rich`. A subject cannot carry a line break, and a
+  translation that adds lines the English lacks is not used.
+- **A problem costs a mail its translation, never its code or its link.** A read
+  is waited for at most 250ms, and a translation that loses a value the English
+  carries is thrown away whole. A build with no English at all still sends the
+  code and the links, bare.
+- **What stays in English in code:** what only an admin or an operator receives
+  (`ENGLISH_ONLY_KINDS`: the test email and report notices), and a
+  `build_ready`'s words when they are handed over from the bot's notification
+  copy, which has no catalog of its own and is English on the push as well.
 
 ## How a language reaches the screen
 
