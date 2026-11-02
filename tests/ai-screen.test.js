@@ -278,7 +278,7 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
     row('building', { by: 'someone' }), row('vote'), row('checking'), row('decision'), row('queued'), row('build_queued'),
     row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('on_hold'), row('not_picked_up'), row('mystery'),
   ].map((r) => words(shortWords(r))), [
-    'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Checks', 'Votes', 'A builder', 'Its turn',
+    'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Checks', 'Votes', 'A builder', 'In line',
     'A slot', 'Tomorrow', 'Monday', 'Nobody yet', 'Waiting',
   ]);
   // Every id is one whole literal, so the inventory can check it exists.

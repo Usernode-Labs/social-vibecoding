@@ -5140,8 +5140,8 @@
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: it waits for a free builder in Homeroom bot's queue."
   },
   "ai.short.turn": {
-    "text": "Its turn",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting its turn among the project's builds."
+    "text": "In line",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting in line behind the project's other builds (not its turn yet)."
   },
   "ai.short.slot": {
     "text": "A slot",
