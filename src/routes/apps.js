@@ -4321,9 +4321,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
       // AN INVITE LINK IS OUT (#4045, 8 Oct 2026): the viewer has a live one
-      // for a project that is still just theirs, so the hub draws their face
-      // with open seats beside it instead of "Just you". Asked only then;
-      // see hasLiveLink for what the records can and cannot say.
+      // for a project that is still just theirs, and it went out (copied,
+      // shared or used; audit D03), so the hub draws their face with open
+      // seats beside it instead of "Just you". Asked only then; see
+      // hasLiveLink.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
       // WHAT INVITE IS OUT, for Share it's line (15 Oct 2026): "Invite link
