@@ -301,7 +301,9 @@ test('#3984: castVote and castIssueVote set the mark once the vote is committed 
   assert.match(vote, /const key = `\$\{sessionId\}`;/, 'one vote in flight per change, whichever side');
   assert.ok(vote.indexOf("_publishVoteSending(`castVote:${sessionId}`, vote)") > vote.indexOf('if (reason === false)'),
     'set after the line is in hand: a cancelled No never reads as sending');
-  assert.match(vote, /finally \{\s*AppView\._voteInFlight\.delete\(key\);\s*AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, null\);/);
+  // A vote kept for the connection (#6127) keeps its mark until it is
+  // answered (AppView._actionSent); every other ending clears it here.
+  assert.match(vote, /finally \{\s*AppView\._voteInFlight\.delete\(key\);[\s\S]*?if \(!queued\) AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, null\);/);
   const issue = body('castIssueVote');
   assert.match(issue, /_publishVoteSending\(`castIssueVote:\$\{issueId\}`, vote === 'down' \? 'no' : 'yes'\);\n    try \{/);
   assert.match(issue, /finally \{\s*AppView\._voteInFlight\.delete\(key\);\s*AppView\._publishVoteSending\(`castIssueVote:\$\{issueId\}`, null\);/);

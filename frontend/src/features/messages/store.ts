@@ -2454,6 +2454,7 @@ function reactionAnswered(detail: ActionOutcome | null | undefined): void {
     mapRows((item) => item.id === messageId ? { ...item, reactions } : item);
     return;
   }
+  if (detail.outcome !== 'refused') return;
   const open = state.route.conversationId;
   if (open) void loadThread(open, true);
 }
