@@ -18,6 +18,7 @@
 // heights other than the Duo's sideways one are typical, not measured.
 
 const IOS_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 27_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148';
+const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
 const IPAD_UA = 'Mozilla/5.0 (iPad; CPU OS 27_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148';
 
 export const PROFILES = [
@@ -48,6 +49,18 @@ export const PROFILES = [
       { name: 'home indicator', x: 0, y: 372, w: 852, h: 21, severity: 'warn' },
     ],
     keyboard: 209,
+  },
+  {
+    // A small Android phone in Chrome: 360x560 is what the page gets under
+    // the status bar, the address bar and the navigation bar, all of which
+    // Chrome draws outside it. Short enough at rest that the keys leave
+    // about 300px (overnight audit K01, 2 November 2026).
+    id: 'android-chrome',
+    label: 'Android Chrome, small phone',
+    width: 360, height: 560, scale: 3, touch: true, userAgent: ANDROID_UA, native: false,
+    insets: { top: 0, right: 0, bottom: 0, left: 0 },
+    system: [],
+    keyboard: 260,
   },
   {
     id: 'duo-folded',
