@@ -308,7 +308,7 @@ test('#3489: Your work stays on the hub with nothing in progress, and says so', 
     data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
   }));
   const empty = card({ viewer: true, count: 0, shown: 3, rows: [] });
-  assert.match(empty, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop"[^>]*>/,
+  assert.match(empty, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop">/,
     'a door to the Workshop, where your work is listed in full');
   assert.match(empty, /<div class="[^"]*">Your work<\/div><div class="[^"]*"><span data-ws-mine-empty="">No work in progress\.<\/span><\/div>/);
   assert.doesNotMatch(empty, /dev-ws-foryou-count|in progress<\/span>/, 'no count of zero');

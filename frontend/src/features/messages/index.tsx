@@ -285,7 +285,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
             "2 new" in grey (#18: grey is new to read, the accent is waiting
             on you) — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name" title={rowName || undefined}>{rowName}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
+          <span className="messages-row-name" title={rowName || undefined}>{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
@@ -1432,7 +1432,7 @@ function ThreadHeader() {
         className="min-w-0 text-start flex-1"
         onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
-        <div className="messages-thread-name" title={threadName || undefined}>{threadName}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
+        <div className="messages-thread-name" title={threadName || undefined}>{active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
         {/* One request, one story: what the bot is doing is the strip under
             this header (./bot-strip.tsx); the line under its name says what
             it is for. */}
@@ -2905,8 +2905,8 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
         {inMain ? (
           // 1 Nov 2026: the thread alone in Main Chat's place, under its own
           // name and the line that says it is theirs alone.
-          <div className="min-w-0 flex-1">
-            <div className="messages-thread-name min-w-0 truncate" data-reply-title="" title={mainTitle || undefined}>{mainTitle}</div>
+          <div className="min-w-0 flex-1" title={mainTitle || undefined}>
+            <div className="messages-thread-name min-w-0 truncate" data-reply-title="">{mainTitle}</div>
             <div className="messages-thread-sub flex min-w-0 items-center gap-1" data-private-thread-sub="">
               <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
               <span className="truncate">{t('messages:ai.thread.sub')}</span>
@@ -2916,7 +2916,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
           <div className="min-w-0 flex-1">
             <div className="messages-thread-name flex min-w-0 items-center gap-2">
               {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
-              <span className="min-w-0 truncate" title={replyTitle}>{replyTitle}</span>
+              <span className="min-w-0 truncate" title={replyTitle}>{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
             </div>
             {where ? <div className="messages-thread-sub">{where}</div> : null}
           </div>

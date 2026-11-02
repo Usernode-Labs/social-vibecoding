@@ -2436,7 +2436,7 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   // ON THE HUB, one row of For you: the first of it and how many, a door to
   // the Workshop page above. No rows of its own to unfold.
   const hub = workshopHtml(AppView, 'status');
-  assert.match(hub, /<button type="button" class="[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop"[^>]*>/);
+  assert.match(hub, /<button type="button" class="[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop">/);
   assert.match(hub, /<span data-ws-mine-first="mine:my-session:51" data-ws-mine-session="">Bottom tabs<\/span>/);
   assert.match(hub, /<span class="dev-ws-foryou-count">2 in progress<\/span>/);
   assert.equal((hub.match(/data-ws-row="mine:/g) || []).length, 0, 'the rows are the Workshop\'s');
@@ -3205,7 +3205,7 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // On the hub, For you's Your work row names it and opens the Workshop
   // above; nothing on the hub links to the session.
   const hubHtml = workshopHtml(AppView, 'status');
-  assert.match(hubHtml, /data-ws-mine-card="" data-ws-mine-open="workshop"[^>]*>[\s\S]*?<span data-ws-mine-first="mine:my-session:51" data-ws-mine-session="">Bottom tabs<\/span>/);
+  assert.match(hubHtml, /data-ws-mine-card="" data-ws-mine-open="workshop">[\s\S]*?<span data-ws-mine-first="mine:my-session:51" data-ws-mine-session="">Bottom tabs<\/span>/);
   assert.ok(!hubHtml.includes('/dev/sessions/51'), 'the hub links the session from nowhere');
   assert.ok(!hubHtml.includes('dev-ws-sheet-actions'), 'and unfolds no card to carry a link');
 

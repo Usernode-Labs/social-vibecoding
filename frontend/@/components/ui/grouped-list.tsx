@@ -160,10 +160,10 @@ export interface ListRowProps
    * thing keeping the app detail page's rows hand-rolled (#2446). Rendered as
    * the attribute, so `undefined` writes nothing at all.
    *
-   * #6118: a plain-string title defaults to the row's own hover hint, so a row
-   * whose title the layout ellipsises explains itself without every caller
-   * repeating the string. An explicit `tooltip` still wins, and a JSX title
-   * writes nothing — a caller with a string behind JSX passes `tooltip`.
+   * #6118: a caller whose title can be ellipsised passes the same string here,
+   * as `bot-slots.tsx` and `thread-items.tsx` do. It is opt-in rather than
+   * implied by a string title: a fixed label ("Your work") truncates nothing,
+   * and a hint on it is noise.
    */
   tooltip?: string;
   /** The leading rounded-square glyph tile. */
@@ -223,11 +223,8 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
         rowSeparator({ inset: depth }),
         className,
       )}
+      title={tooltip}
       {...props}
-      // After the spread, so a row's own `data-*` attributes stay adjacent to
-      // its class string in the markup (several declared checks select on
-      // that chain) and a stray `title` can never shadow the row's hint.
-      title={tooltip ?? (typeof title === 'string' ? title : undefined)}
     >
       {leading}
       <div className={cn('min-w-0 flex-1', contentClassName)}>

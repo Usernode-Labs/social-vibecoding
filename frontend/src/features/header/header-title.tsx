@@ -186,6 +186,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
       ref={titleRef}
       id="header-title"
       className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-start"}
+      /* #6118: a community's name the bar ellipsises is readable on hover.
+         On the heading rather than the name span so the switcher's own
+         markup stays as the declared checks select it; never on the
+         logotype, which already draws a word in the space. */
+      title={communityPage && !selfHosted ? (name || text) || undefined : undefined}
     >
       {drawerOn ? <DrawerTitles /> : (
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
@@ -240,7 +245,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                   the name, so a project that happens to be called Homeroom
                   keeps its word. The button's aria-label already says the
                   name, so the drawing is aria-hidden, as on Home. */}
-              <span id="header-title-name" className="min-w-0 truncate" title={selfHosted ? undefined : (name || text) || undefined}>
+              <span id="header-title-name" className="min-w-0 truncate">
                 {selfHosted
                   ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
                   : name || text}
@@ -257,13 +262,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
           </>
         ) : (
           <span className="min-w-0 flex items-baseline gap-1.5">
-            <span
-              id="header-title-name"
-              className="min-w-0 truncate"
-              title={communityName
-                ? (selfHosted ? undefined : (name || text) || undefined)
-                : (showsWordmark ? undefined : text || undefined)}
-            >
+            <span id="header-title-name" className="min-w-0 truncate">
               {/* `aria-hidden` on the mark: the h1 takes its accessible name
                   from its contents, and the drawing IS the word "Homeroom" — a
                   title element or an sr-only span here would have it read
