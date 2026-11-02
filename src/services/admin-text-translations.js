@@ -226,32 +226,38 @@ async function translated(pool, message, language) {
   }
 }
 
-/** Every string in `value`, once. */
-function collectStrings(value, out = new Set()) {
+// `only` limits both walks to what sits under those keys, wherever they are:
+// a leaderboard's rows are people, and someone may have picked a name that is
+// also a season's.
+function collectStrings(value, only, out = new Set(), inside = !only) {
   if (typeof value === 'string') {
-    if (out.size < MAX_STRINGS_READ && hasWords(value)) out.add(value);
+    if (inside && out.size < MAX_STRINGS_READ && hasWords(value)) out.add(value);
   } else if (Array.isArray(value)) {
-    for (const item of value) collectStrings(item, out);
+    for (const item of value) collectStrings(item, only, out, inside);
   } else if (value && typeof value === 'object') {
-    for (const item of Object.values(value)) collectStrings(item, out);
+    for (const [key, item] of Object.entries(value)) {
+      collectStrings(item, only, out, inside || only.includes(key));
+    }
   }
   return out;
 }
 
-function swapStrings(value, words) {
-  if (typeof value === 'string') return words.has(value) ? words.get(value) : value;
-  if (Array.isArray(value)) return value.map((item) => swapStrings(item, words));
+function swapStrings(value, words, only, inside = !only) {
+  if (typeof value === 'string') return inside && words.has(value) ? words.get(value) : value;
+  if (Array.isArray(value)) return value.map((item) => swapStrings(item, words, only, inside));
   if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, swapStrings(item, words)]));
+    return Object.fromEntries(Object.entries(value).map(
+      ([key, item]) => [key, swapStrings(item, words, only, inside || only.includes(key))],
+    ));
   }
   return value;
 }
 
 /** A copy of `payload` with each string that has a translation swapped. Never throws. */
-async function translatePayload(pool, payload, language) {
+async function translatePayload(pool, payload, language, { only } = {}) {
   if (!language) return payload;
   try {
-    const byKey = new Map([...collectStrings(payload)].map((english) => [textKey(english), english]));
+    const byKey = new Map([...collectStrings(payload, only)].map((english) => [textKey(english), english]));
     if (!byKey.size) return payload;
     const { rows } = await pool.query(
       `SELECT source_key, source_digest, text
@@ -264,7 +270,7 @@ async function translatePayload(pool, payload, language) {
       const english = byKey.get(row.source_key);
       if (english && isCurrent(row, english) && hasText(row)) words.set(english, row.text);
     }
-    return words.size ? swapStrings(payload, words) : payload;
+    return words.size ? swapStrings(payload, words, only) : payload;
   } catch (err) {
     log.warn('admin-text-translations', 'Read failed, showing English', { message: err.message });
     return payload;
@@ -286,7 +292,7 @@ async function readerLanguage(pool, req, source) {
  * An error answer goes out as it is, and anything going wrong here sends the
  * English the handler wrote.
  */
-function translatedReads(pool, { source } = {}) {
+function translatedReads(pool, { source, only } = {}) {
   return (req, res, next) => {
     res.vary('Accept-Language');
     const send = res.json.bind(res);
@@ -295,7 +301,7 @@ function translatedReads(pool, { source } = {}) {
       if (res.statusCode >= 400) return send(body);
       (async () => {
         const language = await readerLanguage(pool, req, source !== undefined ? source : languageCache.readSource());
-        return translatePayload(pool, body, language);
+        return translatePayload(pool, body, language, { only });
       })().then(send, (err) => {
         log.warn('admin-text-translations', 'Could not tell the reader\'s language', { message: err.message });
         send(body);

@@ -452,3 +452,42 @@ test('each challenge read and the home panels are wrapped; the admin\'s own read
   assert.ok(read('src/routes/home-panels.js').includes("router.get('/api/home-panels', translated,"));
   assert.doesNotMatch(read('src/routes/topochain/admin/challenges.js'), /translatedReads/);
 });
+
+// ── Event and season names on the leaderboard reads ──────────────────────
+
+test('`only` swaps what sits under the named keys and leaves the rest of the answer alone', async () => {
+  const pool = programmePool({ rows: [row(textKey('Week one'), 'id', 'Week one', 'Minggu pertama')] });
+  const body = {
+    data: {
+      event: { name: 'Week one', disclaimer: null, id: 3 },
+      event_name: 'Week one',
+      leaderboard: [{ username: 'Week one', rank: 1 }],
+    },
+  };
+  const out = await service.translatePayload(pool, body, 'id', { only: ['event', 'event_name'] });
+  assert.deepEqual(out.data.event, { name: 'Minggu pertama', disclaimer: null, id: 3 });
+  assert.equal(out.data.event_name, 'Minggu pertama');
+  assert.equal(out.data.leaderboard[0].username, 'Week one', 'a person who picked that name keeps it');
+});
+
+test('`only` reads nothing when the answer has none of those keys', async () => {
+  const pool = { query: async () => { throw new Error('must not read'); } };
+  const body = { data: { leaderboard: [{ username: 'Week one' }] } };
+  assert.equal(await service.translatePayload(pool, body, 'id', { only: ['event'] }), body);
+});
+
+test('the leaderboard, ranking and points reads are wrapped with `only`, so rows of people are never walked', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const mobile = read('src/routes/topochain/mobile.js');
+  assert.match(mobile, /translatedReads\(pool, \{ only: EVENT_NAME_KEYS \}\)/);
+  for (const route of ['/api/v4/mobile/leaderboard', '/api/v4/mobile/me/ranking', '/api/v4/mobile/event/points', '/challenges-api/leaderboard', '/challenges-api/me/ranking']) {
+    assert.ok(mobile.includes(`'${route}'`), route);
+  }
+  assert.match(mobile, /router\.use\(path, translatedNames\);/);
+  const pub = read('src/routes/topochain/public.js');
+  for (const route of ['/api/v4/leaderboard', '/api/v4/leaderboard/epoch-breakdown']) {
+    assert.ok(pub.includes(`router.get('${route}', translatedNames,`), route);
+  }
+});

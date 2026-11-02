@@ -262,6 +262,8 @@ function topochainPublicRoutes(config) {
   const pool = getPool(config);
   // What organisers wrote, in the reader's language (#4814).
   const translated = adminTextTranslations.translatedReads(pool);
+  // A leaderboard's rows are people, so only its event is touched.
+  const translatedNames = adminTextTranslations.translatedReads(pool, { only: ['event'] });
 
   // Every route in this group is optionally-authenticated (SPEC 900);
   // applied once here rather than per-route since it never itself
@@ -293,7 +295,7 @@ function topochainPublicRoutes(config) {
   router.get('/api/v4/public/__ping', (_req, res) => ok(res, {}));
 
   // ── GET /leaderboard (SPEC 902-965) ────────────────────────────────
-  router.get('/api/v4/leaderboard', async (req, res) => {
+  router.get('/api/v4/leaderboard', translatedNames, async (req, res) => {
     try {
       // SPEC 912: default per_page is 50 for this endpoint (not this
       // repo's shared 25 default — see the `defaultPerPage` doc comment
@@ -476,7 +478,7 @@ function topochainPublicRoutes(config) {
   });
 
   // ── GET /leaderboard/epoch-breakdown (SPEC 1009-1051, rebuilt on epoch_stats) ─
-  router.get('/api/v4/leaderboard/epoch-breakdown', async (req, res) => {
+  router.get('/api/v4/leaderboard/epoch-breakdown', translatedNames, async (req, res) => {
     try {
       const walletAddress = typeof req.query.wallet_address === 'string' ? req.query.wallet_address.trim() : '';
       if (!walletAddress) return fail(res, 400, 'wallet_address is required.');
