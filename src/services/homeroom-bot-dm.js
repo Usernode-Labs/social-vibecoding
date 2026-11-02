@@ -308,6 +308,27 @@ async function threadRootFor(pool, { conversationId, replyToId = null }) {
   }
 }
 
+/**
+ * Where news that quotes `replyToId` (requestStart's message) is said: in
+ * Main, `{ threadRootId: false }`, when that message sits under a request's
+ * card, else `{}` (sendDm's own choice, the thread it was written in). A
+ * card's thread opens the request's page, or a first version's hub, so news
+ * said there was never seen (the plan in B02, audit of 2 Nov 2026). A thread
+ * of the person's own (a draft, an idea) keeps it. Never throws.
+ */
+async function outsideCardThread(pool, replyToId) {
+  const id = conversations.strictId(replyToId);
+  if (!id) return {};
+  try {
+    const { rows: [quoted] = [] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [id]);
+    const root = Number(quoted?.thread_root_id) || null;
+    return root && await isRequestCard(pool, root) ? { threadRootId: false } : {};
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not tell where a request\'s start is (saying it in Main)', { replyToId: id, err: err.message });
+    return { threadRootId: false };
+  }
+}
+
 /** Whether a message is a request's activity card (homeroom-bot-activity.js). Never throws. */
 async function isRequestCard(pool, messageId) {
   try {
@@ -1976,6 +1997,7 @@ async function relayIssuePost({
     kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
   }) : null;
   if (offer) Object.assign(metadata, offer.metadata);
+  const started = shown ? null : await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
   const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -1986,8 +2008,8 @@ async function relayIssuePost({
     // B7: a ready card's Try it is its way to the change; it carries no card.
     objects: dm.card ? [] : cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
     // #3707: news about a request they started here points back at it.
-    replyToId: shown ? null : await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
-    ...(shown ? { threadRootId: shown.messageId } : {}),
+    replyToId: started,
+    ...(shown ? { threadRootId: shown.messageId } : await outsideCardThread(pool, started)),
     // 16 Oct 2026: said, and rings nothing (`quiet`, homeroom-bot.js
     // actOnVerdict): an older request's first read that is not ready to
     // try, and a request that names who builds it. Its card and the bot's
@@ -3482,10 +3504,12 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, 
         context, card, step: 'preview_failed', key, content: PREVIEW_RETRY_TEXT,
       });
     }
+    const started = await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber: context.issueNumber });
     return await sendDm(pool, {
       bot,
       userId: requester.userId,
-      replyToId: await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber: context.issueNumber }),
+      replyToId: started,
+      ...await outsideCardThread(pool, started),
       idempotencyKey: key,
       content: `${requestLine(context)}\n\n${PREVIEW_RETRY_TEXT}`,
       moment: null,
@@ -3560,11 +3584,12 @@ async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'chec
     };
     // One story: said in the request's thread (and the main chat), when it has one.
     const card = await cardShown(pool, requester.userId, run.id, issueNumber);
+    const started = card ? null : await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber });
     const sent = await sendDm(pool, {
       bot,
       userId: requester.userId,
-      replyToId: card ? null : await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber }),
-      ...(card ? { threadRootId: card.messageId } : {}),
+      replyToId: started,
+      ...(card ? { threadRootId: card.messageId } : await outsideCardThread(pool, started)),
       idempotencyKey: why === 'checks'
         ? `hrbot-needs-look-checks-${id}-${Number(run.approval_epoch) || 0}`
         : `hrbot-needs-look-built-${id}`,
@@ -6286,6 +6311,7 @@ module.exports = {
   quotedTarget,
   quotable,
   requestStart,
+  outsideCardThread,
   newestOpenQuestion,
   postOnRequest,
   postOnProposal,
