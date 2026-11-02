@@ -336,6 +336,18 @@ const PLAIN_NOTE = [
   'a minute, and set `later` to true: you will be asked again in full.',
 ].join('\n');
 
+// B01 (audit 2 Nov 2026): when the turn will not be asked again (an error
+// a later try cannot help), the plain answer is never told to promise one.
+const PLAIN_NOTE_NO_LATER = PLAIN_NOTE.replace(
+  /If answering needs a lookup or an action, say you will come back to it here in\na minute, and set `later` to true: you will be asked again in full\./,
+  'If answering needs a lookup or an action, say plainly that you could not do it just now and that they can send\n'
+    + 'it again. Never say you will come back to it: nothing asks you again.',
+);
+// B01: a new project's thread whose turn failed asks for what its first
+// screen needs, in the thread, so the conversation goes on there.
+const PROJECT_THREAD_TEXT = 'Let\'s shape it here. What should the first screen show, and who will use it? '
+  + 'Tell me in a line or two and I\'ll draw it.';
+
 function clip(value, max) {
   const text = String(value ?? '').trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
@@ -1945,7 +1957,8 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
   return {
     onDelta(state) {
       const text = draftOf(state);
-      if (text !== null) set(text);
+      // 2 Nov 2026: the words already kept from earlier rounds stay on the card (answerText).
+      if (text !== null) set(text && ctx.besides?.length ? answerText(ctx.besides, text) : text);
     },
     clear() { set(''); },
     // `clear`: what was shown goes too (the turn found no answer to send).
@@ -1958,6 +1971,52 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
       }
     },
   };
+}
+
+// ── Words written beside a call (Homeroom bot parity, P1) ──────────────────
+//
+// 2 Nov 2026 (#6097 tested in a browser): the cheap model often writes its
+// whole answer as plain words in a round that also calls a tool
+// (offer_request, list_requests), then sends a short reply that assumes those
+// words were read. They were shown as they were written (draftOf) and then
+// dropped: a long walkthrough appeared on the working card, and what arrived
+// was "Short version: …", or only "To be clear: nothing has been filed".
+// Now words beside a call that are longer than a preamble are the start of
+// the answer: kept in order (ctx.besides), the model is told so once
+// (BESIDE_NOTE), and the reply's text follows them (answerText).
+
+/** Pure: a round's words beside its calls, when they are part of the answer (longer than a preamble), else null. */
+function besideWords(content) {
+  const text = cleanReply(content);
+  return text.length > MAX_PREAMBLE_CHARS ? text : null;
+}
+
+/** What a turn is told the first time its words beside a call are kept (role user, as checkNote is). */
+const BESIDE_NOTE = '[Homeroom check, not from them: the words you wrote beside those calls are shown to them as the start '
+  + 'of your answer. Your reply\'s text follows them: do not write them again, add only what is new.]';
+
+// How much of a kept passage's opening, found in the reply, means the reply wrote it again.
+const BESIDE_MATCH_CHARS = 160;
+const squashWords = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+/**
+ * Pure: the answer as it is sent: the words kept beside calls, in order,
+ * then the reply's text, each said once. Kept words whose opening the reply
+ * (or an earlier passage) writes again are left out, and a reply already
+ * inside the kept words adds nothing.
+ */
+function answerText(besides = [], text = '') {
+  const reply = String(text || '').trim();
+  const said = squashWords(reply);
+  const kept = [];
+  for (const words of Array.isArray(besides) ? besides : []) {
+    const passage = String(words || '').trim();
+    const opening = squashWords(passage).slice(0, BESIDE_MATCH_CHARS);
+    if (!opening || said.includes(opening) || kept.some((k) => squashWords(k).includes(opening))) continue;
+    kept.push(passage);
+  }
+  const inside = said && squashWords(kept.join(' ')).includes(said);
+  return [...kept, ...(reply && !inside ? [reply] : [])].join('\n\n');
 }
 
 // ── What the turn looked at (Homeroom bot parity, P1) ─────────────────────
@@ -2956,7 +3015,7 @@ function plainMessage(m) {
  * a message that needs no lookup. Resolves { text, later } (#3772: `later`
  * when the model said it has to come back to it), or null.
  */
-async function plainAnswer(t, history) {
+async function plainAnswer(t, history, { later = true } = {}) {
   if (!t.apiKey || Date.now() - t.startedMs > PLAIN_WITHIN_MS) return null;
   t.route += 1;
   try {
@@ -2970,7 +3029,7 @@ async function plainAnswer(t, history) {
             username: t.user.username, perPerson: t.settings.perPerson, platform: false,
             // 31 Oct 2026: where they wrote it, as the rounds were told.
             thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId ? { draft: t.ctx.deps.threadDraft || null } : null,
-          })}\n\n${PLAIN_NOTE}${t.ctx?.owed ? `\n\n${t.ctx.owed}` : ''}`,
+          })}\n\n${later ? PLAIN_NOTE : PLAIN_NOTE_NO_LATER}${t.ctx?.owed ? `\n\n${t.ctx.owed}` : ''}`,
         },
         ...history.slice(-PLAIN_HISTORY).map(plainMessage),
       ],
@@ -2981,7 +3040,7 @@ async function plainAnswer(t, history) {
     const call = (res.toolCalls || []).find((c) => c?.function?.name === 'reply');
     const args = call ? parseArgs(call.function.arguments) : {};
     const text = clip(cleanReply(call ? args.text : res.content), MAX_REPLY_CHARS);
-    return text ? { text, later: args.later === true } : null;
+    return text ? { text, later: later && args.later === true } : null;
   } catch {
     // Logged and recorded by askModel.
     return null;
@@ -3003,7 +3062,7 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
   if (ctx.posted) {
     return {
       fallback: 'posted',
-      text: `I posted your answer on ${ctx.posted}'s public discussion, and I'll look at the request again next.`,
+      text: `I posted your answer on the public discussion of ${ctx.posted}, and I'll look at the request again next.`,
       cards: ctx.cards.slice(0, MAX_CARDS),
       defer: false,
     };
@@ -3017,10 +3076,15 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
     ].filter(Boolean).join(' ');
     return { fallback: 'done', text: done, cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
   }
+  // B01 (audit 2 Nov 2026): a new project's thread opened before the model
+  // failed is answered there with the question its first screen needs, now.
+  // A plain answer knows nothing of the thread, and promised to "come back
+  // in a minute" from Main, a promise no later try kept.
+  if (ctx.projectThread) return { fallback: 'project', text: PROJECT_THREAD_TEXT, cards: [], defer: false };
   const fromRecords = await recordsAnswer(pool, ctx);
   if (fromRecords) return { fallback: 'records', ...fromRecords, defer: false };
   if (KEY_ERRORS.has(error) && errorStatus !== 403) return { fallback: 'key', text: KEY_TEXT, cards: [], defer: false };
-  const plain = await plainAnswer(t, history);
+  const plain = await plainAnswer(t, history, { later: deferrable });
   if (plain) return { fallback: 'plain', text: plain.text, cards: [], defer: plain.later && deferrable };
   if (deferrable) return { fallback: 'deferred', text: DEFERRED_TEXT, cards: [], defer: true };
   return { fallback: 'broken', text: BROKEN_TEXT, cards: [], defer: false };
@@ -3156,6 +3220,15 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     checkedProblems: null,
     decisionWithoutOffer: deps.decisionWithoutOffer === true,
   };
+  // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
+  // project's thread, everything this turn says goes in it, whichever way
+  // it is said. A fallback answer used to land in Main beside the thread's
+  // line, as a second reply quoting the question again.
+  const sayOutside = say;
+  say = (content, extra = {}) => sayOutside(content, {
+    ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
+    ...extra,
+  });
   // What one turn's model requests share (askModel). The route is OpenRouter's
   // session, which pins a provider: it is this turn's, not the person's, so
   // one that failed them is not the one every later turn of theirs is sent
@@ -3313,6 +3386,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             finalText = res.content || '';
             break;
           }
+          // 2 Nov 2026: words beside these calls are the start of the answer (besideWords).
+          const beside = besideWords(res.content);
+          if (beside) ctx.besides = [...(ctx.besides || []), beside];
           messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
           const pictures = [];
           for (const call of calls) {
@@ -3331,6 +3407,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           }
           const shown = picturesMessage(takeImages({ images: pictures }));
           if (shown) messages.push(shown);
+          if (beside && !ctx.reply && !ctx.besideNoted) {
+            ctx.besideNoted = true;
+            messages.push({ role: 'user', content: BESIDE_NOTE });
+          }
         }
       };
       await runRounds();
@@ -3338,7 +3418,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // this turn's tools did, and every request number it names against the
       // requests that exist. One more pass to put it right; whatever is still
       // claimed with nothing behind it is cut before it is sent (answer()).
-      const said = ctx.reply?.text ?? finalText;
+      const said = answerText(ctx.besides, ctx.reply?.text ?? finalText);
       // A screen handed to the designer is answered by it, not checked here.
       const problems = said && !ctx.drawScreen ? await claimProblems(pool, ctx, said) : [];
       if (problems.length) {
@@ -3362,7 +3442,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           log.info('homeroom-bot-mayor', 'The second pass failed; sending the first answer, checked', { userId: user.id, code: codeOf(err) });
         }
         if (!ctx.reply && !finalText) ctx.reply = first;
-        ctx.checkedProblems = await claimProblems(pool, ctx, ctx.reply?.text ?? finalText);
+        ctx.checkedProblems = await claimProblems(pool, ctx, answerText(ctx.besides, ctx.reply?.text ?? finalText));
       }
     } catch (err) {
       error = codeOf(err);
@@ -3374,7 +3454,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       try { await platform?.close?.(); } catch {}
     }
   }
-  let text = clip(cleanReply(ctx.reply?.text || finalText), MAX_REPLY_CHARS);
+  let text = clip(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText)), MAX_REPLY_CHARS);
   // P1: nothing more is shown as it is written; the message takes the card's place.
   draft?.close({ clear: !text });
   // Whatever the second pass still claimed with nothing behind it is cut.
@@ -3421,12 +3501,21 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // 1 Nov 2026: draw_screen. The designer draws it and answers, in this
   // private thread or one it opens from Main Chat (design-bot.js draw).
   if (ctx.drawScreen) {
+    // B01: drawn in the new project's thread when this turn opened one.
+    const where = ctx.projectThread ? { ...deps, threadRootId: ctx.projectThread.rootId, threadRequest: null } : deps;
     return (deps.designBot || require('./design-bot')).draw(pool, config, {
-      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps,
+      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps: where,
     });
   }
   if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
-  if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps });
+  // P1: what the turn looked at, as one line above the words (lookedMeta).
+  const looked = await lookedMeta(pool, ctx, Date.now() - t.startedMs);
+  // Homeroom bot parity (P1-P9): a card a thread tool put under the reply
+  // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
+  const toolCard = ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? ctx.card : null;
+  const extra = { ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}) };
+  // 2 Nov 2026: a reply that ends in an offer keeps both.
+  if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps, extra });
   // A card that cannot be read never costs the answer. #4097: the model's
   // cards first, then the requests its words name that it did not list.
   const named = namedCards(text, ctx);
@@ -3444,18 +3533,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const next = suggestionLabels(ctx.reply?.suggestions);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
-  // P1: what the turn looked at, as one line above the words (lookedMeta).
-  const looked = await lookedMeta(pool, ctx, Date.now() - t.startedMs);
   const project = named.project ? { appSlug: named.project } : {};
   return say(text, {
     objects: unique,
     metadata: {
       kind: 'chat', ...project,
       ...(actions.length ? { actions, status: 'open' } : {}),
-      ...(looked ? { looked } : {}),
-      // Homeroom bot parity (P1-P9): a card a thread tool put under the reply
-      // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
-      ...(ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? { card: ctx.card } : {}),
+      ...extra,
     },
     // C2.4: a new project's thread opened this turn: the answer is its first reply.
     ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
@@ -3524,7 +3608,9 @@ function closeOfferText({ name, issueNumber, text = null, title, why = null }) {
 function postOfferText({ name, issueNumber, revise = false, text = null, draft }) {
   const where = revise ? `the change for request #${issueNumber}` : `request #${issueNumber}`;
   return [
-    text || `This chat is private. Want me to post this on ${where}'s public discussion, as you?`,
+    // B20 (audit 2 Nov 2026): "request #1's" put a gap between the #1 chip
+    // and its "'s"; the discussion is named first instead.
+    text || `This chat is private. Want me to post this on the public discussion of ${where}, as you?`,
     '',
     `**${name}** · ${where}:`,
     '',
@@ -3544,8 +3630,12 @@ function closeOfferMeta({ app, name, actionId, issueNumber }) {
 // with a lock until the draft is filed, posted or put away. Resolves the
 // line ({ messageId, conversationId }), or null when it could not be sent,
 // and the draft is then said in Main as before.
-async function openDraftThread(pool, { bot, user, conversationId, message, kind, app, name, deps }) {
+async function openDraftThread(pool, { bot, user, conversationId, message, kind, app, name, title = null, deps }) {
   const dm = dmModule(deps);
+  // B19 (audit 2 Nov 2026): what the thread is named by, in the tab's list
+  // and over it: the request it drafts, or the words it would post. Its
+  // line in Main was the name before, the bot's own sentence.
+  const draftTitle = clip(String(title || '').split('\n').map((line) => line.trim()).find(Boolean) || '', 120);
   const said = await dm.sendDm(pool, {
     bot,
     userId: user.id,
@@ -3556,7 +3646,7 @@ async function openDraftThread(pool, { bot, user, conversationId, message, kind,
     replyToId: message.id,
     threadRootId: false,
     moment: null,
-    metadata: { kind: 'opened_draft', appSlug: app.slug, appName: name, draft: kind },
+    metadata: { kind: 'opened_draft', appSlug: app.slug, appName: name, draft: kind, ...(draftTitle ? { draftTitle } : {}) },
   }).catch((err) => {
     log.warn('homeroom-bot-mayor', 'Could not open a draft\'s private thread (saying it in Main)', { err: err.message });
     return null;
@@ -3583,7 +3673,7 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
 
-async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps }) {
+async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps, extra = null }) {
   const dm = dmModule(deps);
   const name = o.app.name || o.app.slug;
   // #11 (WP3): an offer to withdraw one of its proposals is decided the same
@@ -3631,9 +3721,13 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   // put in a private thread of its own, only the person's. Main says so,
   // quoting what they asked, and the draft is the thread's first reply.
   // Said in a thread already, it stays there.
-  const draft = kind === 'file_request' || post;
+  // B05 (audit 2 Nov 2026): a change to a plan is drafted where the plan
+  // is, so its Post it is right under it, never one thread away.
+  const draft = kind === 'file_request' || (post && o.title !== 'plan_change');
   const opened = draft && !(message.threadRootId || message.thread_root_id)
-    ? await openDraftThread(pool, { bot, user, conversationId, message, kind, app: o.app, name, deps })
+    ? await openDraftThread(pool, {
+      bot, user, conversationId, message, kind, app: o.app, name, title: post ? o.details : o.title, deps,
+    })
     : null;
   const sent = await dm.sendDm(pool, {
     bot,
@@ -3649,17 +3743,21 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw || (post && o.sessionId) ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
       : move || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
-    metadata: post ? confirmMeta('post_reply', {
-      app: o.app, name, actionId: action.id,
-      question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
-    })
-      : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
-      : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
-      : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
-      : confirmMeta(kind, {
+    metadata: {
+      ...(post ? confirmMeta('post_reply', {
         app: o.app, name, actionId: action.id,
-        question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
-      }),
+        question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
+      })
+        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
+        : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
+        : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
+        : confirmMeta(kind, {
+          app: o.app, name, actionId: action.id,
+          question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
+        })),
+      // 2 Nov 2026: the turn's "Looked at" line and a thread tool's card (answer()).
+      ...(extra || {}),
+    },
   });
   if (sent?.messageId && sent.duplicate) {
     // Offered already, by an attempt a restart cut short: that offer is
@@ -4122,6 +4220,10 @@ async function settleOffer(pool, config, {
   // A draft put away: its private thread went nowhere (openDraftThread).
   if (no && (action.kind === 'file_request' || action.kind === 'post_reply')) {
     await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'dropped' });
+  }
+  // B05: a change to a plan put away gives the plan its Build it back.
+  if (no && tapped && action.kind === 'post_reply' && action.title === 'plan_change' && action.target_message_id) {
+    await dm.notePlanChangeDropped(pool, { user, messageId: Number(action.target_message_id), deps });
   }
   if (no && tapped) return { declined: true };
   // The act's claim (`key`) rides with it, so what it calls can tell a
@@ -5162,13 +5264,24 @@ async function offerCloseRequest(pool, ctx, args) {
  * revision), every gate read again now. Keep it private posts nothing.
  */
 async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = {} }) {
-  if (!yes) return ack('OK, it stays here in our chat. Nothing was posted.');
+  const dm = dmModule(deps);
+  // B05 (audit 2 Nov 2026): a change to a plan that is not posted leaves the
+  // plan as it was, its Build it back (homeroom-bot-dm.js changeOnRequest).
+  const keepPlan = async () => {
+    if (action.title === 'plan_change' && action.target_message_id) {
+      await dm.notePlanChangeDropped(pool, { user, messageId: Number(action.target_message_id), deps });
+    }
+  };
+  if (!yes) {
+    await keepPlan();
+    return ack('OK, it stays here in our chat. Nothing was posted.');
+  }
   const failed = async (error, text) => {
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    await keepPlan();
     return ack(text);
   };
   const later = 'I couldn\'t post it just now. Try again in a minute.';
-  const dm = dmModule(deps);
   const { rows } = await pool.query('SELECT slug FROM apps WHERE id = $1', [action.app_id]);
   const app = rows[0] ? await findApp(pool, rows[0].slug) : null;
   const n = Number(action.source_issue_number);
@@ -5231,14 +5344,12 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
   // and is planned again with it (homeroom-bot-dm.js changeOnRequest).
   if (action.title === 'plan_change') {
     await dm.notePlanChanged(pool, { user, target, app, deps });
-    return ack(`Posted on ${posted.line}'s public discussion, as you. I'll plan it again with it and send the new plan here.`, {
-      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
-    });
+    return ack(`Posted on the public discussion of ${posted.line}, as you. I'll plan it again with it and send the new plan here.`);
   }
+  // B20 (audit 2 Nov 2026): the draft right above already shows the
+  // request's card; a second one under the ack repeated it.
   const builds = liveModule(deps).isLiveFor(settings, app);
-  return ack(`Posted on ${posted.line}'s public discussion, as you.${builds ? ' I\'ll look at it again now.' : ''}`, {
-    objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
-  });
+  return ack(`Posted on the public discussion of ${posted.line}, as you.${builds ? ' I\'ll look at it again now.' : ''}`);
 }
 
 /**
@@ -5640,6 +5751,9 @@ module.exports = {
   partialTextField,
   draftOf,
   draftWriter,
+  besideWords,
+  answerText,
+  BESIDE_NOTE,
   noteLookup,
   lookedItems,
   lookedMeta,

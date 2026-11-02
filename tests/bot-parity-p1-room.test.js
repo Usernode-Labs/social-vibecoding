@@ -18,6 +18,8 @@
 //      arguments, shown at most every 250 ms, on the working card, and the
 //      message sent takes its place.
 //   5. What it looked at: the reply's metadata `looked`, and its line.
+//   6. Words written beside a call are the start of the answer, and a reply
+//      that ends in an offer keeps its "Looked at" line and its card.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -430,6 +432,130 @@ test('a reply carries `looked` when it looked something up, named and timed; sma
     { items: [{ what: 'Read 23 files in Gym Tracker' }], ms: 64_000 });
   assert.equal(await mayor.lookedMeta({ async query() { throw new Error('down'); } }, { lookups: [{ tool: 'get_app', project: 'gym' }] }, 2_000).then((m) => m.items[0].what),
     'Read about gym', 'a name it cannot read is its short name');
+});
+
+// ── 6. Words written beside a call, and an offer's line (2 Nov 2026) ─────
+//
+// Tested in a browser: the model wrote a whole walkthrough as plain words in
+// a round that also called offer_request, the working card showed it as it
+// was written, and the message sent was only the short reply after it, with
+// no "Looked at" line although it had read the code.
+
+test('words beside a call are kept as the start of the answer, each said once', () => {
+  const walk = 'Here is how the main screen works. '.repeat(12).trim();
+  assert.equal(mayor.besideWords(walk), walk);
+  assert.equal(mayor.besideWords('Let me read the code first.'), null, 'a preamble is not an answer');
+  assert.equal(mayor.besideWords(''), null);
+  assert.equal(mayor.answerText([walk], 'Tap File it if you want it.'), `${walk}\n\nTap File it if you want it.`);
+  assert.equal(mayor.answerText([], 'Just the reply.'), 'Just the reply.');
+  assert.equal(mayor.answerText([walk], ''), walk, 'kept words are an answer when no reply came');
+  assert.equal(mayor.answerText([walk], `${walk} And one more thing.`), `${walk} And one more thing.`, 'written again in the reply: once');
+  assert.equal(mayor.answerText([walk, walk], 'Done.'), `${walk}\n\nDone.`, 'twice beside calls: once');
+  assert.equal(mayor.answerText([walk], 'Here is how the main screen works.'), walk, 'a reply already inside them adds nothing');
+});
+
+test('a reply after a walkthrough written beside a call sends the walkthrough, and an offer keeps its "Looked at" line', async () => {
+  const walk = 'The main screen has three parts. The header names the rota. The day strip lets you pick your days and Save '
+    + 'changes keeps them. The week list says who waters each day. What I would improve: mark today, say who is next, '
+    + 'and show the days nobody has picked, so a gap in the week is plain before it is too late to fill it.';
+  assert.ok(walk.length > 300);
+  const seen = [];
+  const chat = async (req) => {
+    seen.push(req);
+    if (seen.length === 1) {
+      req.onDelta({ content: walk, toolCalls: [] });
+      return {
+        content: walk,
+        toolCalls: [
+          callOf('a', 'read_source', { project: 'gym', path: 'public/index.html' }),
+          callOf('b', 'offer_request', { project: 'gym', title: 'Mark today on the main screen', details: 'Mark today and who is next.' }),
+        ],
+      };
+    }
+    const args = JSON.stringify({ text: 'Tap File it if you want the first two.' });
+    req.onDelta({ content: '', toolCalls: [{ index: 0, function: { name: 'reply', arguments: args.slice(0, 20) } }] });
+    return { content: '', toolCalls: [callOf('c', 'reply', { text: 'Tap File it if you want the first two.' })] };
+  };
+  const access = require('../src/services/app-access');
+  const was = access.checkAppAccess;
+  access.checkAppAccess = async () => true;
+  try {
+    const pool = {
+      async query(sql) {
+        const text = String(sql);
+        if (/SELECT slug, name FROM apps WHERE slug = ANY/.test(text)) return { rows: [{ slug: 'gym', name: 'Gym Tracker' }] };
+        if (/INSERT INTO homeroom_bot_dm_actions/.test(text)) return { rows: [{ id: 5 }] };
+        if (/FROM apps/.test(text)) return { rows: [{ id: 3, slug: 'gym', name: 'Gym Tracker', repo_url: 'https://github.com/o/r', view_visibility: 'public', community_id: null }] };
+        return { rows: [] };
+      },
+    };
+    const sent = [];
+    const doings = [];
+    await mayor.runDmTurn(pool, {}, {
+      bot: { id: 2, username: 'homeroom_bot' }, user: { id: 9, username: 'evan' }, settings: { mode: 'live', perPerson: 2 },
+      conversationId: 41,
+      // In a private thread already: the offer is its reply there.
+      message: { id: 72, content: 'Walk me through the main screen, in detail.', threadRootId: 60 },
+      deps: {
+        chat, apiKey: 'sk-test', openMcp: async () => null, seesImages: false, sleep: async () => {},
+        github: { async getFileContent() { return '<main></main>'; } },
+        botSvc: { ...require('../src/services/homeroom-bot'), parseRepo: () => ({ owner: 'o', repo: 'r' }) },
+        dmSvc: { ...realDm, async sendDm(_pool, args) { sent.push(args); return { messageId: 902, conversationId: 41 }; } },
+        doing: async (what) => { doings.push(what); },
+      },
+    });
+    assert.ok(seen[1].messages.some((m) => m.role === 'user' && m.content === mayor.BESIDE_NOTE), 'the model is told its words were kept');
+    assert.equal(sent.length, 1);
+    const body = sent[0].content;
+    assert.ok(body.startsWith(walk), 'the walkthrough it wrote is the start of the message');
+    assert.match(body, /Tap File it if you want the first two\./);
+    assert.match(body, /\*\*Gym Tracker\*\* · new request: Mark today on the main screen/);
+    assert.equal(sent[0].metadata.kind, 'confirm', 'still the offer, with File it');
+    assert.deepEqual(sent[0].metadata.looked.items, [{ what: 'Read 1 file in Gym Tracker' }], 'and the line above it');
+    const writing = doings.filter((d) => d?.kind === 'writing');
+    assert.ok(writing.at(-1).text.startsWith(walk), 'the card never swaps the walkthrough for the short reply');
+  } finally {
+    access.checkAppAccess = was;
+  }
+});
+
+test('a thread tool\'s card stays under a reply that ends in an offer', async () => {
+  const chat = scripted([
+    { calls: [
+      callOf('a', 'offer_options', { title: 'Ways to remind', options: [{ title: 'A banner' }, { title: 'A calendar file' }] }),
+      callOf('b', 'offer_request', { project: 'gym', title: 'Add a reminder banner' }),
+    ] },
+    { calls: [callOf('c', 'reply', { text: 'Two ways; the first is drafted as a request.' })] },
+  ]);
+  const access = require('../src/services/app-access');
+  const was = access.checkAppAccess;
+  access.checkAppAccess = async () => true;
+  try {
+    const pool = {
+      async query(sql) {
+        const text = String(sql);
+        if (/INSERT INTO homeroom_bot_dm_actions/.test(text)) return { rows: [{ id: 6 }] };
+        if (/FROM apps/.test(text)) return { rows: [{ id: 3, slug: 'gym', name: 'Gym Tracker', repo_url: 'https://github.com/o/r', view_visibility: 'public', community_id: null }] };
+        return { rows: [] };
+      },
+    };
+    const sent = [];
+    await mayor.runDmTurn(pool, {}, {
+      bot: { id: 2, username: 'homeroom_bot' }, user: { id: 9, username: 'evan' }, settings: { mode: 'live', perPerson: 2 },
+      conversationId: 41, message: { id: 73, content: 'Ways to remind people?', threadRootId: 61 },
+      deps: {
+        chat, apiKey: 'sk-test', openMcp: async () => null, seesImages: false, sleep: async () => {},
+        github: {},
+        dmSvc: { ...realDm, async sendDm(_pool, args) { sent.push(args); return { messageId: 903, conversationId: 41 }; } },
+      },
+    });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].metadata.kind, 'confirm');
+    assert.equal(sent[0].metadata.card?.type, 'options', 'the options card is under it too');
+    assert.deepEqual(sent[0].metadata.card.options.map((o) => o.key), ['A', 'B']);
+  } finally {
+    access.checkAppAccess = was;
+  }
 });
 
 // ── The client ───────────────────────────────────────────────────────────

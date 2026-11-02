@@ -257,9 +257,20 @@ export function landKeepingPlace(slug: string): string {
   const view = (window as unknown as {
     AppView?: { _workshopTab?: () => unknown; _landOnTab?: (slug: string, tab: string) => void };
   }).AppView;
-  let was: unknown = null;
-  try { was = view?._workshopTab?.(); } catch { /* nothing remembered: its hub */ }
-  const keep = keepPlace(typeof was === 'string' ? was : null, cachedTopics(slug));
+  const keep = reopenPlace(slug);
   try { view?._landOnTab?.(slug, keep); } catch { /* the page opens where it opens */ }
   return keep;
+}
+
+/**
+ * The place `slug`'s page reopens on (AppView._workshopTab), as one of the
+ * places it has, else its Hub. A request's or a change's page lights it in
+ * the sidebar, because its back chip returns there (audit N05).
+ */
+export function reopenPlace(slug: string): string {
+  if (typeof window === 'undefined') return 'status';
+  const view = (window as unknown as { AppView?: { _workshopTab?: () => unknown } }).AppView;
+  let was: unknown = null;
+  try { was = view?._workshopTab?.(); } catch { /* nothing remembered: its hub */ }
+  return keepPlace(typeof was === 'string' ? was : null, cachedTopics(slug));
 }

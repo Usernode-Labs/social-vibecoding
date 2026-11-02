@@ -70,7 +70,7 @@ test('directory lists the apps that run, and discloses the rest accessibly', () 
   const html = render();
   assert.ok(html.indexOf('data-slug="ready"') < html.indexOf('data-slug="second"'));
   // #5267: one heading over them.
-  assert.match(html, /<h2[^>]*>All apps</);
+  assert.match(html, /<h2[^>]*>Apps to try</);
   assert.match(html, /Show more \(3\)/);
   assert.match(html, /aria-expanded="false" aria-controls="browse-more-apps"/);
   assert.match(html, /id="browse-more-apps" class="hidden"/);
@@ -91,7 +91,7 @@ test('#1912: a metric sort is one list in its own order, and still discloses the
   const html = render({ rows: ordered, grouped: false });
   assert.ok(html.indexOf('data-slug="second"') < html.indexOf('data-slug="ready"'), 'the sort order holds');
   assert.doesNotMatch(html, /<h2/, 'no headings');
-  assert.match(render(), /<h2[^>]*>All apps</, 'while the default list keeps its heading');
+  assert.match(render(), /<h2[^>]*>Apps to try</, 'while the default list keeps its heading');
   assert.match(html, /Show more \(3\)/, 'the same disclosure as Recommended');
   for (const slug of ['stopped', 'creating', 'iconless']) assert.ok(!html.includes(`data-slug="${slug}"`));
   const expanded = render({ rows: ordered, grouped: false, moreExpanded: true });
@@ -144,7 +144,7 @@ test('#5267, #5928: Featured leads the default list, and the rest is More apps',
   const more = html.indexOf('>More apps</h2>');
   assert.ok(rec >= 0 && rec < html.indexOf('data-slug="picked"'));
   assert.ok(html.indexOf('data-slug="picked"') < more && more < html.indexOf('data-slug="ready"'));
-  assert.doesNotMatch(html, />All apps</);
+  assert.doesNotMatch(html, />Apps to try</);
   // A joined row offers Open; a row you are not in offers Join.
   const joined = { ...row('joined'), added: true, canOpen: true };
   const both = render({ rows: [joined, rows[0]], curated: false });

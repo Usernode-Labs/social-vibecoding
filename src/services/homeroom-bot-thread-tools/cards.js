@@ -20,6 +20,13 @@ const { withoutEmDashes } = require('../em-dashes');
 
 const KEYS = Object.freeze(['A', 'B', 'C', 'D']);
 const TAGS = Object.freeze(['ready', 'question', 'done', 'stopped']);
+// 2 Nov 2026: "Where it stands, when it is one of these" left the model no
+// tag for a request being read or waiting its turn, so a table showed "I'm
+// reading it now" tagged Ready and "Waiting its turn" tagged Question.
+const TAG_DESCRIPTION = 'Only when the row is exactly one of these: ready (its plan is ready to build, or its change is ready '
+  + 'for their yes), question (it waits for their answer to a question), done (live, or closed as done), stopped (closed '
+  + 'or stopped without being built). Leave the tag out for anything else, such as being read, waiting its turn or '
+  + 'being built: the row\'s words say where it stands.';
 const LIMITS = Object.freeze({
   title: 90,
   optionTitle: 90,
@@ -250,8 +257,8 @@ const TOOLS = Object.freeze([
       name: 'show_table',
       description: 'Show a short table under your reply, when things side by side read better than sentences: their requests and '
         + 'where each stands, options compared, a plan\'s steps. 2 to 4 columns, up to 12 rows. A row about a request names its '
-        + 'project and number, so it links to the request. A row may carry one tag: ready, question, done or stopped. Up to 3 '
-        + 'buttons say something for them when tapped. One card per reply.',
+        + 'project and number, so it links to the request. A row may carry one tag, only when its state is one of the four tags '
+        + '(see tag). Up to 3 buttons say something for them when tapped. One card per reply.',
       parameters: {
         type: 'object',
         properties: {
@@ -268,7 +275,7 @@ const TOOLS = Object.freeze([
               type: 'object',
               properties: {
                 cells: { type: 'array', items: { type: 'string' }, description: `One short cell per column, in order, each at most ${LIMITS.cell} characters.` },
-                tag: { type: 'string', enum: [...TAGS], description: 'Where it stands, when it is one of these.' },
+                tag: { type: 'string', enum: [...TAGS], description: TAG_DESCRIPTION },
                 project: { type: 'string', description: 'For a row about a request: its project\'s name or short name.' },
                 number: { type: 'integer', description: 'For a row about a request: its number.' },
               },
@@ -331,7 +338,8 @@ function promptLines() {
     '  each with 2 to 4 suggested answers and your guess). They answer them together, and the answers come back numbered.',
     '- Show things side by side as a table card when that reads better than sentences, such as their requests and where',
     '  each stands (show_table: 2 to 4 columns, up to 12 rows; a row about a request names its project and number so it',
-    '  links to it; tag a row ready, question, done or stopped; up to 3 buttons that say something for them).',
+    '  links to it; a tag only when a row is ready, waits on their answer, is done or stopped, none while it is being',
+    '  read, waits its turn or is being built; up to 3 buttons that say something for them).',
     '- One card per reply. A card is not an answer by itself: the reply still says, in a sentence or two, what it is.',
   ];
 }

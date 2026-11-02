@@ -146,8 +146,8 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   // the figure came with it. The number is a count badge and the words are
   // its accessible name.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
-    'the badge is the Workshop row\'s trailing figure');
+  assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,500}sub=\{owed \?/,
+    'the badge is the Workshop row\'s line under its label (audit D07: beside it, it cut the label)');
   assert.match(sheet, /id="app-menu-workshop-owed"/);
   assert.match(sheet, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
   // #5927 item 3: "3 to vote" did not say what was voted on, and read like a

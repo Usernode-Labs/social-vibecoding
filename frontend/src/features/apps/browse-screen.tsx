@@ -67,7 +67,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
-import { BrowseRows } from './browse-list';
+import { BOX_COLUMNS, BrowseRows } from './browse-list';
 import { openBrowseFilterSheet } from './browse-filter-sheet';
 import { AppsLoadError } from './load-error';
 import { browseStore } from './mount';
@@ -114,6 +114,21 @@ export function MakeFromSearch({ idea, label }: { idea: string; label: string })
     ><span className="min-w-0 truncate">{label}</span></Button>
   );
 }
+
+
+// THE PAGE COLUMN (overnight audit W02, 1 Nov 2026): Discover is drawn in
+// the 1024px column Home, Profile, Settings and Challenges share (`max-w-5xl
+// mx-auto`), centred, instead of running edge to edge beside the rail, so
+// moving between those screens no longer moves the content's edges.
+const PAGE_COLUMN = 'max-w-5xl mx-auto';
+// The search, the view switch and the type row span the list's own width
+// (W04 / I9): capped at `max-w-xl` they stopped ~575px in while the boxes ran
+// on to the column's edge. 62.5rem is the page column less the list's `md:p-3`,
+// and the bar's own `md:px-3` is that padding's twin, so both edges line up.
+const CONTROL_COLUMN = 'max-w-[62.5rem] mx-auto';
+// (The view switch takes the strip's classes with `flex` in place of
+// `inline-flex`: Tailwind emits `.inline-flex` after `.flex`, so the pair left
+// it an inline box, which `mx-auto` cannot centre.)
 
 export function BrowseScreen() {
   const t = useMessages('discover');
@@ -199,7 +214,7 @@ export function BrowseScreen() {
         id="browse-search-bar"
         className={`${onDetail ? 'hidden ' : ''}browse-pane-head md:px-3 md:pt-5 md:pb-2`}
       >
-        <div className="relative max-w-xl">
+        <div className={`relative ${CONTROL_COLUMN}`}>
           <SearchIcon
             className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
             aria-hidden="true"
@@ -258,7 +273,7 @@ export function BrowseScreen() {
             id="browse-view-switch"
             role="group"
             aria-label={t('discover:view.groupLabel')}
-            className={`${SECTION_TABS_LIST_BASE} mt-2 flex w-full max-w-xl`}
+            className={`${SECTION_TABS_LIST_BASE.replace('inline-flex', 'flex')} mt-2 w-full ${CONTROL_COLUMN}`}
           >
             {VIEW_TABS.map((v) => (
               <TabsTrigger
@@ -287,7 +302,7 @@ export function BrowseScreen() {
             defaults (Browse.activeFilterCount) and opens the sheet. `px-4`
             over the primitive's `px-6`, through cn's twMerge.
         */}
-        <div id="browse-type-row" className="mt-2 flex items-center gap-2 max-w-xl">
+        <div id="browse-type-row" className={`mt-2 flex items-center gap-2 ${CONTROL_COLUMN}`}>
           {typeChips.length ? (
             <ChipRail
               id="browse-category-chips"
@@ -343,7 +358,7 @@ export function BrowseScreen() {
           App Store idiom). md and up: a 2/3-column grid whose rows pick up
           a bordered-box treatment from .browse-row in app.css.
       */}
-      <div id="browse-list-level" className={onDetail ? 'hidden' : undefined}>
+      <div id="browse-list-level" className={onDetail ? `hidden ${PAGE_COLUMN}` : PAGE_COLUMN}>
         {/*
             Grid only. Every border — the phone hairline AND the desktop box —
             is .browse-row in app.css; a divide-* utility here would win the
@@ -367,10 +382,13 @@ export function BrowseScreen() {
           // below md. At md+ nothing changes: every row is its own box in the
           // grid (app.css), so only the grid utilities live here.
           //
-          // Three columns only from xl (1280px), not lg (QA 2026-09-24 Q10):
-          // at 1024 the sidebar leaves ~770px, and a third column squeezed
-          // the name out of every box entirely.
-          className="browse-pane-body md:grid md:grid-cols-2 xl:grid-cols-3 md:gap-3 md:p-3"
+          // As many columns as fit a 20rem box (BOX_COLUMNS, ./browse-list.tsx), counted from
+          // the room the list has rather than the window (overnight audit
+          // W03): `md:grid-cols-2` gave two ~250px boxes at 800px, where the
+          // rail takes 212, and cut every name and meta line. That is one
+          // column at 800, two at 1024 (QA 2026-09-24 Q10: a third squeezed
+          // the name out there) and three in the page column from ~1260.
+          className={`browse-pane-body md:grid ${BOX_COLUMNS} md:gap-3 md:p-3`}
         >
           {state.error
             ? (

@@ -126,11 +126,16 @@ test('the swatch is the transcript\'s own hash, so a proposer\'s event avatar ma
   assert.match(transcript, /import \{ swatchFor \} from '\.\/swatch';/);
   assert.doesNotMatch(transcript, /const SWATCHES/, 'one copy, not two');
   assert.match(read(EVENT), /import \{ swatchFor \} from '\.\/swatch';/);
-  // The legacy hash, unchanged: h = h * 31 + code.
+  // Audit Y06: the one pick every surface uses for a person, so a face on a
+  // request's page is the colour it is in Messages and on the hub.
   assert.equal(swatchFor('alice'), swatchFor('alice'));
-  let h = 0;
-  for (const ch of 'cyrcle_0') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  assert.equal(swatchFor('cyrcle_0'), ['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'][h % 6]);
+  const people = loadTsx('frontend/src/lib/community-color.ts');
+  const messages = loadTsx('frontend/src/features/messages/format.tsx');
+  for (const name of ['cyrcle_0', 'audit_ada', 'pat_parrot', 'Launch crew']) {
+    assert.equal(swatchFor(name), people.swatchFor(name), name);
+    assert.equal(swatchFor(name), messages.swatchFor(name), name);
+  }
+  assert.match(read(SWATCH), /export \{ swatchFor \} from '\.\.\/\.\.\/lib\/community-color';/);
 });
 
 test('the box is the Current status tab\'s surface: frosted fill, hairline, bare glyph, simple text', () => {

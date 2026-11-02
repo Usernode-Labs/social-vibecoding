@@ -427,6 +427,22 @@ function plainText(value) {
     .trim();
 }
 
+/** The longest bell subject a reply gives, in characters, its "…" included. */
+const BELL_SUBJECT_MAX = 140;
+
+/**
+ * Pure: a bell subject no longer than BELL_SUBJECT_MAX, cut at the last
+ * whole word with "…" (overnight audit D04, 2 Nov 2026: a bare 140-character
+ * cut left "Tap File it under my mes", which read as a typo and hid the ask).
+ */
+function bellSubjectOf(words) {
+  if (words.length <= BELL_SUBJECT_MAX) return words;
+  const room = words.slice(0, BELL_SUBJECT_MAX - 1);
+  const space = room.lastIndexOf(' ');
+  const cut = space > BELL_SUBJECT_MAX / 2 ? room.slice(0, space) : room;
+  return `${cut.replace(/[\s.,;:!?-]+$/, '')}…`;
+}
+
 /**
  * Pure: the words for one of the bot's notifications, from its detail:
  * `{ title, body, bellLabel, bellSubject, bellMeta, moment, said,
@@ -442,7 +458,7 @@ function botMomentCopy(detail, message = '') {
   if (d.moment === 'reply') {
     const words = plainText(message);
     return {
-      title: 'Homeroom bot', body: words, bellLabel: 'Homeroom bot', bellSubject: words.slice(0, 140),
+      title: 'Homeroom bot', body: words, bellLabel: 'Homeroom bot', bellSubject: bellSubjectOf(words),
       bellMeta: 'Homeroom bot', moment: 'reply', said: 'reply', threadRootId: null,
     };
   }
@@ -506,6 +522,7 @@ module.exports = {
   botNotificationDetail,
   parseBotDetail,
   botMomentCopy,
+  bellSubjectOf,
   botEmailCopy,
   firstSentence,
   momentKind,

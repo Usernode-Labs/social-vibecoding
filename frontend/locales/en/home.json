@@ -28,7 +28,7 @@
     "description": "Read by screen readers while the grid of app tiles on Home is still loading."
   },
   "grid.noMatches": {
-    "text": "No apps match “{{query}}”. Clear the search and try <0>Discover Communities</0> below.",
+    "text": "No apps match “{{query}}”. Clear the search and try <0>Discover communities</0> below.",
     "description": "Shown in place of Home's app tiles when the search finds none of the viewer's apps. {{query}} is what the person typed. The numbered tag highlights the name of the section further down the Home screen; use the same words as that section's heading."
   },
   "grid.showAll_one": {
@@ -584,7 +584,7 @@
     "description": "Text under \"Verify your account\" on Home when phone verification is not offered; instructions to link other accounts follow it."
   },
   "discover.heading": {
-    "text": "Discover Communities",
+    "text": "Discover communities",
     "description": "Heading of the section of Home that shows a rail of app cards to try."
   },
   "discover.fallbackTitle": {
@@ -593,75 +593,75 @@
   },
   "discover.browseAll.text": {
     "text": "See all",
-    "description": "Link at the right end of the \"Discover Communities\" heading on Home: opens the Discover screen, which lists every community the person can join. The Challenges heading's link says the same."
+    "description": "Link at the right end of the \"Discover communities\" heading on Home: opens the Discover screen, which lists every community the person can join. The Challenges heading's link says the same."
   },
   "discover.browseAll.label": {
     "text": "See all communities",
-    "description": "Accessible name of the \"See all\" link beside the \"Discover Communities\" heading on Home: opens the Discover screen, which lists every community the person can join."
+    "description": "Accessible name of the \"See all\" link beside the \"Discover communities\" heading on Home: opens the Discover screen, which lists every community the person can join."
   },
   "discover.browseAll.tip": {
     "text": "See every community you can join in Discover",
-    "description": "Tooltip of the \"See all\" link beside the \"Discover Communities\" heading on Home. Discover is the name of the screen it opens."
+    "description": "Tooltip of the \"See all\" link beside the \"Discover communities\" heading on Home. Discover is the name of the screen it opens."
   },
   "discover.empty.title": {
     "text": "No communities to suggest right now",
-    "description": "First line of the card shown in Home's Discover Communities section when there is no community to suggest: none the person can join that they have not. The whole card links to the Discover screen."
+    "description": "First line of the card shown in Home's Discover communities section when there is no community to suggest: none the person can join that they have not. The whole card links to the Discover screen."
   },
   "discover.empty.detail": {
     "text": "Discover lists every community you can join.",
-    "description": "Second line of the card shown in Home's Discover Communities section when there is no community to suggest. Discover is the name of the screen the card opens."
+    "description": "Second line of the card shown in Home's Discover communities section when there is no community to suggest. Discover is the name of the screen the card opens."
   },
   "discover.card.addTip": {
     "text": "Add to My apps",
-    "description": "Tooltip of the labelled pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member but the app is not in My apps: puts a tile for the app in My apps."
+    "description": "Tooltip of the labelled pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer is already a member but the app is not in My apps: puts a tile for the app in My apps."
   },
   "discover.card.addedTip": {
     "text": "Added. Tap to remove from My apps",
-    "description": "Tooltip of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps."
+    "description": "Tooltip of the round check button on an app's card in Home's Discover communities rail when the app is already in My apps."
   },
   "discover.card.removeNamed": {
     "text": "Remove {{app}} from My apps",
-    "description": "Accessible name of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps. {{app}} is the app's name."
+    "description": "Accessible name of the round check button on an app's card in Home's Discover communities rail when the app is already in My apps. {{app}} is the app's name."
   },
   "discover.card.join": {
     "text": "Join",
-    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer has not joined the app's community. Tapping it joins that community and puts a tile for the app in My apps."
+    "description": "Label of the pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer has not joined the app's community. Tapping it joins that community and puts a tile for the app in My apps."
   },
   "discover.card.joined": {
     "text": "Joined",
-    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is a member and the app is in My apps. Tapping it asks whether to leave the community."
+    "description": "Label of the pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer is a member and the app is in My apps. Tapping it asks whether to leave the community."
   },
   "discover.card.add": {
     "text": "Add",
-    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member but the app is not in My apps. Tapping it puts a tile for the app in My apps."
+    "description": "Label of the pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer is already a member but the app is not in My apps. Tapping it puts a tile for the app in My apps."
   },
   "discover.card.joinNamed": {
     "text": "Join {{app}}",
-    "description": "Accessible name of the Join pill on an app's card in Home's Discover Communities rail. {{app}} is the app's name."
+    "description": "Accessible name of the Join pill on an app's card in Home's Discover communities rail. {{app}} is the app's name."
   },
   "discover.card.joinedNamed": {
     "text": "Joined {{app}}",
-    "description": "Accessible name of the pill on an app's card in Home's Discover Communities rail when the viewer is a member and the app is in My apps; tapping it asks whether to leave. {{app}} is the app's name."
+    "description": "Accessible name of the pill on an app's card in Home's Discover communities rail when the viewer is a member and the app is in My apps; tapping it asks whether to leave. {{app}} is the app's name."
   },
   "discover.card.joinTip": {
     "text": "Join this community. It also goes on My apps",
-    "description": "Tooltip of the Join pill in the corner of an app's card in Home's Discover Communities rail. \"My apps\" is the name of the grid on Home."
+    "description": "Tooltip of the Join pill in the corner of an app's card in Home's Discover communities rail. \"My apps\" is the name of the grid on Home."
   },
   "discover.card.joinedTip": {
     "text": "You're a member. Tap to leave",
-    "description": "Tooltip of the Joined pill in the corner of an app's card in Home's Discover Communities rail; tapping it opens the leave confirmation."
+    "description": "Tooltip of the Joined pill in the corner of an app's card in Home's Discover communities rail; tapping it opens the leave confirmation."
   },
   "discover.card.addNamed": {
     "text": "Add {{app}} to My apps",
-    "description": "Accessible name of the Add pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member. {{app}} is the app's name; \"My apps\" is the name of the grid on Home."
+    "description": "Accessible name of the Add pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer is already a member. {{app}} is the app's name; \"My apps\" is the name of the grid on Home."
   },
   "discover.card.contributors_one": {
     "text": "{{count}} contributor",
-    "description": "Small line at the bottom of an app's card in Home's Discover Communities rail. {{count}} is how many people have contributed to the app."
+    "description": "Small line at the bottom of an app's card in Home's Discover communities rail. {{count}} is how many people have contributed to the app."
   },
   "discover.card.contributors_other": {
     "text": "{{count}} contributors",
-    "description": "Small line at the bottom of an app's card in Home's Discover Communities rail. {{count}} is how many people have contributed to the app."
+    "description": "Small line at the bottom of an app's card in Home's Discover communities rail. {{count}} is how many people have contributed to the app."
   },
   "challenges.heading": {
     "text": "Challenges",
