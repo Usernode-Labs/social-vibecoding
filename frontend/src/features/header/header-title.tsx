@@ -240,7 +240,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                   the name, so a project that happens to be called Homeroom
                   keeps its word. The button's aria-label already says the
                   name, so the drawing is aria-hidden, as on Home. */}
-              <span id="header-title-name" className="min-w-0 truncate">
+              <span id="header-title-name" className="min-w-0 truncate" title={selfHosted ? undefined : (name || text) || undefined}>
                 {selfHosted
                   ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
                   : name || text}
@@ -257,7 +257,13 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
           </>
         ) : (
           <span className="min-w-0 flex items-baseline gap-1.5">
-            <span id="header-title-name" className="min-w-0 truncate">
+            <span
+              id="header-title-name"
+              className="min-w-0 truncate"
+              title={communityName
+                ? (selfHosted ? undefined : (name || text) || undefined)
+                : (showsWordmark ? undefined : text || undefined)}
+            >
               {/* `aria-hidden` on the mark: the h1 takes its accessible name
                   from its contents, and the drawing IS the word "Homeroom" — a
                   title element or an sr-only span here would have it read

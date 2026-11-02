@@ -200,7 +200,7 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
     onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, data, ...over,
   }));
   const html = card(community());
-  assert.match(html, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-channel="preview" data-ws-channel-open="">/,
+  assert.match(html, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-channel="preview" data-ws-channel-open=""[^>]*>/,
     'one door, to the Discussion place');
   assert.match(html, />Discussion <span class="dev-ws-foryou-handle">#general<\/span><\/div>/, 'the project\'s channel is its #general');
   assert.match(html, /<span data-ws-channel-last=""><span data-ws-channel-said="">@lin: See you Sunday<\/span><span data-ws-channel-ago=""> · [^<]+<\/span><\/span>/,
@@ -241,7 +241,7 @@ test('For you\'s Needs you opens the queue and counts the votes owed', () => {
   const needs = card([row('a', 'Dark mode', 'ada'), row('b', 'Tags', 'lin'), row('c', 'Export', 'kai')]);
   assert.match(needs, /^<section class="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby="([^"]+)"><h2 class="[^"]*uppercase[^"]*" id="\1">For you<\/h2><div class="dev-ws-strip dev-ws-foryou">/,
     'the small-caps label over one card');
-  assert.match(needs, /<div class="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes="3"><button type="button" class="[^"]*" data-ws-hub-needs-open="">/);
+  assert.match(needs, /<div class="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes="3"><button type="button" class="[^"]*" data-ws-hub-needs-open=""[^>]*>/);
   assert.match(needs, />Needs you<\/div><div class="[^"]*"><span data-ws-hub-needs-first="">Dark mode, and 2 more<\/span><\/div><\/div><span class="dev-ws-foryou-pill">3 to vote<\/span>/);
   assert.equal((needs.match(/dev-ws-foryou-pill/g) || []).length, 1, 'one pill on the row');
   assert.doesNotMatch(needs, /Join to vote/);

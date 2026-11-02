@@ -226,7 +226,7 @@ test('For you on a project nobody else is in: Your work and the Discussion from 
     data: community({ channel }), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
   }));
   const html = card();
-  assert.match(html, /^<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop">/,
+  assert.match(html, /^<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop"[^>]*>/,
     'no Needs you line: nothing needs you, and nobody else could put a vote up');
   assert.match(html, /<span data-ws-mine-empty="">No work in progress\.<\/span>/, 'Your work, saying so, as on every project');
   assert.match(html, /data-ws-channel="preview" data-ws-channel-open=""[\s\S]*<span data-ws-channel-empty="">No messages yet\.<\/span>/,

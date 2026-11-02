@@ -851,7 +851,7 @@ function IssueIdentity({ label, title }: { label: string; title: string }): Reac
       <span className="shrink-0 rounded-full bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
         {label}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200">{title}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200" title={title}>{title}</span>
     </>
   );
 }

@@ -2436,7 +2436,7 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   // ON THE HUB, one row of For you: the first of it and how many, a door to
   // the Workshop page above. No rows of its own to unfold.
   const hub = workshopHtml(AppView, 'status');
-  assert.match(hub, /<button type="button" class="[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop">/);
+  assert.match(hub, /<button type="button" class="[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop"[^>]*>/);
   assert.match(hub, /<span data-ws-mine-first="mine:my-session:51" data-ws-mine-session="">Bottom tabs<\/span>/);
   assert.match(hub, /<span class="dev-ws-foryou-count">2 in progress<\/span>/);
   assert.equal((hub.match(/data-ws-row="mine:/g) || []).length, 0, 'the rows are the Workshop\'s');
@@ -2941,7 +2941,7 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   // The first line: the small glyph (This week's), the title, then the
   // card's own status pill and its Vote at the line's end, the pill first.
   assert.match(html, /^<div class="dev-ws-wrow dev-ws-lrow" data-ws-row="[^"]+" data-ws-kind="change" data-ws-open="proposal:34"><span class="dev-ws-hrow-glyph" data-kind="change" aria-hidden="true"><svg/);
-  assert.match(html, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/34">[^<]+<\/a><span class="dev-ws-wvote" data-ws-vote=""><span class="dev-ws-row-state [^"]*dev-ws-wvote-state"[^>]*>[^<]+<\/span><span class="dev-ws-wvote-btn"><button type="button" class="dev-vote-btn"[^]*?<\/button><\/span><\/span><\/span>/,
+  assert.match(html, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/34"[^>]*>[^<]+<\/a><span class="dev-ws-wvote" data-ws-vote=""><span class="dev-ws-row-state [^"]*dev-ws-wvote-state"[^>]*>[^<]+<\/span><span class="dev-ws-wvote-btn"><button type="button" class="dev-vote-btn"[^]*?<\/button><\/span><\/span><\/span>/,
     'the title, then the pill, then Vote, closing the first line');
   // The second: the number and its maker (somebody else's, so named), then
   // the tags, and no vote. No age (#4716).
@@ -3205,7 +3205,7 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // On the hub, For you's Your work row names it and opens the Workshop
   // above; nothing on the hub links to the session.
   const hubHtml = workshopHtml(AppView, 'status');
-  assert.match(hubHtml, /data-ws-mine-card="" data-ws-mine-open="workshop">[\s\S]*?<span data-ws-mine-first="mine:my-session:51" data-ws-mine-session="">Bottom tabs<\/span>/);
+  assert.match(hubHtml, /data-ws-mine-card="" data-ws-mine-open="workshop"[^>]*>[\s\S]*?<span data-ws-mine-first="mine:my-session:51" data-ws-mine-session="">Bottom tabs<\/span>/);
   assert.ok(!hubHtml.includes('/dev/sessions/51'), 'the hub links the session from nowhere');
   assert.ok(!hubHtml.includes('dev-ws-sheet-actions'), 'and unfolds no card to carry a link');
 
