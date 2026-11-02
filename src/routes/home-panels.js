@@ -9,6 +9,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const { translatedReads } = require('../services/admin-text-translations');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -744,7 +745,9 @@ function homePanelRoutes() {
   const router = Router();
   const pool = getPool();
 
-  router.get('/api/home-panels', async (req, res) => {
+  // What organisers wrote on a challenge, in the reader's language (#4814).
+  const translated = translatedReads(pool);
+  router.get('/api/home-panels', translated, async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
     const registry = panelRegistryPublic();
     try {
