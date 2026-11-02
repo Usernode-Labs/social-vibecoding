@@ -5507,9 +5507,25 @@
     // precisely "tapping it does nothing". The row must still offer the
     // ask. `ios-denied` renders the other dead end (determined-denied,
     // where iOS presents no prompt however often it is asked).
+    // `foreground-only` renders an Android build that produces blocks only
+    // while it is open: no permission rows, and the note saying so.
     _unDemoMode() {
       const v = this._demoParam('usernodedemo');
-      return (v === 'ios' || v === 'ios-denied') ? v : null;
+      return (v === 'ios' || v === 'ios-denied' || v === 'foreground-only') ? v : null;
+    },
+
+    DEMO_FOREGROUND_ONLY_STATE: {
+      buildInfo: { appVersion: '0.0.0-demo', buildNumber: '0' },
+      debugMode: false,
+      facematchStrict: true,
+      authStatus: 'authenticated',
+      permissions: {
+        platform: 'android',
+        exactAlarmGranted: false,
+        batteryOptDisabled: false,
+        deviceManufacturer: null,
+        backgroundProduction: false,
+      },
     },
 
     DEMO_USERNODE_STATE: {
@@ -5751,7 +5767,9 @@
       if (demo) {
         // Fixed snapshot, no bridge call: this link exists to make the
         // notification row reachable from a browser.
-        this._usernodeState = this.DEMO_USERNODE_STATE;
+        this._usernodeState = demo === 'foreground-only'
+          ? this.DEMO_FOREGROUND_ONLY_STATE
+          : this.DEMO_USERNODE_STATE;
         this._unPushStatus = demo === 'ios-denied' ? 'denied' : 'undetermined';
         this._unPushProbed = true;
         this._unCanOpenNotifSettings = true;
@@ -6687,6 +6705,10 @@
     },
 
     _bpView() {
+      // The demo link reads no account, and must not offer a live ask.
+      if (this._unDemoMode() === 'foreground-only') {
+        return { kind: 'note', text: tr('settings:usernode.blockProduction.released') };
+      }
       const state = this._bpState;
       if (state === undefined) return { kind: 'checking' };
       if (!state) return { kind: 'note', text: tr('settings:usernode.blockProduction.checkFailed') };

@@ -314,6 +314,7 @@ export function UsernodeSectionBody({ s }: { s: UsernodeSectionState }): ReactNo
       {/* The demo link renders the permissions rows and stops: everything
           below reads the live bridge, which a browser does not have. */}
       {s.belowDemoCut ? <><SocialPush s={s} /><Tail s={s} /></> : null}
+      {!s.belowDemoCut && s.foregroundOnly ? <BlockProduction s={s} /> : null}
     </>
   );
 }

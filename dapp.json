@@ -3525,6 +3525,12 @@
       "expectText": "Not granted"
     },
     {
+      "name": "A build that produces only while open says so and asks for no alarm or battery access",
+      "path": "/#settings/usernode?usernodedemo=foreground-only",
+      "expectSelector": "#settings-usernode-section:not(.hidden)",
+      "expectText": "only while Homeroom is open"
+    },
+    {
       "name": "Widget icons: the diagnostics box separates \"couldn't say\" from \"no\"",
       "path": "/#settings/usernode?widgeticons=demo",
       "expectSelector": "#settings-usernode-section:not(.hidden) #settings-widget-capability-row + #settings-widget-verdict-row",

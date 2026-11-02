@@ -32,6 +32,16 @@ test('Settings hides only the Android rows', () => {
   assert.match(settings, /if \(isAndroid && this\._unForegroundOnly\(\)\) return null;/);
 });
 
+test('the demo link draws the note, offers no live ask, and hides the Android rows', () => {
+  const usernodeTsx = read('frontend/src/features/settings/sections/usernode.tsx');
+  assert.match(settings, /v === 'foreground-only'/);
+  assert.match(settings, /this\._unDemoMode\(\) === 'foreground-only'\) \{\s*return \{ kind: 'note'/);
+  assert.match(usernodeTsx, /!s\.belowDemoCut && s\.foregroundOnly \? <BlockProduction s=\{s\} \/>/);
+  const check = JSON.parse(read('dapp.json')).tests
+    .find((t) => t.path === '/#settings/usernode?usernodedemo=foreground-only');
+  assert.equal(check.expectText, 'only while Homeroom is open');
+});
+
 test('the note is in the catalog', () => {
   assert.equal(
     message('settings:usernode.blockProduction.foregroundOnly'),
