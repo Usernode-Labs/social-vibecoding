@@ -27356,21 +27356,23 @@ const AppView = {
       // costs one refresh rather than one for the POST and one for the
       // event: the server broadcasts before it answers, so the two land
       // within the window of each other.
-      const refresh = typeof App !== 'undefined' && App._liveRefresh
-        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
-        : AppView.refreshDevData('vote');
       // #5458: refreshDevData returns before doing anything outside the dev
       // tab, so a chat mounted on Messages never re-read its snapshot and
       // the settled counts on its card stayed the optimistic ones until
-      // opening the proposal page rewrote the row. When a chat is mounted
-      // (GroupChat.appSlug) outside the board, re-read its snapshot here;
-      // the dev tab's own sub-views are covered by refreshDevData as before.
-      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
-        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
-        ? AppView.loadVoteState(GroupChat.appSlug) : null;
+      // opening the proposal page rewrote the row. #6109: the burst names
+      // the chat the vote came from (chatSlug), and its flush reads that
+      // chat's snapshot wherever it is mounted, so the vote costs one read
+      // and the settle waits for the burst alone.
+      const refresh = typeof App !== 'undefined' && App._liveRefresh
+        ? App._liveRefresh('vote', sessionId, {
+          appSlug: AppView.appData && AppView.appData.slug,
+          chatSlug: typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null,
+        })
+        : AppView.refreshDevData('vote');
       // The pending-vote overlay inside loadVoteState keeps the vote on a
-      // read that started before it landed, so the settle waits for both.
-      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
+      // read that started before it landed, so the settle waits for the
+      // burst, which holds that read.
+      Promise.resolve(refresh).then(settle, settle);
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
@@ -27568,13 +27570,15 @@ const AppView = {
       window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
+      // #6109: the burst reads the chat's snapshot for this vote wherever it
+      // is mounted (chatSlug), so the undo does not read it a second time.
       const refresh = typeof App !== 'undefined' && App._liveRefresh
-        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
+        ? App._liveRefresh('vote', sessionId, {
+          appSlug: AppView.appData && AppView.appData.slug,
+          chatSlug: typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null,
+        })
         : AppView.refreshDevData('vote');
-      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
-        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
-        ? AppView.loadVoteState(GroupChat.appSlug) : null;
-      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
+      Promise.resolve(refresh).then(settle, settle);
       window.Notifications?.refresh?.();
       window.UsernodeReact?.profileProposals?.voted?.();
       window.Leaderboard?.invalidateHistory?.();
