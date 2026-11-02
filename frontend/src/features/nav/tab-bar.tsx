@@ -875,6 +875,15 @@ function openCommunitiesPage(): void {
  * checks select on, is untouched. Off the phone the attribute goes, and the
  * rail reads in its markup order as before.
  *
+ * …AND THE TAB KEY MOVES IN IT TOO (2 Nov 2026, the owner's call after
+ * #6102). `aria-owns` reorders what a screen reader reads, not what Tab
+ * focuses, which still followed the markup. So below 768px a Tab or
+ * Shift+Tab on one of the five moves to its neighbour in the drawn order
+ * (`nextPhoneTab`). At the two ends it is left to the browser: Home is
+ * first and You last in the markup as on screen, so Tab out of You and
+ * Shift+Tab out of Home leave the bar where they always did. No tabindex is
+ * written, so the markup, the prerender and every other bar are untouched.
+ *
  * Written from an effect, never rendered: the prerender has no width, and a
  * first client render that differed from it would be a hydration mismatch.
  * The Duo's side strip is left alone: its Apps section is the bar's first
@@ -892,6 +901,13 @@ export function phoneReadingOrder(phone: boolean, sideStrip: boolean): string | 
   return phone && !sideStrip ? PHONE_TAB_ORDER.join(' ') : null;
 }
 
+/** The tab a Tab (or, `back`, a Shift+Tab) on `id` moves to in the phone's drawn order, or null at an end. */
+export function nextPhoneTab(id: string, back: boolean): string | null {
+  const at = (PHONE_TAB_ORDER as readonly string[]).indexOf(id);
+  if (at === -1) return null;
+  return PHONE_TAB_ORDER[at + (back ? -1 : 1)] ?? null;
+}
+
 function usePhoneReadingOrder(barRef: React.RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const bar = barRef.current;
@@ -903,12 +919,30 @@ function usePhoneReadingOrder(barRef: React.RefObject<HTMLElement | null>): void
       if (owns) bar.setAttribute('aria-owns', owns);
       else bar.removeAttribute('aria-owns');
     };
+    // Tab and Shift+Tab, in the drawn order (the note above).
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (!phoneReadingOrder(mq.matches, root.hasAttribute('data-side-strip'))) return;
+      const from = (event.target as HTMLElement | null)?.closest?.('a[id], button[id]');
+      let id = from && bar.contains(from) ? from.id : '';
+      while (id) {
+        id = nextPhoneTab(id, event.shiftKey) || '';
+        const to = id ? document.getElementById(id) : null;
+        if (to && to.getClientRects().length > 0) {
+          event.preventDefault();
+          to.focus();
+          return;
+        }
+      }
+    };
     apply();
     mq.addEventListener?.('change', apply);
+    bar.addEventListener('keydown', onKey);
     const watch = typeof MutationObserver === 'function' ? new MutationObserver(apply) : null;
     watch?.observe(root, { attributes: true, attributeFilter: ['data-side-strip'] });
     return () => {
       mq.removeEventListener?.('change', apply);
+      bar.removeEventListener('keydown', onKey);
       watch?.disconnect();
     };
   }, [barRef]);

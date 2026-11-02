@@ -1400,3 +1400,18 @@ test('the Communities ring overhangs instead of pushing its label down (audit N0
   assert.match(ring, /margin-block: -3px;/);
   assert.match(css, /@media \(min-width: 768px\) \{\s*\.platform-tab-ring \{[^}]*margin-block: 0;/);
 });
+
+test('on a phone the Tab key moves through the bar in its drawn order (audit N01 follow-up)', () => {
+  const { nextPhoneTab } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  assert.equal(nextPhoneTab('platform-tab-home', false), 'platform-tab-workshop');
+  assert.equal(nextPhoneTab('platform-tab-workshop', false), 'platform-tab-ai');
+  assert.equal(nextPhoneTab('platform-tab-ai', false), 'platform-tab-messages');
+  assert.equal(nextPhoneTab('platform-tab-messages', false), 'platform-tab-me');
+  assert.equal(nextPhoneTab('platform-tab-me', false), null, 'out of You: the browser\'s, as before');
+  assert.equal(nextPhoneTab('platform-tab-workshop', true), 'platform-tab-home');
+  assert.equal(nextPhoneTab('platform-tab-home', true), null, 'back out of Home: the browser\'s');
+  assert.equal(nextPhoneTab('platform-tab-discover', false), null, 'the rail\'s alone');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/nav/tab-bar.tsx'), 'utf8');
+  assert.match(src, /bar\.addEventListener\('keydown', onKey\);/, 'from the effect, never in the prerender');
+  assert.doesNotMatch(src, /tabIndex=\{[^}]*phone/i, 'no tabindex rendered');
+});
