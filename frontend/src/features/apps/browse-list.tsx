@@ -351,7 +351,7 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   // The default list's two sections (#5267): "Recommended for you" (the
   // featured apps you are not in, Browse.recommendedApps) and then the rest,
   // in the Recommended order, under one heading. The rest is "More apps"
-  // under a Recommended section and "All apps" where there is none.
+  // under a Recommended section and "Apps to try" where there is none.
   const picked = shown.filter((view) => view.recommended);
   const rest = shown.filter((view) => !view.recommended);
   const more = rows.filter((view) => view.directoryTier === 'more');
