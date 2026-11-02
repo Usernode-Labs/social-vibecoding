@@ -11,7 +11,7 @@ const runtime = createLanguageRuntime(catalogs);
 
 export const {
   i18n, t, htmlText, htmlRich, listText, languageName, registerNamespace, ensureNamespace,
-  changeLanguage, applySessionLanguage, getLanguage, getPreference,
+  changeLanguage, applySessionLanguage, getLanguage, getDateLocale, getPreference,
   getNotice, subscribeNotice, dismissNotice, getLanguages, subscribeLanguages,
 } = runtime;
 
@@ -67,6 +67,8 @@ export function switchToEnglish(): Promise<boolean> {
 (globalThis as unknown as { PlatformI18n: unknown }).PlatformI18n = {
   t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, changeLanguage,
   applySessionLanguage, saveAccountLocale, getLanguages,
+  // #6103: the classic scripts' date formatters read the same rule.
+  dateLocale: getDateLocale,
 };
 
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {

@@ -3445,16 +3445,22 @@ const GroupChat = {
     const d = new Date(ts == null ? NaN : ts);
     if (isNaN(d.getTime())) return { text: '', title: '' };
     const today = now || new Date();
+    // The date's locale is the interface language with the device's region
+    // (#6103) — the same rule lib/timestamp.ts reads. The device default
+    // stands where the runtime predates it, or where this file is evaluated
+    // without one (a bare test sandbox).
+    const locale = typeof PlatformI18n !== 'undefined' && PlatformI18n.dateLocale
+      ? PlatformI18n.dateLocale() : undefined;
     // No zero-padded hour (polish N5): "4:14 AM", as lib/timestamp.ts.
-    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const title = d.toLocaleString([], {
+    const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+    const title = d.toLocaleString(locale, {
       year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
     const sameDay = d.getFullYear() === today.getFullYear()
       && d.getMonth() === today.getMonth()
       && d.getDate() === today.getDate();
     if (sameDay) return { text: time, title };
-    const date = d.toLocaleDateString([], d.getFullYear() === today.getFullYear()
+    const date = d.toLocaleDateString(locale, d.getFullYear() === today.getFullYear()
       ? { month: 'short', day: 'numeric' }
       : { year: 'numeric', month: 'short', day: 'numeric' });
     return { text: `${date}, ${time}`, title };
