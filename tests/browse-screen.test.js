@@ -841,6 +841,34 @@ test('Opened recently: an app another tab left counts too, without this tab havi
   });
 });
 
+test('Opened recently: the app you just left joins a list drawn before it was parked', () => {
+  withRecentStore((store) => {
+    const { Browse, state } = makeBrowse();
+    Browse._load = () => {};
+    Browse._recentEntries = () => store.recentAppEntries('ana');
+    Browse._apps = [app({ slug: 'left', name: 'Left' })];
+    Browse._only = ['recent'];
+    // The order App.navigateToBrowse runs them in: open, then park.
+    Browse.open(null);
+    assert.deepEqual(state.rows.map((row) => row.slug), []);
+    store.rememberRecentApp({ slug: 'left', name: 'Left' }, 'ana');
+    Browse.recentChanged();
+    assert.deepEqual(state.rows.map((row) => row.slug), ['left']);
+
+    // Nothing to redraw with the switch off, or with the screen shut.
+    let renders = 0;
+    const render = Browse.render;
+    Browse.render = () => { renders += 1; render(); };
+    Browse._only = [];
+    Browse.recentChanged();
+    Browse._only = ['recent'];
+    Browse.close();
+    Browse.recentChanged();
+    assert.equal(renders, 0);
+  });
+  assert.match(read('frontend/src/features/apps/mount.ts'), /recentAppsStore\.subscribe\(\(\) => .*recentChanged/);
+});
+
 test('Opened recently: mount.ts reads the store under the name it was written with', () => {
   const mount = read('frontend/src/features/apps/mount.ts');
   assert.match(mount, /_recentEntries = \(\) => recentAppEntries\(navStore\.get\(\)\.viewer\)/);

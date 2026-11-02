@@ -20,7 +20,7 @@ import { flushSync } from 'react-dom';
 import './browse.js';
 import { browseStore } from './browse-store.js';
 import { navStore } from '../nav/nav-store.js';
-import { recentAppEntries } from '../nav/recent-apps-store.js';
+import { recentAppEntries, recentAppsStore } from '../nav/recent-apps-store.js';
 
 browseStore.setFlush(flushSync);
 
@@ -36,6 +36,7 @@ if (typeof window !== 'undefined') {
     // The Opened recently switch's list (#4809), read when the filter runs and
     // so never during the first render, and for the same name it is stored under.
     host.Browse._recentEntries = () => recentAppEntries(navStore.get().viewer);
+    recentAppsStore.subscribe(() => (host.Browse as any)?.recentChanged?.());
   }
   const bridge = (host.UsernodeReact ||= {});
   bridge.browse = host.Browse;

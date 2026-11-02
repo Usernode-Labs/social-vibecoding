@@ -768,6 +768,14 @@ const Browse = {
     return (apps || []).filter((a) => a && slugs.has(a.slug));
   },
 
+  // ./mount.ts calls this when the list of apps you left changes. Coming back
+  // from an app, App.navigateToBrowse opens this screen BEFORE the transition
+  // that parks the app, so without it the app you just left would be missing
+  // from a list drawn with this switch on, until something else redrew it.
+  recentChanged() {
+    if (Browse._open && !Browse._slug && Browse._only.includes('recent')) Browse.render();
+  },
+
   // The chip's set, before any sort or search. Each chip reads a predicate
   // that already exists rather than growing its own:
   //   featured — the per-viewer `featured` flag GET /api/apps serializes: the
