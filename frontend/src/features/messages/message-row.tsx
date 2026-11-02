@@ -109,6 +109,7 @@ export const MessageRow = memo(function MessageRow({
   hidePrompts = false,
   block = null,
   botChat = false,
+  quoteAgain = false,
 }: {
   message: ConversationMessage;
   conversationId: number;
@@ -134,6 +135,13 @@ export const MessageRow = memo(function MessageRow({
    * else, and for a bot message about no request: those draw as before.
    */
   block?: ChangeBlock | null;
+  /**
+   * B16 (overnight audit, 1 Nov 2026): the bot's answer quotes the same
+   * message its answer just above already quoted, with nothing anybody
+   * said between them (./index.tsx). The quote is left off: it repeated
+   * the whole request over every reply in one exchange.
+   */
+  quoteAgain?: boolean;
   /**
    * One request, one story: the row is in the viewer's chat with Homeroom
    * bot, the one direct chat with threads (./bot-shared.ts threadsAllowed):
@@ -351,7 +359,7 @@ export const MessageRow = memo(function MessageRow({
     <p className="messages-deleted">{t('messages:row.deleted')}</p>
   ) : (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
+      {message.reply && !quoteAgain ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
       {/* Homeroom bot parity, P1: what the reply looked at, above its words (./bot-looked.tsx). */}
       {!editing ? <BotLookedLine message={message} /> : null}
       {editing ? (

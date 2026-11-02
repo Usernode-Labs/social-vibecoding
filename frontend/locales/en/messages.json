@@ -4807,6 +4807,10 @@
     "text": "Vote",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a vote on it."
   },
+  "ai.pill.approve": {
+    "text": "Approve",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: a change on a project that is just this person's waits for their approval (their yes alone decides it). A verb."
+  },
   "ai.pill.pick": {
     "text": "Pick one",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a pick between competing changes."

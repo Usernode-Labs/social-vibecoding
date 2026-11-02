@@ -1312,6 +1312,13 @@
       "preview": "`SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE slug = LOWER($1) OR LOWER(name) = LOWER($1) ORDER BY (slug = LOWER($1)) DESC, id LIM"
     },
     {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
+      "fingerprint": "fdb7e64ac3ee12ccb1f3",
+      "count": 1,
+      "preview": "`SELECT a.slug, a.name, ${require('./communities').audienceSql('a', '(SELECT COUNT(*) FROM community_members cm WHERE cm.community_id = a.community_id)')} AS au"
+    },
+    {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
       "fingerprint": "78c2595a6c02401a3e85",
