@@ -92,7 +92,7 @@ import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { runningAppStore } from './parked-store.js';
 import { SideApps } from './side-apps';
-import { RailCommunities, useRailCommunities } from './rail-communities';
+import { RAIL_COMMUNITIES, RailCommunities, useRailCommunities } from './rail-communities';
 import { RailConversations } from './rail-conversations';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
@@ -1172,10 +1172,13 @@ export function PlatformTabs() {
               app.css shows these instead of the label and the tab's own
               badge there; a hidden element is not in the accessible name, so
               each width's name is what it shows.
+              Overnight audit Y04: the count is said only when it IS more
+              than the rows above list. "All 2 communities" under the same
+              two rows (or "All 1 community") said nothing but a stray number.
           */}
           {key === 'workshop' ? (
             <span className="platform-tab-all-label">
-              {allCount > 0 ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
+              {allCount > RAIL_COMMUNITIES ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
             </span>
           ) : null}
           {key === 'workshop' && allVotes > 0 ? (
