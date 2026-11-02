@@ -2164,6 +2164,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
+  // B16: in the chat with Homeroom bot, the message its last drawn answer
+  // quoted, until somebody else says something or the day turns: a later
+  // answer to the same message does not quote it again.
+  let quoted: number | null = null;
   // The "New" line, drawn once: above the first unread message, or above
   // the first row drawn after it when that message is not drawn itself.
   let lineDrawn = false;
@@ -2223,8 +2227,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
+      quoted = null;
     }
     if (lineAt !== null && message.id >= lineAt) drawLine();
+    // B16: somebody other than the bot spoke; the next answer quotes afresh.
+    if (!message.sender.bot) quoted = null;
     // One request, one story: in the chat with Homeroom bot, the bot's news
     // about a request is ONE short line (./bot-news-line.tsx) whose tap opens
     // the request's own page, unless it still asks something here.
@@ -2280,6 +2287,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         { author: previous.sender.id, at: previous.createdAt },
         { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
       );
+    const quoteAgain = botDm && !!message.sender.bot && !!message.reply && message.reply.id === quoted;
     rows.push(<MessageRow
       key={message.clientKey || message.id}
       message={message}
@@ -2294,7 +2302,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       // #4564: this row's part of its change's block, in the bot's DM alone.
       block={blocks?.get(message.id) ?? null}
       botChat={botDm}
+      quoteAgain={quoteAgain}
     />);
+    if (botDm && message.sender.bot && message.reply) quoted = message.reply.id;
     previous = moment ? null : message;
     const length = runs.get(index);
     const runKey = String(message.clientKey || message.id);
