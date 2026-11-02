@@ -355,8 +355,14 @@ const ROUTES = [
   ['GET', /^\/api\/public\/waitlist\/options$/, () => ok({ discovery_sources: {}, group_sizes: {}, group_roles: {}, group_tools: {}, loss_answers: {}, loss_kinds: {}, countries: {}, waitlist_url: 'https://example.invalid/waitlist', marketing_url: 'https://example.invalid', story_landing: false, sign_in_providers: [], phone_sign_in: false, terms_link: 'https://example.invalid/terms', privacy_link: 'https://example.invalid/privacy', child_safety_link: 'https://example.invalid/safety', account_deletion_link: 'https://example.invalid/delete', native_sign_in_providers: [] })],
   ['GET', /^\/api\/platform\/about$/, () => ok({ name: 'Homeroom', tagline: 'Build things together', repoUrl: 'https://example.invalid/homeroom', version: 'audit', updatedAt: ago(600), stats: { apps: 4, members: 3, merged: 40 }, selfAppSlug: SELF_SLUG, served: true })],
   // A phone browser is offered the app, as it is wherever a store link is
-  // published: the strip over the top of the page is part of its shape.
-  ['GET', /^\/api\/public\/mobile-app$/, () => ok({ ios: 'https://example.invalid/ios', android: 'https://example.invalid/android' })],
+  // published: the strip over the top of the page is part of its shape. The
+  // app's own shapes are the app (their bridge says so; the audit's stand-in
+  // for it does not reach this island), so nothing is offered there.
+  // (Answered as a failed read there: a missing listing still offers the
+  // home-screen install.)
+  ['GET', /^\/api\/public\/mobile-app$/, (m, url, shape) => (shape && shape.native
+    ? json(503, { error: 'not offered in the app' })
+    : ok({ ios: 'https://example.invalid/ios', android: 'https://example.invalid/android' }))],
   ['GET', /^\/api\/me\/community-pins$/, () => ok({ pins: [] })],
   ['GET', /^\/api\/me\/session-state$/, () => ok({ bootId: 'audit', at: NOW, sessions: [] })],
   ['GET', /^\/api\/me\/app-allowance$/, () => ok({ quota: { used: 2, limit: 5, remaining: 3 }, canCreateApps: true, requestedAt: null, server: null })],
@@ -395,11 +401,11 @@ const ROUTES = [
   ['PUT', /^\/api\/conversations\/\d+\/read$/, () => ok({ ok: true })],
 ];
 
-export function answer(method, url) {
+export function answer(method, url, shape = null) {
   for (const [m, pattern, build] of ROUTES) {
     if (m !== method) continue;
     const match = url.pathname.match(pattern);
-    if (match) return build(match, url);
+    if (match) return build(match, url, shape);
   }
   return { status: 404, json: { error: 'not in the layout audit\'s made-up world' }, fixture: false };
 }

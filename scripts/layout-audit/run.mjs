@@ -115,7 +115,7 @@ async function auditProfile(profile, screens, args, outDir) {
         if (Array.isArray(state.cookies) && state.cookies.length) await page.send('Network.setCookies', { cookies: state.cookies });
       }
     } else {
-      await serve(page, { publicDir: args.publicDir, api: async (method, url) => answer(method, url), log });
+      await serve(page, { publicDir: args.publicDir, api: async (method, url) => answer(method, url, profile), log });
     }
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: readFileSync(join(HERE, 'page-setup.js'), 'utf8') });
     await page.send('Emulation.setDeviceMetricsOverride', { width: profile.width, height: profile.height, deviceScaleFactor: 2, mobile: !!profile.touch });
