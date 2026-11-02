@@ -6421,6 +6421,7 @@
         belowDemoCut: !demo,
         socialPush: this._socialPushView(),
         blockProduction: this._bpView(),
+        foregroundOnly: this._unForegroundOnly(),
         privacy: s ? {
           facematch: {
             label: tr('settings:usernode.privacy.strictFacematch'),
@@ -6552,6 +6553,12 @@
       dialog.open({ userId });
     },
 
+    // Older builds omit the field and still produce in the background.
+    _unForegroundOnly() {
+      const perms = this._usernodeState && this._usernodeState.permissions;
+      return !!perms && perms.backgroundProduction === false;
+    },
+
     _usernodeBodyView() {
       const s = this._usernodeState;
       if (!s) {
@@ -6567,6 +6574,10 @@
       }
       const perms = s.permissions || {};
       const isAndroid = perms.platform === 'android';
+      // Android's rows here are the exact-alarm and battery permissions, and a
+      // build that produces only while open has neither. iOS keeps its
+      // notification row.
+      if (isAndroid && this._unForegroundOnly()) return null;
       // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
       // notification permission (there are no exact alarms on iOS), so once a
       // request has settled through NativeChrome.settleIosPushGrant that
