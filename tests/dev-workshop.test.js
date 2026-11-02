@@ -7168,3 +7168,20 @@ test('a bare link to a project\'s /workshop opens the Workshop; a door, a switch
   // 5. The Communities tab reopening the page you left keeps its place.
   assert.match(appSrc, /AppView\?\._notePlaceDecided\?\.\(view\.slug\);\s*\} catch[^\n]*\n\s*try \{\s*history\.pushState\(null, '', `\$\{view\.path\}/);
 });
+
+test('the Hub has its own address, #app/<slug>/dev/hub, for links that mean the front door (N03 follow-up)', () => {
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = appSrc.indexOf('  _placeAddress(parts) {');
+  const body = appSrc.slice(at + '  _placeAddress(parts) {'.length, appSrc.indexOf('\n  },', at));
+  const view = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  // eslint-disable-next-line no-new-func
+  const placeAddress = new Function('AppView', `return (function (parts) {${body}\n})`)(view);
+  const parts = ['app', 'garden', 'dev', 'hub'];
+  assert.equal(placeAddress(parts), true);
+  assert.deepEqual(parts, ['app', 'garden', 'workshop'], 'rewritten to the page\'s own address');
+  assert.equal(view._workshopTab(), 'status', 'on its Hub');
+  assert.equal(view._takePlaceDecision('garden'), true, 'a decision the /workshop link rule then honours');
+  assert.match(appSrc, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/);
+  assert.match(read('src/services/homeroom-bot-dm.js'), /id: 'open_community'[^\n]*target: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`/);
+  assert.match(read('src/services/shared-objects.js'), /href: link\.type === 'hub' \? `#app\/\$\{slug\}\/dev\/hub`/);
+});

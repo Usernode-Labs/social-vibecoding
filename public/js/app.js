@@ -6697,7 +6697,8 @@ const App = {
 
   // The address of a project's hub, the page its channel hangs off. A HASH,
   // because the back button follows its href only when it is one (the
-  // #back-btn listener below); `#app/<slug>/workshop` is the same route.
+  // #back-btn listener below); `#app/<slug>/dev/hub` is the project page on
+  // its Hub (_placeAddress).
   /**
    * #4417: A CHANNEL'S OWN ADDRESS. `#app/<slug>/dev/discussion` is the
    * project's #general and `#app/<slug>/dev/c/<handle>` one of its topics (a
@@ -6707,13 +6708,20 @@ const App = {
    * already up for the project), and `parts` is rewritten in place to the
    * page's own address (`workshop`), which the route then takes as it takes
    * any other. Every older address is left as it is.
+   *
+   * THE HUB'S OWN ADDRESS (2 Nov 2026): `#app/<slug>/dev/hub`. A bare
+   * `/workshop` link opens the Workshop now (_linkOpensWorkshop), so a link
+   * that means the project's front door, one written as an href with no
+   * click of its own (a server's card, the back arrow's href, a new tab),
+   * names the Hub here and lands on it the same way.
    */
   _placeAddress(parts) {
     if (!parts || parts[0] !== 'app' || !parts[1] || parts[2] !== 'dev') return false;
-    if (parts[3] !== 'discussion' && !(parts[3] === 'c' && parts[4])) return false;
+    if (parts[3] !== 'discussion' && parts[3] !== 'hub' && !(parts[3] === 'c' && parts[4])) return false;
     let handle = '';
     try { handle = decodeURIComponent(parts[4] || '').toLowerCase(); } catch (_) { handle = ''; }
-    const place = parts[3] === 'discussion' || handle === 'general' ? 'discussion' : `c:${handle}`;
+    const place = parts[3] === 'hub' ? 'status'
+      : parts[3] === 'discussion' || handle === 'general' ? 'discussion' : `c:${handle}`;
     if (typeof AppView !== 'undefined' && AppView._isWorkshopPlace && AppView._isWorkshopPlace(place)) {
       AppView._landOnTab(parts[1], place);
     }
@@ -6753,7 +6761,7 @@ const App = {
   },
 
   _hubHref(slug) {
-    return slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
+    return slug ? `#app/${encodeURIComponent(slug)}/dev/hub` : '#communities';
   },
 
   // ── A discussion is its project page's Discussion tab (#3653) ─────────
@@ -7731,7 +7739,7 @@ const App = {
         const m = /^#(app\/[^/?]+)(\/[^?]*)?$/.exec(href);
         if (m) {
           const rest = m[2] || '';
-          const forms = /^\/(dev|board|workshop|activity)$/.test(rest)
+          const forms = /^\/(dev|board|workshop|activity|dev\/hub)$/.test(rest)
             ? ['/workshop', '/board'] : [rest];
           for (const form of forms) {
             wanted.push(new URL(`/${m[1]}${form}${App._routeSearch(null)}`, location.origin).href);

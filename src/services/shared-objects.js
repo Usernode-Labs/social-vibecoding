@@ -442,7 +442,7 @@ async function hydrateLink(pool, user, raw) {
       return {
         type: link.type, available: true, appId: app.id, appSlug: app.slug,
         title: app.name, subtitle: null,
-        href: link.type === 'hub' ? `#app/${slug}/workshop` : `#app/${slug}/dev/chat`,
+        href: link.type === 'hub' ? `#app/${slug}/dev/hub` : `#app/${slug}/dev/chat`,
         ...(link.type === 'hub' ? appIcon(app) : {}),
       };
     } catch (_) {

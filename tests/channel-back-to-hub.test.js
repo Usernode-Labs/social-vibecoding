@@ -131,7 +131,7 @@ test('the slug lands while resolve() still waits on the app row: heard at once, 
     assert.equal(back.label, 'Homeroom');
     back.onBack();
     assert.deepEqual(landed, ['homeroom']);
-    assert.equal(win.location.hash, '#app/homeroom/workshop');
+    assert.equal(win.location.hash, '#app/homeroom/dev/hub');
     releaseRow(json({}, false));
     await pending;
     off();
@@ -173,7 +173,7 @@ test('a project\'s channel: _landOnHub first, then the hub\'s address', async ()
   await withEnv({ fetchImpl: () => Promise.resolve(json(null, false)) }, ({ win, landed, HUB }) => {
     HUB.openChannelHub('whiteboard');
     assert.deepEqual(landed, ['whiteboard']);
-    assert.equal(win.location.hash, '#app/whiteboard/workshop');
+    assert.equal(win.location.hash, '#app/whiteboard/dev/hub');
   });
 });
 
@@ -224,7 +224,7 @@ test('a cold #general: the header arrow follows the slug to the hub, with the di
 
     window.App._lastVersionInfo = { sha: 'abc', selfAppSlug: 'homeroom' };
     PlatformTarget.notifySlug();
-    assert.deepEqual(backIcons.at(-1), ['arrow', '#app/homeroom/workshop'], 'the arrow hears the slug');
+    assert.deepEqual(backIcons.at(-1), ['arrow', '#app/homeroom/dev/hub'], 'the arrow hears the slug, to the Hub\'s own address');
     const disc = HUB.generalHubBack(HUB.platformSlug());
     assert.equal(disc.label, 'Homeroom');
     disc.onBack();

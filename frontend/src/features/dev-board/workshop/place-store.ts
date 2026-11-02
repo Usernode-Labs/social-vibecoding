@@ -99,7 +99,7 @@ type ViewApi = {
   _landOnTab?: (slug: string, tab: string) => void;
   _stashDiscussionTarget?: (slug: string, target: Record<string, unknown>) => void;
 };
-type AppApi = { _hubHref?: (slug: string) => string };
+type AppApi = Record<string, never>;
 
 /**
  * Go to `key` on `slug`'s page: in place when the page is up for it (a press
@@ -125,9 +125,9 @@ export function openPlace(
   }
   const w = window as unknown as { AppView?: ViewApi; App?: AppApi };
   try { w.AppView?._landOnTab?.(slug, key); } catch { /* the page opens on what it remembers */ }
-  let href = '';
-  try { href = w.App?._hubHref?.(slug) || ''; } catch { href = ''; }
-  const to = href || `#app/${encodeURIComponent(slug)}/workshop`;
+  // The page's own address: the place was said above (_landOnTab), and the
+  // router takes it over the link's (App._linkOpensWorkshop).
+  const to = `#app/${encodeURIComponent(slug)}/workshop`;
   // A redirect (an old address the router is turning into this one) takes
   // its entry's place, so Back does not land on it and redirect again.
   if (opts.replace) window.location.replace(to.startsWith('#') ? to : `#${to}`);

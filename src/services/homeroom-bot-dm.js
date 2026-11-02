@@ -236,8 +236,9 @@ function openAppAction({ slug, appName }) {
 /**
  * Pure (#4231): the buttons under a NEW project's first version going live,
  * after its Open: its community page, where the project's hub is
- * (`#app/<slug>/workshop`, frontend/src/features/messages/bot-shared.ts
- * openAppTarget lands it on the hub), and Invite people, which the client
+ * (`#app/<slug>/dev/hub`, the Hub's own address: a bare /workshop opens the
+ * Workshop; frontend/src/features/messages/bot-shared.ts openAppTarget
+ * lands it on the hub), and Invite people, which the client
  * answers itself by opening the first-session invite sheet in place
  * (bot-question.tsx; an invite link is made from the browser, as the sheet
  * always makes it). Empty for no slug.
@@ -245,7 +246,7 @@ function openAppAction({ slug, appName }) {
 function firstLiveActions({ slug }) {
   if (typeof slug !== 'string' || !slug) return [];
   return [
-    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: `#app/${encodeURIComponent(slug)}/workshop` },
+    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: `#app/${encodeURIComponent(slug)}/dev/hub` },
     { id: 'invite_people', label: 'Invite people', style: 'secondary', type: 'invite' },
   ];
 }

@@ -1171,13 +1171,13 @@ const Browse = {
   // person browsing wants first is what it is, who it is for and Join, which
   // is the hub's hero, with its channel and what it is working on under it —
   // not a store page one level short of that. The address is the one
-  // App._hubHref builds (`#app/<slug>/workshop`, which opens on the hub),
+  // App._hubHref builds (`#app/<slug>/dev/hub`, the Hub's own address),
   // spelled here so the controller stays testable without App. The About
   // page (#apps/<slug>) stays: Home's card menu opens it, links to it still
   // work, and ?shot=browse-detail still drills into it for the captures.
   rowHref(view) {
     if (!view || view.demo || !view.slug) return null;
-    return `#app/${encodeURIComponent(view.slug)}/workshop`;
+    return `#app/${encodeURIComponent(view.slug)}/dev/hub`;
   },
 
   openRow(view) {

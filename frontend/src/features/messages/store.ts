@@ -1219,7 +1219,8 @@ function listAside(): boolean {
  * its hub rather than off this list.
  */
 export function channelHub(): string | null {
-  if (state.route.appSlug) return `#app/${encodeURIComponent(state.route.appSlug)}/workshop`;
+  // The project's Hub (App._placeAddress `dev/hub`), not its Workshop.
+  if (state.route.appSlug) return `#app/${encodeURIComponent(state.route.appSlug)}/dev/hub`;
   const id = state.route.conversationId;
   if (!id) return null;
   const row = state.active && state.active.id === id
@@ -1229,7 +1230,7 @@ export function channelHub(): string | null {
   // The same read the pane's own disc draws from (channel-hub.ts), so the
   // header's arrow and the disc name one hub.
   const platform = typeof window !== 'undefined' ? platformSlug() : null;
-  return platform ? `#app/${encodeURIComponent(platform)}/workshop` : '#communities';
+  return platform ? `#app/${encodeURIComponent(platform)}/dev/hub` : '#communities';
 }
 
 /**
