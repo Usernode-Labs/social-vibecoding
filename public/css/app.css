@@ -4382,7 +4382,15 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    engines that have shipped it unprefixed); it needs the -webkit-box
    display, which is why this is a class rather than Tailwind's
    `truncate`. overflow-wrap: anywhere keeps a single long unbroken word
-   (a slug-style name) inside the tile instead of overflowing it. */
+   (a slug-style name) inside the tile instead of overflowing it.
+
+   HYPHENATED FIRST (overnight audit L05, 2 Nov 2026). On a 13 mini a tile's
+   text lane is about 60px, narrower than "Neighbourhood" at 11px, so
+   `anywhere` alone cut it at the last letter that fit ("Neighbourh / ood
+   Swap"). `hyphens: auto` breaks such a word at a syllable with a hyphen,
+   in the document's language (<html lang>, set by the i18n runtime);
+   `anywhere` stays as the last resort for a word the dictionary cannot
+   split. */
 .app-card-title {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -4397,6 +4405,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   text-align: center;
   overflow-wrap: anywhere;
   word-break: break-word;
+  -webkit-hyphens: auto;
+  hyphens: auto;
 }
 
 /* The status caption ("Spinning up…" / "Awaiting secrets" / "Error")
@@ -16505,6 +16515,29 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-sheet { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .dev-request-bar { flex: 0 0 auto; }
 .dev-request-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+/* THE BAR GETS AN EDGE ONCE THE PAGE SCROLLS UNDER IT (overnight audit R01,
+   2 Nov 2026). The bar is the sheet's first row and the scroller its next
+   sibling, with nothing between them, so a scrolled page was cut flush
+   under the title: the root post's own title (the bar repeats it) read as a
+   second copy sliced in half, a line of the words as a stray bar. A hairline
+   inside the bar's foot says where the page goes under it. Where scroll
+   timelines exist it fades in over the first 12px of scroll, so a page at
+   rest keeps its seamless head; elsewhere it is always drawn. Inset, so the
+   scroller's text never paints over it. */
+.dev-request-bar { box-shadow: inset 0 -1px 0 var(--messages-hair); }
+@supports (animation-timeline: scroll()) and (timeline-scope: --a) {
+  .dev-request-sheet { timeline-scope: --dev-request-scroll; }
+  .dev-request-scroll { scroll-timeline: --dev-request-scroll y; }
+  .dev-request-bar {
+    animation: dev-request-bar-edge linear both;
+    animation-timeline: --dev-request-scroll;
+    animation-range: 0 12px;
+  }
+}
+@keyframes dev-request-bar-edge {
+  from { box-shadow: inset 0 -1px 0 transparent; }
+  to { box-shadow: inset 0 -1px 0 var(--messages-hair); }
+}
 .dev-request-bar .messages-thread-action { position: relative; }
 
 /* The root post: the request itself. */
@@ -23915,6 +23948,23 @@ html.un-kb #platform-parked {
 .platform-sidebar-toggle {
   display: none;
 }
+
+/* ANDROID'S BACK IS A PLAIN ARROW (overnight audit G01, 2 Nov 2026). The
+   header's back was iOS's chevron in a periwinkle disc on every device,
+   which on Android reads as an iPhone port: Material's back is a bare
+   arrow. The kit marks the device on <html> (`un-android`, native.js
+   detectPlatform), so there the disc goes and the arrow
+   (platform-header.tsx `.back-icon-android`) stands in for the chevron,
+   shown exactly when the chevron would be. The house and the ✕ keep their
+   glyphs; only the disc goes from under them. Elsewhere the arrow never
+   shows. */
+.back-icon-android { display: none; }
+html.un-android #back-btn {
+  border-color: transparent;
+  background: transparent;
+}
+html.un-android #back-btn > #back-icon-arrow { display: none; }
+html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android { display: block; }
 
 /* ── WHAT REACT STOPPED DECIDING (#2718 review) ──────────────────────
    The toggle's markup is constant and so is its group's class string. Both

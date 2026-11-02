@@ -4724,15 +4724,15 @@
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Shown after New project, over three choices that each open Create with the thread's words."
   },
   "privateThread.forMe": {
-    "text": "Just me",
+    "text": "Just you",
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a project only the person is in."
   },
   "privateThread.forGroup": {
-    "text": "A group",
+    "text": "Private community",
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a private project for people the person invites."
   },
   "privateThread.forCommunity": {
-    "text": "A community",
+    "text": "Public community",
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a public project anyone can join."
   },
   "privateThread.filed": {

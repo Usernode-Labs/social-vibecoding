@@ -1515,7 +1515,7 @@ test('the My apps area spans the full home column on wide windows, overlay untou
   const wide = CSS.slice(CSS.indexOf('@media (min-width: 640px) {\n  .home-grid-overlay'),
     CSS.indexOf('\n}\n', CSS.indexOf('.home-grid-overlay {\n    /* #app-list')));
   // No width cap on the area, of any kind: the grid runs to the same edges
-  // as the search bar above it and Discover Communities below.
+  // as the search bar above it and Discover communities below.
   assert.doesNotMatch(wide, /#home-apps-section[^{]*\{[^}]*max-width/);
   assert.doesNotMatch(wide, /#home-apps-section[^{]*\{[^}]*margin-inline/);
   // The overlay's inset and gap are unchanged: it is inset by #app-list's
@@ -2110,12 +2110,12 @@ test('Discover draws no chrome of its own; its control is in the section heading
   assert.match(empty, /home-area-label[\s\S]*?id="home-browse-btn"/);
 });
 
-// #4184: the home section's heading is "Discover Communities". Only the
+// #4184: the home section's heading is "Discover communities". Only the
 // heading: the tab bar's "Discover", the link beside it and the panel
 // registry's title keep their words.
-test('the Discover section is headed Discover Communities; the page and the link keep theirs', () => {
+test('the Discover section is headed Discover communities; the page and the link keep theirs', () => {
   const heading = renderDiscover().match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
-  assert.match(heading, /<span class="min-w-0 flex-1 truncate[^"]*">Discover Communities<\/span>/,
+  assert.match(heading, /<span class="min-w-0 flex-1 truncate[^"]*">Discover communities<\/span>/,
     'the label truncates rather than wraps at 320px, beside the link');
   // Polish N3: the link is "See all", as Challenges' is, not an "apps"
   // beside a heading that says communities.

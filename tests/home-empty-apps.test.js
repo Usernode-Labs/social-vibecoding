@@ -34,7 +34,7 @@ const SHEET = 'frontend/src/features/app-context/app-context-sheet.tsx';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 // The line it used to draw.
-const SENTENCE = 'No apps added yet. Make one with New project, or find one in the Discover Communities section.';
+const SENTENCE = 'No apps added yet. Make one with New project, or find one in the Discover communities section.';
 
 // ── rendering AppGrid at an arbitrary state ───────────────────────────
 //
@@ -120,7 +120,7 @@ test('a search that matched nothing keeps its own answer', () => {
   assert.ok(!html.includes(SENTENCE), 'the search line names the query instead');
   assert.match(html, /No apps match/);
   // ...and points at the section below by its heading (#4184).
-  assert.match(html, /try <span[^>]*>Discover Communities<\/span> below\./);
+  assert.match(html, /try <span[^>]*>Discover communities<\/span> below\./);
 });
 
 // ── 3. Home.render() reaches that state for an account with no apps ───

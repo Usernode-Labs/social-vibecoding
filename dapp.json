@@ -1543,7 +1543,7 @@
       "name": "Adding from Discover lands in My apps with no reload, and removing takes it out again (#1567)",
       "path": "/?shot=discover-add",
       "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
-      "expectText": "Discover Communities"
+      "expectText": "Discover communities"
     },
     {
       "name": "The launcher grid shows two rows by default, with a way to the rest",

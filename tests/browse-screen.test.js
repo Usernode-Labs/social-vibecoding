@@ -864,8 +864,9 @@ test('presentCategories: only types some app has, and no row for Other alone', (
     ['games', 'tools', 'other'], 'in the list\'s order');
   // The Filters sheet lists every type present, with Other always included
   // once anything is tagged, and no Type section at all when nothing is.
+  // Audit D11: nor when Other is all there is, which filters nothing.
   assert.deepEqual(keys(Browse.categoryOptions([typed('a', 'tools')])), ['tools', 'other']);
-  assert.deepEqual(keys(Browse.categoryOptions([typed('a', 'other')])), ['other']);
+  assert.deepEqual(keys(Browse.categoryOptions([typed('a', 'other')])), []);
   assert.deepEqual(keys(Browse.categoryOptions([app({})])), []);
   // resolveCategory can pick Other (the sheet offers it) but never a type the
   // directory does not have.
