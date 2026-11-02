@@ -5615,12 +5615,8 @@ const App = {
             // dev, dev/issues, dev/proposals, dev/sessions (no id) —
             // all land on the plain card list.
             subTab = 'forum';
-            // …and a link to the LIST of requests or changes opens that list:
-            // All items by stage, under the Workshop, as the retired Board
-            // route does above. It opened on the place last left, the Hub on
-            // a cold load, so an old "proposals" link in a notification or a
-            // chat showed the Hub and nothing about proposals (audit N03,
-            // 1 Nov 2026). A bare `dev` is the project page and keeps it.
+            // A link to the LIST of requests or changes opens All items by
+            // stage, as `board` does above, not the Hub (audit N03).
             if ((sec === 'proposals' || sec === 'issues' || sec === 'changes')
                 && typeof AppView !== 'undefined' && AppView._overrideWorkshopTab) {
               AppView._overrideWorkshopTab('all');

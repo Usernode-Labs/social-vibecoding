@@ -1271,8 +1271,10 @@ test('#5323: a pinned row carries the Unpin menu and the drag-out path', () => {
 test('the still-open dot only on the apps kept alive, said aloud; the app on screen lit', () => {
   const src = read(RAIL);
   assert.match(src, /const live = useLiveAppSlugs\(\);/, 'read off the frame store\'s kept frames');
-  assert.match(src, /\{running \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
-  assert.match(src, /aria-label=\{running \? listText\(\[appName, liveAppLabel\(\)\]\) : appName\}/);
+  // Only on an app kept behind another page, not the one on screen (audit N04).
+  assert.match(src, /const keptOpen = running && onApp !== slug;/);
+  assert.match(src, /\{keptOpen \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
+  assert.match(src, /aria-label=\{keptOpen \? listText\(\[appName, liveAppLabel\(\)\]\) : appName\}/);
   assert.equal(message('core:liveApp.stillOpen'), 'still open');
   assert.equal(message('core:rail.app'), 'App');
   assert.equal(message('core:rail.appOf', { name: 'Chess' }), 'Chess app');
