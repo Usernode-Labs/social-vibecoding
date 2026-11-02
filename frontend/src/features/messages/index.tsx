@@ -1985,9 +1985,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const layout = useMemo(() => {
     if (!botDm) return { plans: NO_PLAN_LAYOUT, blocks: null as ReadonlyMap<number, ChangeBlock> | null };
     const plans = planLayout(snap.messages);
+    // B12: what the loop below draws as one news line, and what it folds
+    // into a newer one, read as the loop reads them.
+    const asks = (message: ConversationMessage) => asksInChat(message) && !newsStatusOf(message, botWork)?.settled;
+    const folded = foldBotNews(snap.messages, (message) => isMovedActivity(message) || plans.hidden.has(message.id) || asks(message)).hidden;
     const blocks = changeBlocks(snap.messages, {
       // The rows the loop skips: passed over without breaking a run.
-      hidden: (message) => isMovedActivity(message) || plans.hidden.has(message.id),
+      hidden: (message) => isMovedActivity(message) || plans.hidden.has(message.id) || folded.has(message.id),
+      // A news line draws no outline: it ends a block, in none itself (B12).
+      apart: (message) => isBotNews(message) && !asks(message),
       // The same stretch of transcript: same day, and no unread line between.
       together: (previous, next) => dayKey(previous) === dayKey(next)
         && !(lineAt !== null && previous.id < lineAt && next.id >= lineAt),
@@ -1997,7 +2003,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         || readyNamesRequest(message),
     });
     return { plans, blocks };
-  }, [botDm, snap.messages, lineAt]);
+  }, [botDm, snap.messages, lineAt, botWork]);
 
   useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
