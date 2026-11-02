@@ -36,7 +36,7 @@ const topoTokens = fs.readFileSync(
 const BUILT_SUBS = [
   'seasons', 'season-events', 'challenge-templates', 'challenge-scoring', 'waitlist',
   'onchain-accounts', 'user-activities', 'delegations',
-  'settings', 'app-version', 'sql-console', 'api-tester',
+  'settings', 'app-version', 'text-translations', 'sql-console', 'api-tester',
 ];
 const GAP_SUBS = ['challenge-kinds', 'terms-versions', 'token-allocation', 'mobile-logs'];
 
@@ -74,6 +74,7 @@ test('AdminConsole.SECTIONS promotes every programme screen under the #1179 grou
     'delegations': ['Delegations', 'People'],
     'settings': ['Settings', 'Platform'],
     'app-version': ['App version', 'Platform'],
+    'text-translations': ['Translations', 'Platform'],
     'sql-console': ['SQL console', 'Platform'],
     'api-tester': ['API tester', 'Platform'],
   };
@@ -245,7 +246,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
   const registry = fs.readFileSync(path.join(REACT_DIR, 'screens.tsx'), 'utf8');
   const subsBlock = topoJs.slice(topoJs.indexOf('  SUBS: ['), topoJs.indexOf('  // ── Shared helpers'));
   const subKeys = [...subsBlock.matchAll(/key: '([^']+)'/g)].map((m) => m[1]);
-  assert.equal(subKeys.length, 12, 'all twelve screens are still listed');
+  assert.equal(subKeys.length, 13, 'all thirteen screens are still listed');
   for (const key of subKeys) {
     assert.ok(new RegExp(`(^|\\s)'?${key}'?: \\{ mount`, 'm').test(registry),
       `SUBS key '${key}' has a screen in the React registry`);
@@ -263,6 +264,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
     ['sql-console', 'SqlConsoleScreen'],
     ['settings', 'SettingsScreen'],
     ['app-version', 'AppVersionScreen'],
+    ['text-translations', 'TextTranslationsScreen'],
     ['waitlist', 'WaitlistScreen'],
     ['onchain-accounts', 'OnchainAccountsScreen'],
     ['user-activities', 'UserActivitiesScreen'],

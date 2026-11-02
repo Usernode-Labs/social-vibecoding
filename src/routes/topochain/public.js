@@ -47,6 +47,7 @@
 const { Router } = require('express');
 const { getPool } = require('../../db/pool');
 const { activityTimePrecision } = require('../../services/topochain/activity-time');
+const adminTextTranslations = require('../../services/admin-text-translations');
 const log = require('../../services/logger');
 const { optionalSessionAuth } = require('../../middleware/topochain-auth');
 const { computeStandings } = require('../../services/topochain/standings');
@@ -1293,14 +1294,15 @@ function topochainPublicRoutes(config) {
       if (buildNumber < versionConfig.min_build_number) upgrade = 2;
       else if (versionConfig.recommended_build_number != null && buildNumber < versionConfig.recommended_build_number) upgrade = 1;
 
-      let upgradeDetails = null;
-      if (upgrade === 2) {
-        upgradeDetails = versionConfig.must_update_message
-          || 'A required update is available. Please update the app to continue.';
-      } else if (upgrade === 1) {
-        upgradeDetails = versionConfig.should_update_message
-          || 'A new version is available. We recommend updating.';
-      }
+      // #6152: in the phone's language when there is a translation to show,
+      // else English. Never a reason for this answer to fail.
+      const message = adminTextTranslations.updateMessage(os, upgrade, versionConfig);
+      const upgradeDetails = message
+        ? await adminTextTranslations.translated(
+          pool, message,
+          adminTextTranslations.languageFor(body.language, req.get('accept-language')),
+        )
+        : null;
 
       const updateUrl = upgrade === 0 ? null : (versionConfig.update_url || null);
 
