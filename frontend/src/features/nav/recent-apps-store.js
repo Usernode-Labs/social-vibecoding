@@ -101,6 +101,18 @@ export function readRecentApps(owner) {
 }
 
 /**
+ * Everything known about what `owner` left, for what asks how recently:
+ * this tab's live list, which still holds an app when storage refused it, and
+ * the stored one, which holds what another tab left since this one read it.
+ * A slug can appear in both.
+ *
+ * @param {string|null} owner  The signed-in username; null reads nothing stored.
+ */
+export function recentAppEntries(owner) {
+  return [...recentAppsStore.get().apps, ...readRecentApps(owner)];
+}
+
+/**
  * Record that `owner` just left `app`: it moves to the front, once.
  *
  * With no owner (nobody signed in yet) the store still updates, so the rail

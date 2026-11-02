@@ -802,9 +802,32 @@ test('Opened recently: a seeded parked app has no time, and never counts, even o
   });
 });
 
+test('Opened recently: an app left while storage refuses writes still counts, in this tab', () => {
+  withRecentStore((store) => {
+    const { Browse } = makeBrowse();
+    Browse._recentEntries = () => store.recentAppEntries('ana');
+    global.window.localStorage.setItem = () => { throw new Error('quota'); };
+    store.rememberRecentApp({ slug: 'left', name: 'Left' }, 'ana');
+    assert.deepEqual(slugsOf(store.readRecentApps('ana')), [], 'storage has nothing');
+    assert.deepEqual(slugsOf(Browse.filterApps([app({ slug: 'left' })], 'recent', Date.now())), ['left']);
+  });
+});
+
+test('Opened recently: an app another tab left counts too, without this tab having read it', () => {
+  withRecentStore((store, storage) => {
+    const { Browse } = makeBrowse();
+    Browse._recentEntries = () => store.recentAppEntries('ana');
+    storage.set(store.RECENT_APPS_KEY, JSON.stringify({
+      owner: 'ana', apps: [{ slug: 'other-tab', name: 'Other', at: new Date().toISOString() }],
+    }));
+    assert.deepEqual(store.recentAppsStore.get().apps, [], 'this tab has not heard');
+    assert.deepEqual(slugsOf(Browse.filterApps([app({ slug: 'other-tab' })], 'recent', Date.now())), ['other-tab']);
+  });
+});
+
 test('Opened recently: mount.ts reads the store under the name it was written with', () => {
   const mount = read('frontend/src/features/apps/mount.ts');
-  assert.match(mount, /_recentEntries = \(\) => readRecentApps\(navStore\.get\(\)\.viewer\)/);
+  assert.match(mount, /_recentEntries = \(\) => recentAppEntries\(navStore\.get\(\)\.viewer\)/);
   // The window the switch applies is the one its catalog description states.
   const catalog = JSON.parse(read('frontend/locales/en/discover.json'));
   assert.match(catalog['filter.recent'].description, /last 30 days/);
