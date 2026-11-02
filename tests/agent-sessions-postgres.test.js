@@ -84,6 +84,10 @@ async function connect(t, { beforeMigration = null } = {}) {
       check_error_detail TEXT,
       -- When the last verdict was stored (activeChange.failingChecks.at, #3755).
       checks_checked_at TIMESTAMPTZ,
+      -- Where a pending run stands, and its progress stream, which a queued
+      -- run's wait is read from (activeChange.checkPhase / checksQueueAhead,
+      -- #6122).
+      check_phase VARCHAR(24), checks_progress JSONB,
       shots_state VARCHAR(24), shots_run_id VARCHAR(32),
       -- A change's own durable turn (a build restart recovery can adopt).
       active_turn JSONB,
