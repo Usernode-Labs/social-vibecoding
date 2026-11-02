@@ -1451,6 +1451,10 @@
     "text": "Couldn't save that change. Try again in a moment.",
     "description": "Error on the Settings > Privacy page when saving a change failed; the control goes back to what it was."
   },
+  "privacy.saved": {
+    "text": "Saved",
+    "description": "Short confirmation under a block of the Settings > Privacy page when a change to one of its settings has been saved. It goes away after about three seconds."
+  },
   "privacy.usageAnalytics.title": {
     "text": "Usage analytics",
     "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
