@@ -287,6 +287,13 @@ const App = {
     try {
       if (typeof AppView !== 'undefined') AppView.clearOfflineReady();
     } catch (err) { /* ignore */ }
+    // …and the key every app sealed its copies of this account's reads with
+    // (usernode.offline, AppView.appDataKeyFor): without it no app can open
+    // them again, and the next account gets a key of its own. Kept for a
+    // restored session's new token, which is the same person.
+    try {
+      if (!keepUnsent && typeof AppView !== 'undefined') AppView.clearAppDataKey();
+    } catch (err) { /* ignore */ }
     // …and the messages this account wrote that the server has not had yet,
     // kept on the device so a reload cannot lose them (offline test, finding
     // 1; frontend/src/features/messages/outbox.ts). They are never left for

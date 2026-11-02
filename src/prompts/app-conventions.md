@@ -2543,6 +2543,56 @@ Be honest in the UI about which of the two worlds the app is in. A device
 that refuses durable storage cannot promise "3 changes will sync", and
 saying so is better than a queue that silently disappears.
 
+## Offline data: `usernode.offline` keeps your last reads
+
+An app that opens offline has its code but not its data: every `/api/*`
+read fails. The bridge keeps the last answer of each read you wrap and
+gives it back when the read cannot be answered. Wrap each screen's opening
+read:
+
+```js
+usernode.offline.read('chores', () => api('GET', '/api/chores'))
+  .then(({ value, fromCopy, savedAt }) => {
+    render(value);
+    showSaved(fromCopy, savedAt); // "Offline. Showing what was saved at 10:42."
+  })
+  .catch(showError); // no copy either: the app's own error state
+```
+
+- **`readFn` returns the data itself**, as a promise, and it must survive
+  JSON. Render after, not inside it. A read that resolves `undefined`
+  keeps nothing.
+- **When the copy is used:** when the read fails without a "no" from the
+  server: a network error, a timeout, an error with no `status`, a 5xx, a
+  408 or 429, or a 401 on a load that carried no token (an offline mount).
+  **Set `err.status` on an error the server answered.** A 403, 404 or 410
+  deletes the copy and the error stands; any other 4xx stands too. An
+  `api()` that throws a plain `Error` for a server answer has its 403
+  covered over with an old copy.
+- **Whose it is.** The copy is kept in your app's own storage, sealed with
+  a key the shell holds for the person signed in. When they sign out, no
+  copy of theirs can be opened again, in any app, and another account on
+  the device never sees it. You do not key anything by user yourself, and
+  an offline load needs no remembered identity for it. With no shell (the
+  app opened at its own address, a staging preview) nothing is kept and a
+  read is just the read.
+- **Caps.** A copy is at most 250,000 characters of JSON and all of an
+  app's copies at most 1,000,000 (about 2 MB of your origin's ~5 MB of
+  localStorage); the copies kept longest ago make room. A copy older than
+  30 days is not given back. Keep what the opening screen needs, not
+  everything the app has ever read.
+- **Say so.** While `fromCopy` is true, show it under the title with how
+  old it is (`savedAt` is milliseconds since the epoch), and clear the line
+  on the next read that works. The starters' `showSaved` is the pattern.
+- **Names** are 1 to 100 characters and are not secret (they sit in
+  storage as keys): `'chores'`, `'challenge:2026-11'`, never a person's
+  name or anything typed in.
+- Also `usernode.offline.get(name)` (`{ value, savedAt }` or `null`),
+  `put(name, value)` (true when kept), `remove(name)` and `available()`
+  (whether anything can be kept here), all promises, for an app that keeps
+  its own state, such as a list with changes queued on it. Writes made
+  offline are still the app's own queue, as above.
+
 ## User language preference
 
 The platform owns a single per-user language/locale setting. Apps that

@@ -7532,6 +7532,342 @@
   })();
   /* __USERNODE_OFFLINE_READY_END__ */
 
+  /* __USERNODE_OFFLINE_DATA_BEGIN__ */
+  // ── An app's last reads, kept for offline ─────────────────────────────
+  //
+  // An app that opens with no connection (its own service worker, or the
+  // browser's cache: "Offline" in the platform conventions) has its code but
+  // not its data: every `/api/*` read fails. `usernode.offline` keeps the
+  // last answer of each read an app wraps, and gives it back when the read
+  // cannot be answered, with the time it was kept, so the app can say how
+  // old it is (docs/plans/project-apps-offline-data.md):
+  //
+  //   usernode.offline.read(name, readFn) -> { value, fromCopy, savedAt }
+  //   usernode.offline.get(name)          -> { value, savedAt } or null
+  //   usernode.offline.put(name, value)   -> true when kept
+  //   usernode.offline.remove(name)
+  //   usernode.offline.available()        -> whether anything can be kept
+  //
+  // (each a promise). `readFn` returns a promise of the data itself, which
+  // must survive JSON.
+  //
+  // WHOSE THEY ARE. A copy is kept in this app's own localStorage, sealed
+  // (AES-GCM) with a key the shell holds for the signed-in person and gives
+  // to this app's frame alone, derived for this origin
+  // (AppView.handleAppDataKeyMessage in public/js/app-view.js). The shell
+  // drops the key when the person signs out, so from then on no copy of
+  // theirs can be opened, in any app, without any app being visited; a copy
+  // under another key (another person, or one signed out since) is deleted
+  // the first time this block sees it. The answer is believed only from the
+  // platform's origin (platform.json beside this file, remembered for loads
+  // that cannot fetch it). With no shell to ask (the app at its own address,
+  // a staging preview, a shell from before this block) nothing is kept, and
+  // a read is just the read.
+  //
+  // WHEN THE COPY IS USED. When the read fails without a "no" from the
+  // server: no answer (a network error, a timeout, an error with no
+  // `status`), a 5xx, a 408 or 429, or a 401 on a load that carried no
+  // token (an offline mount; the next load has one). A 403, 404 or 410 says
+  // the data is not there for this person any more: the copy is deleted and
+  // the error stands. Any other 4xx stands too.
+  //
+  // CAPS. A copy is at most MAX_COPY_CHARS of JSON, and all of this app's
+  // copies at most MAX_TOTAL_CHARS of storage: room is made by deleting the
+  // copies kept longest ago. A copy that cannot be kept takes its older copy
+  // with it, and one older than MAX_AGE_MS is not given back.
+  (function () {
+    if (window.usernode.offline) return;
+
+    var PREFIX = "usernode:kept:";
+    var ORIGIN_KEY = "usernode:platform-origin";
+    var CONFIG_SRC = "/usernode-bridge/v1/platform.json";
+    var MAX_COPY_CHARS = 250000;
+    var MAX_TOTAL_CHARS = 1000000;
+    var MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+    var KEY_TIMEOUT_MS = 3000;
+
+    var framed = false;
+    try { framed = !!(window.parent && window.parent !== window); } catch (_) { framed = false; }
+    // Read after the cache block at the top of this file has moved an
+    // offline app's token into the query.
+    var hadToken = false;
+    try { hadToken = !!new URLSearchParams(location.search).get("token"); } catch (_) { hadToken = false; }
+
+    var _store;
+    function storage() {
+      if (_store !== undefined) return _store;
+      _store = null;
+      try {
+        var s = window.localStorage;
+        s.setItem(PREFIX + "probe", "1");
+        s.removeItem(PREFIX + "probe");
+        _store = s;
+      } catch (_) { /* refused storage: nothing is kept */ }
+      return _store;
+    }
+
+    function subtle() {
+      try { return window.crypto && window.crypto.subtle ? window.crypto.subtle : null; } catch (_) { return null; }
+    }
+
+    function toB64(bytes) {
+      var s = "";
+      for (var i = 0; i < bytes.length; i += 0x8000) {
+        s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      return btoa(s);
+    }
+    function fromB64(text) {
+      var s = atob(text);
+      var out = new Uint8Array(s.length);
+      for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+      return out;
+    }
+
+    // ── The key ──────────────────────────────────────────────────────────
+
+    // Is `from` the platform's origin? The one remembered from an earlier
+    // load answers at once (offline, platform.json may not load); anything
+    // else waits for platform.json, which then becomes the one remembered.
+    function fromPlatform(s, from) {
+      var remembered = null;
+      try { remembered = s.getItem(ORIGIN_KEY); } catch (_) { remembered = null; }
+      if (remembered && from === remembered) return Promise.resolve(true);
+      return Promise.resolve().then(function () {
+        return window.fetch(CONFIG_SRC, { credentials: "omit" });
+      }).then(function (res) {
+        return res && res.ok ? res.json() : null;
+      }).then(function (config) {
+        var u;
+        try { u = new URL(String((config && config.platform_origin) || "")); } catch (_) { return false; }
+        if (u.protocol !== "https:" || u.username || u.password) return false;
+        var origin = u.protocol + "//" + u.host;
+        try { s.setItem(ORIGIN_KEY, origin); } catch (_) { /* asked again next load */ }
+        return from === origin;
+      }, function () { return false; });
+    }
+
+    // Copies under any key but this one, or past their age, go.
+    function sweep(s, keyId) {
+      var names = [];
+      try {
+        for (var i = 0; i < s.length; i++) {
+          var k = s.key(i);
+          if (k && k.indexOf(PREFIX) === 0 && k !== PREFIX + "probe") names.push(k);
+        }
+      } catch (_) { return; }
+      var now = Date.now();
+      names.forEach(function (k) {
+        var entry = null;
+        try { entry = JSON.parse(s.getItem(k)); } catch (_) { entry = null; }
+        if (!entry || entry.k !== keyId || typeof entry.t !== "number" || now - entry.t > MAX_AGE_MS) {
+          try { s.removeItem(k); } catch (_) { /* gone anyway */ }
+        }
+      });
+    }
+
+    // The shell's key for this person in this app, once per load:
+    // { key: CryptoKey, id } or null.
+    var _key = null;
+    function sealKey() {
+      if (_key) return _key;
+      _key = new Promise(function (resolve) {
+        var s = storage();
+        var crypto = subtle();
+        if (!framed || !s || !crypto) { resolve(null); return; }
+        var id = "kept-" + String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+        var settled = false;
+        var timer = null;
+        function finish(k) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          window.removeEventListener("message", onMessage);
+          resolve(k);
+        }
+        function onMessage(e) {
+          if (e.source !== window.parent) return;
+          var data = e.data;
+          if (!data || data.__usernode_kept !== "key" || data.id !== id) return;
+          var raw = typeof data.key === "string" ? data.key : null;
+          // No key for this frame (a preview, nobody signed in): nothing to check.
+          if (!raw) { finish(null); return; }
+          fromPlatform(s, e.origin).then(function (ok) {
+            if (!ok) return null;
+            var bytes = fromB64(raw);
+            if (bytes.length !== 32) return null;
+            return Promise.all([
+              crypto.importKey("raw", bytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]),
+              crypto.digest("SHA-256", bytes),
+            ]).then(function (both) {
+              var digest = new Uint8Array(both[1]);
+              var keyId = "";
+              for (var i = 0; i < 8; i++) keyId += (digest[i] < 16 ? "0" : "") + digest[i].toString(16);
+              sweep(s, keyId);
+              return { key: both[0], id: keyId };
+            });
+          }).then(finish, function () { finish(null); });
+        }
+        timer = setTimeout(function () { finish(null); }, KEY_TIMEOUT_MS);
+        window.addEventListener("message", onMessage);
+        try { window.parent.postMessage({ __usernode_kept: "key", id: id }, "*"); } catch (_) { finish(null); }
+      });
+      return _key;
+    }
+
+    // ── The copies ───────────────────────────────────────────────────────
+
+    // The name and the time are sealed in with the data, so a copy cannot
+    // be passed off under another name or another time.
+    function bound(name, t) { return new TextEncoder().encode(name + "\n" + t); }
+
+    function drop(s, slot) { try { s.removeItem(slot); } catch (_) { /* gone anyway */ } }
+
+    // Room for `need` more characters under `slot`, deleting the copies kept
+    // longest ago (never `slot`'s own, which is about to be replaced).
+    function makeRoom(s, slot, need) {
+      if (need > MAX_TOTAL_CHARS) return false;
+      var others = [];
+      var total = 0;
+      try {
+        for (var i = 0; i < s.length; i++) {
+          var k = s.key(i);
+          if (!k || k.indexOf(PREFIX) !== 0 || k === slot) continue;
+          var raw = s.getItem(k) || "";
+          var t = 0;
+          try { t = Number(JSON.parse(raw).t) || 0; } catch (_) { t = 0; }
+          others.push({ k: k, size: k.length + raw.length, t: t });
+          total += k.length + raw.length;
+        }
+      } catch (_) { return false; }
+      others.sort(function (a, b) { return a.t - b.t; });
+      while (total + need > MAX_TOTAL_CHARS && others.length) {
+        var gone = others.shift();
+        drop(s, gone.k);
+        total -= gone.size;
+      }
+      return total + need <= MAX_TOTAL_CHARS;
+    }
+
+    // The newest keep of each name wins, whichever finishes first; a remove
+    // outranks every keep already on its way.
+    var turns = {};
+    function turn(name) { turns[name] = (turns[name] || 0) + 1; return turns[name]; }
+
+    function keep(name, value) {
+      var json;
+      try { json = JSON.stringify(value); } catch (_) { json = undefined; }
+      if (typeof json !== "string") return Promise.resolve(false);
+      var mine = turn(name);
+      return sealKey().then(function (k) {
+        if (!k) return false;
+        var s = storage();
+        var slot = PREFIX + name;
+        if (json.length > MAX_COPY_CHARS) { drop(s, slot); return false; }
+        var t = Date.now();
+        var iv = window.crypto.getRandomValues(new Uint8Array(12));
+        return subtle().encrypt(
+          { name: "AES-GCM", iv: iv, additionalData: bound(name, t) },
+          k.key,
+          new TextEncoder().encode(json)
+        ).then(function (sealed) {
+          if (turns[name] !== mine) return false;
+          var raw = JSON.stringify({ k: k.id, t: t, iv: toB64(iv), c: toB64(new Uint8Array(sealed)) });
+          if (!makeRoom(s, slot, slot.length + raw.length)) { drop(s, slot); return false; }
+          try { s.setItem(slot, raw); return true; } catch (_) { drop(s, slot); return false; }
+        });
+      }).catch(function () { return false; });
+    }
+
+    function load(name) {
+      return sealKey().then(function (k) {
+        if (!k) return null;
+        var s = storage();
+        var slot = PREFIX + name;
+        var entry = null;
+        try { entry = JSON.parse(s.getItem(slot)); } catch (_) { entry = null; }
+        if (!entry) return null;
+        if (entry.k !== k.id || typeof entry.t !== "number" || Date.now() - entry.t > MAX_AGE_MS
+            || typeof entry.iv !== "string" || typeof entry.c !== "string") {
+          drop(s, slot);
+          return null;
+        }
+        return subtle().decrypt(
+          { name: "AES-GCM", iv: fromB64(entry.iv), additionalData: bound(name, entry.t) },
+          k.key,
+          fromB64(entry.c)
+        ).then(function (plain) {
+          return { value: JSON.parse(new TextDecoder().decode(plain)), savedAt: entry.t };
+        }, function () {
+          drop(s, slot);
+          return null;
+        });
+      }).catch(function () { return null; });
+    }
+
+    function forget(name) {
+      turn(name);
+      var s = storage();
+      if (s) drop(s, PREFIX + name);
+      return Promise.resolve();
+    }
+
+    function checked(name) {
+      if (typeof name !== "string" || !name || name.length > 100) {
+        throw new TypeError("usernode.offline: a name is a string of 1 to 100 characters");
+      }
+      return name;
+    }
+
+    function statusOf(err) {
+      var n = err && err.status != null ? Number(err.status) : NaN;
+      return n > 0 ? n : 0;
+    }
+    function usesCopy(err) {
+      var status = statusOf(err);
+      if (!status) return true;
+      if (status >= 500 || status === 408 || status === 429) return true;
+      return status === 401 && !hadToken;
+    }
+    function isGone(err) {
+      var status = statusOf(err);
+      return status === 403 || status === 404 || status === 410;
+    }
+
+    window.usernode.offline = {
+      read: function (name, readFn) {
+        return Promise.resolve().then(function () {
+          checked(name);
+          if (typeof readFn !== "function") throw new TypeError("usernode.offline.read: readFn must be a function");
+          return Promise.resolve().then(readFn).then(function (value) {
+            keep(name, value);
+            return { value: value, fromCopy: false, savedAt: Date.now() };
+          }, function (err) {
+            if (isGone(err)) return forget(name).then(function () { throw err; });
+            if (!usesCopy(err)) throw err;
+            return load(name).then(function (copy) {
+              if (!copy) throw err;
+              return { value: copy.value, fromCopy: true, savedAt: copy.savedAt, error: err };
+            });
+          });
+        });
+      },
+      get: function (name) {
+        return Promise.resolve().then(function () { return load(checked(name)); });
+      },
+      put: function (name, value) {
+        return Promise.resolve().then(function () { return keep(checked(name), value); });
+      },
+      remove: function (name) {
+        return Promise.resolve().then(function () { return forget(checked(name)); });
+      },
+      available: function () {
+        return sealKey().then(function (k) { return !!k; });
+      },
+    };
+  })();
+  /* __USERNODE_OFFLINE_DATA_END__ */
+
   /* __USERNODE_SHORTCUTS_BEGIN__ */
   // ── The platform's C shortcut, from inside an app (#4289) ─────────────
   //

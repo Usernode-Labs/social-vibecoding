@@ -541,6 +541,40 @@ test('every ready-made app hears its own writes, and every screen that shares an
   }
 });
 
+// Offline (docs/plans/project-apps-offline-data.md): a ready-made app's
+// opening read goes through the bridge's usernode.offline, which keeps its
+// last answer on the device, sealed for the person signed in, and gives it
+// back when the read cannot be answered; the page says so and how old it is
+// (the bridge's own behaviour is pinned in tests/usernode-offline-data.test.js).
+// The game starters keep nothing: an old game room is not something to open.
+test('every ready-made app opens on its last read when offline, and says how old it is', () => {
+  for (const id of READY) {
+    const files = generate(id);
+    const script = file(files, 'public/app.js');
+    const html = file(files, 'public/index.html');
+    if (appTemplates.dirOf(id) === 'grocery-list') {
+      // The list and its queued changes, as on screen, kept on every change.
+      assert.match(script, /window\.usernode\.offline\.put\('list', data\)/);
+      assert.match(script, /window\.usernode\.offline\.get\('list'\)\.then\(function \(saved\) \{/);
+      assert.doesNotMatch(script, /KEY_SAVED/, 'no copy of the list in plain text');
+      assert.match(script, /'Offline: showing the list saved on this device ' \+ savedWhen\(savedAt\)/);
+      assert.match(script, /return keptList\.then\(function \(\) \{/, 'a failed first read waits for the copy before the error');
+      continue;
+    }
+    assert.match(script, /function kept\(name, read\) \{\n    if \(window\.usernode && window\.usernode\.offline\) return window\.usernode\.offline\.read\(name, read\);/, id);
+    assert.ok([...script.matchAll(/\bkept\('[\w:]+'/g)].length >= 1, `${id}: its opening read is kept`);
+    assert.doesNotMatch(script, /(?:loading = |return )api\('GET'[^\n]*\n\s*\.then\(function \((?:data|next)\)/, `${id}: no opening read left bare`);
+    assert.match(script, /err\.status = res\.status;\n\s*throw err;/, `${id}: the server's own answers are marked, never covered by a copy`);
+    assert.match(script, /\? \(navigator\.onLine === false \? 'Offline\.' : 'Can\\'t reach the server\.'\) \+ ' Showing what was saved ' \+ savedWhen\(got\.savedAt\) \+ '\.'/, id);
+    assert.match(script, /showSaved\(/, `${id}: the line follows each read`);
+    assert.match(html, /<p id="saved-strip" class="rounded-xl bg-raised px-3 py-2 text-small text-muted" role="status" hidden><\/p>/, id);
+    assert.ok(html.indexOf('id="saved-strip"') > html.indexOf('</header>'), `${id}: under the title`);
+  }
+  for (const id of GAMES) assert.doesNotMatch(file(generate(id), 'public/app.js'), /usernode\.offline/, id);
+  // The study timer's count is today's: yesterday's copy is under another name.
+  assert.match(file(generate('study-timer'), 'public/app.js'), /kept\('today:' \+ now\(\)\.toLocaleDateString\(\)/);
+});
+
 // Evan, 21 Oct 2026: "Book club times: shouldn't this be a weekly time? Not
 // just a few times to choose between?" and "If you type in 'what's it for',
 // it's unclear how to close the keyboard." One find-a-time app, two modes:

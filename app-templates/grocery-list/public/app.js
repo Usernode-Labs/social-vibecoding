@@ -28,8 +28,10 @@
 //   - Search filters as you type; a category whose name matches shows all
 //     of its items. Pull the list down to fetch it again.
 //   - Markdown export and import, in Todo List's format.
-//   - Offline: the list opens from the copy saved on this device (the
-//     service worker in sw.js keeps the page itself). Adding, ticking,
+//   - Offline: the list opens from the copy kept on this device
+//     (usernode.offline in the platform bridge: sealed for the person
+//     signed in, and gone when they sign out; the service worker in sw.js
+//     keeps the page itself). Adding, ticking,
 //     editing, due dates and deleting work offline too: each change shows at
 //     once, is saved on this device in a queue, and is sent, in order, the
 //     moment the connection is back. A strip under the nav bar says which
@@ -221,8 +223,9 @@
   // ── Who this is, and this device's storage ──────────────────────────────
   //
   // The token says who is signed in, for the server; the page reads its
-  // name and id only to keep each person's saved copy and queued changes
-  // apart on a shared device. An offline load has no token (the shell
+  // name and id only to keep each person's queued changes apart on a
+  // shared device (the list itself is kept by the bridge, under the
+  // person the shell says is signed in). An offline load has no token (the shell
   // cannot make one with no connection), so the page remembers who last
   // opened it, never the token itself, and uses that. Nothing of anybody's
   // is cleared on a load that does not know who it is.
@@ -257,19 +260,35 @@
   var identity = KNOWN ? { id: claims.id, username: claims.username } : storedJSON(KEY_LAST_USER);
   if (KNOWN) store(KEY_LAST_USER, JSON.stringify(identity));
   var NS = 'grocery-list:u' + (identity && identity.id != null ? identity.id : 'anon') + ':';
-  var KEY_SAVED = NS + 'list';
   var KEY_QUEUE = NS + 'queue';
 
-  // Another person's saved copy and queue go once this load knows who it is.
-  if (DURABLE && KNOWN) {
+  // Another person's queue goes once this load knows who it is, and so does
+  // any copy of the list an older version kept here in plain text.
+  if (DURABLE) {
     try {
       Object.keys(localStorage).forEach(function (k) {
-        if (/^grocery-list:u[^:]+:/.test(k) && k.indexOf(NS) !== 0) localStorage.removeItem(k);
+        if (/^grocery-list:u[^:]+:list$/.test(k)) localStorage.removeItem(k);
+        else if (KNOWN && /^grocery-list:u[^:]+:/.test(k) && k.indexOf(NS) !== 0) localStorage.removeItem(k);
       });
     } catch (e) { /* the list still works */ }
   }
 
-  function saveCopy() { if (data) store(KEY_SAVED, JSON.stringify(data)); }
+  // The list as it is on screen, queued changes and all, kept on this device
+  // by the platform bridge (usernode.offline), so it opens with no
+  // connection. Outside Homeroom nothing is kept.
+  function saveCopy() {
+    if (data && window.usernode && window.usernode.offline) window.usernode.offline.put('list', data);
+  }
+  var savedAt = null; // when the copy on screen was kept, while showingSaved
+
+  function savedWhen(at) {
+    var then = new Date(at);
+    var today = new Date();
+    var time = then.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (then.toDateString() === today.toDateString()) return 'at ' + time;
+    if (then.toDateString() === new Date(today.getTime() - 86400000).toDateString()) return 'yesterday at ' + time;
+    return 'on ' + then.toLocaleDateString(undefined, { day: 'numeric', month: 'long' }) + ' at ' + time;
+  }
 
   // ── Talking to the server ────────────────────────────────────────────────
 
@@ -372,6 +391,7 @@
       // Never promise what this device cannot keep.
       if (!DURABLE) return { text: 'Offline: changes are kept until you close the app' };
       if (n) return { text: 'Offline: ' + changes(n) + ' will sync' };
+      if (showingSaved && savedAt) return { text: 'Offline: showing the list saved on this device ' + savedWhen(savedAt) };
       return { text: showingSaved || loaded ? 'Offline: showing the list saved on this device' : 'Offline: nothing saved on this device yet' };
     }
     if (conn === 'slow') return n ? { text: 'Slow connection: ' + changes(n) + ' will sync', tap: true } : { text: 'Slow connection' };
@@ -1773,14 +1793,16 @@
       })
       .catch(function (err) {
         // A read that fails keeps what is on screen, the list saved on this
-        // device included; only a first load with nothing to show turns into
-        // the error state.
-        if (data) { if (force && !err.network) toast(err.message); renderStrip(); return; }
-        el.loading.hidden = true;
-        el.error.hidden = false;
-        el.errorText.textContent = err.network
-          ? 'You are offline, and this list has not been saved on this device yet. It will be the next time it opens with a connection.'
-          : 'Nothing on it is lost. Check your connection and try again.';
+        // device included (once its own read is back); only a first load
+        // with nothing to show turns into the error state.
+        return keptList.then(function () {
+          if (data) { if (force && !err.network) toast(err.message); renderStrip(); return; }
+          el.loading.hidden = true;
+          el.error.hidden = false;
+          el.errorText.textContent = err.network
+            ? 'You are offline, and this list has not been saved on this device yet. It will be the next time it opens with a connection.'
+            : 'Nothing on it is lost. Check your connection and try again.';
+        });
       })
       .then(function () { loading = null; });
     return loading;
@@ -1869,14 +1891,19 @@
     ? window.LiveUpdates.watch({ refresh: function () { return refresh(); }, quiet: function () { return !busy(); } })
     : null;
 
-  // The list saved on this device shows at once, before the network
-  // answers, and is all there is offline.
-  var saved = storedJSON(KEY_SAVED);
-  if (saved && saved.list && Array.isArray(saved.items)) {
-    data = saved;
-    showingSaved = true;
-    render();
-  }
+  // The list saved on this device shows as soon as it is read, unless the
+  // network has answered first, and is all there is offline.
+  var keptList = window.usernode && window.usernode.offline
+    ? window.usernode.offline.get('list').then(function (saved) {
+      var copy = saved && saved.value;
+      if (loaded || data || !copy || !copy.list || !Array.isArray(copy.items)) return;
+      data = copy;
+      savedAt = saved.savedAt;
+      showingSaved = true;
+      render();
+      renderStrip();
+    }, function () { /* nothing kept: the read decides */ })
+    : Promise.resolve();
   renderStrip();
   if (queue().length) drain();
 
