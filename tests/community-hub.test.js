@@ -501,3 +501,11 @@ test('#3520: a short growing tab keeps one pixel to scroll, so the installed app
   // test above. Still that scroller, so still its one pixel of range.)
   assert.match(read('public/js/app-view.js'), /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{/);
 });
+
+test('the Hub has one large heading on a wide window, and a phone\'s 16px gutter (audit P02, P03)', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-placebar\[data-place-bar="status"\] \.dev-ws-place-title \{ font-size: 15px; font-weight: 600; color: var\(--text-muted\); \}/,
+    'on the Hub the hero\'s name is the heading; "Hub" is the band\'s quiet name');
+  assert.match(css, /@media \(max-width: 767\.98px\) \{\s*\.dev-ws\[data-ws-tab="status"\] > \.dev-ws-tabbody \{ padding-inline: 12px; \}\s*\.dev-ws\[data-ws-tab="status"\] > \.dev-ws-tabbody > \.dev-ws-hero \{ padding-inline: 0; \}/,
+    'the column starts 4px in: 12 more puts the cards, the tile and the labels on 16');
+});

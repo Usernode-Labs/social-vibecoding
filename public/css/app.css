@@ -19346,6 +19346,16 @@ button.dev-ws-recent-card {
    coloured header's (#852), so the hero has no heading of its own. The type
    is the scale AGENTS.md "Type and colour" sets: the rows' 15/13. */
 .dev-ws-hero { display: flex; flex-direction: column; gap: 12px; padding: 6px 4px 4px; }
+/* THE HUB'S GUTTER ON A PHONE IS EVERY SCREEN'S 16px (audit P03, 1 Nov
+   2026). The page's column starts 4px in, so the For you card and the cards
+   under it ran to within 4px of the screen's edges while the hero's tile sat
+   at 12 and the label at 8: three left edges, and the hub wider than
+   Communities, Profile and Settings. The body takes 12px more, and the hero
+   its own 4px less, so the tile, the cards and the labels line up on 16. */
+@media (max-width: 767.98px) {
+  .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { padding-inline: 12px; }
+  .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { padding-inline: 0; }
+}
 .dev-ws-hero-actions { display: flex; align-items: center; gap: 8px; }
 .dev-ws-hero-actions:empty { display: none; }
 .dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
@@ -19745,6 +19755,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   @media (hover: hover) { .dev-ws-places-btn:hover { background: var(--bg-secondary); color: var(--text-primary); } }
   .dev-ws-places-dot { background: var(--text-muted); box-shadow: 0 0 0 2px var(--bg-primary); }
   .dev-ws-place-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+  /* ON THE HUB THE HERO IS THE PAGE'S HEADING (audit P02, 1 Nov 2026): its
+     name is the one large heading, so "Hub" above it is the band's quiet
+     name of where you are, not a second 20px title over the project's
+     28px one. The other places have no hero, and keep theirs. */
+  .dev-ws-placebar[data-place-bar="status"] .dev-ws-place-title { font-size: 15px; font-weight: 600; color: var(--text-muted); }
 }
 
 /* THE MERGED HEADER (#4703): on a phone the place bar's contents live in the
