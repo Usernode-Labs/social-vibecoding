@@ -79,7 +79,7 @@ import { DesignPane } from '../messages/design-pane';
 import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
 import { openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
-import { closeThread, useMessagesSnapshot } from '../messages/store';
+import { closeThread, openBotRequest, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
 import { sidePanelStore } from '../side-panel/store.js';
 import { BOT_TAB, botTabAddress, noteBotConversation, useBotTabAsk, type BotAt } from './door';
@@ -360,6 +360,13 @@ export function AiScreen(): ReactNode {
       if (!(wide || phone)) { go(botTabAddress(next)); return; }
       showAt(next);
       showAddress(botTabAddress(next));
+      return;
+    }
+    // B06: a plan's Build it is on the plan in Main Chat: Main, at the plan
+    // (the door "See progress" on its request's page uses too).
+    if (row.plan) {
+      sidePanel()?.close?.();
+      void openBotRequest(row.plan.slug, row.plan.number);
       return;
     }
     if (openPublic(row.href, row.app, row.title, aboutRow(row), botId)) underPanel();

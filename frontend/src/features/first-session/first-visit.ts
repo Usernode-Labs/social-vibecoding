@@ -188,6 +188,52 @@ export function clearLook(uid: Uid, store: KeyStore | null = local()): void {
 }
 
 /**
+ * S01 (audit 2 Nov 2026): the made screen of a project made in the first
+ * session, until one of its ways on is taken (Share invite then Go to app,
+ * Invite people later, the plan in the chat, its secrets). A reload or a
+ * cold start of the app in between used to land a newcomer on Home, with
+ * the invite step and their first look at the app gone: it reopens on the
+ * made screen instead. The project as Make it answered it (./make.tsx
+ * `Made`), and when, so a record left behind never reopens a day later.
+ * Not the Create door's made screen: that one closes like any dialog.
+ */
+export const MADE_PREFIX = 'usernode:first-session:made:';
+/** How long an unfinished made screen is reopened for. */
+export const MADE_KEEP_MS = 24 * 60 * 60 * 1000;
+
+export function madeKey(uid: Uid): string {
+  return `${MADE_PREFIX}${uid}`;
+}
+
+/** The made screen is up for this project: reopened on the next boot until it is left. */
+export function oweMade<T extends { slug: string; name: string }>(uid: Uid, made: T, store: KeyStore | null = local(), now = Date.now()): void {
+  if (!made || typeof made.slug !== 'string' || !made.slug) return;
+  write(madeKey(uid), JSON.stringify({ made, at: now }), store);
+}
+
+/** The made screen this person left unfinished on this browser, or null (none, left, or too old). */
+export function owedMade<T extends { slug: string; name: string }>(uid: Uid, store: KeyStore | null = local(), now = Date.now()): T | null {
+  let raw: string | null = null;
+  try { raw = store ? store.getItem(madeKey(uid)) : null; } catch { return null; }
+  if (!raw || raw === DONE) return null;
+  try {
+    const value = JSON.parse(raw) as { made?: T; at?: number } | null;
+    const made = value?.made;
+    if (!made || typeof made.slug !== 'string' || !made.slug || typeof made.name !== 'string') return null;
+    const at = Number(value?.at);
+    if (!Number.isFinite(at) || now - at > MADE_KEEP_MS || at - now > MADE_KEEP_MS) return null;
+    return made;
+  } catch {
+    return null;
+  }
+}
+
+/** One of its ways on was taken: it is not reopened again. */
+export function clearMade(uid: Uid, store: KeyStore | null = local()): void {
+  write(madeKey(uid), DONE, store);
+}
+
+/**
  * Whether anything is owed on this device, to anybody: read once as the
  * island mounts (a reload in the middle of a first visit), so it looks at
  * the screen only while something is.

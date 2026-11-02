@@ -164,6 +164,11 @@ function isTry(run) {
   return run.verdict === 'failed' && /^revise:/.test(String(run.error || ''));
 }
 
+/** Pure (B23): whether a run's change of the bot's is merged and live (pastRuns' proposal_status). */
+function wentLive(run) {
+  return run.verdict === 'ready' && !!run.proposal_session_id && run.proposal_status === 'merged';
+}
+
 function triesOf(runs = [], { underWay = false } = {}) {
   const tries = runs.filter(isTry).length;
   return Math.max(1, tries + (underWay ? 1 : 0));
@@ -228,7 +233,12 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
   // or stopped, is over, shipped by somebody else's change or just closed.
   const closed = job.requestClosed === true;
   if (closed && !['vote', 'checks', 'going_live', 'live', 'building'].includes(base.state)) {
-    base = doneBy
+    // B23 (audit 2 Nov 2026): a request its own change made live, and that
+    // closed when it merged, is live, whatever a later look at it said: a
+    // first version that went live read "Closed".
+    base = runs.some(wentLive)
+      ? { state: 'live', step: 'live', why: null }
+      : doneBy
       ? { state: 'done_elsewhere', step: 'live', why: null }
       : { state: 'closed', step: null, why: null };
   }
@@ -400,8 +410,16 @@ async function withTracks(pool, work, { entries = [], rows = [], keyOf, deps = {
     if (!runsByKey.has(key)) runsByKey.set(key, []);
     runsByKey.get(key).push(row);
   }
-  const entryByKey = new Map(entries.filter((e) => e && e.project)
-    .map((e) => [keyOf(e.project, e.firstVersion ? null : e.number), e]));
+  // B02 (audit 2 Nov 2026): an entry is found by the key its job has. A
+  // first version once filed has its request's number on both (tray
+  // jobOfEntry), so keying it 'first' lost its stage: a plan waiting for its
+  // creator read "Stopped". One being set up has no number, and stays 'first'.
+  const entryByKey = new Map();
+  for (const e of entries) {
+    if (!e || !e.project) continue;
+    const key = keyOf(e.project, e.number);
+    if (!entryByKey.has(key)) entryByKey.set(key, e);
+  }
   const appIdOf = new Map(rows.map((row) => [row.slug, Number(row.app_id)]).filter(([, id]) => id > 0));
   let held = new Map();
   let doneBy = new Map();

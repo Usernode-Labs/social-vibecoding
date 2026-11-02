@@ -1627,6 +1627,10 @@
     "text": "I stopped waiting on this plan. Reply to pick it up again.",
     "description": "Line on Homeroom bot's plan card when nobody answered it for a week. The bot speaks in the first person; replying in the conversation revives the plan."
   },
+  "bot.plan.state.drafted": {
+    "text": "Your change waits below. Post it, and a new plan follows.",
+    "description": "Line on Homeroom bot's plan card for a change to an existing project, while what the person wrote to change in the plan waits below it for them to tap Post it, which posts it on the request for the group to see. Until then the plan cannot be built. \"Post it\" is the name of the button below."
+  },
   "bot.plan.state.changing": {
     "text": "You asked for changes. A new plan is on its way.",
     "description": "Line on Homeroom bot's plan card after the person asked for something to be changed in it."
@@ -2068,7 +2072,7 @@
     "description": "Note in the reply bar while replying to the plan for a project's first version from Homeroom bot: the reply is read by the bot alone, which sends a new plan. Homeroom bot is the assistant's name. \"Change\" is a verb."
   },
   "composer.planReplyNotePublic": {
-    "text": "What you write is posted on the request, where the group can see it.",
+    "text": "What you write is drafted for you to post on the request, where the group can see it. Nothing is posted until you tap Post it.",
     "description": "Note in the reply bar while replying to Homeroom bot's plan for a request on an existing project: the reply is posted on the request's public discussion."
   },
   "composer.cancelReply": {
@@ -4236,11 +4240,11 @@
     "description": "How a piece of Homeroom bot's work ended, shown as the status on its activity card and in its history, for a change to Homeroom itself: the change is built and merged, and waits for the platform's next release. {{release}} is a finished sentence saying when it goes live, for example \"Merged; goes live in the next release (about 8 minutes)\". Homeroom bot is the assistant that builds changes; \"it\" is what the person asked for."
   },
   "bot.plan.complicatedNote": {
-    "text": "Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.",
+    "text": "Its before and after screens are on the request below. To change it, write what to change: you post it there, where the group can see it, and a new plan follows.",
     "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits: its before and after screens are on the request card below, and what the reader asks to change is posted there for the community to see."
   },
   "bot.plan.complicatedNoteShown": {
-    "text": "What you ask to change is posted on the request below, where the group can see it.",
+    "text": "To change it, write what to change: you post it on the request below, where the group can see it, and a new plan follows.",
     "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits and the card itself shows the plan and its before and after screens: what the reader asks to change is posted on the request card below, for the community to see."
   },
   "bot.plan.spec.see": {
@@ -5112,8 +5116,8 @@
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: it waits for a free builder in Homeroom bot's queue."
   },
   "ai.short.turn": {
-    "text": "Its turn",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting its turn among the project's builds."
+    "text": "In line",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting in line behind the project's other builds (not its turn yet)."
   },
   "ai.short.slot": {
     "text": "A slot",

@@ -144,10 +144,20 @@ test('the plan card for an existing project says where its screens are and where
   const { PlanCardView, COMPLICATED_PLAN_NOTE } = loadTsx('frontend/src/features/messages/bot-plan-view.tsx');
   const draw = (plan, props = {}) => renderToHtml(createElement(PlanCardView, { appName: 'Chores', plan, state: 'open', ...props }));
   const open = draw({ ...PLAN, complicated: true, spec: { sessionId: 5, version: 1 } });
-  assert.match(open, /<p class="messages-bot-note mt-2\.5" data-bot-plan-note=""><svg[^>]*>[\s\S]*?<\/svg><span>Its before and after screens are on the request below\. What you ask to change is posted there, where the group can see it\.<\/span><\/p>/);
-  assert.equal(message(COMPLICATED_PLAN_NOTE), 'Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.');
+  assert.match(open, /<p class="messages-bot-note mt-2\.5" data-bot-plan-note=""><svg[^>]*>[\s\S]*?<\/svg><span>Its before and after screens are on the request below\. To change it, write what to change: you post it there, where the group can see it, and a new plan follows\.<\/span><\/p>/);
+  assert.equal(message(COMPLICATED_PLAN_NOTE), 'Its before and after screens are on the request below. To change it, write what to change: you post it there, where the group can see it, and a new plan follows.');
   assert.match(open, /data-bot-plan-build="">Build it<\/button>/);
   assert.match(open, /data-bot-plan-change="">Change something<\/button>/);
+  // B05 (audit 2 Nov 2026): while a change to it waits for Post it, the
+  // plan says so and offers no Build it.
+  const drafted = draw({ ...PLAN, complicated: true }, { state: 'drafted' });
+  assert.doesNotMatch(drafted, /data-bot-plan-build/);
+  assert.doesNotMatch(drafted, /data-bot-plan-change/);
+  assert.match(drafted, /<p class="messages-bot-answered" role="status">Your change waits below\. Post it, and a new plan follows\.<\/p>/);
+  const { planState } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
+  assert.equal(planState({ kind: 'plan', status: 'open', actionId: 3, changeDrafted: true }), 'drafted');
+  assert.equal(planState({ kind: 'plan', status: 'open', actionId: 3, changeDrafted: false }), 'open');
+  assert.equal(planState({ kind: 'plan', status: 'closed', actionId: 3, changing: true, changeDrafted: true }), 'changing');
   assert.doesNotMatch(draw(PLAN), /data-bot-plan-note/, 'a first version\'s card is unchanged');
   assert.doesNotMatch(draw({ ...PLAN, complicated: true }, { state: 'built' }), /data-bot-plan-note/, 'only while it waits');
 });
@@ -220,8 +230,8 @@ test('the chat\'s plan card shows the plan it asks about, under its lines, and o
   const open = draw();
   assert.ok(open.indexOf('data-bot-plan-lines') < open.indexOf('data-test-plan-spec'), 'under its lines');
   assert.ok(open.indexOf('data-test-plan-spec') < open.indexOf('data-bot-plan-build'), 'above Build it');
-  assert.equal(message(COMPLICATED_PLAN_NOTE_SHOWN), 'What you ask to change is posted on the request below, where the group can see it.');
-  assert.match(open, /data-bot-plan-note=""><svg[^>]*>[\s\S]*?<\/svg><span>What you ask to change is posted on the request below, where the group can see it\.<\/span>/);
+  assert.equal(message(COMPLICATED_PLAN_NOTE_SHOWN), 'To change it, write what to change: you post it on the request below, where the group can see it, and a new plan follows.');
+  assert.match(open, /data-bot-plan-note=""><svg[^>]*>[\s\S]*?<\/svg><span>To change it, write what to change: you post it on the request below, where the group can see it, and a new plan follows\.<\/span>/);
   assert.doesNotMatch(draw({ state: 'built' }), /data-test-plan-spec/, 'its answers take its place once built');
   assert.doesNotMatch(draw({ state: 'replaced' }), /data-test-plan-spec/, 'a replaced plan folds away');
 
@@ -666,6 +676,17 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     );
     assert.equal(early.length, 0, 'nothing on the request before the tap');
     assert.ok((await runRow(run)).awaiting_go_at, 'and the plan still waits');
+    // B05 (audit 2 Nov 2026): the draft is right where the plan is, not one
+    // thread away, and the plan offers no Build it while it waits.
+    const { rows: [where] } = await pool.query('SELECT thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1', [out.messageId]);
+    assert.equal(where.thread_root_id, null, 'the draft is not in a thread of its own');
+    assert.equal(Number(where.reply_to_id), Number(sent.messageId), 'it answers what they wrote');
+    const { rows: opened } = await pool.query(
+      `SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND metadata->'homeroomBot'->>'kind' = 'opened_draft'`,
+      [card.conversation_id],
+    );
+    assert.equal(opened.length, 0, 'and no "I drafted that" line opens one');
+    assert.equal((await planMessage(run)).meta.changeDrafted, true, 'the plan waits on the draft: no Build it');
 
     const tapped = await mayor.decideOfferTap(pool, {}, {
       deps: { replies: tapsNow(pool, {}, { bot: homeroomBot, ws }) }, user: maya, actionId, choice: 'yes',
@@ -675,7 +696,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
       'SELECT content FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1',
       [card.conversation_id, homeroomBot.id],
     );
-    assert.equal(said.content, "Posted on Chores request #12's public discussion, as you. I'll plan it again with it and send the new plan here.");
+    assert.equal(said.content, "Posted on the public discussion of Chores request #12, as you. I'll plan it again with it and send the new plan here.");
     const { rows: posted } = await pool.query(
       `SELECT user_id, content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 12`, [app.id],
     );
@@ -690,6 +711,33 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     const { rows: [q] } = await pool.query('SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 12', [app.id]);
     assert.deepEqual(q, { priority: 0, reason: 'plan_change' }, 'read again next');
     assert.equal(await bot.plannedWithRequester(pool, { appId: app.id, issueNumber: 12 }), true, 'and planned with them again');
+  });
+
+  // B05: Keep it private leaves the plan as it was, with its Build it.
+  await t.test('Change something kept private gives the plan its Build it back', async () => {
+    const mayor = require('../src/services/homeroom-bot-mayor');
+    await pool.query('UPDATE homeroom_bot_runs SET awaiting_go_at = NULL WHERE app_id = $1 AND issue_number = 12', [app.id]);
+    const run = await waitingRun();
+    await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
+    const card = await planMessage(run);
+    const sent = await conversations.sendMessage(pool, maya, card.conversation_id, {
+      content: 'Make it yearly', reply_to_id: card.id,
+    });
+    const out = await dm.noteUserMessage(pool, {}, {
+      user: maya, conversationId: card.conversation_id,
+      message: { id: sent.messageId, content: 'Make it yearly', reply: { id: card.id } },
+      deps: { bot: homeroomBot, ws },
+    });
+    assert.equal((await planMessage(run)).meta.changeDrafted, true);
+    const offer = (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [out.messageId])).rows[0];
+    const tapped = await mayor.decideOfferTap(pool, {}, {
+      deps: { replies: tapsNow(pool, {}, { bot: homeroomBot, ws }) }, user: maya, actionId: offer.metadata.homeroomBot.actionId, choice: 'no',
+    });
+    assert.equal(tapped.ok, true);
+    const back = await planMessage(run);
+    assert.deepEqual([back.meta.status, back.meta.changeDrafted, back.meta.changing], ['open', false, undefined], 'Build it is back');
+    assert.ok((await runRow(run)).awaiting_go_at, 'and the plan still waits for it');
+    await pool.query('UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, build_ok = FALSE, build_error = $2 WHERE id = $1', [run, 'test: done']);
   });
 
   await t.test('a small change, or a complicated one already proposed, is not planned again', async () => {

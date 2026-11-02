@@ -4755,6 +4755,14 @@
     "text": "See progress",
     "description": "Main button on a request's card (a request is a filed issue): shown to the person Homeroom bot is building the request for; opens their chat with the bot."
   },
+  "issue.action.seePlan": {
+    "text": "See the plan",
+    "description": "Main button on a request's card, shown to the person who asked for it while Homeroom bot's plan for it waits for them: opens their chat with the bot at the plan, where its Build it button is."
+  },
+  "issue.action.seePlanTitle": {
+    "text": "Open the plan in your chat with Homeroom bot, where you can build it",
+    "description": "Tooltip of the \"See the plan\" button on a request's card. \"Homeroom bot\" is the name of the platform's builder bot."
+  },
   "issue.action.seeProgressTitle": {
     "text": "Open your chat with Homeroom bot, where this request's card is",
     "description": "Tooltip of the \"See progress\" button on a request's card. \"Homeroom bot\" is the name of the platform's builder bot. \"Open\" is a verb."
@@ -8198,6 +8206,10 @@
   "request.status.lead.botPlanWaiting": {
     "text": "Waiting for @{{username}} to OK the plan.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. Homeroom bot (the platform's assistant) wrote a plan for the change and builds nothing until the person who asked for it approves the plan. {{username}} is that person's username, after an @. \"OK\" is a verb: approve."
+  },
+  "request.status.lead.botPlanYours": {
+    "text": "Your plan is ready. Say Build it on it in your chat with Homeroom bot.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, read by the person who asked for it while Homeroom bot's plan for it waits for them to approve it. \"Build it\" is the name of the button on the plan in their chat with Homeroom bot: keep it as the button reads."
   },
   "request.status.lead.botPlanWaitingUnnamed": {
     "text": "Waiting for the person who asked for it to OK the plan.",

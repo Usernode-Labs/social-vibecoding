@@ -385,6 +385,10 @@ function links(domain, { slug, number = null, proposal = null, pr = null }) {
  */
 function leftOverQueue(row) {
   if (row.proposal_status !== 'merged' || !row.queue_id || !row.merged_at) return false;
+  // B24 (audit 2 Nov 2026): nor is any row on a request that closed with its
+  // change live: the bot reads open requests only, so nothing comes of it.
+  // A live request's row read "Reading the request" under its "It's live".
+  if (row.request_closed === true) return true;
   const ms = (value) => (value instanceof Date ? value.getTime() : Date.parse(value || ''));
   const queued = ms(row.enqueued_at || row.started_at);
   const merged = ms(row.merged_at);
