@@ -48,6 +48,9 @@
  *
  * The row whose chat is in the column beside the list (Main Chat, or a
  * private thread) is drawn lit, where you are (`--lit-tint`, `--lit-ink`).
+ * #6153: a design thread filed as a request is that request's row (In
+ * progress, Waiting or Live, with the track's word on its right), which
+ * opens the thread and is lit while it is in the column.
  */
 import { useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
@@ -398,7 +401,10 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   hero: ReactNode;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
   main: { lit: boolean; unread: number; open: () => void };
-  /** The key of the row whose chat is in the column (`private:<root>`), lit. */
+  /**
+   * The key of the row whose chat is in the column (`private:<root>`), lit:
+   * a private thread's row, or the row of the request it was filed as (#6153).
+   */
   lit?: string | null;
   /** The lists have been read: until then Needs you says nothing, not "nothing needs you". */
   ready: boolean;
@@ -455,6 +461,9 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     tooltip: say(nextWords(th))!,
     why: say(threadWhy(th)),
     owe: false,
+    // #6153: a request filed from a private thread opens that thread, and
+    // is where you are while it is in the column.
+    lit: !!lit && !!th.rootId && lit === `private:${th.rootId}`,
     open: () => openThread(th),
   });
   const progressShown = progress.filter((x) => shows(x.app));

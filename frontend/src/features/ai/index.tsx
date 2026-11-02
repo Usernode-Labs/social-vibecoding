@@ -89,7 +89,7 @@ import { AiLists } from './lists';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import { closePreview, previewLayout, THREE_COLUMNS, usePreview } from './preview';
 import {
-  heroWords, inProgress, isTopicHref, needsYou, owedCount, rankProjects, upNext,
+  heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type WorkRow,
 } from './model';
 
@@ -377,7 +377,7 @@ export function AiScreen(): ReactNode {
   const rows = useMemo(() => needsYou(needs, work), [needs, work]);
   const progress = useMemo(() => inProgress(needs, work), [needs, work]);
   const waiting = useMemo(() => upNext(needs, work), [needs, work]);
-  const live: AiThread[] = useMemo(() => work?.live || [], [work]);
+  const live: AiThread[] = useMemo(() => liveThisWeek(work), [work]);
   const owed = owedCount(rows);
   const projects = useMemo(
     () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
@@ -421,13 +421,16 @@ export function AiScreen(): ReactNode {
     if (openRoot) closeThread();
     showAddress(BOT_TAB);
   };
+  // A private thread is the column's, alone, in Main's place.
+  const openPrivate = (rootId: number) => {
+    const next = { threadRootId: rootId, focusMessageId: null };
+    if (!(wide || phone)) { go(botTabAddress(next)); return; }
+    showAt(next);
+    showAddress(botTabAddress(next));
+  };
   const openRow = (row: WorkRow) => {
     if (row.rootId) {
-      // A private thread is the column's, alone, in Main's place.
-      const next = { threadRootId: row.rootId, focusMessageId: null };
-      if (!(wide || phone)) { go(botTabAddress(next)); return; }
-      showAt(next);
-      showAddress(botTabAddress(next));
+      openPrivate(row.rootId);
       return;
     }
     // B06: a plan's Build it is on the plan in Main Chat: Main, at the plan
@@ -440,6 +443,12 @@ export function AiScreen(): ReactNode {
     if (openPublic(row.href, row.app, row.title, aboutRow(row), botId)) underPanel();
   };
   const openThread = (th: AiThread) => {
+    // #6153: a request filed from a private thread opens that thread, where
+    // its design and its story are, rather than the request's page.
+    if (th.rootId) {
+      openPrivate(th.rootId);
+      return;
+    }
     if (openPublic(th.href, th.app, th.title, aboutRow(th), botId)) underPanel();
   };
   // A page the side panel takes is the column's: no preview beside it.
