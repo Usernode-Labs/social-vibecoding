@@ -866,7 +866,9 @@ test('Opened recently: the app you just left joins a list drawn before it was pa
     Browse.recentChanged();
     assert.equal(renders, 0);
   });
-  assert.match(read('frontend/src/features/apps/mount.ts'), /recentAppsStore\.subscribe\(\(\) => .*recentChanged/);
+  // After the setViewer that replaced the list has also recorded who for.
+  assert.match(read('frontend/src/features/apps/mount.ts'),
+    /recentAppsStore\.subscribe\(\(\) => \{\s*queueMicrotask\(\(\) => .*recentChanged/);
 });
 
 test('Opened recently: mount.ts reads the store under the name it was written with', () => {
