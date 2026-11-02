@@ -67,7 +67,7 @@ export function MessageActionSheet({
         ) : (
           <>
             {preview ? (
-              <p className="msgx-sheet-preview"><strong>@{preview.who}</strong> {preview.text || t('messages:actions.sheet.previewAttachment')}</p>
+              <p className="msgx-sheet-preview"><strong>{preview.who}</strong> {preview.text || t('messages:actions.sheet.previewAttachment')}</p>
             ) : null}
             {onReact ? (
               <div className="msgx-sheet-reactions">

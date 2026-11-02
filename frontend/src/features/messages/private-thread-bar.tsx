@@ -45,6 +45,8 @@ import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { Button } from '@/components/ui/button';
 
+import { MakeSheet } from './bot-make';
+
 export interface PrivateThreadState {
   state: 'open' | 'filed' | 'posted' | 'dropped';
   /** What it is (open only): absent from an older server, which reads as an idea. */
@@ -60,6 +62,11 @@ export interface PrivateThreadState {
   /** A drafted reply: the number of the thread it answers. */
   target?: number | null;
   href?: string | null;
+  /**
+   * B04 (audit 2 Nov 2026): a screen drawn in it for no project yet, its
+   * newest version: New project makes the project from it (./bot-make.tsx).
+   */
+  design?: { title: string | null; version: number } | null;
 }
 
 export type Door = 'new';
@@ -74,6 +81,8 @@ export type Door = 'new';
  */
 export function doorsFor(where: PrivateThreadState | null, botReplied: boolean): Door[] {
   if (!where || where.state !== 'open' || !botReplied || where.mine === false) return [];
+  // B04: a screen drawn for no project yet is made into one, with its drawing.
+  if (where.design && !where.app && where.kind !== 'draft_request' && where.kind !== 'draft_reply') return ['new'];
   // A design thread's bot offers the project itself (design-bot.js offer_project).
   if (where.kind === 'draft_request' || where.kind === 'draft_reply' || where.kind === 'design' || where.app) return [];
   return ['new'];
@@ -84,7 +93,7 @@ interface ThreadMessage {
   sender: { id: number; bot?: boolean };
   metadata?: {
     homeroomBot?: {
-      kind?: string; designTitle?: string;
+      kind?: string; designTitle?: string; projectIdea?: string; draftTitle?: string;
       aboutKind?: 'request' | 'change'; aboutNumber?: number; aboutTitle?: string;
     } | null;
   } | null;
@@ -137,7 +146,12 @@ export function privateThreadTitle(root: ThreadMessage | null | undefined, repli
   if (meta?.kind === 'opened_about' && (meta.aboutKind === 'request' || meta.aboutKind === 'change') && meta.aboutNumber) {
     return aboutThreadTitle(meta.aboutKind, meta.aboutNumber, meta.aboutTitle);
   }
+  // B08 (audit 2 Nov 2026): a new project's thread by its idea, never by
+  // their newest words in it ("Yes please. Just the three of us").
+  if (meta?.kind === 'opened_thread' && meta.projectIdea) return firstLine(meta.projectIdea);
   if (meta?.kind === 'opened_thread') return firstLine(firstOwn(replies, meId)?.content) || firstLine(meta.designTitle) || null;
+  // B19: a draft's thread by what it drafts, not the bot's line opening it.
+  if (meta?.kind === 'opened_draft' && meta.draftTitle) return firstLine(meta.draftTitle);
   return firstLine(root.content) || null;
 }
 
@@ -148,6 +162,10 @@ export function privateThreadTitle(root: ThreadMessage | null | undefined, repli
  */
 export function privateThreadWords(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[], meId: number): string {
   if (root && !root.sender.bot && root.sender.id === meId) return root.content || '';
+  // B04 (audit 2 Nov 2026): a new project's thread starts from its idea,
+  // not from whatever they answered the bot with first.
+  const idea = root?.sender.bot && root.metadata?.homeroomBot?.kind === 'opened_thread' ? root.metadata.homeroomBot.projectIdea : null;
+  if (idea) return idea;
   return firstOwn(replies, meId)?.content || '';
 }
 
@@ -199,11 +217,23 @@ export function PrivateThreadDoors({ rootId, text, where, botReplied }: {
 }): ReactNode {
   const t = useMessages('messages');
   const [door, setDoor] = useState<Door | null>(null);
+  const [made, setMade] = useState<{ slug: string; name: string } | null>(null);
 
-  useEffect(() => { setDoor(null); }, [rootId]);
+  useEffect(() => { setDoor(null); setMade(null); }, [rootId]);
 
+  if (made) {
+    return (
+      <div className="px-4 py-2" data-private-made="">
+        <a className="font-semibold text-violet-700 dark:text-violet-300" href={`#app/${encodeURIComponent(made.slug)}`}>{t('messages:bot.make.open', { project: made.name })}</a>
+      </div>
+    );
+  }
   const doors = doorsFor(where, botReplied);
   if (!where || !doors.length) return null;
+  // B04 (audit 2 Nov 2026): a drawn screen is made into its project in
+  // place, with its name and its drawing (the bot's own Make the project
+  // sheet), never the generic create screen.
+  const drawn = where.design && !where.app ? where.design : null;
 
   const startProject = (audience: Audience) => {
     const app = typeof window !== 'undefined' ? (window as any).App : null;
@@ -218,7 +248,14 @@ export function PrivateThreadDoors({ rootId, text, where, botReplied }: {
           </Button>
         ))}
       </div>
-      {door === 'new' ? (
+      {door === 'new' && drawn ? (
+        <MakeSheet
+          project={{ name: (drawn.title || '').slice(0, 60), rootId, version: drawn.version }}
+          onClose={() => setDoor(null)}
+          onMade={(app) => { setDoor(null); setMade(app); }}
+        />
+      ) : null}
+      {door === 'new' && !drawn ? (
         <div className="mt-2 flex flex-col gap-2" data-private-form="new">
           <p className="messages-bot-note">{t('messages:privateThread.whoFor')}</p>
           <div className="messages-bot-answers" role="group" aria-label={t('messages:privateThread.whoFor')}>

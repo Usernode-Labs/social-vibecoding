@@ -129,5 +129,7 @@ test('where a private thread stands says what it is and what a reply answers', (
   assert.match(fn, /kind: row\.kind/);
   // 1 Nov 2026: and whether it is the viewer's private thread at all.
   assert.match(fn, /const mine = !!\(await ownRoot\(pool, \{ user, bot: who, rootId \}\)\);/);
-  assert.match(fn, /mine: true,\n {2}\};/);
+  assert.match(fn, /mine: true,\n/);
+  // B04 (audit 2 Nov 2026): and a screen drawn in it for no project yet.
+  assert.match(fn, /\.\.\.\(!app && row\.design_version != null\n\s+\? \{ design: \{ title: row\.design_title \|\| null, version: Number\(row\.design_version\) \} \} : \{\}\),\n {2}\};/);
 });

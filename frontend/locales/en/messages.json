@@ -1627,6 +1627,10 @@
     "text": "I stopped waiting on this plan. Reply to pick it up again.",
     "description": "Line on Homeroom bot's plan card when nobody answered it for a week. The bot speaks in the first person; replying in the conversation revives the plan."
   },
+  "bot.plan.state.drafted": {
+    "text": "Your change waits below. Post it, and a new plan follows.",
+    "description": "Line on Homeroom bot's plan card for a change to an existing project, while what the person wrote to change in the plan waits below it for them to tap Post it, which posts it on the request for the group to see. Until then the plan cannot be built. \"Post it\" is the name of the button below."
+  },
   "bot.plan.state.changing": {
     "text": "You asked for changes. A new plan is on its way.",
     "description": "Line on Homeroom bot's plan card after the person asked for something to be changed in it."
@@ -2068,7 +2072,7 @@
     "description": "Note in the reply bar while replying to the plan for a project's first version from Homeroom bot: the reply is read by the bot alone, which sends a new plan. Homeroom bot is the assistant's name. \"Change\" is a verb."
   },
   "composer.planReplyNotePublic": {
-    "text": "What you write is posted on the request, where the group can see it.",
+    "text": "What you write is drafted for you to post on the request, where the group can see it. Nothing is posted until you tap Post it.",
     "description": "Note in the reply bar while replying to Homeroom bot's plan for a request on an existing project: the reply is posted on the request's public discussion."
   },
   "composer.cancelReply": {
@@ -2415,26 +2419,6 @@
     "text": "Couldn’t unblock this user.",
     "description": "Error in the \"New message\" dialog when unblocking a person failed and the server gave no reason."
   },
-  "create.error.block": {
-    "text": "Couldn’t block this person.",
-    "description": "Error in the \"New message\" dialog when blocking a person failed and the server gave no reason."
-  },
-  "create.block.title": {
-    "text": "Block @{{username}}?",
-    "description": "Title of the confirmation before blocking a person, so they can no longer message you. \"Block\" is a verb. {{username}} is that person; keep the @."
-  },
-  "create.block.titleUnknown": {
-    "text": "Block @unknown?",
-    "description": "Title of the confirmation before blocking a person, so they can no longer message you. \"Block\" is a verb. Used when the username is not known; \"@unknown\" is written as it has always been shown."
-  },
-  "create.block.message": {
-    "text": "Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.",
-    "description": "Body of the confirmation before blocking a person: what blocking does."
-  },
-  "create.block.confirm": {
-    "text": "Block",
-    "description": "Confirm button of the confirmation before blocking a person. A verb: stop this person from messaging you."
-  },
   "create.title": {
     "text": "New message",
     "description": "Title of the dialog for starting a conversation with a person or creating a group chat."
@@ -2490,18 +2474,6 @@
   "create.result.message": {
     "text": "Message",
     "description": "Action shown on a person in the search results of the \"New message\" dialog: pressing the row opens a direct conversation with them. A verb."
-  },
-  "create.result.blockNamed": {
-    "text": "Block @{{username}}",
-    "description": "Accessible name of the \"Block\" button beside a person in the search results. \"Block\" is a verb: stop this person from messaging you. {{username}} is that person; keep the @."
-  },
-  "create.result.blockUnknown": {
-    "text": "Block @unknown",
-    "description": "Accessible name of the \"Block\" button beside a person in the search results. \"Block\" is a verb: stop this person from messaging you. Used when the username is not known; \"@unknown\" is written as it has always been shown."
-  },
-  "create.result.block": {
-    "text": "Block",
-    "description": "Button beside a person in the search results of the \"New message\" dialog. A verb: stop this person from messaging you."
   },
   "create.blockedPeople": {
     "text": "Blocked people",
@@ -3180,8 +3152,8 @@
     "description": "Small-caps heading over the Messages list section that holds the viewer's conversations with AI agents and their changes in flight. It is a button that folds the section away and opens it again."
   },
   "inbox.section.people": {
-    "text": "Direct messages",
-    "description": "Small-caps heading over the last section of the Messages list, under Agents: the viewer's direct messages and group chats with people. It does not fold."
+    "text": "People",
+    "description": "Small-caps heading over the last section of the Messages list, under Agents, and over the same rows in the sidebar: the viewer's direct messages and group chats with people. It does not fold."
   },
   "inbox.section.working_one": {
     "text": "{{count}} working",
@@ -4268,11 +4240,11 @@
     "description": "How a piece of Homeroom bot's work ended, shown as the status on its activity card and in its history, for a change to Homeroom itself: the change is built and merged, and waits for the platform's next release. {{release}} is a finished sentence saying when it goes live, for example \"Merged; goes live in the next release (about 8 minutes)\". Homeroom bot is the assistant that builds changes; \"it\" is what the person asked for."
   },
   "bot.plan.complicatedNote": {
-    "text": "Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.",
+    "text": "Its before and after screens are on the request below. To change it, write what to change: you post it there, where the group can see it, and a new plan follows.",
     "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits: its before and after screens are on the request card below, and what the reader asks to change is posted there for the community to see."
   },
   "bot.plan.complicatedNoteShown": {
-    "text": "What you ask to change is posted on the request below, where the group can see it.",
+    "text": "To change it, write what to change: you post it on the request below, where the group can see it, and a new plan follows.",
     "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits and the card itself shows the plan and its before and after screens: what the reader asks to change is posted on the request card below, for the community to see."
   },
   "bot.plan.spec.see": {
@@ -4724,15 +4696,15 @@
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Shown after New project, over three choices that each open Create with the thread's words."
   },
   "privateThread.forMe": {
-    "text": "Just me",
+    "text": "Just you",
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a project only the person is in."
   },
   "privateThread.forGroup": {
-    "text": "A group",
+    "text": "Private community",
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a private project for people the person invites."
   },
   "privateThread.forCommunity": {
-    "text": "A community",
+    "text": "Public community",
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a public project anyone can join."
   },
   "privateThread.filed": {
@@ -4758,6 +4730,10 @@
   "ai.hero.next": {
     "text": "In progress: {{next}}",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Line under the heading when nothing waits on the person: {{next}} is how many of their pieces of work are being worked on."
+  },
+  "ai.hero.needs": {
+    "text": "Needs you: {{needs}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Line under the heading when nothing of theirs is being worked on: {{needs}} is how many things in its Needs you list ask something of the person (a vote, an answer, a Build it)."
   },
   "ai.work.title": {
     "text": "Needs you",
@@ -5144,8 +5120,8 @@
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: it waits for a free builder in Homeroom bot's queue."
   },
   "ai.short.turn": {
-    "text": "Its turn",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting its turn among the project's builds."
+    "text": "In line",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting in line behind the project's other builds (not its turn yet)."
   },
   "ai.short.slot": {
     "text": "A slot",

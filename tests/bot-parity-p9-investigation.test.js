@@ -185,6 +185,22 @@ test('the card, ended: why it ended, its spend in grey, Notes and File what it f
   assert.doesNotThrow(() => render(mod, { type: 'investigation', state: 'nonsense', checkins: 'x', project: 3, everyHours: 'a' }));
 });
 
+test('Notes shows each check-in\'s time as the card does, never the ISO time stored for the model', () => {
+  // 2 Nov 2026, tested in a browser: Notes read "Check-in 1 (2026-11-02T10:45:50.065Z):".
+  const mod = cardModule();
+  const now = new Date('2026-11-02T13:00:00.000Z');
+  const notes = 'Check-in 1 (2026-11-02T10:45:50.065Z):\nEmpty days are allowed.\n\nCheck-in 2 (2026-11-01T09:05:00Z):\nStill so.';
+  const shown = mod.notesShown(notes, now, 'en-US');
+  assert.doesNotMatch(shown, /\d{4}-\d{2}-\d{2}T/);
+  const today = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date('2026-11-02T10:45:50.065Z'));
+  assert.ok(shown.startsWith(`Check-in 1 (${today}):\nEmpty days are allowed.`), shown);
+  const before = new Intl.DateTimeFormat('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date('2026-11-01T09:05:00Z'));
+  assert.ok(shown.includes(`Check-in 2 (${before}):\nStill so.`), 'another day says which');
+  assert.equal(mod.notesShown('Staging demo notes.\nCheck-in 1: the sync check fails.', now, 'en-US'), 'Staging demo notes.\nCheck-in 1: the sync check fails.');
+  assert.equal(mod.notesShown('(2026-13-45T99:99:99Z): kept as written', now, 'en-US'), '(2026-13-45T99:99:99Z): kept as written');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', ENTRY), 'utf8'), /\{notesShown\(view\.notes\.trim\(\), now, locale\)\}/);
+});
+
 test('the card\'s source keeps the shell\'s rules: catalog words, the palette, whole class literals', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', ENTRY), 'utf8');
   assert.doesNotMatch(src, /\b(?:gray|indigo)-\d/);

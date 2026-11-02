@@ -140,6 +140,13 @@ test('the compare card: its items read defensively, small previews side by side,
   assert.equal(message('messages:botCards.compare.pickWords', { version: 3 }), 'Pick version 3');
   assert.doesNotMatch(src, /\b(?:gray|indigo)-\d/);
   assert.doesNotMatch(src, /—/);
+  // 2 Nov 2026: at a phone's width, Desktop's two 240px previews made the
+  // card (a flex item of the bubble) wider than the bubble, the thread
+  // scrolled sideways and the size switch went off the screen. Every card's
+  // wrapper may shrink to the bubble; its widest row scrolls inside it.
+  assert.match(read('frontend/src/features/messages/bot-cards/index.tsx'),
+    /<div className="messages-bot-card min-w-0 max-w-full" data-bot-card=\{card\.type\}>/);
+  assert.match(src, /<ul className="flex max-w-full gap-2 overflow-x-auto pb-1"/, 'the previews scroll inside the card');
 });
 
 test('a design\'s pictures are written into its frame from the page, where the chat\'s sign-in reaches them', async () => {

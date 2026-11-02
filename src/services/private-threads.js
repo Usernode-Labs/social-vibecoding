@@ -90,8 +90,11 @@ async function ownRoot(pool, { user, bot, rootId }) {
  */
 async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
   const { rows: [row] } = await pool.query(
-    `SELECT p.state, p.result_ref, p.kind, a.slug, a.name, t.number AS target_number
+    `SELECT p.state, p.result_ref, p.kind, a.slug, a.name, t.number AS target_number,
+            d.title AS design_title,
+            (SELECT MAX(v.version) FROM design_versions v WHERE v.private_thread_id = p.id) AS design_version
        FROM private_threads p
+       LEFT JOIN design_threads d ON d.private_thread_id = p.id
        LEFT JOIN apps a ON a.id = p.app_id
        LEFT JOIN threads t ON t.id = p.target_thread_id
       WHERE p.root_message_id = $1 AND p.user_id = $2`,
@@ -111,6 +114,11 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
     target: row.target_number == null ? null : Number(row.target_number),
     href: app && row.result_ref != null ? hrefFor(app, row.result_ref, row.kind === 'draft_reply' ? 'thread' : 'request') : null,
     mine: true,
+    // B04 (audit 2 Nov 2026): a screen drawn for no project yet, which New
+    // project makes the project from (its name, the drawing), never the
+    // generic create screen with the thread's last words.
+    ...(!app && row.design_version != null
+      ? { design: { title: row.design_title || null, version: Number(row.design_version) } } : {}),
   };
 }
 

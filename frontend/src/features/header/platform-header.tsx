@@ -32,6 +32,7 @@ import { useRef } from 'react';
 
 import {
   BellIcon,
+  ArrowLeftIcon,
   ChevronLeftIcon,
   HomeIcon,
   XIcon,
@@ -541,6 +542,16 @@ export function PlatformHeader() {
               id="back-icon-arrow"
               className={backArrow ? 'w-5 h-5' : 'hidden w-5 h-5'}
             />
+            {/*
+                Overnight audit G01: Android's back is a plain arrow with no
+                disc (Material's arrow_back), so on `html.un-android` (the
+                kit's device class) app.css draws this one in place of the
+                chevron and takes the disc away. No id and no state of its
+                own: the chevron's `#back-icon-arrow` stays the slot's
+                contract (app.js's pre-hydration fallback toggles it by id),
+                and app.css shows this one only beside a shown chevron.
+            */}
+            <ArrowLeftIcon className="back-icon-android w-5 h-5" />
             <HomeIcon
               id="back-icon-home"
               className={mode === 'home' ? 'w-5 h-5' : 'hidden w-5 h-5'}

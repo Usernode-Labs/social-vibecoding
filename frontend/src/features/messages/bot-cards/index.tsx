@@ -43,8 +43,10 @@ export function BotRichCard({ message, conversationId }: { message: Conversation
   const card = botCardOf(message);
   if (!card) return null;
   const Component = CARD_COMPONENTS[card.type];
+  // A flex item, so min-w-0: a card's widest row (the compare card's
+  // previews at desktop size) scrolls inside the bubble, never the thread.
   return (
-    <div className="messages-bot-card" data-bot-card={card.type}>
+    <div className="messages-bot-card min-w-0 max-w-full" data-bot-card={card.type}>
       <Component message={message} conversationId={conversationId} card={card} />
     </div>
   );

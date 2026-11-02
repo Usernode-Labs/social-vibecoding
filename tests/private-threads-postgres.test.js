@@ -223,6 +223,22 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     assert.equal(privateThreads.startLine({ kind: 'any', appName: 'Seed swap' }), 'New thread, about Seed swap.');
   });
 
+  await t.test('B04: a thread holding a screen drawn for no project says so, with its newest version', async () => {
+    const made = await privateThreads.startThread(pool, { user: ada, project: null, kind: 'any' });
+    assert.equal(made.ok, true, made.error);
+    assert.equal((await privateThreads.stateOf(pool, { user: ada, rootId: made.rootId })).design, undefined, 'nothing drawn yet');
+    const { rows: [d] } = await pool.query(
+      `INSERT INTO design_threads (private_thread_id, title, surface, width, height)
+       SELECT id, 'Weekly chore chart', 'new', 390, 844 FROM private_threads WHERE root_message_id = $1 RETURNING private_thread_id`, [made.rootId]);
+    for (const v of [1, 2]) {
+      await pool.query(`INSERT INTO design_versions (private_thread_id, version, html, author) VALUES ($1, $2, '<!doctype html><p>v</p>', 'bot')`,
+        [d.private_thread_id, v]);
+    }
+    assert.deepEqual((await privateThreads.stateOf(pool, { user: ada, rootId: made.rootId })).design, { title: 'Weekly chore chart', version: 2 });
+    await pool.query('UPDATE private_threads SET app_id = $2 WHERE root_message_id = $1', [made.rootId, app.id]);
+    assert.equal((await privateThreads.stateOf(pool, { user: ada, rootId: made.rootId })).design, undefined, 'a screen of a project that exists is not a new one');
+  });
+
   await t.test('a thread off the bot\'s line is hers too: it says so, and File it takes her first words in it', async () => {
     // 1 Nov 2026: a "+" thread, a draft the bot opened and a design thread
     // hang off a line of the bot's. Her row makes them hers: the doors work

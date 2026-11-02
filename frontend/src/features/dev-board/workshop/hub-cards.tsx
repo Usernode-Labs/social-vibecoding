@@ -652,8 +652,22 @@ function DiscussionRow({ data, onOpen }: {
   const ago = last && last.at ? agoStamp(last.at).text : '';
   const sub = last ? (
     <span data-ws-channel-last="">
-      {line && last.by ? t('project:hub.forYou.discussion.lastBy', { username: last.by, message: line, ago })
-        : line ? t('project:hub.forYou.discussion.last', { message: line, ago })
+      {/* The message is cut short, never the time: with the pill and the
+          chevron at the row's end, "· 9…" was all that was left of
+          "· 9m ago" (audit P04). */}
+      {line && last.by ? (
+        <RichMessage
+          id="project:hub.forYou.discussion.lastBy"
+          values={{ username: last.by, message: line, ago }}
+          components={[<span data-ws-channel-said="" />, <span data-ws-channel-ago="" />]}
+        />
+      ) : line ? (
+        <RichMessage
+          id="project:hub.forYou.discussion.last"
+          values={{ message: line, ago }}
+          components={[<span data-ws-channel-said="" />, <span data-ws-channel-ago="" />]}
+        />
+      )
           : last.by ? t('project:hub.forYou.discussion.postedBy', { username: last.by, ago })
             : t('project:hub.forYou.discussion.posted', { ago })}
     </span>

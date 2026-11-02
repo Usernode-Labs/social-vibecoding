@@ -143,5 +143,5 @@ test('searching Settings for Sign out (or Log out) finds it, and choosing it pre
 
 test('the prerendered hosts are unchanged: empty until settings.js publishes', () => {
   const html = renderComponent(NAV, 'SettingsMobileMenu', {});
-  assert.equal(html, '<div id="settings-mobile-menu-host" class="md:hidden"></div>');
+  assert.equal(html, '<div id="settings-mobile-menu-host" class="lg:hidden"></div>');
 });

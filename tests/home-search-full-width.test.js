@@ -16,7 +16,7 @@ const HOME = read('frontend/src/features/home/index.tsx');
 const CSS = read('public/css/app.css');
 
 function wrapperClasses() {
-  const m = HOME.match(/<div className="home-column px-3 pt-3 pb-2">\s*<div className="([^"]*)">\s*<SearchIcon/);
+  const m = HOME.match(/<div className="home-column px-3 pt-3 md:pt-5 pb-2">\s*<div className="([^"]*)">\s*<SearchIcon/);
   assert.ok(m, 'the search field sits in a wrapper inside the bar\'s .home-column');
   return m[1].split(/\s+/);
 }

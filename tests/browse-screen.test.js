@@ -864,8 +864,9 @@ test('presentCategories: only types some app has, and no row for Other alone', (
     ['games', 'tools', 'other'], 'in the list\'s order');
   // The Filters sheet lists every type present, with Other always included
   // once anything is tagged, and no Type section at all when nothing is.
+  // Audit D11: nor when Other is all there is, which filters nothing.
   assert.deepEqual(keys(Browse.categoryOptions([typed('a', 'tools')])), ['tools', 'other']);
-  assert.deepEqual(keys(Browse.categoryOptions([typed('a', 'other')])), ['other']);
+  assert.deepEqual(keys(Browse.categoryOptions([typed('a', 'other')])), []);
   assert.deepEqual(keys(Browse.categoryOptions([app({})])), []);
   // resolveCategory can pick Other (the sheet offers it) but never a type the
   // directory does not have.
@@ -1186,11 +1187,13 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   // matchMedia, so nothing re-renders on resize.
   const listTag = INDEX.match(/<div id="browse-list"[^>]*>/)[0];
   assert.match(listTag, /md:grid/);
-  assert.match(listTag, /md:grid-cols-2/);
-  // QA 2026-09-24 Q10: the third column waits for xl. From lg (1024px) it
-  // left the name column 0px wide beside the sidebar.
-  assert.match(listTag, /xl:grid-cols-3/);
-  assert.doesNotMatch(listTag, /lg:grid-cols-3/);
+  // Overnight audit W03: the columns are counted from the list's own width
+  // (as many 20rem boxes as fit), not picked by the window's: md:grid-cols-2
+  // gave two ~250px boxes beside the rail at 800px. That is one column at
+  // 800, two at 1024 (QA 2026-09-24 Q10: a third left the name 0px wide
+  // there) and three in the 1024px page column.
+  assert.match(listTag, /md:grid-cols-\[repeat\(auto-fill,minmax\(20rem,1fr\)\)\]/);
+  assert.doesNotMatch(listTag, /(md|lg|xl):grid-cols-\d/, 'no count tied to the window');
   assert.doesNotMatch(BROWSE_SRC, /matchMedia\(/, 'the breakpoint is CSS, not JS');
 
   // NO divide-* utility on the container. Tailwind's divide-y sets
@@ -2150,10 +2153,11 @@ test('the Joined view offers Leave beside Open, never to the creator or outside 
   assert.equal(fetchCalls.length, 1);
   assert.match(BROWSE_LIST_SRC, /data-action="leave"/);
   assert.match(BROWSE_LIST_SRC, /\.browse-leave-btn/, 'the row click skips the button');
-  // On a phone the row is a grid that seats only what app.css names: Open and
-  // Leave go in one box that takes Open's cell, or Leave lands under the icon.
+  // Open and Leave go in one box, the row's one trailing control.
   assert.match(BROWSE_LIST_SRC, /<span className="browse-row-actions [^"]*">\s*\{primary\}\s*\{leave\}/);
-  assert.match(APP_CSS, /\.browse-row > \.browse-row-actions \{ grid-column: 3; grid-row: 2; \}/);
+  // Overnight audit W08: one row shape at every width (no phone grid), so
+  // the pair sits in the row's trailing slot like Open alone does.
+  assert.doesNotMatch(APP_CSS, /\.browse-row\.browse-row \{\s*display: grid;/);
 });
 
 test('leaving a private app says it costs access', async () => {

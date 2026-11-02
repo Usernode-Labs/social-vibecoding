@@ -87,8 +87,14 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(rows[2].href, '#app/garden/dev/issues/390');
   assert.equal(rows[3].href, '#app/garden/dev/governance/14');
   assert.equal(words(rows[3].sub), 'Garden club');
-  assert.deepEqual([rows[4].title, words(rows[4].sub), rows[4].href], ['A reminder email', 'Garden club · #410', '#app/garden/dev/issues/410'],
-    'a plan opens on its request, where its Build it is');
+  assert.deepEqual([rows[4].title, words(rows[4].sub), rows[4].href], ['A reminder email', 'Garden club · #410', '#app/garden/dev/issues/410']);
+  // B06 (audit 2 Nov 2026): its Build it is on the plan in Main Chat, not on
+  // the request's page, so the row opens Main there.
+  assert.deepEqual(rows[4].plan, { slug: 'garden', number: 410 });
+  assert.equal(rows[0].plan, undefined, 'a vote is decided on its page');
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /if \(row\.plan\) \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+void openBotRequest\(row\.plan\.slug, row\.plan\.number\);\s+return;\s+\}/,
+    'a plan row opens Main Chat at the plan, as See progress on its page does');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
   assert.deepEqual([rows[6].who, words(rows[6].sub)], ['me', 'Only you · Garden club · Not posted yet']);
@@ -127,6 +133,8 @@ test('each section groups its rows by project, and a project shows its first few
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
   assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
   assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
+  assert.match(lists, /right: row\.pill \? say\(row\.pill\)! : row\.app \? t\('messages:ai\.short\.private'\) : '',/,
+    'B07: a private idea under that heading does not say Only you again on its row');
   // One project picked: its chip names it, so its name is not said again.
   assert.match(lists, /const heads = picked\.length !== 1;/);
 });
@@ -262,6 +270,9 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
   assert.equal(message('messages:ai.up.titleCount', { count: 2 }), 'Waiting · 2');
   assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
   assert.equal(words(heroWords(0, 3)), 'In progress: 3');
+  // Y03: a zero says nothing, and with neither there is no line.
+  assert.equal(words(heroWords(2, 0)), 'Needs you: 2');
+  assert.equal(heroWords(0, 0), null);
 });
 
 test('a row\'s one word on the right, and on a phone the reason where it is news', () => {
@@ -272,7 +283,7 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
     row('building', { by: 'someone' }), row('vote'), row('checking'), row('decision'), row('queued'), row('build_queued'),
     row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('on_hold'), row('not_picked_up'), row('mystery'),
   ].map((r) => words(shortWords(r))), [
-    'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Checks', 'Votes', 'A builder', 'Its turn',
+    'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Checks', 'Votes', 'A builder', 'In line',
     'A slot', 'Tomorrow', 'Monday', 'Nobody yet', 'Waiting',
   ]);
   // Every id is one whole literal, so the inventory can check it exists.
@@ -417,6 +428,28 @@ test('a request the bot handed back is one its records say it left for a person,
     },
   });
   assert.deepEqual([...stages], [['garden#6010', { stage: 'decide', since: '2026-10-29T10:00:00Z', capSuppressed: null }]]);
+});
+
+test('B03: a first version being built is In progress, never Waiting · Nobody yet', async () => {
+  const aiWork = require('../src/services/ai-work');
+  const stages = await aiWork.botStages(null, { id: 5 }, {
+    liveSvc: { isStaging: () => false },
+    settings: { mode: 'live' },
+    progress: {
+      handedBack: () => null,
+      requestStates: async () => [
+        { row: { slug: 'flat-chores', issue_number: 1, first_version: true }, state: { stage: 'building', since: '2026-11-01T22:00:00Z' } },
+      ],
+    },
+  });
+  assert.deepEqual([...stages], [['flat-chores#1', { stage: 'building', since: '2026-11-01T22:00:00Z', capSuppressed: null }]]);
+  const row = {
+    id: 60, kind: 'request', slug: 'flat-chores', name: 'Flat Chores', number: 1, request_title: 'First version of Flat Chores',
+    state: 'open', request_state: 'open', own: true, created_at: '2026-11-01T21:50:00Z',
+  };
+  const lists = aiWork.arrange([row], 5, new Date('2026-11-01T22:08:00Z'), null, stages);
+  assert.deepEqual(lists.next.map((t) => [t.number, t.what, t.by]), [[1, 'building', 'bot']]);
+  assert.equal(lists.waiting.length, 0, 'not Waiting · Nobody yet');
 });
 
 test('Homeroom bot answers "where do things stand?" from the lists this page draws', () => {

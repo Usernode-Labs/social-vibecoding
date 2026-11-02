@@ -77,6 +77,8 @@ import {
   anyOwed, armWalk, claimWalk, clearLook, FIRST_VISIT_CHECK_MS, lookOwed, noteTipShown, noteWalkRun, oweLook, oweTip,
   owedTip, owedWalk, oweWalk, readScreen, type TipRecord, type TipWho, tipDue, walkArms, walkDue, type WalkRecord,
 } from './first-visit';
+// S01: the made screen kept across a reload (./first-visit.ts oweMade).
+import { clearMade, oweMade, owedMade } from './first-visit';
 import { type CreateAudience, type IdeaSource, type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { noteMoment } from './made-moments';
@@ -1330,6 +1332,47 @@ export function FirstSession() {
     document.addEventListener('sv:authed', check);
     return () => document.removeEventListener('sv:authed', check);
   }, []);
+
+  // S01 (audit 2 Nov 2026): the first session's made screen, left by a
+  // reload or a cold start of the app before any of its ways on was taken,
+  // opens again (./first-visit.ts oweMade), never Home in its place. Only
+  // over nothing, and never on a screenshot address.
+  useEffect(() => {
+    const check = () => {
+      const user = legacy().App?.user;
+      const uid = user?.id;
+      if (uid == null || user?.hasPlatformAccess === false) return;
+      let shot = false;
+      try { shot = !!new URLSearchParams(window.location.search).get('shot'); } catch { /* no shot */ }
+      if (shot || modeRef.current.kind !== 'none') return;
+      const made = owedMade<Made>(uid);
+      if (!made) return;
+      setMode((prev) => (prev.kind === 'none' ? { kind: 'made', made } : prev));
+    };
+    if (legacy().App?.user) check();
+    document.addEventListener('sv:authed', check);
+    return () => document.removeEventListener('sv:authed', check);
+  }, []);
+
+  // S01: while the first session's made screen is up it is kept on this
+  // browser (oweMade); once it goes, by any of its ways on, it is let go
+  // (clearMade). A reload or a cold start never runs this, so the record
+  // stays and the check above reopens it. Create's own made screen closes
+  // like a dialog and is never kept.
+  const madeUp = mode.kind === 'made' && mode.entry !== 'create' ? mode.made : null;
+  const madeKept = useRef(false);
+  useEffect(() => {
+    const uid = legacy().App?.user?.id;
+    if (uid == null) return;
+    if (madeUp) {
+      madeKept.current = true;
+      oweMade(uid, madeUp);
+      return;
+    }
+    if (!madeKept.current) return;
+    madeKept.current = false;
+    clearMade(uid);
+  }, [madeUp]);
 
   // The bridge App._followInvite calls. welcome() answers whether it will
   // show, so the caller can land the viewer the old way when it will not.

@@ -208,10 +208,13 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
  * the rest are <a>s. One fragment is what keeps "the buttons look like the
  * links" true by construction rather than by copies staying in step.
  */
-function RowBody({ icon, label, trailing, external }: {
+function RowBody({ icon, label, trailing, sub, external }: {
   icon: ReactNode;
   label: string;
   trailing?: ReactNode;
+  // Audit D07: a line under the label, for a phrase that would otherwise
+  // share the row with it and cut it ("Go to com… 1 decision waiting on you").
+  sub?: ReactNode;
   // A row that leaves Homeroom (#5927): the browser, or another site. It
   // ends in the external-link glyph rather than the chevron every row
   // inside the platform ends in, and says so to a screen reader.
@@ -222,7 +225,12 @@ function RowBody({ icon, label, trailing, external }: {
       <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
         {icon}
       </span>
-      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      {sub ? (
+        <span className="flex-1 min-w-0">
+          <span className="block truncate font-medium">{label}</span>
+          {sub}
+        </span>
+      ) : <span className="flex-1 min-w-0 truncate font-medium">{label}</span>}
       {trailing}
       {external ? <ExternalMark /> : (
         <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
@@ -364,7 +372,7 @@ function followThenDismiss(e: React.MouseEvent, href: string): void {
 }
 
 function MenuRow({
-  id, href, icon, label, trailing, onClick, elRef, shipsHidden, dataContextRow,
+  id, href, icon, label, trailing, sub, onClick, elRef, shipsHidden, dataContextRow,
 }: {
   id: string;
   // Names the destination for selectors that key on it rather than on the id.
@@ -373,6 +381,7 @@ function MenuRow({
   icon: ReactNode;
   label: string;
   trailing?: ReactNode;
+  sub?: ReactNode;
   onClick?: (e: React.MouseEvent) => void;
   elRef?: React.Ref<HTMLAnchorElement>;
   // Ships `hidden` in the FIRST render, for a row a classic module reveals.
@@ -392,7 +401,7 @@ function MenuRow({
         followThenDismiss(e, href);
       }}
     >
-      <RowBody icon={icon} label={label} trailing={trailing} />
+      <RowBody icon={icon} label={label} trailing={trailing} sub={sub} />
     </a>
   );
 }
@@ -689,15 +698,18 @@ export function AppsSwitcherSheet(): ReactNode {
           */}
           {view !== 'menu' ? (
             <div className="flex-1 min-w-0 flex items-center">
-              <button
-                id="app-about-back"
-                type="button"
-                aria-label={backLabel}
-                className={BACK_DISC}
-                onClick={() => AppContext.goBack()}
-              >
-                <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
-              </button>
+              {/* Audit D07: a pane the sheet opened on has nothing behind it. */}
+              {back === 'none' ? null : (
+                <button
+                  id="app-about-back"
+                  type="button"
+                  aria-label={backLabel}
+                  className={BACK_DISC}
+                  onClick={() => AppContext.goBack()}
+                >
+                  <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
+                </button>
+              )}
             </div>
           ) : (
             /*
@@ -977,12 +989,14 @@ export function AppsSwitcherSheet(): ReactNode {
             href={communityRowHref(slug, owed)}
             icon={<UserGroupIcon />}
             label={t('agent:appContext.row.community')}
-            trailing={owed ? (
+            // Audit D07: on its own line under the label, which it cut to
+            // "Go to com…" when the two shared the row on a phone.
+            sub={owed ? (
               <span
                 id="app-menu-workshop-owed"
                 title={t('agent:appContext.row.toVote', { count: owed })}
                 aria-label={t('agent:appContext.row.toVote', { count: owed })}
-                className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
+                className="block truncate text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
                 {t('agent:appContext.row.toVote', { count: owed })}
               </span>

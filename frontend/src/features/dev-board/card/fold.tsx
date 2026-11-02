@@ -182,8 +182,8 @@ export function StatePill({ s, className }: { s: StatusPillState; className?: st
 }
 
 /**
- * The final counted vote of a change that is live (#6075): "3/3 yes · 1 no",
- * read beside its "✓ Live" pill. The yes count is compared with the
+ * The final counted vote of a change that is live (#6075): "3 yes · 1 no" (or "1/2 yes"
+ * when it went live short of its threshold), read beside its "✓ Live" pill. The yes count is compared with the
  * threshold snapshotted at merge time (`StatusPillState.majority`, which
  * `statusPillState` already falls back to the live majority for legacy
  * rows); the no votes are shown only when there were some. A row with no
@@ -196,9 +196,13 @@ export function liveTally(s: StatusPillState | null): { text: string; title: str
   const no = Math.max(0, s.no || 0);
   if (yes + no <= 0) return null;
   const needed = s.majority > 0 ? s.majority : 1;
+  // V05 (audit, 2 Nov 2026): with the yes it needed, or more, the count
+  // stands alone ("2 yes"); "2/1 yes" read as more votes than possible.
+  // What it needed stays in the title.
+  const passed = yes >= needed;
   const text = no > 0
-    ? t('project:card.tally.yesNo', { yes, needed, no })
-    : t('project:card.tally.yes', { yes, needed });
+    ? (passed ? t('project:card.tally.passedNo', { yes, no }) : t('project:card.tally.yesNo', { yes, needed, no }))
+    : (passed ? t('project:card.tally.passed', { yes }) : t('project:card.tally.yes', { yes, needed }));
   return { text, title: t('project:card.tally.title', { yes, no, needed }) };
 }
 

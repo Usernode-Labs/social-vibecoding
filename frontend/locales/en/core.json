@@ -105,15 +105,15 @@
   },
   "rail.all_one": {
     "text": "All {{count}} community",
-    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in. {{count}} is how many there are (here 1)."
+    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in, shown only when they are in more than the five the sidebar lists. {{count}} is how many there are (here 1)."
   },
   "rail.all_other": {
     "text": "All {{count}} communities",
-    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in. {{count}} is how many there are."
+    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in, shown only when they are in more than the five the sidebar lists. {{count}} is how many there are."
   },
   "rail.allPlain": {
     "text": "All communities",
-    "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded: opens the list of every community they are in."
+    "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded or when the sidebar already lists every one of them: opens the list of every community they are in."
   },
   "rail.conversations": {
     "text": "Conversations",
