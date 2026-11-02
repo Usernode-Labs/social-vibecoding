@@ -888,10 +888,9 @@ test('Opened recently composes with the other switches, and the sheet counts wha
     apps.push(app({ slug: `old-${i}`, name: `Old ${i}`, created_at: new Date(Date.parse(old) + i * 86400000).toISOString() }));
   }
   Browse._apps = apps;
-  Browse._recentEntries = () => [
-    { slug: 'old-1', at: new Date().toISOString() },
-    { slug: 'old-8', at: new Date().toISOString() },
-  ];
+  // Dated once, before the filter reads its clock: a time ahead of it is not recent.
+  const justNow = new Date(Date.now() - 1000).toISOString();
+  Browse._recentEntries = () => [{ slug: 'old-1', at: justNow }, { slug: 'old-8', at: justNow }];
   Browse.applyFilters({ only: ['recent'] });
   assert.equal(state.filter, 'recent');
   assert.equal(state.activeCount, 1);
