@@ -3771,6 +3771,14 @@
     "text": "{{yes}}/{{needed}} yes · {{no}} no",
     "description": "Final vote count shown beside the Live status of a change that has shipped, after the yes votes against the number needed, then the no votes. {{yes}} is how many yes votes counted, {{needed}} how many were needed to pass and {{no}} how many voted no, for example \"3/3 yes · 1 no\"."
   },
+  "card.tally.passed": {
+    "text": "{{yes}} yes",
+    "description": "Final vote count shown beside the Live status of a change that has shipped with at least as many yes votes as it needed and nobody against it. {{yes}} is how many yes votes counted, for example \"3 yes\". The number needed is in the hover text."
+  },
+  "card.tally.passedNo": {
+    "text": "{{yes}} yes · {{no}} no",
+    "description": "Final vote count shown beside the Live status of a change that has shipped with at least as many yes votes as it needed, then the no votes. {{yes}} is how many yes votes counted and {{no}} how many voted no, for example \"3 yes · 1 no\". The number needed is in the hover text."
+  },
   "card.tally.title": {
     "text": "{{yes}} yes and {{no}} no. It needed {{needed}} yes to pass.",
     "description": "Hover text for the final vote count beside the Live status of a change that has shipped: the whole sentence the short count stands for. {{yes}} is how many yes votes counted, {{no}} how many voted no and {{needed}} how many yes votes were needed to pass."
@@ -4054,6 +4062,10 @@
   "card.vote.picker.sendNo": {
     "text": "Vote no",
     "description": "Button at the bottom of the vote picker when No is chosen: sends a No vote. \"Vote\" is a verb."
+  },
+  "card.vote.picker.sendPick": {
+    "text": "Vote",
+    "description": "Button at the bottom of the vote picker before Yes or No is chosen: it stays off until one is. \"Vote\" is a verb."
   },
   "card.vote.picker.sendApprove": {
     "text": "Approve",

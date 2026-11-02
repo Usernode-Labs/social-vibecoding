@@ -142,3 +142,18 @@ test('one number on the All row: the votes hide the grey count of unread channel
   const hide = CSS.indexOf('#platform-tab-workshop:has(.platform-tab-all-votes) .platform-tab-mark > #platform-tabs-badge-communities:not(.hidden) {\n    display: none;');
   assert.ok(show > 0 && hide > show, 'the hide rule, as heavy, after the show rule');
 });
+
+test('V02: on the phone\'s bar the Communities tab\'s one number is its votes; unread channels are a dot', () => {
+  // Voting on the only change waiting turned a blue 1 into a grey 2 (the
+  // channels' count in the same seat), which read as the count growing.
+  const at = CSS.indexOf('@media (max-width: 767px) {\n  #platform-tabs-badge-communities {');
+  assert.ok(at > 0, 'a phone-only rule for the channels\' badge');
+  const body = CSS.slice(at, CSS.indexOf('}', at) + 1);
+  assert.match(body, /width: 9px;/);
+  assert.match(body, /font-size: 0;/, 'no figure on the dot');
+  assert.match(body, /color: transparent;/);
+  // Its accessible name stays the words, with no number to lose.
+  assert.equal(message('core:tabs.unreadChannels'), 'Channels with unread messages');
+  // And the votes still take its seat while any are owed.
+  assert.ok(CSS.includes('.platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities { display: none; }'));
+});

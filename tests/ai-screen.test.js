@@ -262,6 +262,9 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
   assert.equal(message('messages:ai.up.titleCount', { count: 2 }), 'Waiting · 2');
   assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
   assert.equal(words(heroWords(0, 3)), 'In progress: 3');
+  // Y03: a zero says nothing, and with neither there is no line.
+  assert.equal(words(heroWords(2, 0)), 'Needs you: 2');
+  assert.equal(heroWords(0, 0), null);
 });
 
 test('a row\'s one word on the right, and on a phone the reason where it is news', () => {
