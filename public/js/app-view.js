@@ -1725,7 +1725,9 @@ const AppView = {
   // Conservative in both directions. An app we have never heard announce
   // keeps today's placeholder, and a "not-ready" announcement (worker
   // gone, or a registration the WebView refused) drops the flag rather
-  // than leaving the user in front of a frame that cannot paint.
+  // than leaving the user in front of a frame that cannot paint. A
+  // "registered" one (the app's worker is active, but this load went past
+  // it) changes nothing: it is no proof either way.
   OFFLINE_READY_KEY: 'usernode:offline-ready',
   // Entries are dropped after this long unseen, so the map cannot grow
   // without bound on a browser that visits many apps and a stale flag for
@@ -1804,11 +1806,15 @@ const AppView = {
     const data = e.data;
     if (!data) return;
     const type = data.__usernode_offline_ready;
-    if (type !== 'ready' && type !== 'not-ready') return;
+    if (type !== 'ready' && type !== 'not-ready' && type !== 'registered') return;
     const appIframe = document.getElementById('app-iframe');
     if (!appIframe || e.source !== appIframe.contentWindow) return;
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
+    // The app still has its worker; the browser just did not use it for
+    // this load (a hard reload, or WebKit's first load of a frame the shell
+    // did not prime). Whatever this device knew stands.
+    if (type === 'registered') return;
     AppView.markOfflineReady(slug, type === 'ready');
   },
 

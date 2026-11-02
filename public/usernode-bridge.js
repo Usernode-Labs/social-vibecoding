@@ -7504,6 +7504,14 @@
   // sent, so an app that unregisters its worker — or one whose
   // registration the WebView refuses — stops being opened offline on its
   // next load rather than getting a frame that cannot paint.
+  //
+  // A THIRD ANSWER, "registered" (2 Nov 2026): no worker controls this load,
+  // but this document's registration has an active one. That is a load the
+  // browser sent past a worker the app still has: WebKit did it on the first
+  // load of every new app frame until the shell primed them (app-frame-
+  // bridge.js `prime`), and a hard reload does it everywhere. It is neither
+  // a claim nor a withdrawal, so the shell keeps what it knew. Only a
+  // document with no active worker at all says "not-ready".
   (function () {
     function post(kind) {
       try {
@@ -7513,7 +7521,14 @@
 
     function announce() {
       try {
-        post(navigator.serviceWorker.controller ? "ready" : "not-ready");
+        var sw = navigator.serviceWorker;
+        if (sw.controller) { post("ready"); return; }
+        if (typeof sw.getRegistration !== "function") { post("not-ready"); return; }
+        sw.getRegistration().then(function (reg) {
+          // Claimed while we asked: controllerchange has said "ready".
+          if (sw.controller) return;
+          post(reg && reg.active ? "registered" : "not-ready");
+        }, function () { post("not-ready"); });
       } catch (_) { /* serviceWorker access threw — say nothing */ }
     }
 

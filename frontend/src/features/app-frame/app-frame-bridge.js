@@ -85,7 +85,77 @@ function announce(el, visible) {
   } catch { /* a frame mid-teardown has nothing to tell */ }
 }
 
-const srcOf = (el) => (el && typeof el.getAttribute === 'function' ? el.getAttribute('src') : null) || '';
+/**
+ * ── The first navigation of a new frame (2 Nov 2026) ─────────────────────
+ *
+ * WebKit (the iOS app's web view, and Safari) decides whether a frame's
+ * navigation may be answered by a service worker from the sandbox flags of
+ * the document the frame HOLDS, not the ones it navigates with. A new frame
+ * holds the fully restricted pending blank (see ./app-frame-policy.js), so
+ * its first app load went past the app's own worker every time: on the iOS
+ * 26.4 simulator, Todo List's first open read `controller` null and
+ * `workerStart` 0, and a frame switched from `sandbox=""` to the app sandbox
+ * even 200 ms before its `src` was the same. A reload of that frame, a frame
+ * made with the app sandbox, or one with none, was served by the worker. So
+ * an app that precaches its own shell never opened offline, and the bridge
+ * said "not-ready" on every open.
+ *
+ * So the first navigation goes through an empty `data:` document, loaded
+ * under the app sandbox, and `src` is assigned once it is in (4-13 ms
+ * measured). A data: document has an opaque origin whatever
+ * `allow-same-origin` says, so it is not the escapable same-origin blank the
+ * pending sandbox is there to avoid, and it holds and runs nothing. Its
+ * `load` is stopped in the capture phase, so none of the frame's own load
+ * listeners (the reveal ladder, AppView's onload, appActivity) take it for
+ * the app's. Neither WebKit nor Chromium added a history entry for it.
+ */
+const PRIMER_SRC = 'data:text/html,';
+/** The longest a primed frame waits for that document before navigating anyway. */
+const PRIMER_CAP_MS = 1000;
+/** Frames whose empty document is on its way, and the `src` each goes to next. */
+const primers = new WeakMap();
+
+/** The one assignment of an app frame's `src`: setSrc's, directly or once primed. */
+function navigate(el, src) {
+  el.src = src;
+}
+
+/**
+ * Load the empty document into `el`, then point it at `src`. False when the
+ * frame's window cannot be navigated from here (never so in a browser), and
+ * the caller assigns `src` itself, as it always did.
+ */
+function prime(el, src) {
+  const doc = el.ownerDocument;
+  let location = null;
+  try { location = el.contentWindow ? el.contentWindow.location : null; } catch { location = null; }
+  if (!doc || typeof doc.addEventListener !== 'function'
+      || !location || typeof location.replace !== 'function') return false;
+  const job = { src, timer: null };
+  const done = () => {
+    if (primers.get(el) !== job) return;
+    primers.delete(el);
+    doc.removeEventListener('load', swallow, true);
+    clearTimeout(job.timer);
+    // A frame let go meanwhile has nowhere to go; a kept one still loads.
+    if (el.isConnected) navigate(el, job.src);
+  };
+  function swallow(event) {
+    if (event.target !== el) return;
+    event.stopPropagation();
+    done();
+  }
+  primers.set(el, job);
+  doc.addEventListener('load', swallow, true);
+  job.timer = setTimeout(done, PRIMER_CAP_MS);
+  try { location.replace(PRIMER_SRC); } catch { done(); }
+  return true;
+}
+
+// The frame's document address: its `src`, or the one a primed frame is
+// about to be given.
+const srcOf = (el) => (el && typeof el.getAttribute === 'function' ? el.getAttribute('src') : null)
+  || (el && primers.has(el) ? primers.get(el).src : '') || '';
 
 /**
  * A stale mounted frame (see `markStale`) that is not on screen: parked behind
@@ -400,12 +470,17 @@ export const appFrameBridge = {
    * from the current one. Omitting it stamps nothing, for the same reason: a
    * load is never credited with the last load's build. A navigation loads what
    * is deployed now, so it also clears `stale`.
+   *
+   * The first navigation of a new frame goes through an empty document first,
+   * so WebKit lets the app's own service worker answer it (see `prime`).
    */
   setSrc(src, { granted = [], build = '' } = {}) {
     const el = appFrameRefs.iframe;
     if (!el || !src) return false;
     const platformOrigin = el.ownerDocument?.defaultView?.location?.origin;
     if (!isSafeAppFrameSrc(src, platformOrigin)) return false;
+    // Still the pending blank, until the switch below.
+    const pending = !appFrameStore.get().sandboxReady;
     // flushSync updates the sandbox AND the permission policy on this same
     // element before the navigation.
     appFrameStore.set({
@@ -415,7 +490,14 @@ export const appFrameBridge = {
     resumedSlug = '';
     navigations += 1;
     appActivity.frameNavigated({ slug: appFrameStore.get().slug, frame: el, src });
-    el.src = src;
+    const priming = primers.get(el);
+    if (priming) {
+      // Asked again before the empty document is in: it goes here instead.
+      priming.src = src;
+      return true;
+    }
+    if (pending && prime(el, src)) return true;
+    navigate(el, src);
     return true;
   },
 

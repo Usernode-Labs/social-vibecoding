@@ -10,6 +10,11 @@
  * switches the SAME element to APP_FRAME_SANDBOX. Sandbox changes apply to the
  * next navigation, so the app keeps its origin-backed storage and APIs without
  * granting those permissions to the pending blank document.
+ *
+ * One exception, in WebKit: whether a navigation may go to the app's own
+ * service worker is read from the sandbox of the document the frame holds.
+ * So a new frame's first navigation passes through an empty, opaque `data:`
+ * document under APP_FRAME_SANDBOX (`prime` in ./app-frame-bridge.js).
  */
 
 export const PENDING_FRAME_SANDBOX = '';

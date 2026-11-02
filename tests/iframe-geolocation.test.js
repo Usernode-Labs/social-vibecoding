@@ -69,12 +69,17 @@ test('the React app frame delegates from the grant set, not a constant', () => {
 test('setSrc writes the permission policy before the navigation that reads it', () => {
   // The whole mechanism rests on this ordering: a container policy is
   // computed at navigation, so an `allow` written after `src` applies to
-  // nothing. Assert the publish precedes the assignment in the source.
+  // nothing. Assert the publish precedes the navigation in the source: setSrc
+  // navigates directly, or through the empty document a new frame loads
+  // first (`prime`), and both come after it.
   const src = read('frontend/src/features/app-frame/app-frame-bridge.js');
-  const publish = src.indexOf('allow: allowAttribute(granted)');
-  const assign = src.indexOf('el.src = src;');
+  const body = src.slice(src.indexOf('  setSrc(src, {'));
+  const publish = body.indexOf('allow: allowAttribute(granted)');
+  const primed = body.indexOf('prime(el, src)');
+  const assign = body.indexOf('navigate(el, src);');
   assert.ok(publish > 0, 'setSrc publishes the allow value');
-  assert.ok(assign > publish, 'and does so BEFORE assigning src');
+  assert.ok(primed > publish, 'BEFORE the first navigation of a new frame');
+  assert.ok(assign > publish, 'and BEFORE assigning src');
 });
 
 test('the DOM adapter copy builds allow from the same catalogue', () => {
