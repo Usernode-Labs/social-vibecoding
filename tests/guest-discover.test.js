@@ -128,7 +128,7 @@ test('Featured is what an admin featured that a visitor can try, and nothing els
   assert.deepEqual(featuredApps(APPS, () => false), [], 'nothing to try, no Featured');
   assert.deepEqual(featuredApps(APPS.map((a) => ({ ...a, featured: false })), here), [], 'nothing featured, no Featured');
   assert.equal(data.FEATURED_MIN, undefined, 'no minimum to fill to');
-  assert.equal(projectHash('game-corner'), '#app/game-corner/workshop');
+  assert.equal(projectHash('game-corner'), '#app/game-corner/dev/hub', 'the Hub\'s own address: a bare /workshop opens the Workshop');
   assert.equal(data.projectPath('game-corner'), '/app/game-corner');
   // A card's votes line opens the page at its Workshop, a signed-in
   // person's own address for it too.

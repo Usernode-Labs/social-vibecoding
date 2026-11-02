@@ -206,7 +206,9 @@ export function inHomeroomApp(): boolean {
 
 /** Where a project's page is: its hub, the address a signed-in person lands on too. */
 export function projectHash(slug: string): string {
-  return `#app/${encodeURIComponent(slug)}/workshop`;
+  // Its Hub's own address (App._placeAddress): a bare /workshop opens the
+  // Workshop for a signed-in person.
+  return `#app/${encodeURIComponent(slug)}/dev/hub`;
 }
 
 /**
@@ -226,7 +228,7 @@ export function projectPath(slug: string): string {
  * signed-in person's `?ws=workshop` opens too (dev-board places.ts placeHref).
  */
 export function projectVotesHash(slug: string): string {
-  return `${projectHash(slug)}?ws=workshop`;
+  return `#app/${encodeURIComponent(slug)}/workshop?ws=workshop`;
 }
 
 /** Whether a project link names its Workshop (projectVotesHash) rather than its hub. */

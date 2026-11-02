@@ -47,7 +47,7 @@ test('the client keeps Invite people, and draws a first version\'s live news wit
   assert.deepEqual(meta.actions.map((a) => [a.id, a.type, a.style]), [
     ['open_app', 'open', 'primary'], ['open_community', 'open', 'secondary'], ['invite_people', 'invite', 'secondary'],
   ]);
-  assert.equal(meta.actions[1].target, '#app/plant-pal/workshop');
+  assert.equal(meta.actions[1].target, '#app/plant-pal/dev/hub');
   assert.equal('target' in meta.actions[2], false, 'an invite goes nowhere by address: it is answered in place');
 
   const { BotQuestion, inviteMade } = loadTsx(QUESTION, {

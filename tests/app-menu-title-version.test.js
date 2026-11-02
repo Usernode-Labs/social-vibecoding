@@ -125,13 +125,13 @@ test('Go to community opens on Needs you while decisions wait on you, else on th
   // The link the browser opens by itself (new tab, middle click) names the
   // same place: Needs you's own address while the badge shows.
   assert.equal(ui.communityRowHref('bread-bot', 3), '/app/bread-bot/workshop?ws=needs');
-  assert.equal(ui.communityRowHref('bread-bot', 0), '#app/bread-bot/workshop');
-  assert.equal(ui.communityRowHref('bread-bot', null), '#app/bread-bot/workshop');
+  assert.equal(ui.communityRowHref('bread-bot', 0), '#app/bread-bot/dev/hub', 'the Hub\'s own address: a new tab lands where a tap does');
+  assert.equal(ui.communityRowHref('bread-bot', null), '#app/bread-bot/dev/hub');
   assert.equal(ui.communityRowHref(null, 3), '#');
 
   // Rendered closed (the prerender), there is no figure, so the hub's link.
   const html = renderSheet({ target: 'app', slug: 'bread-bot', name: 'Bread Bot' });
-  assert.match(html, /id="app-menu-row-workshop"[^>]*href="#app\/bread-bot\/workshop"/);
+  assert.match(html, /id="app-menu-row-workshop"[^>]*href="#app\/bread-bot\/dev\/hub"/);
 });
 
 test('pressing Go to community: a plain click lands on its place, a modified one changes nothing here (#5927 item 3)', (t) => {

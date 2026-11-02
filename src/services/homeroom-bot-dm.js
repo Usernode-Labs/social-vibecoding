@@ -236,8 +236,9 @@ function openAppAction({ slug, appName }) {
 /**
  * Pure (#4231): the buttons under a NEW project's first version going live,
  * after its Open: its community page, where the project's hub is
- * (`#app/<slug>/workshop`, frontend/src/features/messages/bot-shared.ts
- * openAppTarget lands it on the hub), and Invite people, which the client
+ * (`#app/<slug>/dev/hub`, the Hub's own address: a bare /workshop opens the
+ * Workshop; frontend/src/features/messages/bot-shared.ts openAppTarget
+ * lands it on the hub), and Invite people, which the client
  * answers itself by opening the first-session invite sheet in place
  * (bot-question.tsx; an invite link is made from the browser, as the sheet
  * always makes it). Empty for no slug.
@@ -245,7 +246,7 @@ function openAppAction({ slug, appName }) {
 function firstLiveActions({ slug }) {
   if (typeof slug !== 'string' || !slug) return [];
   return [
-    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: `#app/${encodeURIComponent(slug)}/workshop` },
+    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: `#app/${encodeURIComponent(slug)}/dev/hub` },
     { id: 'invite_people', label: 'Invite people', style: 'secondary', type: 'invite' },
   ];
 }
@@ -686,6 +687,9 @@ async function sendDm(pool, {
     {
       metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
       notificationKind: (story && BUILD_KINDS[story]) || null, notificationAppId, ...hooks,
+      // B09: the cards are the person's to see, and the bot is no member of
+      // their private project: judged as the bot, every card was refused.
+      cardsViewer: { id: Number(userId) },
     });
   let result = await send(cards);
   if (!result && cards.length) {
@@ -4955,7 +4959,10 @@ async function greetTourFinisher(pool, { userId, strict = false }) {
 // with the project's card and one thing to ask for: the starter's own
 // example change (services/app-templates.js exampleChange), as the walk's
 // card offers it.
-const READY_MADE_PROMPTS = Object.freeze(['What can I ask for?', 'How do I invite friends?', 'How does the group decide?']);
+// B27 (overnight audit, 1 Nov 2026): a ready-made app starts just its
+// maker's, with no group to decide anything, so its third prompt asks who
+// decides rather than how "the group" does.
+const READY_MADE_PROMPTS = Object.freeze(['What can I ask for?', 'How do I invite friends?', 'Who decides on changes?']);
 
 /**
  * Pure: the hello a maker hears with a ready-made app: the maker's hello,

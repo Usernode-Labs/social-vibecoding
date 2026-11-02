@@ -775,7 +775,7 @@ test('an app\'s channel belongs to its community, and a change to Messages', () 
     'and the back slot agrees with the tab that lights');
   assert.match(appJs, /if \(App\._isChannelThread\(\)\) return \['arrow', App\._hubHref\(App\.currentApp\)\];/,
     'the channel\'s way up is its hub');
-  assert.match(appJs, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#communities';/,
+  assert.match(appJs, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/,
     'a hash, because the back button follows only a hash');
   const appView = read('public/js/app-view.js');
   const branch = appView.slice(appView.indexOf("if (subTab === 'chat') {"));
@@ -1348,7 +1348,8 @@ test('recent apps are remembered per account, and an app appears once, at the fr
     delete global.window;
   }
   const mount = read('frontend/src/features/nav/mount.ts');
-  assert.match(mount, /if \(app && app\.slug\) rememberRecentApp\(app, navStore\.get\(\)\.viewer\);/);
+  // Named first (./nav-app-names.test.js): a slug never replaces a name there.
+  assert.match(mount, /if \(parked\) rememberRecentApp\(parked, navStore\.get\(\)\.viewer\);/);
 });
 
 test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover on the tabs', () => {
@@ -1399,4 +1400,19 @@ test('the Communities ring overhangs instead of pushing its label down (audit N0
   // 28 - 2 * 3 = the 22px of every other tab's glyph.
   assert.match(ring, /margin-block: -3px;/);
   assert.match(css, /@media \(min-width: 768px\) \{\s*\.platform-tab-ring \{[^}]*margin-block: 0;/);
+});
+
+test('on a phone the Tab key moves through the bar in its drawn order (audit N01 follow-up)', () => {
+  const { nextPhoneTab } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  assert.equal(nextPhoneTab('platform-tab-home', false), 'platform-tab-workshop');
+  assert.equal(nextPhoneTab('platform-tab-workshop', false), 'platform-tab-ai');
+  assert.equal(nextPhoneTab('platform-tab-ai', false), 'platform-tab-messages');
+  assert.equal(nextPhoneTab('platform-tab-messages', false), 'platform-tab-me');
+  assert.equal(nextPhoneTab('platform-tab-me', false), null, 'out of You: the browser\'s, as before');
+  assert.equal(nextPhoneTab('platform-tab-workshop', true), 'platform-tab-home');
+  assert.equal(nextPhoneTab('platform-tab-home', true), null, 'back out of Home: the browser\'s');
+  assert.equal(nextPhoneTab('platform-tab-discover', false), null, 'the rail\'s alone');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/nav/tab-bar.tsx'), 'utf8');
+  assert.match(src, /bar\.addEventListener\('keydown', onKey\);/, 'from the effect, never in the prerender');
+  assert.doesNotMatch(src, /tabIndex=\{[^}]*phone/i, 'no tabindex rendered');
 });

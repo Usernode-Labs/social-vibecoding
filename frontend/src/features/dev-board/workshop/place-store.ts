@@ -99,7 +99,7 @@ type ViewApi = {
   _landOnTab?: (slug: string, tab: string) => void;
   _stashDiscussionTarget?: (slug: string, target: Record<string, unknown>) => void;
 };
-type AppApi = { _hubHref?: (slug: string) => string };
+type AppApi = Record<string, never>;
 
 /**
  * Go to `key` on `slug`'s page: in place when the page is up for it (a press
@@ -125,9 +125,9 @@ export function openPlace(
   }
   const w = window as unknown as { AppView?: ViewApi; App?: AppApi };
   try { w.AppView?._landOnTab?.(slug, key); } catch { /* the page opens on what it remembers */ }
-  let href = '';
-  try { href = w.App?._hubHref?.(slug) || ''; } catch { href = ''; }
-  const to = href || `#app/${encodeURIComponent(slug)}/workshop`;
+  // The page's own address: the place was said above (_landOnTab), and the
+  // router takes it over the link's (App._linkOpensWorkshop).
+  const to = `#app/${encodeURIComponent(slug)}/workshop`;
   // A redirect (an old address the router is turning into this one) takes
   // its entry's place, so Back does not land on it and redirect again.
   if (opts.replace) window.location.replace(to.startsWith('#') ? to : `#${to}`);
@@ -264,8 +264,7 @@ export function landKeepingPlace(slug: string): string {
 
 /**
  * The place `slug`'s page reopens on (AppView._workshopTab), as one of the
- * places it has, else its Hub. A request's or a change's page lights it in
- * the sidebar, because its back chip returns there (audit N05).
+ * places it has, else its Hub.
  */
 export function reopenPlace(slug: string): string {
   if (typeof window === 'undefined') return 'status';
@@ -273,4 +272,20 @@ export function reopenPlace(slug: string): string {
   let was: unknown = null;
   try { was = view?._workshopTab?.(); } catch { /* nothing remembered: its hub */ }
   return keepPlace(typeof was === 'string' ? was : null, cachedTopics(slug));
+}
+
+/**
+ * WHERE A REQUEST'S OR A CHANGE'S PAGE GOES BACK TO (audit N05 and its
+ * follow-up), as its chip names it (../topic/topic-back.tsx chipFor): the
+ * place its page was left on when the chip's press steps Back to that page,
+ * else the Workshop, which a link to the page's /workshop address opens
+ * (App._linkOpensWorkshop). The sidebar lights it and the phone's header
+ * names it while the item is up.
+ */
+export function itemReturnPlace(slug: string): string {
+  if (typeof window === 'undefined') return 'workshop';
+  const app = (window as unknown as { App?: { _canStepBackTo?: (href: string) => boolean } }).App;
+  let steps = false;
+  try { steps = !!app?._canStepBackTo?.(`#app/${encodeURIComponent(slug)}/workshop`); } catch { steps = false; }
+  return steps ? reopenPlace(slug) : 'workshop';
 }
