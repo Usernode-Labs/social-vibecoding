@@ -1181,12 +1181,22 @@ async function sweepSleep(config, { limit = DEFAULT_SLEEP_SWEEP_LIMIT } = {}) {
     const afterMs = previewSleep.sleepAfterMs(config);
     if (!afterMs) return { ...summary, off: true };
     const pool = getPool(config);
+    // Not while a process of another build still runs the workflow (a
+    // rollout, or a rollback): a build from before sleep would check a
+    // sleeping preview without waking it. The next run, once it is gone.
+    const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
+    const { rows: [others] } = await pool.query(
+      `SELECT count(*)::int AS n FROM platform_processes
+        WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now() - interval '45 seconds'
+          AND release IS DISTINCT FROM $1`, [own]);
+    if (Number(others?.n) > 0) return { ...summary, rollout: true };
     const { rows } = await pool.query(
       `SELECT cs.id, cs.app_id, cs.status, cs.last_activity_at, cs.staging_asleep_at, cs.staging_runtime_name,
               w.state AS machine_state, w.data->'serving' AS serving,
               EXISTS (SELECT 1 FROM check_runs cr WHERE cr.session_id = cs.id) AS check_run_open
          FROM chat_sessions cs
          JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
+                            AND w.state IN ('settled', 'deferred', 'failed')
         WHERE cs.staging_url IS NOT NULL AND cs.staging_runtime_kind = 'kubernetes'
           AND cs.staging_runtime_name IS NOT NULL AND cs.staging_asleep_at IS NULL
           AND cs.status IN ('active', 'paused', 'promoted', 'merging')

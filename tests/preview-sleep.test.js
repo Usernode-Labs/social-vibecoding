@@ -20,6 +20,7 @@ function stub(path, exports) {
 // ── The session rows ────────────────────────────────────────────────────
 const rows = new Map();
 const statements = [];
+const olderBuilds = { n: 0 };
 const busy = new Set();
 const pool = {
   async query(sql, params = []) {
@@ -67,6 +68,8 @@ const pool = {
       const r = rows.get(params[0]);
       return { rows: r && r.slug === params[1] ? [{ ...r }] : [] };
     }
+    // sweepSleep: the workflow processes of another build still serving.
+    if (/FROM platform_processes/.test(text)) return { rows: [{ n: olderBuilds.n }] };
     if (/count\(staging_asleep_db_bytes\)/.test(text)) {
       const asleep = [...rows.values()].filter((r) => r.staging_asleep_at);
       return { rows: [{ count: asleep.length, bytes: String(asleep.reduce((n, r) => n + (r.staging_asleep_db_bytes || 0), 0)),
@@ -195,6 +198,18 @@ test('the sleep pass leaves a preview somebody works on, and one used inside the
   assert.deepEqual(await stagingReap.sweepSleep({ ...CONFIG, previewSleepAfterMs: 0 }), {
     examined: 0, eligible: 0, asleep: 0, skipped: 0, failed: 0, dbBytes: 0, off: true,
   }, 'PREVIEW_SLEEP_AFTER_MS=0 switches it off');
+});
+
+test('nothing sleeps while a process of another build still runs the workflow: it would check a sleeping preview without waking it', async () => {
+  const c = cluster();
+  const row = preview();
+  olderBuilds.n = 1;
+  try {
+    assert.equal((await stagingReap.sweepSleep(CONFIG)).rollout, true);
+    assert.deepEqual(c.writes, []);
+    assert.equal(row.staging_asleep_at, null);
+  } finally { olderBuilds.n = 0; }
+  assert.equal((await stagingReap.sweepSleep(CONFIG)).asleep, 1, 'once it is gone');
 });
 
 test('a preview that changed since it was chosen is not put to sleep, and a claim whose scale did not happen is given back', async () => {

@@ -343,6 +343,14 @@ No operator step is required. Check: `kubectl -n social-apps get deploy -l
 social.usernode.io/environment=staging` shows sleeping previews at `0/0`;
 open one's address and expect the waking page, then the app.
 
+Nothing is put to sleep while a workflow process of another build still
+serves (a rollout or a rollback): a build from before sleep would start a
+checks run on a sleeping preview without waking it. A rollback past this
+change leaves the previews already asleep as they are, and the older build
+reads each as stopped: it rebuilds one when it is opened, and its
+`preview-runtimes` clock rebuilds the vote-backed ones, so expect a burst of
+preview builds after such a rollback.
+
 ## A separate server for preview databases
 
 By default one PostgreSQL server holds everything: the platform's database,

@@ -705,12 +705,12 @@ test('#6157 ensure-staging on a stale sleeping preview rebuilds it instead of wa
   } finally { await srv.close(); loaded.restore(); sleep.restore(); }
 });
 
-test('#6157 a sleeping preview that does not wake is rebuilt; a reader\'s preview-status wakes it too', async () => {
+test('#6157 a sleeping preview that does not wake is rebuilt when a collaborator opened it', async () => {
   const sleep = stubPreviewSleep({ status: 'timeout', detail: 'The preview was asleep and did not wake in time' });
   const loaded = loadSessions({ pool: makePool(ASLEEP_ROW), needsRebuild: false, rebuild: async () => 'handed_off' });
   const srv = await startServer(loaded, { id: 2, username: 'bob' });
   try {
-    const res = await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`);
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
     assert.deepEqual(await res.json(), { status: 'rebuilding', waking: true });
     assert.ok(await waitFor(() => loaded.getRebuildCalls() === 1), 'handed to the preview machine, which rebuilds it');
     assert.deepEqual(sleep.woken, [{ sessionId: 42, reason: 'preview-click' }]);
@@ -718,11 +718,32 @@ test('#6157 a sleeping preview that does not wake is rebuilt; a reader\'s previe
   } finally { await srv.close(); loaded.restore(); sleep.restore(); }
 });
 
+test('#6157 a reader\'s preview-status wakes a sleeping preview too, and never rebuilds one that does not wake', async () => {
+  let sleep = stubPreviewSleep({ status: 'woke', url: 'https://stg.example' });
+  let loaded = loadSessions({ pool: makePool(ASLEEP_ROW), needsRebuild: false, rebuild: async () => 'must not rebuild' });
+  let srv = await startServer(loaded, { id: 2, username: 'bob' });
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`);
+    assert.deepEqual(await res.json(), { status: 'rebuilding', waking: true });
+    assert.ok(await waitFor(() => loaded.broadcasts.some((b) => b.event === 'staging_awake')));
+  } finally { await srv.close(); loaded.restore(); sleep.restore(); }
+
+  sleep = stubPreviewSleep({ status: 'timeout', detail: 'The preview was asleep and did not wake in time' });
+  loaded = loadSessions({ pool: makePool(ASLEEP_ROW), needsRebuild: false, rebuild: async () => 'must not rebuild' });
+  srv = await startServer(loaded, { id: 2, username: 'bob' });
+  try {
+    await (await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`)).json();
+    assert.ok(await waitFor(() => loaded.broadcasts.some((b) => b.event === 'staging_failed')));
+    assert.equal(loaded.broadcasts.find((b) => b.event === 'staging_failed').errorName, 'PreviewAsleep');
+    assert.equal(loaded.getRebuildCalls(), 0, 'the read-only route never rebuilds');
+  } finally { await srv.close(); loaded.restore(); sleep.restore(); }
+});
+
 test('#6157 the loader opens a woken preview the way it opens a rebuilt one, and says it is waking', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(app, /data\.event === 'staging_ready' \|\| data\.event === 'staging_awake'\) \{\s*AppView\.onStagingRebuildResult\(data\.sessionId, \{ url: data\.url \}\);/);
+  assert.match(app, /\} else if \(data\.event === 'staging_awake'\) \{[^}]*AppView\.onStagingRebuildResult\(data\.sessionId, \{ url: data\.url \}\);/);
   const view = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
   assert.match(view, /PlatformI18n\.t\(data\.waking \? 'changes:frame\.loader\.wakingSub' : 'changes:frame\.loader\.rebuildingSub'\)/);
   const catalog = require('../frontend/locales/en/changes.json');
