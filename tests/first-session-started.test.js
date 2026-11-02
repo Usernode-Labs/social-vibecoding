@@ -185,7 +185,7 @@ test('#4900: a card under the project says how far its setup has got, in words, 
   assert.match(third, />Preparing it to run…<\/p>/);
   assert.match(third, />Should be ready shortly…<\/p>/);
   // The plane's card, 20px, one hairline, as the other cards under the project.
-  assert.match(third, /class="flex h-\[84px\] items-center gap-3 rounded-\[20px\] bg-white py-3 pl-3 pr-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
+  assert.match(third, /class="flex h-\[84px\] items-center gap-3 rounded-\[20px\] bg-white py-3 ps-3 pe-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
 
   // On the made screen: under the project, over the line and the buttons.
   // (A project Homeroom bot builds from its description has its setup's
@@ -209,7 +209,7 @@ test('READY IN PLACE: once the app runs its setup card stays where it was, so no
   const done = renderToHtml(createElement(SetupProgress, { step: 4, slow: false, waitedOut: false, done: { line: 'Ready to use.', busy: false } }));
   assert.match(done, /data-made-setup="done"/);
   // The same card, row and sizes as while it ran: 15 over 13, two lines.
-  assert.match(done, /class="flex h-\[84px\] items-center gap-3 rounded-\[20px\] bg-white py-3 pl-3 pr-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
+  assert.match(done, /class="flex h-\[84px\] items-center gap-3 rounded-\[20px\] bg-white py-3 ps-3 pe-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
   assert.match(done, /<div role="status" class="min-w-0 flex-1"><p class="truncate text-\[15px\] font-\[650\] leading-5">Ready to use\.<\/p><p class="line-clamp-2 text-\[13px\] leading-\[18px\] text-zinc-500 dark:text-zinc-400">It’s running now\.<\/p><\/div>/);
   // Full and quiet while nothing says it is made, and turns only while the bot builds.
   assert.match(done, />4\/4<\/text>/);
@@ -276,7 +276,7 @@ test('the people row: your face in the middle, waiting seats on both sides, face
   assert.equal((one.match(/<svg[^>]*><path d="M12 4\.4a4\.6 4\.6/g) || []).length, 4, 'a silhouette in every seat');
   assert.match(src0, /import \{ PersonSilhouetteIcon \} from '@\/components\/ui\/icons';/);
   for (const bg of ['#ebefed', '#ede5f2', '#fae5dc', '#f5e9e5']) assert.match(one, new RegExp(`background:${bg}`), bg);
-  assert.match(one, /margin-left|-ml-2\.5/, 'the places overlap');
+  assert.match(one, /margin-inline-start|-ms-2\.5/, 'the places overlap');
   const three = row([{ username: 'maya' }, { username: 'sam' }, { username: 'alex' }]);
   assert.equal((three.match(/data-first-session-seat=""/g) || []).length, 2, 'two seats left once three are in');
   assert.match(three, /aria-label="You and 2 others"/);

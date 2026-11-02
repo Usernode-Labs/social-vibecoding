@@ -359,8 +359,8 @@ test('the fold mark: the same two chevrons at both sizes, stretched open on the 
   // Geometry: absolute, at the same spot at both sizes, so on open the mark
   // does not move — it stretches — and only the title keeps clear of it.
   assert.match(CSS, /\.dev-ws-row, \.dev-ws-sheet > div:is\(\.dev-card-dense, \.dev-card-topic\) \{ position: relative; \}/);
-  assert.match(CSS, /\.dev-ws-row-title, \.dev-ws-sheet \.dev-card-title \{ padding-right: 22px; \}/);
-  assert.match(CSS, /\.dev-fold-mark \{\n  position: absolute; top: 15px; right: 14px; width: 16px; height: 16px;/);
+  assert.match(CSS, /\.dev-ws-row-title, \.dev-ws-sheet \.dev-card-title \{ padding-inline-end: 22px; \}/);
+  assert.match(CSS, /\.dev-fold-mark \{\n  position: absolute; top: 15px; inset-inline-end: 14px; width: 16px; height: 16px;/);
   assert.match(CSS, /\.dev-fold-mark \.dev-fold-bar \{ transform: scaleY\(0\); \}/, 'closed: the bar scaled away');
   assert.match(CSS, /\.dev-fold-mark\[data-open="1"\] \.dev-fold-top \{ transform: translateY\(-2px\); animation: dev-fold-top \.15s ease both; \}/);
   assert.match(CSS, /\.dev-fold-mark\[data-open="1"\] \.dev-fold-bottom \{ transform: translateY\(2px\); animation: dev-fold-bottom \.15s ease both; \}/);
@@ -1857,11 +1857,11 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.ok(!CARD.includes('className="dev-card-rail"'), 'the rail column is gone from the card');
   const tr = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {');
   assert.ok(tr > 0);
-  assert.match(CSS.slice(tr, CSS.indexOf('\n}', tr)), /margin-left: auto;/);
+  assert.match(CSS.slice(tr, CSS.indexOf('\n}', tr)), /margin-inline-start: auto;/);
   const pv = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {');
   assert.ok(pv > 0);
-  assert.match(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-left: auto;/, 'Preview pushes the pair when it is the first of them');
-  assert.match(CSS, /\.gc-card-actions > \.gc-vote-btn-preview \+ \.dev-card-menu-btn \{ margin-left: 0; \}/,
+  assert.match(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-inline-start: auto;/, 'Preview pushes the pair when it is the first of them');
+  assert.match(CSS, /\.gc-card-actions > \.gc-vote-btn-preview \+ \.dev-card-menu-btn \{ margin-inline-start: 0; \}/,
     'and the hamburger after it keeps the gap, or two auto margins would split the free space');
   assert.ok(!/\n\.dev-card-rail \{/.test(CSS), 'and from app.css');
 });
@@ -1942,13 +1942,13 @@ test('the open card’s meta line is tabbed in under the title, as the row’s i
   // head that has a glyph earns it; the bands below stay at the edge.
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head > \.dev-card-icon \{\n  width: 22px;/);
-  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-inline-start: 30px; \}/);
   // The title neither clamps nor reserves a second line any more: the
   // row's has always wrapped in full, and the card's does the same.
   assert.ok(!/dev-card-title-clamp/.test(CSS));
   // And the facts row under the status row is tabbed in like the meta line,
   // as the row's last line is; the status row and the band span the card.
-  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-left: 30px; \}/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-inline-start: 30px; \}/);
   assert.ok(!/\.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-status \{/.test(CSS), 'the bar row is not indented');
   // Folded rows sit 4px apart, as the Workshop's do.
   assert.match(CSS, /#dev-kanban \.dev-kanban-col > \.space-y-2 > :not\(\[hidden\]\) ~ :not\(\[hidden\]\) \{ margin-top: 4px; \}/);
@@ -2044,13 +2044,13 @@ test('the message count rides the meta line at both sizes, and only when there i
   // padding with the 4px edge inside it, its 8px glyph gap, its drop shadow,
   // and no hairline border. Pinned value for value against the card's rule.
   const card = CSS.slice(CSS.indexOf('\ndiv:is(.dev-card-dense, .dev-card-topic) {'));
-  assert.match(card, /border-radius: 22px;[\s\S]*?padding: 14px 14px 12px;\s*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);/);
+  assert.match(card, /border-radius: 22px;[\s\S]*?padding: 14px 14px 12px;\s*padding-inline-start: calc\(14px \+ var\(--dev-edge-w\)\);/);
   assert.match(CSS, /\.dev-ws-row \{[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
   // The 8px glyph gap moved to the head when the row became a column, so the
   // bar underneath spans the whole row rather than starting past the glyph.
   assert.match(CSS, /\.dev-ws-row \{[^}]*flex-direction: column; align-items: stretch;/);
   assert.match(CSS, /\.dev-ws-row-head \{ display: flex; align-items: center; gap: 8px; \}/);
-  assert.match(CSS, /\.dev-ws-row \{[^}]*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);[^}]*0 1px 2px rgba\(0, 0, 0, 0\.06\);/);
+  assert.match(CSS, /\.dev-ws-row \{[^}]*padding-inline-start: calc\(14px \+ var\(--dev-edge-w\)\);[^}]*0 1px 2px rgba\(0, 0, 0, 0\.06\);/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
   assert.ok(!/\.dev-ws-row:hover \{ border-color/.test(CSS), 'no border to colour on hover');
 });
@@ -2082,8 +2082,8 @@ test('a press changes the fill and nothing else, and the row is the card minus i
     'the text column that held the meta line and the band 30px in is gone');
   // The meta line's tab is the CARD's rule, condition and all: 30px, and
   // only when there is a glyph to tab past.
-  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
-  assert.match(CSS, /\.dev-ws-row-head:has\(> \.dev-card-icon\) \+ \.dev-ws-row-meta \{ padding-left: 30px; \}/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-inline-start: 30px; \}/);
+  assert.match(CSS, /\.dev-ws-row-head:has\(> \.dev-card-icon\) \+ \.dev-ws-row-meta \{ padding-inline-start: 30px; \}/);
 
   // -- The two gaps ---------------------------------------------------
   // Title to meta: the card stacks them flush, the row carried a 1px column

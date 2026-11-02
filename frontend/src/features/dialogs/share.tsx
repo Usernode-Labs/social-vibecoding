@@ -192,7 +192,7 @@ export function ShareDialog() {
       <DialogCard size="md" relative>
         <button
           id="share-close"
-          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
+          className="absolute top-4 end-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
           aria-label={t('dialogs:share.close')}
           onClick={() => dialog.close()}
         >

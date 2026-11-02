@@ -381,7 +381,7 @@ export function OneTimeResult({ account, onDone }: { account: NewAccount; onDone
         <CopyValue id="admin-test-accounts-new-username" label="Username" value={account.username} />
         <CopyValue id="admin-test-accounts-new-password" label="Password" value={account.password} />
       </div>
-      <ul className="mt-3 list-disc pl-5 space-y-1 text-sm text-amber-900 dark:text-amber-200">
+      <ul className="mt-3 list-disc ps-5 space-y-1 text-sm text-amber-900 dark:text-amber-200">
         <li>Sign out on the device first, then sign in with these.</li>
         {account.needsUsernameChoice ? (
           <li>The username is a placeholder. Sign in with it, and Homeroom asks for a real one straight after, as it does for a newcomer.</li>
@@ -570,7 +570,7 @@ export function PhoneSignInResult({ signIn, onDone }: { signIn: PhoneSignIn; onD
         <CopyValue id="admin-test-accounts-phone-number" label="Number" value={signIn.phoneNumber} />
         <CopyValue id="admin-test-accounts-phone-code" label="Code" value={signIn.code} />
       </div>
-      <ul className="mt-3 list-disc pl-5 space-y-1 text-sm text-amber-900 dark:text-amber-200">
+      <ul className="mt-3 list-disc ps-5 space-y-1 text-sm text-amber-900 dark:text-amber-200">
         <li>Sign out on the device first.</li>
         <li>Open the invite link and enter this number. Tap Text me a code: no text is sent.</li>
         <li>Enter the code.</li>
@@ -679,7 +679,7 @@ function AccountRow({ account, now, busy, disabled, onRetire }: {
           </ul>
         ) : 'None'}
       </td>
-      <td className={`${AdminUI.td} text-right`}>
+      <td className={`${AdminUI.td} text-end`}>
         <button type="button" className={AdminUI.btn.destructiveSm} data-retire-test-account={account.userId}
           disabled={busy || disabled} onClick={onRetire}>
           {busy ? 'Retiring…' : 'Retire'}

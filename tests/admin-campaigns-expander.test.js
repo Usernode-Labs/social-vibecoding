@@ -38,7 +38,7 @@ test('the header says whether it is open and which region it controls', () => {
 });
 
 test('the button holds phrasing content only', () => {
-  const start = SRC.indexOf('<button type="button" className="w-full text-left');
+  const start = SRC.indexOf('<button type="button" className="w-full text-start');
   const body = SRC.slice(start, SRC.indexOf('</button>', start));
   assert.doesNotMatch(body, /<div\b/, 'no block <div> inside the button');
 });

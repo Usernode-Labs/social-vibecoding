@@ -119,9 +119,9 @@ function ActivityTable({ activity }: { activity: Activity | null }) {
         <table className="w-full">
           <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             <tr>
-              <th className="px-3 py-2 text-left">OS</th>
-              <th className="px-3 py-2 text-left">Told</th>
-              <th className="px-3 py-2 text-right">Checks</th>
+              <th className="px-3 py-2 text-start">OS</th>
+              <th className="px-3 py-2 text-start">Told</th>
+              <th className="px-3 py-2 text-end">Checks</th>
             </tr>
           </thead>
           <tbody>
@@ -129,7 +129,7 @@ function ActivityTable({ activity }: { activity: Activity | null }) {
               <tr key={i} className="border-t border-zinc-200 dark:border-zinc-800">
                 <td className="px-3 py-1.5 text-sm">{r.os || '—'}</td>
                 <td className="px-3 py-1.5 text-sm">{UPGRADE_LABEL[r.upgrade] || r.upgrade}</td>
-                <td className="px-3 py-1.5 text-sm font-mono text-right">{r.count}</td>
+                <td className="px-3 py-1.5 text-sm font-mono text-end">{r.count}</td>
               </tr>
             ))}
           </tbody>
@@ -338,14 +338,14 @@ function AppVersionScreen() {
     {
       label: 'Min build',
       cell: (c) => c.min_build_number,
-      tdClass: 'font-mono text-right',
-      thClass: 'text-right',
+      tdClass: 'font-mono text-end',
+      thClass: 'text-end',
     },
     {
       label: 'Recommended',
       cell: (c) => (c.recommended_build_number != null ? c.recommended_build_number : '—'),
-      tdClass: 'font-mono text-right',
-      thClass: 'text-right',
+      tdClass: 'font-mono text-end',
+      thClass: 'text-end',
     },
     {
       label: 'Current version',

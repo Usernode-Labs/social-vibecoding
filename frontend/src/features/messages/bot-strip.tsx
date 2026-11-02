@@ -634,7 +634,7 @@ export function SettledLine({ name, slug, iconUrl, emoji, number, title, outcome
             still puts its status at the row's end, as the others are; the
             status takes at most 40% and gives way first. */}
         <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-5 text-zinc-700 dark:text-zinc-300">{title}</span>
-        {words ? <span className="min-w-0 max-w-[40%] truncate text-right text-[13px] leading-5 text-zinc-500 dark:text-zinc-400" data-bot-settled-words="">{words}</span> : null}
+        {words ? <span className="min-w-0 max-w-[40%] truncate text-end text-[13px] leading-5 text-zinc-500 dark:text-zinc-400" data-bot-settled-words="">{words}</span> : null}
       </span>
     </>
   );
@@ -645,7 +645,7 @@ function NeedsRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => v
   const t = useMessages('messages');
   return (
     <li className="flex items-center gap-3 px-4 py-2" data-bot-strip-row="needs" data-bot-strip-key={row.key}>
-      <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" data-bot-strip-open="" onClick={() => onOpen(row)}>
+      <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-start" data-bot-strip-open="" onClick={() => onOpen(row)}>
         <Tile job={row.job} />
         <RowText row={row} />
       </button>
@@ -689,14 +689,14 @@ function ReadyRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => v
   return (
     <li className="px-4 py-2" data-bot-strip-row={row.group} data-bot-strip-key={row.key}>
       <div className="flex items-center gap-3">
-        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" data-bot-strip-open="" onClick={() => onOpen(row)}>
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-start" data-bot-strip-open="" onClick={() => onOpen(row)}>
           <Tile job={row.job} />
           <RowText row={row} />
         </button>
         <button type="button" className={PILL_SECONDARY} data-bot-strip-act="try" onClick={tryIt}>{t('messages:bot.strip.action.tryIt')}</button>
         {canApprove ? <button type="button" className={PILL_PRIMARY} data-bot-strip-act="approve" disabled={busy} onClick={() => { void approve(); }}>{t('messages:bot.strip.action.approve')}</button> : null}
       </div>
-      {error ? <p role="alert" className="mt-1 pl-12 text-[13px] text-red-700 dark:text-red-400">{error}</p> : null}
+      {error ? <p role="alert" className="mt-1 ps-12 text-[13px] text-red-700 dark:text-red-400">{error}</p> : null}
     </li>
   );
 }
@@ -707,7 +707,7 @@ function DoneRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => vo
   const outcome = row.track ? trackEnding(row.track) : (job as HomeroomBotPastJob).outcome;
   return (
     <li data-bot-strip-row="done" data-bot-strip-key={row.key}>
-      <button type="button" className="flex w-full items-center gap-2 px-4 py-1.5 text-left" data-bot-strip-open="" onClick={() => onOpen(row)}>
+      <button type="button" className="flex w-full items-center gap-2 px-4 py-1.5 text-start" data-bot-strip-open="" onClick={() => onOpen(row)}>
         <SettledLine
           name={job.appName} slug={job.appSlug} iconUrl={job.iconUrl} emoji={job.iconEmoji}
           number={job.firstVersion ? null : job.issueNumber} title={stripTitle(job)}
@@ -723,7 +723,7 @@ function DoneRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => vo
 function PlainRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => void }) {
   return (
     <li data-bot-strip-row={row.group} data-bot-strip-key={row.key}>
-      <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-left" data-bot-strip-open="" onClick={() => onOpen(row)}>
+      <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-start" data-bot-strip-open="" onClick={() => onOpen(row)}>
         <Tile job={row.job} />
         <RowText row={row} />
       </button>
@@ -792,7 +792,7 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
       <button
         ref={toggleRef}
         type="button"
-        className="flex w-full items-center gap-2.5 bg-[color:var(--dc-sheet-solid)] px-4 py-2.5 text-left shadow-[inset_0_-1px_0_var(--app-sheet-line)] hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
+        className="flex w-full items-center gap-2.5 bg-[color:var(--dc-sheet-solid)] px-4 py-2.5 text-start shadow-[inset_0_-1px_0_var(--app-sheet-line)] hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
         aria-expanded={open}
         data-bot-strip-toggle=""
         onClick={() => choose(!open)}
@@ -804,7 +804,7 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
               {index ? <span aria-hidden="true">{' · '}</span> : null}
               <span className={part.group === 'needs' ? NEED_INK : undefined} data-bot-strip-count={part.group}>{part.text}</span>
               {part.group === 'needs' && needTags.length ? (
-                <span className="ml-1 inline-flex gap-1 align-[1px]">{needTags.map((n) => <RequestTag key={n} number={n} />)}</span>
+                <span className="ms-1 inline-flex gap-1 align-[1px]">{needTags.map((n) => <RequestTag key={n} number={n} />)}</span>
               ) : null}
             </span>
           ))}
@@ -845,7 +845,7 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
               <>
                 <button
                   type="button"
-                  className={`${EYEBROW} flex w-full items-center gap-1.5 text-left text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200`}
+                  className={`${EYEBROW} flex w-full items-center gap-1.5 text-start text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200`}
                   aria-expanded={doneOpen}
                   data-bot-strip-done-toggle=""
                   onClick={() => setDoneOpen(!doneOpen)}

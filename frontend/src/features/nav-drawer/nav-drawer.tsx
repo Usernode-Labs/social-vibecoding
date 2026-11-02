@@ -60,6 +60,7 @@ import type { WorkshopRow } from '../workshop/index';
 import {
   afterSlideStarts, depthAt, EDGE_PX, isPan, keepPlace, landing, LEVEL_AT, PAN_SLOP_PX, SLIDE_EASE, SLIDE_MS, type Level,
 } from './drawer-math';
+import { dirSign } from '../../lib/i18n/direction';
 import {
   drawerStore, go, holdBack, letGoBack, registerSurface, setBackRecords, setDepth, setMoving, setOn, setPending,
   setSearching, setShown,
@@ -240,8 +241,9 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
     const w = screenWidth();
     const strip = stripRef.current;
     const cover = coverRef.current;
-    const x = -offset * w;
-    const pageX = (LEVEL_AT[2] - offset) * w;
+    const sign = dirSign();
+    const x = -offset * w * sign;
+    const pageX = (LEVEL_AT[2] - offset) * w * sign;
     if (strip) {
       strip.style.transition = transition;
       strip.style.transform = `translate3d(${x}px, 0, 0)`;
@@ -323,7 +325,8 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const p = pan.current;
     if (!p || e.pointerId !== p.id) return;
-    const dx = e.clientX - p.x0;
+    const sign = dirSign();
+    const dx = (e.clientX - p.x0) * sign;
     const dy = e.clientY - p.y0;
     if (!p.on) {
       if (!isPan(dx, dy)) {
@@ -337,7 +340,7 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
       setMoving(true);
     }
     p.dx = dx;
-    follow(Math.max(0, Math.min(LEVEL_AT[2], LEVEL_AT[p.from] - dx / p.w)));
+    follow(Math.max(0, Math.min(LEVEL_AT[2], LEVEL_AT[p.from] - p.dx / p.w)));
   };
   const onPointerEnd = (e: ReactPointerEvent<HTMLDivElement>) => {
     const p = pan.current;
@@ -361,14 +364,14 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
   useEffect(() => {
     const takesEdge = pageTakesEdge();
     let p: null | { x0: number; y0: number; w: number; from: Level; on: boolean; dx: number } = null;
-    const offsetOf = (from: Level, dx: number, w: number) => Math.max(0, Math.min(LEVEL_AT[2], LEVEL_AT[from] - dx / w));
+    const offsetOf = (from: Level, dx: number, w: number) => Math.max(0, Math.min(LEVEL_AT[2], LEVEL_AT[from] - dx * dirSign() / w));
     const move = (e: TouchEvent) => {
       const touch = e.touches[0];
       if (!p || !touch) return;
       const dx = touch.clientX - p.x0;
       const dy = touch.clientY - p.y0;
       if (!p.on) {
-        if (isPan(dx, dy) && (p.from !== 2 || dx > 0)) {
+        if (isPan(dx, dy) && (p.from !== 2 || dx * dirSign() > 0)) {
           // Its moves may not be cancelable, and the pan follows them all the
           // same. WebKit and Chromium decide at touchstart, from the listeners
           // there then, whether a touch's moves wait for the page; this one
@@ -379,7 +382,7 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
           // sideways part; a cancelable move is still held below.
           p.on = true;
           setMoving(true);
-        } else if (Math.abs(dy) > PAN_SLOP_PX || (p.from === 2 && dx < -PAN_SLOP_PX)) {
+        } else if (Math.abs(dy) > PAN_SLOP_PX || (p.from === 2 && dx * dirSign() < -PAN_SLOP_PX)) {
           stop();
           return;
         } else {
@@ -404,8 +407,10 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
       if (s.level === 2) {
         const page = target.closest?.('#app-view') || null;
         if (!page) return;
-        const sideways = touch.clientX > EDGE_PX && startsOnSideways(target, page, window);
-        if (!swipeBackMayStart({ x: touch.clientX, takesEdge, sideways })) return;
+        const rtl = dirSign() === -1;
+        const pastEdge = rtl ? touch.clientX < window.innerWidth - EDGE_PX : touch.clientX > EDGE_PX;
+        const sideways = pastEdge && startsOnSideways(target, page, window);
+        if (!swipeBackMayStart({ x: touch.clientX, takesEdge, sideways, rtl, width: window.innerWidth })) return;
       } else {
         // The drawer's own levels: anywhere on them but a field (the search).
         const surface = rootRef.current;

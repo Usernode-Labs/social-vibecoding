@@ -49,7 +49,7 @@ import { useMessages } from '../../lib/i18n/react';
  * compiled.
  */
 export const AUTH_BACK_CLASS =
-  'absolute left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800';
+  'absolute start-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800';
 
 /** 0.75rem below the safe area, so the 44px disc clears a notch. */
 const AUTH_BACK_STYLE = { top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' };

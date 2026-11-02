@@ -92,7 +92,7 @@ test('a started thread is headed by what it is for, never as a request, and take
   assert.match(read('frontend/src/features/messages/api.ts'), /\{ changeKind: String\(pick\(bot, 'changeKind'\)\)/, 'the kind survives the client\'s reading of the metadata');
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-layout-embedded\.messages-has-blank-thread > \.messages-thread-pane \{ display: none; \}/);
-  assert.match(css, /\.messages-layout-embedded\.messages-has-blank-thread > \.messages-reply-pane \{ flex: 1 1 auto; margin-left: 0; \}/);
+  assert.match(css, /\.messages-layout-embedded\.messages-has-blank-thread > \.messages-reply-pane \{ flex: 1 1 auto; margin-inline-start: 0; \}/);
   // On a phone its composer keeps clear of the tab bar, as a thread's does.
   // The chat foot's bar, as a form (1 November 2026), which brings the class.
   assert.match(read(NEW_THREAD), /<ChatComposerBar as="form" className="messages-composer messages-composer-thread"/);

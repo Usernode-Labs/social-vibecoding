@@ -153,7 +153,7 @@ export function WaitingAbout() {
   return (
     <form
       data-waiting-about="ask"
-      className="mt-7 rounded-[20px] bg-white p-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900"
+      className="mt-7 rounded-[20px] bg-white p-4 text-start shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900"
       onSubmit={(e) => { e.preventDefault(); void onSave(); }}
     >
       <h2 className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('auth:waiting.about.title')}</h2>

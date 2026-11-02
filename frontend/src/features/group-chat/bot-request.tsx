@@ -44,7 +44,7 @@ import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcri
 
 // `max-w-full`: on a narrow phone a sentence wraps inside the chip rather
 // than running past the message.
-const CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-left text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
+const CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-start text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
 
 /**
  * What each chip says (`words`), and what a screen reader hears (`said`)

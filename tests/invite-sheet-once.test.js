@@ -368,7 +368,7 @@ test('the skeleton is built from the loaded pane\'s own rows', async () => {
     'class="flex items-stretch gap-2 px-5 pt-3"',
     'flex items-center justify-between gap-3 px-5 pt-4 pb-1',
     'text-[0.7rem] font-semibold uppercase tracking-wide',
-    'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-left',
+    'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-start',
   ]) {
     assert.ok(loaded.includes(row), `the loaded pane has ${row}`);
     assert.ok(skeleton.includes(row), `and so does its skeleton`);

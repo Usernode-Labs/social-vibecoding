@@ -113,7 +113,7 @@ export function UserFieldRow({
       {children}
       {shown ? (
         <ul id={listId} role="listbox" aria-label={`Accounts matching ${q}`}
-          className="absolute left-0 right-0 z-10 mt-1 max-h-60 overflow-y-auto rounded-lg bg-white py-1 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700">
+          className="absolute start-0 end-0 z-10 mt-1 max-h-60 overflow-y-auto rounded-lg bg-white py-1 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700">
           {suggestions.map((u, i) => (
             <li key={u.id} id={optionId(i)} role="option" aria-selected={i === active}
               className="cursor-pointer px-3 py-1.5 text-sm text-zinc-900 aria-selected:bg-zinc-100 dark:text-zinc-100 dark:aria-selected:bg-zinc-700"

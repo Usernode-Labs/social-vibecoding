@@ -124,7 +124,7 @@ function SecretKey({ secret }: { secret: string | null }) {
       <button
         id="admin-topo-oa-detail-secret-toggle"
         type="button"
-        className={`${BTN.row} ml-2`}
+        className={`${BTN.row} ms-2`}
         onClick={() => setShown((v) => !v)}
       >
         {shown ? 'Hide' : 'Reveal'}
@@ -458,7 +458,7 @@ function OnchainAccountsScreen() {
         <button
           data-acct-show={a.id}
           type="button"
-          className="text-left break-all underline decoration-dotted underline-offset-2 hover:text-violet-600 dark:hover:text-violet-400 rounded touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+          className="text-start break-all underline decoration-dotted underline-offset-2 hover:text-violet-600 dark:hover:text-violet-400 rounded touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
           aria-haspopup="dialog"
           onClick={() => setDetailId(a.id)}
         >
@@ -468,7 +468,7 @@ function OnchainAccountsScreen() {
       tdClass: 'text-xs font-mono',
     },
     { label: 'Tier', cell: (a) => a.tier, tdClass: 'text-zinc-500 dark:text-zinc-400' },
-    { label: 'Amount', cell: (a) => a.amount, tdClass: 'font-mono text-right', thClass: 'text-right' },
+    { label: 'Amount', cell: (a) => a.amount, tdClass: 'font-mono text-end', thClass: 'text-end' },
     { label: 'Event', cell: (a) => (a.event ? a.event.name : '—'), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     {
       label: 'Status',

@@ -140,7 +140,7 @@ test('the tile badge gave up its pulse, and then the badge itself (#1946)', () =
 test('the spinner is recoloured to the pill rather than left accent-blue', () => {
   assert.match(ROW_TSX, /\[&>\.dc-status-spinner-arc\]:border-current/,
     'one literal covers every state and both themes');
-  assert.match(ROW_TSX, /\[&>\.dc-status-spinner-arc\]:border-r-transparent/,
+  assert.match(ROW_TSX, /\[&>\.dc-status-spinner-arc\]:border-e-transparent/,
     'border-current would otherwise close the ring and stop it reading as an arc');
   // The base class really is accent-coloured, which is why the override has
   // to exist at all.

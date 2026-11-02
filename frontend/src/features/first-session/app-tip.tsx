@@ -214,7 +214,7 @@ export function AppTip({ tip, onClose }: { tip: TipRecord; onClose: () => void }
       aria-labelledby="first-session-tip-title"
       data-first-session-tip={tip.who}
       onClick={close}
-      className="fixed z-[9000] rounded-[20px] bg-white py-3.5 pl-4 pr-11 text-left text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"
+      className="fixed z-[9000] rounded-[20px] bg-white py-3.5 ps-4 pe-11 text-start text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"
       style={{ top: place.top, left: place.left, width: place.width }}
     >
       {/* The pointer, up at the mark's middle. */}
@@ -233,7 +233,7 @@ export function AppTip({ tip, onClose }: { tip: TipRecord; onClose: () => void }
         data-first-session-tip-close=""
         aria-label={t('core:common.close')}
         onClick={(e) => { e.stopPropagation(); close(); }}
-        className="un-touch-target absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 active:bg-zinc-100 dark:text-zinc-500 dark:hover:bg-zinc-700 dark:active:bg-zinc-700"
+        className="un-touch-target absolute end-2 top-2 flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 active:bg-zinc-100 dark:text-zinc-500 dark:hover:bg-zinc-700 dark:active:bg-zinc-700"
       >
         <XIcon className="h-4 w-4" aria-hidden="true" />
       </button>

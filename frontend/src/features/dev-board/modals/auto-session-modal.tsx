@@ -102,7 +102,7 @@ export function AutoSessionModelPicker({
           ink="none"
           aria-label={t('project:modals.generate.picker.back')}
           onClick={onBack}
-          className="-ml-2 rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          className="-ms-2 rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
         >
           <ChevronLeftIcon className="h-5 w-5" aria-hidden="true" />
         </Button>
@@ -147,15 +147,15 @@ export function AutoSessionModelPicker({
         width="full"
       />
 
-      <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1" role="radiogroup" aria-label={t('project:modals.generate.picker.listLabel')}>
+      <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pe-1" role="radiogroup" aria-label={t('project:modals.generate.picker.listLabel')}>
         {visible.map((option) => {
           const selected = option.id === draftId;
           return (
             <label
               key={option.id}
               className={selected
-                ? 'flex cursor-pointer items-center gap-3 rounded-lg bg-violet-50 p-3 text-left dark:bg-violet-950/40'
-                : 'flex cursor-pointer items-center gap-3 rounded-lg bg-zinc-50 p-3 text-left hover:bg-zinc-100 dark:bg-zinc-800/60 dark:hover:bg-zinc-800'}
+                ? 'flex cursor-pointer items-center gap-3 rounded-lg bg-violet-50 p-3 text-start dark:bg-violet-950/40'
+                : 'flex cursor-pointer items-center gap-3 rounded-lg bg-zinc-50 p-3 text-start hover:bg-zinc-100 dark:bg-zinc-800/60 dark:hover:bg-zinc-800'}
             >
               <input
                 type="radio"

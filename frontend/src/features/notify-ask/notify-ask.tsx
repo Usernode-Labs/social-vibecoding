@@ -201,7 +201,7 @@ export function NotifyAsk({ moment, project = '', small = false, tone = 'plane',
               <p className="mt-0.5 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{body}</p>
             </div>
           </div>
-          <div className="mt-3 flex flex-wrap gap-2 pl-8">
+          <div className="mt-3 flex flex-wrap gap-2 ps-8">
             {surface === 'app' ? (
               <Button
                 variant="pillAccent"

@@ -220,7 +220,7 @@ test('the tray: rendered only while open, into the body; focus in and back; Esca
   assert.match(CSS, /\.dev-ws-tray-root\.is-closing \{ pointer-events: none; \}/);
   assert.match(CSS, /\.dev-ws-tray-root\.is-closing \.dev-ws-tray \{ animation: dev-ws-tray-out 200ms cubic-bezier\(\.2, \.8, \.2, 1\) forwards; \}/);
   assert.match(CSS, /\.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: dev-ws-tray-fade-out 160ms ease-out forwards; \}/);
-  assert.match(CSS, /@keyframes dev-ws-tray-out \{ from \{ transform: none; \} to \{ transform: translateX\(-100%\); \} \}/);
+  assert.match(CSS, /@keyframes dev-ws-tray-out \{ from \{ transform: none; \} to \{ transform: translateX\(calc\(-100% \* var\(--rtl-sign\)\)\); \} \}/);
   assert.match(CSS, /@keyframes dev-ws-tray-fade-out \{ from \{ opacity: 1; \} to \{ opacity: 0; \} \}/);
   assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.dev-ws-tray-root\.is-closing \.dev-ws-tray, \.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: none; \}/);
   // #5384: it opens under the header, which stays undimmed and pressable,

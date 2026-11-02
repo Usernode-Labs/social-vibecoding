@@ -366,7 +366,7 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
         </p>
       ) : null}
       {thumb && view.ask === 'project_opens' ? (
-        <NotifyAsk moment="project_opens" project={thumb.name} className="mt-2 w-full max-w-sm text-left" />
+        <NotifyAsk moment="project_opens" project={thumb.name} className="mt-2 w-full max-w-sm text-start" />
       ) : null}
       {view.detail ? (
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>

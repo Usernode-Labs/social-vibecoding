@@ -231,7 +231,7 @@ test('with the keys up in a phone browser the Discussion room is laid on the vis
   const css = read('public/css/app.css');
   const block = css.slice(css.indexOf('/* WITH THE KEYBOARD UP IN A PHONE BROWSER, THE ROOM IS WHAT IS SEEN'));
   const rules = block.slice(block.indexOf('@media (max-width: 767px) {'), block.indexOf('\n}\n') + 2);
-  assert.match(rules, /html\[data-browser-scroller\]\.platform-kb-open \.dev-ws-discussion \{\s*position: fixed;\s*left: 0;\s*right: 0;\s*top: var\(--platform-vv-top, 0px\);\s*bottom: var\(--platform-kb-cover, 0px\);/);
+  assert.match(rules, /html\[data-browser-scroller\]\.platform-kb-open \.dev-ws-discussion \{\s*position: fixed;\s*inset-inline-start: 0;\s*inset-inline-end: 0;\s*top: var\(--platform-vv-top, 0px\);\s*bottom: var\(--platform-kb-cover, 0px\);/);
   // The column reserves nothing more: the band already ends at the keys.
   assert.match(rules, /html\[data-browser-scroller\]\.platform-kb-open \.dev-ws-discussion \.platform-kb-column \{\s*padding-bottom: 0;\s*\}/);
   // It outranks the kit's reservation (html.un-kb .platform-kb-column).

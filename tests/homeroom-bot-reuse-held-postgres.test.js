@@ -49,7 +49,7 @@ test('the fingerprint is the request as people wrote it, the bot\'s own posts le
 
 test('the console and the connector show a reused run', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /\{run\.reused_run_id \? <span className=\{`\$\{AdminUI\.badge\.outline\} ml-1`\} data-homeroom-bot-reused=\{run\.reused_run_id\}>reused<\/span> : null\}/);
+  assert.match(tsx, /\{run\.reused_run_id \? <span className=\{`\$\{AdminUI\.badge\.outline\} ms-1`\} data-homeroom-bot-reused=\{run\.reused_run_id\}>reused<\/span> : null\}/);
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /r\.read_reason, r\.reused_run_id,/);
   assert.ok(bot.EXPORT_COLUMNS.includes('reused_run_id'));

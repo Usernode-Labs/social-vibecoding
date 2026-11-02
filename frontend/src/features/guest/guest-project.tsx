@@ -85,7 +85,7 @@ export function VoteCard({ vote, app, onIntent, signedIn = false }: {
                   setWide((m) => (m[side] === isWide ? m : { ...m, [side]: isWide }));
                 }}
               />
-              <figcaption className="absolute bottom-1.5 left-1.5 rounded-full bg-zinc-950/70 px-2 py-0.5 text-[11px] font-bold text-white">
+              <figcaption className="absolute bottom-1.5 start-1.5 rounded-full bg-zinc-950/70 px-2 py-0.5 text-[11px] font-bold text-white">
                 {side === 'before' ? t('auth:guest.project.before') : t('auth:guest.project.after')}
               </figcaption>
             </figure>
@@ -171,7 +171,7 @@ function MembersOnly({ app, onIntent, roomy = false, signedIn = false }: {
 
 function Row({ children, onClick, last }: { children: ReactNode; onClick?: () => void; last: boolean }) {
   const cls = cn(
-    'flex min-h-[52px] w-full items-center gap-3 px-3.5 py-2 text-left',
+    'flex min-h-[52px] w-full items-center gap-3 px-3.5 py-2 text-start',
     last ? '' : 'shadow-[inset_0_-1px_0_var(--app-sheet-line)]',
   );
   if (!onClick) return <div className={cls}>{children}</div>;

@@ -255,15 +255,15 @@ test('#3276: the hero\'s rows wrap instead of running past a phone\'s edge', () 
   };
   assert.match(rule('.dev-ws-hero-people'), /display: flex; flex-wrap: wrap;/);
   assert.match(rule('.dev-ws-hero-row > .dev-ws-hero-actions'), /min-width: 0; flex-wrap: wrap;/);
-  assert.match(rule('.dev-ws-hero-member'), /margin-left: auto; flex: none;/);
+  assert.match(rule('.dev-ws-hero-member'), /margin-inline-start: auto; flex: none;/);
   // The Join popup hangs from the right of its button, which ends the row.
-  assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/);
+  assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ inset-inline-start: auto; inset-inline-end: -6px; \}/);
   // THE HUB'S HEAD stacks on a phone: name, description, who is around, then
   // the actions. From 768px the actions sit across from the name, packed
   // into the hole beside it, and the ⋯'s menu opens leftward into the column.
   assert.match(CSS, /@media \(min-width: 768px\) \{\s*\.dev-ws-hero-summary \{\s*display: grid; grid-template-columns: minmax\(0, 1fr\) auto; grid-auto-flow: row dense;/);
-  assert.match(CSS, /\.dev-ws-hero-summary > \* \{ grid-column: 1 \/ -1; \}\s*\.dev-ws-hero-summary > \.dev-ws-hero-id \{ grid-column: 1; \}\s*\.dev-ws-hero-summary > \.dev-ws-hero-row \{ grid-column: 2; align-self: center; \}\s*\.dev-ws-hero-summary #dev-plus-menu \{ left: auto; right: 0; \}/);
-  assert.ok(CSS.indexOf('.dev-ws-hero-summary #dev-plus-menu') > CSS.indexOf('.dev-ws-hero #dev-plus-menu { left: 0; right: auto; }'),
+  assert.match(CSS, /\.dev-ws-hero-summary > \* \{ grid-column: 1 \/ -1; \}\s*\.dev-ws-hero-summary > \.dev-ws-hero-id \{ grid-column: 1; \}\s*\.dev-ws-hero-summary > \.dev-ws-hero-row \{ grid-column: 2; align-self: center; \}\s*\.dev-ws-hero-summary #dev-plus-menu \{ inset-inline-start: auto; inset-inline-end: 0; \}/);
+  assert.ok(CSS.indexOf('.dev-ws-hero-summary #dev-plus-menu') > CSS.indexOf('.dev-ws-hero #dev-plus-menu { inset-inline-start: 0; inset-inline-end: auto; }'),
     'after the phone\'s rule, so it wins on a wide window');
   // Who is around keeps its names to one line, cut short on a narrow phone.
   assert.match(rule('.dev-ws-hero-active'), /display: flex; align-items: center; gap: 12px; min-width: 0;/);

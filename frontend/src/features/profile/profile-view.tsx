@@ -106,7 +106,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           variant="neutral"
           size="sm"
           ink="neutral"
-          className="self-start ml-[68px] sm:self-auto sm:ml-0"
+          className="self-start ms-[68px] sm:self-auto sm:ms-0"
           onClick={() => Profile.showEditSheet()}
         >
           {t('profile:identity.edit')}

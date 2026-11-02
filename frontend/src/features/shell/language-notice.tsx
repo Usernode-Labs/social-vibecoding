@@ -56,7 +56,7 @@ export function LanguageNotice() {
       id="language-notice"
       role="status"
       style={inset > 0 ? { '--language-notice-inset': `${inset}px` } as CSSProperties : undefined}
-      className="flex items-center gap-2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 py-1.5 pl-4 pr-1.5 text-xs text-zinc-700 dark:text-zinc-300 shadow-lg"
+      className="flex items-center gap-2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 py-1.5 ps-4 pe-1.5 text-xs text-zinc-700 dark:text-zinc-300 shadow-lg"
     >
       <span className="min-w-0">{t('core:language.notice.showing', { language: notice.name })}</span>
       <Button

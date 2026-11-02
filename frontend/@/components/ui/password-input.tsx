@@ -55,7 +55,7 @@ export interface PasswordInputProps extends Omit<InputProps, 'type'> {
 }
 
 const TOGGLE =
-  'absolute inset-y-0 right-0 flex items-center px-3 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200';
+  'absolute inset-y-0 end-0 flex items-center px-3 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200';
 
 const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
   ({ className, wrapperClassName, ...props }, ref) => {
@@ -67,7 +67,7 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
           ref={ref}
           {...props}
           type={shown ? 'text' : 'password'}
-          className={cn(className, 'pr-11')}
+          className={cn(className, 'pe-11')}
         />
         {/*
             `type="button"` is load-bearing: four of these fields sit inside a

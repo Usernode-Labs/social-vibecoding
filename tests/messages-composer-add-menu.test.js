@@ -100,6 +100,6 @@ test('the menu sits above the bar, left-aligned to the button', () => {
   const body = rule('.messages-composer-menu');
   assert.match(body, /position: absolute;/);
   assert.match(body, /bottom: calc\(100% \+ 6px\);/, 'above the composer, not over the thread');
-  assert.match(body, /left: 0;/);
+  assert.match(body, /inset-inline-start: 0;/);
   assert.match(rule('.messages-composer-menu button'), /padding: 9px 12px;/);
 });

@@ -260,10 +260,10 @@ const EXEMPT = [
   },
   {
     file: 'frontend/src/features/settings/cli-setup-guide.tsx',
-    needles: ['border-l border-zinc-200 dark:border-zinc-700'],
-    why: 'not a separator: the Copy button’s left edge CONTINUES the enclosing '
-      + 'card’s own `border border-zinc-200 dark:border-zinc-700`, and an edge '
-      + 'that breaks colour halfway round is the bug, not the fix',
+    needles: ['border-s border-zinc-200 dark:border-zinc-700'],
+    why: 'not a separator: the Copy button’s inline-start edge CONTINUES the '
+      + 'enclosing card’s own `border border-zinc-200 dark:border-zinc-700`, and '
+      + 'an edge that breaks colour halfway round is the bug, not the fix',
   },
 ];
 

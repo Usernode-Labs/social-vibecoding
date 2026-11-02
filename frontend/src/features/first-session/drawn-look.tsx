@@ -91,7 +91,7 @@ export function DrawnLook({ src, label, width, hidden = false, onLoad, className
         tabIndex={-1}
         aria-hidden="true"
         onLoad={onLoad}
-        className={`absolute left-0 top-0 h-[844px] w-[390px] origin-top-left border-0 [color-scheme:light] ${scale > 0 ? '' : 'opacity-0'}`}
+        className={`absolute start-0 top-0 h-[844px] w-[390px] origin-top-left border-0 [color-scheme:light] ${scale > 0 ? '' : 'opacity-0'}`}
         style={scale > 0 ? { transform: `scale(${scale})` } : undefined}
       />
     </div>

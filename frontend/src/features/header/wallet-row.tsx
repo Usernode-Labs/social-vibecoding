@@ -12,8 +12,8 @@ import { walletSheetStore } from './wallet-sheet-store';
 
 /** The row's class run; the `hidden` in front of it is the model's. */
 const ROW
-  = 'flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative'
-  + " after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px"
+  = 'flex items-center gap-3 px-4 min-h-[44px] w-full text-start relative'
+  + " after:absolute after:bottom-0 after:start-12 after:end-0 after:h-px"
   + " after:bg-zinc-100 dark:after:bg-zinc-800 after:content-['']"
   + ' text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800';
 
@@ -38,7 +38,7 @@ export function WalletRow(): ReactNode {
           this span empty and the prerender has to agree. */}
       <span
         id="account-wallet-balance"
-        className="ml-auto text-xs font-semibold text-violet-700 dark:text-violet-400"
+        className="ms-auto text-xs font-semibold text-violet-700 dark:text-violet-400"
       >{s.balanceLabel}</span>
     </button>
   );

@@ -214,7 +214,7 @@ function OlderRow({ older }: { older: number }): ReactNode {
   return (
     <button
       type="button"
-      className="dc-session-older w-full px-3 py-2 text-left text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+      className="dc-session-older w-full px-3 py-2 text-start text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
       disabled={pending}
       onClick={async () => {
         if (pending) return;

@@ -92,7 +92,7 @@ function ResultBlock({ result }: { result: QueryResult }) {
         <table className="w-full">
           <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             <tr>
-              {result.columns.map((c) => <th key={c} className="px-2 py-1 text-left">{c}</th>)}
+              {result.columns.map((c) => <th key={c} className="px-2 py-1 text-start">{c}</th>)}
             </tr>
           </thead>
           <tbody>

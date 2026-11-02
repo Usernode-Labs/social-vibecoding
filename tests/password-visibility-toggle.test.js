@@ -97,8 +97,9 @@ test('the field keeps its box, its variants and the room the glyph needs', () =>
   assert.match(input, /bg-zinc-100 dark:bg-zinc-900 border border-zinc-300/);
   assert.match(input, /placeholder-zinc-500/);
   assert.match(input, /focus:border-transparent/);
-  // …and the padding that keeps a typed password clear of the glyph.
-  assert.match(input, /pr-11/);
+  // …and the padding that keeps a typed password clear of the glyph, at the
+  // field's end edge in either direction.
+  assert.match(input, /pe-11/);
 });
 
 test('the state lives in the primitive, so no section becomes stateful', () => {

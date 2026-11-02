@@ -500,8 +500,8 @@ const MembersDialog = {
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
       const tag = r.isCreator
-        ? `<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">${PlatformI18n.htmlText('dialogs:members.collaborators.tag.creator')}</span>`
-        : (pending ? `<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">${PlatformI18n.htmlText('dialogs:members.collaborators.tag.invited')}</span>` : '');
+        ? `<span class="text-[0.65rem] text-violet-700 font-medium ms-1 dark:text-violet-400">${PlatformI18n.htmlText('dialogs:members.collaborators.tag.creator')}</span>`
+        : (pending ? `<span class="text-[0.65rem] text-amber-800 font-medium ms-1 dark:text-amber-300">${PlatformI18n.htmlText('dialogs:members.collaborators.tag.invited')}</span>` : '');
       // Remove/revoke: creator/admin for anyone but the creator; users
       // may remove themselves (leave). Mirrors the server rules.
       const canRemove = !r.isCreator && (canManage || r.userId === me.id);
@@ -553,7 +553,7 @@ const MembersDialog = {
       const { users } = await res.json();
       if (!users || !users.length) { AppView._hideInviteSuggestions(); return; }
       box.innerHTML = users.map((u) =>
-        `<button data-invite-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+        `<button data-invite-user="${escapeAttr(u.username)}" class="w-full text-start px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
       ).join('');
       box.classList.remove('hidden');
       box.querySelectorAll('[data-invite-user]').forEach((btn) => {
@@ -715,7 +715,7 @@ const MembersDialog = {
     if (!list) return;
     list.innerHTML = AppView._govDraftApprovers.map((u) =>
       `<div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800">
-        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">${PlatformI18n.htmlText('dialogs:members.initialApprovers.willBeInvited')}</span></span>
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-[0.65rem] text-amber-800 font-medium ms-1 dark:text-amber-300">${PlatformI18n.htmlText('dialogs:members.initialApprovers.willBeInvited')}</span></span>
         <button type="button" data-remove-draft-approver="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400">${PlatformI18n.htmlText('dialogs:members.initialApprovers.remove')}</button>
       </div>`
     ).join('');
@@ -752,7 +752,7 @@ const MembersDialog = {
       const { users } = await res.json();
       if (!users || !users.length) { AppView._hideInitialApproverSuggestions(); return; }
       box.innerHTML = users.map((u) =>
-        `<button type="button" data-draft-approver-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+        `<button type="button" data-draft-approver-user="${escapeAttr(u.username)}" class="w-full text-start px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
       ).join('');
       box.classList.remove('hidden');
       box.querySelectorAll('[data-draft-approver-user]').forEach((btn) => {
@@ -1086,7 +1086,7 @@ const MembersDialog = {
       const { users } = await res.json();
       if (!users || !users.length) { AppView._hideAppAdminSuggestions(); return; }
       box.innerHTML = users.map((u) =>
-        `<button type="button" data-appadmin-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+        `<button type="button" data-appadmin-user="${escapeAttr(u.username)}" class="w-full text-start px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
       ).join('');
       box.classList.remove('hidden');
       box.querySelectorAll('[data-appadmin-user]').forEach((btn) => {
@@ -1198,8 +1198,8 @@ const MembersDialog = {
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
       const tag = pending
-        ? `<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">${PlatformI18n.htmlText('dialogs:members.approvers.tag.invited')}</span>`
-        : `<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">${PlatformI18n.htmlText('dialogs:members.approvers.tag.approver')}</span>`;
+        ? `<span class="text-[0.65rem] text-amber-800 font-medium ms-1 dark:text-amber-300">${PlatformI18n.htmlText('dialogs:members.approvers.tag.invited')}</span>`
+        : `<span class="text-[0.65rem] text-violet-700 font-medium ms-1 dark:text-violet-400">${PlatformI18n.htmlText('dialogs:members.approvers.tag.approver')}</span>`;
       // Remove/revoke: creator/admin for anyone; approvers may remove
       // themselves (leave). Mirrors the server rules.
       const canRemove = canManage || r.userId === me.id;
@@ -1241,7 +1241,7 @@ const MembersDialog = {
       const { users } = await res.json();
       if (!users || !users.length) { AppView._hideApproverSuggestions(); return; }
       box.innerHTML = users.map((u) =>
-        `<button data-approver-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+        `<button data-approver-user="${escapeAttr(u.username)}" class="w-full text-start px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
       ).join('');
       box.classList.remove('hidden');
       box.querySelectorAll('[data-approver-user]').forEach((btn) => {

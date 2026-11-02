@@ -4092,9 +4092,9 @@
       "expectText": "of $50 left this week"
     },
     {
-      "name": "AI credit value is right-aligned to the row edge, wrapped or not",
+      "name": "AI credit value sits at the row's end edge, wrapped or not (the right in English, the left in Arabic)",
       "path": "/?demo=1#settings/api-key",
-      "expectSelector": "#drawer-row-ai-budget #ai-budget-slot.grow.text-right"
+      "expectSelector": "#drawer-row-ai-budget #ai-budget-slot.grow.text-end"
     },
     {
       "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
@@ -4413,9 +4413,9 @@
       "expectSelector": "#board-filters-modal #board-filters-priority"
     },
     {
-      "name": "Re-pointed: the ⋯ ends the hero's actions, its menu hung off its right edge so it opens on-screen",
+      "name": "Re-pointed: the ⋯ ends the hero's actions, its menu hung off that end edge so it opens on-screen (the right in English, the left in Arabic)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu.absolute.right-0.top-full"
+      "expectSelector": "#dev-workshop .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu.absolute.end-0.top-full"
     },
     {
       "name": "Re-pointed: the Workshop's actions row shows the filled filter bar; the ⋯ it sat beside is the hub's",

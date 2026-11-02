@@ -151,12 +151,12 @@ test('the desktop presentation is anchored under the mark, not centred on the pa
   assert.match(closed,
     /top:\s*var\(--menu-anchor-top,\s*calc\(var\(--platform-header-h\)\s*\+\s*var\(--platform-safe-top\)\)\)/,
     'placed from the measured anchor, falling back to the underside of the bar');
-  assert.match(closed, /left:\s*var\(--menu-anchor-left,/,
-    'and from the measured left edge, which right-aligns it with the mark');
-  assert.doesNotMatch(closed, /left:\s*50%/,
+  assert.match(closed, /inset-inline-start:\s*var\(--menu-anchor-left,/,
+    'and from the measured inline start, which aligns it with the mark in either direction');
+  assert.doesNotMatch(closed, /inset-inline-start:\s*50%/,
     'no longer centred on the viewport under a title chip that is not the trigger');
   assert.doesNotMatch(closed, /translate\(-50%/, 'and no centring transform');
-  assert.match(closed, /right:\s*auto/, 'the right edge does not pin it…');
+  assert.match(closed, /inset-inline-end:\s*auto/, 'the end edge does not pin it…');
   assert.match(closed, /bottom:\s*auto/, '…and neither does the floor: it is content-height');
   assert.match(closed, /max-height:\s*calc\(100dvh - var\(--menu-anchor-top/,
     'capped against the fold from where it actually starts, with #switcher-nav '
@@ -221,6 +221,10 @@ test('the island measures the mark with the vote popover\'s arithmetic', () => {
   // channel that does not touch the constant class string the kit writes to.
   assert.match(ISLAND, /setProperty\('--menu-anchor-top'/);
   assert.match(ISLAND, /setProperty\('--menu-anchor-left'/);
+  // `placeUnderAnchor` measures a physical left; the rule places from the
+  // inline start, so the offset is flipped once, in Arabic.
+  assert.match(ISLAND, /currentDirection\(\) === 'rtl'\s*\n\s*\? window\.innerWidth - left - sheet\.offsetWidth/,
+    'the measured left becomes an inline-start inset in Arabic');
   // Placed in a LAYOUT effect, before the open state paints, and only on the
   // web presentation — the kit positions an adopted sheet itself.
   assert.match(ISLAND, /useIsomorphicLayoutEffect\(\(\) => \{\s*\n\s*if \(!open \|\| adopted\) return undefined;/);
@@ -288,8 +292,8 @@ test('below sm it is still a bottom sheet, dim and all', () => {
   // all three read the same 1.75rem off `.dc-lift`. What is pinned here is
   // that it still HAS two rounded top corners — the dropdown above keeps its
   // own 0.75rem menu radius, which is the shape this must not inherit.
-  assert.match(sheet, /border-top-left-radius:\s*1\.75rem/, 'and keeps its two top corners');
-  assert.match(sheet, /border-top-right-radius:\s*1\.75rem/);
+  assert.match(sheet, /border-start-start-radius:\s*1\.75rem/, 'and keeps its two top corners');
+  assert.match(sheet, /border-start-end-radius:\s*1\.75rem/);
 
   // The dim here is lib/overlay-scrim.js's paint layer rather than the
   // backdrop, because a dim painted behind the panel lands inside the panel's

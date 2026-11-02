@@ -111,7 +111,7 @@ export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-
       {phoneOffered ? (
         <AddPhoneCard groups={[]} title={copy.title} lead={copy.lead} onJoined={() => onVerified()} />
       ) : (
-        <section className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left">
+        <section className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-start">
           <h2 className="text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">{copy.title}</h2>
           <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{copy.reason}</p>
         </section>

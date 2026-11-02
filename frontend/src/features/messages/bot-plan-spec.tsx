@@ -111,7 +111,7 @@ export function PlanDocument({ id, read, docKey }: {
 
 // "See the plan": a row of the card, as its plan's lines are, in the
 // accent an action takes (Change something's).
-const SEE_ROW = 'mt-2 flex min-h-[44px] w-full items-center justify-between gap-2 text-left text-[0.9375rem] font-semibold text-violet-700 shadow-[inset_0_1px_0_var(--app-sheet-line)] hover:underline disabled:cursor-default disabled:no-underline disabled:opacity-60 dark:text-violet-300';
+const SEE_ROW = 'mt-2 flex min-h-[44px] w-full items-center justify-between gap-2 text-start text-[0.9375rem] font-semibold text-violet-700 shadow-[inset_0_1px_0_var(--app-sheet-line)] hover:underline disabled:cursor-default disabled:no-underline disabled:opacity-60 dark:text-violet-300';
 
 /**
  * A complicated change's plan on its card: the first screen it drew, before

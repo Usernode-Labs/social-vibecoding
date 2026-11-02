@@ -43,7 +43,7 @@ const TONE_CLASS: Record<Tone, string> = {
 };
 
 const LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
-const MONEY_INPUT = `${AdminUI.input} pl-6 font-mono disabled:opacity-60`;
+const MONEY_INPUT = `${AdminUI.input} ps-6 font-mono disabled:opacity-60`;
 
 /** A `$`-prefixed money field. */
 function MoneyField({ id, label, title, placeholder, value, onChange, disabled }: {
@@ -54,7 +54,7 @@ function MoneyField({ id, label, title, placeholder, value, onChange, disabled }
     <label className="block">
       <span className={LABEL} title={title}>{label}</span>
       <div className="relative mt-1">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 dark:text-zinc-400 pointer-events-none">$</span>
+        <span className="absolute start-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 dark:text-zinc-400 pointer-events-none">$</span>
         <input id={id} type="number" min="0" step="0.01" inputMode="decimal" disabled={disabled}
           className={MONEY_INPUT} placeholder={placeholder}
           value={value} onChange={(e) => onChange(e.target.value)} />

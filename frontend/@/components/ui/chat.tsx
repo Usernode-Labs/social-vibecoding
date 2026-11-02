@@ -100,7 +100,7 @@ export function ChatMessageRow({
   if (grouped) {
     return (
       <div className={cn('flex gap-3 px-4 py-0.5', className)} data-grouped="" {...props}>
-        <span className="gc-msg-gutter w-11 shrink-0 pt-0.5 text-right text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
+        <span className="gc-msg-gutter w-11 shrink-0 pt-0.5 text-end text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
         <div className="min-w-0 flex-1">
           <div className="text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100">{children}</div>
         </div>
@@ -118,7 +118,7 @@ export function ChatMessageRow({
             <span className="shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
           ) : null}
           {actions ? (
-            <span className={cn('flex shrink-0 items-center gap-1', me ? 'order-first mr-auto' : 'ml-auto')}>{actions}</span>
+            <span className={cn('flex shrink-0 items-center gap-1', me ? 'order-first me-auto' : 'ms-auto')}>{actions}</span>
           ) : null}
         </div>
         <div
@@ -270,7 +270,7 @@ export function JumpToLatestButton({
     >
       <ChevronDownIcon aria-hidden="true" className="h-5 w-5" />
       {dot ? (
-        <span aria-hidden="true" className="absolute right-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-violet-600 ring-2 ring-white dark:bg-violet-400 dark:ring-zinc-800" />
+        <span aria-hidden="true" className="absolute end-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-violet-600 ring-2 ring-white dark:bg-violet-400 dark:ring-zinc-800" />
       ) : null}
     </button>
   );
@@ -328,7 +328,7 @@ export function JumpToLatestButton({
  */
 export function WorkingDots({ className }: { className?: string }) {
   return (
-    <span className={cn('inline-flex shrink-0 items-center gap-[3px] pl-[3px]', className)} aria-hidden="true" data-working-dots="">
+    <span className={cn('inline-flex shrink-0 items-center gap-[3px] ps-[3px]', className)} aria-hidden="true" data-working-dots="">
       <span className="block h-[3px] w-[3px] rounded-full bg-current motion-safe:animate-pulse" />
       <span className="block h-[3px] w-[3px] rounded-full bg-current motion-safe:animate-pulse motion-safe:[animation-delay:300ms]" />
       <span className="block h-[3px] w-[3px] rounded-full bg-current motion-safe:animate-pulse motion-safe:[animation-delay:600ms]" />
@@ -375,7 +375,7 @@ export function ThreadReplySummary({
   return (
     <button
       type="button"
-      className={cn('mt-1 flex items-center gap-2 rounded-lg py-0.5 text-left', className)}
+      className={cn('mt-1 flex items-center gap-2 rounded-lg py-0.5 text-start', className)}
       {...props}
     >
       {avatars ? <span className="flex -space-x-1" aria-hidden="true">{avatars}</span> : null}
