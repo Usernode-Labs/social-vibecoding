@@ -84,3 +84,14 @@ test('L02: a phone held sideways starts with the rail folded, and turning it dec
   // The store still starts open; nothing is remembered across loads.
   assert.match(read('frontend/src/features/nav/nav-store.js'), /\n  railOpen: true,\n\};/);
 });
+
+test('L06: the bot\'s Needs you card shows its rows\' shape until the lists are read', () => {
+  const src = read('frontend/src/features/ai/lists.tsx');
+  assert.match(src, /empty=\{ready \? <p [^>]*data-ai-empty="">\{t\('messages:ai\.work\.empty'\)\}<\/p> : \(/);
+  assert.match(src, /<SkeletonGroup label=\{t\('messages:ai\.work\.loading'\)\}[^>]*data-ai-loading="">/);
+  const catalog = JSON.parse(read('frontend/locales/en/messages.json'));
+  assert.equal(catalog['ai.work.loading'].text, 'Loading what needs you');
+  // Discover's list: the store's prerender value draws nothing, as before.
+  assert.match(read('frontend/src/features/apps/browse-store.js'), /\n  loading: false,/);
+  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /: state\.loading\n\s+\? <BrowseRowsLoading label=\{t\('discover:list\.loading'\)\} \/>/);
+});

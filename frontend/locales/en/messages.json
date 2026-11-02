@@ -4775,6 +4775,10 @@
     "text": "Nothing needs you right now.",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Shown in the Needs you list when it is empty."
   },
+  "ai.work.loading": {
+    "text": "Loading what needs you",
+    "description": "The Homeroom bot tab: announced to screen readers in the Needs you list while it is still loading; on screen its rows show as grey placeholders."
+  },
   "ai.work.showMore_one": {
     "text": "Show {{count}} more",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Row at the end of a list showing only its first rows: shows the rest. {{count}} is how many more."
