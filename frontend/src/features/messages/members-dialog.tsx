@@ -106,7 +106,7 @@ export function ConversationMembersDialog() {
                 ROLE_LABELS[member.role] ? t(ROLE_LABELS[member.role]) : member.role,
                 member.status !== 'member' ? (STATUS_LABELS[member.status] ? t(STATUS_LABELS[member.status]) : member.status) : null,
               ])}</div></div>
-              {active.canManage && member.role !== 'owner' && member.status === 'member' ? <button type="button" disabled={busy} onClick={() => void remove(member)} className="ml-auto text-xs text-red-700 dark:text-red-400 disabled:opacity-50">{t('messages:members.removeButton')}</button> : null}
+              {active.canManage && member.role !== 'owner' && member.status === 'member' ? <button type="button" disabled={busy} onClick={() => void remove(member)} className="ms-auto text-xs text-red-700 dark:text-red-400 disabled:opacity-50">{t('messages:members.removeButton')}</button> : null}
             </div>
           ))}
         </div>
@@ -117,7 +117,7 @@ export function ConversationMembersDialog() {
             <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:members.invitePeople')}</label>
             {selected.length ? <div className="flex flex-wrap gap-1 mb-2">{selected.map((user) => <button type="button" key={user.id} onClick={() => setSelected((current) => current.filter((item) => item.id !== user.id))} className="rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300 px-2 py-1 text-xs">@{user.username} ×</button>)}</div> : null}
             <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('messages:members.searchPlaceholder')} autoComplete="off" />
-            {query.trim() ? <div className="mt-1 max-h-32 overflow-y-auto">{available.map((user) => <button type="button" key={user.id} onClick={() => { setSelected((current) => [...current, user]); setQuery(''); }} className="w-full flex items-center gap-2 py-1.5 px-1 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded"><UserAvatar user={user} size="sm" />@{user.username}<span className="ml-auto text-xs text-violet-700 dark:text-violet-400">{t('messages:members.add')}</span></button>)}</div> : null}
+            {query.trim() ? <div className="mt-1 max-h-32 overflow-y-auto">{available.map((user) => <button type="button" key={user.id} onClick={() => { setSelected((current) => [...current, user]); setQuery(''); }} className="w-full flex items-center gap-2 py-1.5 px-1 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded"><UserAvatar user={user} size="sm" />@{user.username}<span className="ms-auto text-xs text-violet-700 dark:text-violet-400">{t('messages:members.add')}</span></button>)}</div> : null}
             <Button type="button" className="mt-3 w-full" disabled={busy || !selected.length} onClick={() => void invite()}>{busy ? t('messages:members.inviting') : selected.length ? t('messages:members.inviteCount', { count: selected.length }) : t('messages:members.inviteNone')}</Button>
           </div>
         ) : null}

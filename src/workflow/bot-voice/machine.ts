@@ -285,6 +285,8 @@ export function botVoice(): Machine<VState, Facts> {
     version: 1,
     events: EVENTS,
     create: CREATE,
+    // What web appends: a message heard where the bot listens, and its offer tapped.
+    web: ['Heard', 'OfferTapped'],
     decode: (row) => ({ name: row.state, data: row.data } as VState),
     facts: (tx: Tx, _state: VState, event: Event<any>) => readFacts(tx, event),
     authorize: {

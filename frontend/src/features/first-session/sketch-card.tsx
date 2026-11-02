@@ -206,7 +206,7 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
     <div className="flex flex-col gap-2">
       <div
         data-featured-card={sketched ? 'sketching' : 'ready'}
-        className={`relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100${oneHeight ? ` flex flex-col ${bandClassName}` : ''}`}
+        className={`relative overflow-hidden rounded-[20px] bg-white text-start text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100${oneHeight ? ` flex flex-col ${bandClassName}` : ''}`}
       >
         <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${band ? bandClassName : compact ? 'h-[88px]' : cornerRoom && bandCorner ? 'h-[148px] pt-10' : 'h-[132px]'}`}>
           <div
@@ -222,7 +222,7 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
               {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
             </span>
           )}
-          {bandCorner ? <div className="absolute right-3 top-3 z-10">{bandCorner}</div> : null}
+          {bandCorner ? <div className="absolute end-3 top-3 z-10">{bandCorner}</div> : null}
         </div>
         {band && bandOnly ? null : (
           <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
@@ -265,7 +265,7 @@ export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null, l
   const color = useResolvedCommunityColor({ iconEmoji: emoji, key: colorKey });
   const glyph = glyphOf(name, emoji, false);
   return (
-    <div data-thumb-row="" className="flex min-w-0 items-center gap-3 text-left text-zinc-900 dark:text-zinc-100">
+    <div data-thumb-row="" className="flex min-w-0 items-center gap-3 text-start text-zinc-900 dark:text-zinc-100">
       <span
         aria-hidden="true"
         className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-zinc-200 dark:bg-zinc-800"

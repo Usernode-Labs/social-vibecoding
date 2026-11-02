@@ -103,6 +103,31 @@ row into `wf_events` and notifies the slots. An undeclared type is refused right
 3 s for the outcome. If the outcome is not there yet, the route answers `202` with the
 request key, and a retry with the same key returns the original result once it exists.
 
+**Who produced it.** `source` is what the producer says; `producer` is what the database
+recorded (`src/db/migrations/0011-workflow-producers.sql`). A login that may update the
+event stream (the conductor's, the migrator's, the one login of a database whose roles
+are not split) appends as `platform`. One that may only append, web's
+(`services/database-role-grants.js restrictWebWorkflow`), appends as `web`. The release
+that adds the stamp leaves web its writes, so a web Pod of the build before it can still
+restart; the release after it takes them, once no web process of an earlier build serves
+(`platform_processes.web_restriction_ready`). Until then web's events read as
+`platform`, and nothing below binds web yet. Web names
+only what a producer says (machine, key, app, type, payload, source, actor, request key);
+an event's status, outcome, retry time and cause are the kernel's. The database refuses
+web's rows that claim a `service`, `timer` or `message` source, and a refused web event
+the conductor asks again (`reaskRefused`) is still web's. Each machine lists the events
+web may append (`web` in its definition, required): what its routes ask for, and what a
+row web inserts sets off (an enrolment trigger). A slot refuses any other event web
+appended as `not_a_producer` (a type it does not know as `unknown_event`, so a newer
+build asks it again), before admission, a replay or any machine code. A rule that trusts
+a `system` source does not trust web's claim of one where that would let web choose
+what only the platform chooses: web asks app delivery for an admin's redeploy of main,
+never for an image or a commit. Web writes nothing else of the kernel's tables: a route
+that stops waiting withdraws its own pending request through `wf_refuse_pending` (only
+one its own login appended, and only as `expired`, `operation_unavailable` or
+`stop_unavailable`), and an admin's release of a faulted instance is a platform
+operation a conductor runs.
+
 **Answers.** A route answers from the outcome's `reply`, never by reading the tables
 afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, facts)`:
 - **When it runs.** In the event's transaction, after the writes and the projection. It
@@ -156,11 +181,13 @@ Internal cleanup reports itself as `system`, not as a human admin. The HTTP perm
 checks remain necessary: ordinary commands still depend on their callers and their
 machine's rules. Admission does not cancel external work already authorized and queued.
 
-This admission boundary does not authenticate an arbitrary process that can forge
-actors or write workflow rows. `PROCESS_ROLE` separates loops, not credentials; database
-login privileges, migration/provisioning credentials and Kubernetes service accounts
-need independent isolation. All deciding processes must run the updated code before a
-new admission rule applies across the fleet.
+Admission trusts the actor its producer names: web authenticates people, so a route's
+`user:<id>` is web's word. What web cannot do is speak for the conductor: its login
+appends only the events its machines list (`producer` above) and writes no machine
+state, receipt, work item or outcome. Web can still write the application tables that
+admission and machine facts read (`users`, `app_admins`, a check's result), which is
+separate work. All deciding processes must run the updated code before a new admission
+rule applies across the fleet.
 
 **Pushes.** What browsers should hear is part of the transition. A transition returns
 `push`, and a domain write adds what it inserted with `ctx.push` (a thread line with its
@@ -329,7 +356,8 @@ event.
   data.
 - **Actions** (full admins, runtime running). The admin view never edits rows. Each
   action is an event on the timeline, like any other:
-  - release a faulted instance;
+  - release a faulted instance (a `workflow.release` platform operation: a conductor
+    releases it, since web writes no instance);
   - "Re-check now" (`Evaluate`);
   - "Apply" (`AdminApply`);
   - "Retry follow-up".
@@ -362,7 +390,9 @@ they cannot drift from the instance.
 
 **Ownership.** Every pipeline transaction runs `SET LOCAL app.wf_writer = 'transition'`.
 
-- **Kernel tables.** Triggers refuse writes to them made without that marker.
+- **Kernel tables.** Triggers refuse writes to them made without that marker. Web's login
+  has no write on them at all but appending an event (`producer` above), so the marker
+  guards the conductor's own code against accidents, and privileges guard against web.
 - **Legacy columns.** A machine claims the legacy columns it owns with
   `wf_guard_owned_columns()`, for example on `issues`:
 
@@ -469,6 +499,10 @@ always `unknown_event`.
 9. **A machine replaces its old paths.** The step that moves a flow onto a machine
    deletes the old flow in the same change: no flag, no second path. Rollback is a
    release revert.
+10. **List what web may append.** An event a route appends, or a row web inserts sets off,
+    goes in the machine's `web` list; one only the conductor produces (a work result, a
+    timer, a message, a clock's tick, a service's report) never does. Leave one out and
+    that route's request is refused as `not_a_producer` wherever the roles are split.
 
 **Wiring it in.** `src/workflow/platform.ts` owns the process's runtime: its own pool,
 the machines, the services and the boot backfill. It also exports the helpers routes

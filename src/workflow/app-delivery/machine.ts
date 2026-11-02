@@ -468,6 +468,14 @@ function healed(s: Going, e: Event<any>, f: Facts, ctx: TransitionContext): Outc
 
 export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
   const mayAsk = (e: Event<any>): Check => {
+    // Web asks for one thing only: an admin's redeploy of what main holds.
+    // Which image or commit runs (`reuse`, `revision`, a PR) is the platform's
+    // choice alone, whatever source web claims.
+    if (e.producer === 'web') {
+      const p = e.payload;
+      return e.source.kind === 'admin' && p.reason === 'redeploy'
+        && p.prNumber == null && p.revision == null && p.reuse == null ? ok() : reject('not_a_producer');
+    }
     if (e.source.kind === 'system' || e.source.kind === 'admin') return ok();
     if (e.source.kind === 'message' && ASKERS.has(e.source.from.machine)) return ok();
     return reject('internal_only');
@@ -519,6 +527,9 @@ export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
     version: 2,
     events: EVENTS,
     create: ['DeployRequested', 'MainMoved', 'Unhealthy', 'Unreachable'],
+    // What web appends: an admin's redeploy, Check for updates, a visitor finding the
+    // app down, and the admin console's End deploy.
+    web: ['EndDeploy', 'DeployRequested', 'MainMoved', 'Unreachable'],
     decode: (row) => ({ name: row.state, data: row.data } as DeliveryState),
     facts: (tx, state, event) => readFacts(tx, state.name === NONE ? event.payload.appId : (state as Going).data.appId,
       { githubOn: deps.githubOn ? deps.githubOn() : true, runtimeMode: deps.runtimeMode ?? null },

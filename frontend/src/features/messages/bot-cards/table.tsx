@@ -140,11 +140,11 @@ export function TableCard({ message, conversationId, card }: BotCardProps) {
     <CardShell state="shown">
       {title ? <CardTitle>{title}</CardTitle> : null}
       <div className="-mx-4 mt-1 overflow-x-auto px-4">
-        <table className="w-full min-w-[280px] border-collapse text-left">
+        <table className="w-full min-w-[280px] border-collapse text-start">
           <thead>
             <tr>
               {columns.map((column, i) => (
-                <th key={i} scope="col" className="py-1.5 pr-3 align-bottom text-[0.75rem] font-semibold leading-4 text-zinc-500 last:pr-0 dark:text-zinc-400">{column}</th>
+                <th key={i} scope="col" className="py-1.5 pe-3 align-bottom text-[0.75rem] font-semibold leading-4 text-zinc-500 last:pe-0 dark:text-zinc-400">{column}</th>
               ))}
               {tagged ? <th scope="col" className="py-1.5"><span className="sr-only">{t('messages:botCards.table.tagHeading')}</span></th> : null}
             </tr>
@@ -154,15 +154,15 @@ export function TableCard({ message, conversationId, card }: BotCardProps) {
               <tr key={r} className="border-t border-[color:var(--app-sheet-line)] align-top" data-bot-table-row={r + 1}>
                 {row.cells.map((cell, i) => (
                   i === 0 ? (
-                    <th key={i} scope="row" className="py-2 pr-3 text-[0.9375rem] font-[650] leading-5 text-zinc-900 break-words dark:text-zinc-100">
+                    <th key={i} scope="row" className="py-2 pe-3 text-[0.9375rem] font-[650] leading-5 text-zinc-900 break-words dark:text-zinc-100">
                       <RowName row={row} conversationId={conversationId} />
                     </th>
                   ) : (
-                    <td key={i} className="py-2 pr-3 text-[0.8125rem] leading-5 text-zinc-500 break-words last:pr-0 dark:text-zinc-400">{cell}</td>
+                    <td key={i} className="py-2 pe-3 text-[0.8125rem] leading-5 text-zinc-500 break-words last:pe-0 dark:text-zinc-400">{cell}</td>
                   )
                 ))}
                 {tagged ? (
-                  <td className="whitespace-nowrap py-2 text-right">
+                  <td className="whitespace-nowrap py-2 text-end">
                     {row.tag ? <span className={`${TAG_BASE} ${TAG_TONES[row.tag]}`} data-bot-table-tag={row.tag}>{t(TAG_WORDS[row.tag])}</span> : null}
                   </td>
                 ) : null}

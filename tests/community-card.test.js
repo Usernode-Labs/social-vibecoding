@@ -151,7 +151,7 @@ test('the channel is a hub card at its old address; Join asks under its button a
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-ws-join-pop \{\s*position: absolute; top: calc\(100% \+ 12px\)/,
     'it hangs from the button');
-  assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/,
+  assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ inset-inline-start: auto; inset-inline-end: -6px; \}/,
     'from its right edge in the hero, where Join ends the actions row (#852)');
   // #4045: Leave is a row of the hub's ⋯ (it was the Joined pill), through
   // the same call Discover makes, and never the creator's.

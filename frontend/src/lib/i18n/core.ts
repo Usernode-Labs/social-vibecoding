@@ -1,6 +1,7 @@
 import { createInstance, type TOptions } from 'i18next';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { matchLanguage, resolveLanguage, type Catalogs } from './locale';
+import { directionFor } from './direction';
 
 /**
  * The language runtime, built from one set of catalogs.
@@ -374,8 +375,14 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     activeLanguage = language;
     preference = value;
     await i18n.changeLanguage(language);
-    if (typeof document !== 'undefined' && document.documentElement.lang !== language) {
-      document.documentElement.lang = language;
+    if (typeof document !== 'undefined') {
+      const root = document.documentElement;
+      if (root.lang !== language) root.lang = language;
+      // The layout follows the language: `dir` is what app.css and the
+      // direction-aware geometry read. Set before announce() so a listener
+      // that measures the page sees the new direction.
+      const direction = directionFor(language);
+      if (root.dir !== direction) root.dir = direction;
     }
     if (changed) announce();
     // The language is on screen: lift the head's hold, and remember it so

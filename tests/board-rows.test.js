@@ -242,7 +242,7 @@ test('the column heads are one stage strip: steps with icon, count and arrow, an
     assert.match(steps, new RegExp(`<span class="dev-kanban-step-name">${title}</span>`));
   }
   assert.match(steps, /<span class="dev-kanban-step-n">2,750<\/span>/, 'Done’s count, in words');
-  assert.equal(count(steps, /class="dev-kanban-step-arrow"/g), 3, 'an arrow between each step and the next');
+  assert.equal(count(steps, /class="dev-kanban-step-arrow[^"]*"/g), 3, 'an arrow between each step and the next');
   assert.ok(!html.includes('dev-kanban-col-head'), 'no head of its own over a column');
   // Each column names itself by its step.
   assert.match(html, /<div id="dev-kanban-col-done" data-kanban-col="done" class="dev-kanban-col" role="tabpanel" aria-labelledby="dev-kanban-tab-done">/);

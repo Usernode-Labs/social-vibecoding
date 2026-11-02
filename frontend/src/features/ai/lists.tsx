@@ -119,12 +119,12 @@ function nextGlyph(t: AiThread): ReactNode {
 // Complete literals: Tailwind's extractor reads source text. 36px a row on a
 // desktop, so a project's rows sit closer than the groups do; 44px on a
 // phone, the shell's tap target.
-const ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-left rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
-const LIVE_ROW = 'flex w-full min-h-[40px] md:min-h-[32px] items-center gap-3 py-1 text-left rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
+const ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
+const LIVE_ROW = 'flex w-full min-h-[40px] md:min-h-[32px] items-center gap-3 py-1 text-start rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
 const GLYPH_OWE = 'flex shrink-0 text-violet-600 dark:text-violet-300';
 const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 // Where you are: the row whose chat is in the column, on the lit tint.
-const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-left rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
+const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
 
 function LineRow({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
   const t = useMessages('messages');
@@ -219,8 +219,10 @@ function FadeRail({ className = '', children, ...props }: React.ComponentProps<'
     const el = ref.current;
     if (!el) return undefined;
     const sync = () => {
-      const start = el.scrollLeft > 1;
-      const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      // scrollLeft runs negative from the start in a right-to-left scroller.
+      const at = Math.abs(el.scrollLeft);
+      const start = at > 1;
+      const end = at + el.clientWidth < el.scrollWidth - 1;
       setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
     };
     sync();
@@ -314,7 +316,7 @@ function Section({ list, head, owe = false, lines, quiet = false, empty = null, 
               </div>
             ) : null}
             {/* The rows sit in a little under their project's name. */}
-            <div className={heads ? 'ml-3' : undefined}>
+            <div className={heads ? 'ms-3' : undefined}>
               {(hidden ? items.slice(0, shown) : items).map((line) => <LineRow key={line.key} line={line} quiet={quiet} />)}
               {/* The rest, folded: a grid row that grows from 0fr to 1fr, so
                   it opens to its own height without measuring it. */}
@@ -479,7 +481,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
                 {t('messages:ai.filter.all')}
               </Chip>
               {rail.map((app) => (
-                <Chip key={app.slug} size="bar" className={`gap-2 pl-2.5 pr-4 ${CHIP_EDGE}`} selected={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
+                <Chip key={app.slug} size="bar" className={`gap-2 ps-2.5 pe-4 ${CHIP_EDGE}`} selected={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
                   <SmallTile app={app} />
                   {app.name || app.slug}
                 </Chip>
@@ -488,7 +490,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
             {past > 0 ? (
               <Chip
                 size="bar"
-                className={`mb-4 mr-4 mt-3 gap-1 pl-4 pr-3 ${CHIP_EDGE}`}
+                className={`mb-4 me-4 mt-3 gap-1 ps-4 pe-3 ${CHIP_EDGE}`}
                 selected={false}
                 aria-pressed={undefined}
                 aria-haspopup="dialog"

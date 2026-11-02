@@ -872,6 +872,9 @@ export function shots(deps: Deps): Machine<SState, Facts> {
     version: 1,
     events: EVENTS,
     create: CREATE,
+    // What web appends: a worker's or a hand-off's declared changes and head, and
+    // a person's rerun, Stop and waiver.
+    web: ['Declared', 'HeadMoved', 'RetryRequested', 'StopRequested', 'WaiveRequested'],
     decode: (row) => ({ name: row.state, data: row.data } as SState),
     facts: (tx, state, event) => {
       const id = state.name === NONE ? Number((event.payload as any)?.sessionId) : (state.data as Data).sessionId;

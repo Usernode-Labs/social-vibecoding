@@ -128,7 +128,7 @@ test('a faked bar whose edge is a border redraws it above the layer', () => {
   // bar and the parked strip draw their top hairline again on top.
   const phone = css.slice(css.indexOf('@media (max-width: 767px) {\n  .platform-tabs::after,\n  .platform-parked::after {'));
   assert.match(phone.slice(0, phone.indexOf('}\n}') + 3),
-    /position: absolute;\s*top: -1px;\s*left: 0;\s*right: 0;\s*height: 1px;\s*background: var\(--app-sheet-line\);/);
+    /position: absolute;\s*top: -1px;\s*inset-inline-start: 0;\s*inset-inline-end: 0;\s*height: 1px;\s*background: var\(--app-sheet-line\);/);
 });
 
 test('where nothing passes behind, the plain translucent fill is the glass', () => {

@@ -178,18 +178,21 @@ test('no pane keeps the pre-lift panel look', () => {
 // ── The shape, which differs by how each pane docks ────────────────────
 
 test('the rail rounds the one corner that is a corner of anything', () => {
-  // A right-edge rail runs floor to ceiling against the right of the display,
-  // so three of its four corners sit on an edge. `.dc-lift` ships the
-  // floor-docked shape (1.75rem 1.75rem 0 0) and each rail restates its own.
+  // An edge rail runs floor to ceiling against the display's inline end, so
+  // three of its four corners sit on an edge. `.dc-lift` ships the floor-docked
+  // shape (1.75rem 1.75rem 0 0) and each rail restates its own, logically, so
+  // the one rounded corner sits at the inline start in either reading
+  // direction.
   //
   // THERE WERE TWO. #improve-panel was the other, and it retired (#2718
   // review) with every rule that drew it; the bell's sheet is the idiom's
   // remaining tenant, and the app menu below is deliberately not one.
   for (const id of ['notifications-sheet']) {
     const r = rule(`#${id}`);
-    assert.match(r, /border-radius: 1\.75rem 0 0 0/,
-      `#${id}'s desktop shape is the top-LEFT corner only`);
-    assert.match(r, /border-(left|color)/, `#${id} draws its left hairline`);
+    assert.match(r,
+      /border-start-start-radius: 1\.75rem; border-start-end-radius: 0; border-end-end-radius: 0; border-end-start-radius: 0;/,
+      `#${id}'s desktop shape is the inline-start corner only`);
+    assert.match(r, /border-inline-start/, `#${id} draws its inline-start hairline`);
   }
 });
 
@@ -216,12 +219,12 @@ test('both bottom sheets round to the same 1.75rem, by reading it', () => {
   // THREE, until #improve-panel retired with its panel (#2718 review).
   for (const id of ['apps-switcher-sheet', 'notifications-sheet']) {
     const sheet = bottomSheetRule(id);
-    assert.match(sheet, /border-top-left-radius: 1\.75rem/, `#${id}'s left corner`);
-    assert.match(sheet, /border-top-right-radius: 1\.75rem/, `#${id}'s right corner`);
+    assert.match(sheet, /border-start-start-radius: 1\.75rem/, `#${id}'s inline-start corner`);
+    assert.match(sheet, /border-start-end-radius: 1\.75rem/, `#${id}'s inline-end corner`);
     assert.match(sheet, /transform: translateY\(100%\)/,
       `#${id} is the bottom-sheet rule, not some other block that mentions it`);
   }
-  assert.doesNotMatch(APP_CSS, /border-top-left-radius: [^;]*!important/,
+  assert.doesNotMatch(APP_CSS, /border-(?:start-start|top-left)-radius: [^;]*!important/,
     'no pane needs an !important to win its own top corner any more');
 });
 

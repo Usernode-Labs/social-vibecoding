@@ -52,6 +52,8 @@ export function releaseMachine() {
     version: 2,
     events: { Booted: release, Expired: () => ({}) },
     create: ['Booted'],
+    // Nothing from web: a release is booted by the conductors that run it.
+    web: [],
     terminal: ['done', 'failed', 'abandoned'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
     async facts(tx, state, event, ctx) {

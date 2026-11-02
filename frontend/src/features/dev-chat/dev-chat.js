@@ -1579,12 +1579,12 @@ const DevChat = {
           <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="${PlatformI18n.htmlText('core:common.close')}">✕</button>
         </div>
         <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="${PlatformI18n.htmlText('devchat:agentChoice.groupLabel')}">
-          <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
+          <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-start transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · OpenRouter</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('devchat:agentChoice.openRouterBlurb')}</span>
             ${data.defaultBackend === 'codex_openrouter' ? `<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">${PlatformI18n.htmlText('devchat:agentChoice.savedDefault')}</span>` : ''}
           </button>
-          <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
+          <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-start transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · Claude</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('devchat:agentChoice.claudeBlurb')}</span>
             ${data.defaultBackend === 'claude_code' ? `<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">${PlatformI18n.htmlText('devchat:agentChoice.savedDefault')}</span>` : ''}
@@ -1643,7 +1643,7 @@ const DevChat = {
     let favoritesOnly = this._openRouterFavoritesOnlyByDefault(data.models, selectedModel);
     effortSelect.value = selectedEffort;
 
-    const cardClass = (selected) => `rounded-lg border p-3 text-left transition-colors ${selected
+    const cardClass = (selected) => `rounded-lg border p-3 text-start transition-colors ${selected
       ? 'border-violet-500 bg-violet-500/5 ring-1 ring-violet-500'
       : 'border-zinc-300 dark:border-zinc-700 hover:border-violet-400'}`;
 

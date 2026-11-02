@@ -134,7 +134,7 @@ export function ExternalMark({ className = 'w-4 h-4 text-zinc-400 dark:text-zinc
   );
 }
 
-const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-left '
+const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-start '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
   + 'transition-colors';
 
@@ -287,7 +287,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
           type="button"
           aria-expanded={showAll}
           aria-controls="app-about-contributors-list"
-          className="w-full px-5 min-h-[40px] text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+          className="w-full px-5 min-h-[40px] text-start text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
           onClick={onToggle}
         >
           {showAll ? t('agent:appContext.about.contributors.showFewer') : t('agent:appContext.about.contributors.showAll', { count: total })}
@@ -451,7 +451,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
           {stack.length || pill ? (
             <div id="app-about-pills" className="mt-2 flex flex-wrap items-center gap-2">
               {stack.length ? (
-                <span className="flex -space-x-1.5" aria-hidden="true">
+                <span className="flex -space-x-1.5 rtl:space-x-reverse" aria-hidden="true">
                   {stack.map((c) => <Avatar key={c.who} who={c.who} size="xs" />)}
                 </span>
               ) : null}

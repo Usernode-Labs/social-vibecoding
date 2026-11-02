@@ -173,9 +173,9 @@ test('the band draws nothing on a phone, and keeps the box it is measured by', (
 });
 
 test('the header\'s merged controls are the bar\'s, sized to the header\'s row', () => {
-  assert.match(CSS, /#platform-header \.header-places-btn \{ width: 28px; height: 28px; margin-left: 0; \}/,
+  assert.match(CSS, /#platform-header \.header-places-btn \{ width: 28px; height: 28px; margin-inline-start: 0; \}/,
     'a 28px control, like the header\'s others');
-  assert.match(CSS, /#platform-header \.header-places-btn \.dev-ws-places-dot \{ top: 1px; right: 0; \}/,
+  assert.match(CSS, /#platform-header \.header-places-btn \.dev-ws-places-dot \{ top: 1px; inset-inline-end: 0; \}/,
     'the dot rides the smaller box');
   assert.match(CSS, /#platform-header \.header-place-name \{[^}]*flex-shrink: 0; min-width: 0; max-width: 45%;/,
     'the place name holds its ground');

@@ -86,7 +86,7 @@ export function FirstVersionSteps({ steps: raw, phase = null, caption = null, es
   const steps = stepsOf(raw) as FirstVersionStep[];
   if (!steps.length) return null;
   return (
-    <section data-app-first-version-steps="" className="w-full max-w-[342px] text-left">
+    <section data-app-first-version-steps="" className="w-full max-w-[342px] text-start">
       <SectionHeader className="px-1 pb-1.5 pt-4">{t('onboarding:buildLine.stepsLabel')}</SectionHeader>
       <GroupedList tone="plane" className="mx-0">
         {steps.map((step) => (

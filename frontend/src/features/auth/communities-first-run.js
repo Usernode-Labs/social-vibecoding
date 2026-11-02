@@ -505,7 +505,7 @@
       const picked = new Set(list.filter((c) => c.checked).map((c) => c.slug));
       const rows = [];
       for (const c of list) {
-        const row = el('button', 'w-full flex items-center gap-3 px-4 py-3 text-left');
+        const row = el('button', 'w-full flex items-center gap-3 px-4 py-3 text-start');
         row.type = 'button';
         row.setAttribute('role', 'checkbox');
         row.setAttribute('data-join-community', c.slug);

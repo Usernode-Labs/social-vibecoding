@@ -68,7 +68,7 @@ test('a conversation, a group and #general: at the right of the header, just bef
   const at = header.indexOf('<FullWidthToggle />');
   assert.ok(at > 0, 'the conversation header carries it');
   assert.equal(header.indexOf('<FullWidthToggle />', at + 1), -1, 'once');
-  assert.ok(at > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
+  assert.ok(at > header.indexOf('className="min-w-0 text-start flex-1"'), 'after the title, which takes the free width');
   assert.equal(message('messages:header.groupMembers'), 'Group members');
   assert.ok(at > header.indexOf("aria-label={t('messages:header.groupMembers')}"), 'after a group\'s members disc');
   // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).

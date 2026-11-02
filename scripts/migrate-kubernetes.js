@@ -64,7 +64,17 @@ async function main() {
   try {
     await ensureTargetDatabase(config);
     await migrate(config);
-    await require('../src/services/database-role-grants').ensureRuntimeGrants(getPool(config));
+    // One transaction: no login sees a grant half made (web never holds the
+    // kernel's writes, even for the moment between two statements).
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await require('../src/services/database-role-grants').ensureRuntimeGrants(client);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally { client.release(); }
     // The read-only database roles, by the new build over the new schema,
     // before any Pod of the release starts (services/db-roles.js).
     await require('../src/services/db-roles').ensureRoles(config);

@@ -1198,7 +1198,7 @@ test('embedded mode needs panel=1 AND a same-origin parent, including inside Pre
 
 test('the layout: the app narrows by a margin, above the breakpoint, while the panel is up', () => {
   const desk = CSS.slice(CSS.indexOf('@media (min-width: 1024px) {\n  html[data-side-panel] #app-view {'));
-  assert.match(desk, /html\[data-side-panel\] #app-view \{\s*margin-right: var\(--side-panel-w\);\s*min-width: 480px;/);
+  assert.match(desk, /html\[data-side-panel\] #app-view \{\s*margin-inline-end: var\(--side-panel-w\);\s*min-width: 480px;/);
   assert.match(CSS, /--side-panel-w: clamp\(360px, 36vw, 560px\);/);
   // 1 Nov 2026: beside the AI tab's page it is drawn from 768px (its column).
   assert.match(CSS, /@media \(max-width: 1023\.98px\) \{[\s\S]{0,400}body:not\(:has\(#ai-screen:not\(\.hidden\)\)\) #platform-side-panel \{\s*display: none;/);
@@ -1391,7 +1391,7 @@ test('the width\'s rules: 320px of panel and 480px of app at the least, whatever
   const { bounds, clampWidth, MIN_PANEL_W, MIN_APP_W } = api.resize;
   assert.equal(MIN_PANEL_W, 320);
   assert.equal(MIN_APP_W, 480, 'the floor app.css already holds #app-view to beside the panel');
-  assert.match(CSS, /html\[data-side-panel\] #app-view \{\s*margin-right: var\(--side-panel-w\);\s*min-width: 480px;/);
+  assert.match(CSS, /html\[data-side-panel\] #app-view \{\s*margin-inline-end: var\(--side-panel-w\);\s*min-width: 480px;/);
   // A 1440px window with the app flush left: up to 960px of panel.
   assert.deepEqual({ ...bounds({ innerWidth: 1440, appLeft: 0 }) }, { min: 320, max: 960 });
   // A rail to the left of the app comes out of the panel's room, not the app's.
@@ -1453,7 +1453,7 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
   const divider = SRC.slice(SRC.indexOf('function SidePanelDivider('));
   assert.match(divider, /setPointerCapture\(e\.pointerId\)/);
-  assert.match(divider, /d\.width = set\(d\.startW \+ \(d\.startX - e\.clientX\), false\);/,
+  assert.match(divider, /d\.width = set\(d\.startW \+ \(d\.startX - e\.clientX\) \* dirSign\(\), false\);/,
     'pinned to the right edge: moving left widens the panel, and nothing is stored mid-drag');
   assert.match(divider, /if \(d\.width != null\) writeStoredWidth\(d\.width\);/,
     'a press that never moved is half of a double-click, not a choice');
@@ -1523,7 +1523,7 @@ test('on a touch screen the divider is a handle you can see and hit', () => {
   const at = CSS.indexOf('@media (pointer: coarse) {\n  .side-panel-divider { --divider-w: 24px; }');
   assert.ok(at > 0, 'a 24px handle with a coarse pointer');
   const block = CSS.slice(at, CSS.indexOf('\n}\n', at));
-  assert.match(block, /\.side-panel-divider::before \{[^}]*content: "";[^}]*left: calc\(50% - 2px\);[^}]*height: 40px;[^}]*border-radius: 999px;[^}]*opacity: \.5;/,
+  assert.match(block, /\.side-panel-divider::before \{[^}]*content: "";[^}]*inset-inline-start: calc\(50% - 2px\);[^}]*height: 40px;[^}]*border-radius: 999px;[^}]*opacity: \.5;/,
     'a grip drawn at rest, on the line');
   // The grip is the whole mark under a finger: the full-height bar is a
   // pointer's hover cue, and beside the grip it read as a second divider.
@@ -1542,9 +1542,9 @@ test('the divider is drawn on the line between the two halves, not inside the pa
   const rule = CSS.slice(CSS.indexOf('.side-panel-divider {\n'), CSS.indexOf('\n}\n', CSS.indexOf('.side-panel-divider {\n')));
   assert.match(rule, /--divider-w: 10px;/, 'a mouse keeps the 10px edge');
   assert.match(rule, /position: fixed;/);
-  assert.match(rule, /right: calc\(var\(--divider-at, var\(--side-panel-w\)\) - var\(--divider-w\) \/ 2\);/,
+  assert.match(rule, /inset-inline-end: calc\(var\(--divider-at, var\(--side-panel-w\)\) - var\(--divider-w\) \/ 2\);/,
     'centred on the line; beside an app the line is the panel\'s own edge');
   assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);/,
     'beside the bot\'s list, the middle of the 16px gutter before Main');
-  assert.match(CSS, /\.side-panel-divider::after \{[^}]*left: calc\(50% - 1\.5px\);/, 'the bar on the line too');
+  assert.match(CSS, /\.side-panel-divider::after \{[^}]*inset-inline-start: calc\(50% - 1\.5px\);/, 'the bar on the line too');
 });

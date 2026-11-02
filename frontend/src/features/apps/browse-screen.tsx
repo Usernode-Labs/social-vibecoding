@@ -72,7 +72,7 @@ import { openBrowseFilterSheet } from './browse-filter-sheet';
 import { AppsLoadError } from './load-error';
 import { browseStore } from './mount';
 
-const CLEAR_CLASS = 'absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center '
+const CLEAR_CLASS = 'absolute end-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center '
   + 'justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200  dark:text-zinc-400'
   + 'hover:bg-zinc-500/10 text-base leading-none';
 
@@ -216,7 +216,7 @@ export function BrowseScreen() {
       >
         <div className={`relative ${CONTROL_COLUMN}`}>
           <SearchIcon
-            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
+            className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
             aria-hidden="true"
           />
           <input
@@ -226,7 +226,7 @@ export function BrowseScreen() {
             autoComplete="off"
             placeholder={t('discover:search.placeholder')}
             aria-label={t('discover:search.label')}
-            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
               // Enter opens the site when the field holds a web address —

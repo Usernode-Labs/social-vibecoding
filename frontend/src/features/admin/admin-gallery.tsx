@@ -461,7 +461,7 @@ function GallerySection() {
               </select>
             </label>
             <button id="admin-gallery-apply" type="button" onClick={commit}
-              className="ml-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
+              className="ms-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
             <button id="admin-gallery-refresh" type="button" onClick={commit}
               className="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>
           </section>

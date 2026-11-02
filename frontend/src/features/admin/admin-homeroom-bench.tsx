@@ -201,7 +201,7 @@ type BotStage = 'triage' | 'spec' | 'build' | 'followup';
 // columns of two-line cells in the 40rem a 1280px screen leaves beside the
 // two menus. The recipes' 1.5rem side padding leaves room for five, so these
 // tables draw tighter cells (the recipe's colours, less padding).
-const DENSE_TH = 'px-2 py-2 text-left align-bottom text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400';
+const DENSE_TH = 'px-2 py-2 text-start align-bottom text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400';
 const DENSE_TD = 'px-2 py-3 align-top';
 // A table wider than its box scrolls sideways inside it, never the page:
 // each is drawn at least 40rem wide, which a 1280px screen holds whole.
@@ -763,10 +763,10 @@ export function AddTaskMenu({ onPick }: { onPick: (kind: AddKind) => void }) {
         onClick={() => setOpen(!open)}>Add task</button>
       {open ? (
         <div role="menu" aria-label="Add task" id="admin-homeroom-bench-add-task-menu"
-          className={`${AdminUI.card} absolute inset-x-0 top-full sm:left-auto sm:w-72 z-20 mt-2 p-1 shadow-xl ring-1 ring-zinc-200 dark:ring-zinc-700`}>
+          className={`${AdminUI.card} absolute inset-x-0 top-full sm:start-auto sm:w-72 z-20 mt-2 p-1 shadow-xl ring-1 ring-zinc-200 dark:ring-zinc-700`}>
           {ADD_KINDS.map((k) => (
             <button key={k.key} type="button" role="menuitem" data-bench-add-kind={k.key}
-              className="block w-full rounded-lg px-3 py-2 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="block w-full rounded-lg px-3 py-2 text-start transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
               onClick={() => { setOpen(false); onPick(k.key); }}>
               <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">{k.label}</span>
               <span className={`${AdminUI.muted} block`}>{k.hint}</span>
@@ -983,7 +983,7 @@ export function SuiteDetail({ suite, isCore, core, canWrite, go, onChanged, say,
                               ? <span className={AdminUI.badge.warn} data-bench-taste-placeholder={t.id}>placeholder brief: not run</span>
                               : <span className="break-words">{t.taste!.brief.length > 120 ? `${t.taste!.brief.slice(0, 119)}…` : t.taste!.brief}</span>}
                           </td>
-                          <td className={`${DENSE_TD} text-right`}>{tasteActions(t)}</td>
+                          <td className={`${DENSE_TD} text-end`}>{tasteActions(t)}</td>
                         </>
                       )}
                     </tr>
@@ -1006,12 +1006,12 @@ export function SuiteDetail({ suite, isCore, core, canWrite, go, onChanged, say,
                 {others.map((t) => (
                   <tr className={AdminUI.trHover} key={t.id} data-bench-task={t.id}>
                     <td className={DENSE_TD}>{STAGE_LABEL[t.stage]}</td>
-                    <td className={DENSE_TD}>{`${t.app_slug || 'an app no longer here'} #${t.issue_number ?? ''}`}{t.snapshot_source === 'import' ? <span className={`${AdminUI.badge.outline} ml-1`}>from a PR</span> : null}{scriptedAnswer(t) ? <span className={`${AdminUI.badge.outline} ml-1`} data-bench-scripted={t.id}>scripted answer</span> : null}</td>
+                    <td className={DENSE_TD}>{`${t.app_slug || 'an app no longer here'} #${t.issue_number ?? ''}`}{t.snapshot_source === 'import' ? <span className={`${AdminUI.badge.outline} ms-1`}>from a PR</span> : null}{scriptedAnswer(t) ? <span className={`${AdminUI.badge.outline} ms-1`} data-bench-scripted={t.id}>scripted answer</span> : null}</td>
                     <td className={`${DENSE_TD} text-sm`}>{['verdict', 'repo_size', 'request_type', 'difficulty'].map((k) => t.tags?.[k]).filter(Boolean).join(' · ')}</td>
                     <td className={`${DENSE_TD} text-sm`}>
                       {referenceWords(t)}
                       {canWrite && open ? (
-                        <button type="button" className={`${AdminUI.btn.ghost} ml-2 text-xs`} onClick={() => removeTask(t)}>remove</button>
+                        <button type="button" className={`${AdminUI.btn.ghost} ms-2 text-xs`} onClick={() => removeTask(t)}>remove</button>
                       ) : null}
                     </td>
                   </tr>
@@ -1344,7 +1344,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, pre
                 <input type="checkbox" className="mt-1" checked={!!chosen[m.id]} onChange={(e) => setChosen({ ...chosen, [m.id]: e.target.checked })} />
                 <span className="min-w-0">
                   <span className="font-medium">{m.label}</span>
-                  {m.role ? <span className={`${AdminUI.badge.outline} ml-1`}>{m.role}</span> : null}
+                  {m.role ? <span className={`${AdminUI.badge.outline} ms-1`}>{m.role}</span> : null}
                   <span className={`${AdminUI.muted} block break-words`}>
                     {[
                       m.id,
@@ -1666,7 +1666,7 @@ export function StageTable({ best, models, suiteLabel, inUse, defaultModel, capN
                   {showInUse ? <th className={DENSE_TH} scope="col">In use now</th> : null}
                   <th className={DENSE_TH} scope="col">Recommended</th>
                   <th className={DENSE_TH} scope="col">Why</th>
-                  <th className={`${DENSE_TH} text-right`} scope="col">Graded</th>
+                  <th className={`${DENSE_TH} text-end`} scope="col">Graded</th>
                   <th className={DENSE_TH} scope="col"><span className="sr-only">Action</span></th>
                 </tr>
               </thead>
@@ -1690,7 +1690,7 @@ export function StageTable({ best, models, suiteLabel, inUse, defaultModel, capN
                   else why = pending ? `${pending} wait for the judge.` : '';
                   return (
                     <tr className={AdminUI.trHover} key={st} data-bench-stage-row={st} data-bench-best-pick={pick ? pick.model : ''}>
-                      <th className={`${DENSE_TD} text-left font-semibold`} scope="row">{STAGE_LABEL[st]}</th>
+                      <th className={`${DENSE_TD} text-start font-semibold`} scope="row">{STAGE_LABEL[st]}</th>
                       {showInUse ? <td className={`${DENSE_TD} text-sm min-w-[6rem]`} data-bench-in-use={st}>{now ? name(now) : '–'}</td> : null}
                       <td className={`${DENSE_TD} text-sm min-w-[6.5rem]`}>
                         {pick ? (
@@ -1703,8 +1703,8 @@ export function StageTable({ best, models, suiteLabel, inUse, defaultModel, capN
                             : <span className={AdminUI.muted}>No graded trials yet</span>}
                       </td>
                       <td className={`${DENSE_TD} text-sm text-zinc-600 dark:text-zinc-300 tabular-nums`}>{why}</td>
-                      <td className={`${DENSE_TD} text-right tabular-nums`}>{pick ? pick.graded : graded}</td>
-                      <td className={`${DENSE_TD} text-right whitespace-nowrap`}>
+                      <td className={`${DENSE_TD} text-end tabular-nums`}>{pick ? pick.graded : graded}</td>
+                      <td className={`${DENSE_TD} text-end whitespace-nowrap`}>
                         {pick && canUse && onUseModel && botStage && pick.model !== now ? (
                           <button type="button" className={AdminUI.btn.outlineSm} data-bench-use={`${st}|${pick.model}`}
                             onClick={() => onUseModel(botStage, pick.model)}>{`Use for ${STAGE_LABEL[botStage]}`}</button>
@@ -1860,7 +1860,7 @@ export function TasteSideBySide({ trials, name }: { trials: TasteTrial[]; name: 
     <div className="space-y-5" id="admin-homeroom-bench-taste-apps">
       {apps.map(([slug, appName]) => (
         <div key={slug} data-bench-taste-app={slug}>
-          <p className="text-sm font-semibold">{appName}<span className={`${AdminUI.muted} ml-2 font-normal`}>{slug}</span></p>
+          <p className="text-sm font-semibold">{appName}<span className={`${AdminUI.muted} ms-2 font-normal`}>{slug}</span></p>
           <div className="mt-2 grid gap-3 md:grid-cols-2">
             {arms.map((k) => {
               const mine = trials.filter((t) => t.appSlug === slug && armOf(t) === k).sort((a, b) => a.attempt - b.attempt);
@@ -2017,7 +2017,7 @@ function RunPage({ runId, run, models, canWrite, say, go, onCancel }: {
           </div>
           <div className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 p-3 space-y-2" id="admin-homeroom-bench-run-spent">
             <div className={AdminUI.muted}>Spent</div>
-            <div className="text-lg font-semibold tabular-nums">{usd(spent)}<span className="ml-1 text-sm font-normal text-zinc-500 dark:text-zinc-400">{`of ${usd(cap)} cap`}</span></div>
+            <div className="text-lg font-semibold tabular-nums">{usd(spent)}<span className="ms-1 text-sm font-normal text-zinc-500 dark:text-zinc-400">{`of ${usd(cap)} cap`}</span></div>
             <SpendBar spent={spent} cap={cap} />
             <div className={AdminUI.muted}>{status === 'capped' ? 'Stopped at the cap: the trials left were skipped' : 'Platform faults are kept out of accuracy; a timeout counts as a fail'}</div>
           </div>
@@ -2068,7 +2068,7 @@ function RunPage({ runId, run, models, canWrite, say, go, onCancel }: {
                     <tr className={AdminUI.trHover} key={`${row.stage}-${row.model}`} data-bench-row={`${row.stage}:${row.model}`}>
                       <td className={DENSE_TD}>
                         <span className="font-medium">{name(row.model)}</span>
-                        {row.baseline ? <span className={`${AdminUI.badge.outline} ml-1`}>baseline</span> : null}
+                        {row.baseline ? <span className={`${AdminUI.badge.outline} ms-1`}>baseline</span> : null}
                         <span className={`${AdminUI.muted} block`}>{STAGE_LABEL[row.stage]}</span>
                       </td>
                       <td className={DENSE_TD}>
@@ -2342,7 +2342,7 @@ function NowStrip({ runs, pending, models, go, say }: { runs: Run[]; pending: nu
           </div>
         )}
       </div>
-      <div className={`p-4 space-y-2 min-w-0 ${pending ? 'bg-amber-50 dark:bg-amber-500/10' : 'md:border-l md:border-zinc-100 md:dark:border-zinc-800'}`} id="admin-homeroom-bench-judge-now">
+      <div className={`p-4 space-y-2 min-w-0 ${pending ? 'bg-amber-50 dark:bg-amber-500/10' : 'md:border-s md:border-zinc-100 md:dark:border-zinc-800'}`} id="admin-homeroom-bench-judge-now">
         {pending == null ? <p className={AdminUI.loading}>Loading…</p> : pending ? (
           <>
             <div className="flex flex-wrap items-center gap-2">
@@ -2420,7 +2420,7 @@ function TasteCard({ suite, arms, latestRunId, models, go }: { suite: Suite; arm
               <div className={AdminUI.muted}>{arm.stage === 'capture' ? 'Before: what shipped' : `First versions, ${shortModel(arm.model, models)}`}</div>
               <div className="mt-0.5 text-2xl font-semibold tabular-nums">
                 {arm.score ? held(arm.score.held) : '–'}
-                <span className="ml-1 text-sm font-normal text-zinc-500 dark:text-zinc-400">{`of ${arm.score ? arm.score.of : TASTE_CRITERIA.length} criteria`}</span>
+                <span className="ms-1 text-sm font-normal text-zinc-500 dark:text-zinc-400">{`of ${arm.score ? arm.score.of : TASTE_CRITERIA.length} criteria`}</span>
               </div>
               <div className={AdminUI.muted}>
                 {arm.score
@@ -2439,7 +2439,7 @@ function HowItWorks() {
   return (
     <details className={`${AdminUI.card} px-4`} id="admin-homeroom-bench-how">
       <summary className="cursor-pointer py-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100">How the benchmark works</summary>
-      <ul className="list-disc space-y-1 pb-4 pl-5 text-sm text-zinc-600 dark:text-zinc-300" id="admin-homeroom-bench-intro">
+      <ul className="list-disc space-y-1 pb-4 ps-5 text-sm text-zinc-600 dark:text-zinc-300" id="admin-homeroom-bench-intro">
         <li>Real requests the bot has seen, replayed on other models with the bot&apos;s own prompts, worker and clocks.</li>
         <li>A model can also run at an effort of its own (Effort, in the launcher): every turn of its trials at that effort, an arm graded blind beside the same model at the bot&apos;s own.</li>
         <li>Nothing is posted, messaged or proposed, and every run stops at its dollar cap.</li>

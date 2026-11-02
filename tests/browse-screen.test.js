@@ -1224,7 +1224,7 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   const css = read('public/css/app.css');
   assert.match(css, /\.browse-row \+ \.browse-row::before \{/,
     'phone: a hairline between consecutive rows');
-  assert.match(css, /\.browse-row \+ \.browse-row::before \{[\s\S]*?left: 4\.75rem/,
+  assert.match(css, /\.browse-row \+ \.browse-row::before \{[\s\S]*?inset-inline-start: 4\.75rem/,
     'and it is inset to the text column, not the card edge');
   // The md block re-states the sibling selector so the full box wins at
   // equal specificity instead of relying on source order alone.

@@ -221,7 +221,7 @@ test('the desktop rail un-centres the header title', () => {
   const css = read('public/css/app.css');
   const at = css.indexOf('NOT WHILE THE DESKTOP RAIL IS UP');
   assert.ok(at > 0, 'the rule states its reason');
-  const block = css.slice(at, css.indexOf('}', css.indexOf('text-align: left;', at)));
+  const block = css.slice(at, css.indexOf('}', css.indexOf('text-align: start;', at)));
   // From 640px since the overnight audit's U03: the band between, where only
   // the iPhone Duo held upright lives, was the one place a title centred.
   assert.match(block, /@media \(min-width: 640px\)/);
@@ -235,7 +235,7 @@ test('the desktop rail un-centres the header title', () => {
   assert.doesNotMatch(block, /body:has\(#platform-tabs/,
     'the rail is no longer what decides it');
   assert.match(block, /position: static;/);
-  assert.match(block, /text-align: left;/);
+  assert.match(block, /text-align: start;/, 'left-aligned in English, the start edge in Arabic');
   // Expressed in CSS rather than in the hook: "is there room" is a
   // measurement, "is there a rail" is a layout fact the stylesheet knows, and
   // a media query cannot get out of step with the one that draws the rail.

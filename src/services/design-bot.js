@@ -33,13 +33,17 @@ const MAX_DESIGN_CHARS = 120_000;
 // The thread's newest messages it reads.
 const MAX_HISTORY = 16;
 // 1 Nov 2026: 4 → 6, room to read the code, draw, and grow what it drew.
-const MAX_ROUNDS = 6;
+// #6142: 12 for a first drawing; #6144: 12 for every design turn, since
+// "build a dedicated home screen" is an edit only in name. A small edit still
+// ends in two or three rounds: the limit only matters while it keeps reading.
+const MAX_ROUNDS = 12;
 // #6142: a first drawing (handed a screen, or a thread with no version yet)
-// reads the code, draws and grows what it drew: 12 rounds, and with nothing
-// drawn by round 8 that round draws (write_screen), leaving 9 to 11 for
-// edit_design and 12 to reply. An edit keeps MAX_ROUNDS.
-const FIRST_DRAW_ROUNDS = 12;
+// with nothing drawn by round 8 draws in it (write_screen), leaving 9 to 11
+// for edit_design and 12 to reply.
 const DRAW_BY_ROUND = 8;
+// #6144: the rounds it may read the project's code in (list_source,
+// read_source); from the next one on it is offered ACT_TOOLS alone.
+const READ_UNTIL = 7;
 // The app's entry page, up front in a first drawing's prompt: its <body>,
 // scripts left out, at most this long (a read_source answer's size).
 const ENTRY_BODY_CHARS = 12_000;
@@ -103,15 +107,41 @@ const ASKS_LEAVE = /\b(?:want me to|do you want me to|would you like me to|shall
 const DRAW_NOTE = '[Homeroom check, not from them: you have not drawn anything yet. Call write_screen (or edit_design) '
   + 'now, then reply.]';
 
+// #6144: what the model writes when the last round forces `reply` before it
+// has done anything ("placeholder"), posted as the answer twice on 2 Nov.
+const FILLER_WORDS = new Set(['placeholder', 'todo', 'tbd', 'text', 'reply', 'answer', 'response', 'n/a', 'none', 'null', 'undefined']);
+// Wrapping a filler word may carry: quotes, brackets, emphasis, dots.
+const FILLER_WRAP = /^[\s"'`*_()[\]{}<>.,:;!…-]+|[\s"'`*_()[\]{}<>.,:;!…-]+$/g;
+
+/** Pure: words that are no answer at all: empty, "…", or one filler word alone ("placeholder", "TODO"). */
+function isFiller(text) {
+  const word = String(text ?? '').replace(FILLER_WRAP, '').toLowerCase();
+  return !word || FILLER_WORDS.has(word);
+}
+
+/** What filler is sent back with, while a round with tools is left. */
+function fillerNote(text) {
+  return `[Homeroom check, not from them: "${clip(text, 40)}" is not an answer. Do what they asked with your tools, `
+    + 'or ask one real question, then reply.]';
+}
+
+/** Pure: a question back that ends a turn as it is: it asks something, and not leave to start. */
+function realQuestion(text) {
+  const said = String(text || '');
+  return said.includes('?') && !ASKS_LEAVE.test(said);
+}
+
 /**
  * Pure: why words that end a design turn are not its end yet, or null.
  * `changed` the turn made a version, `offered` it offered a card,
  * `handoff` Main Chat handed it a screen to draw, `drawnBefore` the thread
- * holds a version already.
+ * holds a version already. Filler (isFiller) is 'filler' whatever was asked.
  */
 function notDrawnYet(text, { changed = false, offered = false, handoff = false, drawnBefore = false, mayor } = {}) {
   const said = String(text || '').trim();
   if (changed || offered) return null;
+  // #6144: no answer at all, whatever was asked.
+  if (isFiller(said)) return 'filler';
   // Said to be drawn or drawing first: it is told to draw, not to go on.
   if (mayor.DRAWING_CLAIM.test(said) || DESIGN_DONE.test(said)) return 'claimed';
   if (mayor.announcesOnly(said)) return 'preamble';
@@ -280,6 +310,13 @@ const TOOLS = Object.freeze([
     },
   },
 ]);
+
+// #6144: the tools once reading is over (READ_UNTIL): all but the readers.
+const READ_TOOLS = new Set(['list_source', 'read_source']);
+const ACT_TOOLS = Object.freeze(TOOLS.filter((tool) => !READ_TOOLS.has(tool.function.name)));
+const READING_OVER_NOTE = '[Homeroom check, not from them: reading is over for this turn. Draw or change the screen now with '
+  + 'write_screen or edit_design, or reply.]';
+const READING_OVER_ERROR = 'Reading is over for this turn: draw or change the screen, or reply.';
 
 // The cheap model's one tool, when it describes pictures for a text-only one.
 const DESCRIBE_TOOL = Object.freeze({
@@ -631,9 +668,18 @@ async function threadRows(pool, { conversationId, rootId, upToId }) {
   return rows.reverse();
 }
 
+/**
+ * Pure (#6144): a thread's rows without the bot's filler ("placeholder"
+ * posted before the honest ending), so the model never reads it as one of
+ * its own answers. The person's rows are all kept.
+ */
+function withoutFiller(rows, botId) {
+  return rows.filter((m) => Number(m.sender_id) !== Number(botId) || !isFiller(m.content));
+}
+
 /** The thread as the model reads it: the person's messages and the bot's, newest MAX_HISTORY, up to `upToId`. */
 async function historyOf(pool, { conversationId, rootId, botId, upToId }) {
-  const rows = await threadRows(pool, { conversationId, rootId, upToId });
+  const rows = withoutFiller(await threadRows(pool, { conversationId, rootId, upToId }), botId);
   return rows.map((m) => (Number(m.sender_id) === Number(botId)
     ? { role: 'assistant', content: clip(m.content, 1500) || '(nothing)' }
     : { role: 'user', content: personLine(m) }));
@@ -828,11 +874,10 @@ async function answer(pool, config, {
   let html = current ? current.html : '';
   let drawn = null;
   let sheets = null;
-  // #6142: a first drawing, handed a screen or with no version yet, has more
-  // rounds than an edit, and an app's starts from its entry page (`entry`:
+  // #6142: a first drawing, handed a screen or with no version yet, draws by
+  // DRAW_BY_ROUND, and an app's starts from its entry page (`entry`:
   // undefined while unread, null when there is none they may read).
   const firstDrawing = handoff || !current;
-  const maxRounds = firstDrawing ? FIRST_DRAW_ROUNDS : MAX_ROUNDS;
   let entry;
   const notes = [];
   let replyText = '';
@@ -845,10 +890,11 @@ async function answer(pool, config, {
     if (t.apiKey === undefined) t.apiKey = await mayor.botKey(pool, config, bot.id).catch(() => null);
     if (!t.apiKey) throw Object.assign(new Error('no key'), { code: 'no_key' });
     const rows = await threadRows(pool, { conversationId, rootId: room.rootId, upToId: message.id });
-    let history = rows.map((m) => (Number(m.sender_id) === Number(bot.id)
+    const kept = withoutFiller(rows, bot.id);
+    let history = kept.map((m) => (Number(m.sender_id) === Number(bot.id)
       ? { role: 'assistant', content: clip(m.content, 1500) || '(nothing)' }
       : { role: 'user', content: personLine(m) }));
-    const ids = rows.map((m) => Number(m.id));
+    const ids = kept.map((m) => Number(m.id));
     // Main Chat's hand-off: the message is Main's, not the thread's.
     if (!history.length || history[history.length - 1].role !== 'user') {
       history.push({ role: 'user', content: personLine(message) });
@@ -898,18 +944,23 @@ async function answer(pool, config, {
     // last one only replies.
     let nudges = 0;
     const holdEnd = (said) => {
-      if (nudges >= mayor.MAX_PREAMBLE_NUDGES || rounds + 1 >= maxRounds) return null;
+      if (nudges >= mayor.MAX_PREAMBLE_NUDGES || rounds + 1 >= MAX_ROUNDS) return null;
       const changedNow = !!html && html !== (current?.html || '');
       // A card (a comparison, pictures) is an answer in itself, as an offer is.
       const why = notDrawnYet(said, { changed: changedNow, offered: !!offered || !!card, handoff, drawnBefore: !!current, mayor });
       if (!why) return null;
       nudges += 1;
       t.failures.push(`d${rounds}:${why}`);
+      if (why === 'filler') return fillerNote(said);
       return why === 'preamble' ? mayor.PREAMBLE_NOTE : DRAW_NOTE;
     };
-    while (rounds < maxRounds && !replyText) {
+    while (rounds < MAX_ROUNDS && !replyText) {
       rounds += 1;
-      const last = rounds === maxRounds;
+      const last = rounds === MAX_ROUNDS;
+      // #6144: reading has a budget. From the round after READ_UNTIL it is
+      // offered ACT_TOOLS alone, and told so once.
+      const reading = rounds <= READ_UNTIL;
+      if (rounds === READ_UNTIL + 1) messages.push({ role: 'user', content: READING_OVER_NOTE });
       // #6141: handed a screen to draw, a turn that read the code until its
       // rounds ran out ended on "placeholder". #6142: a first drawing with
       // nothing shown by round DRAW_BY_ROUND draws in it (write_screen),
@@ -917,7 +968,7 @@ async function answer(pool, config, {
       const drawNow = firstDrawing && !last && rounds === DRAW_BY_ROUND && !shownNow();
       if (drawNow) t.failures.push(`d${rounds}:draw_forced`);
       const res = await mayor.askModel(t, {
-        messages, tools: TOOLS, where: `d${rounds}`, maxOutputTokens: DESIGN_OUTPUT_TOKENS,
+        messages, tools: reading ? TOOLS : ACT_TOOLS, where: `d${rounds}`, maxOutputTokens: DESIGN_OUTPUT_TOKENS,
         toolChoice: last ? { type: 'function', function: { name: 'reply' } }
           : drawNow ? { type: 'function', function: { name: 'write_screen' } } : 'auto',
       });
@@ -938,8 +989,10 @@ async function answer(pool, config, {
         const name = call.function.name;
         tools.push(name.slice(0, 40));
         const args = mayor.parseArgs(call.function.arguments);
+        // A read that arrives once reading is over is refused (#6144).
+        const lateRead = !reading && READ_TOOLS.has(name);
         // 1 Nov 2026: the working card's words, as the call starts.
-        sayDoing(deps, mayor, name, args, project);
+        if (!lateRead) sayDoing(deps, mayor, name, args, project);
         let result;
         if (name === 'write_screen') {
           const screen = screenArgs(args);
@@ -969,6 +1022,8 @@ async function answer(pool, config, {
               result = { ok: true, chars: collapseSheets(html).length };
             }
           }
+        } else if (lateRead) {
+          result = { ok: false, error: READING_OVER_ERROR };
         } else if (name === 'list_source' || name === 'read_source') {
           const named = typeof args.project === 'string' && args.project.trim() ? args.project : project?.slug;
           if (!named) result = { ok: false, error: 'This design is for a new project, which has no code yet. Name a project they can build on to read its code.' };
@@ -1053,9 +1108,17 @@ async function answer(pool, config, {
   // "placeholder" a reply forced in the last round came back with). The turn
   // says it could not draw (NOT_DRAWN_TEXT), recorded as `end:<why>`. A turn
   // that failed with nothing to say says that instead (BROKEN_TEXT).
+  // #6144: on every design turn, an edit too, filler is no answer, and nor is
+  // a reply the last round forced (`reply` is its only tool) unless it asks
+  // a real question back: `end:filler`, `end:forced`.
   const shown = changed || (!error && (!!offered || !!card));
-  const unkept = shown || (error && !replyText) ? null : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayor });
+  const forced = rounds === MAX_ROUNDS && !!replyText;
+  const unkept = shown || (error && !replyText) ? null
+    : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayor }) || (forced && !realQuestion(replyText) ? 'forced' : null);
   if (unkept) t.failures.push(`end:${unkept}`);
+  // The words sent beside a version or an offer: never filler (#6144). With
+  // nothing shown, filler is unkept above.
+  const said = isFiller(replyText) ? '' : replyText;
   await mayor.recordTurn(pool, {
     userId: user.id, conversationId, messageId: message.id, model: t.model, rounds, tools,
     inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd,
@@ -1072,7 +1135,7 @@ async function answer(pool, config, {
   }
   if (offered && !changed && !error) {
     return mayor.sendDesignOffer(pool, {
-      bot, user, conversationId, message, design, offer: offered, text: withoutEmDashes(clip(replyText, MAX_REPLY_CHARS)), key, deps,
+      bot, user, conversationId, message, design, offer: offered, text: withoutEmDashes(clip(said, MAX_REPLY_CHARS)), key, deps,
     });
   }
   // P2, P8: the card under the reply, once the turn went through.
@@ -1093,7 +1156,7 @@ async function answer(pool, config, {
   if (!made) return say(FULL_TEXT);
   const words = [
     threads.versionLine(made.version, notes.join('; ') || null),
-    clip(replyText, MAX_REPLY_CHARS),
+    clip(said, MAX_REPLY_CHARS),
   ].filter(Boolean).join('\n\n');
   const sent = await say(words, {
     metadata: {
@@ -1155,8 +1218,11 @@ module.exports = {
   MAX_DESIGN_CHARS,
   DESIGN_OUTPUT_TOKENS,
   MAX_ROUNDS,
-  FIRST_DRAW_ROUNDS,
   DRAW_BY_ROUND,
+  READ_UNTIL,
+  ACT_TOOLS,
+  READING_OVER_NOTE,
+  READING_OVER_ERROR,
   TOOLS,
   KIT_SHEET,
   PLATFORM_SHEETS,
@@ -1177,6 +1243,9 @@ module.exports = {
   fillSheets,
   screenArgs,
   notDrawnYet,
+  isFiller,
+  fillerNote,
+  withoutFiller,
   NOT_DRAWN_TEXT,
   DRAW_NOTE,
   picturesOf,

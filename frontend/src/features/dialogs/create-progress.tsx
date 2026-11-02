@@ -312,7 +312,7 @@ export function CreateProgress({
       >
         {outcome === 'failed' || outcome === 'needs-secrets' ? (
           <WarningTriangleIcon
-            className="inline-block h-4 w-4 mr-1.5 -mt-0.5"
+            className="inline-block h-4 w-4 me-1.5 -mt-0.5"
             aria-hidden="true"
           />
         ) : null}

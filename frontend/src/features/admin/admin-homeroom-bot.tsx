@@ -1717,7 +1717,7 @@ function HomeroomBotSection() {
               onClick={() => showTab(key)}
             >
               {TAB_LABEL[key]}
-              {key === 'settings' && dirty.length ? <span className="ml-1">(not saved)</span> : null}
+              {key === 'settings' && dirty.length ? <span className="ms-1">(not saved)</span> : null}
             </button>
           ))}
         </div>
@@ -1930,17 +1930,17 @@ function HomeroomBotSection() {
                       <td className={AdminUI.td}>
                         <button
                           type="button"
-                          className="text-left"
+                          className="text-start"
                           aria-expanded={isOpen}
                           onClick={() => setOpen((o) => ({ ...o, [run.id]: !isOpen }))}
                         >
                           <span className={run.budget_stop ? AdminUI.badge.warn : VERDICT_BADGE[run.verdict]}>
                             {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
                           </span>
-                          {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
-                          {run.reused_run_id ? <span className={`${AdminUI.badge.outline} ml-1`} data-homeroom-bot-reused={run.reused_run_id}>reused</span> : null}
-                          {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ml-1`}>follow-up</span> : null}
-                          <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
+                          {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ms-1`}>held</span> : null}
+                          {run.reused_run_id ? <span className={`${AdminUI.badge.outline} ms-1`} data-homeroom-bot-reused={run.reused_run_id}>reused</span> : null}
+                          {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ms-1`}>follow-up</span> : null}
+                          <span className={`${AdminUI.muted} ms-2`}>{isOpen ? 'hide' : 'show'}</span>
                         </button>
                       </td>
                       <td className={`${AdminUI.td} whitespace-nowrap`}>{money(run.cost_usd)}</td>

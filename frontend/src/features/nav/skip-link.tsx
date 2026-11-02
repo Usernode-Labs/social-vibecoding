@@ -26,7 +26,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 
-const CLS = 'sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-2 focus:z-[100] '
+const CLS = 'sr-only focus:not-sr-only focus:fixed focus:start-3 focus:top-2 focus:z-[100] '
   + 'focus:rounded-full focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:shadow-lg '
   + 'focus:bg-white focus:text-violet-700 focus:ring-2 focus:ring-violet-500 '
   + 'dark:focus:bg-zinc-900 dark:focus:text-violet-300';

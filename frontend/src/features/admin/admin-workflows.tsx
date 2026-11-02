@@ -190,7 +190,7 @@ function Instances({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) 
                   <td className={AdminUI.td}><InstanceLink r={i} onOpen={onOpen} /></td>
                   <td className={AdminUI.td}>
                     <span className={AdminUI.badge.default}>{i.state}</span>
-                    {i.flag ? <span className={`${FLAG_BADGE.get(i.flag) || AdminUI.badge.default} ml-1`}>{i.flag}</span> : null}
+                    {i.flag ? <span className={`${FLAG_BADGE.get(i.flag) || AdminUI.badge.default} ms-1`}>{i.flag}</span> : null}
                   </td>
                   <td className={`${AdminUI.td} ${AdminUI.muted}`}>{when(i.updatedAt)}</td>
                 </tr>
@@ -225,7 +225,7 @@ function Timeline({ events, onOpen }: { events: WfEvent[]; onOpen: (r: Ref) => v
             <span className={RESULT_BADGE.get(e.result || '') || AdminUI.badge.warn}>{e.result || e.status}</span>
             {e.reason ? <code className="text-xs">{e.reason}</code> : null}
             {e.stateBefore ? <span className={AdminUI.muted}>{e.stateBefore === e.stateAfter ? e.stateAfter : `${e.stateBefore} → ${e.stateAfter}`}</span> : null}
-            <span className={`${AdminUI.muted} ml-auto`}>{`#${e.id} · ${when(e.processedAt || e.createdAt)}`}</span>
+            <span className={`${AdminUI.muted} ms-auto`}>{`#${e.id} · ${when(e.processedAt || e.createdAt)}`}</span>
           </div>
           <div className={`${AdminUI.muted} text-xs mt-1`}>
             {`${e.source?.kind || '?'}${e.source?.name ? ` (${e.source.name})` : ''}${e.actor ? ` · ${e.actor}` : ''} · ${e.requestKey}`}
@@ -380,7 +380,7 @@ function InstanceView({ at, actions, onOpen, onBack }: {
                   <span className={AdminUI.muted}>{`${w.attemptCount} attempt${w.attemptCount === 1 ? '' : 's'}`}</span>
                   {w.lastError?.message ? <span className="text-xs text-red-700 dark:text-red-400">{w.lastError.message}</span> : null}
                   {retryable ? (
-                    <button type="button" disabled={busy} className={`${AdminUI.btn.outlineSm} ml-auto`}
+                    <button type="button" disabled={busy} className={`${AdminUI.btn.outlineSm} ms-auto`}
                       onClick={() => act('Retry', ...event('RetryFollowup', { workKey: w.workKey }))}>Retry</button>
                   ) : null}
                 </li>

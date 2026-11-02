@@ -76,10 +76,12 @@ import {
   clearStoredWidth,
   probeLayout,
   readStoredWidth,
+  inlineStartOf,
   shownWidth,
   writeStoredWidth,
 } from './resize';
 import { sidePanelRefs, sidePanelStore } from './store.js';
+import { dirSign } from '../../lib/i18n/direction';
 
 /** The app header's round control, as its #back-btn draws it — less its
  *  display, which the two ways of drawing it below each supply. */
@@ -326,7 +328,7 @@ export function SidePanelDivider({
     // Its width as chosen, which on the Duo held sideways leaves out the
     // column of system chrome it runs under (./resize.ts).
     const box = panel ? panel.getBoundingClientRect() : null;
-    const now = box && box.width > 0 ? shownWidth(box.left, probe) : 0;
+    const now = box && box.width > 0 ? shownWidth(inlineStartOf(box), probe) : 0;
     setRange(now > 0 ? { now, ...b } : null);
   }, [panelRef]);
 
@@ -361,7 +363,7 @@ export function SidePanelDivider({
     drag.current = {
       id: e.pointerId,
       startX: e.clientX,
-      startW: shownWidth(panel.getBoundingClientRect().left, probeLayout()),
+      startW: shownWidth(inlineStartOf(panel.getBoundingClientRect()), probeLayout()),
       width: null,
     };
     // Frames swallow pointer events that cross them; while a drag is on, the
@@ -372,8 +374,9 @@ export function SidePanelDivider({
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
-    // The panel is pinned to the right edge, so moving left widens it.
-    d.width = set(d.startW + (d.startX - e.clientX), false);
+    // The panel is pinned to the inline-end edge, so moving toward inline-start
+    // widens it: left in English, right in Arabic.
+    d.width = set(d.startW + (d.startX - e.clientX) * dirSign(), false);
   };
 
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -394,11 +397,11 @@ export function SidePanelDivider({
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const panel = panelRef.current;
     if (!panel) return;
-    const now = shownWidth(panel.getBoundingClientRect().left, probeLayout());
+    const now = shownWidth(inlineStartOf(panel.getBoundingClientRect()), probeLayout());
     const step = e.shiftKey ? KEY_STEP * 4 : KEY_STEP;
     let next: number | null = null;
-    if (e.key === 'ArrowLeft') next = now + step;
-    else if (e.key === 'ArrowRight') next = now - step;
+    if (e.key === 'ArrowLeft') next = now + step * dirSign();
+    else if (e.key === 'ArrowRight') next = now - step * dirSign();
     else if (e.key === 'Home') next = 0;
     else if (e.key === 'End') next = Number.POSITIVE_INFINITY;
     if (next == null) return;

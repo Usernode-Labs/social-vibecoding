@@ -55,7 +55,7 @@ export function NativeAppVersionRow(): ReactNode {
           exactly that reason. React escapes text children. */}
       <span
         id="native-app-version-slot"
-        className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end"
+        className="drawer-ver drawer-ver-value ms-auto min-w-0 justify-end"
       >{value}</span>
     </div>
   );

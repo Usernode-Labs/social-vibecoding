@@ -277,9 +277,9 @@ test('the stylesheet draws every part of the block from the one hairline', () =>
   for (const part of ['first', 'middle', 'last', 'only']) {
     assert.match(css, new RegExp(`\\.messages-bot-block-${part}`), `the ${part} part is drawn`);
   }
-  assert.match(css, /\.messages-bot-block-body \{[^}]*border-left: 1px solid var\(--app-sheet-line\);[^}]*border-right: 1px solid var\(--app-sheet-line\);/);
-  assert.match(css, /\.messages-bot-block-first \.messages-bot-block-body,[\s\S]{0,200}?border-top: 1px solid var\(--app-sheet-line\);[\s\S]{0,200}?border-radius: 20px 20px 0 0;/);
-  assert.match(css, /\.messages-bot-block-last \.messages-bot-block-body,[\s\S]{0,200}?border-bottom: 1px solid var\(--app-sheet-line\);[\s\S]{0,200}?border-radius: 0 0 20px 20px;/);
+  assert.match(css, /\.messages-bot-block-body \{[^}]*border-inline-start: 1px solid var\(--app-sheet-line\);[^}]*border-inline-end: 1px solid var\(--app-sheet-line\);/);
+  assert.match(css, /\.messages-bot-block-first \.messages-bot-block-body,[\s\S]{0,200}?border-top: 1px solid var\(--app-sheet-line\);[\s\S]{0,200}?border-start-start-radius: 20px; border-start-end-radius: 20px; border-end-end-radius: 0; border-end-start-radius: 0;/);
+  assert.match(css, /\.messages-bot-block-last \.messages-bot-block-body,[\s\S]{0,200}?border-bottom: 1px solid var\(--app-sheet-line\);[\s\S]{0,200}?border-end-end-radius: 20px; border-end-start-radius: 20px;/);
   assert.match(css, /\.messages-bot-block-first, \.messages-bot-block-middle \{ padding-bottom: 0; \}/);
   assert.match(css, /\.messages-bot-block-middle, \.messages-bot-block-last \{ padding-top: 0; \}/);
 });

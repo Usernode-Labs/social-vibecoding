@@ -318,7 +318,7 @@ test('the frame: sandbox="", lazy, named, out of the tab order, takes no pointer
   const html = renderToHtml(createElement(DrawnLook, { src: DRAWN_URL, label: 'The first look at Club Votes', width: 50 }));
   assert.equal(html, '<div role="img" aria-label="The first look at Club Votes" data-first-look-drawn="" class="pointer-events-none absolute inset-0 overflow-hidden ">'
     + `<iframe src="${DRAWN_URL}" title="The first look at Club Votes" sandbox="" loading="lazy" referrerPolicy="no-referrer" scrolling="no" tabindex="-1" aria-hidden="true"`
-    + ' class="absolute left-0 top-0 h-[844px] w-[390px] origin-top-left border-0 [color-scheme:light] " style="transform:scale(0.1282051282051282)"></iframe></div>');
+    + ' class="absolute start-0 top-0 h-[844px] w-[390px] origin-top-left border-0 [color-scheme:light] " style="transform:scale(0.1282051282051282)"></iframe></div>');
   // Named by the box it is in.
   const hidden = renderToHtml(createElement(DrawnLook, { src: DRAWN_URL, label: 'x', width: 125, hidden: true }));
   assert.match(hidden, /^<div aria-hidden="true" data-first-look-drawn=""/);

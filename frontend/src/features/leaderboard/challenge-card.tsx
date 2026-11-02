@@ -102,7 +102,7 @@ const RAIL_TONE: Record<ChallengeState, string> = {
   progress: 'bg-zinc-200/70 text-zinc-900 dark:bg-zinc-700/60 dark:text-zinc-100',
   done: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
 };
-const RAIL_FILL = 'absolute inset-y-0 left-0 bg-violet-500/25';
+const RAIL_FILL = 'absolute inset-y-0 start-0 bg-violet-500/25';
 // The least a drawn bar ever is: 6px against the rail's left edge, inside its
 // 10px padding, so it sits clear of the state ring. It is the whole bar at 0
 // of N, and the floor under a small real fraction — 1 of 50 is 2%, about 3px

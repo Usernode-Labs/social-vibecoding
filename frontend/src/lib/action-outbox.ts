@@ -26,7 +26,10 @@
  *
  * Each send that is answered fires ACTION_OUTBOX_EVENT on `window` with
  * `{ outcome: 'sent' | 'refused', record, status, data }`: AppView for votes
- * (public/js/app-view.js _actionSent), the messages store for reactions. A
+ * (public/js/app-view.js _actionSent), the messages store for reactions.
+ * When a page starts with records still waiting (the app was closed before
+ * the connection came back), each is announced once as `queued`, so a Vote
+ * button can say its vote is on its way rather than ask for it again. A
  * refusal (a 4xx other than 401 and 429: the change moved on to a new
  * revision, the person left the project) drops the record; its owner says
  * so on screen. No answer, a 401 (a session being renewed), a 429 or a 5xx
@@ -65,7 +68,7 @@ export interface ActionRecord {
 }
 
 export interface ActionOutcome {
-  outcome: 'sent' | 'refused';
+  outcome: 'sent' | 'refused' | 'queued';
   record: ActionRecord;
   status: number;
   data: unknown;
@@ -225,6 +228,11 @@ export interface ActionOutbox {
   drop(key: string): void;
   /** Send what is kept, if the shell is online with a confirmed session. */
   flush(): Promise<void>;
+  /**
+   * Announce the signed-in viewer's waiting records as `queued`, once per
+   * page: what a page that starts with records still kept is told.
+   */
+  announceKept(): Promise<void>;
   /** Every record, whoever made it (sign-out). */
   clear(): void;
 }
@@ -239,6 +247,7 @@ export function createActionOutbox(win: Win, idb: IDBFactory | null | undefined,
   const store = createStore(idb);
   let running: Promise<void> | null = null;
   let again = false;
+  let announcedFor: number | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
 
   function ready(): number | null {
@@ -310,6 +319,14 @@ export function createActionOutbox(win: Win, idb: IDBFactory | null | undefined,
     },
     drop(key) { store.drop(key); },
     flush,
+    async announceKept() {
+      const viewer = viewerOf(win);
+      if (!viewer || announcedFor === viewer) return;
+      announcedFor = viewer;
+      for (const record of await store.load(viewer)) {
+        announce({ outcome: 'queued', record, status: 0, data: null });
+      }
+    },
     clear() {
       if (retry) { win.clearTimeout(retry); retry = null; }
       store.clear();
@@ -343,7 +360,10 @@ export function installActionOutbox(): void {
   window.addEventListener('usernode:offline-change', (event) => {
     if ((event as CustomEvent<{ offline?: boolean }>).detail?.offline === false) flush();
   });
-  if (typeof document !== 'undefined') document.addEventListener('sv:session', flush);
+  // Who is signed in is known: say what is still waiting, then try to send it.
+  if (typeof document !== 'undefined') {
+    document.addEventListener('sv:session', () => { void outbox.announceKept().then(flush, flush); });
+  }
   const bridge = ((window as unknown as Win).UsernodeReact ||= {});
   bridge.actionOutbox = outbox;
 }

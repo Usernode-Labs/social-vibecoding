@@ -183,6 +183,8 @@ export function botLane(deps: Deps = { staging: false }) {
     version: 1,
     events: EVENTS,
     create: ['Look', 'Released', 'RefreshAsked', 'Tick'],
+    // What web appends: a new request or a chat line asking the lane to look again.
+    web: ['RefreshAsked'],
     decode: (r) => ({ name: r.state as Name, data: r.data as Data }),
     facts: (tx) => readFacts(tx, deps),
     authorize: {

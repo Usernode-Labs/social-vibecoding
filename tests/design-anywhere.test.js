@@ -9,7 +9,8 @@
 //   1. The design bot draws: write_screen (self-contained HTML for one
 //      screen; the server puts the stylesheets in, an app's own from its
 //      entry page on main, the model reading them as one empty block), the
-//      project's code read with list_source/read_source, six rounds; its
+//      project's code read with list_source/read_source, twelve rounds
+//      (#6144); its
 //      prompt for a thread with no screen yet; the person's pictures as
 //      pictures or in words.
 //   2. Main Chat's turn has draw_screen in offer_design's place, and no
@@ -33,9 +34,9 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const designBot = require('../src/services/design-bot');
 
-test('the design bot draws, reads the project\'s code and edits, in up to six rounds', () => {
+test('the design bot draws, reads the project\'s code and edits, in up to twelve rounds', () => {
   assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_screen', 'edit_design', 'list_source', 'read_source', 'reply']);
-  assert.equal(designBot.MAX_ROUNDS, 6);
+  assert.equal(designBot.MAX_ROUNDS, 12);
   for (const t of designBot.TOOLS) {
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
     assert.doesNotMatch(t.function.description, /—/);

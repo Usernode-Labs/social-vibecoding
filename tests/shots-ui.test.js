@@ -857,10 +857,10 @@ test('the theme switch is CSS: the pick swaps the images and keeps the arrows be
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   const rule = (selector) => new RegExp(`\\n${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`).exec(css)?.[1] || '';
   const flip = rule('.shots-theme-flip');
-  for (const part of ['width: 30px', 'height: 30px', 'border-radius: 999px', 'margin-left: auto']) {
+  for (const part of ['width: 30px', 'height: 30px', 'border-radius: 999px', 'margin-inline-start: auto']) {
     assert.ok(flip.includes(part), `the switch is a small round disc at the bar's end: ${part}`);
   }
-  assert.match(css, /\.shots-theme-flip ~ \.shots-screen-nav \{ margin-left: 0; \}/,
+  assert.match(css, /\.shots-theme-flip ~ \.shots-screen-nav \{ margin-inline-start: 0; \}/,
     'the stepping arrows sit beside the switch, not the bar\'s far end');
   assert.match(css, /\.shots-viewer:has\(\.shots-theme-dark:checked\) \.shots-theme-to-dark,\n\.shots-viewer:has\(\.shots-theme-light:checked\) \.shots-theme-to-light \{ display: none; \}/,
     'the label naming the mode already showing is hidden');
@@ -900,8 +900,8 @@ test('the expand CSS: closed it is the same block, open a window-sized card over
   assert.match(css, /\.shots-expand-in \{ display: none; \}/);
   assert.match(css, /\.shots-viewer:popover-open \.shots-expand-out \{ display: none; \}/);
   assert.match(css, /\.shots-viewer:popover-open \.shots-expand-in \{ display: inline-flex; \}/);
-  assert.match(css, /\.shots-theme-flip ~ \.shots-expand \{ margin-left: 0; \}/);
-  assert.match(css, /\.shots-expand ~ \.shots-screen-nav \{ margin-left: 0; \}/);
+  assert.match(css, /\.shots-theme-flip ~ \.shots-expand \{ margin-inline-start: 0; \}/);
+  assert.match(css, /\.shots-expand ~ \.shots-screen-nav \{ margin-inline-start: 0; \}/);
   assert.match(css, /@supports not selector\(:popover-open\) \{ \.shots-expand \{ display: none; \} \}/,
     'a browser without the popover API gets no button that does nothing');
 });
@@ -914,7 +914,7 @@ test('the crop is CSS: it applies while both sides show, stacked or beside each 
   assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-flip-side\[data-shots-crop\] > \.shots-crop \{ inset: auto; left: var\(--shots-crop-x, 0\); top: var\(--shots-crop-y, 0\); width: var\(--shots-crop-w, 100%\); height: auto; aspect-ratio: var\(--shots-shape, 16 \/ 10\); \}/);
   assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(0, 1fr\) minmax\(0, 1fr\); column-gap: 0; row-gap: 12px; \}/);
   assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] > \.shots-flip-after \{ grid-area: 2 \/ 1; \}/);
-  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \.shots-flip-chip-after \{ left: 10px; top: calc\(50% \+ 16px\); \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \.shots-flip-chip-after \{ inset-inline-start: 10px; top: calc\(50% \+ 16px\); \}/);
   for (const [viewport, width] of [['phone', 420], ['desktop', 720]]) {
     assert.match(css, new RegExp(`@container \\(min-width: ${width}px\\) \\{[^@]*?\\.shots-viewer:has\\(\\.shots-side-auto:checked\\) \\.shots-view\\[data-shots-viewport="${viewport}"\\] \\.shots-stage > \\.shots-flip-side\\[data-shots-crop\\]`),
       `${viewport}: the automatic side by side crops too`);

@@ -275,7 +275,7 @@ export function RegisterScreen() {
           </form>
           <p className="mt-3">
             <a href="#login" className={PILL_LINK}>
-              <RichMessage id="auth:register.haveAccount" components={[<span className="ml-1 text-violet-700 dark:text-violet-400" />]} />
+              <RichMessage id="auth:register.haveAccount" components={[<span className="ms-1 text-violet-700 dark:text-violet-400" />]} />
             </a>
           </p>
         </div>

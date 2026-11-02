@@ -81,6 +81,9 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     assert.equal((await pool.query(`SELECT 1 FROM platform_processes WHERE id = 'predecessor'`)).rows.length, 0);
     const { rows: [me] } = await pool.query('SELECT * FROM platform_processes WHERE id = $1', [processes.ID]);
     assert.equal(me.state, 'serving');
+    // This build serves with web's writes on the workflow kernel's tables
+    // taken away; the release that takes them waits for every web row to say so.
+    assert.equal(me.web_restriction_ready, true);
 
     const late = processes.hold('handoff', 12);
     await processes.beat();

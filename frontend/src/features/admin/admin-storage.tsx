@@ -221,7 +221,7 @@ function AppRow({ row, canWrite, onChanged, setStatus }: {
       <td className={`${AdminUI.td} align-top whitespace-nowrap tabular-nums`}>
         {formatBytes(row.capBytes)}
         {row.capOverrideBytes != null
-          ? <span className={`${AdminUI.badge.outline} ml-2`} title="This app has its own cap">custom</span>
+          ? <span className={`${AdminUI.badge.outline} ms-2`} title="This app has its own cap">custom</span>
           : null}
       </td>
       <td className={`${AdminUI.td} align-top min-w-[9rem]`}>
@@ -231,7 +231,7 @@ function AppRow({ row, canWrite, onChanged, setStatus }: {
             aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
             <div className={`h-2 rounded-full ${BAR_FILL[row.state]}`} style={{ width: `${pct}%` }} />
           </div>
-          <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+          <span className="w-10 text-end text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
             {used == null ? '' : `${pct}%`}
           </span>
         </div>

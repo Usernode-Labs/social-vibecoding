@@ -27316,6 +27316,7 @@ const AppView = {
     const epoch = known === undefined ? expectedEpoch : known;
     const body = { vote, expectedEpoch: epoch, ...(reason ? { reason } : {}) };
     let answered = false;
+    let queued = false;
     try {
       const res = await AppView._sendVote(sessionId, body);
       answered = true;
@@ -27394,6 +27395,7 @@ const AppView = {
       // it away. Sending it twice is safe: the server answers a repeat
       // `unchanged`.
       if (!answered && await AppView._queueVote(sessionId, body)) {
+        queued = true;
         window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.queued'));
         return true;
       }
@@ -27406,7 +27408,12 @@ const AppView = {
     }
     finally {
       AppView._voteInFlight.delete(key);
-      AppView._publishVoteSending(`castVote:${sessionId}`, null);
+      // A kept vote stays "Sending…" on every Vote button for this change
+      // until it is answered (_actionSent): with the mark gone, a card that
+      // draws the vote only from the server's rows (the change page's Votes
+      // card) offered Vote again for a vote that was waiting to go (offline
+      // rerun, 2 Nov 2026).
+      if (!queued) AppView._publishVoteSending(`castVote:${sessionId}`, null);
     }
   },
 
@@ -27449,13 +27456,20 @@ const AppView = {
   // is saved everywhere a saved vote is heard of; refused (the change moved
   // on to a new revision meanwhile, the voter left the project), the card
   // asks again and the voter is told, in the server's words when it has
-  // them. Either way the rows are read again.
+  // them. Either way its "Sending…" mark goes and the rows are read again.
+  // `queued` is a vote still waiting, announced when a page starts (an app
+  // relaunched before the connection came back): its mark goes up again.
   _actionSent(detail) {
     const record = detail && detail.record;
     if (!record || record.kind !== 'vote' || !record.body) return;
     const sessionId = Number(String(record.key).slice('vote:'.length));
     if (!Number.isSafeInteger(sessionId) || sessionId <= 0) return;
     const vote = record.body.vote;
+    if (detail.outcome === 'queued') {
+      if (vote === 'yes' || vote === 'no') AppView._publishVoteSending(`castVote:${sessionId}`, vote);
+      return;
+    }
+    AppView._publishVoteSending(`castVote:${sessionId}`, null);
     const held = AppView._pendingVotes.get(sessionId);
     if (held && held.vote === vote) AppView._pendingVotes.delete(sessionId);
     const data = detail.data || {};
@@ -29079,7 +29093,7 @@ const AppView = {
   // What the open staging preview is showing (#4918): { sessionId, slug,
   // name, self_hosted } — the change and the app its frames show — set by
   // ensureStaging and cleared on close. Comment mode reads it to file a
-  // request on the previewed app and name the change in its where line.
+  // request on the previewed app and name the change in its description.
   _stagingPreview: null,
 
   // #127: show/hide + wire the overlay's "Test this change" button and the

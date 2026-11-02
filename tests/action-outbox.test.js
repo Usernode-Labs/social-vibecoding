@@ -189,6 +189,24 @@ test('nothing is sent offline, before the session is confirmed, or for another a
   assert.equal(await bare.queue(vote(33, 'yes')), false, 'no storage: the same');
 });
 
+test('a page that starts with records waiting announces them once, as queued, for that viewer only', async () => {
+  // Offline rerun, 2 Nov 2026: a kept vote's button must say it is on its
+  // way after the app is closed and opened again before the connection is back.
+  const h = harness();
+  await h.outbox.queue(vote(51, 'yes'));
+  await h.outbox.queue({ key: 'reaction:9:👍', kind: 'reaction', url: '/api/conversations/1/messages/9/reactions', body: { emoji: '👍', on: true } });
+  await h.outbox.announceKept();
+  assert.deepEqual(h.outcomes.map((item) => [item.outcome, item.record.key]), [['queued', 'vote:51'], ['queued', 'reaction:9:👍']]);
+  await h.outbox.announceKept();
+  assert.equal(h.outcomes.length, 2, 'once per page');
+  assert.deepEqual(h.sent, [], 'announcing sends nothing');
+  const other = harness({ viewer: 8 });
+  await other.outbox.queue(vote(52, 'no'));
+  other.win.App.user = { id: 9 };
+  await other.outbox.announceKept();
+  assert.deepEqual(other.outcomes, [], 'another account hears nothing of this one\'s');
+});
+
 test('a dropped or cleared record is never sent', async () => {
   const h = harness();
   await h.outbox.queue(vote(41, 'yes'));
@@ -208,7 +226,8 @@ test('the shell sends on the connection coming back, and clears on sign-out', ()
   assert.match(src, /window\.addEventListener\('online', flush\);/);
   assert.match(src, /window\.addEventListener\('usernode:network-changed', flush\);/);
   assert.match(src, /window\.addEventListener\('usernode:offline-change', \(event\) => \{\s+if \(\(event as CustomEvent<\{ offline\?: boolean \}>\)\.detail\?\.offline === false\) flush\(\);/);
-  assert.match(src, /document\.addEventListener\('sv:session', flush\);/);
+  assert.match(src, /document\.addEventListener\('sv:session', \(\) => \{ void outbox\.announceKept\(\)\.then\(flush, flush\); \}\);/,
+    'who is signed in is known: what is waiting is said first, then sent');
   assert.match(src, /bridge\.actionOutbox = outbox;/);
   assert.match(read('frontend/src/main.tsx'), /bootStep\('installActionOutbox', \(\) => installActionOutbox\(\)\);/);
   assert.match(read('public/js/app.js'), /window\.UsernodeReact\?\.actionOutbox\?\.clear\?\.\(\);/, 'App._dropCachedSession');
@@ -218,9 +237,13 @@ test('a vote with no answer is kept and stays on the card; one answered another 
   const src = read('public/js/app-view.js');
   const cast = src.slice(src.indexOf('  async castVote('), src.indexOf('  VOTE_SEND_TIMEOUT_MS:'));
   assert.match(cast, /const res = await AppView\._sendVote\(sessionId, body\);\s+answered = true;/);
-  assert.match(cast, /if \(!answered && await AppView\._queueVote\(sessionId, body\)\) \{\s+window\.PlatformUI\?\.toast\?\.\(PlatformI18n\.t\('changes:vote\.toast\.queued'\)\);\s+return true;\s+\}\s+rollback\(\);/,
+  assert.match(cast, /if \(!answered && await AppView\._queueVote\(sessionId, body\)\) \{\s+queued = true;\s+window\.PlatformUI\?\.toast\?\.\(PlatformI18n\.t\('changes:vote\.toast\.queued'\)\);\s+return true;\s+\}\s+rollback\(\);/,
     'no rollback, no settle: the pending vote holds the card');
   assert.match(cast, /window\.UsernodeReact\?\.actionOutbox\?\.drop\?\.\(`vote:\$\{sessionId\}`\);/, 'a vote that landed drops the older kept one');
+  // Offline rerun, 2 Nov 2026: a kept vote keeps its "Sending…" mark, or the
+  // change page's Votes card offered Vote again for a vote waiting to go.
+  assert.match(cast, /queued = true;\s+window\.PlatformUI\?\.toast\?\.\(PlatformI18n\.t\('changes:vote\.toast\.queued'\)\);/);
+  assert.match(cast, /if \(!queued\) AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, null\);/);
   const undo = src.slice(src.indexOf('  async retractVote('), src.indexOf('  async retractVote(') + 6000);
   assert.match(undo, /window\.UsernodeReact\?\.actionOutbox\?\.drop\?\.\(`vote:\$\{sessionId\}`\);/, 'so does an undo');
   // The send has a limit: on a network that passes nothing it waited for minutes.
@@ -230,6 +253,8 @@ test('a vote with no answer is kept and stays on the card; one answered another 
   assert.match(src, /window\.addEventListener\('usernode:action-outbox', \(event\) => AppView\._actionSent\(event\.detail\)\);/);
   const late = src.slice(src.indexOf('  _actionSent(detail) {'), src.indexOf('  _actionSent(detail) {') + 2400);
   assert.match(late, /AppView\._publishVoteSaved\(sessionId, vote, record\.body\.expectedEpoch\);/);
+  assert.match(late, /if \(detail\.outcome === 'queued'\) \{\s+if \(vote === 'yes' \|\| vote === 'no'\) AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, vote\);\s+return;\s+\}\s+AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, null\);/,
+    'a waiting vote shows as on its way; an answered one, sent or refused, clears it');
   assert.match(late, /PlatformI18n\.t\('changes:vote\.toast\.queuedSent'\)/);
   assert.match(late, /data\.error \|\| PlatformI18n\.t\('changes:vote\.toast\.queuedRefused'\)/);
   for (const id of ['changes:vote.toast.queued', 'changes:vote.toast.queuedSent', 'changes:vote.toast.queuedRefused']) {

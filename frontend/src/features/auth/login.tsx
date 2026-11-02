@@ -185,8 +185,8 @@ const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-
 // it (their copy block's `gap`). Where the next thing is the card instead of a
 // sentence — board 2's password step — the form adds the other 10 of that
 // board's `margin-top: 20px`.
-const SCREEN_H1 = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-left mb-2.5 text-zinc-900 dark:text-zinc-100';
-const SCREEN_H1_HIDDEN = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-left mb-2.5 text-zinc-900 dark:text-zinc-100 hidden';
+const SCREEN_H1 = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-start mb-2.5 text-zinc-900 dark:text-zinc-100';
+const SCREEN_H1_HIDDEN = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-start mb-2.5 text-zinc-900 dark:text-zinc-100 hidden';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as

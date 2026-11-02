@@ -83,15 +83,15 @@ import { platformSlug } from '../messages/channel-hub';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import {
   changesPicture, loadLibrary, outOfPicture, textsUnchanged,
-  closeUpView, coverCrop, cropCanvas, CROP_SHADE, describeElement, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
+  closeUpView, coverCrop, cropCanvas, CROP_SHADE, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
   isFullCrop, overlaysGone, pictureScale, pinInCrop, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
-  type Base, type CropHandle, type ElementInfo, type Point, type Rect, type Size,
+  type Base, type CropHandle, type Point, type Rect, type Size,
 } from './picture';
 import { CloseUp } from './close-up';
 import {
-  MAX_COMMENTS, MAX_PICTURES, handOver, numberFromUrl, numberedWords, postComment, whereLines,
-  type CommentPost, type CommentShot, type Spot, type Target,
+  MAX_COMMENTS, MAX_PICTURES, changeLine, handOver, numberFromUrl, numberedWords, postComment,
+  type CommentPost, type CommentShot, type Target,
 } from './post';
 
 export const HOST_ID = 'comment-pin-host';
@@ -329,7 +329,7 @@ interface Comment {
   inApp: boolean;
   /** The change the preview was showing, when the pin went in a preview. */
   preview: number | null;
-  /** The route the page was on, for the where line. */
+  /** The route the page was on when the pin went down. */
   screen: string;
   /** The picture its pin is on, when it has one. */
   picture: number | null;
@@ -486,7 +486,7 @@ function CropFrame({ pic, rect, onRect, frame, page, phone, draft, numbered }: {
           src={pic.url || pic.thumb}
           alt=""
           draggable={false}
-          className="pointer-events-none absolute left-0 top-0 max-w-none select-none"
+          className="pointer-events-none absolute start-0 top-0 max-w-none select-none"
           style={{ width: W, height: H }}
         />
         {/* The part kept; what is outside it goes dark. */}
@@ -1061,14 +1061,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     for (const pic of d.pictures) {
       bases.set(pic.key, pic.base === undefined ? await pic.promise.catch(() => null) : pic.base);
     }
-    const spots: Spot[] = live.map((c) => {
-      const pic = c.picture != null ? d.pictures.find((x) => x.key === c.picture) : null;
-      const base = pic ? bases.get(pic.key) ?? null : null;
-      let at: ElementInfo | null;
-      if (c.inApp) at = pic && pic.askedFor === c.key ? base?.app?.at ?? null : null;
-      else at = c.anchor.el && c.anchor.el.isConnected ? describeElement(c.anchor.el) : null;
-      return { inApp: c.inApp, preview: c.inApp ? c.preview : null, screen: c.inApp ? (base?.app?.path || '') : c.screen, at };
-    });
     const shots: CommentShot[] = [];
     if (d.keepShot) {
       for (const pic of d.pictures) {
@@ -1097,7 +1089,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       images: d.images.map((i) => i.blob),
       title: titleToSend(d),
       bounty: !KUDOS_PARKED && d.kudos && budget.remaining !== 0,
-      where: live.length ? whereLines(spots, app?.slug ?? null) : '',
+      change: changeLine(live.find((c) => c.inApp && c.preview)?.preview ?? null, app?.slug ?? null),
     };
   }, [app, budget.remaining]);
 
@@ -1578,7 +1570,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   // The box's head: where the request goes, then its controls.
   const head = draft && target ? (
-    <div className={phone ? '-mr-1.5 flex items-center gap-0.5' : 'flex min-h-[30px] items-center gap-1.5'}>
+    <div className={phone ? '-me-1.5 flex items-center gap-0.5' : 'flex min-h-[30px] items-center gap-1.5'}>
       {app ? (
         <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')}>
           <span className="text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.to')}</span>
@@ -1667,8 +1659,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       style={{ zIndex: 2147483000, ['--comment-band' as string]: `${inset ? band : safeTop}px` }}
     >
       {/* Measure the status bar's height and the home indicator's (see `safeTop`). */}
-      <div ref={safeRef} aria-hidden="true" className="pointer-events-none invisible absolute left-0 top-0 w-px" style={{ height: 'var(--platform-safe-top, 0px)' }} />
-      <div ref={safeBottomRef} aria-hidden="true" className="pointer-events-none invisible absolute left-0 top-0 w-px" style={{ height: 'var(--platform-safe-bottom, 0px)' }} />
+      <div ref={safeRef} aria-hidden="true" className="pointer-events-none invisible absolute start-0 top-0 w-px" style={{ height: 'var(--platform-safe-top, 0px)' }} />
+      <div ref={safeBottomRef} aria-hidden="true" className="pointer-events-none invisible absolute start-0 top-0 w-px" style={{ height: 'var(--platform-safe-bottom, 0px)' }} />
       {/* The layer: a press anywhere is a comment. Its mousedown is
           prevented, so the box's field keeps the keyboard through it
           (tests/keyboard-dismiss.test.js); a finger taps, and a drag does
@@ -1813,7 +1805,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             aria-label={smallComment.text.trim() ? undefined : t('devchat:commentPin.box.write')}
             disabled={draft.sending}
             onClick={expand}
-            className="flex h-11 min-w-0 flex-1 items-center rounded-xl bg-zinc-100 px-3 text-left text-[15px] dark:bg-zinc-800"
+            className="flex h-11 min-w-0 flex-1 items-center rounded-xl bg-zinc-100 px-3 text-start text-[15px] dark:bg-zinc-800"
           >
             {smallComment.text.trim() ? (
               <span className="truncate text-zinc-900 dark:text-zinc-100">{smallComment.text.trim()}</span>
@@ -1905,7 +1897,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   title={t('devchat:commentPin.comment.change')}
                   disabled={draft.sending}
                   onClick={() => openComment(c.key)}
-                  className="min-w-0 flex-1 truncate rounded-lg px-1.5 py-0.5 text-left text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                  className="min-w-0 flex-1 truncate rounded-lg px-1.5 py-0.5 text-start text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
                 >
                   {c.text.trim() || t('devchat:commentPin.comment.empty')}
                 </button>
@@ -1923,7 +1915,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             )))}
             {nextPinRow}
           </div>
-          <div id="comment-pin-title" className="flex min-h-[32px] items-center gap-2 rounded-[10px] bg-zinc-100 py-1 pl-2.5 pr-1 text-[13px] dark:bg-zinc-800">
+          <div id="comment-pin-title" className="flex min-h-[32px] items-center gap-2 rounded-[10px] bg-zinc-100 py-1 ps-2.5 pe-1 text-[13px] dark:bg-zinc-800">
             <span className="shrink-0 font-semibold text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.title.label')}</span>
             {draft.editingTitle ? (
               <input
@@ -1954,13 +1946,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   title={t('devchat:commentPin.title.change')}
                   disabled={draft.sending}
                   onClick={() => update(draft.key, { editingTitle: true })}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left font-semibold text-zinc-900 hover:bg-zinc-200 dark:text-white dark:hover:bg-zinc-700"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-start font-semibold text-zinc-900 hover:bg-zinc-200 dark:text-white dark:hover:bg-zinc-700"
                 >
                   <span className="truncate">{draft.title}</span>
                   <DraftEditIcon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
                 </button>
                 {draft.titleState === 'auto' ? (
-                  <span className="inline-flex shrink-0 items-center gap-1 pr-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  <span className="inline-flex shrink-0 items-center gap-1 pe-1 text-xs text-zinc-500 dark:text-zinc-400">
                     <SparklesIcon className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
                     {titleLoading ? t('devchat:commentPin.title.updating') : t('devchat:commentPin.title.suggested')}
                   </span>
@@ -1971,7 +1963,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 type="button"
                 disabled={draft.sending}
                 onClick={() => update(draft.key, { editingTitle: true })}
-                className="min-w-0 flex-1 truncate rounded-md px-1 py-1 text-left text-zinc-400 hover:bg-zinc-200 dark:text-zinc-500 dark:hover:bg-zinc-700"
+                className="min-w-0 flex-1 truncate rounded-md px-1 py-1 text-start text-zinc-400 hover:bg-zinc-200 dark:text-zinc-500 dark:hover:bg-zinc-700"
               >
                 {words.length >= TITLE_MIN ? t('devchat:commentPin.title.namedOnPost') : t('devchat:commentPin.title.asYouType')}
               </button>
@@ -2049,7 +2041,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                       title={t('devchat:commentPin.shot.remove')}
                       disabled={draft.sending}
                       onClick={() => update(draft.key, { keepShot: false })}
-                      className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
+                      className="absolute -end-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
                     >
                       <XIcon className="h-3 w-3" />
                     </button>
@@ -2059,7 +2051,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                       title={t('devchat:commentPin.shot.crop')}
                       disabled={draft.sending}
                       onClick={() => setCropping({ picture: pic.key, rect: pic.cut?.rect ?? FULL_CROP })}
-                      className="absolute -bottom-2 -right-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
+                      className="absolute -bottom-2 -end-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
                     >
                       <ArrowsPointingInIcon className="h-3 w-3" />
                     </button>
@@ -2081,7 +2073,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   title={t('devchat:commentPin.image.removeTitle')}
                   disabled={draft.sending}
                   onClick={() => removeImage(draft.key, img.url)}
-                  className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
+                  className="absolute -end-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
                 >
                   <XIcon className="h-3 w-3" />
                 </button>
@@ -2094,7 +2086,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   type="button"
                   disabled={draft.sending || draft.images.length >= MAX_PICTURES}
                   onClick={() => update(draft.key, { keepShot: true })}
-                  className="ml-1 font-semibold text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300"
+                  className="ms-1 font-semibold text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300"
                 >
                   {t('devchat:commentPin.shot.addBack')}
                 </button>
@@ -2124,8 +2116,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             disabled={draft.sending || kudosOut}
             onClick={() => update(draft.key, (d) => ({ kudos: !d.kudos }))}
             className={draft.kudos
-              ? 'flex h-9 w-full items-center gap-2 rounded-[10px] bg-violet-600/10 px-2.5 text-left ring-1 ring-inset ring-violet-600/30'
-              : 'flex h-9 w-full items-center gap-2 rounded-[10px] bg-zinc-100 px-2.5 text-left hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-800 dark:hover:bg-zinc-700'}
+              ? 'flex h-9 w-full items-center gap-2 rounded-[10px] bg-violet-600/10 px-2.5 text-start ring-1 ring-inset ring-violet-600/30'
+              : 'flex h-9 w-full items-center gap-2 rounded-[10px] bg-zinc-100 px-2.5 text-start hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-800 dark:hover:bg-zinc-700'}
           >
             <span aria-hidden="true" className="text-base leading-none">{'\u{1F44F}'}</span>
             <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">{t('devchat:commentPin.kudos.label')}</span>
@@ -2140,8 +2132,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 : 'relative h-5 w-[34px] shrink-0 rounded-full bg-zinc-300 dark:bg-zinc-600'}
             >
               <span className={draft.kudos
-                ? 'absolute left-[17px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow'
-                : 'absolute left-[3px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow'}
+                ? 'absolute start-[17px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow'
+                : 'absolute start-[3px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow'}
               />
             </span>
           </button>}
@@ -2324,7 +2316,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         role="toolbar"
         aria-label={t('devchat:commentPin.bar.label')}
         className={[
-          'absolute flex max-w-[calc(var(--platform-float-w)-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 pl-1.5 pr-1.5 outline-none ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
+          'absolute flex max-w-[calc(var(--platform-float-w)-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 ps-1.5 pe-1.5 outline-none ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
           barFrame
             ? 'rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.18)]'
             : 'shadow-[0_8px_30px_rgba(0,0,0,0.22)]',
@@ -2369,7 +2361,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 its question, which otherwise read "Discard t…". */}
             <span
               aria-hidden="true"
-              className={`comment-shot-label-in min-w-0 truncate pl-1.5 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400${confirm ? ' hidden sm:inline' : ''}`}
+              className={`comment-shot-label-in min-w-0 truncate ps-1.5 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400${confirm ? ' hidden sm:inline' : ''}`}
             >
               {t('devchat:commentPin.view.chip')}
             </span>
@@ -2456,7 +2448,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 aria-checked="false"
                 title={t('devchat:commentPin.bar.formTitle')}
                 onClick={() => { void toForm(); }}
-                className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                className="inline-flex h-7 items-center gap-1.5 rounded-full ps-2 pe-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
               >
                 <DescriptionIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.form')}
@@ -2466,7 +2458,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 role="radio"
                 aria-checked="true"
                 title={t('devchat:commentPin.bar.commentTitle')}
-                className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
+                className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white ps-2 pe-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
               >
                 <ChatIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.comment')}
@@ -2475,7 +2467,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <button
               type="button"
               onClick={requestExit}
-              className="inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900 sm:pr-3"
+              className="inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900 sm:pe-3"
             >
               {t('devchat:commentPin.bar.done')}
               <kbd className="hidden rounded-[5px] px-1 font-mono text-[11px] font-semibold opacity-70 ring-1 ring-inset ring-current sm:inline">{t('devchat:commentPin.bar.doneKey')}</kbd>

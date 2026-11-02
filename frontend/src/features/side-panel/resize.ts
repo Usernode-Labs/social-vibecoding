@@ -65,15 +65,15 @@ export interface WidthBounds {
 /** What `bounds` reads, so it can be driven without a browser. */
 export interface LayoutProbe {
   innerWidth: number;
-  /** Where the app view begins from the window's left edge (the rail's width). */
+  /** Where the app view begins from the window's inline-start edge (the rail's width). */
   appLeft: number;
-  /** The Duo's column on the right, which the panel runs under but does not count. */
+  /** The Duo's column on the panel's side, which the panel runs under but does not count. */
   rightInset?: number;
   /** The narrowest the neighbour may be left: the app's, or the bot's list's. */
   neighbourMin?: number;
 }
 
-/** The right end of the room the panel's width is measured to. */
+/** The far end of the room the panel's width is measured to, on the panel's side. */
 function roomRight(probe: LayoutProbe): number {
   return probe.innerWidth - Math.max(0, probe.rightInset || 0);
 }
@@ -84,9 +84,18 @@ export function bounds(probe: LayoutProbe): WidthBounds {
   return { min: MIN_PANEL_W, max: Math.max(MIN_PANEL_W, room) };
 }
 
-/** The panel's width as chosen: its left edge to the end of the room. */
+/** The panel's width as chosen: its inner edge to the end of the room. */
 export function shownWidth(panelLeft: number, probe: LayoutProbe): number {
   return Math.round(roomRight(probe) - panelLeft);
+}
+
+/**
+ * A box's start edge from the window's inline-start edge. Everything in this
+ * file reads in these figures, so its sums hold in Arabic, where the panel is
+ * pinned to the left and the rail to the right.
+ */
+export function inlineStartOf(box: { left: number; right: number }, win: Window = window): number {
+  return win.document?.documentElement?.dir === 'rtl' ? win.innerWidth - box.right : box.left;
 }
 
 /** `width`, held inside `b` and rounded to a whole pixel. */
@@ -157,12 +166,13 @@ export function applyWidth(width: number | null, root: HTMLElement = document.do
 export function probeLayout(win: Window = window): LayoutProbe {
   let appLeft = 0;
   try {
+    const rtl = win.document.documentElement?.dir === 'rtl';
     const app = win.document.getElementById('app-view');
     const box = app ? app.getBoundingClientRect() : null;
-    if (box && box.width > 0) appLeft = box.left;
+    if (box && box.width > 0) appLeft = inlineStartOf(box, win);
     else {
       const rail = win.document.getElementById('platform-tabs');
-      if (rail && !rail.classList.contains('platform-tabs-peek')) appLeft = Math.max(0, rail.getBoundingClientRect().right);
+      if (rail && !rail.classList.contains('platform-tabs-peek')) appLeft = Math.max(0, rtl ? win.innerWidth - rail.getBoundingClientRect().left : rail.getBoundingClientRect().right);
     }
   } catch {
     appLeft = 0;
@@ -176,7 +186,8 @@ export function probeLayout(win: Window = window): LayoutProbe {
       const n = parseFloat(style ? style.getPropertyValue(name) : '');
       return Number.isFinite(n) && n > 0 ? n : 0;
     };
-    if (doc.documentElement.getAttribute('data-side-strip') === 'right') rightInset = px('--platform-strip-w');
+    const panelSide = doc.documentElement.dir === 'rtl' ? 'left' : 'right';
+    if (doc.documentElement.getAttribute('data-side-strip') === panelSide) rightInset = px('--platform-strip-w');
     const ai = doc.getElementById('ai-screen');
     if (ai && !ai.classList.contains('hidden')) neighbourMin = px('--ai-list-min') || MIN_APP_W;
   } catch {

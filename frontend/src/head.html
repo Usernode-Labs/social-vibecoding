@@ -445,9 +445,18 @@
     // costs a moment of English, never the page.
     (function () {
       try {
+        // The languages written right to left, by primary subtag. A literal
+        // copy of RTL_LANGUAGES in lib/i18n/direction.ts: this runs before
+        // that module loads, and tests/language-direction.test.js pins the
+        // two lists to each other. Arabic must not paint left to right.
+        var RTL = ['ar', 'he', 'fa', 'ur', 'ps', 'dv', 'ckb', 'yi', 'sd', 'ug'];
         var shown = localStorage.getItem('homeroom:language:shown');
-        if (!shown || shown === 'en') return;
+        if (!shown) return;
         var root = document.documentElement;
+        var primary = String(shown).toLowerCase().split(/[-_]/)[0];
+        root.lang = shown;
+        root.dir = RTL.indexOf(primary) === -1 ? 'ltr' : 'rtl';
+        if (shown === 'en') return;
         root.classList.add('language-pending');
         setTimeout(function () { root.classList.remove('language-pending'); }, 3000);
       } catch (e) { /* storage blocked: nothing remembered, nothing held */ }

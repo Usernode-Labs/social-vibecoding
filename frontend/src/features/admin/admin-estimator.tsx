@@ -245,8 +245,8 @@ function Tile({ label, value, cls, sub }: { label: string; value: string; cls?: 
   );
 }
 
-const TH_L = 'text-left font-medium py-1';
-const TH_R = 'text-right font-medium py-1';
+const TH_L = 'text-start font-medium py-1';
+const TH_R = 'text-end font-medium py-1';
 const TR = 'border-t border-zinc-200 dark:border-zinc-800';
 const H4 = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400';
 
@@ -269,9 +269,9 @@ function Breakdown({ title, rows, keyLabel }: { title: string; rows: any[]; keyL
               // eslint-disable-next-line react/no-array-index-key
               <tr key={i} className={TR}>
                 <td className="py-1 text-zinc-600 dark:text-zinc-300">{r.label}</td>
-                <td className="py-1 text-right">{fmtInt(r.scored)}</td>
-                <td className="py-1 text-right">{fmtSecs(r.medianAbsErrS)}</td>
-                <td className="py-1 text-right">{fmtPct(r.withinBand)}</td>
+                <td className="py-1 text-end">{fmtInt(r.scored)}</td>
+                <td className="py-1 text-end">{fmtSecs(r.medianAbsErrS)}</td>
+                <td className="py-1 text-end">{fmtPct(r.withinBand)}</td>
               </tr>
             ))}
           </tbody>
@@ -289,9 +289,9 @@ function BaseRow({ label, b, note }: { label: string; b: any; note: string }) {
         {label}
         <div className="text-[10px] text-zinc-500 dark:text-zinc-400">{note}</div>
       </td>
-      <td className="py-1 text-right">{fmtSecs(b.medianAbsErrS)}</td>
-      <td className="py-1 text-right">{fmtPct(b.withinBand)}</td>
-      <td className="py-1 text-right">{fmtSecs(b.medianBiasS)}</td>
+      <td className="py-1 text-end">{fmtSecs(b.medianAbsErrS)}</td>
+      <td className="py-1 text-end">{fmtPct(b.withinBand)}</td>
+      <td className="py-1 text-end">{fmtSecs(b.medianBiasS)}</td>
     </tr>
   );
 }
@@ -433,10 +433,10 @@ function EstimatorCard({ e }: { e: any }) {
                       ? <> <span className="text-[10px] uppercase tracking-wide text-violet-700 dark:text-violet-400">candidate</span></>
                       : null}
                   </td>
-                  <td className="py-1 text-right">{fmtInt(v.scored)}</td>
-                  <td className="py-1 text-right">{fmtSecs(v.medianAbsErrS)}</td>
-                  <td className="py-1 text-right">{fmtPct(v.withinBand)}</td>
-                  <td className="py-1 text-right">{fmtSecs(v.medianBiasS)}</td>
+                  <td className="py-1 text-end">{fmtInt(v.scored)}</td>
+                  <td className="py-1 text-end">{fmtSecs(v.medianAbsErrS)}</td>
+                  <td className="py-1 text-end">{fmtPct(v.withinBand)}</td>
+                  <td className="py-1 text-end">{fmtSecs(v.medianBiasS)}</td>
                 </tr>
               ))}
             </tbody>
@@ -554,9 +554,9 @@ function EstimatorCard({ e }: { e: any }) {
               {(priors.buckets || []).map((b: any) => (
                 <tr key={b.bucket} className={TR}>
                   <td className="py-1 text-zinc-600 dark:text-zinc-300">{b.bucket}</td>
-                  <td className="py-1 text-right">{fmtSecs(b.committedP50)}</td>
-                  <td className="py-1 text-right">{fmtSecs(b.liveP50)}</td>
-                  <td className={`py-1 text-right ${b.driftRatio != null && b.driftRatio > 0.25
+                  <td className="py-1 text-end">{fmtSecs(b.committedP50)}</td>
+                  <td className="py-1 text-end">{fmtSecs(b.liveP50)}</td>
+                  <td className={`py-1 text-end ${b.driftRatio != null && b.driftRatio > 0.25
                     ? 'text-amber-800 dark:text-amber-400' : ''}`}>{fmtPct(b.driftRatio)}</td>
                 </tr>
               ))}

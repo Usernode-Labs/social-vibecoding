@@ -739,13 +739,13 @@ export function AppsSwitcherSheet(): ReactNode {
             </span>
           )}
           {/* A 36px target with a 24px ✕ (#5927): the 20px glyph was the
-              smallest thing on the sheet. `-mr-2` keeps the glyph's edge on
+              smallest thing on the sheet. `-me-2` keeps the glyph's edge on
               the rows' 20px margin; `un-touch-target` grows the hit box to
               44px. */}
           <button
             id="apps-switcher-close"
             type="button"
-            className={'shrink-0 -mr-2 inline-flex items-center justify-center w-9 h-9 rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 un-touch-target ' + FOCUS_RING}
+            className={'shrink-0 -me-2 inline-flex items-center justify-center w-9 h-9 rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 un-touch-target ' + FOCUS_RING}
             aria-label={t('core:common.close')}
             onClick={close}
           >
@@ -863,7 +863,7 @@ export function AppsSwitcherSheet(): ReactNode {
               <button
                 id="app-menu-row-homeroom"
                 type="button"
-                className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
+                className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-start hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
                 onClick={() => {
                   const info = { slug: slug || null, name: name || null };
                   void AppContext.dismissForNav().then(() => {
@@ -893,7 +893,7 @@ export function AppsSwitcherSheet(): ReactNode {
                   <button
                     id="app-menu-row-add-home"
                     type="button"
-                    className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
+                    className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-start hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
                     onClick={() => { void AppContext.dismissForNav().then(() => addToHomeScreen.run()); }}
                   >
                     <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
@@ -1060,7 +1060,7 @@ export function AppsSwitcherSheet(): ReactNode {
             // the chevron sits against the words instead of at the edge —
             // which reads as a different KIND of row, on the one row where
             // that would be a lie.
-            className={`${ROW} w-full text-left`}
+            className={`${ROW} w-full text-start`}
             onClick={() => AppContext.showAbout()}
           >
             <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
@@ -1069,7 +1069,7 @@ export function AppsSwitcherSheet(): ReactNode {
             <button
               id="app-menu-row-add-homeroom"
               type="button"
-              className={`${ROW} w-full text-left`}
+              className={`${ROW} w-full text-start`}
               onClick={() => {
                 if (homeroomOffer.via === 'browser') {
                   openHomeroomInBrowser();
@@ -1112,7 +1112,7 @@ export function AppsSwitcherSheet(): ReactNode {
                   className={'inline-flex items-center min-h-[44px] px-3 rounded-lg hover:text-zinc-900 dark:hover:text-zinc-100 hover:underline ' + FOCUS_RING}
                 >
                   {t('agent:appContext.privacy')}
-                  <ExternalMark className="ml-1 w-3.5 h-3.5" />
+                  <ExternalMark className="ms-1 w-3.5 h-3.5" />
                 </a>
               ) : null}
               {slug && canReport ? (

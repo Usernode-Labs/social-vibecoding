@@ -581,7 +581,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
             )}
           />
         </summary>
-        <div className="px-4 pb-4 pl-[3.125rem]">
+        <div className="px-4 pb-4 ps-[3.125rem]">
           {panelNote ? (
             <p className={`mb-3 text-[0.9375rem] ${STATE_TONE.amber}`}>{panelNote}</p>
           ) : null}
@@ -675,7 +675,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
     );
   }
 
-  const notes = 'px-4 pb-3 pl-[3.125rem]';
+  const notes = 'px-4 pb-3 ps-[3.125rem]';
   return (
     <div>
       {head}
@@ -772,7 +772,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
           body in the document.
       */}
       {row.diagnostics ? (
-        <details className="group/diag px-4 pb-3 pl-[3.125rem]" open={!!row.strandedNote || undefined}>
+        <details className="group/diag px-4 pb-3 ps-[3.125rem]" open={!!row.strandedNote || undefined}>
           <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
             {t('settings:linkedAccounts.diagnostics.summary', { provider: row.name })}
             <ChevronRightIcon

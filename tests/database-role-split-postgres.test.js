@@ -212,6 +212,19 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
         'TRUNCATE public.schema_migrations']) await denied(c, sql);
     });
     await use(at(PRIMARY, platform, roles.migrator, passwords.migrator), c => c.query('DROP TABLE public.role_default_grant'));
+    // The workflow kernel, this release: web keeps its writes, so a web Pod
+    // of the build before it can still restart, and its events read as the
+    // platform's; both serving logins withdraw their own requests.
+    const probe = (c) => c.query(`INSERT INTO public.wf_events (machine, key, type, source, request_key)
+      VALUES ('role-probe', 'k', 'Asked', '{"kind":"route"}', gen_random_uuid()::text) RETURNING id, producer`);
+    for (const kind of ['web', 'conductor']) await use(at(PRIMARY, platform, roles[kind], passwords[kind]), async c => {
+      const { rows: [e] } = await probe(c);
+      assert.equal(e.producer, 'platform', kind);
+      await c.query("INSERT INTO public.wf_settings (key, value) VALUES ('role-probe', '1') ON CONFLICT (key) DO UPDATE SET value = '1'");
+      assert.equal((await c.query('SELECT public.wf_refuse_pending($1, $2) AS refused', [e.id, 'expired'])).rows[0].refused, true);
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+        DELETE FROM public.wf_events WHERE machine = 'role-probe'; DELETE FROM public.wf_settings WHERE key = 'role-probe'; COMMIT`);
+    });
     await use(env.DB_ADMIN_URL, c => access.assertLogin(c, 'provisioner'));
     await use(at(PRIMARY, platform), async c => {
       await c.query(`SET ROLE ${roles.web}`);

@@ -172,7 +172,7 @@ test('the row ends in its bookmark alone, 16px in, and its unread dot sits in th
   // The dot is the first thing in the row, beside the tile, before the words.
   // #5580: on Unread the row is a card in its project's stack; the dot keeps
   // its place in the card's left margin.
-  assert.match(row(10), /^data-notif-id="10" class="notifications-row col-start-1 row-start-1 w-full text-left pl-5 pr-4 [^"]*"><span class="relative flex shrink-0 self-start mt-0\.5"><span class="absolute -left-3 top-1\/2 -translate-y-1\/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread"><\/span>/);
+  assert.match(row(10), /^data-notif-id="10" class="notifications-row col-start-1 row-start-1 w-full text-start ps-5 pe-4 [^"]*"><span class="relative flex shrink-0 self-start mt-0\.5"><span class="absolute -start-3 top-1\/2 -translate-y-1\/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread"><\/span>/);
   assert.doesNotMatch(row(11), /aria-label="Unread"/, 'a read row has no dot');
   // No chevron left in a notification row (the Messages footer keeps its own).
   const rowBody = SHEET_SRC.slice(SHEET_SRC.indexOf('function ScreenRow('), SHEET_SRC.indexOf('export function NotificationsSheetView('));
@@ -181,8 +181,8 @@ test('the row ends in its bookmark alone, 16px in, and its unread dot sits in th
   // pointer is over it, the time stepping aside for it (#5929), with its
   // name as its tooltip; a row of a flat list (All, a search) keeps it 16px
   // from the edge, the close disc's line.
-  assert.match(html, /data-notification-save="10" aria-pressed="false" aria-label="([^"]+)" title="\1" class="absolute right-2 top-1\.5 flex h-8 w-8 [^"]*group-hover\/notif:opacity-100 /);
-  assert.match(rowBody, /: 'absolute right-4 top-1\/2 -translate-y-1\/2 flex h-9 w-9 items-center justify-center '/);
+  assert.match(html, /data-notification-save="10" aria-pressed="false" aria-label="([^"]+)" title="\1" class="absolute end-2 top-1\.5 flex h-8 w-8 [^"]*group-hover\/notif:opacity-100 /);
+  assert.match(rowBody, /: 'absolute end-4 top-1\/2 -translate-y-1\/2 flex h-9 w-9 items-center justify-center '/);
   assert.match(SHEET_SRC, /id="notifications-sheet-close"[\s\S]{0,40}className=\{'flex h-9 w-9 /,
     'the close disc is the same 36px, in the title row\'s 16px padding');
 });

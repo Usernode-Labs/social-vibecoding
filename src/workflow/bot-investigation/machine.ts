@@ -140,6 +140,8 @@ export function botInvestigation() {
     version: 1,
     events: EVENTS,
     create: ['Started'],
+    // What web appends: the card's Start and Stop, and the Stop route.
+    web: ['Started', 'StopRequested'],
     terminal: ['ended'],
     decode: (row) => ({ name: row.state, data: row.data }) as IState,
     facts: (tx, _s, e, ctx) => readFacts(tx, e, ctx),
