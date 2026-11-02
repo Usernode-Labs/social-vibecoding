@@ -1626,6 +1626,10 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     version: 8,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
+    // What web appends: a revision or a preview asked for, a recheck, what the
+    // ensure-staging and recheck routes find, a hand-off's build, a demo reset,
+    // and the admin console's actions.
+    web: ['RevisionSubmitted', 'PreviewRequested', 'RecheckRequested', 'ChecksSkipped', 'RecheckFolded', 'PreviewLost', 'RetireRequested', 'OperationStarted', 'OperationEnded', 'AdminRetry', 'AdminRetire', 'AdminEnd'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {

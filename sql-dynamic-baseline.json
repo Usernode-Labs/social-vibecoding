@@ -1118,6 +1118,27 @@
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
+      "fingerprint": "0553d1ca933bdfd6c1d5",
+      "count": 1,
+      "preview": "`REVOKE UPDATE ON SEQUENCE public.wf_events_id_seq FROM ${role}; GRANT USAGE, SELECT ON SEQUENCE public.wf_events_id_seq TO ${role}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "443c29ba4b6dc9829efe",
+      "count": 1,
+      "preview": "`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE ${kernel} FROM ${role}; GRANT SELECT ON TABLE ${kernel} TO ${role}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "728879950533f9074e34",
+      "count": 1,
+      "preview": "`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.wf_events FROM ${role}; GRANT SELECT, INSERT (${WEB_EVENT_COLUMNS.join(', ')}) ON TABLE public.wf_event"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
       "fingerprint": "83622e5a5ef7d176420d",
       "count": 1,
       "preview": "`GRANT ${privileges} ON ${kind} ${item.name} TO ${runtime}`"
@@ -2168,9 +2189,9 @@
     {
       "source": "src/workflow/kernel/stream.ts",
       "kind": "structural-template",
-      "fingerprint": "c744c2462ef8bfb640f5",
+      "fingerprint": "d40268ced7a32c38374d",
       "count": 1,
-      "preview": "`BEGIN; SET LOCAL app.wf_writer = 'transition'; SET LOCAL lock_timeout = '${Math.max(0, Math.floor(lockTimeoutMs))}ms'`"
+      "preview": "`BEGIN; SET LOCAL lock_timeout = '${Math.max(0, Math.floor(lockTimeoutMs))}ms'`"
     },
     {
       "source": "src/workflow/merge-followups/facts.ts",

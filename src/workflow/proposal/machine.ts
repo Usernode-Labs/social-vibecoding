@@ -1734,6 +1734,10 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
     version: 6,
     events: EVENTS,
     create: CREATE,
+    // What web appends: a new proposal's adoption (the chat_sessions trigger), what a
+    // person does to it (promote, pause, resume, close, reopen, admin merge, sync,
+    // Stop), what GitHub's webhook reports, and a worker's diagram.
+    web: ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'Reopen', 'PrLooked', 'ReviewHeadMoved', 'ForceMerge', 'SyncRequested', 'StopRequested', 'DiagramStored', 'ParentMerged'],
     terminal: ['merged'],
     attention: { ...ATTENTION },
     decode: (row) => ({ name: row.state, data: row.data } as PState),

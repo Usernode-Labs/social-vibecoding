@@ -277,6 +277,9 @@ export function appCreation(): Machine<CState, Facts> {
     version: 2,
     events: EVENTS,
     create: ['Started', 'Retry'],
+    // What web appends: a new project's start (the apps trigger), Retry, and its first
+    // version's plan owed.
+    web: ['Started', 'Retry', 'PlanOwed'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
     facts: (tx, state, event) => readFacts(tx, state.name === NONE ? event.payload.appId : (state as Live).data.appId,
       { firstRequest: event.type === 'WorkSucceeded',

@@ -50,6 +50,11 @@
       "id": "0010-invite-link-shared",
       "sha256": "669d2a1c789f3fe7e54801f325eba28488e447fb5c4246974ef34c43f654dbc9",
       "schemaSha256": "d6b3f27f8785aa80117914afd5bbd1de50ba45af3a1f42804f5b19174b3c7193"
+    },
+    {
+      "id": "0011-workflow-producers",
+      "sha256": "0a09c903b09debd6f01562e700f61300adaa965fa001827204271ea24e88a2c8",
+      "schemaSha256": "368fe38042acf4c553b1c1e1fa71f23ad0e649264b4f9cda95bd796e657571da"
     }
   ]
 }

@@ -495,6 +495,8 @@ export function campaign(deps: CampaignDeps = DEFAULT_DEPS): Machine<CState, Fac
     version: 1,
     events: EVENTS,
     create: ['Start'],
+    // What web appends: an admin's actions on the campaign.
+    web: ['RetryApp', 'MergeGreen', 'Stop', 'Resume', 'AutoMerge'],
     terminal: [],
     decode: (row) => ({ name: row.state, data: row.data } as CState),
     facts: (tx: Tx, state: CState, event: Event<any>) => {

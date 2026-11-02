@@ -451,6 +451,8 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
     version: 1,
     events: EVENTS,
     create: ['CheckRequested', 'Resume'],
+    // What web appends: Check for updates, and Resume.
+    web: ['CheckRequested', 'Resume'],
     terminal: [],
     decode: (row) => ({ name: row.state, data: row.data } as MCState),
     facts: (tx: Tx, state: MCState, event: Event<any>) => {

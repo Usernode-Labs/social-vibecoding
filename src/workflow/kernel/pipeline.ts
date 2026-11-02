@@ -10,7 +10,7 @@
 import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection, jsonText } from './machine.ts';
 import type { Machine, WorkResultPayload } from './machine.ts';
 import type {
-  Event, EventAuthorizer, Json, Logger, MessageRequest, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
+  Event, EventAuthorizer, Json, Logger, MessageRequest, Outcome, Pool, PoolClient, Producer, Push, Queryable, State, TransitionContext, Tx,
 } from './types.ts';
 
 export interface PipelineOptions {
@@ -99,7 +99,7 @@ function deepFreeze<T>(value: T): T {
 // the stored receipt for its request key, and the transaction's clock.
 interface Picked {
   id: string; machine: string; key: string; app_id: number | null; type: string; payload: any; source: any;
-  actor: string | null; request_key: string; caused_by: string | null; attempts: number;
+  producer: string; actor: string | null; request_key: string; caused_by: string | null; attempts: number;
   seen_version: string | null;   // the instance's version in the pick's snapshot
   now: Date;
   instance: Instance | null;
@@ -139,7 +139,7 @@ function pickSql(names: string[], versions: number[], passed: number[]): string 
      ORDER BY e.id
      LIMIT 1
      FOR UPDATE OF e SKIP LOCKED)
-  SELECT p.id, p.machine, p.key, p.app_id, p.type, p.payload, p.source, p.actor, p.request_key,
+  SELECT p.id, p.machine, p.key, p.app_id, p.type, p.payload, p.source, p.producer, p.actor, p.request_key,
          p.caused_by, p.attempts, p.seen_version, now() AS now,
          CASE WHEN i.machine IS NULL THEN NULL ELSE json_build_object(
            'state', i.state, 'data', i.data, 'version', i.version, 'machine_version', i.machine_version,
@@ -224,7 +224,7 @@ async function processOne(opts: PipelineOptions, names: string[], versions: numb
     // Nothing runs after COMMIT: everything an event sets off committed with
     // it (state, writes, work, messages, pushes).
     try {
-      await applyEvent(client, machine, row, opts.publish, opts.authorizeEvent);
+      await applyEvent(client, machine, row, opts.publish, opts.authorizeEvent, opts.log);
       await client.query('COMMIT');
     } catch (err) {
       // Nothing of the event's transaction survives, the machine's writes
@@ -369,7 +369,7 @@ const CANCEL_WORK = `
 const json = (v: Json | undefined) => (v == null ? null : jsonText(v));
 
 async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked,
-  publish?: PipelineOptions['publish'], authorizeEvent?: EventAuthorizer): Promise<void> {
+  publish?: PipelineOptions['publish'], authorizeEvent?: EventAuthorizer, log?: Logger): Promise<void> {
   const eventId = Number(row.id);
   const inst = row.instance;
   // A '(none)' row is left by a creating event that timed out or faulted.
@@ -393,10 +393,23 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     await finishUnchanged({ result: 'rejected', reason });
   };
 
+  // 0. The producer, as the database recorded it: web asks only for what its
+  // machine lets it, before admission, a replay or any machine code. A refusal
+  // is either web forging an event or a machine's `web` list missing a route's:
+  // said in the log either way. A type this build does not know is refused
+  // as unknown, so a newer build asks it again (platform.ts reaskRefused).
+  const producer: Producer = row.producer === 'web' ? 'web' : 'platform';
+  if (producer === 'web' && !machine.events.has(row.type)) return rejectWith('unknown_event');
+  if (producer === 'web' && !machine.web.has(row.type)) {
+    log?.warn('workflow', 'event from web refused: its machine does not list it', {
+      machine: machine.name, key: row.key, type: row.type, eventId, source: row.source?.kind ?? null, name: row.source?.name ?? null });
+    return rejectWith('not_a_producer');
+  }
+
   const tx = machineTx(client);
   if (authorizeEvent) {
     const admission = await authorizeEvent(tx, deepFreeze({
-      id: eventId, type: row.type, payload: row.payload, source: row.source, actor: row.actor,
+      id: eventId, type: row.type, payload: row.payload, source: row.source, producer, actor: row.actor,
       requestKey: row.request_key, appId: row.app_id, causedBy: row.caused_by == null ? null : Number(row.caused_by),
     }), ctx);
     if (tx.poisoned) throw tx.poisoned;
@@ -422,7 +435,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   if (!decoder) return rejectWith('unknown_event');
   try { payload = decoder(row.payload); } catch { return rejectWith('invalid_payload'); }
   const event: Event = deepFreeze({
-    id: eventId, type: row.type, payload, source: row.source, actor: row.actor,
+    id: eventId, type: row.type, payload, source: row.source, producer, actor: row.actor,
     requestKey: row.request_key, appId: row.app_id, causedBy: row.caused_by == null ? null : Number(row.caused_by),
   });
   if (WORK_EVENTS.has(event.type)) {
