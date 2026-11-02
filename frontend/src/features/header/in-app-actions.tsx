@@ -50,10 +50,17 @@ const SUGGEST_CLASS = 'shrink-0 hidden sm:inline-flex items-center justify-cente
   + 'bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] '
   + 'text-[0.8125rem] font-semibold un-touch-target';
 
-/** Whether the running-app controls have somewhere to stand right now. */
+/**
+ * Whether the controls have somewhere to stand right now: a project's app,
+ * AND its page (Hub, Needs you, the Workshop, a channel, a request). The
+ * page used to draw no Suggest, so the same project's bar had it on its App
+ * tab and lost it on every other (audit P01, 1 Nov 2026); "Suggest" is about
+ * the project either way, and the form opens on it from both
+ * (Improve.giveFeedback, App.currentApp is the project's).
+ */
 function useInAppShown(): boolean {
   const { target, slug, tab, selfHosted } = useStoreState(improveStore);
-  return target === 'app' && tab === 'app' && !!slug && !selfHosted;
+  return target === 'app' && (tab === 'app' || tab === 'dev') && !!slug && !selfHosted;
 }
 
 export function InAppActions(): ReactNode {
