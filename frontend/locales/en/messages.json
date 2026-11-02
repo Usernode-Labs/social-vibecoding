@@ -2375,6 +2375,10 @@
     "text": "Request failed ({{status}})",
     "description": "Error in Messages when a request to the server failed and the server gave no explanation. \"Request\" is a noun, the network request. {{status}} is the HTTP status number."
   },
+  "api.sendTimedOut": {
+    "text": "No answer from Homeroom. Check your connection and try again.",
+    "description": "Error in Messages when sending a message or sharing an item got no answer from the server for several seconds, usually because the connection stopped passing anything, and sending was given up."
+  },
   "api.contactRestricted": {
     "text": "This person only takes new messages and invitations from people in projects with them. You can send them an invite link instead.",
     "description": "Error in Messages when you try to start a conversation with someone, or invite them to a group, and their Privacy setting allows that only from people who share a project with them. It must not say anything else about the person."
@@ -3058,6 +3062,14 @@
   "row.notSent": {
     "text": "Not sent",
     "description": "Red note under your message when sending it failed."
+  },
+  "row.sending": {
+    "text": "Sending…",
+    "description": "Quiet grey note under your message while it is still on its way. Shown only once sending has taken more than a couple of seconds, on a slow or silent connection."
+  },
+  "row.queued": {
+    "text": "Will send when you’re back online",
+    "description": "Grey note under your message when it was written without a connection: it is kept on this device and sent by itself once the connection returns. A Discard button beside it throws the message away."
   },
   "row.discard": {
     "text": "Discard",
