@@ -310,7 +310,7 @@ function ReelApp(item: FeedRow): ReactNode {
 
 const NO_MODELS: DevWorkshopView['models'] = { list: [], selected: null };
 
-export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
+export function NeedsReel({ items, error, capped, onDone, onAnswered, onSettled }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   /** The read stopped at its bound: there may be more than these. */
@@ -323,6 +323,12 @@ export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
    * whose refresh already drops the row.
    */
   onAnswered?: (id: number, epoch: number | null) => void;
+  /**
+   * #6101: a vote refused because the change is not up for a vote any more.
+   * The controller drops it from every copy of the feed, so it cannot come
+   * back with live Yes and No.
+   */
+  onSettled?: (id: number) => void;
 }) {
   // `t` changes with the language on screen, so the rows' words (reelRows)
   // are read again when it does.
@@ -387,6 +393,11 @@ export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
             // proposal's epoch rides along for the answered set.
             if (row.askAbout && row.askAbout.kind === 'proposal') {
               onAnswered(row.askAbout.ref as number, epochs.get(row.key) ?? null);
+            }
+          } : undefined}
+          onSettled={onSettled ? (row) => {
+            if (row.askAbout && row.askAbout.kind === 'proposal') {
+              onSettled(row.askAbout.ref as number);
             }
           } : undefined}
         />

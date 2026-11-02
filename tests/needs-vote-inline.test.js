@@ -78,7 +78,7 @@ test('the sheet sends its line with the vote, so castVote does not ask again', (
   assert.match(WORKSHOP, /answer\('yes', undefined, voteTrimmed \|\| null\)/, 'a Yes sends its line');
   assert.match(WORKSHOP, /if \(voteSide === 'no'\) \{\s*if \(!voteChoice\) return;/, 'a No sends only once an answer is picked');
   assert.match(WORKSHOP, /answer\('no', undefined, composeNoReason\(choice, voteLine,/, 'and carries the answer with its line');
-  assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/,
+  assert.match(WORKSHOP, /const opts = reason === undefined\s*\? \{ onSend, onSettled: onSettle \}\s*: \{ onSend, reason, onSettled: onSettle \};/,
     'a line (or null) rides in the options bag; only the swipe leaves it out');
   // castVote asks only when the bag has no `reason` key at all.
   const resolve = APP_VIEW.slice(APP_VIEW.indexOf('  async _resolveVoteReason(vote, opts)'), APP_VIEW.indexOf('  async castVote(sessionId'));

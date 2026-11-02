@@ -3332,7 +3332,21 @@ function voteRoutes(config) {
          WHERE cs.id = $1 AND cs.status IN ('promoted', 'merging')`,
         [req.params.id]
       );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
+      if (!sessionRows.length) {
+        // #6101: the change merged (or left review) since the list this
+        // voter was looking at was read. Say which it is, so the client can
+        // close the vote instead of putting its Yes and No back.
+        const { rows: latestRows } = await pool.query(
+          `SELECT status, merged_at FROM chat_sessions WHERE id = $1`,
+          [req.params.id]
+        ).catch(() => ({ rows: [] }));
+        const latest = latestRows[0] || null;
+        return res.status(404).json({
+          error: 'Promoted session not found',
+          code: 'not_up_for_vote',
+          ...(latest ? { status: latest.merged_at ? 'merged' : latest.status } : {}),
+        });
+      }
       const session = sessionRows[0];
       // A private member does not vote on a public app (communities.js).
       const privateRefusal = await communities.privateVoteRefusal(pool, session.app_id, req.user?.id);
@@ -3463,7 +3477,18 @@ function voteRoutes(config) {
       if ((recorded.rowCount || 0) === 0) {
         // It left review between the read above and the write lock (an
         // imported proposal moved back to Underway, withdrawn): no vote.
-        return res.status(409).json({ error: 'This proposal is no longer up for a vote.' });
+        // #6101: answer with where the change is now, so the client closes
+        // the vote rather than restoring it, and says why it did not count.
+        const { rows: latestRows } = await pool.query(
+          `SELECT status, merged_at FROM chat_sessions WHERE id = $1`,
+          [session.id]
+        ).catch(() => ({ rows: [] }));
+        const latest = latestRows[0] || null;
+        return res.status(409).json({
+          error: 'This proposal is no longer up for a vote.',
+          code: 'not_up_for_vote',
+          ...(latest ? { status: latest.merged_at ? 'merged' : latest.status } : {}),
+        });
       }
 
       // A vote revives a going-stale proposal: the proposal machine's review

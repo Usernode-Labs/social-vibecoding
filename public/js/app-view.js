@@ -27326,6 +27326,38 @@ const AppView = {
         if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
+        // #6101: the change merged or left the vote after this page read it.
+        // The vote did not count, but there is nothing to put back: mark the
+        // rows settled and repaint, so no Yes or No is left offering a vote
+        // that can no longer be cast, then read the lists fresh.
+        if (data.code === 'not_up_for_vote') {
+          const reported = typeof data.status === 'string' ? data.status : '';
+          const status = reported && reported !== 'promoted' && reported !== 'merging'
+            ? reported : 'closed';
+          const settledRows = targets.map((t) => t.row);
+          if (pr) settledRows.push(pr);
+          if (live) settledRows.push(live);
+          settledRows.forEach((r) => { if (r) r.status = status; });
+          AppView._repaintAfterVote(sessionId);
+          const refresh = AppView.refreshDevData('vote');
+          // As on the ok path: a chat mounted outside the dev tab re-reads
+          // its snapshot too, where refreshDevData does nothing.
+          const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
+            && typeof GroupChat !== 'undefined' && GroupChat.appSlug
+            ? AppView.loadVoteState(GroupChat.appSlug) : null;
+          void Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).catch(() => {});
+          // The feed that drew this card hears it is over, so it can drop it
+          // instead of restoring the pin this press added.
+          const onSettled = opts && typeof opts.onSettled === 'function' ? opts.onSettled : null;
+          if (onSettled) {
+            try { onSettled(status); } catch { /* the caller's paint, never the vote's */ }
+          }
+          PlatformUI.toast(PlatformI18n.t(status === 'merged'
+            ? 'changes:vote.toast.alreadyMerged' : 'changes:vote.toast.noLongerUp'));
+          // Your votes moves it out of Still open (#6101).
+          window.UsernodeReact?.profileProposals?.voted?.();
+          return false;
+        }
         await AppView.refreshDevData('vote');
         // A public app's vote counts from a verified account: the sheet that
         // verifies, then the same vote again (features/auth/verify-identity.tsx).

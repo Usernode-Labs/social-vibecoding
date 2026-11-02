@@ -2620,7 +2620,7 @@ voteSavedStore.subscribe(() => {
  * button is `doneLabel` (else "See what's live") and calls `onDone`; `onHub`,
  * where there is one, is its way back to the project's Hub.
  */
-export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSuggest, doneLabel, renderApp, openOn = null, onAnswered }: {
+export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSuggest, doneLabel, renderApp, openOn = null, onAnswered, onSettled }: {
   rows: DevWorkshopView['queue'];
   models: DevWorkshopView['models'];
   slug: string;
@@ -2645,6 +2645,13 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
    * refresh already drops the row from its own store.
    */
   onAnswered?: (row: QueueRow, which: 'yes' | 'no') => void;
+  /**
+   * #6101: a vote the server refused because the change is not up for a vote
+   * any more (it merged, or left review). The card is dropped from the feed
+   * instead of being pinned or marked answered; a screen that owns the
+   * feed's store copy hears it too, so a later read cannot draw it again.
+   */
+  onSettled?: (row: QueueRow) => void;
 }): ReactNode {
   const t = useMessages('project');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -2691,6 +2698,13 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // the same breath as the vote and read back in the very next publish.
   const pinsRef = useRef<Map<string, { row: QueueRow; index: number }>>(new Map());
   const [pinsVersion, setPinsVersion] = useState(0);
+  // #6101: a vote this press cast on a change that had already merged (or
+  // left the vote). The row leaves the feed rather than being pinned or
+  // marked answered — there is nothing to confirm. The ref is what
+  // castVote's onSettled callback marks synchronously, before its promise
+  // resolves false; the state is what the drawn rows filter on.
+  const settledRef = useRef<Set<string>>(new Set());
+  const [gone, setGone] = useState<Record<string, boolean>>({});
   // Which row the reader is ON, by key — the thing the list is re-synced to
   // when rows leave or arrive above it. `END_KEY` is the end card, the slot
   // after every row, and it is the seed when the route asked for it.
@@ -2754,11 +2768,11 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // elsewhere holds the slot it had, the way a row answered here does.
   const drawnRef = useRef<QueueRow[]>([]);
   const items = useMemo<QueueRow[]>(() => {
-    const live = rows.filter((r): r is QueueRow => r.t === 'card');
+    const live = rows.filter((r): r is QueueRow => r.t === 'card' && !gone[r.key]);
     const have = new Set(live.map((r) => r.key));
     const out = live.slice();
     for (const [key, pin] of pinsRef.current) {
-      if (!have.has(key)) out.splice(Math.min(pin.index, out.length), 0, pin.row);
+      if (!have.has(key) && !gone[key]) out.splice(Math.min(pin.index, out.length), 0, pin.row);
     }
     // A row voted elsewhere holds its slot the same way: it left `rows` with
     // the publish that noticed the saved vote, and the pin keeps the
@@ -2769,13 +2783,13 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     const prev = drawnRef.current;
     for (let idx = prev.length - 1; idx >= 0; idx--) {
       const prior = prev[idx];
-      if (have.has(prior.key) || pinsRef.current.has(prior.key)) continue;
+      if (have.has(prior.key) || pinsRef.current.has(prior.key) || gone[prior.key]) continue;
       if (out.some((r) => r.key === prior.key)) continue;
       if (!savedVoteFor(prior, savedAll)) continue;
       out.splice(Math.min(idx, out.length), 0, prior);
     }
     return out;
-  }, [rows, pinsVersion, savedAll]);
+  }, [rows, pinsVersion, savedAll, gone]);
   drawnRef.current = items;
   const n = items.length;
   // `n + 1` slots: the items, then the end card (#2172). `i === n` is the
@@ -3102,7 +3116,13 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
       setSending((cur) => ({ ...cur, [key]: which }));
       if (settled) settled();
     };
-    const opts = reason === undefined ? { onSend } : { onSend, reason };
+    // #6101: castVote calls this when the server refused because the change
+    // is not up for a vote any more. It runs before the promise settles, so
+    // the false branch below knows this refusal closes the card.
+    const onSettle = () => { settledRef.current.add(key); };
+    const opts = reason === undefined
+      ? { onSend, onSettled: onSettle }
+      : { onSend, reason, onSettled: onSettle };
     Promise.resolve(callAppView(spec.act.fn, ...args, opts))
       .catch(() => false)
       .then((ok) => {
@@ -3124,6 +3144,16 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
           // its bookkeeping must not be able to undo a saved vote.
           if (onAnswered) {
             try { onAnswered(row, which); } catch { /* the vote stands whatever the hook did */ }
+          }
+        } else if (settledRef.current.has(key)) {
+          // #6101: the change merged while this card was on screen. Nothing
+          // was recorded, so there is nothing to confirm: drop the row (and
+          // the pin this press added) rather than putting its Yes and No
+          // back. The screen that owns the store copy hears it too.
+          settledRef.current.delete(key);
+          setGone((cur) => ({ ...cur, [key]: true }));
+          if (onSettled) {
+            try { onSettled(row); } catch { /* the vote is over whatever the hook did */ }
           }
         } else if (pinnedHere) {
           pinsRef.current.delete(key);
