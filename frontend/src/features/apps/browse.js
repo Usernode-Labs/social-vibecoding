@@ -762,7 +762,8 @@ const Browse = {
     const slugs = new Set();
     for (const entry of entries || []) {
       const left = entry && entry.at ? new Date(entry.at).getTime() : NaN;
-      if (!Number.isNaN(left) && at - left <= windowMs) slugs.add(entry.slug);
+      // A time ahead of now is a clock that was wrong, not an app just left.
+      if (!Number.isNaN(left) && left <= at && at - left <= windowMs) slugs.add(entry.slug);
     }
     return (apps || []).filter((a) => a && slugs.has(a.slug));
   },

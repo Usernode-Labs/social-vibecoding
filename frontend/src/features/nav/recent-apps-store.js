@@ -69,6 +69,25 @@ function clean(entry) {
   };
 }
 
+/** The list stored for `owner` as it stands, or an empty one. Never throws. */
+function readStored(owner) {
+  try {
+    const raw = window.localStorage.getItem(KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && parsed.owner === owner && Array.isArray(parsed.apps)) {
+      return parsed.apps.map(clean).filter(Boolean);
+    }
+  } catch {
+    // Unreadable is the same as nothing stored.
+  }
+  return [];
+}
+
+/** When an entry was left, for ordering; 0 when nobody knows. */
+function leftAt(entry) {
+  return Date.parse(entry.at) || 0;
+}
+
 /**
  * The list stored for `owner`, or an empty one. Never throws.
  *
@@ -83,16 +102,7 @@ function clean(entry) {
  */
 export function readRecentApps(owner) {
   if (!owner) return [];
-  let list = [];
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (parsed && parsed.owner === owner && Array.isArray(parsed.apps)) {
-      list = parsed.apps.map(clean).filter(Boolean);
-    }
-  } catch {
-    list = [];
-  }
+  let list = readStored(owner);
   if (!list.length) {
     const parked = readParked();
     if (parked) list = [{ ...parked, at: '' }];
@@ -115,6 +125,9 @@ export function recentAppEntries(owner) {
 /**
  * Record that `owner` just left `app`: it moves to the front, once.
  *
+ * What another tab stored since this one read the list is merged in rather
+ * than written over: each app once, at the latest time either side has.
+ *
  * With no owner (nobody signed in yet) the store still updates, so the rail
  * shows it for this page, but nothing is written to storage.
  *
@@ -125,9 +138,13 @@ export function recentAppEntries(owner) {
 export function rememberRecentApp(app, owner, at) {
   const next = clean({ ...app, at: at || new Date().toISOString() });
   if (!next) return;
-  const current = recentAppsStore.get().apps;
-  const apps = [next, ...current.filter((item) => item.slug !== next.slug)]
-    .slice(0, RECENT_APPS_MAX);
+  const latest = new Map();
+  for (const item of [...recentAppsStore.get().apps, ...(owner ? readStored(owner) : [])]) {
+    const known = latest.get(item.slug);
+    if (item.slug !== next.slug && (!known || leftAt(item) > leftAt(known))) latest.set(item.slug, item);
+  }
+  const others = [...latest.values()].sort((a, b) => leftAt(b) - leftAt(a));
+  const apps = [next, ...others].slice(0, RECENT_APPS_MAX);
   recentAppsStore.set({ apps });
   if (!owner) return;
   try {

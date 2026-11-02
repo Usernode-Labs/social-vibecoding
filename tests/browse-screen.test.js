@@ -799,6 +799,8 @@ test('Opened recently: a seeded parked app has no time, and never counts, even o
 
     Browse._recentEntries = () => [{ slug: 'parked', at: 'not a time' }, null];
     assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), [], 'junk is not recent either');
+    Browse._recentEntries = () => [{ slug: 'parked', at: new Date(Date.now() + 86400000).toISOString() }];
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), [], 'nor a time ahead of the clock');
   });
 });
 
@@ -821,7 +823,21 @@ test('Opened recently: an app another tab left counts too, without this tab havi
       owner: 'ana', apps: [{ slug: 'other-tab', name: 'Other', at: new Date().toISOString() }],
     }));
     assert.deepEqual(store.recentAppsStore.get().apps, [], 'this tab has not heard');
-    assert.deepEqual(slugsOf(Browse.filterApps([app({ slug: 'other-tab' })], 'recent', Date.now())), ['other-tab']);
+    const apps = [app({ slug: 'other-tab' }), app({ slug: 'this-tab' })];
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), ['other-tab']);
+
+    // …and this tab leaving an app does not write the other tab's over.
+    store.rememberRecentApp({ slug: 'this-tab', name: 'This' }, 'ana');
+    assert.deepEqual(slugsOf(store.readRecentApps('ana')), ['this-tab', 'other-tab']);
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), ['other-tab', 'this-tab']);
+
+    // Both sides know an app: the later time wins, whichever side has it.
+    const iso = (days) => new Date(Date.now() - days * 86400000).toISOString();
+    store.recentAppsStore.set({ apps: [{ slug: 'both', name: 'Both', at: iso(40) }] });
+    storage.set(store.RECENT_APPS_KEY, JSON.stringify({ owner: 'ana', apps: [{ slug: 'both', name: 'Both', at: iso(1) }] }));
+    store.rememberRecentApp({ slug: 'new-one', name: 'New' }, 'ana');
+    const both = store.readRecentApps('ana').find((a) => a.slug === 'both');
+    assert.ok(Date.now() - Date.parse(both.at) < 2 * 86400000, 'the later time');
   });
 });
 
