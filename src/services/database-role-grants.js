@@ -43,7 +43,7 @@ async function grantWebWorkflow(pool, web, kernel = null) {
 // takes web's writes for the first time since web could update the stream,
 // it records when (wf_settings 'web_restricted_at'): a request web appended
 // before then reads as the platform's, and web may still withdraw it
-// (wf_refuse_pending, src/db/migrations/0013-web-withdraws-at-cutover.sql).
+// (wf_refuse_pending, src/db/migrations/0014-web-withdraws-at-cutover.sql).
 async function restrictWebWorkflow(pool, web) {
   const role = access.identifier(web);
   const kernel = await kernelRelations(pool);
