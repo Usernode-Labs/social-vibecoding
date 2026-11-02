@@ -1,3 +1,5 @@
+import { fetchWithin, READ_TIMEOUT_MS } from './read-timeout';
+
 /** Session partitions are cache labels, never credentials or authorization. */
 export const API_SCOPE_COOKIE = 'usernode_api_scope';
 export const API_SCOPE_HEADER = 'X-Usernode-Cache-Scope';
@@ -161,9 +163,11 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
       // An already-admitted native document skips admission's /me on resume.
       // Confirm the rotated cookie once, before any ordinary request can
       // consume an offline copy. Use the original fetch to avoid recursion.
-      const res = await send(new Request(new URL('/api/auth/me', win.location.href), {
+      // Bounded like any read (./read-timeout.ts): every read waits on this
+      // one, so a confirmation begun on a dead network must not outlive it.
+      const res = await fetchWithin(send, new Request(new URL('/api/auth/me', win.location.href), {
         credentials: 'same-origin', cache: 'no-store',
-      }));
+      }), undefined, READ_TIMEOUT_MS);
       await adoptNativeIdentity(res, context, boundaryAtStart, expectedViewer);
     })();
     const verification = { epoch: context.nativeEpoch, boundary: boundaryAtStart, pending };
