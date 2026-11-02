@@ -2482,6 +2482,32 @@ async function whoDecides(pool, app, requester) {
 }
 
 /**
+ * #6146: who answers the bot's "a person needs to decide" note on a request
+ * with a plain message in its discussion, which the note tells them to do:
+ * the user ids of its `requester` ({ userId }) and, when they do not decide
+ * alone, of the deciders the note names (whoDecides; `decider` when the
+ * caller already read it). [] with no requester; the requester alone when
+ * the deciders cannot be read. Never throws.
+ */
+async function answerersOf(pool, app, requester, decider = null) {
+  const own = Number(requester?.userId);
+  if (!Number.isSafeInteger(own) || own <= 0) return [];
+  try {
+    const d = decider || await whoDecides(pool, app, requester);
+    const names = d && !d.requesterDecides && Array.isArray(d.deciders)
+      ? d.deciders.map((x) => x?.username).filter(Boolean)
+      : [];
+    if (!names.length) return [own];
+    const { rows } = await pool.query('SELECT id FROM users WHERE username = ANY($1::text[])', [names]);
+    return [own, ...rows.map((row) => Number(row.id)).filter((id) => Number.isSafeInteger(id) && id > 0 && id !== own)];
+  } catch (err) {
+    // The requester still answers when the deciders cannot be read.
+    log.warn('homeroom-bot', 'Could not read who decides on a request\'s note', { app: app?.slug, err: err.message });
+    return [own];
+  }
+}
+
+/**
  * #3654: the commit a stage is about to run against: where `branch` points
  * on GitHub right now. Best-effort, for the run's snapshot; null when GitHub
  * cannot say.
@@ -6495,10 +6521,17 @@ async function actOnVerdict({
   // there is the voice's to answer (homeroom-bot-voice.js), not a reason to
   // say the note again.
   const voiceAnswers = (relook || askedLook) && voiceModule(deps).voiceOn(await readSettings(pool).catch(() => null), { type: 'issue' });
-  const gate = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict)
+  const gated = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
+  // #6146: after "a person needs to decide", which tells them to reply in the
+  // discussion, a plain message there from its requester or a decider it
+  // names is their answer (answerersOf), not people talking among themselves.
+  const answerers = gated
+    ? await answerersOf(pool, app, await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null), decider)
+    : [];
+  const gate = gated
     ? await addressedMod().shouldSpeak(pool, {
       appId: app.id, issueNumber, botId: bot.id, comments, botLogin, waitingOnly: !relook, updatedAt: issue?.updatedAt || null,
-      voiceAnswers,
+      voiceAnswers, answerers,
     })
     : { speak: true };
   if (!gate.speak) {
@@ -9841,6 +9874,7 @@ module.exports = {
   starterOfApp,
   deciderNote,
   whoDecides,
+  answerersOf,
   membersNote,
   projectMembers,
   headShaOf,
