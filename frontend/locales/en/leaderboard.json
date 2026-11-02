@@ -215,6 +215,10 @@
     "text": "Go",
     "description": "Button on a challenge's page that leads to where the challenge is done, when the challenge supplies no label of its own."
   },
+  "challenges.detail.openLinkedAccounts": {
+    "text": "Open linked accounts",
+    "description": "Button on the Connect X and GitHub challenge's page: opens Settings, Linked accounts, where an X or GitHub account is linked. X and GitHub are product names."
+  },
   "challenges.detail.linkUnavailable": {
     "text": "{{label}} <0>(link unavailable)</0>",
     "description": "On a challenge's page, in place of its button when the challenge's link cannot be used. {{label}} is the button's text; the note in the tag is shown in italics."
