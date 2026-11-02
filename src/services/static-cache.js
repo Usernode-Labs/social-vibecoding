@@ -21,6 +21,7 @@
 const express = require('express');
 const fs = require('fs');
 const { isBuildScopedAssetPath, parseBuildScopedPath } = require('../../scripts/shell-stamp');
+const offlineCache = require('./offline-cache');
 
 const REVALIDATE = 'no-cache, must-revalidate';
 
@@ -56,7 +57,10 @@ function shellAssetCacheControl(filePath) {
   // A language pack's name carries the hash of its bytes
   // (scripts/language-packs.js), so it can never change under its URL.
   if (/[\\/]locales[\\/][a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/.test(String(filePath))) return IMMUTABLE;
-  return /\.(?:html|js|css|webmanifest)$/i.test(String(filePath)) ? REVALIDATE : null;
+  const revalidate = /\.(?:html|js|css|webmanifest)$/i.test(String(filePath)) ? REVALIDATE : null;
+  // The shared /usernode-* files an app loads from this address, while
+  // offline apps are on (services/offline-cache.js).
+  return offlineCache.sharedFileCacheControl(filePath, revalidate);
 }
 
 // ── Which BUILD an asset belongs to ──────────────────────────────────────

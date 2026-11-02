@@ -1794,6 +1794,7 @@ const AppView = {
   // dropped with the cached feed when a session ends (App._dropCachedSession).
   clearOfflineReady() {
     try { localStorage.removeItem(AppView.OFFLINE_READY_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(AppView.OFFLINE_CACHE_KEY); } catch { /* ignore */ }
   },
 
   // Bridge -> shell. Mirrors handleIssueStateMessage: only the mounted
@@ -1810,6 +1811,158 @@ const AppView = {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
     AppView.markOfflineReady(slug, type === 'ready');
+  },
+
+  // ── Offline apps from the browser's own cache ────────────────────────
+  //
+  // An app that brings no service worker of its own can still open with no
+  // connection: the app gate gives its pages and files a 30-day fresh
+  // lifetime (src/services/offline-cache.js), and a fresh copy is used with
+  // no request at all. The iOS app's web view allows three service workers
+  // in all, Homeroom's own among them, so this is how more than two apps
+  // open offline there (docs/plans/project-apps-offline.md).
+  //
+  // Three things make it work, all here and in the bridge:
+  //   * ONE address per app, whatever the token: buildAppIframeSrc puts the
+  //     token and the theme after `#`, and the bridge moves them into the
+  //     query before the app's code runs.
+  //   * A copy that keeps up: when the app's build differs from the one this
+  //     device last opened, the address carries `un-refresh`, and the bridge
+  //     downloads the app's files and page again, past the cache, and
+  //     reloads. Online only.
+  //   * A way back: the frame must say it opened (the bridge's
+  //     `__usernode_offline_cache: 'open'`). Online, a page that never says so
+  //     (one that needs the token to load, or loads no bridge) is framed the
+  //     old way on this device for a week. Offline, it gives way to the
+  //     "needs a connection" placeholder.
+  //
+  // Per device and per viewer, like the offline-ready map: dropped with the
+  // session (clearOfflineReady).
+  OFFLINE_CACHE_KEY: 'usernode:offline-cache',
+  OFFLINE_CACHE_MAX: 50,
+  // How long the old address is kept for an app whose page did not open.
+  OFFLINE_CACHE_RETRY_MS: 7 * 24 * 60 * 60 * 1000,
+  // After the frame's load event, how long its bridge has to say it opened.
+  OFFLINE_CACHE_GRACE_MS: 1500,
+  // Offline, the most a frame waits to say it opened before the placeholder.
+  OFFLINE_CACHE_OFFLINE_CAP_MS: 4000,
+
+  _readOfflineCache() {
+    try {
+      const map = JSON.parse(localStorage.getItem(AppView.OFFLINE_CACHE_KEY));
+      return (map && typeof map === 'object' && !Array.isArray(map)) ? map : {};
+    } catch {
+      return {};
+    }
+  },
+
+  _writeOfflineCache(map) {
+    try {
+      const keep = Object.keys(map)
+        .filter((s) => map[s] && typeof map[s] === 'object' && typeof map[s].at === 'number')
+        .sort((a, b) => map[b].at - map[a].at)
+        .slice(0, AppView.OFFLINE_CACHE_MAX);
+      const out = {};
+      keep.forEach((s) => { out[s] = map[s]; });
+      localStorage.setItem(AppView.OFFLINE_CACHE_KEY, JSON.stringify(out));
+    } catch { /* quota or private mode: the old address, as before */ }
+  },
+
+  _offlineCacheEntry(slug) {
+    const entry = slug ? AppView._readOfflineCache()[slug] : null;
+    return entry && typeof entry === 'object' ? entry : null;
+  },
+
+  // Is this app framed at its cacheable address? The platform says whether
+  // the switch is on for it (`offline_cache` on the app's row); this device
+  // says whether its page opened that way last time. A deep link that is a
+  // `#` route of the app's own keeps the old address.
+  offlineCacheFor(appData) {
+    if (!appData || !appData.offline_cache || !appData.slug) return false;
+    if (AppView.pendingInnerPath && String(AppView.pendingInnerPath).includes('#')) return false;
+    const entry = AppView._offlineCacheEntry(appData.slug);
+    return !(entry && entry.oldAddressUntil && Date.now() < entry.oldAddressUntil);
+  },
+
+  // Opened at its cacheable address, online, on this device: the browser
+  // has the page to open with no connection.
+  offlineCacheOpenable(appData) {
+    if (!AppView.offlineCacheFor(appData)) return false;
+    const entry = AppView._offlineCacheEntry(appData.slug);
+    return !!(entry && entry.build);
+  },
+
+  // The copy this device keeps is of another build than the one live now
+  // (or of none it knows), so the bridge refreshes it. Never offline.
+  _offlineCacheNeedsRefresh(slug) {
+    if (window.Offline && Offline.isOffline()) return false;
+    const build = AppView.buildFor(slug);
+    if (!build) return false;
+    const entry = AppView._offlineCacheEntry(slug);
+    return !entry || entry.build !== build;
+  },
+
+  _offlineCacheWatch: null,
+
+  // Just before setSrc, for a frame at the cacheable address: wait for its
+  // bridge to say it opened. The frame's own load handlers (renderAppTab's
+  // and the launch's watchSurfaceLoad) call _offlineCacheFrameLoaded, so
+  // this never touches the React-owned element.
+  _watchOfflineCacheOpen(slug, src) {
+    AppView._offlineCacheWatch = null;
+    if (!slug || !src || !/#un-/.test(String(src))) return;
+    const watch = { slug, opened: false, offline: !!(window.Offline && Offline.isOffline()) };
+    watch.give = () => {
+      if (AppView._offlineCacheWatch !== watch || watch.opened) return;
+      AppView._offlineCacheWatch = null;
+      AppView._offlineCacheDidNotOpen(slug, watch.offline);
+    };
+    AppView._offlineCacheWatch = watch;
+    if (watch.offline) setTimeout(watch.give, AppView.OFFLINE_CACHE_OFFLINE_CAP_MS);
+  },
+
+  // The app frame's document is up: its bridge has a moment to say so.
+  _offlineCacheFrameLoaded() {
+    const watch = AppView._offlineCacheWatch;
+    if (watch && !watch.opened) setTimeout(watch.give, AppView.OFFLINE_CACHE_GRACE_MS);
+  },
+
+  _offlineCacheDidNotOpen(slug, offline) {
+    const map = AppView._readOfflineCache();
+    if (offline) {
+      // No copy to open after all (dropped by the browser): forget it, so
+      // the next render offline is the placeholder.
+      if (map[slug]) { delete map[slug].build; map[slug].at = Date.now(); }
+    } else {
+      // The page did not open without the token in its query: the old
+      // address, on this device, for a while.
+      map[slug] = { at: Date.now(), oldAddressUntil: Date.now() + AppView.OFFLINE_CACHE_RETRY_MS };
+    }
+    AppView._writeOfflineCache(map);
+    if (AppView.appData && AppView.appData.slug === slug) AppView.renderAppTab();
+  },
+
+  // Bridge -> shell: `{ __usernode_offline_cache: 'open', fresh }`, from the
+  // mounted production frame only, like the offline-ready message. `fresh`
+  // is false while the bridge is still refreshing an old copy, or when that
+  // refresh could not fetch the page: the next open asks again.
+  handleOfflineCacheMessage(e) {
+    const data = e.data;
+    if (!data || data.__usernode_offline_cache !== 'open') return;
+    const appIframe = document.getElementById('app-iframe');
+    if (!appIframe || e.source !== appIframe.contentWindow) return;
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    const watch = AppView._offlineCacheWatch;
+    if (watch && watch.slug === slug) watch.opened = true;
+    if (data.fresh !== true) return;
+    if (window.Offline && Offline.isOffline()) return;
+    // Online: the copy the browser now keeps is of the build live now.
+    const build = AppView.buildFor(slug);
+    if (!build) return;
+    const map = AppView._readOfflineCache();
+    map[slug] = { at: Date.now(), build };
+    AppView._writeOfflineCache(map);
   },
 
   // A frame mounted with no token in its src (an offline mount, or any
@@ -1857,10 +2010,24 @@ const AppView = {
     } catch {
       try { url = new URL(appUrl); } catch { return null; }
     }
+    const slug = AppView.appData && AppView.appData.slug;
     const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
-    if (token) url.searchParams.set('token', token);
-    // #3257: the platform's resolved theme, for the app's pre-paint read.
-    url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
+    if (AppView.offlineCacheFor(AppView.appData) && !url.hash) {
+      // An offline app (see offlineCacheFor): one address whatever the token,
+      // so the page the browser kept is the page asked for, online or not.
+      // The token and the theme go after `#`, which is never sent and is not
+      // part of the cache key; the bridge moves them into the query before
+      // the app's own code reads them.
+      const own = new URLSearchParams();
+      if (token) own.set('un-token', token);
+      own.set(AppView.THEME_PARAM, AppView.resolvedTheme());
+      if (AppView._offlineCacheNeedsRefresh(slug)) own.set(AppView.REFRESH_PARAM, '1');
+      url.hash = own.toString();
+    } else {
+      if (token) url.searchParams.set('token', token);
+      // #3257: the platform's resolved theme, for the app's pre-paint read.
+      url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
+    }
     const src = url.toString();
     return AppView._isSafeAppIframeSrc(src) ? src : null;
   },
@@ -2088,8 +2255,9 @@ const AppView = {
     // Offline, only an app whose own service worker can serve the document
     // (#487 follow-up). Anything else falls through to renderAppTab's
     // placeholder rather than animating open onto a frame that can't paint.
-    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(slug)) return false;
     const rec = AppView.launchRecordFor(slug);
+    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(slug)
+        && !AppView.offlineCacheOpenable(rec)) return false;
     if (!rec) return false;
     if (rec.demo) return false;
     if (rec.self_hosted) return false;
@@ -2618,6 +2786,7 @@ const AppView = {
       AppView._watchLaunchLoad(iframe, launchId);
       // `slug`, not appData: on the launch path the detail fetch may not
       // have landed yet, and grantedForSlug answers [] for the wrong app.
+      AppView._watchOfflineCacheOpen(slug, src);
       frame.setSrc(src, { granted: AppView.grantedForSlug(slug), build: AppView.buildFor(slug) });
     };
 
@@ -2716,6 +2885,7 @@ const AppView = {
       if (!held() && !hold.revealed) reveal();
       // The app is in: the dev caches' warm-up may have the connection now.
       if (iframeId === 'app-iframe' && AppView._afterAppFrameLoad) AppView._afterAppFrameLoad();
+      if (iframeId === 'app-iframe') AppView._offlineCacheFrameLoaded();
     };
     iframe.onerror = () => {
       if (!iframe.getAttribute('src')) return;
@@ -4169,7 +4339,11 @@ const AppView = {
     // mount comes out of ITS cache and needs no network — and refusing to
     // mount it was the one thing standing between the user and the offline
     // support the app had already built. See offlineReadyFor().
-    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(appData.slug)) {
+    // And an app the browser keeps a copy of (offlineCacheOpenable): its page
+    // and files were kept fresh by the app gate, so the same address opens
+    // from the browser's cache.
+    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(appData.slug)
+        && !AppView.offlineCacheOpenable(appData)) {
       AppView._teardownLaunch();
       // Same as the status branch above: offline, the frame would render a
       // broken cross-origin document, so it goes rather than parks.
@@ -4271,7 +4445,9 @@ const AppView = {
       // this frame's rect. Also covers the token-refresh re-src, which
       // reloads the frame without re-rendering.
       AppView.scheduleSafeAreaBroadcast();
+      AppView._offlineCacheFrameLoaded();
     });
+    AppView._watchOfflineCacheOpen(appData.slug, iframeSrc);
     frame.setSrc(iframeSrc, { granted: AppView._grantedNow(), build: AppView.buildFor(appData.slug) });
     // A fresh load is of the build that is live now, so an offer to reload
     // onto it is spent (the ?shot=app-update-ready state pins its own).
@@ -30027,6 +30203,8 @@ const AppView = {
   // The bridge turns both into `usernode.theme` and a
   // `usernode:theme-changed` event. It reports; it never restyles the app.
   THEME_PARAM: 'un-theme',
+  // An offline app's one-off "refresh your copies" flag, after `#`.
+  REFRESH_PARAM: 'un-refresh',
 
   // A staging preview shown as of a chosen moment (src/services/preview-
   // clock.js). The ensure answer's `previewAt` ({ at, label }) becomes
@@ -30061,6 +30239,15 @@ const AppView = {
       try {
         const url = new URL(src);
         url.searchParams.delete(AppView.THEME_PARAM);
+        // An offline app's address (buildAppIframeSrc) carries the platform's
+        // parameters after `#`: its theme is ignored like the query's, and so
+        // is the one-off refresh flag.
+        if (url.hash.startsWith('#un-')) {
+          const own = new URLSearchParams(url.hash.slice(1));
+          own.delete(AppView.THEME_PARAM);
+          own.delete(AppView.REFRESH_PARAM);
+          url.hash = own.toString();
+        }
         return url.toString();
       } catch {
         return src;
@@ -31001,6 +31188,7 @@ if (typeof window !== 'undefined') {
     try { AppView.handleIssueStateMessage(e); } catch {}
     // #487 follow-up: "my own service worker is serving this document".
     try { AppView.handleOfflineReadyMessage(e); } catch {}
+    try { AppView.handleOfflineCacheMessage(e); } catch {}
     // #752: file-storage relay (uploadFile/deleteFile/getStorageUsage).
     try { AppView.handleStorageBridgeMessage(e); } catch {}
     // #1195: user-directory relay (lookupUser/searchUsers).

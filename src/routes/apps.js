@@ -17,6 +17,7 @@ const platformEnv = require('../services/platform-env');
 const pendingSecrets = require('../services/pending-secrets');
 const { encrypt: encryptSecret } = require('../services/secrets');
 const appManifest = require('../services/app-manifest');
+const offlineCache = require('../services/offline-cache');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
@@ -1060,6 +1061,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // of this payload (see summarizeManifestSnapshot). GET
           // /api/apps/:slug still answers the whole snapshot.
           manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
+          // Offline apps (services/offline-cache.js): the shell frames this app
+          // at its cacheable address.
+          offline_cache: offlineCache.forApp(a),
           contributor_count: contributorCount,
           first_version_line: firstVersionLines.get(Number(a.id)) || null,
           first_version_phase: firstVersionPhases.get(Number(a.id)) || null,
@@ -1974,6 +1978,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
           : {}),
         demo_partner: demoPartner,
+        offline_cache: offlineCache.forApp(appRow),
         contributor_count: contributorCount,
         // Server-built icon URL so the client never assembles ids into
         // paths (and staging demo rows can inject arbitrary sources) —

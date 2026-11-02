@@ -49,6 +49,8 @@ const http = require('http');
 const https = require('https');
 const net = require('net');
 const { URL } = require('url');
+// Dependency-free, like this file: the rule for offline apps' cache headers.
+const offlineCache = require('../src/services/offline-cache');
 
 // The same stripping the Caddyfile does with a header_up replacement.
 const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon)$/;
@@ -73,7 +75,7 @@ const HOP_BY_HOP = new Set([
 ]);
 // Headers only the platform may set on what the app receives. A client that
 // sends one has it discarded before anything else happens.
-const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink'];
+const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink', 'x-usernode-cache'];
 // What a refusal may carry back to the visitor.
 const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy'];
 
@@ -318,6 +320,22 @@ function createGate({
         return res.end();
       }
       const headers = cleanHeaders(upRes.headers);
+      // Offline apps (src/services/offline-cache.js): when the platform's
+      // answer says so, the app's pages and files stay fresh for 30 days.
+      if (decision.headers[offlineCache.DECISION_HEADER] === offlineCache.DECISION_APP) {
+        const cc = offlineCache.appCacheControl({
+          method: req.method,
+          url: req.url,
+          status: upRes.statusCode,
+          cacheControl: headers['cache-control'],
+          setCookie: headers['set-cookie'],
+        });
+        if (cc) {
+          headers['cache-control'] = cc;
+          delete headers.expires;
+          delete headers.pragma;
+        }
+      }
       res.writeHead(upRes.statusCode || 502, headers);
       upRes.pipe(res);
     });

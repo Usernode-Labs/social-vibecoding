@@ -1046,8 +1046,9 @@ change; the single-server `rollback.sh` is not a cluster rollback mechanism.
 Cilium's Envoy has no forward-auth hook, so on this runtime nothing
 platform-owned sat in front of app and preview hosts: a view-private app was
 gated only by its own code, and an app opened at its own address could not
-sign anyone in. `APP_GATE=on` (chart `config.appGate`) puts a small proxy in
-front of every managed app and preview Ingress: the `usernode-app-gate`
+sign anyone in. `APP_GATE=on` (chart `config.appGate`, `"on"` by default since
+2 Nov 2026) puts a small proxy in front of every managed app and preview
+Ingress: the `usernode-app-gate`
 Deployment in the app namespace (two replicas, `maxUnavailable: 0`, the
 platform's own image running `scripts/app-gate.js`). It asks the platform's
 `/__caddy/access` about each request, exactly as Caddy does on the standalone
@@ -1057,7 +1058,8 @@ prefixes keep going straight to `usernode-platform-assets`.
 The gate holds no keys and reads no database. It fails closed: if the platform
 cannot be asked for 15 seconds, the visitor gets 503.
 
-Before turning it on:
+What it needs (the infra repository's foundation chart provides both in its
+tenant network policy, `tenantNetworkPolicy.enabled`):
 
 1. The app namespace's network policy (foundation repository) must allow the
    ingress controller to reach pods labelled
@@ -1068,7 +1070,7 @@ Before turning it on:
 2. `PLATFORM_INTERNAL_URL` must be set (the chart sets it from
    `config.internalUrl`).
 
-Turning it on: set `config.appGate: "on"` and sync. The app-gate clock (a
+Turning it on (the default): `config.appGate: "on"` and sync. The app-gate clock (a
 workflow job only the newest build runs, every ten minutes) brings the gate
 up, waits for it to be ready, and only then repoints every managed Ingress's
 catch-all path at it. If the gate does not come up, no Ingress is
@@ -1092,3 +1094,13 @@ This applies at once. Then set `config.appGate: "off"` too, or the clock's
 next run, or an app deploy, routes through the gate again. `config.appHostSignin: "off"`
 (`APP_HOST_SIGNIN`) separately turns off signing people in at an app's own
 address, on both runtimes; the gate still keeps private apps members-only.
+
+**Offline apps** (`config.appOfflineCache`, `APP_OFFLINE_CACHE`, `"on"` by
+default; `src/services/offline-cache.js`). With the gate on, it makes the
+gate give production app pages and files a 30-day fresh lifetime (never
+`/api/`, never a preview, never over an app's own `no-store` or `private`),
+serves the shared `/usernode-*` files stale-while-revalidate, and tells the
+shell to open apps from the browser's cache when offline. `"off"` and a sync
+turn it off; nothing in any app changes either way.
+Check: an app page's response through the gate carries
+`Cache-Control: max-age=2592000`.

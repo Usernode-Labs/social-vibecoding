@@ -7,6 +7,7 @@ const { artifactDir, digest, eligibleAsset } = require('../../scripts/precompres
 const { parseBuildScopedPath } = require('../../scripts/shell-stamp');
 const { wantsCompression } = require('./response-compression');
 const { IMMUTABLE, REVALIDATE, applyShellBuildHeader, shellBuildId } = require('../services/static-cache');
+const offlineCache = require('../services/offline-cache');
 
 // Optional build output, behind the same auth gate and ahead of the existing
 // static handlers. Missing/stale artifacts fall through to those handlers and
@@ -62,7 +63,9 @@ function precompressedAssets(publicDir, env = process.env) {
     res.setHeader('Content-Encoding', encoding);
     res.setHeader('ETag', `"${entry.variants[encoding]}"`);
     res.setHeader('Last-Modified', new Date(Number(stat.mtimeMs)).toUTCString());
-    res.setHeader('Cache-Control', scoped && shellBuildId(env) === scoped.build ? IMMUTABLE : REVALIDATE);
+    res.setHeader('Cache-Control', scoped && shellBuildId(env) === scoped.build
+      ? IMMUTABLE
+      : offlineCache.sharedFileCacheControl(asset, REVALIDATE, env));
     applyShellBuildHeader(res, env);
     res.sendFile(file, { dotfiles: 'allow', cacheControl: false, acceptRanges: false }, (err) => {
       if (!err) return;

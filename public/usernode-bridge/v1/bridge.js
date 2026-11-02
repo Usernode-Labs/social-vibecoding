@@ -21,6 +21,113 @@
 (function () {
   window.usernode = window.usernode || {};
 
+  /* __USERNODE_OFFLINE_CACHE_BEGIN__ */
+  // ── Offline apps from the browser's own cache ──────────────────────────
+  //
+  // The shell frames an offline app at ONE address whatever the token, so
+  // the page the browser kept is the page asked for, online or not: the
+  // platform's parameters go after `#` (`un-token`, `un-theme`, sometimes
+  // `un-refresh`; public/js/app-view.js buildAppIframeSrc), and the app gate
+  // keeps the app's pages and files fresh (src/services/offline-cache.js).
+  //
+  // FIRST IN THIS FILE, before the app's own code and before anything here
+  // reads the address:
+  //   1. The token and theme move into the query, where apps have always
+  //      read them (history.replaceState: no reload).
+  //   2. The app's files are remembered (in its own storage) as it loads
+  //      them, so a refresh knows what to fetch again.
+  //   3. `un-refresh`: the app's build changed since this device last kept
+  //      it. The page is hidden, every remembered file and the page are
+  //      fetched again past the cache, and the frame reloads onto them. A
+  //      plain reload is not enough: Chrome re-checks only the page.
+  //   4. It tells the shell it opened: `{ __usernode_offline_cache: 'open',
+  //      fresh }`, fresh being whether this copy is of the live build. The
+  //      shell frames the app the old way if it never hears this.
+  (function () {
+    try {
+      if (!(window.parent && window.parent !== window)) return;
+    } catch (_) { return; }
+    var hash;
+    try { hash = String(location.hash || ""); } catch (_) { return; }
+    if (hash.indexOf("#un-") !== 0) return;
+    var own;
+    try { own = new URLSearchParams(hash.slice(1)); } catch (_) { return; }
+    var page = String(location.href).split("#")[0];
+    var origin = location.origin;
+    var refresh = own.get("un-refresh") === "1";
+    var FILES_KEY = "usernode:offline-files";
+    var MAX_FILES = 200;
+
+    try {
+      var query = new URLSearchParams(location.search);
+      var token = own.get("un-token");
+      if (token) query.set("token", token);
+      var theme = own.get("un-theme");
+      if (theme) query.set("un-theme", theme);
+      var qs = query.toString();
+      history.replaceState(history.state, "", location.pathname + (qs ? "?" + qs : ""));
+    } catch (_) { /* refused: the app reads no token, as on an offline load */ }
+
+    // A file of this app's own, as the browser keeps it: no data reads, no
+    // platform paths, never an address that carries the token.
+    function keepable(raw) {
+      var u;
+      try { u = new URL(String(raw), origin); } catch (_) { return null; }
+      if (u.origin !== origin) return null;
+      if (u.pathname.indexOf("/api/") === 0 || u.pathname.indexOf("/__") === 0) return null;
+      if (/(^|&)token=/.test(u.search.slice(1))) return null;
+      u.hash = "";
+      return u.toString();
+    }
+    function readFiles() {
+      try {
+        var list = JSON.parse(localStorage.getItem(FILES_KEY));
+        return Array.isArray(list) ? list.filter(function (u) { return typeof u === "string"; }) : [];
+      } catch (_) { return []; }
+    }
+    function remember(names) {
+      var add = [];
+      for (var i = 0; i < names.length; i++) {
+        var k = keepable(names[i]);
+        if (k && add.indexOf(k) === -1) add.push(k);
+      }
+      if (!add.length) return;
+      var list = add.concat(readFiles().filter(function (u) { return add.indexOf(u) === -1; }));
+      try { localStorage.setItem(FILES_KEY, JSON.stringify(list.slice(0, MAX_FILES))); } catch (_) { /* full: kept as far as it goes */ }
+    }
+    try {
+      if (typeof PerformanceObserver === "function") {
+        new PerformanceObserver(function (entries) {
+          remember(entries.getEntries().map(function (e) { return e.name; }));
+        }).observe({ type: "resource", buffered: true });
+      }
+    } catch (_) { /* no observer: a refresh fetches the page alone */ }
+
+    function say(fresh) {
+      try { window.parent.postMessage({ __usernode_offline_cache: "open", fresh: !!fresh }, "*"); } catch (_) { /* parent gone */ }
+    }
+
+    if (!refresh) { say(true); return; }
+    say(false);
+    try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* no document yet */ }
+    var files = readFiles();
+    var pageFetch = fetch(page, { cache: "reload", credentials: "same-origin" })
+      .then(function (res) { return !!(res && res.ok); }, function () { return false; });
+    Promise.all([pageFetch].concat(files.map(function (u) {
+      return fetch(u, { cache: "reload", credentials: "same-origin" }).catch(function () { return null; });
+    }))).then(function (done) {
+      if (!done[0]) {
+        // The page could not be fetched again: run on the copy there is, and
+        // the shell asks again on the next open.
+        try { document.documentElement.style.visibility = ""; } catch (_) { /* gone */ }
+        return;
+      }
+      own.delete("un-refresh");
+      location.replace(page + "#" + own.toString());
+    });
+  })();
+  /* __USERNODE_OFFLINE_CACHE_END__ */
+
   // ── Native + iframe-relay detection ───────────────────────────────────
   //
   // "dapp mode" (top frame inside the Flutter WebView) exposes a JS channel
