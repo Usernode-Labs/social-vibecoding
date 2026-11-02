@@ -116,7 +116,9 @@ import {
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { devWorkshopStore } from '../dev-board/card/cards-store';
 import { useCommunity } from '../dev-board/workshop/community-card';
-import { openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { openPlace, placeStore, reopenPlace } from '../dev-board/workshop/place-store';
+import type { PlaceKey } from '../dev-board/workshop/places';
+import { improveStore } from '../improve/improve-store.js';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { openCommunitiesSearch } from '../workshop/communities-search';
 import { communityScopeStore, goToCommunity, type CommunityInfo } from '../workshop/community-scope';
@@ -274,15 +276,21 @@ export function useRailCommunities(): string[] {
 function RailPlaces({ slug, onPage, needs = 0 }: { slug: string; onPage: boolean; needs?: number }) {
   const place = useStoreState(placeStore);
   const v = useStoreState(devWorkshopStore);
+  const improve = useStoreState(improveStore) as { slug: string | null; tab: string | null; subTab: string | null };
   const community = useCommunity(slug);
   // In its app, no place is lit: App is.
   const here = onPage && place.slug === slug;
+  // A request's or a change's page lights the place its back chip returns
+  // to, the one the project page reopens on, as All items lights the
+  // Workshop: with none lit the sidebar said nothing of where you were
+  // (audit N05, 1 Nov 2026).
+  const onItem = onPage && improve.slug === slug && improve.tab === 'dev' && improve.subTab === 'topic';
   return (
     <ProjectPlaces
       slug={slug}
       name={community?.name || slug}
       // Nothing lit until the page has said where it is.
-      place={here ? place.place : null}
+      place={here ? place.place : (onItem ? reopenPlace(slug) as PlaceKey : null)}
       // Off its page (in its app) the row's own count moves here: it hid
       // the row's figure when the part opened, and Needs you drew nothing,
       // so the one count that asks for you vanished (audit N04).

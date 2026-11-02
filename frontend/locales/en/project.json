@@ -5011,6 +5011,30 @@
     "text": "All items",
     "description": "Text of the back chip at the top of a proposal's or request's page when it was opened from the project's All items page (the whole board of requests and proposals under the Workshop tab), which the chip returns to. Shown after a left-pointing chevron."
   },
+  "topic.back.hub": {
+    "text": "Hub",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on its Hub (the project's front page), which the chip returns to. Shown after a left-pointing chevron."
+  },
+  "topic.back.toHub": {
+    "text": "Back to Hub",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to the project's Hub, its front page."
+  },
+  "topic.back.needs": {
+    "text": "Needs you",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on its Needs you place (the decisions waiting on this person), which the chip returns to. Shown after a left-pointing chevron."
+  },
+  "topic.back.toNeeds": {
+    "text": "Back to Needs you",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to the project's Needs you place, the list of decisions waiting on this person."
+  },
+  "topic.back.channel": {
+    "text": "#{{handle}}",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on one of its chat channels, which the chip returns to. {{handle}} is the channel's name without its #, such as general. Shown after a left-pointing chevron."
+  },
+  "topic.back.toChannel": {
+    "text": "Back to #{{handle}}",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to one of the project's chat channels. {{handle}} is the channel's name without its #, such as general."
+  },
   "topic.back.toAllItems": {
     "text": "Back to All items",
     "description": "Accessible name of the back chip on a proposal's or request's page that was opened from the project's All items page. All items is the whole board of the project's requests and proposals, under its Workshop tab."
