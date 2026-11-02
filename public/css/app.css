@@ -20032,12 +20032,13 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
     position: static; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
   }
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child { display: none; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-time,
+  /* AUDIT C03 (2 Nov 2026): the column keeps the rows' own type, 15 over
+     13 at the house weight, and their time: a 400-weight title and a 12px
+     line with no time made the same list two designs, upright and
+     sideways. Only the members chip goes, for the narrower column. */
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-group-tag { display: none; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-name { font-size: 15px; font-weight: 400; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-preview { font-size: 12px; line-height: 16px; }
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; font-weight: 600; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; }
   /* The peek: a picture of the conversation, pressed as one. */
   .messages-thread-peek { overflow: hidden; }
   .messages-thread-peek > .messages-peek-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
