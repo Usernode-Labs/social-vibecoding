@@ -171,6 +171,32 @@ test('You or the group: or when most of the group says yes, as Group vote would'
   assert.equal(g.creatorYes, false);
 });
 
+test('You or the group: when the group\'s vote passes too, the threshold stays the group\'s (audit, 2 Nov 2026)', () => {
+  // Book Club: three members, the bot's change for a member's request. It
+  // read "0 of 2 yes votes", then "1/2" on the first yes; the creator's yes
+  // made it two of the three, which passes BOTH rules. The first rule that
+  // passed was reported (the creator's, need 1), so the merge snapshotted
+  // votes_required = 1 under two yes votes: "2 of 1 yes vote".
+  const f = facts({ memberCount: 3, membersActive: 3 });
+  const BOT = 99;
+  const first = gate(preset('you_or_the_group'), { author: BOT, yes: [SNAIT], f });
+  assert.equal(first.mergeable, false);
+  assert.equal(first.required, 2, 'open: two of the three members');
+  const both = gate(preset('you_or_the_group'), { author: BOT, yes: [SNAIT, EVAN], f });
+  assert.equal(both.mergeable, true);
+  assert.deepEqual(both.passedBy, { group: 'members', kind: 'majority', n: null },
+    'the group\'s own rule passed, so it is the one reported');
+  assert.equal(both.required, 2, 'the threshold the vote was shown against');
+  assert.equal(both.qualifiedYes, 2);
+  assert.equal(both.creatorYes, true, 'the creator\'s yes is still said');
+  // The creator's yes alone, the group short: it went in by the creator's
+  // rule, said in that rule's terms, as before.
+  const creatorOnly = gate(preset('you_or_the_group'), { author: BOT, yes: [EVAN], f: facts() });
+  assert.equal(creatorOnly.mergeable, true);
+  assert.equal(creatorOnly.passedBy.group, 'creator');
+  assert.equal(creatorOnly.required, 1);
+});
+
 test('You or the group: the creator saying No is not a veto', () => {
   const g = gate(preset('you_or_the_group'), { author: MAYA, yes: [MAYA, SNAIT, ANA], no: [EVAN] });
   assert.equal(g.mergeable, true);

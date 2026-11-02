@@ -120,7 +120,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
   }
 
   return (
-    <section data-add-phone={step} className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left">
+    <section data-add-phone={step} className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-start">
       <h2 className="text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">{step === 'phone' ? title : t('auth:addPhone.codeTitle')}</h2>
       <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
         {step === 'phone'

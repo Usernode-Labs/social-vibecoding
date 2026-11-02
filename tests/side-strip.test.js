@@ -489,7 +489,7 @@ test('Messages\' drawer runs under the strip the same way', () => {
   assert.match(block, /html\[data-side-strip="right"\] \.messages-layout\.messages-drawer > \.messages-thread-pane \{\s*padding-right: var\(--platform-strip-w, 0px\);/);
   // Its floating discs are positioned off the sheet's edge, which padding
   // does not move: they come in by the strip too, from their own 12px.
-  assert.match(APP_CSS, /\.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header \{\s*position: absolute; top: 4px; right: 12px;/);
+  assert.match(APP_CSS, /\.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header \{\s*position: absolute; top: 4px; inset-inline-end: 12px;/);
   // Audit C01: they float only over the bot's strip; over a transcript they
   // take a slim row of their own, so no bubble sits under them.
   assert.match(APP_CSS, /\.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header:not\(:has\(\+ \[data-bot-strip\]\)\) \{\s*position: static; padding: 4px 12px; justify-content: flex-end;/);

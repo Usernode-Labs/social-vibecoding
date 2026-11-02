@@ -61,7 +61,8 @@ export function platformHubServed(): boolean {
 export function openChannelHub(slug: string | null): void {
   const win = window as unknown as { AppView?: { _landOnHub?: (slug: string) => void } };
   if (slug) win.AppView?._landOnHub?.(slug);
-  window.location.hash = slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
+  // The Hub's own address, as the header's arrow (messages/store.ts channelHub).
+  window.location.hash = slug ? `#app/${encodeURIComponent(slug)}/dev/hub` : '#communities';
 }
 
 /** Hear when the platform's slug changes; the unsubscribe. */

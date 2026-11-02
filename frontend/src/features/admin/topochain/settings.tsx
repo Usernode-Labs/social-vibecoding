@@ -119,11 +119,11 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-1">
         These flows still report success to the user but deliver nothing:
       </p>
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ms-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
         {(mail.affectedFlows || []).map((f) => <li key={f}>{f}</li>)}
       </ul>
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-2">Providers:</p>
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ms-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
         {(mail.providers || []).map((p) => (
           <li key={p.name}>
             {`${p.label || p.name}: `}
@@ -296,7 +296,7 @@ function SettingsScreen() {
 
   const columns: Column<Setting>[] = [
     { label: 'Key', primary: true, cell: (s) => s.key, tdClass: 'text-xs font-mono' },
-    { label: 'Value', cell: (s) => s.value, tdClass: 'font-mono text-right', thClass: 'text-right' },
+    { label: 'Value', cell: (s) => s.value, tdClass: 'font-mono text-end', thClass: 'text-end' },
     { label: 'Description', cell: (s) => s.description || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     { label: 'Updated', cell: (s) => fmt(s.updated_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
   ];

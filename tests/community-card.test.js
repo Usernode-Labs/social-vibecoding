@@ -117,10 +117,9 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
   const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', canOpenApp: true }));
   assert.match(pending, /class="dev-ws-hero" data-ws-community-pending=""/);
   assert.match(pending, /<button type="button" class="dev-ws-open-app" data-ws-community-open-app="">/);
-  // Open app is an action: the one accent, not the community's colour,
-  // which the header wears to say where you are (audit P01).
-  assert.match(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*background: var\(--accent\); color: #fff;/);
-  assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*--community-tint/);
+  // Open app wears the community's colour from the root, where the header
+  // sets it (features/header/community-tint.ts), not from a prop.
+  assert.match(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*background: var\(--community-tint, var\(--accent\)\)/);
   assert.doesNotMatch(pending, /dev-ws-hero-name|data-ws-community=""|Join|data-ws-community-rule/,
     'no name before the read says it, and nothing that depends on membership before it is known');
   const src = read(CARD);
@@ -152,7 +151,7 @@ test('the channel is a hub card at its old address; Join asks under its button a
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-ws-join-pop \{\s*position: absolute; top: calc\(100% \+ 12px\)/,
     'it hangs from the button');
-  assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/,
+  assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ inset-inline-start: auto; inset-inline-end: -6px; \}/,
     'from its right edge in the hero, where Join ends the actions row (#852)');
   // #4045: Leave is a row of the hub's ⋯ (it was the Joined pill), through
   // the same call Discover makes, and never the creator's.

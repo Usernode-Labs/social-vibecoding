@@ -96,7 +96,7 @@ test('a submission is a message from its proposer: their avatar, name and stamp 
   // Name and stamp on the header line, where a person's message puts them.
   assert.match(html, /<span class="truncate text-\[1\.0625rem\] font-bold text-zinc-900 dark:text-zinc-100"><span data-event-sender="">evan<\/span><\/span><span class="shrink-0 text-\[0\.9375rem\] text-zinc-500 dark:text-zinc-500"><span class="gc-msg-time" title="Sep 16, 2026, 09:05 AM">09:05 AM<\/span><\/span>/);
   // One box: the bare glyph, one line of text, the door's chevron.
-  assert.match(html, /<a class="gc-event-box" href="\/app\/recipe-app\/dev\/proposals\/5" title="Open this change"><span class="w-7 h-7 rounded-lg dev-card-icon bg-sky-500\/15 [^"]*">[\s\S]*?<\/span><span class="gc-event-text">Asked for approval: Custom tier colors<\/span><svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0"/);
+  assert.match(html, /<a class="gc-event-box" href="\/app\/recipe-app\/dev\/proposals\/5" title="Open this change"><span class="w-7 h-7 rounded-lg dev-card-icon bg-sky-500\/15 [^"]*">[\s\S]*?<\/span><span class="gc-event-text">Asked for approval: Custom tier colors<\/span><svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0[^"]*"/);
   // Nothing else: no controls host, no bookmark, no react button, no reactions.
   assert.doesNotMatch(html, /data-vote-controls|gc-msg-save|gc-react-add|gc-reactions|gc-msg-system|gc-msg[" ]/);
 });

@@ -72,7 +72,7 @@ const COLUMNS: Column<Activity>[] = [
   },
   { label: 'Challenge', cell: (a) => a.challenge?.goal || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
   { label: 'Type', cell: (a) => a.activity_type, tdClass: 'text-xs' },
-  { label: 'Points', cell: (a) => a.points, tdClass: 'font-mono text-right', thClass: 'text-right' },
+  { label: 'Points', cell: (a) => a.points, tdClass: 'font-mono text-end', thClass: 'text-end' },
   { label: 'At', cell: (a) => fmt(a.activity_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
 ];
 
@@ -428,9 +428,9 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
                 <table className="w-full">
                   <thead className="text-xs text-zinc-500 dark:text-zinc-400">
                     <tr>
-                      <th className="text-left px-2">User</th>
-                      <th className="text-right px-2">Points</th>
-                      <th className="text-right px-2">Count</th>
+                      <th className="text-start px-2">User</th>
+                      <th className="text-end px-2">Points</th>
+                      <th className="text-end px-2">Count</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -439,8 +439,8 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
                         <td className="px-2 py-1 text-xs">
                           {t.user.display_name || t.user.email || t.user.id}
                         </td>
-                        <td className="px-2 py-1 text-xs font-mono text-right">{t.total_points}</td>
-                        <td className="px-2 py-1 text-xs font-mono text-right">{t.total_activities}</td>
+                        <td className="px-2 py-1 text-xs font-mono text-end">{t.total_points}</td>
+                        <td className="px-2 py-1 text-xs font-mono text-end">{t.total_activities}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -453,19 +453,19 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
                 <table className="w-full">
                   <thead className="text-xs text-zinc-500 dark:text-zinc-400">
                     <tr>
-                      <th className="text-left px-2">Type</th>
-                      <th className="text-right px-2">Count</th>
-                      <th className="text-right px-2">Points</th>
-                      <th className="text-right px-2">Users</th>
+                      <th className="text-start px-2">Type</th>
+                      <th className="text-end px-2">Count</th>
+                      <th className="text-end px-2">Points</th>
+                      <th className="text-end px-2">Users</th>
                     </tr>
                   </thead>
                   <tbody>
                     {totals.type_totals.map((t) => (
                       <tr key={t.activity_type} className="border-t border-zinc-200 dark:border-zinc-800">
                         <td className="px-2 py-1 text-xs">{t.activity_type}</td>
-                        <td className="px-2 py-1 text-xs font-mono text-right">{t.count}</td>
-                        <td className="px-2 py-1 text-xs font-mono text-right">{t.total_points}</td>
-                        <td className="px-2 py-1 text-xs font-mono text-right">{t.unique_users}</td>
+                        <td className="px-2 py-1 text-xs font-mono text-end">{t.count}</td>
+                        <td className="px-2 py-1 text-xs font-mono text-end">{t.total_points}</td>
+                        <td className="px-2 py-1 text-xs font-mono text-end">{t.unique_users}</td>
                       </tr>
                     ))}
                   </tbody>

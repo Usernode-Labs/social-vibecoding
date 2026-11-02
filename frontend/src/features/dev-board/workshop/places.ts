@@ -140,7 +140,9 @@ export function placeHref(slug: string, key: PlaceKey): string {
   if (key === 'discussion') return `${app}/dev/discussion`;
   const handle = placeHandle(key);
   if (handle) return `${app}/dev/c/${handle}`;
-  return key === 'status' ? `${app}/workshop` : `${app}/workshop?ws=${encodeURIComponent(key)}`;
+  // The Hub has its own address (App._placeAddress): a bare /workshop opens
+  // the Workshop.
+  return key === 'status' ? `${app}/dev/hub` : `${app}/workshop?ws=${encodeURIComponent(key)}`;
 }
 
 /**

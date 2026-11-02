@@ -79,6 +79,9 @@ function harness(initial) {
       return { messages: (server.stale || server.messages).map((item) => ({ ...item })), nextBefore: null };
     },
     markRead: async () => {},
+    // What this device kept to draw offline: nothing, unless a test says so.
+    keptConversations: () => null,
+    keptConversation: () => null,
     sendMessage: (id, payload) => new Promise((resolve) => {
       deferred.push(() => {
         // Idempotent, as services/conversations.js is: the same key is one row.
@@ -142,28 +145,34 @@ test('#3705: a re-read after a realtime event asks the server, never the worker\
   assert.deepEqual(h.contents(), ['I build things for you on Homeroom.', 'Your request is up for a vote.']);
 });
 
-test('#4243: an open reads the offline copy only when offline, or once the fresh read failed', async (t) => {
+test('#4243: an open reads fresh only while online; one with no answer draws the copy this device kept', async (t) => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   t.after(() => { if (original) Object.defineProperty(globalThis, 'navigator', original); else delete globalThis.navigator; });
   Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true, writable: true });
   const offline = harness([serverMessage(1, BOT, 'Hello.')]);
   await openDm(offline);
   for (const [what, options] of offline.server.reads.filter(([w]) => w !== 'list')) {
-    assert.ok(!options?.fresh, `offline, the open takes the worker's copy (${what})`);
+    assert.ok(!options?.fresh, `offline, the open takes the ordinary read (${what})`);
   }
 
+  // The worker keeps no offline copy of a conversation (it answers
+  // `private, no-store`), so a failed open does not read again for one: it
+  // draws what this device kept (frontend/src/features/messages/api.ts
+  // keptConversation; tests/messages-offline-kept.test.js has the rest).
   globalThis.navigator.onLine = true;
   const failing = harness([serverMessage(1, BOT, 'Hello.')]);
-  const getConversation = failing.api.getConversation;
-  let failures = 1;
   failing.api.getConversation = async (id, options) => {
-    if (options?.fresh && failures-- > 0) { failing.server.reads.push(['conversation', options]); throw new TypeError('Failed to fetch'); }
-    return getConversation(id, options);
+    failing.server.reads.push(['conversation', options]);
+    throw new TypeError('Failed to fetch');
   };
+  failing.api.keptConversation = (id) => (id === 42
+    ? { detail: DM, page: { messages: [serverMessage(1, BOT, 'Hello.')], nextBefore: null } }
+    : null);
   await openDm(failing);
   const reads = failing.server.reads.filter(([w]) => w === 'conversation').map(([, options]) => !!options?.fresh);
-  assert.deepEqual(reads, [true, false], 'the fresh read failed, so the open read again and took the copy');
-  assert.equal(failing.state().threadError, null, 'and drew it, with no error');
+  assert.deepEqual(reads, [true], 'the fresh read failed, and nothing read again');
+  assert.equal(failing.state().threadError, null, 'the kept copy is drawn, with no error');
+  assert.deepEqual(failing.contents(), ['Hello.']);
 });
 
 test('#4220: the bot stays "typing" until the message it sent is drawn, and no longer than the cap', async (t) => {

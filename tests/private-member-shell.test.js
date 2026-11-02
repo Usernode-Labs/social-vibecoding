@@ -340,7 +340,7 @@ test('a newcomer owed the walk on Home: the menu offers "Go to Homeroom", and "G
   assert.equal(owed.hidden, 1, '"Go to community" hidden');
   // Still in the document, its id and address the Workshop's (dapp.json
   // checks select on it for a viewer who is owed no walk).
-  assert.match(owed.html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#app\/city-tier-list\/workshop"/);
+  assert.match(owed.html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#app\/city-tier-list\/dev\/hub"/);
   // The home-screen row stays a private member's.
   assert.doesNotMatch(owed.html, /app-menu-row-add-home/);
   // Not yet armed (they have not opened the app yet) counts the same.
@@ -374,5 +374,5 @@ test('a private member: "Go to Homeroom" until they have been Home, then "Go to 
   assert.ok(after.mounted);
   assert.doesNotMatch(after.html, /app-menu-homeroom-card|Go to Homeroom/);
   assert.equal(after.hidden, 0, '"Go to community" shown');
-  assert.match(after.html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#app\/city-tier-list\/workshop"/);
+  assert.match(after.html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#app\/city-tier-list\/dev\/hub"/);
 });

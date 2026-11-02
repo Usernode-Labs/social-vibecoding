@@ -1118,6 +1118,27 @@
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
+      "fingerprint": "0553d1ca933bdfd6c1d5",
+      "count": 1,
+      "preview": "`REVOKE UPDATE ON SEQUENCE public.wf_events_id_seq FROM ${role}; GRANT USAGE, SELECT ON SEQUENCE public.wf_events_id_seq TO ${role}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "443c29ba4b6dc9829efe",
+      "count": 1,
+      "preview": "`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE ${kernel} FROM ${role}; GRANT SELECT ON TABLE ${kernel} TO ${role}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "728879950533f9074e34",
+      "count": 1,
+      "preview": "`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.wf_events FROM ${role}; GRANT SELECT, INSERT (${WEB_EVENT_COLUMNS.join(', ')}) ON TABLE public.wf_event"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
       "fingerprint": "83622e5a5ef7d176420d",
       "count": 1,
       "preview": "`GRANT ${privileges} ON ${kind} ${item.name} TO ${runtime}`"
@@ -1310,6 +1331,13 @@
       "fingerprint": "f3f5fdd5a94eb8d50ab2",
       "count": 1,
       "preview": "`SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE slug = LOWER($1) OR LOWER(name) = LOWER($1) ORDER BY (slug = LOWER($1)) DESC, id LIM"
+    },
+    {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
+      "fingerprint": "fdb7e64ac3ee12ccb1f3",
+      "count": 1,
+      "preview": "`SELECT a.slug, a.name, ${require('./communities').audienceSql('a', '(SELECT COUNT(*) FROM community_members cm WHERE cm.community_id = a.community_id)')} AS au"
     },
     {
       "source": "src/services/homeroom-bot-progress.js",
@@ -1678,16 +1706,16 @@
     {
       "source": "src/services/shots-control.js",
       "kind": "structural-template",
-      "fingerprint": "36a17722f351328f3ee1",
+      "fingerprint": "13ee25334e0c09d7d0d7",
       "count": 1,
-      "preview": "`SELECT * FROM shot_run_control WHERE run_id = $1${lock ? ' FOR UPDATE' : ''}`"
+      "preview": "`SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256, density, part, scale, focus_rect, object_key FROM sho"
     },
     {
       "source": "src/services/shots-control.js",
       "kind": "structural-template",
-      "fingerprint": "d6f860ff0554e7f6405d",
+      "fingerprint": "36a17722f351328f3ee1",
       "count": 1,
-      "preview": "`SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256, density, part, scale, focus_rect, object_key FR"
+      "preview": "`SELECT * FROM shot_run_control WHERE run_id = $1${lock ? ' FOR UPDATE' : ''}`"
     },
     {
       "source": "src/services/shots-demo-states.js",
@@ -2161,9 +2189,9 @@
     {
       "source": "src/workflow/kernel/stream.ts",
       "kind": "structural-template",
-      "fingerprint": "c744c2462ef8bfb640f5",
+      "fingerprint": "d40268ced7a32c38374d",
       "count": 1,
-      "preview": "`BEGIN; SET LOCAL app.wf_writer = 'transition'; SET LOCAL lock_timeout = '${Math.max(0, Math.floor(lockTimeoutMs))}ms'`"
+      "preview": "`BEGIN; SET LOCAL lock_timeout = '${Math.max(0, Math.floor(lockTimeoutMs))}ms'`"
     },
     {
       "source": "src/workflow/merge-followups/facts.ts",

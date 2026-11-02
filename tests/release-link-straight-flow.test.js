@@ -271,7 +271,7 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow and ad
   assert.match(card, /<div class="overflow-hidden rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] bg-\[color:var\(--dc-sheet-solid\)\] mx-0 mb-1 mt-3" role="list" data-welcome-page-points="">/);
   assert.equal((card.match(/role="listitem"/g) || []).length, 3, 'three rows');
   assert.equal((card.match(/\[&amp;:not\(:last-child\)\]:after:h-px/g) || []).length, 3, 'each row carries the hairline the last one drops');
-  assert.equal((card.match(/\[&amp;:not\(:last-child\)\]:after:left-\[4\.25rem\]/g) || []).length, 3, 'the hairline starts where the words do');
+  assert.equal((card.match(/\[&amp;:not\(:last-child\)\]:after:start-\[4\.25rem\]/g) || []).length, 3, 'the hairline starts where the words do, at the inline start');
   // Rows to read: no button, no link, no chevron, nothing in the accent.
   assert.doesNotMatch(card, /<button|<a |M9 5l7 7-7 7|cursor-pointer|violet|--accent/);
   // Each a colour emoji on the make screen's idea tile (Evan, 20 Oct 2026),
@@ -355,7 +355,7 @@ test('in Safari\'s visible area Continue is on screen: under 800px a 96px pictur
   assert.match(src, /className=\{`mx-auto mt-2 block h-auto w-\[140px\] max-w-full \$\{SHORT_PICTURE_WIDTH\}`\}/);
   assert.match(src, /const SHORTER_LINE = 'whitespace-normal \[@media\(max-height:799px\)\]:hidden';/);
   assert.match(src, /subtitleClassName=\{SHORTER_LINE\}/);
-  assert.match(src, /const POINT_ROW = 'gap-3 py-2 \[&:not\(:last-child\)\]:after:left-\[4\.25rem\] \[@media\(max-height:799px\)\]:py-0\.5';/);
+  assert.match(src, /const POINT_ROW = 'gap-3 py-2 \[&:not\(:last-child\)\]:after:start-\[4\.25rem\] \[@media\(max-height:799px\)\]:py-0\.5';/);
   assert.equal((html.match(/\[@media\(max-height:799px\)\]:hidden">/g) || []).length, 3, 'the three second lines, and nothing else');
   for (const title of ['Make an app for your group', 'Change it by asking', 'Decide together']) {
     assert.match(html, new RegExp(`whitespace-normal">${title}</div>`), title);

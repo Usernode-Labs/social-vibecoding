@@ -321,7 +321,7 @@ export function QuickQuestions({ name, questions, busy = false, error = null, on
       <p data-first-session-questions-label="" className="px-1 pb-1.5 text-center text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(PLAN_LABEL)}</p>
       <h2 id={`${uid}-title`} className="text-center text-[17px] font-semibold leading-snug text-violet-600 dark:text-violet-400">{questionsTitle(questions.length)}</h2>
       <p className="mt-1 text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.made.questions.line', { project: name })}</p>
-      <div className="mt-3 rounded-[20px] bg-white px-4 pb-1.5 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+      <div className="mt-3 rounded-[20px] bg-white px-4 pb-1.5 text-start shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
         <PlanChoices questions={questions} picked={picked} onPick={pick} idBase={uid} top="plain" />
       </div>
       {error ? <p role="alert" className="mt-2 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
@@ -874,7 +874,7 @@ export function PlanWaitsCard({ name, onOpenChat }: { name: string; onOpenChat: 
   return (
     <section data-first-session-plan="waiting" aria-labelledby="first-session-plan-label" className="mt-4">
       <p id="first-session-plan-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(PLAN_LABEL)}</p>
-      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-4 pr-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 ps-4 pe-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
         <div className="min-w-0 flex-1">
           <p className="text-[15px] font-[650] leading-snug">{planWaitsLine(name)}</p>
           <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.made.planAnswer')}</p>
@@ -903,7 +903,7 @@ export function SetupStoppedCard({ stalled, busy, onRetry, onSetSecrets }: {
   return (
     <section data-made-stalled={stalled} aria-labelledby="made-stalled-label" className="mt-4">
       <p id="made-stalled-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(PLAN_LABEL)}</p>
-      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-4 pr-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 ps-4 pe-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
         <p className="min-w-0 flex-1 text-[15px] font-[650] leading-snug">
           {failed ? t('onboarding:firstSession.made.stalled.failed') : t('onboarding:firstSession.made.stalled.needsSecrets')}
         </p>
@@ -1033,7 +1033,7 @@ export const SETUP_SET_UP = 'onboarding:firstSession.made.setup.setUp';
  * tapping it). The card is one height in every state: its title one line,
  * its note at most two, room kept for both.
  */
-export const SETUP_ROW = 'flex h-[84px] items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+export const SETUP_ROW = 'flex h-[84px] items-center gap-3 rounded-[20px] bg-white py-3 ps-3 pe-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 export const SETUP_NOTE = 'line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400';
 
 /**
@@ -1218,7 +1218,7 @@ export type FirstLookProgress =
  * The phone is the App tab's frame (../app-frame/first-version-screens.tsx,
  * 390 × 844) drawn small.
  */
-export const FIRST_LOOK_ROW = 'flex h-[132px] items-center gap-3.5 rounded-[20px] bg-white py-3 pl-3.5 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+export const FIRST_LOOK_ROW = 'flex h-[132px] items-center gap-3.5 rounded-[20px] bg-white py-3 ps-3.5 pe-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 export const FIRST_LOOK_PHONE = 'relative h-[108px] w-[50px] shrink-0 overflow-hidden rounded-[11px] bg-zinc-100 shadow-[0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800';
 const FIRST_LOOK_STATUS = 'mt-2 flex h-10 items-center gap-2.5';
 const FIRST_LOOK_STEP = 'truncate text-[14px] font-medium leading-[18px] text-zinc-700 dark:text-zinc-300';
@@ -1469,7 +1469,7 @@ const CARD_VIEWS: ReadonlyArray<{ value: CardView; label: string }> = [
 export const CARD_SWITCH = 'flex rounded-full bg-black/55 p-0.5 text-[12px] font-semibold leading-4';
 const CARD_SWITCH_SIDE = 'min-h-[24px] rounded-full px-2.5 py-1';
 /** Where the switch sits: the card's top-right corner. */
-export const CARD_CORNER = 'absolute right-3 top-3 z-10';
+export const CARD_CORNER = 'absolute end-3 top-3 z-10';
 
 /** The switch in the card's corner. */
 export function CardViewSwitch({ value, onChange }: { value: CardView; onChange: (view: CardView) => void }) {
@@ -1507,7 +1507,7 @@ export const APP_BAND = 'h-[264px]';
 export const APP_PHONE = 'relative h-[204px] w-[94px] shrink-0 overflow-hidden rounded-[18px] bg-white shadow-[0_10px_28px_rgba(0,0,0,0.22),0_0_0_4px_rgba(17,17,20,0.9)]';
 const APP_PHONE_WIDTH = 94;
 /** The "Example" tag: the App tab's pill over its band (first-version-screens.tsx). */
-const EXAMPLE_TAG = 'pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white';
+const EXAMPLE_TAG = 'pointer-events-none absolute start-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white';
 
 /**
  * The App side: the phone with the picture (the drawn first look framed as
@@ -2008,7 +2008,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
               when it is ready (the notification ask). In the Homeroom app
               the same moment is askForPingWhileBotBuilds's modal, and this
               draws nothing. */}
-          {botBuilds && busy && !stalled && !asked && !checking ? <NotifyAsk moment="app_building" className="mt-4 w-full text-left" /> : null}
+          {botBuilds && busy && !stalled && !asked && !checking ? <NotifyAsk moment="app_building" className="mt-4 w-full text-start" /> : null}
         </div>
         {/* QUICK QUESTIONS: in place of the invite line and its buttons
             until they are answered, right under the project while the body

@@ -420,7 +420,7 @@ test('#5825: the Show-all line is the expander alone, at the right end', () => {
   assert.doesNotMatch(html, /home-create-tile/, 'and carries no compact entry any more');
   const showAll = html.match(/<button type="button" id="home-apps-more-btn" class="([^"]*)"/);
   assert.ok(showAll, 'Show all is still a button');
-  assert.match(showAll[1], /\btext-right\b/, 'right aligned in its line');
+  assert.match(showAll[1], /\btext-end\b/, 'aligned to the end in its line');
   assert.doesNotMatch(showAll[1], /\btext-left\b/);
   assert.doesNotMatch(showAll[1], /\bflex-1\b/, 'no longer centred in the space left over');
 });
@@ -428,7 +428,7 @@ test('#5825: the Show-all line is the expander alone, at the right end', () => {
 test('without a held-back tile, or with a count, the line is the expander alone', () => {
   const { AppsMoreBody } = loadTsx(MORE);
   const html = renderToHtml(createElement(AppsMoreBody, { moreCount: 9 }));
-  assert.match(html, /id="home-apps-more-btn"[^>]*class="text-right /,
+  assert.match(html, /id="home-apps-more-btn"[^>]*class="text-end /,
     'alone on its line, Show all reads to the right');
   assert.doesNotMatch(html, /w-full/, 'no longer stretched across the line');
   assert.doesNotMatch(html, /home-create-tile/, 'and no compact entry beside it');

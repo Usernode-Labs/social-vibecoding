@@ -104,6 +104,8 @@ export function botBuild() {
     version: 1,
     events: { Requested: decodeRequested, StopRequested: decodeStop },
     create: ['Requested'],
+    // What web appends: Stop.
+    web: ['StopRequested'],
     terminal: ['done', 'failed'],
     decode: (row) => ({ name: row.state, data: row.data as Data }),
     facts: (tx, _s, e, ctx) => readFacts(tx, e, ctx.key),

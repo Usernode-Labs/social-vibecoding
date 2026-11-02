@@ -78,7 +78,8 @@ test('native iOS view-transition override is transform-only and shorter', () => 
   assert.match(block, /un-vt-native-ios-parallax-in-left/);
 
   const keyframes = block.slice(block.indexOf('@keyframes un-vt-native-ios-parallax-out-left'));
-  assert.match(keyframes, /translateX\(-30%\)/);
+  assert.match(keyframes, /translateX\(calc\(-30% \* var\(--rtl-sign\)\)\)/,
+    'the parallax offset, mirrored in a right-to-left language');
   assert.doesNotMatch(keyframes, /filter\s*:/,
     'native override must not animate a full-page filter');
   assert.match(kitCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?::view-transition-new\(root\)[\s\S]*?animation:\s*none/,

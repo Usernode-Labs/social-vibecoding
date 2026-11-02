@@ -431,7 +431,7 @@ export function DrawnSide({ screen, side, label }: { screen: SpecScreen; side: '
           aria-hidden="true"
           title={label}
           srcDoc={side === 'before' ? screen.before : screen.after}
-          className="pointer-events-none absolute left-0 top-0 origin-top-left border-0"
+          className="pointer-events-none absolute start-0 top-0 origin-top-left border-0"
           style={{ width: screen.width, height: screen.height, transform: `scale(${scale}) translate(${-x}px, ${-y}px)` }}
         />
       ) : null}

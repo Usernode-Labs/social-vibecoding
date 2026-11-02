@@ -74,7 +74,7 @@ export function AppSecretsDialog() {
       <DialogCard size="lg" relative scroll>
         <button
           id="app-secrets-close"
-          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
+          className="absolute top-4 end-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
           aria-label={t('core:common.close')}
           onClick={() => Secrets.close()}
         >

@@ -1626,6 +1626,10 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     version: 8,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
+    // What web appends: a revision or a preview asked for, a recheck, what the
+    // ensure-staging and recheck routes find, a hand-off's build, a demo reset,
+    // and the admin console's actions.
+    web: ['RevisionSubmitted', 'PreviewRequested', 'RecheckRequested', 'ChecksSkipped', 'RecheckFolded', 'PreviewLost', 'RetireRequested', 'OperationStarted', 'OperationEnded', 'AdminRetry', 'AdminRetire', 'AdminEnd'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {
@@ -1868,10 +1872,10 @@ const WRITES = {
 async function publishMedia(tx: Tx, sessionId: number, runId: string) {
   await tx.query('DELETE FROM session_visuals WHERE session_id = $1', [sessionId]);
   await tx.query(
-    `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path,
+    `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, captured_path,
                                   capture_index, captured_viewport, shot_status, before_fell_back, scenario_id,
                                   scenario_fingerprint, object_key, sha256, bytes, legacy_etag)
-     SELECT id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index,
+     SELECT id, session_id, commit_hash, kind, media, content_type, captured_path, capture_index,
             captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint,
             object_key, sha256, bytes, legacy_etag
        FROM check_run_media WHERE run_id = $1 AND session_id = $2`, [runId, sessionId]);

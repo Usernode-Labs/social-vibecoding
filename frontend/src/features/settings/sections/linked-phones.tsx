@@ -155,7 +155,7 @@ export function LinkedPhonesSection() {
                   <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
                     {t(phone.platform ? PLATFORM_LABEL[phone.platform] : 'settings:phones.platform.unknown')}
                     {phone.current ? (
-                      <span className="ml-2 text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                      <span className="ms-2 text-xs font-normal text-zinc-500 dark:text-zinc-400">
                         {t('settings:phones.thisPhone')}
                       </span>
                     ) : null}

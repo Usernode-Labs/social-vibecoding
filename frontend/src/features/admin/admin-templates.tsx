@@ -64,7 +64,7 @@ const TemplatesUI = Object.freeze({
   row: 'flex flex-wrap items-start justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800',
   rowMain: 'flex-1 min-w-0',
   rowTitle: 'text-sm font-medium',
-  rowId: 'font-mono text-xs text-zinc-500 dark:text-zinc-400 ml-2',
+  rowId: 'font-mono text-xs text-zinc-500 dark:text-zinc-400 ms-2',
   rowMeta: 'block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 break-all',
   rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400 whitespace-pre-wrap break-words',
   rowRight: 'flex items-center gap-2 shrink-0',

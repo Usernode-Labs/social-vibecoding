@@ -122,7 +122,7 @@ function PresetsSheet({ now, viewer, onPick, onGone }: {
         role="dialog"
         aria-modal="true"
         aria-labelledby="make-rule-sheet-title"
-        className={`absolute inset-x-0 bottom-0 mx-auto max-h-[92%] max-w-lg overflow-y-auto rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-2 text-left transition-transform duration-200 ease-out ${shown ? 'translate-y-0' : 'translate-y-full'}`}
+        className={`absolute inset-x-0 bottom-0 mx-auto max-h-[92%] max-w-lg overflow-y-auto rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-2 text-start transition-transform duration-200 ease-out ${shown ? 'translate-y-0' : 'translate-y-full'}`}
       >
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
@@ -216,7 +216,7 @@ export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPic
             </button>
           </span>
           <button type="button" onClick={() => { hoverOpened.current = false; setTipOpen(false); setOpen(true); }} data-make-rule-change=""
-            className="ml-auto shrink-0 font-semibold text-violet-700 dark:text-violet-400">
+            className="ms-auto shrink-0 font-semibold text-violet-700 dark:text-violet-400">
             {t('onboarding:firstSession.make.rule.change')}
           </button>
         </p>
@@ -225,10 +225,10 @@ export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPic
             id="make-rule-tip"
             role="note"
             data-make-rule-tip=""
-            className="absolute bottom-full right-0 z-10 mb-1.5 w-[min(20rem,calc(var(--platform-float-w)-2rem))] rounded-2xl bg-white px-3.5 py-3 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_8px_24px_rgba(0,0,0,0.14)] dark:bg-zinc-900"
+            className="absolute bottom-full end-0 z-10 mb-1.5 w-[min(20rem,calc(var(--platform-float-w)-2rem))] rounded-2xl bg-white px-3.5 py-3 text-start shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_8px_24px_rgba(0,0,0,0.14)] dark:bg-zinc-900"
           >
             <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('onboarding:firstSession.make.next.title')}</p>
-            <ul className="mt-1.5 list-disc pl-4 text-[13px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
+            <ul className="mt-1.5 list-disc ps-4 text-[13px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
               <li className="mt-1"><RichMessage id="onboarding:firstSession.make.next.readyMade" components={[bold]} /></li>
               <li className="mt-1"><RichMessage id="onboarding:firstSession.make.next.custom" components={[bold]} /></li>
               <li className="mt-1"><RichMessage id="onboarding:firstSession.make.next.invite" components={[bold]} /></li>

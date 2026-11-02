@@ -198,7 +198,7 @@ export function FriendButton({
       {error ? (
         <p
           role="alert"
-          className="absolute left-0 top-full z-10 mt-1 w-max max-w-[16rem] rounded-lg bg-white px-2 py-1 text-xs text-red-700 shadow-sm dark:bg-zinc-800 dark:text-red-400"
+          className="absolute start-0 top-full z-10 mt-1 w-max max-w-[16rem] rounded-lg bg-white px-2 py-1 text-xs text-red-700 shadow-sm dark:bg-zinc-800 dark:text-red-400"
         >
           {error}
         </p>

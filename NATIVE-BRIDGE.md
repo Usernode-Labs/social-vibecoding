@@ -949,10 +949,16 @@ owned entirely by the authenticated Social session.
     "exactAlarmGranted": true,
     "batteryOptDisabled": false,  // Android only, else null
     "deviceManufacturer": "samsung", // Android only, else null
-    "notificationPermission": "notDetermined" // notDetermined | denied | authorized; optional
+    "notificationPermission": "notDetermined", // notDetermined | denied | authorized; optional
+    "backgroundProduction": false // false: produces only while open; older builds omit it
   }
 }
 ```
+
+`permissions.backgroundProduction` is `false` on a build that produces blocks
+only while it is open (additive). SV tests it with a strict `=== false`: such a
+build has no exact-alarm or battery permission to ask for, so the first-run
+sheet stays away and Settings hides those rows.
 
 `permissions.notificationPermission` is the OS notification permission as
 the OS reports it, read independently of push configuration (additive;

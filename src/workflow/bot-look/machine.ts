@@ -54,6 +54,8 @@ export function botLook() {
     retainDays: 14,
     events: { Requested: decodeRequested },
     create: ['Requested'],
+    // Nothing from web: the bot's own tool asks for a look, on the conductor.
+    web: [],
     terminal: ['done', 'failed'],
     decode: (row) => ({ name: row.state, data: row.data as Data }),
     authorize: {

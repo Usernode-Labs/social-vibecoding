@@ -31,7 +31,8 @@ export function workerRelease() {
   const failed = { to: () => ended('failed', { failed: true }) };
   return defineMachine<State, Facts>({
     name: MACHINE, version: 1, retainDays: 1,
-    events: { Requested: requested }, create: ['Requested'], terminal: ['done', 'failed'],
+    // A release is the pause route's (web's).
+    events: { Requested: requested }, create: ['Requested'], web: ['Requested'], terminal: ['done', 'failed'],
     decode: row => ({ name: row.state, data: row.data }) as State,
     async facts(tx, _state, e, ctx) {
       if (e.type !== 'Requested') return { target: null, refusal: null };

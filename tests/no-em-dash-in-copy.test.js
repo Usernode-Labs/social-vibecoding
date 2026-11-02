@@ -165,7 +165,7 @@ const SKIP_FILES = new Map([
 const ALLOW = [
   {
     file: 'frontend/src/features/admin/admin-db-export.tsx',
-    contains: '<li className="list-none pl-4">—',
+    contains: '<li className="list-none ps-4">—',
     reason: 'the dash is the bullet glyph on an unbulleted list, not punctuation',
   },
   {

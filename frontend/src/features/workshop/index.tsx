@@ -229,7 +229,10 @@ export function AudienceChips({ tallies, pressed, onPress, scope }: {
   useEffect(() => {
     const el = railRef.current;
     if (!el) return;
-    const measure = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    // `Math.abs`: a right-to-left scroller counts its offset from the inline
+    // start as a negative `scrollLeft`, and the fade it drives is the same
+    // far edge either way.
+    const measure = () => setMore(Math.abs(el.scrollLeft) + el.clientWidth < el.scrollWidth - 1);
     measure();
     el.addEventListener('scroll', measure, { passive: true });
     // A hidden zero chip changes the row's width without a scroll event.
@@ -257,7 +260,10 @@ export function AudienceChips({ tallies, pressed, onPress, scope }: {
           <Chip
             key={key}
             size="bar"
-            className={key !== 'all' && !count ? 'hidden' : 'gap-1.5 px-4'}
+            // 12px sides, not 16 (overnight audit M01): the four chips fit
+            // a 393px phone whole; narrower, the row still scrolls under
+            // its fade.
+            className={key !== 'all' && !count ? 'hidden' : 'gap-1.5 px-3'}
             selected={pressed === key}
             aria-label={label}
             onClick={() => onPress(key)}

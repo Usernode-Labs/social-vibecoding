@@ -201,7 +201,7 @@ test('a card\'s history gives each of its notifications its own Save, beside the
   assert.ok(openAt > 0, 'the line still opens the notification');
   assert.ok(openEnd > openAt && saveAt > openEnd, 'the bookmark is after the open button, not inside it');
   assert.match(block, /<div key=\{line\.key\} className="relative">/);
-  assert.match(block, /className=\{cls \+ ' pr-8 hover:text-violet-700/);
+  assert.match(block, /className=\{cls \+ ' pe-8 hover:text-violet-700/);
   // It is pressed state and name from the same catalog entries as the row's.
   assert.match(block, /aria-pressed=\{line\.notification\.saved \? 'true' : 'false'\}/);
   assert.match(block, /t\(line\.notification\.saved \? 'notifications:row\.unsave' : 'notifications:row\.save'\)/);

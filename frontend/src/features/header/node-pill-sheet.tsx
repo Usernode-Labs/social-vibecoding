@@ -37,7 +37,7 @@ function SheetRow({ label, value }: { label: string; value: string }): ReactNode
   return (
     <div className={ROW}>
       <span className="text-zinc-500 dark:text-zinc-400">{label}</span>
-      <span className="font-medium text-right text-zinc-800 dark:text-zinc-100">{value}</span>
+      <span className="font-medium text-end text-zinc-800 dark:text-zinc-100">{value}</span>
     </div>
   );
 }

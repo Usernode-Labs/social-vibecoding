@@ -1895,6 +1895,10 @@
     "text": "Producing blocks earns points. Access is released manually, so ask below and an admin will release your keys in batches.",
     "description": "Explanation under the \"Homeroom app: block production\" heading in Settings. \"Blocks\" are blockchain blocks; \"keys\" are the person's cryptographic keys."
   },
+  "usernode.blockProduction.foregroundOnly": {
+    "text": "For now, your phone produces blocks only while Homeroom is open.",
+    "description": "Temporary note in the \"Homeroom app: block production\" block in Settings. Background block production is paused, so the phone misses its turns while the app is closed."
+  },
   "usernode.blockProduction.checking": {
     "text": "Checking status…",
     "description": "Shown in the \"Homeroom app: block production\" block in Settings while Homeroom checks whether this person may produce blocks."

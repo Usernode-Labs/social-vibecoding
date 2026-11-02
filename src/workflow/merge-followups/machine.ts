@@ -696,6 +696,9 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     version: 9,
     events: EVENTS,
     create: ['Merged', 'Included'],
+    // What web appends: the platform's own merges deployed, as the web process that
+    // serves the new build says (releaseServing), and the admin console's retries.
+    web: ['Deployed', 'RetryDelivery', 'RetryFollowup'],
     terminal: ['live'],
     decode: (row) => ({ name: row.state, data: row.data } as MFState),
     // Only the creating events read anything: the row they move into 'merged'.

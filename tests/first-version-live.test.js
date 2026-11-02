@@ -507,8 +507,8 @@ test('run seven: the replay hides the app\'s own demo note, and the band says "S
   for (const cls of ['rounded-full', 'bg-black/55', 'px-2.5', 'py-1', 'text-[12px]', 'font-semibold', 'leading-4', 'text-white', 'pointer-events-none', 'absolute']) {
     assert.ok(pillClass.includes(cls) && chipClass.includes(cls), cls);
   }
-  assert.ok(chipClass.includes('bottom-3') && chipClass.includes('left-3'), 'the band\'s bottom-left corner');
-  assert.ok(pillClass.includes('top-3') && pillClass.includes('left-3'), 'the pill keeps the top-left');
+  assert.ok(chipClass.includes('bottom-3') && chipClass.includes('start-3'), 'the band\'s bottom-left corner');
+  assert.ok(pillClass.includes('top-3') && pillClass.includes('start-3'), 'the pill keeps the top-left');
   // Once a frame is drawn: the first look under "Starting the app…" is a drawing.
   assert.match(src, /\{drawn \? <SampleDataChip \/> : null\}/);
   const starting = renderToHtml(createElement(band.default, { live: { slug: 'club-votes', userKey: '1' }, firstLook: null, name: 'Club Votes' }));

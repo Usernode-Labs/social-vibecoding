@@ -143,8 +143,8 @@ export function UserMessageBody({
           // `touch-target-32` gives a finger 32px on a coarse pointer
           // without the box growing.
           className={expanded
-            ? 'touch-target-32 -mb-0.5 -mr-3 ml-auto mt-1 block'
-            : 'touch-target-32 absolute bottom-2 right-1'}
+            ? 'touch-target-32 -mb-0.5 -me-3 ms-auto mt-1 block'
+            : 'touch-target-32 absolute bottom-2 end-1'}
           aria-expanded={expanded}
           data-agent-session-user-more
           onClick={onToggle}

@@ -61,7 +61,7 @@ export function MoreSheet({ picked, onPick, onPickIdea, onClose }: {
         role="dialog"
         aria-modal="true"
         aria-labelledby="make-more-sheet-title"
-        className={`absolute inset-x-0 bottom-0 mx-auto max-h-[92%] max-w-lg overflow-y-auto rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-2 text-left transition-transform duration-200 ease-out ${shown ? 'translate-y-0' : 'translate-y-full'}`}
+        className={`absolute inset-x-0 bottom-0 mx-auto max-h-[92%] max-w-lg overflow-y-auto rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-2 text-start transition-transform duration-200 ease-out ${shown ? 'translate-y-0' : 'translate-y-full'}`}
       >
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">

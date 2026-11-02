@@ -93,7 +93,7 @@ function FeatureCard({ f, rank }: { f: Feature; rank: number }) {
               : null}
           </div>
         </div>
-        <div className="text-right text-sm shrink-0">
+        <div className="text-end text-sm shrink-0">
           <div className="text-green-800 dark:text-green-400 font-semibold">{`▲ ${f.up_count}`}</div>
           <div className="text-zinc-500 dark:text-zinc-400">{`▼ ${f.down_count}`}</div>
         </div>

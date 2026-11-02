@@ -38,11 +38,13 @@ test('a remembered width is read in an effect and dragged left to widen the thre
     'never read during the first render: the markup every first paint draws is the same');
   assert.match(pane, /useEffect\(\(\) => \{\n\s*const stored = readReplyWidth\(\);/);
   assert.match(pane, /window\.addEventListener\('resize'/, 'a narrower window re-clamps it');
-  assert.match(pane, /startWidth - \(move\.clientX - startX\)/, 'dragging left widens it: its left edge is the divider');
+  assert.match(pane, /startWidth - dirSign\(\) \* \(move\.clientX - startX\)/,
+    'dragging toward the divider widens it: its inline-start edge is the divider');
   assert.match(pane, /setPointerCapture/, 'the drag keeps its pointer');
   assert.match(pane, /frame\.style\.pointerEvents = 'none'/, 'spec frames do not swallow the drag');
   assert.match(pane, /writeReplyWidth\(latest\)/, 'the chosen width is remembered');
-  assert.match(pane, /event\.key === 'ArrowLeft' \? REPLY_WIDTH_STEP : -REPLY_WIDTH_STEP/, 'the arrow keys step it');
+  assert.match(pane, /const toward = event\.key === 'ArrowLeft' \? 1 : -1;/, 'the arrow keys step it, toward the divider');
+  assert.match(pane, /base \+ toward \* dirSign\(\) \* REPLY_WIDTH_STEP/, 'the left arrow in English, the right in Arabic');
   // Only the desktop rule reads the width, so a phone is untouched.
   assert.match(pane, /\{ '--messages-reply-width': `\$\{replyWidth\}px` \} as CSSProperties/);
 });
@@ -50,7 +52,7 @@ test('a remembered width is read in an effect and dragged left to widen the thre
 test('the divider CSS: hidden on a phone, a hairline in the gap from 768px, the accent under the pointer', () => {
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-reply-resizer \{ display: none; \}/);
-  assert.match(css, /\.messages-reply-pane \{ flex: 0 0 var\(--messages-reply-width, min\(420px, 42%\)\); margin: 14px 12px 0 0; \}/,
+  assert.match(css, /\.messages-reply-pane \{ flex: 0 0 var\(--messages-reply-width, min\(420px, 42%\)\); margin-block: 14px 0; margin-inline: 0 12px; \}/,
     'the remembered width is the desktop basis only, over the old default');
   assert.match(css, /\.messages-reply-pane \{ flex: 1 1 auto; width: 100%; margin-top: 12px; \}/,
     'the phone keeps the pane it always had');
@@ -59,7 +61,7 @@ test('the divider CSS: hidden on a phone, a hairline in the gap from 768px, the 
   const desktop = css.slice(css.indexOf('@media (min-width: 768px) {\n  .messages-reply-pane {'));
   const rule = /\n  \.messages-reply-resizer \{([^}]*)\}/.exec(desktop);
   assert.ok(rule, 'the divider is drawn from tablet width up');
-  for (const part of ['display: block', 'position: absolute', 'left: -7px', 'top: 0', 'bottom: 0', 'width: 6px', 'cursor: col-resize', 'touch-action: none']) {
+  for (const part of ['display: block', 'position: absolute', 'inset-inline-start: -7px', 'top: 0', 'bottom: 0', 'width: 6px', 'cursor: col-resize', 'touch-action: none']) {
     assert.ok(rule[1].includes(part), `the divider is draggable: ${part}`);
   }
   assert.match(css, /\.messages-reply-resizer:hover, \.messages-reply-resizer:focus-visible \{ background: var\(--accent, #2563eb\); outline: none; \}/);

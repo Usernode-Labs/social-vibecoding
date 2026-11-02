@@ -278,7 +278,7 @@ function stateOf(session: SessionRowView): {
  * in `var(--accent)`, which is blue (#0a6ee0 light, #5aa9ff dark), and a blue
  * arc inside an amber pill is off-palette. `border-current` takes the arc to
  * whatever ink the pill is already carrying, so one pair of literals covers
- * both themes and every state; `border-r-transparent` puts the gap back, since
+ * both themes and every state; `border-e-transparent` puts the gap back, since
  * `border-current` would otherwise fill it in and draw a closed ring.
  *
  * Scoped HERE rather than added to app.css on purpose. `.dc-pr-btn-promote
@@ -292,7 +292,7 @@ const PILL_BASE =
   'shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 '
   + 'text-[11px] font-semibold '
   + '[&>.dc-status-spinner-arc]:border-current '
-  + '[&>.dc-status-spinner-arc]:border-r-transparent ';
+  + '[&>.dc-status-spinner-arc]:border-e-transparent ';
 
 /**
  * The 32px app tile. `xs` in the widget language's own scale
@@ -366,7 +366,7 @@ export function SessionRow({
     <a
       href={session.href}
       data-improve-row={session.kind}
-      className="flex items-center gap-3 px-3 min-h-[60px] text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+      className="flex items-center gap-3 px-3 min-h-[60px] text-start hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
       onClick={onNavigate}
     >
       {tile || <AppTile session={session} />}

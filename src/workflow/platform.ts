@@ -91,8 +91,9 @@ let kernelPool: Pool & { end(): Promise<void> } | null = null;
 let log: Logger | null = null;
 // The configuration the runtime started with (the release's own steps read it).
 let appConfig: any = null;
-// Each machine's event types in this build (reaskRefused reads them).
-let knownEvents: Map<string, Set<string>> = new Map();
+// Each machine's event types in this build, and those web may append
+// (reaskRefused reads them).
+let knownEvents: Map<string, { types: Set<string>; web: ReadonlySet<string> }> = new Map();
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
@@ -100,11 +101,18 @@ let knownEvents: Map<string, Set<string>> = new Map();
 // from outside it.
 const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE, CAMPAIGN, MAIN_CHECK, BOT_REQUEST];
 
+// A login that may not write them (web's: services/database-role-grants.js
+// restrictWebWorkflow) leaves them to the conductor, whose boot checks it can.
 export async function syncSettings(pool: Pool): Promise<void> {
   for (const name of MACHINES) {
-    await pool.query(
-      `INSERT INTO wf_settings (key, value) VALUES ($1, '1')
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [`enabled:${name}`]);
+    try {
+      await pool.query(
+        `INSERT INTO wf_settings (key, value) VALUES ($1, '1')
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [`enabled:${name}`]);
+    } catch (err) {
+      if ((err as { code?: string }).code === '42501') return;
+      throw err;
+    }
   }
 }
 
@@ -259,7 +267,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
   const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerRelease(), workerStop(), workerInterrupt(), platformOperation(),
     // Homeroom bot parity, P3 and P9.
     botLook(), botInvestigation()];
-  knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
+  knownEvents = new Map(machines.map((m) => [m.name, { types: new Set(m.events.keys()), web: m.web }]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...appCreationServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
@@ -608,8 +616,10 @@ export async function askClockRun(job: string, admin: { id: number; username?: s
 // asked once. A type this build knows cannot have been refused by it. Only
 // refusals since this build's rollout began (its release instance, less a
 // margin for web processes serving before it) are asked: an older one was
-// another rollout's, and its moment has passed. The reask-refused clock runs
-// it, in the newest build only.
+// another rollout's, and its moment has passed. One web appended is asked
+// again only if web may append it (machine `web`): asked again, it is the
+// conductor's, which the pipeline would no longer refuse. The reask-refused
+// clock runs it, in the newest build only.
 const LIVE_SECONDS = 45;
 const REASK_LOOKBACK_HOURS = 48;
 const REASK_ROLLOUT_MARGIN_MINUTES = 15;
@@ -627,19 +637,21 @@ async function olderBuildServes(db: Queryable): Promise<boolean> {
 export async function reaskRefused(db: Queryable): Promise<{ waiting?: string; asked: number }> {
   if (!runtime) return { waiting: 'runtime', asked: 0 };
   if (await olderBuildServes(db)) return { waiting: 'older_build', asked: 0 };
-  const pairs = [...knownEvents].flatMap(([m, types]) => [...types].map((t) => [m, t] as const));
+  const pairs = [...knownEvents].flatMap(([m, { types, web }]) => [...types].map((t) => [m, t, web.has(t)] as const));
   if (!pairs.length) return { asked: 0 };
   const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
   const { rows } = await db.query(
     `SELECT e.id, e.machine, e.key, e.app_id, e.type, e.payload, e.source, e.actor
        FROM wf_events e
-       JOIN unnest($1::text[], $2::text[]) AS k(machine, type) ON k.machine = e.machine AND k.type = e.type
+       JOIN unnest($1::text[], $2::text[], $8::boolean[]) AS k(machine, type, web) ON k.machine = e.machine AND k.type = e.type
       WHERE e.status = 'processed' AND e.result = 'rejected' AND e.reason = 'unknown_event'
+        AND (e.producer <> 'web' OR k.web)
         AND e.processed_at > GREATEST(now() - make_interval(hours => $3),
               (SELECT r.created_at - make_interval(mins => $6) FROM wf_instances r WHERE r.machine = $5 AND r.key = $7))
         AND NOT EXISTS (SELECT 1 FROM wf_events r WHERE r.caused_by = e.id AND r.request_key = 'reask:' || e.id)
       ORDER BY e.id LIMIT $4`,
-    [pairs.map((p) => p[0]), pairs.map((p) => p[1]), REASK_LOOKBACK_HOURS, REASK_PAGE, RELEASE, REASK_ROLLOUT_MARGIN_MINUTES, releaseKey(own ?? '')]);
+    [pairs.map((p) => p[0]), pairs.map((p) => p[1]), REASK_LOOKBACK_HOURS, REASK_PAGE, RELEASE, REASK_ROLLOUT_MARGIN_MINUTES, releaseKey(own ?? ''),
+      pairs.map((p) => p[2])]);
   for (const e of rows) {
     await runtime.append(e.machine, e.key, { type: e.type, payload: e.payload }, {
       requestKey: `reask:${e.id}`, source: e.source, actor: e.actor ?? null, appId: e.app_id ?? null, causedBy: Number(e.id),
@@ -2212,9 +2224,26 @@ export async function adminEvent(
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
 }
 
+// Releasing writes the instance and its held events, which only a deciding
+// process may (src/db/migrations/0011-workflow-producers.sql): the route asks
+// a conductor for it (services/workflow-release-operation.js), which reads the
+// admin's authority again in the release's own transaction.
 export async function adminRelease(machineName: string, key: string, mode: 'retry' | 'skip', admin: { id: number }) {
   if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
-  const out = await runtime.release(machineName, key, { mode, actor: `user:${admin.id}` });
-  if (out.reason === 'not_authorized') throw new AdminActionError(403, 'Current admin access required');
-  return out;
+  const out = await runOperation({ op: 'workflow.release', appId: null, userId: admin.id, input: { machine: machineName, key, mode } },
+    { waitMs: 15000 });
+  if (out.status === 'pending') return { status: 'pending' };
+  if (out.status === 'done') {
+    const result = out.result as { ok?: boolean; status?: number; error?: string } & Record<string, Json>;
+    if (result?.ok === false) throw new AdminActionError(result.status ?? 403, result.error ?? 'Current admin access required');
+    const { ok: _ok, ...released } = result;
+    return released;
+  }
+  if (out.status === 'refused') throw new AdminActionError(409, `The release was refused (${out.reason})`);
+  throw new AdminActionError(500, out.error?.message ?? 'The release failed');
+}
+
+// On a conductor: the release an admin asked for.
+export async function releaseFaulted(machineName: string, key: string, mode: 'retry' | 'skip', userId: number) {
+  return running().release(machineName, key, { mode, actor: `user:${userId}` });
 }

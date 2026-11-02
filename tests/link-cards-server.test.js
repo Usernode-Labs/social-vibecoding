@@ -103,7 +103,7 @@ test('a community hub and its discussion are as visible as the app', async () =>
   const pool = fakePool();
   assert.deepEqual(await sharedObjects.hydrateLink(pool, viewer, { type: 'hub', app_slug: 'open' }), {
     type: 'hub', available: true, appId: 7, appSlug: 'open', title: 'Open App', subtitle: null,
-    href: '#app/open/workshop',
+    href: '#app/open/dev/hub',
   });
   assert.deepEqual(await sharedObjects.hydrateLink(pool, viewer, { type: 'discussion', app_slug: 'open' }), {
     type: 'discussion', available: true, appId: 7, appSlug: 'open', title: 'Open App', subtitle: null,

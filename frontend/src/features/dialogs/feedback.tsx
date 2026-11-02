@@ -209,7 +209,7 @@ export function FeedbackDialog() {
               role="radio"
               aria-checked="true"
               title={t('dialogs:feedback.mode.formTitle')}
-              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
+              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white ps-2 pe-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
             >
               <DescriptionIcon className="h-4 w-4" />
               {t('dialogs:feedback.mode.form')}
@@ -220,7 +220,7 @@ export function FeedbackDialog() {
               aria-checked="false"
               title={t('dialogs:feedback.mode.commentTitle')}
               onClick={toComment}
-              className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+              className="inline-flex h-7 items-center gap-1.5 rounded-full ps-2 pe-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
             >
               <ChatIcon className="h-4 w-4" />
               {t('dialogs:feedback.mode.comment')}
@@ -259,7 +259,7 @@ export function FeedbackDialog() {
               aria-checked="false"
               data-feedback-target="app"
               id="feedback-target-app"
-              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-left transition-colors"
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-start transition-colors"
             >
               {/* The controller writes the app's name into the first line,
                   and "No app open" when there is none; the second line says
@@ -267,12 +267,6 @@ export function FeedbackDialog() {
               <span id="feedback-target-app-name" className="block truncate text-sm font-semibold"><ControllerText id="dialogs:feedback.target.thisApp" /></span>
               <span id="feedback-target-app-sub" className="block truncate text-xs opacity-75">{t('dialogs:feedback.target.appSub')}</span>
             </button>
-            {/* Caret indicating the selected option; shown/hidden by the controller. */}
-            <div
-              id="feedback-caret-app"
-              className="hidden mt-1 w-0 h-0 border-l-4 border-r-4 border-b-4 border-l-transparent border-r-transparent border-b-violet-600"
-            >
-            </div>
           </div>
           <div className="flex-1 flex flex-col items-center">
             <button
@@ -281,16 +275,11 @@ export function FeedbackDialog() {
               aria-checked="false"
               data-feedback-target="platform"
               id="feedback-target-platform"
-              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-left transition-colors"
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-start transition-colors"
             >
               <span className="block truncate text-sm font-semibold">Homeroom</span>
               <span className="block truncate text-xs opacity-75">{t('dialogs:feedback.target.platformSub')}</span>
             </button>
-            <div
-              id="feedback-caret-platform"
-              className="hidden mt-1 w-0 h-0 border-l-4 border-r-4 border-b-4 border-l-transparent border-r-transparent border-b-violet-600"
-            >
-            </div>
           </div>
         </div>
         {/*

@@ -189,7 +189,7 @@ const HINT = 'py-8 text-center text-sm text-zinc-500 dark:text-zinc-400';
 const ERROR_HINT = 'py-8 text-center text-sm text-red-700 dark:text-red-400';
 
 /** The list row, shared by all four lists. The profile row adds the cursor. */
-const ROW = 'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg '
+const ROW = 'w-full text-start flex items-center gap-3 px-3 py-2.5 rounded-lg '
   + 'border border-zinc-200 dark:border-zinc-800 '
   + 'hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors';
 

@@ -234,7 +234,7 @@ test('a still press of a third of a second opens the magnifier; moving early doe
   assert.match(src, /onContextMenu=\{\(e\) => e\.preventDefault\(\)\}/, 'the phone\'s long-press menu stays shut');
 
   const css = read('public/css/app.css');
-  assert.match(css, /\n\.rf-lens \{ position: absolute; left: 0; top: 0; z-index: 6; width: 132px; height: 132px; border-radius: 999px;/);
+  assert.match(css, /\n\.rf-lens \{ position: absolute; inset-inline-start: 0; top: 0; z-index: 6; width: 132px; height: 132px; border-radius: 999px;/);
   assert.match(css, /\.rf-compare \{[^}]*\-webkit-touch-callout: none;/);
   assert.match(
     css,
@@ -268,9 +268,9 @@ test('the switch flips the view and its knob says which side, a press leans the 
   assert.match(src, /pinned\.current = true;\s*setView\(to > 0 \? 'before' : 'after'\);\s*glide\(to, 320/);
   assert.match(src, /closest\('\[data-rf-switch\]'\)\) return;/, 'a press on the switch never starts a drag');
   const css = read('public/css/app.css');
-  assert.match(css, /\.rf-switch \{ position: absolute; left: 50%; bottom: 12px;[^}]*width: 72px; height: 40px;/);
-  assert.match(css, /\.rf-switch\[data-view="before"\] \.rf-knob \{ left: 2\.5px;/, 'Before on the left');
-  assert.match(css, /\.rf-knob \{ position: absolute; top: 2\.5px; left: 34\.5px;/, 'After on the right');
+  assert.match(css, /\.rf-switch \{ position: absolute; inset-inline-start: 50%; bottom: 12px;[^}]*width: 72px; height: 40px;/);
+  assert.match(css, /\.rf-switch\[data-view="before"\] \.rf-knob \{ inset-inline-start: 2\.5px;/, 'Before at the start edge');
+  assert.match(css, /\.rf-knob \{ position: absolute; top: 2\.5px; inset-inline-start: 34\.5px;/, 'After at the end edge');
 });
 
 test('the picture takes the page\'s free height, up to 3:2, and gives way to 2:1 before the line does', () => {
@@ -376,7 +376,7 @@ test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens 
   // A detail view: on a phone the page covers the header and the tab bar
   // (z 30) top to bottom; the vote bar clears the home indicator itself, and
   // the page's height budget counts that inset.
-  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0; top: 0; bottom: 0; z-index: 35;/);
+  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; inset-inline-start: var\(--platform-rail-w, 0px\); inset-inline-end: 0; top: 0; bottom: 0; z-index: 35;/);
   assert.match(css, /\.rf-sheet-inner \{ display: flex; flex-direction: column; max-height: inherit; padding: 0 16px calc\(10px \+ var\(--platform-safe-bottom, 0px\)\); \}/);
   assert.match(css, /\.rf-safe-probe \{ [^}]*height: var\(--platform-safe-bottom, 0px\);/);
   assert.match(src, /const h = \(Number\.isFinite\(max\) && max > 0 \? max : pr\.height\) - bar - safe;/);
@@ -767,8 +767,8 @@ test('on a wide window the run is one column as wide as the page', () => {
   const col = css.match(/\.rf-run, \.rf-feed-note \{([^}]*)\}/);
   assert.ok(col, 'the run\'s pane and its notes share one column rule');
   assert.match(col[1], new RegExp(`max-width: ${cap}px;`));
-  assert.match(col[1], /margin-left: auto; margin-right: auto;/);
-  assert.match(css, new RegExp(`\\.rf-page \\{[^}]*left: max\\(0px, calc\\(50% - ${cap / 2}px\\)\\); width: min\\(100%, ${cap}px\\);`));
+  assert.match(col[1], /margin-inline-start: auto; margin-inline-end: auto;/);
+  assert.match(css, new RegExp(`\\.rf-page \\{[^}]*inset-inline-start: max\\(0px, calc\\(50% - ${cap / 2}px\\)\\); width: min\\(100%, ${cap}px\\);`));
   assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-error="">/);
   assert.match(src, /data-needs-empty="" data-review-flow="">/);
   assert.match(src, /<div ref=\{anchorRef\} className="rf-run rf-loading" data-review-flow=""/);

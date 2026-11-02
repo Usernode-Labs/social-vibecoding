@@ -115,7 +115,7 @@ export function BotSlotsDoor({ slug, onOpen }: { slug: string; onOpen: () => voi
   return (
     <button
       type="button"
-      className="flex w-full items-center gap-2 border-t border-[color:var(--app-sheet-line)] pt-2.5 text-left text-[13px] font-semibold text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
+      className="flex w-full items-center gap-2 border-t border-[color:var(--app-sheet-line)] pt-2.5 text-start text-[13px] font-semibold text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
       data-ws-bot-slots-door={`${used}/${view.cap}`}
       onClick={onOpen}
     >
@@ -283,7 +283,7 @@ function RowSection({ name, title, note = null, entries, section, rowProps }: {
         {shown.length < entries.length ? (
           <button
             type="button"
-            className="w-full px-4 py-3 text-left text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+            className="w-full px-4 py-3 text-start text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
             data-ws-bot-show-all={name}
             onClick={() => setAll(true)}
           >

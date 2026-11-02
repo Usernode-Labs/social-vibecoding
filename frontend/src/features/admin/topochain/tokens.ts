@@ -56,11 +56,11 @@ export const BTN = {
   rowWarn: `${BTN_BASE} ${BTN_ROW} border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
   // Full-width list entry in a reference sidebar (SQL templates, schema
   // tables). Left-aligned rather than centred, and tall enough to hit.
-  sidebar: 'flex w-full items-center min-h-[36px] rounded-lg px-2.5 py-1.5 text-left text-xs '
+  sidebar: 'flex w-full items-center min-h-[36px] rounded-lg px-2.5 py-1.5 text-start text-xs '
     + 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 '
     + 'touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
   // Back control on a nested screen, and the ✕ in a panel header.
-  back: `${BTN_BASE} min-h-[44px] sm:min-h-[36px] -ml-2 px-2 py-1 text-sm text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
+  back: `${BTN_BASE} min-h-[44px] sm:min-h-[36px] -ms-2 px-2 py-1 text-sm text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
   close: 'inline-flex shrink-0 items-center justify-center h-9 w-9 rounded-lg text-zinc-500  dark:text-zinc-400'
     + 'hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 '
     + 'touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',

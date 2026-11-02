@@ -31,7 +31,7 @@ export function ApiKeySection() {
           className="hidden px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex items-center gap-3 text-[17px]"
         >
           <span className="text-zinc-500 dark:text-zinc-400">{t('settings:apiKey.savedKeyLabel')}</span>
-          <span className="ml-auto font-mono text-[15px] text-zinc-700 dark:text-zinc-300">sk-ant-…<span id="settings-key-last4"></span></span>
+          <span className="ms-auto font-mono text-[15px] text-zinc-700 dark:text-zinc-300">sk-ant-…<span id="settings-key-last4"></span></span>
         </div>
       </div>
       <Label className="sr-only" htmlFor="settings-api-key">

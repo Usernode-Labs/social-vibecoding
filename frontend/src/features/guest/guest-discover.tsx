@@ -221,7 +221,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
         </>
       )}
       {isNew(app) ? (
-        <span className="absolute left-2 top-2 rounded-full bg-white px-2 py-0.5 text-xs font-bold text-zinc-950 dark:bg-zinc-900 dark:text-white">
+        <span className="absolute start-2 top-2 rounded-full bg-white px-2 py-0.5 text-xs font-bold text-zinc-950 dark:bg-zinc-900 dark:text-white">
           {t('auth:guest.card.new')}
         </span>
       ) : null}
@@ -229,7 +229,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
         <span
           data-guest-card-people=""
           aria-hidden="true"
-          className="absolute bottom-2 left-2 inline-flex h-6 items-center gap-1 rounded-full bg-white/90 pl-1.5 pr-2 text-xs font-[650] tabular-nums text-zinc-800 shadow-[0_1px_3px_rgba(0,0,0,0.14)]"
+          className="absolute bottom-2 start-2 inline-flex h-6 items-center gap-1 rounded-full bg-white/90 ps-1.5 pe-2 text-xs font-[650] tabular-nums text-zinc-800 shadow-[0_1px_3px_rgba(0,0,0,0.14)]"
         >
           <UserIcon className="h-3.5 w-3.5" />
           {people.toLocaleString()}
@@ -237,7 +237,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
       ) : null}
       <span
         aria-hidden="true"
-        className="absolute bottom-2 right-2 flex h-8 w-8 -translate-x-2 items-center justify-center rounded-full bg-white/95 text-zinc-900 opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.2)] transition duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-has-[a:focus-visible]:translate-x-0 group-has-[a:focus-visible]:opacity-100 motion-reduce:transition-none"
+        className="absolute bottom-2 end-2 flex h-8 w-8 translate-x-[calc(-0.5rem*var(--rtl-sign,1))] items-center justify-center rounded-full bg-white/95 text-zinc-900 opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.2)] transition duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-has-[a:focus-visible]:translate-x-0 group-has-[a:focus-visible]:opacity-100 motion-reduce:transition-none"
       >
         <ArrowRightShortIcon className="h-[18px] w-[18px]" />
       </span>

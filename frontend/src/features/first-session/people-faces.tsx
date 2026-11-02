@@ -42,7 +42,7 @@ const FACE = {
   sm: 'h-7 w-7 text-[12px]',
   lg: 'h-10 w-10 text-[16px]',
 } as const;
-const OVERLAP = { sm: '-ml-2', lg: '-ml-2.5' } as const;
+const OVERLAP = { sm: '-ms-2', lg: '-ms-2.5' } as const;
 
 export function PeopleRow({ people, count = null, size = 'lg', className = '' }: {
   people: Person[];

@@ -171,7 +171,7 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
       data-quota-state={!quota ? 'loading' : serverFull ? 'server-full' : spent ? 'spent' : 'available'}>
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <span className="font-medium text-zinc-700 dark:text-zinc-200">{t('dialogs:allowance.title')}</span>
-        <strong className="text-right text-zinc-900 dark:text-zinc-100">
+        <strong className="text-end text-zinc-900 dark:text-zinc-100">
           {!quota ? t('dialogs:allowance.checking') : serverFull ? t('dialogs:allowance.serverFull') : quotaHeadline(quota)}
         </strong>
       </div>

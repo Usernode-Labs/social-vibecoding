@@ -268,5 +268,16 @@ is deployed, the translation step fills the cache for it, and the shell offers
 it (in Settings and to devices that ask for it) once its translations cover
 `minimumCoverage` of the English, 95% today. Until then a configured language
 gets no pack and nobody sees it. Give the glossary its terms and a style note
-in the same change. Right-to-left layout is not built yet and belongs with the
-first right-to-left language.
+in the same change.
+
+## Reading direction
+
+Direction follows the language on screen: Arabic lays the whole shell out
+right to left, and every other language keeps it left to right. There is no
+separate setting. `lib/i18n/direction.ts` decides it (`directionFor`), the
+runtime writes `dir` on `<html>` whenever a language is activated, and the
+head's first-paint script writes it before a pack loads so a reload in Arabic
+never flashes left to right. A language written right to left joins by being
+in `config.json`; if `Intl.Locale` does not know its tag, add it to
+`RTL_LANGUAGES` in `direction.ts` and to the literal copy in `head.html`, and
+the test that pins the two lists tells you when one is missing.

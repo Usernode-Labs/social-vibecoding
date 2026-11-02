@@ -37,6 +37,7 @@ import type {
 } from './types';
 import { t } from '../../lib/i18n/runtime';
 import { countOf } from './approval-words';
+import { forgetKept, keepCopy, keepRecent, keptCopy } from '../../lib/kept-copies';
 import { releaseOf } from '../../lib/release-eta';
 import type { HomeroomLink } from './homeroom-links';
 import { botRowPreview, plainText } from './plain-text';
@@ -604,8 +605,12 @@ function demoQuery(path: string): string {
  * Opening a conversation reads fresh too while the browser is online
  * (#4243): its offline copy was the last visit's transcript, drawn for a
  * moment before the newest messages snapped in. The open takes the ordinary
- * read, and with it the offline copy, only when the browser is offline or
- * the fresh read failed (store.ts loadThread).
+ * read only when the browser is offline.
+ *
+ * The worker keeps no offline copy of these reads any more: they answer
+ * `private, no-store` (routes/conversations.js), which the worker honours
+ * (#5860). What an open with no answer draws is the copy this device kept
+ * (keptConversation below; store.ts loadThread).
  */
 export interface ReadOptions {
   fresh?: boolean;
@@ -636,13 +641,84 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+// ── What this device keeps to draw offline (../../lib/kept-copies.ts) ───
+//
+// Offline, with nothing kept, Messages and a conversation opened minutes
+// before had nothing to draw (offline test, 2 Nov 2026): these reads answer
+// `private, no-store`, so the service worker keeps no copy of them. The list,
+// and the newest page and detail of the few conversations opened last, are
+// kept here as the server sent them, and normalized again when drawn, so a
+// copy kept by an older build reads like a fresh answer. The store draws one
+// only when its read had no answer (store.ts loadConversations, loadThread).
+
+/** The conversations whose copies are kept: the ones opened most recently. */
+const KEPT_CONVERSATIONS = 6;
+/** The newest messages kept of each: a page, not the history. */
+const KEPT_MESSAGES = 50;
+
+function keepConversation(id: number, part: 'detail' | 'page', data: unknown): void {
+  keepCopy(`conversation:${id}:${part}`, data);
+  keepRecent('conversation', id, KEPT_CONVERSATIONS);
+}
+
+function conversationsOf(data: JsonRecord): ConversationSummary[] {
+  return array(pick(data, 'conversations', 'items')).map(normalizeConversation).filter((item) => item.id);
+}
+
+/** The newest page as kept: at most KEPT_MESSAGES of it, oldest first, and where older messages start. */
+function keptPage(data: JsonRecord): JsonRecord {
+  const rows = array(pick(data, 'messages', 'items'));
+  if (rows.length <= KEPT_MESSAGES) return { messages: rows, nextBefore: pick(data, 'nextBefore', 'next_before') ?? null };
+  const idOf = (row: unknown) => strictId(pick(record(row), 'id', 'messageId', 'message_id')) || 0;
+  const newest = [...rows].sort((a, b) => idOf(a) - idOf(b)).slice(-KEPT_MESSAGES);
+  return { messages: newest, nextBefore: idOf(newest[0]) || null };
+}
+
+/** The inbox as this device last read it, for the person signed in; null when none is kept. */
+export function keptConversations(): ConversationSummary[] | null {
+  const data = keptCopy('conversations');
+  return data ? conversationsOf(record(data)) : null;
+}
+
+/**
+ * A conversation as this device last read it: its detail, and its newest
+ * page when that was kept too (an invitation's never is: it has none).
+ */
+export function keptConversation(id: number): { detail: ConversationDetail; page: { messages: ConversationMessage[]; nextBefore: number | null } | null } | null {
+  const raw = keptCopy(`conversation:${id}:detail`);
+  if (!raw) return null;
+  const data = record(raw);
+  const detail = normalizeConversation(pick(data, 'conversation') ?? data);
+  if (detail.id !== id) return null;
+  const kept = keptCopy(`conversation:${id}:page`);
+  const page = kept ? {
+    messages: array(pick(record(kept), 'messages')).map((message) => normalizeMessage(message, id)),
+    nextBefore: strictId(pick(record(kept), 'nextBefore')),
+  } : null;
+  return { detail, page };
+}
+
+/**
+ * A conversation that is no longer the viewer's (left, or a block that took
+ * it away): its copies go, and its row leaves the kept list.
+ */
+export function forgetKeptConversation(id: number): void {
+  forgetKept(`conversation:${id}:`);
+  const list = keptCopy('conversations');
+  if (!list) return;
+  const rows = array(pick(record(list), 'conversations', 'items'));
+  keepCopy('conversations', { conversations: rows.filter((row) => strictId(pick(record(row), 'id', 'conversationId', 'conversation_id')) !== id) });
+}
+
 export async function listConversations(options?: ReadOptions): Promise<ConversationSummary[]> {
   const data = record(await request<unknown>('/api/conversations', readInit(options)));
-  return array(pick(data, 'conversations', 'items')).map(normalizeConversation).filter((item) => item.id);
+  keepCopy('conversations', data);
+  return conversationsOf(data);
 }
 
 export async function getConversation(id: number, options?: ReadOptions): Promise<ConversationDetail> {
   const data = record(await request<unknown>(`/api/conversations/${id}`, readInit(options)));
+  keepConversation(id, 'detail', data);
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
 
@@ -694,21 +770,60 @@ export async function listMessages(id: number, before?: number | null, options?:
   const params = new URLSearchParams({ limit: String(limit) });
   if (before) params.set('before', String(before));
   const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`, readInit(options)));
+  // The newest page is the one an offline open draws.
+  if (!before) keepConversation(id, 'page', keptPage(data));
   return {
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
     nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
   };
 }
 
-export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string; designPin?: DesignPin }): Promise<ConversationMessage> {
+/**
+ * A send given up after its time (offline test, 2 Nov 2026, finding 1): on a
+ * network that connects but passes nothing the request never fails, and the
+ * message looked sent for as long as the web view let it wait. Not an answer
+ * from the server, so the store asks whether the connection is gone.
+ */
+export class MessagesTimeoutError extends Error {
+  constructor() {
+    super(t('messages:api.sendTimedOut'));
+    this.name = 'TimeoutError';
+  }
+}
+
+/**
+ * `timeoutMs` gives up on the request, body included, once it has gone that
+ * long unanswered, and rejects with MessagesTimeoutError. The idempotency key
+ * is what makes that safe: a message the server did store is returned, not
+ * stored again, when it is sent again under the same key.
+ */
+export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string; designPin?: DesignPin }, options: { timeoutMs?: number } = {}): Promise<ConversationMessage> {
   const payload: JsonRecord = { content: input.content, idempotency_key: input.idempotencyKey };
   if (input.designPin) payload.design_pin = input.designPin as unknown as JsonRecord;
   if (input.replyToId) payload.reply_to_id = input.replyToId;
   if (input.threadRootId) payload.thread_root_id = input.threadRootId;
   if (input.attachmentIds?.length) payload.attachment_ids = input.attachmentIds;
   if (input.object) payload.object = input.object;
-  const data = record(await request<unknown>(`/api/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(payload) }));
-  return normalizeMessage(pick(data, 'message') ?? data, id);
+  const init: RequestInit = { method: 'POST', body: JSON.stringify(payload) };
+  const timeoutMs = options.timeoutMs;
+  if (!timeoutMs || typeof AbortController !== 'function') {
+    const data = record(await request<unknown>(`/api/conversations/${id}/messages`, init));
+    return normalizeMessage(pick(data, 'message') ?? data, id);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const answer = await request<unknown>(`/api/conversations/${id}/messages`, { ...init, signal: controller.signal });
+    // A body cut off by the deadline reads as no body (request): not the message.
+    if (controller.signal.aborted) throw new MessagesTimeoutError();
+    const data = record(answer);
+    return normalizeMessage(pick(data, 'message') ?? data, id);
+  } catch (error) {
+    if (controller.signal.aborted && !(error instanceof MessagesApiError)) throw new MessagesTimeoutError();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── #6071: design threads ─────────────────────────────────────────────────
@@ -875,6 +990,8 @@ export async function listThread(id: number, rootId: number, before?: number | n
   messages: ConversationMessage[];
   nextBefore: number | null;
   discussion: DiscussionState | null;
+  /** B19 follow-up: the first reply this reader has not read, on the first page; null when none. */
+  firstUnreadId: number | null;
 }> {
   const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
@@ -888,6 +1005,7 @@ export async function listThread(id: number, rootId: number, before?: number | n
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
     nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
     discussion,
+    firstUnreadId: strictId(pick(record(pick(data, 'read')), 'firstUnreadId', 'first_unread_id')),
   };
 }
 
@@ -911,9 +1029,37 @@ export async function editMessage(conversationId: number, messageId: number, con
   return normalizeMessage(pick(data, 'message') ?? data, conversationId);
 }
 
-export async function toggleReaction(conversationId: number, messageId: number, emoji: string): Promise<MessageReaction[]> {
-  const data = record(await request<unknown>(`/api/conversations/${conversationId}/messages/${messageId}/reactions`, { method: 'POST', body: JSON.stringify({ emoji }) }));
-  return array(pick(data, 'reactions')).map(normalizeReaction);
+/** How long a reaction waits for its answer before it counts as none (store.ts react keeps it then). */
+export const REACTION_SEND_TIMEOUT_MS = 15_000;
+
+/** Where a reaction is sent; the offline outbox sends it there too. */
+export function reactionPath(conversationId: number, messageId: number): string {
+  return `/api/conversations/${conversationId}/messages/${messageId}/reactions`;
+}
+
+/**
+ * Set the viewer's reaction: `on` names the state it should end in, so the
+ * same request sent again (from the offline outbox, after an answer was
+ * lost) changes nothing twice. Without `on` it flips, as it always did.
+ */
+export async function toggleReaction(conversationId: number, messageId: number, emoji: string, on?: boolean): Promise<MessageReaction[]> {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), REACTION_SEND_TIMEOUT_MS) : null;
+  try {
+    const data = record(await request<unknown>(reactionPath(conversationId, messageId), {
+      method: 'POST',
+      body: JSON.stringify(typeof on === 'boolean' ? { emoji, on } : { emoji }),
+      ...(controller ? { signal: controller.signal } : {}),
+    }));
+    return reactionsOf(data);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** The reactions in a reaction POST's answer, normalized. */
+export function reactionsOf(data: unknown): MessageReaction[] {
+  return array(pick(record(data), 'reactions')).map(normalizeReaction);
 }
 
 export async function markRead(conversationId: number, messageId: number): Promise<void> {
