@@ -13105,23 +13105,14 @@ a.drawer-ver--fork:hover {
   opacity: 1;
 }
 
-/* ── Drawer theme selector: 3-segment toggle + sliding caret ──────
-   The first control in the drawer. Segment faces reuse the segmented
-   language the retired create-app modal's mode pills had verbatim, so
-   the platform has ONE segmented look; the caret underneath is what's
-   new here, and it's the affordance that says "this one is selected"
-   without relying on the raised face alone.
-
-   Positioning is entirely CSS off --theme-caret-index (0|1|2), which
-   App.HeaderMenu._renderThemeButtons writes on the track. A
-   thirds-width element translated by index * 100% lands centred under
-   segment N at ANY track width — which matters because the panel is
-   15rem as a desktop slide-over and --un-panel-width as a touch side
-   drawer, and the index is written before the kit panel resizes it.
-   Never replace this with an offsetLeft measurement. */
-#drawer-theme-track {
-  --theme-caret-index: 0;
-}
+/* ── Settings theme selector: 3-segment toggle ─────────────────────
+   Segment faces reuse the segmented language the retired create-app
+   modal's mode pills had verbatim, so the platform has ONE segmented look.
+   The chosen segment wears the lit tokens (below). The sliding caret that
+   pointed at it from underneath is gone (overnight UI audit D10, the
+   owner's decision of 2 Nov 2026): once the segment itself was lit
+   (#5285) the caret said nothing more, and on its own below the track it
+   read as a stray tooltip arrow. */
 .theme-seg {
   color: var(--text-muted);
   cursor: pointer;
@@ -13144,44 +13135,6 @@ a.drawer-ver--fork:hover {
    the same recessed-track / raised-face system as .theme-seg above. THE UI
    OVERHAUL retired the control, so the rules went with it — the theme
    selector is the platform's one segmented control again. */
-
-/* Caret rail: spans the track, sits just below it. The track's parent
-   row reserves the height with its pb-2.5 so the arrow can never collide
-   with the row's bottom border. */
-#drawer-theme-caret-track {
-  position: absolute;
-  left: 0;
-  top: 100%;
-  width: 100%;
-  display: block;
-  pointer-events: none;
-}
-#drawer-theme-caret {
-  display: block;
-  width: calc(100% / 3);
-  height: 4px;
-  transform: translateX(calc(var(--theme-caret-index) * 100%));
-  transition: transform 180ms ease-out;
-}
-/* The arrow itself — an upward CSS triangle centred in the third.
-   Never the segment's old white face, which vanished on a white surface
-   in light mode. #5285 colours it with the lit ink, like the segment it
-   points at, which reads against the page in both themes. */
-#drawer-theme-caret::after {
-  content: '';
-  display: block;
-  width: 0;
-  height: 0;
-  margin: 0 auto;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-bottom: 4px solid var(--lit-ink);
-}
-@media (prefers-reduced-motion: reduce) {
-  #drawer-theme-caret {
-    transition: none;
-  }
-}
 
 /* The Members modal's visibility pills: the recessed-track look the
    retired create dialog wore before #1910 restyled it. The Members modal is
