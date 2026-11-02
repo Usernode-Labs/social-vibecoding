@@ -50,7 +50,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { audienceLine, useCachedCommunity } from '../dev-board/workshop/community-card';
 import { isPlaceKey, type PlaceKey } from '../dev-board/workshop/places';
-import { cachedTopics, livePlace, openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { cachedTopics, itemReturnPlace, livePlace, openPlace, placeStore } from '../dev-board/workshop/place-store';
 import { pageTakesEdge } from '../dev-board/workshop/places-tray';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { useDevViewMode } from '../dev-board/view-mode-store';
@@ -156,7 +156,11 @@ export function NavDrawer(): ReactNode {
     // has it.
     : (pageUp && slug
       ? livePlace(slug, placed.place)
-      : keepPlace(rememberedPlace(), slug ? cachedTopics(slug) : null));
+      // A request's or a change's page names the place its chip goes back
+      // to, as the sidebar lights it (itemReturnPlace, audit N05).
+      : (slug && improve.subTab === 'topic'
+        ? itemReturnPlace(slug)
+        : keepPlace(rememberedPlace(), slug ? cachedTopics(slug) : null)));
   const name = pending ? pending.name : (improve.name || slug || '');
   const selfHosted = pending ? pending.selfHosted : !!improve.selfHosted;
   useIsomorphicLayoutEffect(() => {

@@ -236,8 +236,9 @@ function openAppAction({ slug, appName }) {
 /**
  * Pure (#4231): the buttons under a NEW project's first version going live,
  * after its Open: its community page, where the project's hub is
- * (`#app/<slug>/workshop`, frontend/src/features/messages/bot-shared.ts
- * openAppTarget lands it on the hub), and Invite people, which the client
+ * (`#app/<slug>/dev/hub`, the Hub's own address: a bare /workshop opens the
+ * Workshop; frontend/src/features/messages/bot-shared.ts openAppTarget
+ * lands it on the hub), and Invite people, which the client
  * answers itself by opening the first-session invite sheet in place
  * (bot-question.tsx; an invite link is made from the browser, as the sheet
  * always makes it). Empty for no slug.
@@ -245,7 +246,7 @@ function openAppAction({ slug, appName }) {
 function firstLiveActions({ slug }) {
   if (typeof slug !== 'string' || !slug) return [];
   return [
-    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: `#app/${encodeURIComponent(slug)}/workshop` },
+    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: `#app/${encodeURIComponent(slug)}/dev/hub` },
     { id: 'invite_people', label: 'Invite people', style: 'secondary', type: 'invite' },
   ];
 }
@@ -304,6 +305,27 @@ async function threadRootFor(pool, { conversationId, replyToId = null }) {
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not find the thread a reply was in (saying it in Main)', { conversationId, err: err.message });
     return null;
+  }
+}
+
+/**
+ * Where news that quotes `replyToId` (requestStart's message) is said: in
+ * Main, `{ threadRootId: false }`, when that message sits under a request's
+ * card, else `{}` (sendDm's own choice, the thread it was written in). A
+ * card's thread opens the request's page, or a first version's hub, so news
+ * said there was never seen (the plan in B02, audit of 2 Nov 2026). A thread
+ * of the person's own (a draft, an idea) keeps it. Never throws.
+ */
+async function outsideCardThread(pool, replyToId) {
+  const id = conversations.strictId(replyToId);
+  if (!id) return {};
+  try {
+    const { rows: [quoted] = [] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [id]);
+    const root = Number(quoted?.thread_root_id) || null;
+    return root && await isRequestCard(pool, root) ? { threadRootId: false } : {};
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not tell where a request\'s start is (saying it in Main)', { replyToId: id, err: err.message });
+    return { threadRootId: false };
   }
 }
 
@@ -686,6 +708,9 @@ async function sendDm(pool, {
     {
       metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
       notificationKind: (story && BUILD_KINDS[story]) || null, notificationAppId, ...hooks,
+      // B09: the cards are the person's to see, and the bot is no member of
+      // their private project: judged as the bot, every card was refused.
+      cardsViewer: { id: Number(userId) },
     });
   let result = await send(cards);
   if (!result && cards.length) {
@@ -1972,6 +1997,7 @@ async function relayIssuePost({
     kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
   }) : null;
   if (offer) Object.assign(metadata, offer.metadata);
+  const started = shown ? null : await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
   const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -1982,8 +2008,8 @@ async function relayIssuePost({
     // B7: a ready card's Try it is its way to the change; it carries no card.
     objects: dm.card ? [] : cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
     // #3707: news about a request they started here points back at it.
-    replyToId: shown ? null : await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
-    ...(shown ? { threadRootId: shown.messageId } : {}),
+    replyToId: started,
+    ...(shown ? { threadRootId: shown.messageId } : await outsideCardThread(pool, started)),
     // 16 Oct 2026: said, and rings nothing (`quiet`, homeroom-bot.js
     // actOnVerdict): an older request's first read that is not ready to
     // try, and a request that names who builds it. Its card and the bot's
@@ -2224,6 +2250,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   // #4488: a complicated change on an existing project: not a first version,
   // with its spec (read on the request, whose card goes under the plan).
   const complicated = plan.complicated === true;
+  const planStarted = await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
   const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -2246,11 +2273,13 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     // 13 Oct 2026: a plan its maker already decided on the made screen
     // (homeroom-bot.js planFromEarly) rings nothing: it is built at once.
     ...(quiet ? { moment: null } : {}),
-    replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
-    // B02 (audit 2 Nov 2026): in Main, where a plan waiting on them is drawn
-    // whole and Review the plan opens. Quoting a message in its card's
-    // thread put a first version's plan there, which only opens its hub.
-    threadRootId: false,
+    replyToId: planStarted,
+    // B02 (audit 2 Nov 2026): never under a request's card, whose thread only
+    // opens its page or hub: in Main, where a plan waiting on them is drawn
+    // whole, or in the private thread the request started in, where every
+    // door to the plan follows it (waitingPlan's threadRootId, the track's
+    // askThreadId).
+    ...await outsideCardThread(pool, planStarted),
   });
   if (!sent?.messageId) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_sent']);
@@ -2738,7 +2767,8 @@ async function buildWaitingPlan(pool, { user, appId, issueNumber, deps = {} }) {
  */
 async function waitingPlan(pool, { userId, appId, issueNumber }) {
   const { rows } = await pool.query(
-    `SELECT d.message_id, d.conversation_id, a.id AS action_id, m.metadata->'homeroomBot'->'plan' AS plan
+    `SELECT d.message_id, d.conversation_id, a.id AS action_id, m.metadata->'homeroomBot'->'plan' AS plan,
+            m.thread_root_id
        FROM homeroom_bot_dm_messages d
        JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
        JOIN homeroom_bot_dm_actions a ON a.message_id = d.message_id AND a.status = 'open'
@@ -2754,6 +2784,9 @@ async function waitingPlan(pool, { userId, appId, issueNumber }) {
     actionId: Number(row.action_id),
     messageId: Number(row.message_id),
     conversationId: Number(row.conversation_id) || null,
+    // The private thread it was said in, when it was (sendPlanCard): where
+    // Review the plan opens it. Null in Main.
+    threadRootId: Number(row.thread_root_id) || null,
   };
 }
 
@@ -3478,10 +3511,12 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, 
         context, card, step: 'preview_failed', key, content: PREVIEW_RETRY_TEXT,
       });
     }
+    const started = await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber: context.issueNumber });
     return await sendDm(pool, {
       bot,
       userId: requester.userId,
-      replyToId: await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber: context.issueNumber }),
+      replyToId: started,
+      ...await outsideCardThread(pool, started),
       idempotencyKey: key,
       content: `${requestLine(context)}\n\n${PREVIEW_RETRY_TEXT}`,
       moment: null,
@@ -3556,11 +3591,12 @@ async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'chec
     };
     // One story: said in the request's thread (and the main chat), when it has one.
     const card = await cardShown(pool, requester.userId, run.id, issueNumber);
+    const started = card ? null : await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber });
     const sent = await sendDm(pool, {
       bot,
       userId: requester.userId,
-      replyToId: card ? null : await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber }),
-      ...(card ? { threadRootId: card.messageId } : {}),
+      replyToId: started,
+      ...(card ? { threadRootId: card.messageId } : await outsideCardThread(pool, started)),
       idempotencyKey: why === 'checks'
         ? `hrbot-needs-look-checks-${id}-${Number(run.approval_epoch) || 0}`
         : `hrbot-needs-look-built-${id}`,
@@ -3756,13 +3792,15 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   // #4231: a new project's first version also offers its community and
   // inviting people to it.
   const actions = open ? [open, ...(context.firstVersion ? firstLiveActions({ slug: run.slug }) : [])] : [];
+  const liveStarted = card ? null : await requestStart(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number });
   return sendDm(pool, {
     bot,
     userId: requester.userId,
-    replyToId: card ? null : await requestStart(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number }),
-    // B23 (audit 2 Nov 2026): said in Main either way, beside its card. With
-    // no card, quoting a message in a thread put "it's live" in the thread.
-    threadRootId: card ? card.messageId : false,
+    replyToId: liveStarted,
+    // B23 (audit 2 Nov 2026): beside its card in Main; with no card, never in
+    // another request's card's thread, where nobody saw it, but in the
+    // thread the request started in when that is the person's own.
+    ...(card ? { threadRootId: card.messageId } : await outsideCardThread(pool, liveStarted)),
     idempotencyKey: `hrbot-merged-${session.id}`,
     content: mergedText({
       line: card ? null : requestLine(context), appName: context.appName, live, platform, card: !!open, change: !context.firstVersion,
@@ -4955,7 +4993,10 @@ async function greetTourFinisher(pool, { userId, strict = false }) {
 // with the project's card and one thing to ask for: the starter's own
 // example change (services/app-templates.js exampleChange), as the walk's
 // card offers it.
-const READY_MADE_PROMPTS = Object.freeze(['What can I ask for?', 'How do I invite friends?', 'How does the group decide?']);
+// B27 (overnight audit, 1 Nov 2026): a ready-made app starts just its
+// maker's, with no group to decide anything, so its third prompt asks who
+// decides rather than how "the group" does.
+const READY_MADE_PROMPTS = Object.freeze(['What can I ask for?', 'How do I invite friends?', 'Who decides on changes?']);
 
 /**
  * Pure: the hello a maker hears with a ready-made app: the maker's hello,
@@ -6279,6 +6320,7 @@ module.exports = {
   quotedTarget,
   quotable,
   requestStart,
+  outsideCardThread,
   newestOpenQuestion,
   postOnRequest,
   postOnProposal,

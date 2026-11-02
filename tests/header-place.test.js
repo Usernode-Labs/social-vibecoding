@@ -233,6 +233,6 @@ test('a place is trusted while its community\'s record is unread, and never a ch
   // channel left behind by another community gives way to the Hub.
   assert.match(read(`${DIR}/place-bar.tsx`), /const shown = livePlace\(slug, place\);[\s\S]*\{handle \|\| placeName\(shown\)\}/);
   assert.match(read('frontend/src/features/nav-drawer/nav-drawer.tsx'),
-    /pageUp && slug\s*\? livePlace\(slug, placed\.place\)\s*: keepPlace\(rememberedPlace\(\), slug \? cachedTopics\(slug\) : null\)/,
+    /pageUp && slug\s*\? livePlace\(slug, placed\.place\)[\s\S]{0,240}: keepPlace\(rememberedPlace\(\), slug \? cachedTopics\(slug\) : null\)/,
     'the drawer checks the page\'s own place too, and its fallback keeps only what the community has');
 });

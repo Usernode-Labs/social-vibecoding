@@ -188,7 +188,7 @@ test('the live news carries its own button to open the app, as the shell opens o
   assert.match(fn, /const actions = open \? \[open, \.\.\.\(context\.firstVersion \? firstLiveActions\(\{ slug: run\.slug \}\) : \[\]\)\] : \[\];/);
   assert.match(fn, /\.\.\.\(actions\.length \? \{ actions \} : \{\}\),/);
   assert.deepEqual(dm.firstLiveActions({ slug: 'page turners' }), [
-    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: '#app/page%20turners/workshop' },
+    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: '#app/page%20turners/dev/hub' },
     { id: 'invite_people', label: 'Invite people', style: 'secondary', type: 'invite' },
   ]);
   assert.deepEqual(dm.firstLiveActions({ slug: '' }), []);

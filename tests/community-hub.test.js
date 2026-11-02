@@ -333,7 +333,7 @@ test('Recently live: the last three changes that went live, as pictures that ope
 });
 
 test('an open channel lights Communities and hangs off its hub; Messages lists people and agents', () => {
-  assert.match(STORE, /export function channelHub\(\): string \| null \{\s*if \(state\.route\.appSlug\) return `#app\/\$\{encodeURIComponent\(state\.route\.appSlug\)\}\/workshop`;/);
+  assert.match(STORE, /export function channelHub\(\): string \| null \{\s*[\s\S]{0,120}if \(state\.route\.appSlug\) return `#app\/\$\{encodeURIComponent\(state\.route\.appSlug\)\}\/dev\/hub`;/);
   assert.match(STORE, /if \(!row \|\| row\.kind !== 'channel'\) return null;/, '#general is the channel among the conversations');
   assert.match(STORE, /navStore\.set\(\{ tab: hub \? 'workshop' : 'messages' \}\);/);
   assert.match(STORE, /app\.setBackIcon\?\.\('arrow', hub\);/);

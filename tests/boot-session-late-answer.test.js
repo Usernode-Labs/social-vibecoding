@@ -40,7 +40,7 @@ function methodSource(name) {
   return APP.slice(start + 1, end + 4);
 }
 
-const REAL = ['init', '_adoptLateSession', '_fetchSession', '_settleOptionalSession', '_fetchWebSession', '_answeredSignedOut'];
+const REAL = ['init', '_adoptLateSession', '_fetchSession', '_withinNativeRestoreLimit', '_settleOptionalSession', '_fetchWebSession', '_answeredSignedOut'];
 
 function response(status, body) {
   return { status, ok: status >= 200 && status < 300, json: async () => body };
@@ -81,6 +81,7 @@ function boot({ firstRead, native = false, signInBegun = false, nativeChrome = n
   vm.runInContext(`
     var App = {
       BOOT_SESSION_TIMEOUT_MS: 30,
+      BOOT_NATIVE_RESTORE_TIMEOUT_MS: 30,
       embeddedPanel: false,
       user: null,
       _authedBooted: false,

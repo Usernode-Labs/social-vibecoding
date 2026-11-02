@@ -529,6 +529,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
+  // A conversation that did not load has no box to write in, though its
+  // header still names it when the read got no answer (store.ts loadThread).
+  if (!inThread && snap.threadError && !snap.messages.length) return null;
 
   // QA 2026-09-24 Q2: a direct request the other person has not accepted
   // yet. It carries ONE opening message; once that is sent (or in flight —

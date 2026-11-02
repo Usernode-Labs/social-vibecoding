@@ -543,8 +543,8 @@ test('a Homeroom line kept in #general, as the root of somebody\'s thread, is dr
 
 test('Discover rows open the hub; the controls sit over the list\'s card', () => {
   const browse = read('frontend/src/features/apps/browse.js');
-  assert.match(browse, /rowHref\(view\) \{\s*if \(!view \|\| view\.demo \|\| !view\.slug\) return null;\s*return `#app\/\$\{encodeURIComponent\(view\.slug\)\}\/workshop`;/);
-  assert.match(read('public/js/app.js'), /return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#communities';/,
+  assert.match(browse, /rowHref\(view\) \{\s*if \(!view \|\| view\.demo \|\| !view\.slug\) return null;\s*return `#app\/\$\{encodeURIComponent\(view\.slug\)\}\/dev\/hub`;/);
+  assert.match(read('public/js/app.js'), /return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/,
     'the same address App._hubHref builds');
 });
 

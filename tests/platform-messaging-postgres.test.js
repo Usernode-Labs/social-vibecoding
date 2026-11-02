@@ -552,6 +552,23 @@ test('a channel notifies only the people a message @mentions', async (t) => {
     const groupReaction = await conversations.toggleReaction(pool, lin, group.conversationId, groupRoot.messageId, '👍');
     assert.deepEqual(groupReaction.notifications.map((row) => [row.user_id, row.kind]),
       [[ada.id, 'conversation_reaction']]);
+    // A reaction that names the state it wants (the device's offline outbox,
+    // frontend/src/lib/action-outbox.ts) ends there however often it is sent:
+    // on again changes nothing and rings no one twice; off clears it and its
+    // bell row; off again is nothing.
+    const mine = (result) => result.reactions.filter((row) => row.emoji === '👍').map((row) => [row.count, row.reacted]);
+    const onAgain = await conversations.toggleReaction(pool, lin, group.conversationId, groupRoot.messageId, '👍', true);
+    assert.deepEqual(onAgain.notifications, []);
+    assert.deepEqual(mine(onAgain), [[1, true]]);
+    assert.equal((await rowsFor(groupRoot.messageId)).filter((row) => row.kind === 'conversation_reaction').length, 1);
+    const off = await conversations.toggleReaction(pool, lin, group.conversationId, groupRoot.messageId, '👍', false);
+    assert.deepEqual(mine(off), []);
+    assert.deepEqual(off.clearedUserIds, [ada.id]);
+    const offAgain = await conversations.toggleReaction(pool, lin, group.conversationId, groupRoot.messageId, '👍', false);
+    assert.deepEqual(mine(offAgain), []);
+    assert.deepEqual(offAgain.clearedUserIds, []);
+    const onFirst = await conversations.toggleReaction(pool, lin, group.conversationId, groupRoot.messageId, '👍', true);
+    assert.deepEqual(onFirst.notifications.map((row) => [row.user_id, row.kind]), [[ada.id, 'conversation_reaction']]);
   } finally {
     if (pool) await pool.end().catch(() => {});
     await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
