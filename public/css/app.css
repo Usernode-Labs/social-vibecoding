@@ -10419,7 +10419,7 @@ html[data-browser-scroller="settings-screen"] #settings-screen:has(#settings-sec
   display: flex;
   flex-direction: column;
 }
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
   #settings-root:has(#settings-section-content:not(.hidden)) > div {
     flex-direction: row;
     align-items: stretch;
@@ -10440,11 +10440,11 @@ html.un-kb #settings-content-col > .settings-sheet {
   margin-bottom: 0;
   padding-bottom: 32px;
 }
-/* From md up the sheet sits BESIDE the sidebar, whose search field starts
-   at the root's top. The 12px shoulder put the sheet's top edge 12px below
+/* From lg up (Settings' sidebar breakpoint, settings.js DESKTOP_MEDIA) the
+   sheet sits BESIDE the sidebar, whose search field starts at the root's top. The 12px shoulder put the sheet's top edge 12px below
    the field's, so the two columns did not line up; there the root's
    `md:pt-5` (8 for the header's notch, 12 of air) is the step for both. */
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
   #settings-content-col > .settings-sheet { margin-top: 0; }
 }
 /* THE SECTION LIST IS A SHEET TOO (UX audit, 20 Oct 2026). It was drawn
@@ -10457,7 +10457,7 @@ html.un-kb #settings-content-col > .settings-sheet {
    `position: relative`. `top` is the root's `md:pt-5`, so the two sheets'
    top edges stay level; the fixed height makes the sheet run to the window's
    foot like the pane, so a short list never ends on a square edge. */
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
   #settings-sidebar-col {
     position: sticky;
     top: 1.25rem;
@@ -10505,6 +10505,31 @@ html.un-kb #settings-content-col > .settings-sheet {
   margin-bottom: 4px;
 }
 .settings-sheet h3 + p { font-size: 15px; line-height: 1.35; margin-bottom: 14px; }
+/* ONE LARGE HEADING A PAGE (overnight audit W05, 1 Nov 2026; AGENTS.md,
+   "Type and colour"). A page of several parts names itself once, from lg up
+   beside the sidebar (`SettingsPageTitle`, settings-nav.tsx; below lg the
+   header names it), and its parts' headings step down to 17px, so Account
+   no longer opens under "Profile", "Sign-in" and "Delete account" in one
+   size. A one-part page is unchanged: its part's heading is its name. */
+.settings-page-title { display: none; }
+.settings-sheet:has(> [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden) > :not(.hidden)) h3 {
+  font-size: 17px;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+@media (min-width: 1024px) {
+  .settings-sheet:has(> [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden) > :not(.hidden)) > .settings-page-title {
+    display: block;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    margin-bottom: 20px;
+  }
+}
+/* The Settings filter is the shell's search pill (`.messages-search`); its
+   hosts already space it, so the list's own margins come off. */
+.messages-search.settings-filter { margin: 0; }
 /* The AI-credit row (features/header/ai-budget.tsx) is one row of the
    API-key card here, not the boxed pill it is in the header pane: its own
    fill, hairline and padding come off inside the sheet, and its type steps
@@ -10520,7 +10545,7 @@ html.un-kb #settings-content-col > .settings-sheet {
 }
 .settings-sheet #drawer-row-ai-budget > span:first-child { font-weight: 400; }
 .settings-sheet #drawer-row-ai-budget .drawer-meter { font-size: 15px; font-family: inherit; letter-spacing: 0; }
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
   #settings-mobile-menu-host { padding: 4px 0 0; }
 }
 
