@@ -22814,6 +22814,15 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
   display: inline-grid; place-items: center;
   border-radius: 9px;
   box-shadow: inset 0 0 0 2px var(--ring, currentColor);
+  /* THE RING TAKES A GLYPH'S PLACE, NOT MORE (audit N02, 1 Nov 2026). It is
+     28px against the other tabs' 22px glyphs, and laid out at 28 it pushed
+     "Communities" about 3px below Home, Homeroom bot, Messages and You, and
+     made its lit pill the tallest. The ring overhangs by 3px above and
+     below instead: the label sits on the bar's one baseline, and the
+     marker (measured off `.platform-tab-mark`, which stays 22px) matches
+     its neighbours. The marker's own padding (5px over, 3px under) covers
+     the overhang. */
+  margin-block: -3px;
 }
 .platform-tab-ring-all .platform-tab-glyph { width: 18px; height: 18px; }
 .platform-tab-tile {
@@ -22822,7 +22831,7 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
   font-size: 12px; font-weight: 700; line-height: 1;
 }
 @media (min-width: 768px) {
-  .platform-tab-ring { width: auto; height: auto; border-radius: 0; box-shadow: none; }
+  .platform-tab-ring { width: auto; height: auto; border-radius: 0; box-shadow: none; margin-block: 0; }
   .platform-tab-ring-all .platform-tab-glyph { width: 22px; height: 22px; }
   .platform-tab-tile { width: 22px; height: 22px; }
 }

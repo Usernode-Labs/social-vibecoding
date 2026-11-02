@@ -7079,3 +7079,20 @@ test('#6075: a live row keeps its final counted vote beside ✓ Live', () => {
   assert.match(deploying, />Going live…<\/span>/);
   assert.ok(!deploying.includes('dev-ws-wrow-tally'));
 });
+
+test('a link to the list of requests or changes opens All items by stage, not the Hub (audit N03)', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = src.indexOf("// dev, dev/issues, dev/proposals, dev/sessions (no id)");
+  assert.ok(at > 0);
+  const block = src.slice(at, at + 1200);
+  assert.match(block, /subTab = 'forum';/);
+  assert.match(block, /sec === 'proposals' \|\| sec === 'issues' \|\| sec === 'changes'/);
+  assert.match(block, /AppView\._overrideWorkshopTab\('all'\);\s*AppView\._overrideWorkshopGroup\?\.\('stage'\);/,
+    'both halves, as the retired Board route takes them');
+  // …and the two together are what put the stage pane up.
+  const view = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  view._overrideWorkshopTab('all');
+  view._overrideWorkshopGroup('stage');
+  assert.equal([view._workshopTab(), view._getWorkshopGroup()].join('/'), 'all/stage',
+    'over a remembered Hub');
+});

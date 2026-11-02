@@ -5615,6 +5615,17 @@ const App = {
             // dev, dev/issues, dev/proposals, dev/sessions (no id) —
             // all land on the plain card list.
             subTab = 'forum';
+            // …and a link to the LIST of requests or changes opens that list:
+            // All items by stage, under the Workshop, as the retired Board
+            // route does above. It opened on the place last left, the Hub on
+            // a cold load, so an old "proposals" link in a notification or a
+            // chat showed the Hub and nothing about proposals (audit N03,
+            // 1 Nov 2026). A bare `dev` is the project page and keeps it.
+            if ((sec === 'proposals' || sec === 'issues' || sec === 'changes')
+                && typeof AppView !== 'undefined' && AppView._overrideWorkshopTab) {
+              AppView._overrideWorkshopTab('all');
+              AppView._overrideWorkshopGroup?.('stage');
+            }
           }
         } else if (tab === 'group-chat') {
           tab = 'dev'; subTab = 'chat';
@@ -6449,7 +6460,11 @@ const App = {
     const railPinned = inApp && App._railBesideApp();
     document.body?.classList?.toggle('rail-pinned', railPinned);
     // …and its Communities tab names this app's community (_scopeToRunningApp).
-    if (railPinned && !App.chromeless) App._scopeToRunningApp();
+    // The Duo's side strip draws the bar beside a running app as well (app.css
+    // "AND IN A RUNNING APP TOO"), so there the tab follows the app too: it
+    // kept the last project page's tile, another community's, inside this one
+    // (audit N02, 1 Nov 2026).
+    if ((railPinned || (inApp && App._sideStripUp())) && !App.chromeless) App._scopeToRunningApp();
     App._watchRailBreakpoint();
     App.Visibility.publish(
       'platform-tabs',
@@ -6605,6 +6620,13 @@ const App = {
   // the whole screen and its ✕. Never in the side panel's document, which
   // draws no chrome. And not for a private member's first app, which has
   // no way out but the mark menu's "Go to Homeroom" (_privateNoClose).
+  // Whether the Duo's side strip is up (frontend/src/lib/side-strip.ts sets
+  // `data-side-strip` on <html>): there app.css draws the bar beside a
+  // running app although the route reports it hidden.
+  _sideStripUp() {
+    try { return !!document.documentElement?.hasAttribute?.('data-side-strip'); } catch (_) { return false; }
+  },
+
   _railBesideApp() {
     return !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout()
       && !App._privateNoClose();
