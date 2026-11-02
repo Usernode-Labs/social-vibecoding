@@ -271,6 +271,12 @@ const App = {
     try {
       window.UsernodeReact?.keptCopies?.clear?.();
     } catch (err) { /* nothing kept, or no storage at all */ }
+    // …and the votes and reactions waiting for a connection
+    // (frontend/src/lib/action-outbox.ts): the previous account's, which
+    // must never be sent under the next one's session.
+    try {
+      window.UsernodeReact?.actionOutbox?.clear?.();
+    } catch (err) { /* nothing kept, or no storage at all */ }
     try {
       if (apiCache) navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
@@ -557,6 +563,23 @@ const App = {
     AuthScreens.finishLogin({ stillWanted }).catch(() => {});
   },
 
+  // A native restore that finished after the session read stopped waiting
+  // for it (BOOT_NATIVE_RESTORE_TIMEOUT_MS) installed a cookie nobody has
+  // read. A boot from the snapshot is still unconfirmed, so it is confirmed
+  // now. A boot with none painted the anonymous shell, so the session comes
+  // in the way a sign-in's does (AuthScreens.finishLogin), unless the viewer
+  // began one of their own meanwhile.
+  _lateNativeRestore() {
+    if (App._sessionFromSnapshot) {
+      App._reconcileSession().catch(() => {});
+      return;
+    }
+    const stillWanted = () => !App.user && !App._authedBooted && !App._signInBegun;
+    if (!stillWanted()) return;
+    if (!window.AuthScreens || typeof AuthScreens.finishLogin !== 'function') return;
+    AuthScreens.finishLogin({ stillWanted }).catch(() => {});
+  },
+
   // Does this answer mean the SESSION is over? Only the two statuses the API
   // returns for that: 401 (no session) from /api/auth/me itself and 403 from
   // the platform-access gate. Everything else a response can carry — 500 when
@@ -594,7 +617,8 @@ const App = {
     if (optional) response = await App._settleOptionalSession(response);
     if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
       try {
-        const restored = await NativeChrome.restoreWebSession({ force: response.status === 401 });
+        const restored = await App._withinNativeRestoreLimit(
+          NativeChrome.restoreWebSession({ force: response.status === 401 }));
         if (restored) return App._fetchWebSession();
       } catch (error) {
         // Native uncertainty must not erase a display snapshot. A valid web
@@ -603,6 +627,28 @@ const App = {
       }
     }
     return response;
+  },
+
+  // The native restore's own limit is the bridge's 45 s (usernode-bridge.js
+  // restoreWebSession), and on a network that carries nothing the boot sat
+  // on it that long (offline follow-up, 2 Nov 2026). Past this, the session
+  // read goes on as for a restore that failed: a valid web answer is used,
+  // and an expired one is "no answer". The restore itself is not cancelled
+  // (nothing here can cancel the native call): a late success is taken up
+  // by _lateNativeRestore.
+  BOOT_NATIVE_RESTORE_TIMEOUT_MS: 8000,
+
+  _withinNativeRestoreLimit(restoring) {
+    let timer = null;
+    const limit = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('Native session recovery timed out'));
+        Promise.resolve(restoring).then((restored) => {
+          if (restored) App._lateNativeRestore();
+        }, () => {});
+      }, App.BOOT_NATIVE_RESTORE_TIMEOUT_MS);
+    });
+    return Promise.race([restoring, limit]).finally(() => clearTimeout(timer));
   },
 
   // The optional read's "nobody" as the 401 it stands for, so _answeredSignedOut,
@@ -1161,6 +1207,10 @@ const App = {
       // is re-read when the network comes back (_eventsNetworkChanged).
       if (e.detail) App._eventsNetworkChanged(e.detail.offline === true);
     });
+
+    // The phone moved to another network while online (offline.ts, from
+    // the native shell's word): see _networkHandedOver.
+    window.addEventListener('usernode:network-changed', () => App._networkHandedOver());
 
     // The service worker answered a slow /api/* from cache and the real
     // answer has now landed disagreeing with it (see _onApiUpdated).
@@ -3181,6 +3231,26 @@ const App = {
       App._eventsRetryTimer = null;
       App.connectEvents();
     }, delay);
+  },
+
+  // The phone handed over to another network while online
+  // (usernode:network-changed, frontend/src/lib/offline.ts): what was made
+  // on the old one, the events socket and any read still waiting, can be
+  // dead with nothing to say so (offline test, 2 Nov 2026: a read begun in
+  // a quiet spell held its screen after the network came back). The socket
+  // is asked now, and given up if it does not answer (_pingEvents); a boot
+  // from the snapshot asks again who is signed in; the screen is read again
+  // over the new network, its newer reads superseding the waiting ones.
+  _networkHandedOver() {
+    if (App._sessionFromSnapshot) {
+      App._reconcileSession().catch(() => {});
+      return;
+    }
+    const socket = App.eventsWs;
+    if (!App.user || !socket) return;
+    if (socket.readyState === 1 && !App._eventsAwaiting) App._pingEvents(socket);
+    if (Date.now() - App._lastResyncAt < App.RESYNC_SETTLE_MS) return;
+    App.resyncCurrentView();
   },
 
   // The connectivity probe changed its answer (usernode:offline-change).

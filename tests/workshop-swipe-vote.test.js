@@ -129,7 +129,7 @@ test('a Yes swipe votes at once; a No swipe opens the sheet on No, where its rea
   const view = read('public/js/app-view.js');
   const cast = body(view, '  async castVote(sessionId, vote', '\n  },\n');
   const asks = cast.indexOf('_resolveVoteReason(vote, opts)');
-  const posts = cast.indexOf('fetch(`/api/sessions/');
+  const posts = cast.indexOf('AppView._sendVote(sessionId, body)');
   assert.ok(asks > 0 && posts > asks, 'the reason is resolved before the vote is posted');
   assert.match(cast, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
   const ask = body(view, '  async _askVoteReason(vote)', '\n  },\n');

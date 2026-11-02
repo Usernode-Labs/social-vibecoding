@@ -28,9 +28,10 @@
  *
  * ── What they are for ──────────────────────────────────────────────────
  *
- * A screen draws a kept copy only when its own read had no answer it could
- * use, never in place of one: an open on a healthy network still waits for
- * the server (#4243). A copy older than KEPT_MAX_AGE_MS is not drawn, and
+ * A screen draws a kept copy when its own read had no answer it could use,
+ * and, with nothing on screen yet, once that read has gone KEPT_DRAW_MS
+ * unanswered, never in place of an answer: the read carries on, and its
+ * answer replaces the copy when it lands. A copy older than KEPT_MAX_AGE_MS is not drawn, and
  * one larger than KEPT_MAX_CHARS is not kept. localStorage, not IndexedDB:
  * the copies are small, they are read on the same tick a read fails, and
  * losing them under storage pressure costs only the offline view.
@@ -65,6 +66,17 @@ export const KEPT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 export const KEPT_MAX_CHARS = 150_000;
 /** All copies together, keys and values: about a quarter of WebKit's quota for the origin. */
 export const KEPT_TOTAL_CHARS = 600_000;
+/**
+ * How long a screen with nothing on it waits for its read before it draws
+ * the kept copy, the read still going (offline follow-up, 2 Nov 2026). On a
+ * network that carries nothing a read neither answers nor fails until
+ * ./read-timeout.ts gives up at 15 s, and a phone app that has the page on
+ * the phone shows it. Longer than the service worker's second (#4243: a
+ * conversation drawn from an older copy on a merely slow read, with the
+ * newest messages snapping in under the reader a moment later), short
+ * enough not to read as a hang.
+ */
+export const KEPT_DRAW_MS = 2000;
 
 function storage(): Storage | null {
   try {

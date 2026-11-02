@@ -860,7 +860,7 @@ test('the renewal count moves only when a restore lands, and names the one in fl
 });
 
 function recoveryReader(restore, responses) {
-  const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift() };
+  const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift(), setTimeout, clearTimeout };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   const start = appSource.indexOf('  async _fetchSession()');
@@ -877,6 +877,41 @@ test('boot retries web authentication once after successful native restoration',
     [response({}, { ok: false, status: 401 }), ok]);
   assert.equal(await reader._fetchSession(), ok);
   assert.deepEqual(calls, [true]);
+});
+
+test('boot stops waiting on a native restore that does not answer, and takes up its late success', async () => {
+  // Offline follow-up, 2 Nov 2026: on a network that carries nothing the
+  // restore held the boot for the bridge's 45 s.
+  let finish;
+  const reader = recoveryReader(() => new Promise((resolve) => { finish = resolve; }),
+    [response({}, { ok: false, status: 401 })]);
+  assert.equal(reader.BOOT_NATIVE_RESTORE_TIMEOUT_MS, 8000);
+  reader.BOOT_NATIVE_RESTORE_TIMEOUT_MS = 5;
+  let late = 0;
+  reader._lateNativeRestore = () => { late += 1; };
+  await assert.rejects(reader._fetchSession(), /timed out/, 'an expired web session with no restore is no answer');
+  assert.equal(late, 0);
+  finish(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(late, 1, 'the restore that finished late is taken up');
+
+  // A valid web session is used without waiting for it; a late failure changes nothing.
+  const ok = response({ user: { id: 41 } });
+  let fail;
+  const valid = recoveryReader(() => new Promise((_resolve, reject) => { fail = reject; }), [ok]);
+  valid.BOOT_NATIVE_RESTORE_TIMEOUT_MS = 5;
+  valid._lateNativeRestore = () => { late += 1; };
+  assert.equal(await valid._fetchSession(), ok);
+  fail(new Error('native unreachable'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(late, 1);
+
+  // Taken up: a snapshot boot is confirmed again; one with none lets the
+  // session in as a sign-in does, unless the viewer began their own.
+  const lateRestore = appSource.slice(appSource.indexOf('  _lateNativeRestore() {'), appSource.indexOf('  _answeredSignedOut(res) {'));
+  assert.match(lateRestore, /if \(App\._sessionFromSnapshot\) \{\s+App\._reconcileSession\(\)\.catch\(\(\) => \{\}\);\s+return;\s+\}/);
+  assert.match(lateRestore, /const stillWanted = \(\) => !App\.user && !App\._authedBooted && !App\._signInBegun;/);
+  assert.match(lateRestore, /AuthScreens\.finishLogin\(\{ stillWanted \}\)\.catch\(\(\) => \{\}\);/);
 });
 
 test('boot preserves a valid web session on native failure, and treats failed recovery of an expired cookie as unknown', async () => {

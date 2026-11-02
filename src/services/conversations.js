@@ -2097,7 +2097,12 @@ async function deleteMessage(pool, user, conversationId, messageId) {
   return { ...result, message: await getMessage(pool, user, conversationId, messageId) };
 }
 
-async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
+// `want` names the state the reaction should end in (true: on, false: off)
+// rather than flipping it, so a request sent again is harmless: the device
+// keeps a reaction made offline and sends it when the connection is back,
+// and an answer lost on the way means it may be sent twice
+// (frontend/src/lib/action-outbox.ts). Without it, a tap flips it.
+async function toggleReaction(pool, user, conversationId, messageId, rawEmoji, want = null) {
   const emoji = normalizeEmoji(rawEmoji);
   if (!emoji) return null;
   const result = await transaction(pool, async (db) => {
@@ -2113,18 +2118,33 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
     );
     if (!message.rows.length) return null;
     if (message.rows[0].deleted_at) return { error: 'message_deleted' };
-    const deleted = await db.query(
-      `DELETE FROM conversation_message_reactions
-        WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
-      [messageId, user.id, emoji]
-    );
+    let added = false;
+    let removed = false;
+    if (want === true) {
+      const inserted = await db.query(
+        `INSERT INTO conversation_message_reactions (message_id, user_id, emoji)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (message_id, user_id, emoji) DO NOTHING`, [messageId, user.id, emoji]
+      );
+      added = inserted.rowCount > 0;
+    } else {
+      const deleted = await db.query(
+        `DELETE FROM conversation_message_reactions
+          WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
+        [messageId, user.id, emoji]
+      );
+      removed = deleted.rowCount > 0;
+      if (!removed && want !== false) {
+        await db.query(
+          `INSERT INTO conversation_message_reactions (message_id, user_id, emoji)
+           VALUES ($1, $2, $3)`, [messageId, user.id, emoji]
+        );
+        added = true;
+      }
+    }
     const notifications = [];
     let clearedUserIds = [];
-    if (!deleted.rowCount) {
-      await db.query(
-        `INSERT INTO conversation_message_reactions (message_id, user_id, emoji)
-         VALUES ($1, $2, $3)`, [messageId, user.id, emoji]
-      );
+    if (added) {
       const authorId = message.rows[0].sender_id;
       // #3188: a channel rings only for an @mention, and a reaction is not one.
       if (authorId && authorId !== user.id && membership.kind !== 'channel') {
@@ -2133,17 +2153,17 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
           sourceUserId: user.id, kind: 'conversation_reaction', detail: emoji,
         }));
       }
-    } else {
+    } else if (removed) {
       // #3050: name whose bell lost a row, so the route can refresh it and
       // re-badge their iPhone — un-reacting must lower the icon too.
-      const removed = await db.query(
+      const cleared = await db.query(
         `DELETE FROM notifications
           WHERE user_id = $1 AND conversation_id = $2 AND conversation_message_id = $3
             AND source_user_id = $4 AND kind = 'conversation_reaction' AND detail = $5
           RETURNING user_id`,
         [message.rows[0].sender_id, conversationId, messageId, user.id, emoji]
       );
-      clearedUserIds = [...new Set(removed.rows.map((row) => row.user_id))];
+      clearedUserIds = [...new Set(cleared.rows.map((row) => row.user_id))];
     }
     return { notifications, clearedUserIds, memberIds: await activeMemberIds(db, conversationId) };
   });

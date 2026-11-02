@@ -71,7 +71,7 @@ import type { ReactNode } from 'react';
 import { LockIcon, MicrophoneIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { keepCopy, keptCopy } from '../../lib/kept-copies';
+import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
 import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -261,7 +261,9 @@ export function AiScreen(): ReactNode {
   // the copy this device kept of it (../../lib/kept-copies.ts: GET
   // /api/ai/work answers `no-store`, so the worker keeps none), and one with
   // no copy either says so over Needs you, with Try again (`failed`),
-  // instead of leaving an empty card.
+  // instead of leaving an empty card. A list with nothing drawn draws its
+  // copy once its read has gone KEPT_DRAW_MS unanswered too, the read still
+  // going: a network that carries nothing answers no read for 15 s.
   const [moved, setMoved] = useState(0);
   const [failed, setFailed] = useState<ListsFailure>(null);
   const readBefore = useRef(false);
@@ -274,6 +276,13 @@ export function AiScreen(): ReactNode {
     const again = readBefore.current;
     readBefore.current = true;
     const init = again ? FRESH : undefined;
+    const early = setTimeout(() => {
+      if (!live) return;
+      const keptWork = drawn.current.work ? null : keptCopy<AiWork>('ai:work');
+      const keptNeeds = drawn.current.needs ? null : keptCopy<NeedItem[]>('ai:needs');
+      if (keptWork) setWork(keptWork);
+      if (Array.isArray(keptNeeds)) setNeeds(keptNeeds);
+    }, KEPT_DRAW_MS);
     // Each list as it lands; the read that left one with nothing to draw is handed on.
     const workDone = readJson<AiWork>(`/api/ai/work${qs}`, init).then((read) => {
       if (!live) return null;
@@ -301,11 +310,12 @@ export function AiScreen(): ReactNode {
       return Array.isArray(kept) ? null : read;
     });
     void Promise.all([workDone, needsDone]).then((reads) => {
+      clearTimeout(early);
       if (!live) return;
       const missing = reads.flatMap((read) => (read ? [read] : []));
       setFailed(!missing.length ? null : missing.some((read) => !read.reached) ? 'unreachable' : 'failed');
     });
-    return () => { live = false; };
+    return () => { live = false; clearTimeout(early); };
   }, [visible, session, moved]);
 
   // Main beside the list, on a desktop, or peeking beside it in a phone's

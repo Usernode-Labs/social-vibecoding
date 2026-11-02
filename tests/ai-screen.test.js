@@ -554,7 +554,7 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
   // boot and again once the server confirms it; both reads and the docked
   // chat go again then, instead of staying empty until a reload.
   assert.match(src, /const again = \(\) => setSession\(\(n\) => n \+ 1\);\s+document\.addEventListener\('sv:session', again\);\s+return \(\) => document\.removeEventListener\('sv:session', again\);/);
-  assert.match(src, /return \(\) => \{ live = false; \};\s+\}, \[visible, session, moved\]\);/);
+  assert.match(src, /return \(\) => \{ live = false; clearTimeout\(early\); \};\s+\}, \[visible, session, moved\]\);/);
   assert.match(src, /\}, \[visible, wide, phone, botId, session\]\);/);
   assert.match(read('public/js/app.js'), /document\.dispatchEvent\(new CustomEvent\('sv:session', \{\s+detail: \{ user: App\.user, verifiedSession: true \},/,
     'the confirmation it waits for');

@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
 
 import { t } from '../../lib/i18n/runtime';
+import { ACTION_OUTBOX_EVENT, actionOutbox, type ActionOutcome } from '../../lib/action-outbox';
+import { KEPT_DRAW_MS } from '../../lib/kept-copies';
 import { isOffline, probe } from '../../lib/offline';
 import { botTabAddress, botTabFromMessages, goBotAddress, knownBotConversation, noteBotConversation, openBotTab } from '../ai/door';
 import { navStore } from '../nav/nav-store.js';
@@ -20,6 +22,7 @@ import type {
   ConversationMessage,
   ConversationSummary,
   HomeroomBotAction,
+  MessageReaction,
   MessagesAgentThread,
   MessagesSnapshot,
   ReplyThreadState,
@@ -572,6 +575,12 @@ export async function loadConversations(force = false): Promise<void> {
   if (state.listLoaded && !force) return;
   const request = ++listRequest;
   publish({ loadingList: true, error: null, demo: browserDemo() });
+  // Nothing on screen and no answer yet: the list this device kept, while
+  // the read goes on (kept-copies.ts KEPT_DRAW_MS). Its answer replaces it.
+  const early = setTimeout(() => {
+    if (request !== listRequest || !state.loadingList || state.conversations.length) return;
+    if (drawKeptList()) slowRead();
+  }, KEPT_DRAW_MS);
   try {
     // A forced read follows a change, so it asks the server (api.ts ReadOptions).
     const conversations = await api.listConversations({ fresh: force });
@@ -598,15 +607,7 @@ export async function loadConversations(force = false): Promise<void> {
     // answer is the server's word.
     const noAnswer = unreachable(error);
     const answered = error instanceof api.MessagesApiError && error.status < 500;
-    const kept = !answered && !state.conversations.length ? api.keptConversations?.() : null;
-    if (kept) {
-      publish({ conversations: sortConversations(kept), loadingList: false, listLoaded: true, online, error: null });
-      noteBotConversation(kept.find((item) => item.homeroomBot && item.kind !== 'channel')?.id);
-      resolvePendingChannel();
-      channelToHub();
-      botToTab();
-      return;
-    }
+    if (!answered && !state.conversations.length && drawKeptList(online)) return;
     publish({
       loadingList: false,
       listLoaded: true,
@@ -615,7 +616,34 @@ export async function loadConversations(force = false): Promise<void> {
         : state.conversations.length ? null : t('messages:store.error.unreachableList'),
     });
     resolvePendingChannel();
+  } finally {
+    clearTimeout(early);
   }
+}
+
+/**
+ * Draw the conversation list this device kept (api.ts keptConversations).
+ * True when there was one to draw. `online` is the browser's word, kept on
+ * the state as an answered read sets it.
+ */
+function drawKeptList(online = state.online): boolean {
+  const kept = api.keptConversations?.();
+  if (!kept) return false;
+  publish({ conversations: sortConversations(kept), loadingList: false, listLoaded: true, online, error: null });
+  noteBotConversation(kept.find((item) => item.homeroomBot && item.kind !== 'channel')?.id);
+  resolvePendingChannel();
+  channelToHub();
+  botToTab();
+  return true;
+}
+
+/**
+ * A read drew its kept copy before it was answered: ask the connectivity
+ * probe now rather than when the read gives up, so a network that carries
+ * nothing raises the shell's "showing saved content" banner within seconds.
+ */
+function slowRead(): void {
+  if (!isOffline()) void probe();
 }
 
 /**
@@ -722,9 +750,17 @@ export async function loadThread(conversationId: number, force = false): Promise
   // worker's second it was drawn, and the newest messages snapped in under
   // the reader when the worker's correction came. The skeleton stays a beat
   // longer instead. An open that gets no answer draws the copy this device
-  // kept (the catch below).
+  // kept: two seconds in (`early`, below), or when it fails (the catch).
   const fresh = force || !browserOffline();
   const read = { fresh };
+  // An open with nothing drawn and no answer yet draws the copy this device
+  // kept, while the read goes on (kept-copies.ts KEPT_DRAW_MS); the answer
+  // replaces it. Not a refresh of what is on screen, and not a message
+  // link's open: the copy is the newest page, not the window the link asks for.
+  const early = preserveVisibleThread || focus ? null : setTimeout(() => {
+    if (request !== threadRequest || !state.loadingThread || state.messages.length) return;
+    if (drawKeptThread(conversationId)) slowRead();
+  }, KEPT_DRAW_MS);
   try {
     // Invitation metadata is deliberately readable before acceptance, but
     // retained history is not. Resolve membership first and never request
@@ -825,6 +861,8 @@ export async function loadThread(conversationId: number, force = false): Promise
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });
+  } finally {
+    if (early) clearTimeout(early);
   }
 }
 
@@ -2356,11 +2394,68 @@ export async function edit(messageId: number, content: string): Promise<void> {
   mapRows((item) => item.id === message.id ? { ...item, ...message, thread: item.thread, clientKey: item.clientKey } : item);
 }
 
+/**
+ * React to a message, or take the reaction back. It asks for the state the
+ * tap means (on when the viewer has not reacted with it, off when they
+ * have) rather than a flip, so it can be sent again safely.
+ *
+ * With no answer (offline, or a network that passes nothing: offline
+ * follow-up, 2 Nov 2026) it is kept on the device and sent once the
+ * connection is back (../../lib/action-outbox.ts), and drawn at once as if
+ * it had gone. A refusal is the server's word, said under the row as before.
+ */
 export async function react(messageId: number, emoji: string): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
-  const reactions = await api.toggleReaction(conversationId, messageId, emoji);
-  mapRows((item) => item.id === messageId ? { ...item, reactions } : item);
+  const on = !(findRow(messageId)?.reactions || []).some((item) => item.emoji === emoji && item.reacted);
+  const key = `reaction:${messageId}:${emoji}`;
+  try {
+    const reactions = await api.toggleReaction(conversationId, messageId, emoji, on);
+    actionOutbox().drop(key);
+    mapRows((item) => item.id === messageId ? { ...item, reactions } : item);
+  } catch (error) {
+    if (error instanceof api.MessagesApiError) throw error;
+    const kept = await actionOutbox().queue({
+      key, kind: 'reaction', url: api.reactionPath(conversationId, messageId), body: { emoji, on },
+    }).catch(() => false);
+    // Said in words: the browser's own text ("Load failed") is not a sentence.
+    if (!kept) throw new Error(t('messages:row.error.reaction'));
+    mapRows((item) => item.id === messageId ? { ...item, reactions: withReaction(item.reactions, emoji, on) } : item);
+  }
+}
+
+/** `reactions` with the viewer's `emoji` on or off, as the server would draw it. */
+export function withReaction(reactions: MessageReaction[], emoji: string, on: boolean): MessageReaction[] {
+  const me = typeof window !== 'undefined' ? (window as { App?: { user?: { username?: string } } }).App?.user?.username || null : null;
+  const at = reactions.findIndex((item) => item.emoji === emoji);
+  if (at < 0) return on ? [...reactions, { emoji, count: 1, reacted: true, users: me ? [me] : [] }] : reactions;
+  const current = reactions[at];
+  if (current.reacted === on) return reactions;
+  const count = Math.max(0, current.count + (on ? 1 : -1));
+  if (!count) return reactions.filter((_, index) => index !== at);
+  const others = (current.users || []).filter((name) => name !== me);
+  const next = { ...current, count, reacted: on, users: on && me ? [...others, me] : others };
+  return reactions.map((item, index) => (index === at ? next : item));
+}
+
+/**
+ * A reaction kept while offline was answered (ACTION_OUTBOX_EVENT). Sent,
+ * the row takes the server's reactions; refused (the message was deleted,
+ * the viewer left), the conversation on screen is read again, which takes
+ * the reaction drawn for it away.
+ */
+function reactionAnswered(detail: ActionOutcome | null | undefined): void {
+  const record = detail?.record;
+  if (!record || record.kind !== 'reaction') return;
+  const messageId = Number(record.key.split(':')[1]);
+  if (!Number.isSafeInteger(messageId) || messageId <= 0 || !findRow(messageId)) return;
+  if (detail.outcome === 'sent') {
+    const reactions = api.reactionsOf(detail.data);
+    mapRows((item) => item.id === messageId ? { ...item, reactions } : item);
+    return;
+  }
+  const open = state.route.conversationId;
+  if (open) void loadThread(open, true);
 }
 
 /**
@@ -3099,9 +3194,12 @@ export function initializeMessagesStore(): () => void {
   // app's own discussion included — before Messages has ever been opened.
   // And the messages this account left unsent on the device (restoreUnsent).
   const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); void restoreUnsent(); };
+  // A reaction kept while offline was answered (reactionAnswered).
+  const onAction = (event: Event) => { reactionAnswered((event as CustomEvent<ActionOutcome>).detail); };
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
   window.addEventListener('usernode:offline-change', onConnectivity);
+  window.addEventListener(ACTION_OUTBOX_EVENT, onAction);
   // 5 October: somebody using the page, or coming back to it, is somebody
   // there to read what is open (notePresence, readWhenThere). Captured and
   // passive: it only notes the time, and never stands in a gesture's way.
@@ -3141,6 +3239,7 @@ export function initializeMessagesStore(): () => void {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
     window.removeEventListener('usernode:offline-change', onConnectivity);
+    window.removeEventListener(ACTION_OUTBOX_EVENT, onAction);
     for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
     document.removeEventListener('visibilitychange', onPresence);
     document.removeEventListener('homeroom:language-changed', onLanguage);
