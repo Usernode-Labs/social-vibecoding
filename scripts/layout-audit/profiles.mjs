@@ -63,6 +63,22 @@ export const PROFILES = [
     keyboard: 260,
   },
   {
+    // The Homeroom app on a small Android phone with three-button
+    // navigation: the system bars are handed to the page as insets, the
+    // status bar's 24 and the navigation bar's 48 (overnight audit B14, G02).
+    id: 'android-small',
+    label: 'Android app, small phone',
+    width: 360, height: 640, scale: 3, touch: true, userAgent: ANDROID_UA, native: true, platform: 'android',
+    insets: { top: 24, right: 0, bottom: 48, left: 0 },
+    system: [
+      { name: 'status bar', x: 0, y: 0, w: 360, h: 24, severity: 'error' },
+      { name: 'navigation bar', x: 0, y: 592, w: 360, h: 48, severity: 'error' },
+    ],
+    // The app's web view is resized for the keys, which a covered visual
+    // viewport does not stand in for.
+    keyboard: 0,
+  },
+  {
     id: 'duo-folded',
     label: 'iPhone Duo, folded',
     width: 466, height: 678, scale: 3, touch: true, userAgent: IOS_UA, native: true,

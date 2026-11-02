@@ -18570,8 +18570,19 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
    A thread alone in the column has its own (1 Nov 2026), the same way. */
 .ai-drawer[data-level="0"] :is(.ai-drawer-back, .messages-thread-back) { opacity: 0; transform: translateX(8px); pointer-events: none; }
 .ai-drawer-thread > .ai-drawer-peek { z-index: 5; }
-/* The Ask bar sits at the list's foot, in its column, not over the screen. */
-#ai-screen .ai-drawer-list .ai-askbar { position: sticky; left: auto; right: auto; bottom: 0; }
+/* The Ask bar sits at the list's foot, in its column, not over the screen.
+   ON THE TAB BAR, NOT UNDER IT (overnight audit B14, 2 November 2026). The
+   list runs to the foot of the screen, under the tab bar, and the bar stuck
+   to that foot was behind the tab bar on every phone; in the Android app its
+   words showed through under the system's navigation bar. It sticks the
+   bar's height up, and keeps that much room after the list's last row, so
+   scrolled to the end the last row still clears it. With the keys up the
+   bar's height is 0, and so is this. */
+#ai-screen .ai-drawer-list .ai-askbar {
+  position: sticky; left: auto; right: auto;
+  bottom: var(--platform-tabs-h, 0px);
+  margin-bottom: var(--platform-tabs-h, 0px);
+}
 #ai-screen .ai-drawer-list .ai-askbar-gap { display: none; }
 @media (prefers-reduced-motion: reduce) { .ai-drawer-back { transition: none; } }
 .ai-drawer[data-panning] { user-select: none; -webkit-user-select: none; }

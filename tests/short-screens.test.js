@@ -95,3 +95,20 @@ test('L06: the bot\'s Needs you card shows its rows\' shape until the lists are 
   assert.match(read('frontend/src/features/apps/browse-store.js'), /\n  loading: false,/);
   assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /: state\.loading\n\s+\? <BrowseRowsLoading label=\{t\('discover:list\.loading'\)\} \/>/);
 });
+
+test('B14: the bot\'s Ask bar sticks on the tab bar, not behind it', () => {
+  const at = APP_CSS.indexOf('#ai-screen .ai-drawer-list .ai-askbar {');
+  assert.ok(at > 0);
+  const body = APP_CSS.slice(at, APP_CSS.indexOf('}', at));
+  assert.match(body, /position: sticky;/);
+  assert.match(body, /bottom: var\(--platform-tabs-h, 0px\);/);
+  assert.match(body, /margin-bottom: var\(--platform-tabs-h, 0px\);/, 'the last row still clears it, scrolled to the end');
+});
+
+test('the layout audit has the Android app\'s shape, with its navigation bar', async () => {
+  const { PROFILES } = await import(path.join(ROOT, 'scripts/layout-audit/profiles.mjs'));
+  const android = PROFILES.find((p) => p.id === 'android-small');
+  assert.deepEqual([android.width, android.height, android.native, android.platform, android.insets.bottom], [360, 640, true, 'android', 48]);
+  assert.ok(android.system.some((z) => z.name === 'navigation bar' && z.severity === 'error'));
+  assert.match(read('scripts/layout-audit/run.mjs'), /un-platform=\$\{profile\.platform \|\| 'ios'\}/);
+});

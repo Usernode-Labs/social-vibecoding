@@ -130,7 +130,7 @@ async function auditProfile(profile, screens, args, outDir) {
     const origin = args.base || ORIGIN;
     // The Homeroom app's web view and the iOS skin, which a headless browser
     // cannot be detected as: the shell's and the kit's own overrides.
-    const query = profile.native ? '?un-native-webview=1&un-platform=ios' : '';
+    const query = profile.native ? `?un-native-webview=1&un-platform=${profile.platform || 'ios'}` : '';
     for (const screen of screens) {
       errors = [];
       const before = log.length;
