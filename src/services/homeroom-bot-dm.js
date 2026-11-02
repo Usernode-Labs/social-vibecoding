@@ -686,6 +686,9 @@ async function sendDm(pool, {
     {
       metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
       notificationKind: (story && BUILD_KINDS[story]) || null, notificationAppId, ...hooks,
+      // B09: the cards are the person's to see, and the bot is no member of
+      // their private project: judged as the bot, every card was refused.
+      cardsViewer: { id: Number(userId) },
     });
   let result = await send(cards);
   if (!result && cards.length) {

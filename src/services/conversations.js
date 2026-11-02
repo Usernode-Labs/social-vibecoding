@@ -1746,6 +1746,10 @@ async function sendMessage(pool, user, conversationId, input, {
   // instead, or { refuse: true } to send nothing; `afterInsert(db, { messageId,
   // membership, memberIds })` after it.
   prepare = null, afterInsert = null,
+  // B09: the person a platform-written message's cards are for, whose view
+  // of the project the cards are checked against (shared-objects.js
+  // validateForShare `viewer`). Only the Homeroom bot's DM passes it.
+  cardsViewer = null,
 } = {}) {
   const attachmentIds = normalizeAttachmentIds(input.attachment_ids ?? input.attachmentIds);
   const refsRaw = input.objects ?? (input.object ? [input.object] : []);
@@ -1837,7 +1841,7 @@ async function sendMessage(pool, user, conversationId, input, {
     }
     const objectRefs = [];
     for (const raw of refsRaw) {
-      const validated = await sharedObjects.validateForShare(db, user, raw, { conversationId });
+      const validated = await sharedObjects.validateForShare(db, user, raw, { conversationId, viewer: cardsViewer });
       if (!validated) return null;
       objectRefs.push(validated);
     }
