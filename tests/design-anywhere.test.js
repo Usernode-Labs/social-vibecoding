@@ -77,6 +77,45 @@ test('the server supplies the stylesheets: what the entry page links, put in fir
   assert.equal(designBot.fillSheets(edited, full), full.replace('Hi', 'Hello'), 'and the version keeps it');
 });
 
+// #6150 (2 Nov 2026, Ear Trainer's design thread): a redraw copied the empty
+// sheet blocks of the version it read, so version 2 held each sheet twice,
+// the copy empty, and the edit after it (version 3) came out with no styles:
+// fillSheets let the later, empty copy win.
+test('#6150: a redraw holds each sheet once, and an empty duplicate never wipes its CSS', () => {
+  const block = (path, css = '') => `<style data-design-sheet="${path}">${css}</style>`;
+  const count = (html, path) => (html.match(new RegExp(`data-design-sheet="${path.replace('.', '\\.')}"`, 'g')) || []).length;
+  const sheets = { links: [], styles: [{ path: 'public/tailwind.css', css: '.flex{display:flex}' }, { path: 'public/screens.css', css: '.keys{}' }] };
+  // The model's redraw, with the collapsed blocks it read copied in.
+  const copied = `<!doctype html><html><head>${block('public/tailwind.css')}${block('public/screens.css')}<style>.mine{}</style></head>`
+    + '<body><main class="keys">Keys</main></body></html>';
+  const drawn = designBot.withSheets(copied, sheets);
+  assert.equal(count(drawn, 'public/tailwind.css'), 1, 'one tailwind block');
+  assert.equal(count(drawn, 'public/screens.css'), 1);
+  assert.ok(drawn.includes(block('public/tailwind.css', '.flex{display:flex}')), 'and it holds the CSS');
+  assert.ok(drawn.includes('<style>.mine{}</style>'), 'the screen\'s own style is kept');
+  assert.equal(designBot.hasEmptySheet(drawn), false);
+
+  // Version 2 as it was saved: each sheet, then an empty copy of each.
+  const v2 = `<!doctype html><html><head>${block('public/tailwind.css', '.flex{display:flex}')}${block('public/screens.css', '.keys{}')}`
+    + `${block('public/tailwind.css')}${block('public/screens.css')}</head><body><main class="keys">Keys</main></body></html>`;
+  assert.equal(designBot.hasEmptySheet(v2), true);
+  const edited = designBot.collapseSheets(v2).replace('>Keys<', '>Pick a key<');
+  const v3 = designBot.fillSheets(edited, v2);
+  assert.equal(count(v3, 'public/tailwind.css'), 1, 'one block per path');
+  assert.equal(count(v3, 'public/screens.css'), 1);
+  assert.ok(v3.includes(block('public/tailwind.css', '.flex{display:flex}')), 'the first CSS wins, not the empty copy');
+  assert.ok(v3.includes(block('public/screens.css', '.keys{}')));
+  assert.match(v3, />Pick a key</);
+  assert.equal(designBot.hasEmptySheet(v3), false);
+  // A version whose every block came out empty (version 3) is filled back
+  // from the project's stylesheets.
+  const v3Before = designBot.fillSheets(edited, designBot.collapseSheets(v2));
+  assert.equal(designBot.hasEmptySheet(v3Before), true);
+  const refilled = designBot.fillSheets(v3Before, designBot.withSheets('', sheets));
+  assert.ok(refilled.includes(block('public/tailwind.css', '.flex{display:flex}')));
+  assert.equal(count(refilled, 'public/tailwind.css'), 1);
+});
+
 test('what the stylesheets are, by what the design is of', async () => {
   assert.deepEqual(await designBot.sheetsFor(null, { surface: 'platform' }), { links: [...designBot.PLATFORM_SHEETS], styles: [] });
   assert.deepEqual(await designBot.sheetsFor(null, { surface: 'new' }), { links: [designBot.KIT_SHEET], styles: [] });

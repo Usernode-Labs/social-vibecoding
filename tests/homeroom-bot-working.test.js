@@ -609,6 +609,31 @@ test('#6142: a first drawing of an app starts from its entry page; an edit, or a
   assert.deepEqual(none.reads, ['public/index.html', 'index.html']);
 });
 
+// #6150: an edit of a version holding each sheet twice (the copy empty)
+// saves one block per sheet, each with its CSS; and a version whose blocks
+// all came out empty takes the CSS from the project again when it is edited.
+test('#6150: an edit after a redraw keeps the app\'s stylesheets', async () => {
+  const block = (path, css = '') => `<style data-design-sheet="${path}">${css}</style>`;
+  const sheetsOf = (html) => [...html.matchAll(/<style data-design-sheet="([^"]+)">([^<]*)<\/style>/g)].map((m) => [m[1], m[2]]);
+  const v2 = `<!doctype html><html><head>${block('public/app.css', '.ear{color:teal}')}${block('public/app.css')}</head>`
+    + '<body><main class="keys">Keys</main></body></html>';
+  const turn = editTurn([edit('>Keys<', '>Pick a key<', 'Pick a key'), reply('Done.')],
+    { current: { version: 2, html: v2 }, design: { ...DESIGNED, surface: 'app' }, surface: 'app', files: EAR_FILES });
+  await turn.run;
+  assert.equal(turn.versions.length, 1);
+  assert.deepEqual(sheetsOf(turn.versions[0]), [['public/app.css', '.ear{color:teal}']], 'one block, with its CSS');
+  assert.match(turn.versions[0], />Pick a key</);
+  assert.deepEqual(turn.reads, [], 'the CSS came from the version: nothing read');
+
+  const v3 = `<!doctype html><html><head>${block('public/app.css')}${block('public/app.css')}</head>`
+    + '<body><main class="keys">Keys</main></body></html>';
+  const emptied = editTurn([edit('>Keys<', '>Pick a key<', 'Pick a key'), reply('Done.')],
+    { current: { version: 3, html: v3 }, design: { ...DESIGNED, latest: 3, surface: 'app' }, surface: 'app', files: EAR_FILES });
+  await emptied.run;
+  assert.deepEqual(sheetsOf(emptied.versions[0]), [['public/app.css', '.ear{color:teal}']], 'filled back from the project');
+  assert.deepEqual(emptied.reads, ['public/index.html', 'public/app.css']);
+});
+
 test('#6142: an entry page as the prompt shows it', () => {
   assert.equal(designBot.entryBody('<html><head><script>let a = 1;</script></head><main>Hi</main><script>let b = 2;</script></html>'),
     '<html><main>Hi</main><script></script></html>', 'no <body>: the page without its <head>');
