@@ -274,7 +274,7 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
             <label className="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] text-zinc-500">
               <span className="sr-only">{t('messages:design.pane.pickVersion')}</span>
               <select
-                className="min-w-0 max-w-[16rem] truncate bg-transparent text-[13px] text-zinc-600 dark:text-zinc-300"
+                className="min-w-0 max-w-full truncate bg-transparent text-[13px] text-zinc-600 dark:text-zinc-300"
                 value={shown}
                 onChange={(event) => { setChosen(Number(event.target.value)); setDraft(null); }}
                 data-design-version=""
@@ -332,7 +332,7 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
       ) : null}
       <div ref={stageRef} className="messages-design-stage">
         {design && html ? (
-          <div style={{ width: Math.round(design.width * scale), height: Math.round(design.height * scale) }} className="relative overflow-hidden rounded-xl shadow-[0_0_0_1px_var(--app-sheet-line)]">
+          <div style={{ width: Math.round(design.width * scale), height: Math.round(design.height * scale) }} className="relative mx-auto overflow-hidden rounded-xl shadow-[0_0_0_1px_var(--app-sheet-line)]">
             <iframe
               ref={frameRef}
               key={`${html.version}-${redraw}`}

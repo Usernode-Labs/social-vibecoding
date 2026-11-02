@@ -89,6 +89,25 @@ test('the pane reads nothing in its first render, and says it is drawing', () =>
   assert.equal(isDesignThread(plus, [{ sender: { bot: false }, metadata: { homeroomBot: { designVersion: 1 } } }]), false, 'only the bot says one');
 });
 
+// #6143 (2 Nov 2026): a phone-width drawing sat against the pane's left edge,
+// and the version picker was cut at 16rem with the header's room to spare.
+test('a drawing narrower than the pane is centred, and the version picker takes the header\'s width', () => {
+  const pane = read('frontend/src/features/messages/design-pane.tsx');
+  const classesOf = (re, what) => {
+    const found = pane.match(re);
+    assert.ok(found, what);
+    return found[1].split(/\s+/);
+  };
+  const frameBox = classesOf(/style=\{\{ width: Math\.round\(design\.width \* scale\), height: Math\.round\(design\.height \* scale\) \}\} className="([^"]+)"/,
+    'the frame\'s wrapper, sized to the scaled drawing');
+  assert.ok(frameBox.includes('mx-auto'), 'centred in the stage; one scaled to fit fills it anyway');
+  assert.ok(frameBox.includes('relative'));
+  const picker = classesOf(/<select\s+className="([^"]+)"[\s\S]*?data-design-version=""/, 'the version picker');
+  assert.ok(!picker.includes('max-w-[16rem]'), 'no fixed cap');
+  assert.ok(picker.includes('max-w-full'), 'as wide as the header lets it be');
+  assert.ok(picker.includes('min-w-0') && picker.includes('truncate'), 'and cut short only when the header runs out of room');
+});
+
 test('Messages draws the pane for a design thread, and the bot\'s new thread opens one', () => {
   const index = read('frontend/src/features/messages/index.tsx');
   assert.match(index, /const designOpen = !!designRootId && isDesignRoot\(designRoot\);/);
