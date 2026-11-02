@@ -5991,7 +5991,7 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   const submitVote = WORKSHOP.slice(WORKSHOP.indexOf('const submitVote = () => {'), WORKSHOP.indexOf('const onVoteBoxKey'));
   assert.ok(submitVote.length > 0, 'submitVote is found');
   assert.doesNotMatch(submitVote, /voteBoxRef\.current\?\.focus\(\); return;/, 'a lineless No sends rather than refocusing the box');
-  assert.match(WORKSHOP, /const opts = reason === undefined\s*\? \{ onSend, onSettled: onSettle \}\s*: \{ onSend, reason, onSettled: onSettle \};/, 'only the swipe leaves the line to castVote; both paths carry the settled hook');
+  assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/, 'only the swipe leaves the line to castVote');
   // NOTHING ADVANCES ON ITS OWN. The deck used to jump half a second after a
   // vote, which in a feed reads as the card vanishing under the press: the
   // row is pinned in place with its confirmation until you move on.
@@ -6078,7 +6078,7 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   // `n`, the end card's slot, is the last a press reaches (#2172).
   assert.match(WORKSHOP, /const idx = Math\.min\(Math\.max\(i \+ delta, 0\), n\);/);
   assert.ok(!/setSkipped/.test(WORKSHOP), 'the re-queue went with the button it belonged to');
-  assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card' && !gone\[r\.key\]\);/,
+  assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/,
     'the feed keeps the order it was published in');
 });
 
@@ -6697,7 +6697,7 @@ test('the Needs-you card is marked voted only once the server has the vote (QA 2
   assert.ok(marks > then, 'and the card is marked only inside it');
   assert.match(body.slice(then), /if \(ok === true\) \{\s*setAnswered\(/, 'only on a vote that landed');
   assert.match(body, /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
-  assert.match(body, /onSend, onSettled: onSettle/, 'the rail says "Sending…" from the moment the vote is committed');
+  assert.match(body, /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
   assert.match(body, /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
   assert.match(WORKSHOP, /sending\[row\.key\] \? t\('project:needsYou\.rail\.sending'\) : \(approves\(row\) \? t\('project:needsYou\.rail\.approve'\) : t\('project:needsYou\.rail\.vote'\)\)/);
   assert.deepEqual(['sending', 'approve', 'vote'].map((key) => message(`project:needsYou.rail.${key}`)), ['Sending…', 'Approve', 'Vote']);

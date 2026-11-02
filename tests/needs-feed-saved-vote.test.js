@@ -106,8 +106,9 @@ test('a settled refusal drops the card instead of re-pinning it, and tells the s
   assert.match(refused, /onSettled\(row\)/, 'the screen that owns the store copy hears it');
   assert.ok(!/setAnswered/.test(refused), 'nothing was saved, so nothing is confirmed');
   assert.ok(!/pinsRef\.current\.delete/.test(refused), 'the pin is not what removes it');
-  // The drawn rows filter on it, pins included.
-  assert.match(feed, /r\.t === 'card' && !gone\[r\.key\]/);
+  // The drawn rows drop it in a second pass, so the published order the feed
+  // keeps above is untouched; a pin is never put back for a settled row.
+  assert.match(feed, /const out = live\.filter\(\(r\) => !gone\[r\.key\]\);/);
   assert.match(feed, /if \(!have\.has\(key\) && !gone\[key\]\) out\.splice/);
 });
 

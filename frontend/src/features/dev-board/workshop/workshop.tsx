@@ -2768,9 +2768,12 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // elsewhere holds the slot it had, the way a row answered here does.
   const drawnRef = useRef<QueueRow[]>([]);
   const items = useMemo<QueueRow[]>(() => {
-    const live = rows.filter((r): r is QueueRow => r.t === 'card' && !gone[r.key]);
+    const live = rows.filter((r): r is QueueRow => r.t === 'card');
     const have = new Set(live.map((r) => r.key));
-    const out = live.slice();
+    // #6101: a row whose vote the server settled out from under the card (the
+    // change merged, or left review) is drawn no longer. A second pass, so the
+    // published order above is untouched: this only removes.
+    const out = live.filter((r) => !gone[r.key]);
     for (const [key, pin] of pinsRef.current) {
       if (!have.has(key) && !gone[key]) out.splice(Math.min(pin.index, out.length), 0, pin.row);
     }
@@ -3120,9 +3123,8 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     // is not up for a vote any more. It runs before the promise settles, so
     // the false branch below knows this refusal closes the card.
     const onSettle = () => { settledRef.current.add(key); };
-    const opts = reason === undefined
-      ? { onSend, onSettled: onSettle }
-      : { onSend, reason, onSettled: onSettle };
+    const opts = reason === undefined ? { onSend } : { onSend, reason };
+    Object.assign(opts, { onSettled: onSettle });
     Promise.resolve(callAppView(spec.act.fn, ...args, opts))
       .catch(() => false)
       .then((ok) => {
