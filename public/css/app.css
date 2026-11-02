@@ -468,6 +468,31 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .chat-transcript.platform-safe-scroll:has(~ .platform-safe-bar) {
   padding-bottom: 12px !important;
 }
+/* THE WORDS FADE OUT BEFORE THE FLOATING CONTROLS (B11, overnight audit,
+   1 November 2026). Jump to latest floats centred over the transcript's
+   foot and "3 new messages" over its top (@/components/ui/chat
+   TranscriptOverlay), and a line of a message scrolled under either one
+   was printed through it: "top with the[v]tup date", "schedul[3 new
+   messages]on picks the days". While a control is up, the scroller's
+   edge under it fades to nothing, so it sits on a clear band rather than
+   on words; scrolling brings them out of the band. The mask is on the
+   scroller's own box, which does not move with what it scrolls, and is
+   chosen by the control's own state (shown is `inert`-free), so nothing
+   is written to the scroller, which public/js/group-chat.js owns in the
+   group chat. The foot's control hangs from the box right after the
+   scroller, the top's from the box right before it. */
+:has(+ [data-transcript-overlay="foot"] [data-jump-latest]:not([inert])) {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 12px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 12px));
+}
+[data-transcript-overlay="top"]:has([data-unread-banner]:not([inert])) + * {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px);
+  mask-image: linear-gradient(to bottom, transparent 10px, #000 52px);
+}
+[data-transcript-overlay="top"]:has([data-unread-banner]:not([inert])) + :has(+ [data-transcript-overlay="foot"] [data-jump-latest]:not([inert])) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 64px), transparent calc(100% - 12px));
+  mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 64px), transparent calc(100% - 12px));
+}
 /* WHO IS TYPING TAKES NO ROOM UNTIL SOMEBODY TYPES (1 November 2026). The
    line held 18px open between the transcript and the reply box whether or
    not it said anything (20px in the group chat, whose lines were Tailwind
