@@ -29,3 +29,19 @@ test('B22: the drawing is told today and the weekdays\' dates around it', () => 
   assert.match(prompt, /\n  December 2026: Mondays 7, 14, 21, 28;/);
   assert.doesNotMatch(prompt, /—/, 'no em dash');
 });
+
+// B10 follow-up (decided 2 Nov 2026): the label people read on preview data
+// is "Sample data"; "staging" names Homeroom's environment, not anything on
+// their screen. Homeroom's own demo fixtures and id-shaped slugs
+// (staging-demo-user) are not labels and keep their names.
+test('B10: builds are told to label preview data "Sample data", never "Staging demo"', () => {
+  const sources = [
+    'src/prompts/app-conventions.md', 'src/services/prompts.js',
+    'src/services/homeroom-bot-live.js', 'src/services/first-version-early-look.js',
+  ].map(read);
+  for (const text of sources) assert.doesNotMatch(text, /Staging demo/);
+  const conventions = sources[0].replace(/\s+/g, ' ');
+  assert.match(conventions, /The screen says "Sample data" once, plainly and visibly/);
+  assert.match(conventions, /The people trying a preview never see the word "staging": it names Homeroom's environment, not anything on their screen\./);
+  assert.match(conventions, /`staging-demo-user`/, 'an id-shaped slug keeps its name');
+});
