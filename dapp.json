@@ -2539,7 +2539,7 @@
     },
     {
       "name": "A project's hub leads with a hero that says what it is and who it is for (communities); opened from an invite link, who invited you and Join come first in it (#3700)",
-      "path": "/?shot=invite-join#app/usernode-2d5619/workshop",
+      "path": "/?shot=invite-join#app/usernode-2d5619/dev/hub",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite:first-child [data-ws-invite-join]) > .dev-ws-hero-id [data-ws-community-name] + [data-ws-members-cell] > [data-ws-community-audience]",
       "expectText": "Public community"
     },
