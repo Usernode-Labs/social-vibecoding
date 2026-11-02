@@ -90,6 +90,9 @@ async function migrate(config) {
   await seedSelfApp(pool, config);
   await seedTermsVersions(pool);
   await seedStagingPrivateRequest(pool);
+  // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
+  // a slot, handed back, never read, an operator task), for its shots.
+  await seedStagingBotWaitingRows(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -1603,6 +1606,65 @@ async function seedStagingPrivateRequest(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging private request seeding failed', { message: err.message });
+  }
+}
+
+// #6158: the Homeroom bot tab's Waiting rows now say what each request waits
+// on, read from the bot's own records. A fresh staging copy has no such
+// records, so the before & after shots get a small, obviously fake mix on the
+// self-hosted Homeroom project, filed by the shots' member fixture
+// (usernode-capture): one in the bot's queue, one held for a slot, one it
+// handed back to a person, one it never read, and one operator task. Rows
+// for that fixture account only; nothing here is a signal the bot reads to
+// decide anything, and a staging copy never acts on its queue. Idempotent by
+// request number; strictly a no-op outside staging.
+async function seedStagingBotWaitingRows(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const demo = [
+      { number: 9101, title: 'Staging demo: a request in the bot\'s queue', queue: true },
+      { number: 9102, title: 'Staging demo: a request held for a slot', held: 'proposals_per_app' },
+      {
+        number: 9103,
+        title: 'Staging demo: a request handed back to a person',
+        verdict: 'person',
+        reason: 'Staging demo: a person must decide which of the two columns to keep.',
+      },
+      { number: 9104, title: 'Staging demo: a request the bot has not read' },
+      { number: 9105, title: 'Operator: staging demo, rotate the demo mail key' },
+    ];
+    for (const d of demo) {
+      await pool.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+         SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+          WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+        [appId, d.number, d.title, userId],
+      );
+      if (d.queue) {
+        await pool.query(
+          `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by, enqueued_at)
+           SELECT $1, $2, 2, 'refresh', $3, NOW() - INTERVAL '1 day'
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2)`,
+          [appId, d.number, userId],
+        );
+      }
+      if (d.held || d.verdict) {
+        await pool.query(
+          `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, cap_suppressed, created_at)
+           SELECT $1, $2, 'live', $3, $4, $5, NOW() - INTERVAL '1 day'
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                               WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = $3)`,
+          [appId, d.number, d.verdict || 'ready', d.reason || null, d.held || null],
+        );
+      }
+    }
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
   }
 }
 

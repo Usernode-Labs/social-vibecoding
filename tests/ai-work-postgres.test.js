@@ -144,7 +144,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.equal(titles(work.waiting)[0], 'Filters:vote');
   assert.equal(work.waiting[0].myVote, 'yes');
   assert.equal(titles(work.waiting)[1], 'Check pending:checking', 'its checks have not passed: it says checks, not votes');
-  assert.deepEqual(titles(work.waiting).slice(2).sort(), ['Print view:not_picked_up', 'Tags:not_picked_up'].sort());
+  assert.deepEqual(titles(work.waiting).slice(2).sort(), ['Print view:not_read', 'Tags:not_read'].sort());
   assert.deepEqual(work.needs, [], 'no plan of the bot\'s waits for her');
   assert.deepEqual(titles(work.live), ['Badges:live']);
   const all = [...work.needs, ...work.next, ...work.waiting, ...work.live];
@@ -234,7 +234,35 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const of = (title) => [...claimed.next, ...claimed.waiting].find((r) => r.title === title);
   assert.deepEqual([of('Sound toggle').what, of('Sound toggle').by, of('Sound toggle').claimedBy], ['building', 'someone', 'aw_bob']);
   assert.deepEqual([of('Pause button').what, of('Pause button').by], ['building', 'you']);
-  assert.equal(of('Old claim').what, 'not_picked_up', 'a claim past its week');
+  assert.equal(of('Old claim').what, 'not_read', 'a claim past its week, and no bot run: not read yet');
+
+  // #6158: the bot's own records say what a request waits on, whoever filed
+  // it. Two requests held for a vote slot carry their place among the
+  // project's held builds, oldest first; one in the bot's queue carries its
+  // place in the project's line.
+  for (const [number, days] of [[30, 2], [31, 1]]) {
+    await request(app, number, bob, `Held ${number}`);
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cap_suppressed, created_at)
+       VALUES ($1, $2, 'live', 'ready', 'proposals_per_app', NOW() - make_interval(days => $3))`,
+      [app.id, number, days]);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref)
+       VALUES ($1, $2, 'me too', 'issue', $3)`, [app.id, ada.id, number]);
+  }
+  await request(app, 32, bob, 'Queued for a read');
+  await pool.query(
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, enqueued_at)
+     VALUES ($1, 32, 2, NOW() - INTERVAL '1 hour')`, [app.id]);
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref)
+     VALUES ($1, $2, 'me too', 'issue', 32)`, [app.id, ada.id]);
+  const withFacts = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot, settings: { mode: 'live' } } });
+  const fact = (title) => withFacts.waiting.find((r) => r.title === title);
+  assert.deepEqual([fact('Held 30').what, fact('Held 30').heldBy, fact('Held 30').place], ['held', 'approvals', 1]);
+  assert.equal(fact('Held 31').place, 2, 'its place among the project\'s held builds, oldest first');
+  assert.deepEqual([fact('Queued for a read').what, fact('Queued for a read').place], ['queued', 1],
+    'its place in the project\'s line, from the bot\'s queue');
 
   // Homeroom bot's answer: the page's lists. The votes she owes (Bob's change
   // for her Dark mode, the rename) are Needs you's, from the feed (a
