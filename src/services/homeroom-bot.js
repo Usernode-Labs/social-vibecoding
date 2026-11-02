@@ -2966,7 +2966,7 @@ const VERDICT_REPAIR_PROMPT = [
  * that throws is a routed error.
  */
 async function askForVerdictBlock(pool, config, {
-  bot, session, model, containerName, threadId, budgetMs, deps, harness = 'auto',
+  bot, session, model, containerName: readName = null, ensureWorker = null, threadId, budgetMs, deps, harness = 'auto',
 }) {
   const { worker, agentTurn, sessions } = deps;
   if (!threadId) return null;
@@ -2974,6 +2974,22 @@ async function askForVerdictBlock(pool, config, {
   // The session takes its slot for the turn (the proposal machine; never a
   // closed one).
   await require('./session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'homeroom-bot' });
+  // ... and only then is its worker ensured (B15). The read rested the
+  // session after its turn, which owes the worker's removal as durable
+  // work: reusing the read's container name, the repair could run after
+  // that removal and fail "no warm worker registered". Taking the slot
+  // cancels a removal still owed or waits for one under way, so the ensure
+  // finds the worker as it really is.
+  let containerName = readName;
+  if (typeof ensureWorker === 'function') {
+    try {
+      containerName = await ensureWorker();
+    } catch (err) {
+      await pauseIdleSession(pool, session.id);
+      durableSteps.rethrowStop(err, 'verdict repair worker');
+      return { routed: { error: `worker: ${err.message}` }, pricing: null, stopped: false };
+    }
+  }
   let pricing = null;
   let ran;
   try {
@@ -3866,9 +3882,10 @@ async function runTriage(pool, config, {
   await require('./session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'homeroom-bot' });
 
   let containerName = null;
-  try {
+  // The read's worker, ensured the same way again for its verdict repair.
+  const ensureReadWorker = async () => {
     await worker.ensureWorkerImage();
-    containerName = await worker.ensureWorker(session.id, {
+    return worker.ensureWorker(session.id, {
       repoOwner: repo.owner, repoName: repo.repo, branchName: session.branch_name,
       // Scratch storage, not a volume (#3122, using #3119's option). Every
       // issue starts a fresh thread, so nothing on the worker needs to
@@ -3876,6 +3893,9 @@ async function runTriage(pool, config, {
       temporary: true,
       onProgress: () => {},
     });
+  };
+  try {
+    containerName = await ensureReadWorker();
   } catch (err) {
     // Back to rest: the slot above was taken for a turn that never ran.
     await pauseIdleSession(pool, session.id);
@@ -4190,7 +4210,7 @@ async function runTriage(pool, config, {
     // on the same thread asks for the block alone before the run fails.
     let repairText = null;
     const repair = await askForVerdictBlock(pool, config, {
-      bot, session, model, containerName, harness: triageHarness,
+      bot, session, model, containerName, harness: triageHarness, ensureWorker: ensureReadWorker,
       threadId: result.agentThreadId || null,
       budgetMs: Math.min(VERDICT_REPAIR_MS, triageBudgetMs),
       deps: { worker, agentTurn, sessions },

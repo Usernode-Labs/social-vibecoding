@@ -394,15 +394,22 @@ async function lookInto(pool, config, { user, app, question, notes = null, since
     if (progress.length < MAX_PROGRESS_LINES) progress.push(String(line || ''));
     if (typeof deps.onProgress === 'function') { try { deps.onProgress(line); } catch { /* a watcher never stops a look */ } }
   };
+  // The slot is taken BEFORE the worker is ensured (B15, as runTriage does):
+  // the last look's rest owes its worker's removal as durable work, and an
+  // ensure that ran first took a worker still up as warm, then lost it to
+  // that removal ("no warm worker registered"). Taking the slot cancels a
+  // removal still owed and waits for one under way.
+  await require('../session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'homeroom-bot' });
   let containerName;
   try {
     containerName = await live.ensureBuildWorker({ worker, session, repo, branchName: 'main', steps });
   } catch (err) {
+    // Back to rest: the slot was taken for a turn that never ran.
+    await require('../session-lifecycle').restSession({ pool, sessionId: session.id }).catch(() => {});
     durableSteps.rethrowStop(err, 'look worker');
     log.warn('homeroom-bot-look', 'A look\'s worker could not start', { app: app.slug, err: err.message });
     return { ok: false, code: 'worker', infra: true, error: 'Its worker could not start just now.', costUsd: null, ms: Date.now() - startedMs };
   }
-  await require('../session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'homeroom-bot' });
   // A fresh conversation for every look, on the model chosen now.
   await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL, agent_model = $2 WHERE id = $1', [session.id, model]);
   session.agent_thread_id = null;
