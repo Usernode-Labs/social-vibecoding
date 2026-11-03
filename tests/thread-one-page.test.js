@@ -227,7 +227,7 @@ test('#6139: an open request page reads its thread again when a change underway 
 
   assert.match(read(`${TOPIC}/request-head.tsx`), /useEffect\(\(\) => rereadOnChangeNews\(window, layout\.changes, threadRead\.reread, \(window as any\)\.SessionState\), \[underwayKey\]\);/);
   const payload = read(`${TOPIC}/thread-items.tsx`);
-  assert.match(payload, /const unwatch = watch\(\(\) => \{\s*freshNext\.current = true;\s*setRevision\(\(n\) => n \+ 1\);\s*\}, \{ reads: \(url\) => url\.pathname === pathname \}\);/, 'a gap reads it again, past a saved copy');
+  assert.match(payload, /const unwatch = watch\(\(\) => \{\s*freshNext\.current = true;\s*setRevision\(\(n\) => n \+ 1\);\s*\}, \{ reads: threadReads\(pathname, slug, ids\) \}\);/, 'a gap reads it again, past a saved copy');
 });
 
 test('#6139: reading a thread again keeps it through a failed read and past a saved copy; another thread starts empty', async () => {

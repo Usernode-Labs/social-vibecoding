@@ -20,7 +20,7 @@ import { authorLine, closingComment, liveLine, threadLine } from '../rules/inclu
 import { creditsSentence, mergeCredits } from '../rules/merge-credits.ts';
 import { applyInTransaction } from '../rules/pending-secret-apply.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
-import { appVersion, boardMoved, chatLine, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
+import { appVersion, boardMoved, chatLine, issueUpdate, threadChanged, toUser, voteUpdate as votePush } from '../pushes.ts';
 import { readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -383,6 +383,9 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // once, and the lists re-read;
   // issues.closeAfterMerge makes sure they close.
   const push: Push[] = [voteUpdate(d, {})];
+  // The requests it closes read their threads again (#6231): the change is
+  // merged on their pages without a reload.
+  push.push(threadChanged({ appId: d.appId, appSlug: d.appSlug, sessionId: d.sessionId, numbers: [...s.linkedIssues, d.prNumber] }));
   if (d.repo && s.linkedIssues.length) {
     // The request board changed: the Workshop re-places its cards.
     push.push(boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })));

@@ -56,6 +56,25 @@ export function pageSlug(): string | null {
 }
 
 /**
+ * The reads a thread page owns, for lib/live-reads.ts (#6231): its own thread
+ * (today's rule), and the address a change's move is announced at
+ * (`/api/apps/<slug>/threads/change/<id>`) for any change the last read
+ * listed — the ones ./thread-model.ts `threadLayout` turns into `changes`. The
+ * set is the caller's, read when the trigger arrives, so ids from a newer read
+ * count. Pure.
+ */
+export function threadReads(pathname: string | null, slug: string | null, changeIds: ReadonlySet<number>): (url: URL) => boolean {
+  const prefix = slug ? `/api/apps/${encodeURIComponent(slug)}/threads/change/` : null;
+  return (url) => {
+    if (!pathname) return false;
+    if (url.pathname === pathname) return true;
+    if (!prefix || !url.pathname.startsWith(prefix)) return false;
+    const id = Number(url.pathname.slice(prefix.length));
+    return Number.isInteger(id) && changeIds.has(id);
+  };
+}
+
+/**
  * A page's read of its thread (routes/threads.js), and a way to read it
  * again after something on the page changed it (a vote, a move). Null until
  * it is read, so the page's first paint is the one it had before.
@@ -71,6 +90,9 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
   // #6139: a gap (a dropped socket, a sleeping tab) reads it again, past any saved copy.
   const freshNext = useRef(false);
   const readPath = useRef<string | null>(null);
+  // #6231: the changes this page last read, so a move announced by the
+  // change's own id (`thread_changed`) still reaches this thread.
+  const changeIds = useRef<Set<number>>(new Set());
   useEffect(() => {
     const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
       : threadId ? `/api/threads/${threadId}` : null;
@@ -78,7 +100,8 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
     // read fails; another thread starts empty.
     const again = !!path && readPath.current === path;
     readPath.current = path;
-    if (!again) setData(null);
+    const ids = changeIds.current;
+    if (!again) { setData(null); ids.clear(); }
     if (!path) return undefined;
     let live = true;
     const init: RequestInit = { credentials: 'same-origin', ...(freshNext.current ? FRESH : {}) };
@@ -87,15 +110,20 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (!live) return;
-        if (json && Array.isArray(json.items)) setData(json);
-        else if (!again) setData(null);
+        if (json && Array.isArray(json.items)) {
+          ids.clear();
+          for (const item of json.items) {
+            if (item && item.type === 'change' && Number.isInteger(Number(item.id))) ids.add(Number(item.id));
+          }
+          setData(json);
+        } else if (!again) setData(null);
       })
       .catch(() => { if (live && !again) setData(null); });
     const pathname = path.split('?')[0];
     const unwatch = watch(() => {
       freshNext.current = true;
       setRevision((n) => n + 1);
-    }, { reads: (url) => url.pathname === pathname });
+    }, { reads: threadReads(pathname, slug, ids) });
     return () => { live = false; unwatch(); };
   }, [slug, number, threadId, revision, skip, asChange]);
   return { data, setData, reread: () => setRevision((n) => n + 1) };

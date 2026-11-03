@@ -6299,7 +6299,10 @@ const AppView = {
     // vote on the change it built (which no person's session stands for).
     const bot = issue.bot || null;
     const waitingOnBot = AppView._botWaiting(issue);
-    const upForVote = !st && ref && ref.state === 'review';
+    // #6231: a change for it up for a vote wins over a stale bot state — the
+    // row the board last read can still say the bot is building while its
+    // change waits, and the page must not say both.
+    const upForVote = (!st || st.key === 'bot') && ref && ref.state === 'review';
     // 1 Nov 2026: the bot waits for their plan (_planHeld).
     const planHeld = !merged && !closed && !ref && AppView._planHeld(issue);
     let lead;
