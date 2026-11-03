@@ -23,14 +23,32 @@ async function verifiedDockerReceipt(docker, config, id, name, labels) {
 }
 
 
+// The warm templates platform previews were once copied from (SEC-06): a
+// platform preview's database now starts empty, so nothing uses them. An old
+// build still rolling out may make one again, so they are dropped at most
+// every TEMPLATE_DROP_EVERY_MS, in the background: nothing serves from them,
+// and the template lock this waits for must never hold up retirement.
+const TEMPLATE_DROP_EVERY_MS = 10 * 60 * 1000;
+let templatesDroppedAt = 0;
+function dropCopiedTemplates(now = Date.now()) {
+  if (now - templatesDroppedAt < TEMPLATE_DROP_EVERY_MS) return;
+  templatesDroppedAt = now;
+  require('./db-manager').dropStagingTemplates(policy.PLATFORM_DATABASE).catch((error) => {
+    templatesDroppedAt = 0;
+    require('./logger').warn('preview-policy', 'Could not drop the platform preview templates', { message: error.message });
+  });
+}
+
 // Never uses session status, busy checks, review locks or a session pointer.
-// A preview containing an obsolete export is a security retirement, even if
-// its proposal is currently being voted on. Failed removals throw for retry.
+// A preview made under another policy (a copy of production above all) is a
+// security retirement, even if its proposal is currently being voted on.
+// Failed removals throw for retry.
 async function retire(config, pool) {
   if (process.env.USERNODE_ENV === 'staging') return { skipped: 'staging' };
   const { rows } = await pool.query(
     'SELECT id FROM apps WHERE slug = $1 AND self_hosted IS TRUE', [policy.PLATFORM_SLUG]);
   if (rows.length !== 1) throw new Error('Cannot resolve canonical platform for preview data-policy retirement');
+  dropCopiedTemplates();
   if (require('./application-runtime').mode(config) === 'kubernetes') {
     return require('./kubernetes').retirePlatformPreviewPolicy(config, rows[0].id, policy.DIGEST);
   }

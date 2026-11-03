@@ -378,6 +378,38 @@ test('revision resolution prefers the immutable recorded base and reviewed head'
   assert.match(result.diffSummary.text, /frontend\/dialog\.tsx/);
 });
 
+test('a platform change\'s recorded base from before empty previews gives way to where its head meets main', async () => {
+  const MERGE_BASE = 'c'.repeat(40);
+  const resolve = async (session, marker) => {
+    const asked = [];
+    const result = await orchestrator.resolveRevisionContext({
+      repo_url: 'https://github.com/Usernode-Labs/social-vibecoding.git',
+      handoff_base_sha: BASE, reviewed_head_sha: HEAD, ...session,
+    }, null, {
+      getFileContent: async (_owner, _repo, file, ref) => { asked.push(`${file}@${ref}`); return marker; },
+      getRepoHead: async () => ({ defaultBranch: 'main' }),
+      compareRefs: async (_owner, _repo, ref) => (ref === `main...${HEAD}` ? { mergeBaseSha: MERGE_BASE } : { files: [] }),
+    });
+    return { baseSha: result.baseSha, asked };
+  };
+  // An update with main left the recorded base behind: the before side
+  // moves to the merge base, which carries the marker.
+  assert.deepEqual(await resolve({ app_slug: 'usernode-2d5619' }, null),
+    { baseSha: MERGE_BASE, asked: [`src/db/preview-boot.json@${BASE}`] });
+  assert.equal((await resolve({ app_slug: 'usernode-2d5619' }, '{"startsEmpty":0}')).baseSha, MERGE_BASE);
+  // A base that can boot empty stays, and no other app is asked about it.
+  assert.equal((await resolve({ app_slug: 'usernode-2d5619' }, '{"startsEmpty":1}')).baseSha, BASE);
+  assert.deepEqual(await resolve({ app_slug: 'some-app-1a2b3c' }, null), { baseSha: BASE, asked: [] });
+  // A pinned base (a run's later steps, an eval's trial) is never moved.
+  const pinned = await orchestrator.resolveRevisionContext({
+    repo_url: 'https://github.com/Usernode-Labs/social-vibecoding.git', app_slug: 'usernode-2d5619', reviewed_head_sha: HEAD,
+  }, null, {
+    getFileContent: async () => { throw new Error('must not ask'); },
+    compareRefs: async () => ({ files: [] }),
+  }, { baseSha: BASE });
+  assert.equal(pinned.baseSha, BASE);
+});
+
 test('paired resets are fenced by both exact revisions and immutable fixture provenance', () => {
   assert.equal(orchestrator.sameProvenance(provenance, provenance), true);
   assert.equal(orchestrator.sameProvenance({ ...provenance, headSha: 'c'.repeat(40) }, provenance), false);

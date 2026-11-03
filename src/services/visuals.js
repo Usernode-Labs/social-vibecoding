@@ -277,7 +277,8 @@ function mintCaptureToken(user, appId, { previewOnly = false } = {}) {
   return platformJwt.signAppIdentityToken({
     appId,
     user: {
-      id: user.id,
+      // A platform preview knows the personas by their fixed ids (SEC-06).
+      id: previewOnly ? require('./preview-personas').previewPersonaId(user) : user.id,
       username: user.username,
       usernode_pubkey: user.usernode_pubkey || null,
       locale: user.locale ?? null,

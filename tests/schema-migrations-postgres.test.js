@@ -9,7 +9,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { Pool, Client } = require('pg');
 const { applySchemaWithLockRetry: apply, observeSchemaLocks, snapshotHistorySql } = require('../src/db/schema-migrations');
-const policy = require('../src/services/platform-preview-data-policy');
+const { CATALOG_SQL } = require('./lib/schema-catalog');
 const log = require('../src/services/logger');
 const { waitFor } = require('./lib/wait-for');
 const { connectionName } = require('../src/db/connection-options');
@@ -66,15 +66,14 @@ test('legacy adoption preserves rows, matches the fresh snapshot and never repla
   assert.ok(history.length >= 1);
   assert.equal((await p.query("SELECT count(*)::int AS n FROM users WHERE username='existing-person'")).rows[0].n, 1);
   await p.query('SET search_path=pg_catalog');
-  const upgraded = JSON.parse((await p.query(policy.CATALOG_SQL)).rows[0].inventory);
+  const upgraded = JSON.parse((await p.query(CATALOG_SQL)).rows[0].inventory);
   // A separate empty DB created directly from schema.sql has exactly the
   // same catalog as the immutable baseline plus all incremental migrations.
   const fresh = await database(t);
   const fp = fresh.pool(); await fp.query(snapshot);
   await fp.query('SET search_path=pg_catalog');
-  const created = JSON.parse((await fp.query(policy.CATALOG_SQL)).rows[0].inventory);
-  assert.equal(policy.schemaFingerprint(upgraded), policy.schemaFingerprint(created));
-  policy.verifyCatalog(upgraded);
+  const created = JSON.parse((await fp.query(CATALOG_SQL)).rows[0].inventory);
+  assert.deepEqual(upgraded, created);
   await p.query('SET search_path=public');
   const holder = await db.pool().connect();
   try {

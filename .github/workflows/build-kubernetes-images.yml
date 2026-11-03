@@ -158,7 +158,7 @@ jobs:
       # Authority fixtures load real workflow handlers that depend on bcrypt.
       - run: |
           npm rebuild bcrypt --build-from-source
-          node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js tests/workflow-event-authority-postgres.test.js tests/turn-publication-postgres.test.js tests/worker-release-workflow-postgres.test.js
+          node --test --test-timeout=60000 tests/workflow-event-authority-postgres.test.js tests/turn-publication-postgres.test.js tests/worker-release-workflow-postgres.test.js
           node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
           node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js tests/platform-preview-startup-postgres.test.js
         env:
@@ -167,8 +167,10 @@ jobs:
 
       # Use matching PG18 client tools against the two disposable services.
       # Container wrappers forward PG* through the environment, never argv.
+      # Platform previews start from an empty database on every path, and no
+      # copy path takes the platform's (SEC-06): the same two servers.
       - name: Verify database identities and tenant copies
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: |
           tool_dir="$RUNNER_TEMP/database-role-tools"
           mkdir -p "$tool_dir" "$RUNNER_TEMP/database-role-tmp"
@@ -185,6 +187,9 @@ jobs:
           done
           PATH="$tool_dir:$PATH" TMPDIR="$RUNNER_TEMP/database-role-tmp" \
             node --test --test-timeout=180000 tests/database-role-split-postgres.test.js
+          PATH="$tool_dir:$PATH" TMPDIR="$RUNNER_TEMP/database-role-tmp" \
+            TEST_DATABASE_URL="$DATABASE_ROLES_TEST_URL" TEST_PREVIEW_DATABASE_URL="$DATABASE_ROLES_TEST_PREVIEW_URL" \
+            node --test --test-timeout=180000 tests/platform-preview-data-policy-postgres.test.js
         env:
           DATABASE_ROLES_TEST_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
           DATABASE_ROLES_TEST_PREVIEW_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres

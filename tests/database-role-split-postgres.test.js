@@ -387,7 +387,10 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     });
   });
 
-  await t.test('platform previews load the deployed schema and redact data as their own owner', async () => {
+  // SEC-06: a platform preview starts EMPTY (its own boot builds and seeds
+  // it), on the preview server, owned by its own login; nothing is read from
+  // the platform's database and no template of it is made.
+  await t.test('platform previews start empty as their own owner and copy nothing', async () => {
     const username = `fixture_${id}`;
     const { rows: [user] } = await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
       c.query("INSERT INTO users(username, password) VALUES ($1, $2) RETURNING id", [username, 'synthetic-source-hash']));
@@ -398,33 +401,37 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     const manager = require('../src/services/db-manager');
     dbs.add(platform + '_stgtmpl');
     dbs.add(platform + '_stgtmpl_next');
-    async function checkCopy(target, result) {
+    async function checkEmpty(target, result) {
+      assert.equal(result.via, 'empty');
       assert.equal(result.server, manager.PREVIEW_SERVER);
       await use(manager.connectionUrl(target, result.password, { server: result.server }), async c => {
-        const { rows } = await c.query("SELECT password FROM public.users WHERE username LIKE 'preview-user-%'");
-        assert.equal(rows.length, 1); assert.notEqual(rows[0].password, 'synthetic-source-hash');
-        assert.equal((await c.query('SELECT count(*)::int n FROM credentials.user_ai_credentials')).rows[0].n, 0);
-        const schema = await c.query("SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='credentials'");
-        assert.equal(schema.rows[0].owner, manager.ownerRoleName(target));
+        const owner = await c.query('SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = current_database()');
+        assert.equal(owner.rows[0].owner, manager.ownerRoleName(target));
+        const relations = await c.query(`SELECT count(*)::int n FROM pg_class r JOIN pg_namespace n ON n.oid = r.relnamespace
+          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND r.relkind IN ('r', 'p', 'v', 'm', 'S')`);
+        assert.equal(relations.rows[0].n, 0, 'no table, view or sequence: the preview\'s own boot makes them');
         await denied(c, `SET ROLE ${roles.provisioner}`);
       });
     }
     for (const [number, viaTemplate] of [[903, false], [904, true]]) {
       const target = platform + `_staging_s${number}_abcdef`; dbs.add(target);
-      const result = await manager.cloneDatabase(platform, target, { viaTemplate });
-      assert.equal(result.via, viaTemplate ? 'template' : 'direct');
-      await checkCopy(target, result);
+      await checkEmpty(target, await manager.cloneDatabase(platform, target, { viaTemplate }));
     }
     const sourceId = `role-fixture-${id}`;
     dbs.add(manager.preparedCloneSourceName(platform, sourceId));
     const prepared = await manager.prepareStagingCloneSource(platform, { sourceId });
     const target = platform + '_staging_s905_abcdef'; dbs.add(target);
     try {
-      const result = await manager.cloneFromPreparedSource(prepared, target);
-      assert.equal(result.via, 'prepared-template');
-      await checkCopy(target, result);
+      await checkEmpty(target, await manager.cloneFromPreparedSource(prepared, target));
     } finally {
       await manager.releasePreparedCloneSource(prepared);
+    }
+    for (const server of [PRIMARY, PREVIEW]) {
+      await use(server, async c => {
+        const templates = await c.query('SELECT datname FROM pg_database WHERE datname = ANY($1::text[])',
+          [[platform + '_stgtmpl', platform + '_stgtmpl_next']]);
+        assert.deepEqual(templates.rows, [], 'no template of the platform\'s database');
+      });
     }
     await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), async c => {
       assert.equal((await c.query('SELECT count(*)::int n FROM credentials.user_ai_credentials')).rows[0].n, 1);
