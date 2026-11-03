@@ -316,6 +316,7 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       onChange={() => quote(message, conversationId)}
       progress={planProgress(card, state)}
       planSpec={spec && Number(spec.sessionId) > 0 && Number(spec.version) > 0 ? <PlanSpec sessionId={Number(spec.sessionId)} version={Number(spec.version)} /> : null}
+      card={meta.plan.card || null}
       footer={state === 'built' && card && card.state !== 'done'
         ? notifyFooter(meta, offer, userId)
         : null}

@@ -93,6 +93,7 @@ async function migrate(config) {
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
+  await seedStagingBotPlanWaiting(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -1715,6 +1716,59 @@ async function seedStagingBotWaitingRows(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
+  }
+}
+
+// #6207/#6210 (3 Nov 2026): a plan of Homeroom bot's waiting for Build it is
+// a ▷ row on the Homeroom bot page that opens its request's page, where the
+// plan is drawn for everyone with its Build it. A fresh staging copy has no
+// such plan, so the before & after shots get one, obviously fake, on the
+// self-hosted Homeroom project, for the shots' member fixture
+// (usernode-capture) as its requester. Its card text is the plan's own
+// (#6220). Nothing here is a signal the bot decides on, and a staging copy
+// never acts on its queue. Idempotent by request number; a no-op outside
+// staging.
+async function seedStagingBotPlanWaiting(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const number = 9106;
+    const title = 'Staging demo: a plan waiting for Build it';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. A plan waits for Build it.', $4, NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, userId, title],
+    );
+    const plan = {
+      complicated: true,
+      questions: [],
+      bullets: ['Staging demo: the sample screen gets a sample banner.'],
+      card: {
+        summary: 'Staging demo: the sample screen gets a sample banner. Nothing else changes.',
+        lines: [
+          { n: 1, text: 'Staging demo: a sample banner sits at the top of the sample screen.' },
+          { n: null, text: 'Staging demo: nothing else on the screen moves.' },
+        ],
+      },
+    };
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, plan, awaiting_go_at, created_at)
+       SELECT $1, $2, 'live', 'ready', $3::jsonb, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live')`,
+      [appId, number, JSON.stringify(plan)],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot plan seeding failed', { message: err.message });
   }
 }
 

@@ -7389,6 +7389,29 @@ function planChoicesNote(questions) {
  * line) the spec it drafted, in its own words (live.specCardLines); else
  * one plain line.
  */
+/**
+ * #6220: a plan's card text from its spec's HTML, { summary, lines }, or
+ * null when it has none or it fails the checks (logged, so a writer that
+ * keeps missing them shows up). Never throws.
+ */
+function planCardOf(specHtmlText, { app = null, issueNumber = null } = {}) {
+  try {
+    if (!specHtmlText) return null;
+    const card = require('./spec-html').specCard(specHtmlText);
+    if (!card || !card.lines.length) return null;
+    if (card.problems.length) {
+      log.info('homeroom-bot', 'A plan\'s card text failed its checks; its card keeps the lines cut from the spec', {
+        app: app?.slug, issueNumber, problems: card.problems.slice(0, 5),
+      });
+      return null;
+    }
+    return { summary: card.summary, lines: card.lines };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read a plan\'s card text', { err: err.message });
+    return null;
+  }
+}
+
 function complicatedPlanBullets(plan, specMd = null) {
   const bullets = planBullets(plan?.bullets || []);
   if (bullets.length) return bullets;
@@ -7453,9 +7476,15 @@ async function planBeforeBuilding({
     await settle();
     return acted;
   }
+  // #6220 (3 Nov 2026): the card's own text, as the plan writer wrote it in
+  // the spec (its summary and its numbered changes), when it passes the
+  // checks (spec-html.js specCard); never clipped to pass. Otherwise the
+  // card keeps the lines cut from the spec, as before.
+  const card = planCardOf(drafted.specHtml, { app, issueNumber });
   const shown = {
     bullets: complicatedPlanBullets(plan, drafted.specMd), questions, complicated: true,
     ...(drafted.specVersion ? { spec: { sessionId: Number(drafted.sessionId), version: Number(drafted.specVersion) } } : {}),
+    ...(card ? { card } : {}),
   };
   // Once: a plan another drafting of this run already put to its requester
   // stays the one they are asked about (turnly #6 was asked about two). A

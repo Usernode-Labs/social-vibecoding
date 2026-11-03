@@ -151,7 +151,7 @@ function withdrawBotProposals({ pool, appId, prNumber, numbers, strict = false }
   if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return Promise.resolve();
   try {
     const { noteRequestsClosed } = require('./homeroom-bot-closed-requests');
-    return noteRequestsClosed(pool, { appId, closed: numbers, strict, tellStrict: false }).then(() => {}, (err) => {
+    return noteRequestsClosed(pool, { appId, closed: numbers, strict, tellStrict: false, deps: { closedHow: 'merged' } }).then(() => {}, (err) => {
       if (strict) throw err;
       log.warn('issue-close-watcher', 'Withdrawing the bot\'s proposals for closed requests failed', {
         pr: prNumber, issues: numbers, err: err.message,

@@ -5735,9 +5735,15 @@ const App = {
         // list (or a phone's drawer), never the Messages screen's. Its
         // addresses say where in it: `main`, `thread/<id>`, either with
         // `m/<id>` (features/ai/door.ts), handed to the page, which takes
-        // each once.
+        // each once. A request, a change or a decision opened in that column
+        // has an address of its own too (`request|change|decision/<slug>/<n>`):
+        // the page opens it there, or on its own page where the column does
+        // not fit.
         App.setChromeless(false);
         App.navigateToAi();
+        if (parts[1] === 'request' || parts[1] === 'change' || parts[1] === 'decision') {
+          window.UsernodeReact?.ai?.openItem?.('#' + parts.join('/'));
+        }
         if (parts[1] === 'main' || parts[1] === 'thread' || parts[1] === 'm') {
           const at = App._messagesExtras(parts[1] === 'main' ? parts.slice(2) : parts.slice(1));
           window.UsernodeReact?.ai?.openAt?.({

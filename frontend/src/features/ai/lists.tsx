@@ -44,8 +44,10 @@
  * Rows here are 14px over one line, not the shell's 15 over 13 (AGENTS.md,
  * "Type and colour"): this page's exception, recorded there.
  *
- * The row whose chat is in the column beside the list (Main Chat, or a
- * private thread) is drawn lit, where you are (`--lit-tint`, `--lit-ink`).
+ * The row whose place is in the column beside the list (Main Chat, a
+ * private thread, or a request, a change or a decision on its page: #6218)
+ * is drawn lit, where you are (`--lit-tint`, `--lit-ink`). A row is lit by
+ * the column it opens (./column.ts rowKey), the one the page says is open.
  * #6153: a design thread filed as a request is that request's row (In
  * progress, Waiting or Live, with the track's word on its right), which
  * opens the thread and is lit while it is in the column.
@@ -68,6 +70,8 @@ import {
   GROUP_FIRST, NOT_MOVING, byProject, nextWords, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
+import { ThreadDoneMenu } from '../messages/private-thread-done';
+import { rowKey } from './column';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
@@ -95,6 +99,8 @@ interface Line {
   /** Its chat is the one in the column beside the list: where you are. */
   lit?: boolean;
   open: () => void;
+  /** #6159: a private thread's row: its ⋯ has Mark done. */
+  done?: { rootId: number; mark: () => void } | null;
 }
 
 const G = 'h-[18px] w-[18px]';
@@ -128,6 +134,20 @@ const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
 
 function LineRow({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
+  // #6159: a private thread's row has its ⋯ beside it, with Mark done.
+  if (line.done) {
+    const { rootId, mark } = line.done;
+    return (
+      <div className="flex min-w-0 items-center gap-1" data-ai-line-done="">
+        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} /></div>
+        <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} className="shrink-0" />
+      </div>
+    );
+  }
+  return <LineButton line={line} quiet={quiet} />;
+}
+
+function LineButton({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
   const t = useMessages('messages');
   return (
     <button
@@ -428,14 +448,16 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
   );
 }
 
-export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread }: {
+export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
   main: { lit: boolean; unread: number; open: () => void };
   /**
-   * The key of the row whose chat is in the column (`private:<root>`), lit:
-   * a private thread's row, or the row of the request it was filed as (#6153).
+   * What the column shows (./column.ts columnKey): `main`, `private:<root>`
+   * or `page:<route>`. The row that opens it is lit: a private thread's row,
+   * the row of the request it was filed as (#6153), or a request's, a
+   * change's or a decision's row while its page is in the column (#6218).
    */
   lit?: string | null;
   /** The lists have been read: until then Needs you says nothing, not "nothing needs you". */
@@ -451,6 +473,8 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   live: AiThread[];
   openRow: (row: WorkRow) => void;
   openThread: (t: AiThread) => void;
+  /** #6159: a private thread's row was marked done from its ⋯: it leaves the lists at once. */
+  onDone?: (rootId: number) => void;
 }): ReactNode {
   const t = useMessages('messages');
   const say = (p: Phrase | null) => (p ? t(p.id, p.values) : null);
@@ -479,8 +503,9 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     tooltip: say(row.sub)!,
     why: say(whyOf(row)),
     owe: !!row.pill,
-    lit: !!lit && row.key === lit,
+    lit: !!lit && rowKey(row) === lit,
     open: () => openRow(row),
+    done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
   }));
   const threadLine = (glyph: (th: AiThread) => ReactNode) => (th: AiThread): Line => ({
     key: String(th.threadId),
@@ -495,7 +520,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     owe: false,
     // #6153: a request filed from a private thread opens that thread, and
     // is where you are while it is in the column.
-    lit: !!lit && !!th.rootId && lit === `private:${th.rootId}`,
+    lit: !!lit && rowKey(th) === lit,
     open: () => openThread(th),
   });
   const progressShown = progress.filter((x) => shows(x.app));

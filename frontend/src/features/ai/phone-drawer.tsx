@@ -2,42 +2,38 @@
  * THE BOT TAB ON A PHONE, AS A DRAWER (30 Oct 2026, Evan: "the same as
  * Messages and Communities"; ../nav-drawer/messages-drawer.ts is the model).
  *
- * Under 768px the list is the drawer's first level, 85% of the screen, with
- * the column, Main Chat or one thread of it, peeking in at its right. The
- * column is the second level, the whole screen. Main Chat's row, a private
- * thread's row, the peek and the Ask bar slide the strip in; the column's
- * arrow and a swipe right slide it back. 1 Nov 2026: a thread is alone in
- * it, under its own head, whose arrow goes back to the list (Main Chat is a
- * row of it). A pan follows the finger and, let go past a quarter of the way,
- * lands on the next level, as the Messages drawer's does: the same strip
- * (MESSAGES_AT), the same slide (SLIDE_MS, SLIDE_EASE) and the same landing
- * rule (landingIn). The drawer holds only Main and its threads: a request,
- * a change or a decision opens on its own page, as it does from Messages
+ * Under 768px the list is the drawer's first level, the whole screen, and
+ * the column, Main Chat or one thread of it, is the second, the whole screen
+ * to its right. Main Chat's row, a private thread's row and the Ask bar
+ * slide the strip in; the header's arrow (Main Chat) or the thread's own
+ * (1 Nov 2026: a thread is alone in the column, under its own head) and a
+ * swipe right slide it back. A pan follows the finger and, let go past a
+ * quarter of the way, lands on the next level, as the Messages drawer's
+ * does: the same slide (SLIDE_MS, SLIDE_EASE) and the same landing rule
+ * (landingIn). The drawer holds only Main and its threads: a request, a
+ * change or a decision opens on its own page, as it does from Messages
  * (Evan, 30 Oct).
  *
  * The level not in view is inert as well as hidden, so a keyboard or a
- * screen reader never lands in the 15% of the list left showing, or in the
- * peek's thread behind its button.
+ * screen reader never lands in the one off screen.
  *
  * From 768px nothing here is drawn: the list is its own column, beside the
  * column Main Chat docks in (1 Nov 2026: from 768px, not 1024px). The list
  * is never folded into the platform's sidebar (Evan, 30 Oct).
  *
- * NO PEEK UNTIL A THREAD HAS BEEN OPENED (Evan, 1 Nov 2026: "we shouldn't
- * show the sidebar until the user has opened a thread once, until then full
- * screen"). Until then the list is the whole screen and the column waits off
- * its right edge (FULL_AT); the first time it is opened, the device
- * remembers, and from then on the drawer is the one above.
+ * NO PEEK, EVER (Evan, 3 Nov 2026: "simplify on mobile"). The list is the
+ * whole screen and the column waits off its right edge (FULL_AT); a row, the
+ * Ask bar or a pan brings it in, and its back arrow slides the list back. It
+ * was full screen only until a thread had been opened on the device (1 Nov),
+ * then an 85% drawer with Main peeking; the phone's other lists, Messages and
+ * your communities, lost their peek in the same change.
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 
-import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
-
-import { useMessages } from '../../lib/i18n/react';
 import { EmbeddedConversation } from '../messages';
-import { BOT_AVATAR } from '../messages/format';
-import { isPan, landingIn, MESSAGES_AT, SLIDE_EASE, SLIDE_MS } from '../nav-drawer/drawer-math';
+import { isPan, landingIn, SLIDE_EASE, SLIDE_MS } from '../nav-drawer/drawer-math';
+import { botDepth } from '../nav-drawer/bot-drawer';
 import { reducedMotion } from '../nav-drawer/drawer-store';
 import { dirSign } from '../../lib/i18n/direction';
 
@@ -58,93 +54,43 @@ export function usePhone(): boolean {
 }
 
 /**
- * The second level: Main Chat's header and the chat, or a thread of it
- * alone (`threadUp`), whose own head has the arrow back to the list.
+ * The second level: Main Chat, or a thread of it alone (`threadUp`), whose
+ * own head has the arrow back to the list. Main Chat draws no bar of its
+ * own (3 Nov 2026): the platform's header names it and holds its arrow
+ * (../nav-drawer/bot-drawer.ts), as it does a Messages conversation.
  */
-export function MainPane({ botId, active, at, onBack, threadUp = false }: {
+export function MainPane({ botId, active, at, onBack }: {
   botId: number | null;
   active: boolean;
   at: { threadRootId: number | null; focusMessageId: number | null } | null;
   onBack: () => void;
-  threadUp?: boolean;
 }): ReactNode {
-  const t = useMessages('messages');
-  return (
-    <>
-      {threadUp ? null : <header className="ai-drawer-head" data-ai-drawer-head="">
-        <button type="button" className="ai-drawer-back" onClick={onBack} aria-label={t('messages:ai.drawer.back')}>
-          <ChevronLeftIcon className="h-5 w-5" aria-hidden="true" />
-        </button>
-        <img src={BOT_AVATAR} alt="" className="w-8 h-8 rounded-[10px] object-cover shrink-0" />
-        <span className="min-w-0 flex flex-col">
-          <span className="truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{t('messages:store.header.main')}</span>
-          <span className="flex min-w-0 items-center gap-1 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
-            <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span className="truncate">{t('messages:ai.main.sub')}</span>
-          </span>
-        </span>
-      </header>}
-      {botId ? <EmbeddedConversation conversationId={botId} active={active} at={at} mainChat onBack={onBack} /> : null}
-    </>
-  );
+  return botId ? <EmbeddedConversation conversationId={botId} active={active} at={at} mainChat onBack={onBack} /> : null;
 }
 
-// ── Before a thread has been opened, the list is the whole screen ──
+// ── The list is the whole screen ──
 
-const OPENED_KEY = 'homeroom:botDrawer:threadOpened';
-
-/** Where the strip rests with no peek: the column a whole screen to the right. */
+/** Where the strip rests: the column a whole screen to the right of the list. */
 export const FULL_AT: readonly [number, number] = [0, 1];
 
-/** Whether a thread has ever been opened on this device. */
-export function rememberedThreadOpened(): boolean {
-  try {
-    return window.localStorage.getItem(OPENED_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function rememberThreadOpened(): void {
-  try { window.localStorage.setItem(OPENED_KEY, '1'); } catch { /* a private window: this visit only */ }
-}
-
-/** The strip: the list at 85%, Main beside it; level 0 the list, 1 Main. */
-export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
+/** The strip: the list, then Main a whole screen to its right; level 0 the list, 1 Main. */
+export function AiDrawer({ level, onLevel, list, pane }: {
   level: 0 | 1;
   onLevel: (next: 0 | 1) => void;
   list: ReactNode;
   pane: ReactNode;
-  peekLabel: string;
 }): ReactNode {
   const root = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   const [drag, setDrag] = useState<number | null>(null);
   const pan = useRef<{ x: number; y: number; from: 0 | 1; panning: boolean; id: number } | null>(null);
   const swallow = useRef(false);
-  const [opened, setOpened] = useState(rememberedThreadOpened);
-  const [snap, setSnap] = useState(false);
-  const at = opened ? MESSAGES_AT : FULL_AT;
-  // The first thread opened gives the drawer its peek, remembered at once
-  // but laid out only once the slide has landed: the list narrowing to 85%
-  // under a moving strip would jump, and off screen it is never seen. The
-  // strip's rest moves from 100% to 85% with it, in one frame and with no
-  // slide (snap), or the column would slide out and back.
-  useEffect(() => {
-    if (opened || level !== 1) return undefined;
-    rememberThreadOpened();
-    const id = window.setTimeout(() => { setSnap(true); setOpened(true); }, SLIDE_MS + 50);
-    return () => window.clearTimeout(id);
-  }, [opened, level]);
-  // Two frames: the first paints the new rest with no transition, the
-  // second gives the slide back.
-  useEffect(() => {
-    if (!snap) return undefined;
-    let id = window.requestAnimationFrame(() => {
-      id = window.requestAnimationFrame(() => setSnap(false));
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [snap]);
+  const at = FULL_AT;
+  // The header's words and arrow move with the strip (../nav-drawer/bot-drawer.ts):
+  // a tap slides them, a finger sets them, and a pan let go of slides them to
+  // where it lands, the same level or the other.
+  useEffect(() => { botDepth.cut(level); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { botDepth.slide(level); }, [level]);
   useEffect(() => {
     const el = root.current;
     if (!el) return undefined;
@@ -154,7 +100,7 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
     return () => ro?.disconnect();
   }, []);
   const offset = drag ?? at[level];
-  const still = drag != null || snap || reducedMotion();
+  const still = drag != null || reducedMotion();
 
   const down = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -177,7 +123,9 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
       // A mouse dragging the strip would otherwise select the text under it.
       try { window.getSelection()?.removeAllRanges(); } catch { /* nothing selected */ }
     }
-    setDrag(Math.max(0, Math.min(at[1], at[p.from] - dx / width)));
+    const next = Math.max(0, Math.min(at[1], at[p.from] - dx / width));
+    setDrag(next);
+    botDepth.set(next);
   };
   const up = (e: ReactPointerEvent<HTMLDivElement>) => {
     const p = pan.current;
@@ -186,16 +134,17 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
     const now = drag ?? at[p.from];
     swallow.current = true;
     setDrag(null);
-    onLevel(landingIn(at, p.from, now, (e.clientX - p.x) * dirSign()) as 0 | 1);
+    const lands = landingIn(at, p.from, now, (e.clientX - p.x) * dirSign()) as 0 | 1;
+    botDepth.slide(lands);
+    onLevel(lands);
   };
-  const cancel = () => { pan.current = null; setDrag(null); };
+  const cancel = () => { pan.current = null; setDrag(null); botDepth.slide(level); };
 
   return (
     <div
       ref={root}
       className="ai-drawer"
       data-level={level}
-      data-peek={opened ? '' : undefined}
       data-panning={drag != null ? '' : undefined}
       onPointerDown={down}
       onPointerMove={move}
@@ -213,10 +162,6 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
         <div className="ai-drawer-list" inert={level === 1} aria-hidden={level === 1 ? true : undefined}>{list}</div>
         <section className="ai-drawer-thread">
           <div className="ai-drawer-pane" inert={level === 0} aria-hidden={level === 0 ? true : undefined}>{pane}</div>
-          {/* The peek: Main as it is, pressed as one (Messages' own). */}
-          {opened && level === 0 && drag == null ? (
-            <button type="button" className="messages-peek-open ai-drawer-peek" aria-label={peekLabel} onClick={() => onLevel(1)} />
-          ) : null}
         </section>
       </div>
     </div>

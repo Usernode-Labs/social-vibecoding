@@ -4789,31 +4789,23 @@
   },
   "issue.action.seeProgress": {
     "text": "See progress",
-    "description": "Main button on a request's card (a request is a filed issue): shown to the person Homeroom bot is building the request for; opens their chat with the bot."
+    "description": "Main button on a request's card in the Workshop list, shown to the person Homeroom bot is building the request for: opens the request's page at the bot's progress card."
   },
   "issue.action.seePlan": {
     "text": "See the plan",
-    "description": "Main button on a request's card, shown to the person who asked for it while Homeroom bot's plan for it waits for them: opens their chat with the bot at the plan, where its Build it button is."
+    "description": "Main button on a request's card in the Workshop list while Homeroom bot's plan for it waits for Build it: opens the request's page at the plan, where its Build it button is. Any member may press Build it there."
   },
   "issue.action.seePlanTitle": {
-    "text": "Open the plan in your chat with Homeroom bot, where you can build it",
-    "description": "Tooltip of the \"See the plan\" button on a request's card. \"Homeroom bot\" is the name of the platform's builder bot."
+    "text": "Open the plan on this request, where you can build it",
+    "description": "Tooltip of the \"See the plan\" button on a request's card in the Workshop list."
   },
   "issue.action.seeProgressTitle": {
-    "text": "Open your chat with Homeroom bot, where this request's card is",
-    "description": "Tooltip of the \"See progress\" button on a request's card. \"Homeroom bot\" is the name of the platform's builder bot. \"Open\" is a verb."
+    "text": "Open this request, where its progress is",
+    "description": "Tooltip of the \"See progress\" button on a request's card in the Workshop list. \"Open\" is a verb."
   },
   "issue.action.botOnIt": {
     "text": "Homeroom bot is on it",
     "description": "Main button on a request's card (a request is a filed issue): disabled, shown to other people while the request waits in Homeroom bot's queue. \"Homeroom bot\" is the name of the platform's builder bot; \"is on it\" means it has taken the job."
-  },
-  "issue.action.botPlanWaiting": {
-    "text": "Waiting for the plan's OK",
-    "description": "Main button on a request's card: disabled, shown to other people while Homeroom bot's plan for the request waits for the person who asked for it to approve it (say Build it). \"OK\" is a noun: approval."
-  },
-  "issue.action.botPlanWaitingTitle": {
-    "text": "Homeroom bot wrote a plan for this and builds it once the person who asked for it says Build it",
-    "description": "Tooltip of the disabled \"Waiting for the plan's OK\" button on a request's card. \"Build it\" is the name of the button that person taps: keep it as the button reads."
   },
   "issue.action.botHeld": {
     "text": "Homeroom bot will build this",
@@ -8264,16 +8256,16 @@
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it asked a question on the request and waits for someone to answer it."
   },
   "request.status.lead.botPlanWaiting": {
-    "text": "Waiting for @{{username}} to OK the plan.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. Homeroom bot (the platform's assistant) wrote a plan for the change and builds nothing until the person who asked for it approves the plan. {{username}} is that person's username, after an @. \"OK\" is a verb: approve."
+    "text": "@{{username}}'s plan is ready. Any member can build it below.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, for anyone but the person who asked for it. Homeroom bot wrote a plan for the change, drawn right below this card, and any member of the community may press its Build it button. {{username}} is the person who asked for it, after an @."
   },
   "request.status.lead.botPlanYours": {
-    "text": "Your plan is ready. Say Build it on it in your chat with Homeroom bot.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands, read by the person who asked for it while Homeroom bot's plan for it waits for them to approve it. \"Build it\" is the name of the button on the plan in their chat with Homeroom bot: keep it as the button reads."
+    "text": "Your plan is ready. Build it is on the plan below.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, read by the person who asked for it while Homeroom bot's plan for it waits for Build it. The plan, with its Build it button, is drawn right below this card. \"Build it\" is the name of that button: keep it as the button reads."
   },
   "request.status.lead.botPlanWaitingUnnamed": {
-    "text": "Waiting for the person who asked for it to OK the plan.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. Homeroom bot (the platform's assistant) wrote a plan for the change and builds nothing until the person who asked for the request approves it; used when that person cannot be named. \"OK\" is a verb: approve."
+    "text": "The plan is ready. Any member can build it below.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, when the person who asked for it cannot be named. Homeroom bot wrote a plan for the change, drawn right below this card, and any member of the community may press its Build it button."
   },
   "request.status.lead.botHeld": {
     "text": "Homeroom bot will start when one of its changes here is voted in or closed.",
