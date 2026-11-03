@@ -136,7 +136,7 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
   };
   const refresh = async () => {
     const out = await bot.refreshApp(pool, app, {
-      github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1, question_tripwire: 1 },
+      github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1 },
     });
     await settle();
     return out;
@@ -224,7 +224,7 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     };
     await say(chin, '@homeroom_bot is this still on?');
     await bot.refreshApp(pool, app, {
-      github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1, question_tripwire: 1 },
+      github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1 },
     });
     await rt.drain();
     const { rows: [owed] } = await pool.query(

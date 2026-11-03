@@ -47,6 +47,40 @@ just before still reads as the platform's and web may withdraw it
 (`wf_refuse_pending`). Deploy the release that records
 `web_restriction_ready` first and let it finish rolling out.
 
+## Web is the authentication boundary
+
+The separation above limits what a compromised web process can do with its
+own credentials: it holds no code-host writer, no Kubernetes writes, no
+migration or provisioning login, and it cannot decide a workflow event or
+pass one off as the platform's. It does not limit what web can do as a
+person. Web terminates every request, checks every session and names who
+asks for each action: a workflow event's `actor`, a platform operation's
+requester. The conductor rechecks that person's current authority
+(`src/workflow/event-authority.ts`, each operation's `authorize`), but it
+cannot tell whether that person really asked. A compromised web process can
+therefore do anything any signed-in person could, an administrator
+included. The application tables that authority is read from (`users`,
+`app_admins`, a change's or request's project, `apps.created_by`) stay
+writable by web for the same reason: protecting them would not stop it from
+naming an existing administrator as the actor. Closing this needs
+administrator actions authenticated outside web: a separate administrator
+service whose requests never pass through web, or a per-action proof the
+conductor verifies itself.
+
+What is not left silent is a lasting grant. `privilege_changes`
+(`src/db/migrations/privilege-changes.sql`) records every change to who is
+a platform admin, a view-only admin or a project's admin, with the database
+login that made it, when and the values before and after. Only its triggers
+write it, running as its owner. Web and the conductor may read it and
+write none of it (`EVIDENCE` in `database-role-grants.js`), and only the
+owner could disable the triggers. A grant web made is a row with web's
+login; check it after any suspected compromise:
+
+```sql
+SELECT changed_at, login, change, user_id, app_id, before, after
+  FROM privilege_changes ORDER BY changed_at DESC LIMIT 50;
+```
+
 ## Release order
 
 1. Sync only bootstrap/migrator input Secrets at wave -3. Keep the existing

@@ -333,8 +333,10 @@ function retryCommentText() {
 
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
-// issue is queued again as soon as the cap that held it has room.
-function heldText({ cap, verdict, limit, project = null }) {
+// issue is queued again as soon as the cap that held it has room. Only a
+// ready verdict is held, by one of the three caps (homeroom-bot.js
+// SLOT_CAPS): 3 Nov 2026, there is no daily limit on questions and notes.
+function heldText({ cap, limit, project = null }) {
   const name = project ? clipText(project, 80) : 'this project';
   // #6156: the project's builds are full. It waits for the bot's turn, not
   // for a vote.
@@ -344,12 +346,7 @@ function heldText({ cap, verdict, limit, project = null }) {
   if (cap === 'proposals_per_app') {
     return `Homeroom bot will build this when one of its ${limit} changes on ${name} is voted in or closed.`;
   }
-  if (cap === 'proposals_total') {
-    return `Homeroom bot will build this when one of its ${limit} changes across Homeroom is voted in or closed.`;
-  }
-  const what = verdict === 'question' ? 'a question about' : verdict === 'plan' ? 'a plan for' : 'a note on';
-  return `Homeroom bot has ${what} this request, but it has already posted ${limit} questions and notes `
-    + `on ${name} today. It will come back to it once some of those are a day old.`;
+  return `Homeroom bot will build this when one of its ${limit} changes across Homeroom is voted in or closed.`;
 }
 
 function heldKind(cap) {

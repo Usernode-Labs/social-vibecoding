@@ -87,18 +87,13 @@ test('the triage prompt says what counts as complicated, leaning towards buildin
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS complicated BOOLEAN;/);
 });
 
-test('a complicated plan counts against the daily questions and notes; a small change does not', async () => {
-  const seen = [];
-  const counting = (n) => ({ async query(sql, params) { seen.push([String(sql), params]); return { rows: [{ cnt: n }] }; } });
-  assert.equal(await bot.planTripwire(counting(10), 2), 'question_tripwire');
-  assert.equal(await bot.planTripwire(counting(9), 2), null);
-  assert.ok(seen.some(([sql]) => /verdict = ANY\(\$2::text\[\]\) OR complicated IS TRUE/.test(sql)), 'plans asked count as questions do');
+test('3 Nov 2026: a complicated plan is held only by the slots a build is, never by a daily count of questions', () => {
+  assert.equal(bot.planTripwire, undefined);
   const src = read('src/services/homeroom-bot.js');
   // (Homeroom bot parity, P4: the request it decides for, which a batch may raise the hold for.)
-  assert.match(src, /const caps = await simulateCaps\(pool, bot, app\.id, v\.verdict, settings, \{ issueNumber \}\)\n\s+\|\| \(v\.complicated \? await planTripwire\(pool, app\.id\) : null\);/,
-    'only a complicated change: a small one is not asked about');
-  assert.match(live.heldText({ cap: 'question_tripwire', verdict: 'plan', limit: 10, project: 'Chores' }),
-    /^Homeroom bot has a plan for this request, but it has already posted 10 questions and notes on Chores today\./);
+  assert.match(src, /const caps = await simulateCaps\(pool, bot, app\.id, v\.verdict, settings, \{ issueNumber \}\);\n/,
+    'the verdict\'s caps, and nothing more for a plan that asks its requester first');
+  assert.doesNotMatch(src, /planTripwire|tripwireCount/);
 });
 
 // ── What it says ──
