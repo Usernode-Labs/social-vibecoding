@@ -227,6 +227,35 @@ test('a row that is not a vote is never recorded as passed over, so the scan sto
   assert.equal(seen.firstUnseenIndex(rows, () => 'garden'), 1, 'the non-vote row counts as not seen');
 });
 
+// #6199: leaving Needs you after swiping past the one change your vote
+// decides must not reopen past it on the advisory rows below.
+test('a vote that decides stops the resume even when it was passed over', () => {
+  fakeWindow(7);
+  const seen = loadTsx(SEEN_SRC);
+  seen.hydrateNeedsSeen();
+  const deciding = (id, title) => ({
+    ...voteRow(id, title),
+    yes: { label: 'Yes', act: { fn: 'castVote', args: [id, 'yes', 0] } },
+  });
+  const advisory = (id, title) => ({
+    ...voteRow(id, title),
+    yes: { label: 'Yes', act: { fn: 'castVote', args: [id, 'yes', 0] }, advisory: true },
+  });
+  const isDeciding = (row) => !(row.yes && (row.yes.advisory || row.yes.uncounted));
+  // The feed's order: the vote that decides is first, then the advisory ones.
+  const rows = [deciding(1, 'Add a new level'), advisory(2, 'Tags'), advisory(3, 'Export')];
+  seen.markNeedsSeen('garden', 'proposal:1@0');
+  assert.equal(seen.firstUnseenIndex(rows, () => 'garden'), 1,
+    'today: the advisory row below it, which is where the deciding vote looked lost');
+  assert.equal(seen.firstUnseenIndex(rows, () => 'garden', isDeciding), 0,
+    'with the deciding stop, the vote that decides is on screen again');
+  // A feed of advisory votes only behaves exactly as before.
+  const advisories = [advisory(2, 'Tags'), advisory(3, 'Export')];
+  seen.markNeedsSeen('garden', 'proposal:2@0');
+  assert.equal(seen.firstUnseenIndex(advisories, () => 'garden', isDeciding), 1,
+    'only advisory votes already passed over are skipped');
+});
+
 test('the Communities reel: each row is checked against its own project', () => {
   fakeWindow(7);
   const seen = loadTsx(SEEN_SRC);
@@ -249,7 +278,7 @@ test('NeedsFeed opens on the first unseen item, and only when no other open is o
     'the seed never reads the record');
   assert.match(WORKSHOP, /const resumeRef = useRef<boolean>\(!endOnOpen && !approveOpenRef\.current && !openOn\);/,
     'resume only when no other open is owed: no end card, no shot target, no New for you row');
-  const resume = /useLayoutEffect\(\(\) => \{\s*const el = scrollRef\.current;\s*if \(!resumeRef\.current \|\| !el \|\| !el\.clientHeight \|\| !items\.length\) return;\s*resumeRef\.current = false;\s*const idx = firstUnseenIndex\(items, \(r\) => rowSlug\(r, slug\)\);([\s\S]*?)\n {2}\}, \[items\]\);/.exec(WORKSHOP);
+  const resume = /useLayoutEffect\(\(\) => \{\s*const el = scrollRef\.current;\s*if \(!resumeRef\.current \|\| !el \|\| !el\.clientHeight \|\| !items\.length\) return;\s*resumeRef\.current = false;\s*const idx = firstUnseenIndex\(items, \(r\) => rowSlug\(r, slug\), \(r\) => rowVoteType\(r\) === 'deciding'\);([\s\S]*?)\n {2}\}, \[items\]\);/.exec(WORKSHOP);
   assert.ok(resume, 'the resume open: once, on the first publish that has rows and a laid-out scroller');
   assert.match(resume[1], /if \(idx <= 0\) return;/, 'the first unseen item is the first item: nothing to move for');
   assert.match(resume[1], /curKeyRef\.current = items\[idx\]\.key;\s*setAt\(idx\);\s*el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
