@@ -278,6 +278,19 @@ test('thread followers against the full schema', { timeout: 120000 }, async (t) 
     await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1', [erin.id]);
   });
 
+  await t.test('a merged change carries its live time, so the page says Going live until it runs', async () => {
+    const at = '2026-11-03T10:00:00.000Z';
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = NULL WHERE id = $1`, [change.id]);
+    const waiting = await read(erin, `/api/apps/${app.slug}/threads/7`);
+    const notRunning = waiting.body.items.find((i) => i.type === 'change' && i.id === change.id);
+    assert.equal(notRunning.state, 'merged');
+    assert.equal(notRunning.liveAt, null, 'merged but not running yet');
+
+    await pool.query(`UPDATE chat_sessions SET live_at = $2 WHERE id = $1`, [change.id, at]);
+    const running = await read(erin, `/api/apps/${app.slug}/threads/7`);
+    assert.equal(running.body.items.find((i) => i.type === 'change' && i.id === change.id).liveAt, at);
+  });
+
   await t.test('the read answers only for a project the viewer may see, and a number it holds', async () => {
     // A number with no thread is an answer, not a 404: every request and
     // change page asks on open, and a 404 is a console error there.

@@ -30,6 +30,12 @@ export interface ThreadItem {
   status: string;
   /** A change's place in its life (issue-proposal-ref.js `stateOf`). */
   state?: 'underway' | 'review' | 'merged';
+  /**
+   * A change: when production first ran it (chat_sessions.live_at), the fact
+   * its own pill reads. Null from the merge until the rollout ends; a change
+   * sent without it reads as live, as merge-status.js does.
+   */
+  liveAt?: string | null;
   /** #6139, a change underway: built, with its checks passing on its current head and nothing working on it. */
   ready?: boolean;
   at?: string | null;
@@ -154,12 +160,22 @@ function what(item: ThreadItem): Phrase {
   return { id: 'project:topic.thread.item.decision' };
 }
 
+/**
+ * A change that has merged but is not running yet: the same fact its own pill
+ * reads (merge-status.js), so the header never says Live before it does. A
+ * change sent without `liveAt` reads as live, as it always did.
+ */
+function goingLive(item: ThreadItem): boolean {
+  return item.state === 'merged' && item.liveAt === null;
+}
+
 function standing(item: ThreadItem): Phrase | null {
   if (item.type === 'request') {
     return { id: item.status === 'closed' ? 'project:topic.thread.state.closed' : 'project:topic.thread.state.open' };
   }
   if (item.type === 'change') {
-    return item.state === 'merged' ? { id: 'project:topic.thread.state.live' }
+    return item.state === 'merged'
+      ? { id: goingLive(item) ? 'project:topic.thread.state.goingLive' : 'project:topic.thread.state.live' }
       : item.state === 'review' ? { id: 'project:topic.thread.state.voting' }
         : { id: item.ready ? 'project:topic.thread.state.ready' : 'project:topic.thread.state.underway' };
   }
@@ -383,6 +399,11 @@ export function requestPill(
   }
   // #6139: every change underway has finished; only putting one up is left.
   if (underway.length) return { ...base, key: 'ready', label: say('project:topic.thread.pill.ready'), tone: 'neutral' };
+  // Merged is live only once production runs it, the fact each change's own
+  // pill reads: until then the header says Going live, never Live.
+  if (layout.changes.some(goingLive)) {
+    return { ...base, key: 'going_live', label: say('project:topic.thread.pill.goingLive'), tone: 'progress', spinner: true };
+  }
   if (layout.changes.some((c) => c.state === 'merged')) return { ...base, key: 'live', label: say('project:topic.thread.pill.live'), tone: 'ok' };
   return null;
 }

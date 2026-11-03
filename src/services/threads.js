@@ -503,7 +503,8 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        COALESCE(ru.username, r.author_login) AS author, COALESCE(ru.is_synthetic, FALSE) AS author_bot,
        NULL::text AS reason, NULL::int AS target, NULL::int[] AS closes,
        NULL::int AS built_from_session_id, NULL::int AS built_from_version,
-       FALSE AS ready
+       FALSE AS ready,
+       NULL::timestamptz AS live_at
   FROM requests r LEFT JOIN users ru ON ru.id = r.created_by
  WHERE r.thread_id = $1
 UNION ALL
@@ -520,7 +521,8 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        cu.username, COALESCE(cu.is_synthetic, FALSE), NULL::text, NULL::int,
        COALESCE(cs.linked_issues, '{}'::int[]),
        cs.built_from_session_id, cs.built_from_version,
-       ${CHANGE_READY_SQL}
+       ${CHANGE_READY_SQL},
+       cs.live_at
   FROM chat_sessions cs LEFT JOIN users cu ON cu.id = cs.user_id
  WHERE cs.thread_id = $1 AND cs.is_headless = FALSE
    AND (cs.status IN ('active', 'promoted', 'merging', 'merged')
@@ -541,7 +543,8 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
        NULLIF(i.payload->>'reason', ''),
        CASE WHEN i.kind = 'close_issue' AND (i.payload->>'issueNumber') ~ '^[0-9]{1,9}$'
             THEN (i.payload->>'issueNumber')::int END,
-       NULL::int[], NULL::int, NULL::int, FALSE
+       NULL::int[], NULL::int, NULL::int, FALSE,
+       NULL::timestamptz AS live_at
   FROM issues i LEFT JOIN users iu ON iu.id = i.created_by
  WHERE i.thread_id = $1 AND i.kind <> 'general'
  ORDER BY created_at, type, id`;
@@ -601,6 +604,9 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
     };
     if (row.type === 'change') {
       item.state = issueRefs.stateOf(row.status);
+      // When production first ran it (chat_sessions.live_at), the fact the
+      // change's own pill reads: null from the merge until the rollout ends.
+      item.liveAt = row.live_at ? new Date(row.live_at).toISOString() : null;
       // #6139: still underway, but built: CHANGE_READY_SQL.
       item.ready = row.ready === true;
       item.folded = foldOf.get(`change:${row.id}`) || [];
