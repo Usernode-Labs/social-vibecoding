@@ -400,6 +400,16 @@ const TOOLS = Object.freeze([
   {
     type: 'function',
     function: {
+      name: 'close_thread',
+      description: 'Mark this private thread done, when they ask you to close or finish it (#6159). It leaves their '
+        + 'Homeroom bot page\'s lists; nothing in it is deleted, and anything they write in it brings it back. Takes no '
+        + 'arguments. Then reply "Done. Reply here to pick it up again."',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'offer_plan',
       description: 'They say the design looks good, or ask to post it: offer it as a plan, as a card under your reply that '
         + 'they tap. Leave target out to offer it on the request this thread is about (or the one it was posted on '
@@ -429,16 +439,6 @@ const TOOLS = Object.freeze([
         required: ['name'],
         additionalProperties: false,
       },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'close_thread',
-      description: 'Mark this private thread done, when they ask you to close or finish it (#6159). It leaves their '
-        + 'Homeroom bot page\'s lists; nothing in it is deleted, and anything they write in it brings it back. Takes no '
-        + 'arguments. Then reply "Done. Reply here to pick it up again."',
-      parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
 ]);

@@ -429,12 +429,12 @@ function otherThreadLines(thread) {
     'THIS CONVERSATION',
     '- They are writing in a thread of this chat, and the conversation below is that thread. Answer their newest',
     '  message here, in this thread.',
-    // #6159: a private thread can be finished, by them or by you.
-    '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it',
-    '  up again." Never tell them to close it on their side: there is no such control.',
     // 1 Nov 2026: "Status? How is it going?" in a "+" design thread was
     // answered with their whole page (my_work), and none of it this thread.
     ...THREAD_STATUS_LINES,
+    // #6159: a private thread can be finished, by them or by you.
+    '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it',
+    '  up again." Never tell them to close it on their side: there is no such control.',
   ];
   const d = thread.draft;
   if (d?.kind === 'ask' && d.about) {
