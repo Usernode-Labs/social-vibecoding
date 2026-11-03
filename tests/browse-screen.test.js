@@ -27,6 +27,7 @@ const { installAppCard } = require('./helpers/app-card');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC } = require('./helpers/home-modules');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 // browse.js is a bundle module since #1083 chunk F, but it is deliberately
 // still a valid CLASSIC script: this test compiles the real source in a vm
 // context, which is why the store arrives by the `_store` plant ./mount.ts
@@ -614,9 +615,9 @@ test("the switch is a faithful copy of Browse.VIEWS, in its order", () => {
 
 test("the sheet's Show only switches are a faithful copy of Browse.SHOW_ONLY", () => {
   const { Browse } = makeBrowse();
-  assert.deepEqual(Array.from(Browse.SHOW_ONLY, (o) => o.key), ['featured', 'new', 'notjoined']);
+  assert.deepEqual(Array.from(Browse.SHOW_ONLY, (o) => o.key), ['featured', 'new', 'recent', 'notjoined']);
   assert.deepEqual(Array.from(Browse.SHOW_ONLY, (o) => message(o.label)),
-    ['Featured', 'New', 'Hide apps I’ve joined']);
+    ['Featured', 'New', 'Opened recently on this device', 'Hide apps I’ve joined']);
   const src = read('frontend/src/features/apps/browse-filter-sheet.tsx');
   const block = src.match(/const SHOW_ONLY[\s\S]*?\n\];/);
   assert.ok(block, 'SHOW_ONLY is declared in browse-filter-sheet.tsx');
@@ -631,7 +632,7 @@ test("the sheet's Show only switches are a faithful copy of Browse.SHOW_ONLY", (
 
 test('resolveFilter: anything unrecognised is All, never an empty screen', () => {
   const { Browse } = makeBrowse();
-  for (const key of ['all', 'featured', 'notjoined', 'yours', 'new']) assert.equal(Browse.resolveFilter(key), key);
+  for (const key of ['all', 'featured', 'notjoined', 'yours', 'new', 'recent']) assert.equal(Browse.resolveFilter(key), key);
   // The old admin chip's link lands on All, for an admin too.
   assert.equal(Browse.resolveFilter('unreviewed'), 'all');
   assert.equal(makeBrowse({ user: { id: 1, isAdmin: true } }).Browse.resolveFilter('unreviewed'), 'all');
@@ -733,6 +734,191 @@ test('an empty set says which filter is empty', () => {
 });
 
 // ── The view, the switches and the sheet's count ─────────────────────
+
+// ── Opened recently on this device (#4809) ──────────────────────────
+
+// The real store over a fake localStorage, so these read what a device holds.
+function withRecentStore(run) {
+  const storage = new Map();
+  const previous = global.window;
+  global.window = {
+    localStorage: {
+      getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, String(v)),
+      removeItem: (k) => storage.delete(k),
+    },
+  };
+  try {
+    return run(loadTsx('frontend/src/features/nav/recent-apps-store.js'), storage);
+  } finally {
+    if (previous === undefined) delete global.window;
+    else global.window = previous;
+  }
+}
+
+const slugsOf = (list) => Array.from(list, (a) => a.slug);
+
+test('Opened recently: apps left within 30 days on this device, for this account', () => {
+  withRecentStore((store) => {
+    const { Browse } = makeBrowse();
+    const apps = [app({ slug: 'just-left' }), app({ slug: 'last-month' }), app({ slug: 'too-old' }), app({ slug: 'never' })];
+    const iso = (days) => new Date(NOW - days * 86400000).toISOString();
+    store.rememberRecentApp({ slug: 'too-old', name: 'Old' }, 'ana', iso(31));
+    store.rememberRecentApp({ slug: 'last-month', name: 'Month' }, 'ana', iso(30));
+    store.rememberRecentApp({ slug: 'just-left', name: 'Left' }, 'ana', iso(0));
+    store.rememberRecentApp({ slug: 'gone-from-directory', name: 'Gone' }, 'ana', iso(0));
+
+    assert.equal(Browse.RECENT_WINDOW_DAYS, 30);
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', NOW)), [], 'nothing planted, nothing recent');
+    Browse._recentEntries = () => store.readRecentApps('ana');
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', NOW)), ['just-left', 'last-month'],
+      'the directory\'s order, and only what the directory still lists');
+    Browse._recentEntries = () => store.readRecentApps('bo');
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', NOW)), [], 'another account on this device has none of it');
+    Browse._recentEntries = () => store.readRecentApps(null);
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', NOW)), [], 'nor does nobody');
+  });
+});
+
+test('Opened recently: a seeded parked app has no time, and never counts, even once written back', () => {
+  withRecentStore((store, storage) => {
+    const { Browse } = makeBrowse();
+    storage.set('usernode_parked_app_v1', JSON.stringify({ slug: 'parked', name: 'Parked' }));
+    assert.deepEqual(Array.from(store.readRecentApps('ana'), (a) => [a.slug, a.at]), [['parked', '']],
+      'it still seeds the list the sidebar reads a name from, undated');
+    Browse._recentEntries = () => store.readRecentApps('ana');
+    const apps = [app({ slug: 'parked' }), app({ slug: 'real' })];
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), []);
+
+    // What mount.ts does when the viewer arrives and then an app is left: the
+    // seeded entry goes into storage beside a real one, and must stay undated.
+    store.recentAppsStore.set({ apps: store.readRecentApps('ana') });
+    store.rememberRecentApp({ slug: 'real', name: 'Real' }, 'ana');
+    assert.deepEqual(slugsOf(store.readRecentApps('ana')), ['real', 'parked']);
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), ['real']);
+
+    Browse._recentEntries = () => [{ slug: 'parked', at: 'not a time' }, null];
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), [], 'junk is not recent either');
+    Browse._recentEntries = () => [{ slug: 'parked', at: new Date(Date.now() + 86400000).toISOString() }];
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), [], 'nor a time ahead of the clock');
+  });
+});
+
+test('Opened recently: an app left while storage refuses writes still counts, in this tab', () => {
+  withRecentStore((store) => {
+    const { Browse } = makeBrowse();
+    Browse._recentEntries = () => store.recentAppEntries('ana');
+    global.window.localStorage.setItem = () => { throw new Error('quota'); };
+    store.rememberRecentApp({ slug: 'left', name: 'Left' }, 'ana');
+    assert.deepEqual(slugsOf(store.readRecentApps('ana')), [], 'storage has nothing');
+    assert.deepEqual(slugsOf(Browse.filterApps([app({ slug: 'left' })], 'recent', Date.now())), ['left']);
+  });
+});
+
+test('Opened recently: an app another tab left counts too, without this tab having read it', () => {
+  withRecentStore((store, storage) => {
+    const { Browse } = makeBrowse();
+    Browse._recentEntries = () => store.recentAppEntries('ana');
+    storage.set(store.RECENT_APPS_KEY, JSON.stringify({
+      owner: 'ana', apps: [{ slug: 'other-tab', name: 'Other', at: new Date().toISOString() }],
+    }));
+    assert.deepEqual(store.recentAppsStore.get().apps, [], 'this tab has not heard');
+    const apps = [app({ slug: 'other-tab' }), app({ slug: 'this-tab' })];
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), ['other-tab']);
+
+    // …and this tab leaving an app does not write the other tab's over.
+    store.rememberRecentApp({ slug: 'this-tab', name: 'This' }, 'ana');
+    assert.deepEqual(slugsOf(store.readRecentApps('ana')), ['this-tab', 'other-tab']);
+    assert.deepEqual(slugsOf(Browse.filterApps(apps, 'recent', Date.now())), ['other-tab', 'this-tab']);
+
+    // Both sides know an app: the later time wins, whichever side has it.
+    const iso = (days) => new Date(Date.now() - days * 86400000).toISOString();
+    store.recentAppsStore.set({ apps: [{ slug: 'both', name: 'Both', at: iso(40) }] });
+    storage.set(store.RECENT_APPS_KEY, JSON.stringify({ owner: 'ana', apps: [{ slug: 'both', name: 'Both', at: iso(1) }] }));
+    store.rememberRecentApp({ slug: 'new-one', name: 'New' }, 'ana');
+    const both = store.readRecentApps('ana').find((a) => a.slug === 'both');
+    assert.ok(Date.now() - Date.parse(both.at) < 2 * 86400000, 'the later time');
+  });
+});
+
+test('Opened recently: the app you just left joins a list drawn before it was parked', () => {
+  withRecentStore((store) => {
+    const { Browse, state } = makeBrowse();
+    Browse._load = () => {};
+    Browse._recentEntries = () => store.recentAppEntries('ana');
+    Browse._apps = [app({ slug: 'left', name: 'Left' })];
+    Browse._only = ['recent'];
+    // The order App.navigateToBrowse runs them in: open, then park.
+    Browse.open(null);
+    assert.deepEqual(state.rows.map((row) => row.slug), []);
+    store.rememberRecentApp({ slug: 'left', name: 'Left' }, 'ana');
+    Browse.recentChanged();
+    assert.deepEqual(state.rows.map((row) => row.slug), ['left']);
+
+    // Nothing to redraw with the switch off, or with the screen shut.
+    let renders = 0;
+    const render = Browse.render;
+    Browse.render = () => { renders += 1; render(); };
+    Browse._only = [];
+    Browse.recentChanged();
+    Browse._only = ['recent'];
+    Browse.close();
+    Browse.recentChanged();
+    assert.equal(renders, 0);
+  });
+  // After the setViewer that replaced the list has also recorded who for.
+  assert.match(read('frontend/src/features/apps/mount.ts'),
+    /recentAppsStore\.subscribe\(\(\) => \{\s*queueMicrotask\(\(\) => .*recentChanged/);
+});
+
+test('Opened recently: mount.ts reads the store under the name it was written with', () => {
+  const mount = read('frontend/src/features/apps/mount.ts');
+  assert.match(mount, /_recentEntries = \(\) => recentAppEntries\(navStore\.get\(\)\.viewer\)/);
+  // The window the switch applies is the one its catalog description states.
+  const catalog = JSON.parse(read('frontend/locales/en/discover.json'));
+  assert.match(catalog['filter.recent'].description, /last 30 days/);
+  assert.match(catalog['filter.recent'].description, /not account-wide/);
+});
+
+test('Opened recently composes with the other switches, and the sheet counts what it will show', () => {
+  const { Browse, state } = makeBrowse();
+  const old = new Date(Date.now() - 200 * 86400000).toISOString();
+  const apps = [];
+  for (let i = 1; i <= 8; i += 1) {
+    apps.push(app({ slug: `old-${i}`, name: `Old ${i}`, created_at: new Date(Date.parse(old) + i * 86400000).toISOString() }));
+  }
+  Browse._apps = apps;
+  // Dated once, before the filter reads its clock: a time ahead of it is not recent.
+  const justNow = new Date(Date.now() - 1000).toISOString();
+  Browse._recentEntries = () => [{ slug: 'old-1', at: justNow }, { slug: 'old-8', at: justNow }];
+  Browse.applyFilters({ only: ['recent'] });
+  assert.equal(state.filter, 'recent');
+  assert.equal(state.activeCount, 1);
+  assert.deepEqual(state.rows.map((row) => row.slug).sort(), ['old-1', 'old-8']);
+
+  // Nothing in the directory is new, so New is its six newest (old-3 … old-8),
+  // and the switch then keeps the one of those you opened: old-1 stays out.
+  // A draft holds its switches in the order pressed; the answer may not
+  // depend on that, or "Show N apps" counts one list and shows another.
+  for (const only of [['new', 'recent'], ['recent', 'new']]) {
+    assert.equal(Browse.countFor({ view: 'browse', only, category: 'all', sort: 'recommended' }), 1, only.join());
+    Browse.applyFilters({ only });
+    assert.deepEqual(state.rows.map((row) => row.slug), ['old-8'], only.join());
+    assert.equal(state.filter, 'new recent');
+  }
+  Browse.applyFilters({ only: ['recent', 'notjoined'] });
+  assert.equal(state.rows.length, 2, 'nobody joined either');
+});
+
+test('Opened recently: its empty lines say so, on this device', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'plain', name: 'Plain' })];
+  Browse.applyFilters({ only: ['recent'] });
+  assert.equal(state.empty, message('discover:empty.recent'));
+  assert.match(state.empty, /on this device/);
+  Browse.setQuery('zzz', { immediate: true });
+  assert.equal(state.empty, 'Nothing you opened recently on this device matches “zzz”.');
+});
 
 test('narrowApps: the Joined view, each switch, and their composition', () => {
   const { Browse } = makeBrowse();
@@ -1033,6 +1219,7 @@ test('?filter= maps onto the switch and the sheet: yours is Joined, the rest are
     ['?filter=featured', { view: 'foryou', only: ['featured'] }],
     ['?filter=new', { view: 'foryou', only: ['new'] }],
     ['?filter=notjoined', { view: 'foryou', only: ['notjoined'] }],
+    ['?filter=recent', { view: 'foryou', only: ['recent'] }],
     ['?filter=all', { view: 'foryou', only: [] }],
     // The old admin switch is gone, so its link lands on defaults.
     ['?filter=unreviewed', { view: 'foryou', only: [] }],
