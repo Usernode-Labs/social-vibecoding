@@ -7795,6 +7795,14 @@
     "text": "Your vote is saved. This proposal can’t go live until its code is back.",
     "description": "Brief notice after a vote on a proposal whose code did not come across when Homeroom moved off GitHub: the vote was recorded, but nothing can be merged until the code (its branch) is restored or submitted again."
   },
+  "vote.toast.alreadyMerged": {
+    "text": "This change has already merged, so it no longer needs your vote.",
+    "description": "Brief notice when a Yes or No was pressed on a change that merged after the list showing it was read: the vote was not counted because the change is already live."
+  },
+  "vote.toast.noLongerUp": {
+    "text": "This change is no longer up for a vote.",
+    "description": "Brief notice when a Yes or No was pressed on a change that left the vote after the list showing it was read: the vote was not counted because the change is no longer being decided."
+  },
   "vote.toast.undoFailedHttp": {
     "text": "Couldn't take your vote back (HTTP {{status}}).",
     "description": "Brief notice when the viewer pressed Undo after voting on a proposal and the server refused without giving a reason; their vote still stands. {{status}} is the HTTP status code, a number."
