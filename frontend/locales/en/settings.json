@@ -1527,6 +1527,10 @@
     "text": "We never record: what you type or what is on screen.",
     "description": "Last line under the Share usage analytics switch in Settings > Privacy: what is never recorded, whether the switch is on or off."
   },
+  "privacy.usageAnalytics.alreadyRecorded": {
+    "text": "Turning this off doesn't delete what was already recorded.",
+    "description": "Last line under the Share usage analytics switch in Settings > Privacy, shown whether the switch is on or off: switching off only stops new recording."
+  },
   "privacy.usageAnalytics.saveFailed": {
     "text": "Could not save that. Try again.",
     "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
