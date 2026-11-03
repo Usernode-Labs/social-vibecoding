@@ -545,9 +545,12 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   function submit() {
     if (dictating || uploading || (!value.trim() && !attachments.length && !object)) return;
     setError(''); notifyTyping(false, threadRootId); setPrompt(null);
+    // #6212: the chip leaves with the message it rode on, so where it came
+    // from goes with it.
+    objectRef.current = null; objectFrom.current = null;
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
     const answerable = active?.homeroomBot !== true;
-    setValue(''); setAttachments([]); setChip(null, null);
+    setValue(''); setAttachments([]); setObject(null);
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
     send({ ...input, threadRootId })
       .then(() => { if (answerable) setAskReply(true); })

@@ -412,7 +412,9 @@ test('#6212: the composer keeps the list\'s attachment apart from the person\'s 
   assert.match(composer, /const onCleared = \(event: Event\) => \{[\s\S]{0,420}if \(objectFrom\.current !== 'list'\) return;\s+setChip\(null, null\);/,
     'a clear takes off only what the list attached');
   // Sending, changing scope and × also forget where the chip came from.
-  assert.match(composer, /setValue\(''\); setAttachments\(\[\]\); setChip\(null, null\);/);
+  assert.match(composer, /objectRef\.current = null; objectFrom\.current = null;\s+const input = \{ content: value\.trim\(\)/,
+    'sending forgets where the chip came from');
+  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(\[\]\); setChip\(null, null\);/);
   assert.match(composer, /onClick=\{\(\) => \{ setChip\(null, null\); setPrompt\(null\); \}\}/);
   // A request page opened from a bot message in Main Chat is the same
   // automatic attach the list itself makes.
