@@ -505,12 +505,12 @@ function stageOf(input, { now = new Date() } = {}) {
         stage: 'held',
         since: row.run_at,
         // #6156: the project's builds are a limit of their own, freed by a
-        // build finishing rather than by a vote.
+        // build finishing rather than by a vote. Its changes waiting for
+        // approval and the bot's ceiling across projects are the others
+        // (homeroom-bot.js SLOT_CAPS).
         doing: row.cap_suppressed === 'builds_per_app'
           ? 'ready to build, but waiting for its turn: the bot is already building as many changes on this project as it may at once'
-          : row.cap_suppressed === 'proposals_per_app' || row.cap_suppressed === 'proposals_total'
-          ? 'ready to build, but held back until one of the changes waiting for approval goes live or is closed (only so many may wait at once)'
-          : 'ready to build, but held back by the daily limit on questions and notes on this project',
+          : 'ready to build, but held back until one of the changes waiting for approval goes live or is closed (only so many may wait at once)',
       };
     }
     // B6: a first version's plan, sent to its creator, waits for Build it.
@@ -1073,31 +1073,39 @@ async function planHolds(pool, userId) {
 
 /**
  * Pure (#3771): what a request in the queue waits for, as the `queued`
- * stage's words and `waitingFor`. Its project reading another request (a
- * build runs on a session of its own and holds no read up);
- * the most the bot does for one person at once already under way; or, with
- * nothing in the way, its place in the queue. "Waiting in the queue
- * (number 4)" said none of that, and "when will you pick it up?" had no
- * answer.
+ * stage's words and `waitingFor`. Its project reading as many other
+ * requests as it may at once (`readsPerApp`, the bot's setting: each read
+ * runs on a triage session of its own; a build runs on a session of its own
+ * and holds no read up); the most the bot does for one person at once
+ * already under way; or, with nothing in the way, its place in the queue.
+ * "Waiting in the queue (number 4)" said none of that, and "when will you
+ * pick it up?" had no answer.
  */
 function queuedWait(row, {
-  busy = new Map(), working = 0, perPerson = 2, queuePosition = null, now = new Date(), holds = null,
+  busy = new Map(), working = 0, perPerson = 2, queuePosition = null, now = new Date(), holds = null, readsPerApp = 1,
 } = {}) {
   // 2026-10-05: its project's first version is not live yet, and nothing
   // else on the project starts until it is (homeroom-bot.js
   // FIRST_VERSION_PENDING_SQL). That is what it waits for, whatever else is.
   const firstVersion = firstVersionWait(row, holds, { reason: row.queue_reason });
   if (firstVersion) return { doing: FIRST_VERSION_WAIT, waitingFor: firstVersion };
-  const ahead = (busy.get(Number(row.app_id)) || [])
-    .find((b) => b.what === 'reading' && b.issueNumber !== Number(row.issue_number));
-  if (ahead) {
+  const most = Math.max(1, Math.floor(Number(readsPerApp) || 1));
+  const reading = (busy.get(Number(row.app_id)) || [])
+    .filter((b) => b.what === 'reading' && b.issueNumber !== Number(row.issue_number));
+  const ahead = reading[0];
+  if (ahead && reading.length >= most) {
     // How long the other one has run is its own; the entry's time so far is
     // this request's wait.
     const minutes = minutesSince(ahead.since, now);
+    const numbers = reading.map((b) => `#${b.issueNumber}`);
+    const words = most === 1
+      ? `request #${ahead.issueNumber} first (one read per project at a time)`
+      : `requests ${numbers.length > 1 ? `${numbers.slice(0, -1).join(', ')} and ${numbers[numbers.length - 1]}` : numbers[0]} first (${most} reads per project at a time)`;
     return {
-      doing: `waiting its turn: ${row.name || row.slug} is reading request #${ahead.issueNumber} first (one read per project at a time)`,
+      doing: `waiting its turn: ${row.name || row.slug} is reading ${words}`,
       waitingFor: {
         reason: 'project_busy', number: ahead.issueNumber, doing: 'reading', ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
+        ...(most > 1 ? { reading: reading.length, most } : {}),
       },
     };
   }
@@ -1310,6 +1318,7 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
   const busy = staged.some((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
     ? await projectsBusy(pool, rows) : new Map();
   const perPerson = Number(settings?.perPerson) || 2;
+  const readsPerApp = Number(settings?.readsPerApp) || require('./homeroom-bot').DEFAULTS.readsPerApp;
   const holds = await waitingHolds(pool, staged);
   const plans = staged.some((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
     ? await planHolds(pool, userId) : new Set();
@@ -1324,7 +1333,7 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
         row: s.row,
         state: {
           ...s.state,
-          ...queuedWait(s.row, { busy, working: busyCount, perPerson, queuePosition: s.queuePosition, now, holds }),
+          ...queuedWait(s.row, { busy, working: busyCount, perPerson, queuePosition: s.queuePosition, now, holds, readsPerApp }),
         },
       };
     }

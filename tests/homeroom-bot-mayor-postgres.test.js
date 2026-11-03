@@ -202,6 +202,10 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   // The bot is on, for everyone with platform access, on every app but a
   // paused one.
   await setting('homeroom_bot_mode', 'shadow');
+  // One read per project, as these stories were written for (the default is
+  // three): no look's work runs here, so every read granted stays under way
+  // and holds its person's share.
+  await setting('homeroom_bot_reads_per_app', '1');
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
   const settings = await homeroomBot.readSettings(pool);
 

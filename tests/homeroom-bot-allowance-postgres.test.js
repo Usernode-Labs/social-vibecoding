@@ -91,7 +91,7 @@ test('weekly building time against the full PostgreSQL schema', { timeout: 18000
         return { issues: [{ number: 7, state: 'open', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' }] };
       },
     };
-    const capRoom = { proposals_per_app: 5, proposals_total: 50, question_tripwire: 10 };
+    const capRoom = { proposals_per_app: 5, proposals_total: 50 };
     // Three refreshes: before, the row was deleted when it was held and
     // queued again by each of these, at the back.
     for (let i = 0; i < 3; i += 1) {

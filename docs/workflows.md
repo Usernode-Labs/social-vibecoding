@@ -884,7 +884,10 @@ projection, guarded so only its transitions write a row it holds.
   are read again by the next refresh. `NotOwed` from the refresh prunes what it no longer
   wants.
 - **A look** starts when the lane grants a slot (`Granted`): `bot.look` (`homeroom-bot.js
-  lookAt`), a read on the project's triage session or a reply or fix on its change. Its
+  lookAt`), a read on the triage session of the read slot its grant names (`readSlot`:
+  slot 0 is the project's triage session, each further slot a session of its own, made
+  on its first read and marked with its slot, `source` `homeroom_bot_read:<slot>`), or a
+  reply or fix on its change. Its
   turns are durable steps naming the item, and every effect (the run, the spend, the
   notes, the act, the asks' tag) is a keyed step, so a restart follows the turn and says
   and spends nothing twice. A project's first read is granted before its triage session
@@ -922,11 +925,19 @@ projection, guarded so only its transitions write a row it holds.
 
 How much the Homeroom bot runs at once, and when it looks at GitHub
 (`src/workflow/bot-lane/`). One instance (`bot`), so the caps hold however many processes
-run the workflow: `liveAtOnce` looks and builds, `perPerson`, one read at a time on a
-project's triage session, three builds per project.
+run the workflow: `liveAtOnce` looks and builds, `perPerson`, `readsPerApp` reads at once
+on a project (`homeroom_bot_reads_per_app`, 3 unless an admin sets 1 to 6), each on a read
+slot no other read holds while it runs, three builds per project.
 - **Grants** under its lock, in the queue's order (a person's ask, follow-ups, priority,
   age), as `Granted` messages; what is in use is read from the requests (their `slot`, and
-  grants not applied yet), never kept here.
+  grants not applied yet), never kept here. A read takes its project's lowest free read
+  slot. bot-request is at version 2 since read slots: an older release runs every read of
+  a project on its newest triage session whatever its grant says, so a read an older
+  release may run (its request last written by version 1, or granted with no slot) holds
+  all its project's read slots, and is granted only while nothing else reads it. Older
+  code leaves the requests version 2 wrote, and their looks, alone; a rollback past it
+  lowers them (`UPDATE wf_instances SET machine_version = 1 WHERE machine = 'bot-request'`,
+  in a transition, once no process of the newer release is live).
 - **Pauses**: a fault (a look's platform failure) pauses every grant 2 minutes doubling to
   an hour, ended by a look that ran; the bot's weekly cap a minute at a time; GitHub's
   hourly budget nearly used up (`services/github-budget.js`: a look, a build's start, the

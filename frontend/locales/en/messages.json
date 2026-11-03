@@ -4535,10 +4535,6 @@
     "text": "Waiting: Homeroom bot is at its limit across projects",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"bot_wide\"."
   },
-  "bot.track.line.held.questions": {
-    "text": "Waiting: today's questions on this project are used up",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"questions\"."
-  },
   "bot.track.line.held.allowance": {
     "text": "On hold: this week's building time is used up",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"allowance\"."
@@ -4742,10 +4738,6 @@
   "bot.track.filed.held.bot_wide": {
     "text": "Homeroom bot builds it when a slot frees: it is at its limit across projects. Its progress shows here and on the request.",
     "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because Homeroom bot has as much work waiting as it may have across all projects. \"Here\" is the person's chat with Homeroom bot."
-  },
-  "bot.track.filed.held.questions": {
-    "text": "Homeroom bot builds it once its daily limit resets: today's questions on this project are used up. Its progress shows here and on the request.",
-    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because the bot has used up the questions and notes it may post on this project today. \"Here\" is the person's chat with Homeroom bot."
   },
   "bot.track.filed.held.allowance": {
     "text": "Homeroom bot builds it once the week resets: this week's building time is used up. Its progress shows here and on the request.",
@@ -5011,10 +5003,6 @@
     "text": "{{project}} · #{{number}} · Ready to build · waits until a change up for a vote is decided",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but only so many of a project's changes may wait for a vote at once, so it starts once one of them goes live or is closed."
   },
-  "ai.up.heldDaily": {
-    "text": "{{project}} · #{{number}} · Ready to build · held by today's limit on this project",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but the project's daily limit on Homeroom bot's questions and notes is used up."
-  },
   "ai.up.heldTurn": {
     "text": "{{project}} · #{{number}} · Ready to build · waits for Homeroom bot's turn on this project",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but it is already building as many changes on the project at once as it may, so it starts once one of those builds is done."
@@ -5254,10 +5242,6 @@
   "ai.short.slot": {
     "text": "A slot",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting for one of Homeroom bot's slots for changes up for a vote."
-  },
-  "ai.short.tomorrow": {
-    "text": "Tomorrow",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: held by today's limit on the project, so it waits for tomorrow."
   },
   "ai.short.stalled": {
     "text": "Stalled",

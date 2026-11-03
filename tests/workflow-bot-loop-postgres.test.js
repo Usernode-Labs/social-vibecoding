@@ -67,6 +67,9 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
   await setting('homeroom_bot_mode', 'live');
   await setting('homeroom_bot_live_at_once', '3');
   await setting('homeroom_bot_per_person', '2');
+  // One read per project unless a subtest says otherwise (the default is 3:
+  // 'reads per project' below).
+  await setting('homeroom_bot_reads_per_app', '1');
   const requester = (appId, n, userId) => pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [appId, n, userId]);
   const asTransition = async (fn) => {
@@ -188,6 +191,122 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     // came after the previous one's end).
     const app2Looks = calls(request.WORK.look).filter((c) => c.input.appId === app2.id).map((c) => c.input.issueNumber);
     assert.deepEqual(app2Looks, [3, 4, 5]);
+  });
+
+  // 3 Nov 2026: a project's requests are read up to readsPerApp at once, each
+  // on a read slot of its own (one of its triage sessions); never two looks
+  // of one request, and a fourth waits, saying why.
+  await t.test('reads per project: at 3, three waiting requests of a project are read at once, each on its own read slot; a fourth waits', async () => {
+    reset();
+    const app8 = await mkApp('reads-three');
+    const people = [await user(), await user(), await user(), await user()];
+    for (const [i, p] of people.entries()) await requester(app8.id, i + 1, p.id);
+    // The project's triage session (slot 0) and slot 1's, marked as its,
+    // newer: the lane names slot 0's in a grant, never another slot's.
+    const { rows: [s0] } = await pool.query(`INSERT INTO chat_sessions (app_id, user_id, branch_name, status) VALUES ($1, $2, 'main', 'paused') RETURNING id`, [app8.id, bot.id]);
+    await pool.query(`INSERT INTO chat_sessions (app_id, user_id, branch_name, status, source) VALUES ($1, $2, 'main', 'paused', 'homeroom_bot_read:1')`, [app8.id, bot.id]);
+    await setting('homeroom_bot_mode', 'off');
+    for (const n of [1, 2, 3, 4]) await oweOnly(app8.id, n);
+    await setting('homeroom_bot_reads_per_app', '3');
+    // Room for more in all, so what holds the fourth is its project's three.
+    await setting('homeroom_bot_live_at_once', '6');
+    await setting('homeroom_bot_mode', 'live');
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    const mine = async () => (await queuedWork(request.WORK.look)).filter((w) => w.input.appId === app8.id);
+    let looks = await mine();
+    assert.deepEqual(looks.map((w) => [w.input.issueNumber, w.input.readSlot]).sort((a, b) => a[0] - b[0]), [[1, 0], [2, 1], [3, 2]],
+      'three at once, the oldest first, each on a slot of its own');
+    assert.equal(looks.find((w) => w.input.readSlot === 0).input.sessionId, s0.id, 'slot 0 on the triage session');
+    assert.ok(looks.filter((w) => w.input.readSlot !== 0).every((w) => w.input.sessionId == null), 'the others\' looks find their own');
+    assert.deepEqual((await states('reading')).filter((k) => k.startsWith(`request:${app8.id}:`)).sort(),
+      [1, 2, 3].map((n) => requestKey(app8.id, n)).sort());
+    const four = await inst(request.MACHINE, requestKey(app8.id, 4));
+    assert.equal(four.state, 'queued', 'the fourth waits');
+    assert.equal(four.machine_version, request.botRequest({ staging: false }).version);
+    // And the queue says why: its project's read slots are all taken.
+    const bot_ = require('../src/services/homeroom-bot');
+    const snap = await bot_.queueSnapshot(pool, { mode: 'live', pausedApps: [], perPerson: 2, readsPerApp: 3 }, { botId: bot.id });
+    assert.deepEqual(snap.items.find((i) => Number(i.app_id) === app8.id && Number(i.issue_number) === 4).waiting, { reason: 'reads_per_app', until: null });
+    // Never two looks of one request: a person's ask during #1's read waits for after it.
+    await oweOnly(app8.id, 1, { reason: 'dm_answer', priority: 0, requestedBy: people[0].id });
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    looks = await mine();
+    assert.equal(looks.length, 3);
+    assert.equal(looks.filter((w) => w.key === requestKey(app8.id, 1)).length, 1, 'one look of #1');
+    assert.equal((await inst(request.MACHINE, requestKey(app8.id, 1))).data.owed.reason, 'dm_answer', 'kept for after it');
+    // They end: #4 and #1 again take the slots they free.
+    work.answer.set(request.WORK.look, { outcome: 'done' });
+    await settle();
+    const ran = calls(request.WORK.look).filter((c) => c.input.appId === app8.id);
+    assert.deepEqual(ran.map((c) => c.input.issueNumber).sort(), [1, 1, 2, 3, 4]);
+    for (const c of ran) assert.ok([0, 1, 2].includes(c.input.readSlot), `#${c.input.issueNumber} on a slot`);
+    for (const n of [1, 2, 3, 4]) assert.equal((await inst(request.MACHINE, requestKey(app8.id, n))).state, 'idle');
+    // At 1, one at a time again.
+    await setting('homeroom_bot_reads_per_app', '1');
+    await setting('homeroom_bot_mode', 'off');
+    for (const n of [5, 6]) { await requester(app8.id, n, people[n - 3].id); await oweOnly(app8.id, n); }
+    await setting('homeroom_bot_mode', 'live');
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    assert.deepEqual((await mine()).map((w) => [w.input.issueNumber, w.input.readSlot]), [[5, 0]]);
+    await settle();
+    assert.deepEqual(calls(request.WORK.look).filter((c) => c.input.appId === app8.id && c.input.issueNumber >= 5).map((c) => c.input.issueNumber), [5, 6],
+      'in turn');
+    await setting('homeroom_bot_live_at_once', '3');
+  });
+
+  // During a rollout an older release runs every read of a project on its
+  // newest triage session, whatever the grant says: a read it may be running
+  // takes the whole project, and a request it last wrote is granted only on
+  // a project nothing else reads.
+  await t.test('reads per project: a read an older release may run holds its whole project; one it last wrote waits for an idle one', async () => {
+    reset();
+    const app9 = await mkApp('reads-older');
+    const people = [await user(), await user(), await user(), await user()];
+    for (const [i, p] of people.entries()) await requester(app9.id, i + 1, p.id);
+    await setting('homeroom_bot_mode', 'off');
+    for (const n of [1, 2, 3, 4]) await oweOnly(app9.id, n);
+    await setting('homeroom_bot_reads_per_app', '3');
+    // #1: being read by an older release (written by version 1, its slot as
+    // that release kept it: no read slot).
+    const one = await inst(request.MACHINE, requestKey(app9.id, 1));
+    const data = {
+      ...one.data, owed: null, n: 1,
+      slot: { grant: 999, kind: 'read', person: `u${people[0].id}`, appId: app9.id },
+      look: { n: 1, kind: 'read', sessionId: null, owed: one.data.owed, startedAt: new Date().toISOString(), interrupted: false },
+    };
+    await asTransition((cl) => cl.query(`UPDATE wf_instances SET state = 'reading', machine_version = 1, data = $3::jsonb WHERE machine = $1 AND key = $2`,
+      [request.MACHINE, requestKey(app9.id, 1), JSON.stringify(data)]));
+    await setting('homeroom_bot_mode', 'live');
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    const mine = async () => (await queuedWork(request.WORK.look)).filter((w) => w.input.appId === app9.id);
+    assert.deepEqual(await mine(), [], 'nothing else is read on its project while it runs');
+    assert.equal((await inst(request.MACHINE, requestKey(app9.id, 2))).state, 'queued');
+    // It ends (a person's Stop of it, here): #2 and #3 are read, on slots 0 and 1.
+    await sendOnly(request.MACHINE, requestKey(app9.id, 1), 'StopRequested', { by: 'ada' }, { kind: 'route' });
+    assert.equal((await inst(request.MACHINE, requestKey(app9.id, 1))).state, 'idle');
+    let looks = await mine();
+    assert.deepEqual(looks.map((w) => [w.input.issueNumber, w.input.readSlot]).sort((a, b) => a[0] - b[0]), [[2, 0], [3, 1], [4, 2]]);
+    // A request an older version last wrote, queued beside them, waits for
+    // its project to be idle (#1, owed again).
+    work.answer.set(request.WORK.look, { outcome: 'done' });
+    await setting('homeroom_bot_mode', 'off');
+    await settle();
+    await oweOnly(app9.id, 1, { reason: 'dm_answer', priority: 0 });
+    await oweOnly(app9.id, 2);
+    await asTransition((cl) => cl.query('UPDATE wf_instances SET machine_version = 1 WHERE machine = $1 AND key = $2', [request.MACHINE, requestKey(app9.id, 1)]));
+    await setting('homeroom_bot_mode', 'live');
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    looks = await mine();
+    assert.deepEqual(looks.map((w) => [w.input.issueNumber, w.input.readSlot]), [[1, 0]], 'first in line, alone on its project; #2 waits');
+    const first = await inst(request.MACHINE, requestKey(app9.id, 1));
+    assert.equal(first.machine_version, request.botRequest({ staging: false }).version, 'applied here, so its read runs on its slot');
+    assert.equal(first.data.slot.readSlot, 0);
+    // Applied by this version, it holds only its slot: the next look grants #2 beside it.
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    assert.deepEqual((await mine()).map((w) => [w.input.issueNumber, w.input.readSlot]).sort((a, b) => a[0] - b[0]), [[1, 0], [2, 1]]);
+    await settle();
+    for (const n of [1, 2, 3, 4]) assert.equal((await inst(request.MACHINE, requestKey(app9.id, n))).state, 'idle');
+    await setting('homeroom_bot_reads_per_app', '1');
   });
 
   // The refresh: a full one every five minutes, and soon after a project is

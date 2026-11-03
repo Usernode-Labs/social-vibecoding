@@ -193,7 +193,7 @@ test('the bot keeps its promises and reads its older requests, one at a time', {
     async getIssue() { return null; },
   };
   const settings = { mode: 'live', pausedApps: [], everyoneSince: EVERYONE, voiceSession: true, voiceIssue: true };
-  const room = { builds_per_app: 2, proposals_per_app: 3, proposals_total: 20, question_tripwire: 10 };
+  const room = { builds_per_app: 2, proposals_per_app: 3, proposals_total: 20 };
   const dm = { async recordRequester() { return null; }, async sendDm() { return null; } };
   const refresh = async (capRoom = room) => {
     const out = await bot.refreshApp(pool, app, { github, capRoom, bot: botUser, everyoneSince: EVERYONE, settings, dm });
