@@ -4499,7 +4499,7 @@ test('what app.css reads off the page\'s hosts is a class, never a :has() that l
   // What each one means. The skeleton has no band, no board and no tab; the
   // board is the All items page read by stage and nothing else draws one.
   assert.match(WORKSHOP, /useWorkshopHostState\(\s*hostRef,\s*!v\.loading,\s*!v\.loading && tab === 'all' && group === 'stage',\s*!v\.loading && tab === 'needs',\s*\);/);
-  assert.match(WORKSHOP, /\{group === 'stage' \? \(\s*<div className="dev-ws-board"/, 'the pane the class stands for');
+  assert.match(WORKSHOP, /\{group === 'stage' \? \(\s*<>\s*\{v\.emptyNote \? \([\s\S]*?\) : null\}\s*<div className="dev-ws-board"/, 'the pane the class stands for');
 
   // The stylesheet reads exactly those three, with the weight the `:has()`
   // forms had (a `:has()` weighs what its argument weighs). The one
@@ -4891,7 +4891,91 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   assert.equal(message('project:boardEmpty.press.hub.plain.full'),
     'Nothing on the board yet. Press <0>⋯</0> to suggest an improvement; to make one yourself, use Build it now there.');
   assert.match(WORKSHOP, /\{startHere \? <StartHereBanner slug=\{slug\} name=\{projectName\} bot=\{!!\(v\.mine && v\.mine\.bot\)\} \/> : null\}/);
-  assert.match(WORKSHOP, /\{v\.emptyNote && !building && !startHere \? \(\s*<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+onHub\s*\/>/);
+  assert.match(WORKSHOP, /\{v\.emptyNote && !building && !startHere \? \(\s*<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+start=\{emptyStart\}\s+onHub\s*\/>/);
+});
+
+test('#6111: an empty board offers the one action that starts the first change', async () => {
+  const empty = (over, appOver) => {
+    const AppView = makeAppView(appOver);
+    seed(AppView);
+    AppView._ghIssues = [];
+    AppView._proposals = [];
+    AppView._merged = [];
+    AppView._mergedTotal = 0;
+    Object.assign(AppView, over || {});
+    return AppView;
+  };
+  const START = / data-ws-empty-start=""[^>]*>Start a change<\/button>/;
+  const START_BOT = / data-ws-empty-start-bot=""[^>]*>Tell Homeroom bot what to change<\/button>/;
+
+  // All items, By category: the note, then one primary action.
+  const category = workshopHtml(empty(), 'all');
+  assert.match(category, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /, 'the note is unchanged');
+  assert.match(category, START, 'with Start a change under it');
+  assert.doesNotMatch(category, / data-ws-empty-start-bot=""/);
+  assert.equal(message('project:boardEmpty.start'), 'Start a change');
+  assert.equal(message('project:boardEmpty.startBot'), 'Tell Homeroom bot what to change');
+
+  // Where Homeroom bot builds for this viewer, the one action is its chat.
+  const botty = empty();
+  botty._ghIssuesMeta = { ...botty._ghIssuesMeta, homeroomBot: { typicalMinutes: 8 } };
+  const bot = workshopHtml(botty, 'all');
+  assert.match(bot, START_BOT, 'the bot door replaces the session');
+  assert.doesNotMatch(bot, / data-ws-empty-start=""/, 'never both');
+
+  // By stage used to show only a column of "Nothing here yet"s: the note and
+  // its action now lead the columns.
+  const stageApp = empty({}, { localStorage: { devWorkshopGroup: 'stage' } });
+  const stage = workshopHtml(stageApp, 'all');
+  assert.ok(stage.includes('data-ws-stage'), 'the columns render');
+  assert.match(stage, START);
+  assert.ok(stage.indexOf('data-ws-empty') < stage.indexOf('data-ws-stage'), 'the note comes before the columns');
+
+  // A board with entries is not empty, and By stage says nothing.
+  const full = makeAppView({ localStorage: { devWorkshopGroup: 'stage' } });
+  seed(full);
+  assert.ok(!workshopHtml(full, 'all').includes('data-ws-empty'), 'no note on a board with cards');
+
+  // A search that hides everything is not an empty board.
+  const searched = empty();
+  searched._workshopThemes = themes([{ id: 't1', name: 'Voting', items: ['issue:12'] }]);
+  searched._kanbanFilters = { ...searched._defaultKanbanFilters(), q: 'nothing matches this' };
+  const filtered = workshopHtml(searched, 'all');
+  assert.match(filtered, /Nothing here matches the current search and filters\./);
+  assert.doesNotMatch(filtered, START, 'no start action for a search');
+
+  // Nor is a list that could not load.
+  const failed = empty();
+  failed._ghIssuesMeta = { ...failed._ghIssuesMeta, note: 'could not load' };
+  const unloaded = workshopHtml(failed, 'all');
+  assert.match(unloaded, /Couldn&#x27;t load open requests right now\./);
+  assert.doesNotMatch(unloaded, START, 'no start action when we cannot tell');
+
+  // A viewer who can only look has nowhere to start.
+  withDevActions({ readOnly: true }, () => {
+    const html = workshopHtml(empty(), 'all');
+    assert.match(html, /data-ws-empty=""[^>]*>Nothing on the board yet\.<\/div>/);
+    assert.doesNotMatch(html, START, 'no button for a reader');
+  });
+
+  // While Homeroom bot builds the first version the board is empty too, but
+  // "start the first change" would be the change already being made. The
+  // community read runs in an effect, which static rendering does not run,
+  // so this half is pinned at the gate that reads it.
+  assert.match(WORKSHOP, /const emptyStart = v\.emptyNote && !v\.emptyNote\.loadFailed && !building/,
+    'no start while the bot builds the first version');
+
+  // The hub carries the same note and button once it has shipped, and none
+  // while the start-here banner holds its place.
+  const finished = empty({ _mergedTotal: 3 });
+  const hub = workshopHtml(finished, 'status');
+  assert.match(hub, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /);
+  assert.match(hub, START);
+  const unstarted = empty();
+  const banner = workshopHtml(unstarted, 'status');
+  assert.match(banner, /data-ws-start-here=""/);
+  assert.ok(!banner.includes('data-ws-empty'), 'the banner says it');
+  assert.doesNotMatch(banner, START);
 });
 
 test('exactly one surface draws the toolbar, so its ids stay unique', () => {

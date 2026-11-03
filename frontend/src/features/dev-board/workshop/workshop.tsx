@@ -577,13 +577,22 @@ const EMPTY_PRESS: Record<'hub' | 'away', Record<'collab' | 'plain', string>> = 
   },
 };
 
-function EmptyNote({ filtered, loadFailed, onHub = false }: {
+function EmptyNote({ filtered, loadFailed, onHub = false, start = null }: {
   filtered: boolean;
   loadFailed: boolean;
   /** Drawn on the hub, under the hero whose ⋯ it names. */
   onHub?: boolean;
+  /**
+   * #6111: the one action that starts the first change, for a board that
+   * really holds nothing. `bot` says Homeroom bot builds changes for this
+   * viewer here, so the action is its chat rather than a session. It is a
+   * sibling of the note, never inside it, so the sentence every check and
+   * pin selects on is unchanged.
+   */
+  start?: { slug: string; name: string; bot: boolean } | null;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
+  const improveReadOnly = useStoreState(improveStore).readOnly;
   const t = useMessages('project');
   // One whole sentence per case: where the ⋯ is, and what it holds for
   // this viewer.
@@ -592,15 +601,44 @@ function EmptyNote({ filtered, loadFailed, onHub = false }: {
     <RichMessage id={press} components={[<span className="font-medium text-violet-700 dark:text-violet-400" />]} />
   );
   return (
-    <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
-      {filtered ? (
-        t('project:boardEmpty.filtered')
-      ) : loadFailed ? (
-        // The sentence about the board follows the one about the load, where
-        // the message puts it.
-        <RichMessage id="project:boardEmpty.loadFailed" components={[<>{board}</>]} />
-      ) : board}
-    </div>
+    <>
+      <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
+        {filtered ? (
+          t('project:boardEmpty.filtered')
+        ) : loadFailed ? (
+          // The sentence about the board follows the one about the load, where
+          // the message puts it.
+          <RichMessage id="project:boardEmpty.loadFailed" components={[<>{board}</>]} />
+        ) : board}
+      </div>
+      {/* A search or a failed load means the board may not be empty, and a
+          read-only viewer has nowhere to go: neither gets the button. The
+          same goes for the hub's second gate, improveStore.readOnly, which
+          is what the start-here card's own action reads. */}
+      {start && !filtered && !loadFailed && !readOnly && !improveReadOnly ? (
+        start.bot && start.slug ? (
+          <Button
+            type="button"
+            data-ws-empty-start-bot=""
+            size="sm"
+            className="self-start mb-2"
+            onClick={() => { void openBot(startHereBotReference(start.slug, start.name)); }}
+          >
+            {t('project:boardEmpty.startBot')}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            data-ws-empty-start=""
+            size="sm"
+            className="self-start mb-2"
+            onClick={() => Improve.startSession()}
+          >
+            {t('project:boardEmpty.start')}
+          </Button>
+        )
+      ) : null}
+    </>
   );
 }
 
@@ -4886,6 +4924,13 @@ export function DevWorkshop(): ReactNode {
      what the pinned pane head and its band are measured against (`setBar`).
      The back bar scrolls away under it. */
   const projectName = app.name || community?.name || slug;
+  // #6111: the empty board's one start action. `v.emptyNote` is set only
+  // when the board itself holds nothing (never for a search or a filter),
+  // so a failed load is the one case that has to be taken out again; a
+  // project Homeroom bot is still building gets no second start.
+  const emptyStart = v.emptyNote && !v.emptyNote.loadFailed && !building
+    ? { slug, name: projectName, bot: !!(v.mine && v.mine.bot) }
+    : null;
   const choosePlace = (key: TabKey) => {
     trayNav.current = true;
     setTrayOpen(false);
@@ -5146,6 +5191,7 @@ export function DevWorkshop(): ReactNode {
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
           loadFailed={v.emptyNote.loadFailed}
+          start={emptyStart}
           onHub
         />
       ) : null}
@@ -5657,17 +5703,26 @@ export function DevWorkshop(): ReactNode {
               backdrop makes them the same colour by construction. */}
           <div className="dev-ws-pane-body">
           {group === 'stage' ? (
-            <div className="dev-ws-board" data-ws-stage="">
-              <DevKanban openKey={sideKey} onOpen={openItem} />
-            </div>
+            <>
+              {v.emptyNote ? (
+                /* #6111: an empty board's columns each say "Nothing here
+                   yet"; the note above them says what to do about it. */
+                <EmptyNote filtered={false} loadFailed={v.emptyNote.loadFailed} start={emptyStart} />
+              ) : null}
+              <div className="dev-ws-board" data-ws-stage="">
+                <DevKanban openKey={sideKey} onOpen={openItem} />
+              </div>
+            </>
           ) : !themes.length ? (
             /* The rows' place, under the controls that emptied it. `filtered`
                is the live filter state rather than `emptyNote`'s: that note
                is about the BOARD having no entries, and a board whose every
                open item a search has hidden still has them, so it stays null
                while the theme list is bare. The stage pane needs none of
-               this — the columns say "No matching cards" for themselves. */
-            <EmptyNote filtered={v.meta.filtered} loadFailed={!!(v.emptyNote && v.emptyNote.loadFailed)} />
+               this — a board with no entries cannot be narrowed, so it passes
+               `false` — and its columns say "No matching cards" for
+               themselves. */
+            <EmptyNote filtered={v.meta.filtered} loadFailed={!!(v.emptyNote && v.emptyNote.loadFailed)} start={emptyStart} />
           ) : (
           <>
           <div className="dev-ws-sort">
