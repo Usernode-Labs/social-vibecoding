@@ -523,16 +523,16 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "476bc6cbc89e56feb04a",
+      "fingerprint": "88f4499c338d7f3adb7a",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
     },
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "88f4499c338d7f3adb7a",
+      "fingerprint": "b8cdda3a464d8ae27cce",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, a.moderation_suspended_at, ${SESSION_WORK_COLUMNS} FRO"
     },
     {
       "source": "src/routes/proposal-handoff.js",
@@ -1639,6 +1639,13 @@
       "fingerprint": "dd7dfd2983ae4a231fb1",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
+    },
+    {
+      "source": "src/services/preview-sleep.js",
+      "kind": "structural-template",
+      "fingerprint": "aa74331ecdcc54d02ff3",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions cs SET staging_asleep_at = now(), staging_asleep_db_bytes = NULL WHERE cs.id = $1 AND cs.staging_asleep_at IS NULL AND cs.staging_url IS N"
     },
     {
       "source": "src/services/private-threads.js",

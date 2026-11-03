@@ -304,6 +304,11 @@ test('each row says where its request stands under its title, in grey: the need 
     [{ kind: 'note', moment: 'live', said: 'live' }, 'Live', false],
     [{ kind: 'note', moment: 'ready', said: 'ready_group' }, 'Ready to try', false],
     [{ kind: 'note', moment: 'on_hold', said: 'allowance' }, 'On hold until Monday', false],
+    // #6156: held for votes on the bot's other changes, and held for its turn, read apart.
+    [{ kind: 'held_proposals_per_app' }, 'Waiting for votes on other changes', false],
+    [{ kind: 'held_builds_per_app' }, 'Waiting its turn to be built', false],
+    [{ kind: 'note', moment: 'on_hold', said: 'slots' }, 'Waiting for votes on other changes', false],
+    [{ kind: 'note', moment: 'on_hold', said: 'builds' }, 'Waiting its turn to be built', false],
   ];
   // Before the tray's first read (as here), a row says what its message rang as.
   for (const [meta, words, need] of cases) {

@@ -176,3 +176,15 @@ test('the item’s eyebrow reads the new catalog entry for a marked row', () => 
   assert.match(WORKSHOP, /needsYou\.eyebrow\.changeAdvisory/, 'FeedItem names the id where the eyebrow is drawn');
   assert.match(WORKSHOP, /row\.yes && \(row\.yes\.advisory \|\| row\.yes\.uncounted\)/, 'on a change row whose Yes carries a flag');
 });
+
+// #6199: the feed reopens on the vote that decides, never having skipped
+// past it to the advisory rows below. `firstUnseenIndex` gets a deciding
+// predicate built on the same `rowVoteType` the filter reads.
+test('the resume effect stops at a vote that decides, whatever was passed over', () => {
+  assert.match(
+    WORKSHOP,
+    /firstUnseenIndex\(items, \(r\) => rowSlug\(r, slug\), \(r\) => rowVoteType\(r\) === 'deciding'\)/,
+    'the deciding row stops the scan even when it was already seen',
+  );
+  assert.match(WORKSHOP, /import \{[^}]*rowVoteType[^}]*\} from '\.\.\/\.\.\/workshop\/vote-filter';/);
+});

@@ -270,10 +270,13 @@ function Row({ view, eager = false }: {
           ) : null}
           <span className="block truncate">{view.meta}</span>
           {hasAppPills(view.app) ? (
-            <span className="mt-1 flex flex-wrap items-center gap-1">
+            <span className="mt-1 flex flex-wrap items-center gap-1 whitespace-normal">
               {/* ONE pill: the first thing that asks for attention, else
                   the visibility. A row of three chips under a meta line
-                  was more to read than the app's own name. */}
+                  was more to read than the app's own name. `whitespace-normal`
+                  undoes the subtitle's `truncate` for the chip: a chip wider
+                  than a narrow phone's column breaks onto a second line
+                  instead of being cut off mid-word (#5928). */}
               <AppPills app={view.app} limit={1} />
             </span>
           ) : null}

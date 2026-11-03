@@ -245,7 +245,7 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
     row('vote', { myVote: 'yes' }), row('vote', { myVote: 'no' }), row('vote', { myVote: null }),
     row('checking'),
     row('fix_queued'), row('followup_queued'), row('build_queued'),
-    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('stalled'),
+    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'turn' }), row('held', { heldBy: 'daily' }), row('stalled'),
     row('queued'), row('on_hold'),
     row('not_picked_up'), row('not_picked_up', { quietDays: 10 }), row('not_picked_up', { number: null }),
   ].map((r) => words(nextWords(r))), [
@@ -256,6 +256,7 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
     'Garden club · #7 · Waiting for a free builder to follow up on the replies',
     'Garden club · #7 · Ready to build · waiting its turn',
     'Garden club · #7 · Ready to build · waits until a change up for a vote is decided',
+    'Garden club · #7 · Ready to build · waits for Homeroom bot\'s turn on this project',
     'Garden club · #7 · Ready to build · held by today\'s limit on this project',
     'Garden club · #7 · Ready to build · its build has not started',
     'Garden club · #7 · Waiting for a free builder',
@@ -287,10 +288,10 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   assert.deepEqual([
     row('going_live'), row('building', { by: 'bot' }), row('building', { by: 'you' }), row('building', { by: 'someone', claimedBy: 'snait' }),
     row('building', { by: 'someone' }), row('vote'), row('checking'), row('decision'), row('queued'), row('build_queued'),
-    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('on_hold'), row('not_picked_up'), row('mystery'),
+    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'turn' }), row('held', { heldBy: 'daily' }), row('on_hold'), row('not_picked_up'), row('mystery'),
   ].map((r) => words(shortWords(r))), [
     'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Checks', 'Votes', 'A builder', 'In line',
-    'A slot', 'Tomorrow', 'Monday', 'Nobody yet', 'Waiting',
+    'A slot', 'In line', 'Tomorrow', 'Monday', 'Nobody yet', 'Waiting',
   ]);
   // Every id is one whole literal, so the inventory can check it exists.
   assert.ok(!read(MODEL).includes('messages:ai.short.${'));
@@ -344,6 +345,8 @@ test('the server: a vote you have given waits on others (Up next), and the bot\'
   assert.deepEqual(bot('held', { capSuppressed: 'proposals_per_app' }), { group: 'waiting', what: 'held', at, heldBy: 'approvals' },
     'held back until a change up for a vote is decided, as the bot says in Main');
   assert.equal(bot('held', { capSuppressed: 'daily_notes' }).heldBy, 'daily');
+  // #6156: held for the bot's turn among the project's builds, which no vote frees.
+  assert.equal(bot('held', { capSuppressed: 'builds_per_app' }).heldBy, 'turn');
   assert.deepEqual(bot('build_queued'), { group: 'waiting', what: 'build_queued', at });
   assert.deepEqual(bot('queued'), { group: 'waiting', what: 'queued', at }, 'not "Not picked up yet": it is in the bot\'s queue');
   assert.deepEqual(bot('reading'), { group: 'next', what: 'reading', at });

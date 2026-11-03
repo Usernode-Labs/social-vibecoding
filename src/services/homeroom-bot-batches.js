@@ -24,14 +24,18 @@
 //
 // A BATCH MAY RAISE TWO HOLDS, for its own requests and while it runs. A
 // person has `perPerson` pieces of the bot's work at once (3 by default) and
-// the bot holds a project at PROPOSALS_PER_APP_CAP of its own changes open
-// (5). The project's owner, one of its admins, or a platform admin, working
-// through the project's requests, may go to MAX_PER_PERSON (6) at once and
-// BATCH_PROPOSALS_PER_APP (10) open: raiseFor decides it at Build, the batch
-// row keeps it, and the two places those holds are decided read it back for
-// the batch's started requests only (the lane's picks, rules/bot-loop.ts
-// bot-lane/facts.ts BATCH_RAISES_SQL; the proposal hold, homeroom-bot.js simulateCaps through
-// proposalsPerAppFor). A batch ends at the latest RUN_DAYS after Build.
+// the bot holds a project at BUILDS_PER_APP of its own builds (5; #6156: its
+// changes waiting for votes are a cap of their own, WAITING_PER_APP, which a
+// batch does not raise, since it exists to get a batch built). The
+// project's owner, one of its admins, or a platform admin, working through
+// the project's requests, may go to MAX_PER_PERSON (6) at once and
+// BATCH_PROPOSALS_PER_APP (10) builds: raiseFor decides it at Build, the
+// batch row keeps it (its `proposals_per_app`, named before the split), and
+// the two places those holds are decided read it back for the batch's
+// started requests only (the lane's picks, rules/bot-loop.ts
+// bot-lane/facts.ts BATCH_RAISES_SQL; the building hold, homeroom-bot.js
+// simulateCaps through proposalsPerAppFor). A batch ends at the latest
+// RUN_DAYS after Build.
 
 const log = require('./logger');
 
@@ -41,7 +45,8 @@ const MAX_REQUESTS = 20;
 const FRESH_DAYS = 14;
 // How long a batch's raise lasts at most, from its Build.
 const RUN_DAYS = 3;
-// The project's hold on the bot's open changes, for a batch's requests.
+// The project's hold on the bot's builds, for a batch's requests (#6156:
+// the building cap, not the waiting one).
 const BATCH_PROPOSALS_PER_APP = 10;
 // A request of a batch that moved is read again this long after its last
 // move (a burst of posts is one refresh).
@@ -674,10 +679,11 @@ async function sweep(pool, deps = {}) {
 }
 
 /**
- * The project's hold on the bot's open changes for request `issueNumber`
- * (homeroom-bot.js simulateCaps): a running batch's raise when the request
- * is one it started, else `base`. Never throws: a read that fails is the
- * ordinary hold.
+ * The project's hold on the bot's builds for request `issueNumber`
+ * (homeroom-bot.js simulateCaps; #6156: the building cap, BUILDS_PER_APP or
+ * the project's own, which `base` is): a running batch's raise when the
+ * request is one it started, else `base`. Never throws: a read that fails
+ * is the ordinary hold.
  */
 async function proposalsPerAppFor(pool, appId, issueNumber, base) {
   try {
