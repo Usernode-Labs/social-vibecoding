@@ -233,6 +233,38 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   return `I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`;
 }
 
+// The note's fixed replies, beside its own sentence: words the bot offers for
+// a person to send as their own, server text rather than shell catalog text.
+const GO_AHEAD_LABEL = 'Go ahead';
+const SMALLER_STEP_LABEL = 'Start with a smaller first step';
+const NOT_NOW_LABEL = 'Not now';
+
+/**
+ * Pure: the replies offered under a person note, as prompt actions, or []
+ * when the note is about Homeroom itself or says the request is done (Go
+ * ahead applies to neither). `firstStep` is the smaller step the bot would
+ * build, when it named one; the fixed label stands in when it did not.
+ */
+function personSuggestions({ firstStep = null, platform = false, done = false } = {}) {
+  if (platform || done) return [];
+  const mayor = require('./homeroom-bot-mayor');
+  const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
+  const usableStep = step && step.length <= mayor.MAX_SUGGESTION_CHARS ? step : '';
+  const candidates = [
+    { id: 'go_ahead', label: GO_AHEAD_LABEL, style: 'primary' },
+    { id: 'smaller', label: usableStep || SMALLER_STEP_LABEL, style: 'secondary' },
+    { id: 'not_now', label: NOT_NOW_LABEL, style: 'secondary' },
+  ];
+  const labels = mayor.suggestionLabels(candidates.map((c) => c.label));
+  const out = [];
+  for (const candidate of candidates) {
+    if (!labels.some((label) => label.toLowerCase() === candidate.label.toLowerCase())) continue;
+    if (out.some((seen) => seen.label.toLowerCase() === candidate.label.toLowerCase())) continue;
+    out.push({ ...candidate, type: 'prompt' });
+  }
+  return out;
+}
+
 function emptyText({ reason }) {
   return [
     `Homeroom bot couldn't find anything to build in this request: ${clipText(reason) || 'no reason given.'}`,
@@ -2061,6 +2093,14 @@ async function post({
     if (message?.id != null) {
       await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id]).catch(() => {});
     }
+    // A newer word from the bot in the request's discussion retires the
+    // suggested replies on its older messages there (homeroom-bot-voice.js),
+    // as a newer word in its own chat does.
+    if (message?.id != null && !messageSentBefore) {
+      await require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
+        appId: app.id, thread: { type: 'issue', ref: issueNumber }, keepMessageId: Number(message.id), deps: { ws },
+      });
+    }
   }
   // A system message fires no mention notifications of its own, so the
   // mention row is written here, as the "needs a conversation" prompt does
@@ -2143,6 +2183,13 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
   if (postId && message?.id) {
     await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id])
       .catch(() => {});
+  }
+  if (message?.id) {
+    // A newer word from the bot in the change's discussion retires the
+    // suggested replies on its older messages there.
+    await require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
+      appId: app.id, thread: { type: 'session', ref: Number(sessionId) }, keepMessageId: Number(message.id), deps: { ws },
+    });
   }
   log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
   return { postId, thread: !!message };
@@ -5272,6 +5319,10 @@ module.exports = {
   questionText,
   personText,
   personHomeroomText,
+  personSuggestions,
+  GO_AHEAD_LABEL,
+  SMALLER_STEP_LABEL,
+  NOT_NOW_LABEL,
   emptyText,
   proposalText,
   proposalHomeroomText,

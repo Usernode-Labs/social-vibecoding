@@ -5798,6 +5798,8 @@ module.exports = {
   noteRequests,
   namedCards,
   suggestionLabels,
+  MAX_SUGGESTIONS,
+  MAX_SUGGESTION_CHARS,
   claimProblems,
   checkNote,
   stripClaims,

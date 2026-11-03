@@ -757,6 +757,11 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     ...can,
     'Finish every turn by calling reply exactly once, or stay_quiet when the newest messages are people talking to each',
     'other and nothing is asked of you.',
+    ...(['issue', 'session'].includes(place.type)
+      ? ['End the reply with one to three short things the people you answered might say next, in their own words, as',
+        'suggestions: the buttons send them as that person\'s own reply. Leave them out when the conversation has plainly',
+        'ended (the change is built or live, the request is closed, or you are only saying where things stand).']
+      : []),
     '',
     'Rules:',
     '- Reply in the language of the newest message you answer. English only when you cannot tell.',
@@ -787,6 +792,22 @@ function fn(name, description, properties = {}, required = []) {
 const REPLY_TOOL = fn('reply', 'Your one reply in this place. Ends the turn.', {
   text: { type: 'string', description: 'What you say, plain text, under 100 words unless they asked for detail.' },
 }, ['text']);
+// In a request's or a change's discussion, the answer may end in buttons the
+// people it answers can tap to send as their own reply.
+function replyToolWithSuggestions() {
+  const mayor = require('./homeroom-bot-mayor');
+  return fn('reply', 'Your one reply in this place. Ends the turn.', {
+    text: { type: 'string', description: 'What you say, plain text, under 100 words unless they asked for detail.' },
+    suggestions: {
+      type: 'array',
+      maxItems: mayor.MAX_SUGGESTIONS,
+      description: 'Up to 3 short things the people you answered might say next, in their own words, shown as buttons '
+        + 'to tap that send them as that person\'s reply. '
+        + `Each at most ${mayor.MAX_SUGGESTION_CHARS} characters. Leave this out when the conversation has plainly ended.`,
+      items: { type: 'string' },
+    },
+  }, ['text']);
+}
 const QUIET_TOOL = fn('stay_quiet', 'Say nothing: the newest messages are people talking to each other, and nothing is asked of you. Ends the turn.', {
   why: { type: 'string', description: 'Why, in a few words, for the record.' },
 }, []);
@@ -799,7 +820,10 @@ const QUIET_TOOL = fn('stay_quiet', 'Say nothing: the newest messages are people
 function toolsFor(place, {
   ownChange = false, requestChange = false, openChangeCount = 0, platform = false, planWaiting = false,
 } = {}) {
-  const tools = [REPLY_TOOL, QUIET_TOOL];
+  const tools = [
+    place.type === 'issue' || place.type === 'session' ? replyToolWithSuggestions() : REPLY_TOOL,
+    QUIET_TOOL,
+  ];
   const change = place.type === 'session' ? ownChange : place.type === 'issue' ? requestChange : openChangeCount > 0;
   if (change) {
     tools.push(fn('update_change', 'Queue a change to one of your own changes that is up for a vote, as somebody asked for it.', {
@@ -1178,7 +1202,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
-    offer: ctx.offer, mark, deps,
+    offer: ctx.offer, suggestions: ctx.reply?.suggestions, mark, deps,
   });
   return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
 }
@@ -1208,7 +1232,7 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
       case 'reply': {
         const text = String(args.text || '').trim();
         if (!text) return { error: 'Say something, or call stay_quiet.' };
-        ctx.reply = { text };
+        ctx.reply = { text, ...(Array.isArray(args.suggestions) ? { suggestions: args.suggestions } : {}) };
         return { ok: true };
       }
       case 'stay_quiet':
@@ -1371,7 +1395,7 @@ function offerActions(kind, offerId) {
  * reply thread under that message. With an offer, its buttons go under it.
  * Resolves the message, or null.
  */
-async function say(pool, { app, place, bot, text, answer = [], offer = null, mark = null, deps = {} }) {
+async function say(pool, { app, place, bot, text, answer = [], offer = null, suggestions = [], mark = null, deps = {} }) {
   const ws = wsModule(deps);
   const newest = answer[answer.length - 1] || null;
   const thread = place.type === 'chat' || place.type === 'category'
@@ -1392,6 +1416,17 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, mar
     );
     offerRow = rows[0];
   }
+  // A request's or a change's discussion may end in buttons to tap: only the
+  // people it answered see them, and an offer keeps its own Yes/No instead.
+  const suggestFor = !offer && (place.type === 'issue' || place.type === 'session')
+    ? [...new Set(answer.map((a) => Number(a.userId)).filter((id) => Number.isSafeInteger(id) && id > 0))]
+    : [];
+  const suggestLabels = suggestFor.length
+    ? require('./homeroom-bot-mayor').suggestionLabels(suggestions)
+    : [];
+  const suggestActions = suggestLabels.map((label, i) => ({
+    id: `suggest-${i + 1}`, label, style: 'secondary', type: 'prompt',
+  }));
   const metadata = {
     homeroomBot: {
       kind: 'voice',
@@ -1399,6 +1434,9 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, mar
       ...(offerRow ? {
         offer: { id: Number(offerRow.id), kind: offer.kind, status: 'open', forUserId: Number(offer.forUserId) || null },
         actions: offerActions(offer.kind, offerRow.id),
+      } : {}),
+      ...(suggestActions.length ? {
+        suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions,
       } : {}),
     },
     ...(newest && place.type !== 'chat' && place.type !== 'category' ? { quote: quoteOf(newest.message, newest.username) } : {}),
@@ -1410,6 +1448,9 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, mar
     // its message): a failure here is the turn's, and retried.
     await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [offerRow.id, sent.id]);
   }
+  // A newer word from the bot in this thread retires the suggested replies
+  // on its older messages there, as a newer word in its chat does.
+  await retireThreadSuggestions(pool, { appId: app.id, thread, keepMessageId: Number(sent.id), deps });
   if (thread.type === 'message' && typeof ws.broadcastThreadSummary === 'function') {
     await Promise.resolve(ws.broadcastThreadSummary(pool, app.id, thread.ref, bot.id)).catch(() => {});
   }
@@ -1590,8 +1631,45 @@ async function markOfferMessage(pool, { app, messageId, status, deps = {} }) {
   } catch { /* the next read draws it */ }
 }
 
-// ── When a change's update ends ──────────────────────────────────────────
+/**
+ * A newer word in a thread retires the bot's older suggested replies there:
+ * the open `suggest` sets in the same thread before `keepMessageId` close,
+ * and everybody reading hears it (chat_message_updated), as a decided offer
+ * does. Offers keep their own lifecycle, and a set already closed is left
+ * alone. Never throws.
+ */
+async function retireThreadSuggestions(pool, { appId, thread, keepMessageId, deps = {} }) {
+  const type = thread?.type;
+  const ref = Number(thread?.ref);
+  const keep = Number(keepMessageId);
+  if (!Number.isInteger(Number(appId)) || !['issue', 'session'].includes(type)
+    || !Number.isSafeInteger(ref) || ref <= 0 || !Number.isSafeInteger(keep) || keep <= 0) return;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_messages
+          SET metadata = jsonb_set(
+                jsonb_set(metadata, '{homeroomBot,suggest,status}', '"closed"'::jsonb, true),
+                '{homeroomBot,actions}', '[]'::jsonb, true)
+        WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3 AND id < $4
+          AND metadata->'homeroomBot'->'suggest'->>'status' = 'open'
+        RETURNING id, metadata, thread_type, thread_ref`,
+      [Number(appId), type, ref, keep],
+    );
+    const ws = wsModule(deps);
+    if (typeof ws.broadcast === 'function') {
+      for (const row of rows) {
+        ws.broadcast(Number(appId), {
+          type: 'chat_message_updated', id: Number(row.id), metadata: row.metadata,
+          thread: row.thread_type ? { type: row.thread_type, ref: Number(row.thread_ref) } : null,
+        });
+      }
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-voice', 'Could not retire older suggestions in a thread', { appId, thread, err: err.message });
+  }
+}
 
+// ── When a change's update ends ──────────────────────────────────────────
 // What a follow-up's outcome is, as composeReport tells its model.
 const OUTCOME_FACTS = Object.freeze({
   revise: 'you updated the change as asked',
@@ -1994,6 +2072,7 @@ module.exports = {
   quoteOf,
   offerActions,
   say,
+  retireThreadSuggestions,
   decideOffer,
   actOnOffer,
   mustSay,

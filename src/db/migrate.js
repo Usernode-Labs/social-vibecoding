@@ -1739,6 +1739,47 @@ async function seedStagingBotWaitingRows(pool) {
         );
       }
     }
+    // 3 Nov 2026 (#6213): the note the bot handed 9103 back to a person with,
+    // carrying the suggested replies only its requester sees and taps. The
+    // request page draws the thread's messages, so this is the state the
+    // before & after shots need; nothing here is a signal the bot reads.
+    // The bot's account, in the posture botAccount() reads (the later
+    // staging fixtures seed it too, ON CONFLICT-safe), so this note has its
+    // author even when they have not run yet.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const botRow = await pool.query(
+      "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
+    );
+    if (botRow.rows.length) {
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '1 day'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'person-note')`,
+        [
+          appId, botRow.rows[0].id,
+          'I think a person needs to decide this one: Staging demo: a person must decide which of the two columns to keep. '
+            + '@usernode-capture can say Go ahead in a chat with me, or reply here.',
+          JSON.stringify({
+            stagingDemo: 'person-note',
+            homeroomBot: {
+              kind: 'note',
+              suggest: { status: 'open', forUserIds: [userId] },
+              actions: [
+                { id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt' },
+                { id: 'smaller', label: 'Just the triage part', style: 'secondary', type: 'prompt' },
+                { id: 'not_now', label: 'Not now', style: 'secondary', type: 'prompt' },
+              ],
+            },
+          }),
+        ],
+      );
+    }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
   }

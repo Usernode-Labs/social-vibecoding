@@ -487,7 +487,7 @@ async function hydrateMessages(db, user, rows, { cards = null } = {}) {
     // #6071: a person's message shows its design pin alone (a comment pinned
     // on a design's preview, routes/conversations.js), never anything else.
     const metadata = deleted || moderated || system ? null
-      : row.sender_is_synthetic ? publicMetadata(row.metadata) : personMetadata(row.metadata);
+      : row.sender_is_synthetic ? publicMetadata(row.metadata, user) : personMetadata(row.metadata);
     return {
       id: row.id,
       conversationId: row.conversation_id,
@@ -1518,9 +1518,21 @@ async function setMessageMetadata(db, messageId, metadata) {
 }
 
 /** What of a message's metadata a reader is shown: the bot's part, or nothing. */
-function publicMetadata(raw) {
+function publicMetadata(raw, viewer = null) {
   const value = raw && typeof raw === 'object' ? raw[BOT_METADATA_KEY] : null;
-  return value && typeof value === 'object' && !Array.isArray(value) ? { [BOT_METADATA_KEY]: value } : null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  // 3 Nov 2026: a set of suggested replies is offered to the people it names
+  // (forUserIds). Anyone else is shown the message without its buttons, so a
+  // "Go ahead" never appears to somebody the note did not offer it to.
+  const suggest = value.suggest;
+  if (suggest && typeof suggest === 'object' && Array.isArray(value.actions)) {
+    const forIds = Array.isArray(suggest.forUserIds) ? suggest.forUserIds.map(Number) : [];
+    const me = Number(viewer?.id);
+    if (suggest.status === 'open' && forIds.length && (!Number.isSafeInteger(me) || !forIds.includes(me))) {
+      return { [BOT_METADATA_KEY]: { ...value, actions: [] } };
+    }
+  }
+  return { [BOT_METADATA_KEY]: value };
 }
 
 /** #6071: what of a person's message's metadata a reader is shown: its design pin, or nothing. */
