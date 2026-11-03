@@ -142,6 +142,9 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
   // The bot builds on every project but a paused one: Quiet notes is paused.
   await set('homeroom_bot_mode', 'live');
   await set('homeroom_bot_paused_apps', JSON.stringify(['quiet-notes']));
+  // One read per project, as this story was written for (the default is
+  // three): #20 waits behind #12's read.
+  await set('homeroom_bot_reads_per_app', '1');
 
   await t.test('only a member files a request; an admin always may', async () => {
     const refused = await communities.appNeedsJoin(pool, 'plant-pal', sam);
