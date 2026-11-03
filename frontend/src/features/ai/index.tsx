@@ -82,6 +82,7 @@ import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { closeThread, openBotRequest, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
+import { AI_MAIN_WIDTH_KEY } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
 import { BOT_TAB, botTabAddress, knownBotConversation, noteBotConversation, useBotTabAsk, type BotAt } from './door';
 import { useLiveLists } from './live';
@@ -562,7 +563,7 @@ export function AiScreen(): ReactNode {
           data-ai-main=""
           data-ai-column={threadUp ? 'thread' : 'main'}
         >
-          <SidePanelDivider panelRef={mainRef} shown={docked} id="ai-main-divider" controls="ai-main-pane" />
+          <SidePanelDivider panelRef={mainRef} shown={docked} id="ai-main-divider" controls="ai-main-pane" widthKey={AI_MAIN_WIDTH_KEY} />
           {/* Main Chat's name over it. 1 Nov 2026: a thread in its place is
               alone under its own (ReplyThreadPanel `inMain`), with no bar of
               Main Chat's over it. */}
