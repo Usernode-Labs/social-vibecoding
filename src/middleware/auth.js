@@ -520,6 +520,45 @@ function authMiddleware(config) {
   };
 }
 
+// The handles the platform gives a reviewer of a platform preview
+// (platform-preview-data-policy.js previewIdentity): a synthetic one per
+// account, or one of the two screenshot personas.
+const CAPTURE_ADMIN = 'usernode-capture-admin';
+const PREVIEW_HANDLES = new Set(['usernode-capture', CAPTURE_ADMIN]);
+const isPreviewHandle = (id, username) => username === `preview-user-${id}` || PREVIEW_HANDLES.has(username);
+
+// SEC-06: a reviewer this preview has no row for (an account made after its
+// database was copied, or any reviewer once previews no longer start from a
+// copy) gets one on their first verified sign-in, made to the same rule the
+// copy's policy applies to a copied account: the token's synthetic handle,
+// no password anyone can use, member rights with platform access, and the
+// view-only admin role for the screenshot persona that has it. Only a handle
+// the platform issues to previews is accepted, so a production handle never
+// lands here. The users sequence is moved past the id, so a row this preview
+// makes itself never takes it. False when the handle is not one of those.
+async function createPreviewReviewer(pool, payload) {
+  if (!Number.isSafeInteger(payload.id) || payload.id < 1 || !isPreviewHandle(payload.id, payload.username)) return false;
+  const admin = payload.username === CAPTURE_ADMIN;
+  const { rowCount } = await pool.query(
+    `INSERT INTO users (id, username, password, is_admin, admin_readonly, can_create_apps,
+       has_platform_access, private_member_since, created_at)
+     VALUES ($1, $2, '__staging_redacted__', $3, $3, FALSE, TRUE,
+       '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
+     ON CONFLICT DO NOTHING`,
+    [payload.id, payload.username, admin]
+  );
+  if (rowCount) {
+    await pool.query(
+      `SELECT setval(q.seq, GREATEST($1::bigint, COALESCE(s.last_value, 0)))
+         FROM (SELECT pg_get_serial_sequence('users', 'id') AS seq) q
+         JOIN pg_sequences s ON format('%I.%I', s.schemaname, s.sequencename) = q.seq`,
+      [payload.id]
+    );
+    log.info('auth', 'Staging iframe-JWT created the reviewer', { id: payload.id });
+  }
+  return true;
+}
+
 // Verify the parent-issued JWT, look up the matching user in the local
 // (cloned) users table, mint a session row + set the cookie. Returns the
 // resolved req.user shape on success, null on any failure (caller falls
@@ -549,13 +588,14 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
   // trusted export policy resets profiles and production roles; synthetic
   // capture personas receive their fixture roles locally. Username match is defense-in-depth
   // against a token whose id was renumbered between clone and now.
+  const findUser = async () => (await pool.query(
+    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, review_flow_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+    [payload.id]
+  )).rows[0];
   let userRow;
   try {
-    const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, review_flow_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
-      [payload.id]
-    );
-    userRow = rows[0];
+    userRow = await findUser();
+    if (!userRow && await createPreviewReviewer(pool, payload)) userRow = await findUser();
   } catch (err) {
     log.error('auth', 'Staging iframe-JWT user lookup failed', { err: err.message });
     return null;
