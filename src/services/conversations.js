@@ -595,6 +595,25 @@ function pageLimit(limit) {
 // buttons. A person's own replies and the bot's quiet lines stay in the
 // thread.
 const ALSO_IN_CHAT = `(m.metadata->'homeroomBot'->>'alsoInChat') = 'true'`;
+// #6207 (3 Nov 2026): a request's news from Homeroom bot is not Main
+// Chat's. Main holds what the person said there and the bot's replies to it
+// (`moment: 'reply'`, and the kinds that are conversation); a request's
+// activity card, plan, questions and building / ready / live lines are on
+// that request's page, which is where its row goes. Nothing is deleted: old
+// news is only left out of the stream, its unread count and its preview. A
+// first version's news stays, as it has no request page yet. The client's
+// copy of this test is frontend/src/features/messages/bot-request.ts
+// isRequestNews, for a message that arrives live.
+const BOT_CONVERSATION_KINDS = [
+  'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
+  'hello_welcome', 'hello_tour', 'hello_joiner', 'hello_maker', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
+];
+const REQUEST_NEWS = `COALESCE(m.metadata->'homeroomBot' IS NOT NULL
+          AND COALESCE(m.metadata->'homeroomBot'->>'moment', '') <> 'reply'
+          AND COALESCE(m.metadata->'homeroomBot'->>'firstVersion', '') <> 'true'
+          AND COALESCE(m.metadata->'homeroomBot'->>'kind', '') NOT IN (${BOT_CONVERSATION_KINDS.map((k) => `'${k}'`).join(', ')})
+          AND (COALESCE(m.metadata->'homeroomBot'->>'issueNumber', '') ~ '^[1-9][0-9]{0,9}$'
+               OR m.metadata->'homeroomBot'->>'kind' = 'activity'), FALSE)`;
 const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
           m.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden_root
@@ -602,7 +621,8 @@ const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
                            WHERE hidden_root.id = m.thread_root_id AND hb.blocker_id = $2)
           AND (${ALSO_IN_CHAT}
                OR NOT EXISTS (SELECT 1 FROM conversations dc
-                               WHERE dc.id = m.conversation_id AND dc.kind = 'direct'))))`;
+                               WHERE dc.id = m.conversation_id AND dc.kind = 'direct'))))
+        AND NOT ${REQUEST_NEWS}`;
 async function mainStreamBefore(db, user, conversationId, before, count) {
   if (before) {
     return (await db.query(
@@ -1000,7 +1020,7 @@ async function conversationRow(db, user, conversationId) {
          -- apart from a bot moment shown in the main chat too.
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id
-            AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
+            AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -1023,7 +1043,7 @@ async function countUnread(db, conversationId, userId, cursor) {
   const result = await db.query(
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
-        AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
+        AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
         AND (m.metadata->'homeroomBot'->>'quiet') IS DISTINCT FROM 'true'
         AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3

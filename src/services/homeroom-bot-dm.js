@@ -609,9 +609,11 @@ async function sendDm(pool, {
   const input = { content: clip(content, conversations.MAX_MESSAGE_LENGTH || 8000) };
   const key = conversations.normalizeIdempotencyKey(idempotencyKey);
   if (key) input.idempotency_key = key;
-  // Main is one conversation (#6019): a message a caller would have put in
-  // a request's thread, under its card, is said in Main beside the card.
-  // A thread of the person's own (a private thread) keeps its messages.
+  // A message a caller would have put in a request's thread, under its
+  // card, is said beside the card (#6019), and a thread of the person's own
+  // (a private thread) keeps its messages. #6207 (3 Nov 2026): Main Chat no
+  // longer draws a request's news at all (conversations.js REQUEST_NEWS):
+  // it is on the request's page, where its row goes, and it still rings.
   const asked = threadRootId === false ? null : conversations.strictId(threadRootId);
   const root = threadRootId === false ? null
     : (asked && !(await isRequestCard(pool, asked)) ? asked

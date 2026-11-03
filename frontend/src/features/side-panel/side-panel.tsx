@@ -60,12 +60,16 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronLeftIcon, ExpandIcon, XIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, EllipsisHorizontalIcon, ExpandIcon, XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { useMenuKeyboard } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { pageLinkFor } from '../ai/door';
+import { copyToClipboard } from '../message-actions/clipboard';
+import { useDismiss } from '../message-actions/use-dismiss';
 import { SidePanel as controller } from './controller';
 import { panelPage, titleFor } from './routes';
 import {
@@ -192,6 +196,7 @@ export function SidePanel(): ReactNode {
           <span>{t('agent:sidePanel.main')}</span>
         </button>
         <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} />
+        <PanelMore route={s.route} />
       </div>
       <div id="side-panel-body" className="side-panel-body">
         {/* data-un-keyboard-relay: a tap in the panel that closes the
@@ -252,6 +257,7 @@ function PanelHeading({ route, place, reported, label }: {
   const project = slug ? ((same ? place!.name : '') || String(reported || '').trim() || slug) : '';
   const title = (label && label.route === route && label.text) || titleFor(route, reported);
   const where = whereOf(route);
+  const link = pageLinkFor(route);
   return (
     <div className="side-panel-place">
       {same ? (
@@ -276,11 +282,84 @@ function PanelHeading({ route, place, reported, label }: {
                     try { (window as any).AppView?._landOnHub?.(slug); } catch { /* the page as it opens */ }
                   }}
                 />,
+                // The item's own page, the one Expand opens (3 Nov 2026): a
+                // plain left press goes there inside the shell, as Expand does;
+                // a middle press or a modified one gives the real address.
+                link ? (
+                  <a
+                    className="side-panel-place-link"
+                    href={link}
+                    onClick={(e) => {
+                      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                      e.preventDefault();
+                      try { (window as any).Improve?.enterTopicFrom?.(window.location.hash); } catch { /* the page as it opens */ }
+                      controller.expand();
+                    }}
+                  />
+                ) : <span />,
               ]}
             />
           </span>
         ) : null}
       </span>
+    </div>
+  );
+}
+
+/**
+ * The ⋯ beside the column's heading (3 Nov 2026), drawn as Main's own header
+ * menu (../messages/index.tsx): one item, Copy link, which copies the item's
+ * own page address — the one to share, not the tab's. Only a page that has
+ * one shows it, so the prerender (no route yet) draws nothing.
+ */
+function PanelMore({ route }: { route: string | null }): ReactNode {
+  const t = useMessages('agent');
+  const link = route ? pageLinkFor(route) : null;
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const close = () => setOpen(false);
+  useDismiss(open, [wrapRef], close);
+  const menuKeys = useMenuKeyboard(open, menuRef, btnRef, close);
+  // Another page is another heading: a menu left open does not follow.
+  useEffect(() => { setOpen(false); }, [route]);
+  if (!link) return null;
+  return (
+    <div className="side-panel-more relative" ref={wrapRef}>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((shown) => !shown)}
+        className="messages-thread-action"
+        aria-label={t('agent:sidePanel.moreLabel')}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <EllipsisHorizontalIcon aria-hidden="true" />
+      </button>
+      {open ? (
+        <div
+          ref={menuRef}
+          className="messages-thread-menu"
+          role="menu"
+          aria-label={t('agent:sidePanel.moreLabel')}
+          onKeyDown={menuKeys.onKeyDown}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-side-panel-copy-link=""
+            onClick={() => {
+              btnRef.current?.focus({ preventScroll: true });
+              setOpen(false);
+              void copyToClipboard(window.location.origin + link, t('agent:sidePanel.linkCopied'));
+            }}
+          >
+            {t('agent:sidePanel.menu.copyLink')}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

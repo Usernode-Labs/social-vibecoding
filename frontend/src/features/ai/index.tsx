@@ -80,11 +80,15 @@ import { DesignPane } from '../messages/design-pane';
 import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
-import { closeThread, openBotRequest, useMessagesSnapshot } from '../messages/store';
+import { closeThread, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
 import { AI_MAIN_WIDTH_KEY } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
-import { BOT_TAB, botTabAddress, knownBotConversation, noteBotConversation, useBotTabAsk, type BotAt } from './door';
+import { attachmentFor, columnAddress, columnKey, routeOf, type Column, type ColumnHow } from './column';
+import {
+  BOT_TAB, botItemFromRoute, botItemRoute, botTabAddress, knownBotConversation, noteBotConversation, useBotTabAsk,
+  type BotAt, type BotItem,
+} from './door';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { publishBotDrawer, registerBotBack } from '../nav-drawer/bot-drawer';
@@ -203,27 +207,25 @@ function improve(): { enterTopicFrom?: (href: string) => void } | null {
  * anywhere else, and whenever the panel does not take it, its page, which
  * goes back here.
  */
-function openPublic(href: string | null, app: AiApp | null, label: string | null, about: AboutItem | null, botId: number | null): boolean {
+function openPublic(href: string | null, app: AiApp | null, label: string | null): boolean {
   if (!href) return false;
   try {
-    if (sidePanel()?.take?.(href.replace(/^#/, ''), { place: app, label })) {
-      // Main stays mounted under the panel (only hidden), so its composer
-      // takes what was opened now, and ‹ Main Chat comes back to it
-      // attached: a question about it needs no number (30 Oct 2026, from
-      // Evan's Task Assistant prototype). × on the chip takes it off. It is
-      // addressed to Main alone: the Messages screen's composer, mounted
-      // under its hidden screen, keeps whatever it had.
-      if (about && botId) {
-        window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', { detail: { ...about, conversationId: botId } }));
-      }
-      return true;
-    }
+    // Main's composer takes what was opened (./column.ts attachmentFor),
+    // once the column says it is this page.
+    if (sidePanel()?.take?.(href.replace(/^#/, ''), { place: app, label })) return true;
   } catch {
     /* the page instead */
   }
   if (isTopicHref(href)) improve()?.enterTopicFrom?.(BOT_PAGE);
   go(href);
   return false;
+}
+
+/** Pure: the item a page's route is, for Main's composer, when no row named it (a reload). */
+export function aboutRoute(route: string | null): AboutItem | null {
+  const item = botItemFromRoute(route);
+  if (!item || item.kind !== 'request') return null;
+  return { type: 'issue', appSlug: item.slug, issueNumber: item.number, title: null };
 }
 
 export function AiScreen(): ReactNode {
@@ -352,8 +354,19 @@ export function AiScreen(): ReactNode {
   const inMain = !!botId && snap.route.embedded && snap.route.conversationId === botId;
   const openRoot = inMain ? snap.route.threadRootId : null;
   const threadUp = !!openRoot || blank;
-  const columnShows = mounted && (phone ? !!botId : docked && !panel.open);
-  const lit = !columnShows || blank ? null : openRoot ? `private:${openRoot}` : 'main';
+  // THE COLUMN (./column.ts, 3 Nov 2026): the one answer to what is open
+  // beside the list. The lit row, the address and Main's attachment all read
+  // it; nothing else keeps a copy.
+  const panelRoute = panel.open ? routeOf(panel.route) : null;
+  const column: Column = !mounted || !botId ? null
+    : phone ? (level === 1 ? (openRoot ? { at: 'thread', rootId: openRoot } : blank ? { at: 'new' } : { at: 'main' }) : null)
+    : !docked ? null
+    : panelRoute ? { at: 'page', route: panelRoute }
+    : blank ? { at: 'new' }
+    : openRoot ? { at: 'thread', rootId: openRoot }
+    : { at: 'main' };
+  const shown = columnKey(column);
+  const lit = shown === 'new' ? null : shown;
   // 1 Nov 2026 (C1): a design's preview beside the thread it is in, while
   // that thread is the column's (./preview.ts).
   const preview = usePreview();
@@ -391,6 +404,11 @@ export function AiScreen(): ReactNode {
   // message): a page the panel holds there gives Main its place back, and a
   // thread or a blank one open there gives way. On a phone the drawer slides
   // to it.
+  // How the column came to change (./column.ts ColumnHow): this page's own
+  // doors say 'row'; a change none of them made is the side panel's
+  // ‹ Main Chat, 'back'. The item a row opened, for Main's composer.
+  const how = useRef<ColumnHow>('back');
+  const opened = useRef<{ route: string; about: AboutItem | null } | null>(null);
   const showAt = (next: BotAt) => {
     sidePanel()?.close?.();
     closeNewThread();
@@ -407,42 +425,46 @@ export function AiScreen(): ReactNode {
   useEffect(() => {
     if (!ask || ask.seq === askTaken.current || !visible || !(wide || phone)) return;
     askTaken.current = ask.seq;
-    showAt(ask.at);
+    how.current = 'row';
+    if (ask.item) openItem(ask.item);
+    else if (ask.at) showAt(ask.at);
   }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMain = () => {
     if (!(wide || phone)) { go(botTabAddress(null)); return; }
+    how.current = 'row';
     showAt({ threadRootId: null, focusMessageId: null });
-    showAddress(botTabAddress(null));
   };
   // A page the panel took is in the column, in Main's place, and its
   // ‹ Main Chat gives the column back to Main: a thread that was open there
-  // gives way (1 Nov 2026), and the address is the page's.
+  // gives way (1 Nov 2026). The address is the column's (below).
   const underPanel = () => {
     closeNewThread();
     if (openRoot) closeThread();
-    showAddress(BOT_TAB);
   };
   // A private thread is the column's, alone, in Main's place.
   const openPrivate = (rootId: number) => {
     const next = { threadRootId: rootId, focusMessageId: null };
     if (!(wide || phone)) { go(botTabAddress(next)); return; }
+    how.current = 'row';
     showAt(next);
-    showAddress(botTabAddress(next));
+  };
+  // A request, a change or a decision: its page, in the column on a wide
+  // window, its own page anywhere else. Every row goes to its own place
+  // (#6210): a ▷ plan row to its request's page, where its plan and Build
+  // it are, the same place a Vote or Decide row for it opens.
+  const openPage = (href: string | null, app: AiApp | null, title: string | null, about: AboutItem | null) => {
+    how.current = 'row';
+    const route = routeOf(href);
+    opened.current = route ? { route, about } : null;
+    if (openPublic(href, app, title)) underPanel();
   };
   const openRow = (row: WorkRow) => {
     if (row.rootId) {
       openPrivate(row.rootId);
       return;
     }
-    // B06: a plan's Build it is on the plan in Main Chat: Main, at the plan
-    // (the door "See progress" on its request's page uses too).
-    if (row.plan) {
-      sidePanel()?.close?.();
-      void openBotRequest(row.plan.slug, row.plan.number);
-      return;
-    }
-    if (openPublic(row.href, row.app, row.title, aboutRow(row), botId)) underPanel();
+    openPage(row.href, row.app, row.title, aboutRow(row));
   };
   const openThread = (th: AiThread) => {
     // #6153: a request filed from a private thread opens that thread, where
@@ -451,14 +473,75 @@ export function AiScreen(): ReactNode {
       openPrivate(th.rootId);
       return;
     }
-    if (openPublic(th.href, th.app, th.title, aboutRow(th), botId)) underPanel();
+    openPage(th.href, th.app, th.title, aboutRow(th));
   };
+  // A project as the lists name it, for the column's heading when an item is
+  // reopened from its address (the row that named it is not to hand).
+  function appFromLists(slug: string): AiApp | null {
+    for (const list of [rows, progress, waiting, live]) {
+      const row = (list as Array<{ app: AiApp | null }>).find((item) => item.app?.slug === slug);
+      if (row?.app) return row.app;
+    }
+    return (needs || []).find((item) => item.app?.slug === slug)?.app ?? null;
+  }
+  // An item the router asked for by its address (#6215,
+  // `#homeroom-bot/request/<slug>/<n>`): in the column on a wide window, its
+  // own page anywhere else, or when the column does not take it.
+  function openItem(item: BotItem) {
+    const route = botItemRoute(item);
+    if (!route) { go(BOT_TAB); return; }
+    opened.current = { route, about: null };
+    if (wide) {
+      try {
+        if (sidePanel()?.take?.(route, { place: appFromLists(item.slug), label: null })) { underPanel(); return; }
+      } catch { /* the page instead */ }
+    }
+    improve()?.enterTopicFrom?.(BOT_PAGE);
+    window.location.replace(`#${route}`);
+  }
+  // THE ADDRESS IS THE COLUMN'S (#6215): Main, a thread, or the item in it,
+  // so a reload reopens it; a phone's list, a blank thread and any other page
+  // are the tab itself. Written in place: a row is no step for Back. Not on
+  // the column's first showing, which the address itself asked for.
+  const addressed = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!mounted || !visible || !botId) return;
+    const before = addressed.current;
+    addressed.current = shown;
+    if (before === undefined || before === shown) return;
+    showAddress(columnAddress(column));
+  }, [mounted, visible, botId, shown]); // eslint-disable-line react-hooks/exhaustive-deps
+  // MAIN'S ATTACHMENT FOLLOWS THE COLUMN (#6212, ./column.ts attachmentFor):
+  // a page opened from the list is what a question is about; ‹ Main Chat back
+  // from it keeps it; any other way into Main, or a thread, takes the list's
+  // off. An item the person attached themselves stays (the composer's rule).
+  const attachedFor = useRef<Column>(null);
+  useEffect(() => {
+    if (!botId || typeof window === 'undefined') return;
+    const before = attachedFor.current;
+    attachedFor.current = column;
+    const was = how.current;
+    how.current = 'back';
+    const what = attachmentFor(before, column, was);
+    if (what === 'attach' && column?.at === 'page') {
+      const named = opened.current?.route === column.route ? opened.current.about : null;
+      const about = named || aboutRoute(column.route);
+      if (about) {
+        window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', {
+          detail: { ...about, conversationId: botId, source: 'list' },
+        }));
+      } else {
+        window.dispatchEvent(new CustomEvent('usernode:messages-object-cleared', { detail: { conversationId: botId } }));
+      }
+    } else if (what === 'clear') {
+      window.dispatchEvent(new CustomEvent('usernode:messages-object-cleared', { detail: { conversationId: botId } }));
+    }
+  }, [shown, botId]); // eslint-disable-line react-hooks/exhaustive-deps
   // A page the side panel takes is the column's: no preview beside it.
   useEffect(() => { if (panel.open) closePreview(); }, [panel.open]);
   // On a phone the column slides back to the list; the address is the page's.
   const toList = () => {
     setLevel(0);
-    showAddress(BOT_TAB);
   };
   // THE HEADER IS MAIN CHAT'S on a phone (3 Nov 2026,
   // ../nav-drawer/bot-drawer.ts): "Homeroom bot" over the list, the arrow and
@@ -479,8 +562,8 @@ export function AiScreen(): ReactNode {
   const openBlank = () => {
     sidePanel()?.close?.();
     closePreview();
+    how.current = 'row';
     if (phone) setLevel(1);
-    showAddress(BOT_TAB);
   };
   const heroLine = work ? heroWords(owed, progress.length) : null;
   const hero = (

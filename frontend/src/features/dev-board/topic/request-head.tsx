@@ -45,6 +45,7 @@ import { StatusPill, TitleContent } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { normalizeBotTrack } from '../../messages/api';
 import { TrackCard, trackLinks } from '../../messages/bot-track';
+import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
 import {
   STAGES,
@@ -514,6 +515,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           {working && !r.status.closed ? null : (
             <RequestStatus s={r.status} specs={specs} tracked={!!track} />
           )}
+          {/* #6207/#6210: Homeroom bot's plan, public, with Build it for any member. */}
+          {working || r.status.closed || !slug ? null : <RequestPlan slug={slug} number={r.number} specs={specs} />}
           {ownAgent && agentOpen ? <OwnAgentLink slug={agentSlug} number={r.number} startOpen onClose={() => setAgentOpen(false)} /> : null}
           {track && !working ? (
             // 16 Oct 2026 (C4, V3): the same card a request's thread leads

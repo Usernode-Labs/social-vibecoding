@@ -173,12 +173,6 @@ export interface WorkRow {
   /** Where the row goes: a page, or a private thread of Main. */
   href: string | null;
   rootId: number | null;
-  /**
-   * B06 (audit 2 Nov 2026): a plan of Homeroom bot's waiting for your Build
-   * it. Its Build it is on the plan in Main Chat, so the row opens there, at
-   * the plan; the request's page has no Build it.
-   */
-  plan?: { slug: string; number: number } | null;
 }
 
 /**
@@ -397,7 +391,6 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
       href: t.href,
       rootId: null,
-      ...(t.what === 'plan' && t.app && t.number ? { plan: { slug: t.app.slug, number: t.number } } : {}),
     });
   }
   for (const p of work?.private || []) {

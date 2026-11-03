@@ -44,8 +44,10 @@
  * Rows here are 14px over one line, not the shell's 15 over 13 (AGENTS.md,
  * "Type and colour"): this page's exception, recorded there.
  *
- * The row whose chat is in the column beside the list (Main Chat, or a
- * private thread) is drawn lit, where you are (`--lit-tint`, `--lit-ink`).
+ * The row whose place is in the column beside the list (Main Chat, a
+ * private thread, or a request, a change or a decision on its page: #6218)
+ * is drawn lit, where you are (`--lit-tint`, `--lit-ink`). A row is lit by
+ * the column it opens (./column.ts rowKey), the one the page says is open.
  * #6153: a design thread filed as a request is that request's row (In
  * progress, Waiting or Live, with the track's word on its right), which
  * opens the thread and is lit while it is in the column.
@@ -68,6 +70,7 @@ import {
   GROUP_FIRST, NOT_MOVING, byProject, nextWords, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
+import { rowKey } from './column';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
@@ -434,8 +437,10 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
   main: { lit: boolean; unread: number; open: () => void };
   /**
-   * The key of the row whose chat is in the column (`private:<root>`), lit:
-   * a private thread's row, or the row of the request it was filed as (#6153).
+   * What the column shows (./column.ts columnKey): `main`, `private:<root>`
+   * or `page:<route>`. The row that opens it is lit: a private thread's row,
+   * the row of the request it was filed as (#6153), or a request's, a
+   * change's or a decision's row while its page is in the column (#6218).
    */
   lit?: string | null;
   /** The lists have been read: until then Needs you says nothing, not "nothing needs you". */
@@ -479,7 +484,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     tooltip: say(row.sub)!,
     why: say(whyOf(row)),
     owe: !!row.pill,
-    lit: !!lit && row.key === lit,
+    lit: !!lit && rowKey(row) === lit,
     open: () => openRow(row),
   }));
   const threadLine = (glyph: (th: AiThread) => ReactNode) => (th: AiThread): Line => ({
@@ -495,7 +500,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     owe: false,
     // #6153: a request filed from a private thread opens that thread, and
     // is where you are while it is in the column.
-    lit: !!lit && !!th.rootId && lit === `private:${th.rootId}`,
+    lit: !!lit && rowKey(th) === lit,
     open: () => openThread(th),
   });
   const progressShown = progress.filter((x) => shows(x.app));

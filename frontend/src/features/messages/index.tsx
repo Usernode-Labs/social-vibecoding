@@ -46,7 +46,7 @@ import { requestPageOf } from './request-page';
 import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
-import { requestKey } from './bot-request';
+import { isRequestNews, requestKey } from './bot-request';
 import { MessageComposer } from './composer';
 import { useMessagesDrawer } from './phone-drawer';
 import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
@@ -2198,6 +2198,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     if (isMovedActivity(message)) continue;
     // #4046: and a card whose step its plan carries is not drawn at all.
     if (plans.hidden.has(message.id)) continue;
+    // #6207: Main Chat is the conversation; a request's news is on its page.
+    if (botDm && isRequestNews(message)) continue;
     // One request, one row: news drawn inside a newer row about its request.
     if (newsFold?.hidden.has(message.id)) continue;
     const day = dayKey(message);

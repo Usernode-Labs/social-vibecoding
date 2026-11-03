@@ -96,15 +96,14 @@ test('a request nobody is building: Work on this with Homeroom bot, and the agen
   const botOn = AppView._requestStatusView(baseIssue({ bot: { what: 'building', since: null, askedBy: 'me', mine: true } }));
   assert.equal(botOn.action.label, 'See progress');
   assert.equal(botOn.agentSession, false);
-  // B06 (audit 2 Nov 2026): her own plan waits for her: "you", and the
-  // button opens the plan in her chat, where its Build it is.
+  // #6210 (3 Nov 2026): her own plan waits for her: "you", and the plan
+  // with its Build it is right under this card, so the card has no button.
   const planMine = plain(AppView._requestStatusView(baseIssue({ bot: { what: 'reading', plan: true, since: null, askedBy: 'me', mine: true } })));
-  assert.equal(planMine.lead, 'Your plan is ready. Say Build it on it in your chat with Homeroom bot.');
+  assert.equal(planMine.lead, 'Your plan is ready. Build it is on the plan below.');
   assert.doesNotMatch(planMine.lead, /@me/);
-  assert.equal(planMine.action.label, 'See the plan');
-  assert.deepEqual(planMine.action.act, { fn: 'openBotChatFromRequest', args: [3] });
+  assert.equal(planMine.action, null, 'the plan card under it is the one Build it');
   const planTheirs = plain(AppView._requestStatusView(baseIssue({ bot: { what: 'reading', plan: true, since: null, askedBy: 'ada', mine: false } })));
-  assert.equal(planTheirs.lead, 'Waiting for @ada to OK the plan.', 'anyone else is told whose OK it waits for');
+  assert.equal(planTheirs.lead, '@ada\'s plan is ready. Any member can build it below.', 'anyone else is told any member may build it');
   AppView._ghIssuesMeta = { myRemaining: 5, homeroomBot: { typicalMinutes: 8 } };
   assert.equal(AppView._requestStatusView(baseIssue()).action.label, 'Ask Homeroom bot to build this', 'where the bot builds, its door stays');
 });
