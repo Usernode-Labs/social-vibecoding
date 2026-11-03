@@ -981,17 +981,43 @@ async function createPreviewProjectDatabase(dbName) {
     throw new Error(`createPreviewProjectDatabase: ${JSON.stringify(dbName)} is not a preview database name`);
   }
   const server = previewCreateServer();
+  const { password } = await createEmptyDatabase(dbName, server);
+  log.info('db-manager', 'Preview project database created', { dbName, server: serverKey(server) });
+  return { password, server: serverKey(server), url: connectionUrl(dbName, password, { server }) };
+}
+
+// A bare database from template0, owned by a fresh login role of its own,
+// with PUBLIC connect taken and a preview's connection ceiling, after any
+// earlier one of the same name (and its role) is dropped. Resolves
+// { password }; the caller keeps it.
+async function createEmptyDatabase(dbName, server) {
   const inAdmin = adminExecutor(server);
   await dropOldTarget(dbName, server);
   const role = ownerRoleName(dbName);
-  if (!SAFE_IDENT.test(role)) throw new Error(`createPreviewProjectDatabase: unsafe role ${role}`);
+  if (!SAFE_IDENT.test(dbName) || !SAFE_IDENT.test(role)) throw new Error(`createEmptyDatabase: unsafe identifiers ${dbName}/${role}`);
   const password = generatePassword();
   await inAdmin(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
   await inAdmin(`CREATE DATABASE ${dbName} TEMPLATE template0 OWNER ${role}`);
   await inAdmin(`REVOKE CONNECT ON DATABASE ${dbName} FROM PUBLIC`);
   await applyStagingConnectionLimit(dbName, { execute: inAdmin, server });
-  log.info('db-manager', 'Preview project database created', { dbName, server: serverKey(server) });
-  return { password, server: serverKey(server), url: connectionUrl(dbName, password, { server }) };
+  return { password };
+}
+
+// SEC-06: a platform preview's database starts EMPTY. The preview's own boot
+// builds its schema and seeds its fixtures, as a fresh install does (about
+// three seconds), so no production row reaches it, and there is no copy,
+// template or redaction to get wrong. Resolves { password,
+// platformPreviewPolicy }: the digest the deploy requires
+// (application-runtime) and the label retirement reads.
+async function createEmptyPlatformDatabase(targetDb, server) {
+  const { password } = await createEmptyDatabase(targetDb, server);
+  log.info('db-manager', 'Empty platform preview database created', { targetDb, server: serverKey(server) });
+  return { password, platformPreviewPolicy: platformPreview.DIGEST };
+}
+
+// Nothing copies the platform's own database: its previews start empty.
+function refusePlatformCopy(sourceDb) {
+  if (platformPreview.sourceIdentity(sourceDb)) throw platformPreview.refuse('platform previews start empty; nothing copies the platform database');
 }
 
 // `viaTemplate` (staging previews only): clone from the source's staging
@@ -1041,8 +1067,10 @@ const appCaused = (err) => !!(err && typeof err === 'object' && (err.noFallback 
 async function cloneDatabaseOn(server, sourceDb, targetDb, { viaTemplate }) {
   await assertPreviewServerReachable(server);
   // Source identity is resolved here, not selected by the proposal or an
-  // optional caller flag. Revalidate even when a warm template exists.
-  if (platformPreview.sourceIdentity(sourceDb)) await platformPreview.inspect(sourceDb, execInTarget);
+  // optional caller flag.
+  if (platformPreview.sourceIdentity(sourceDb)) {
+    return { ...await createEmptyPlatformDatabase(targetDb, server), via: 'empty', templateRefreshed: false, server };
+  }
   if (viaTemplate && stagingTemplatesEnabled()) {
     const viaTmpl = await withTemplateLock(sourceDb, async () => {
       const ensured = await ensureStagingTemplate(sourceDb, { server }).catch((err) => {
@@ -1150,6 +1178,7 @@ async function logicalCopyTemplate(sourceDb, server) {
 }
 
 async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER } = {}) {
+  refusePlatformCopy(sourceDb);
   log.info('db-manager', 'Cloning database', { sourceDb, targetDb });
   // The clone's own server: the role, the database, the restore, both
   // ownership passes and both redaction passes. Only the dump's source and
@@ -1204,9 +1233,7 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // Discovering the set from the SOURCE (before the clone exists) and
   // handing it to pg_dump as --exclude-table-data drops the payload to
   // the ~80 MB that actually survives.
-  const platformInput = platformPreview.sourceIdentity(sourceDb)
-    ? await platformPreview.inspect(sourceDb, execInTarget) : null;
-  const excludeData = platformInput ? platformPreview.exclusions(platformInput.catalog) : await privateDataExclusions(sourceDb);
+  const excludeData = await privateDataExclusions(sourceDb);
   const dumpStartedAt = Date.now();
   // The restore authenticates AS the clone's own role, so the app-defined
   // code the data load evaluates — CHECK constraints validated after the
@@ -1215,7 +1242,7 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // dumpRestore). The role was created with its password above and owns the
   // fresh database.
   await dumpRestore(sourceDb, targetDb, excludeData, {
-    targetServer: server, as: { user: targetRole, password }, platformInput,
+    targetServer: server, as: { user: targetRole, password },
   });
   log.info('db-manager', 'Clone copy complete', {
     sourceDb, targetDb,
@@ -1326,20 +1353,10 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // every object to it, so it owns these tables and can empty them.
   const asOwner = (db, sql, opts = {}) =>
     execInTarget(db, sql, { ...opts, server, as: { user: targetRole, password } });
-  // The policy transaction is large; use the authenticated owner connection
-  // rather than a psql -c argument (Linux caps one argument at 128 KiB).
-  const platformOutput = platformInput ? await withDatabaseConnection(targetDb,
-    execute => platformPreview.sanitize(targetDb, execute),
-    { server, as: { user: targetRole, password }, queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS }) : null;
-  if (!platformInput) await redactPrivateData(targetDb, asOwner);
-  if (platformOutput && (await platformPreview.inspect(sourceDb, execInTarget)).schema !== platformInput.schema) throw platformPreview.refuse('source schema changed during copy');
-  if (platformOutput) {
-    await asOwner(targetDb, require('../db/schema-migrations').snapshotHistorySql());
-    await stampPlatformCopy(targetDb, sourceDb, platformInput.schema, platformOutput.schema, { server });
-  }
+  await redactPrivateData(targetDb, asOwner);
 
   log.info('db-manager', 'Database cloned with new role', { sourceDb, targetDb, targetRole, server });
-  return { password, ...(platformOutput ? { platformPreviewPolicy: platformPreview.DIGEST } : {}) };
+  return { password };
 }
 
 // ── Staging templates ───────────────────────────────────────────────────
@@ -1416,23 +1433,6 @@ async function dropTemplateDb(dbName, { server = PRIMARY_SERVER } = {}) {
   await dropDisposableDatabase(dbName, { server });
 }
 
-async function databaseComment(dbName, { server = PRIMARY_SERVER } = {}) {
-  if (!SAFE_IDENT.test(dbName)) throw platformPreview.refuse('unsafe provenance database');
-  return String(await adminExecutor(server)(
-    `SELECT COALESCE(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE datname = '${dbName}'`,
-    { tuplesOnly: true }));
-}
-async function stampPlatformCopy(dbName, sourceDb, schema, copySchema, { server = PRIMARY_SERVER } = {}) {
-  await adminExecutor(server)(`COMMENT ON DATABASE ${dbName} IS '${platformPreview.stamp(sourceDb, schema, copySchema)}'`);
-}
-async function platformTemplateProvenance(templateDb, { server = PRIMARY_SERVER } = {}) {
-  const source = platformPreview.sourceIdentity(templateDb);
-  if (!source) return null;
-  const comment = await databaseComment(templateDb, { server });
-  if (!platformPreview.validStamp(comment, source)) throw platformPreview.refuse('template has missing or obsolete provenance');
-  return { source, schema: / preview_schema=([0-9a-f]{64})/.exec(comment)[1], copySchema: / preview_copy_schema=([0-9a-f]{64})/.exec(comment)[1] };
-}
-
 // When the template was last rebuilt, from the comment the refresh stamps
 // on it. Null when there is no template, or nothing readable on it.
 async function readTemplateRefreshedAt(templateDb, { server = PRIMARY_SERVER } = {}) {
@@ -1460,6 +1460,7 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
   if (!SAFE_IDENT.test(targetDb) || !SAFE_IDENT.test(ownerRole)) {
     throw new Error(`buildRedactedCopy: unsafe identifiers ${sourceDb}/${targetDb}/${ownerRole}`);
   }
+  refusePlatformCopy(sourceDb);
   const inTarget = targetExecutor(server);
   const inAdmin = adminExecutor(server);
   const emptyTemplate = await logicalCopyTemplate(sourceDb, server);
@@ -1479,14 +1480,11 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
   const asOwner = (db, sql, opts = {}) =>
     execInTarget(db, sql, { ...opts, server, as: { user: ownerRole, password: redactionPassword } });
   let excludeData = null;
-  let platformInput = null;
   let buildErr = null;
   try {
-    platformInput = platformPreview.sourceIdentity(sourceDb)
-      ? await platformPreview.inspect(sourceDb, execInTarget) : null;
-    excludeData = platformInput ? platformPreview.exclusions(platformInput.catalog) : await privateDataExclusions(sourceDb);
+    excludeData = await privateDataExclusions(sourceDb);
     await dumpRestore(sourceDb, targetDb, excludeData, {
-      targetServer: server, as: { user: ownerRole, password: redactionPassword }, platformInput,
+      targetServer: server, as: { user: ownerRole, password: redactionPassword },
     });
     const sourceRole = ownerRoleName(sourceDb);
     if (SAFE_IDENT.test(sourceRole)) {
@@ -1498,14 +1496,7 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
       if (serverKey(server) !== PRIMARY_SERVER) throw err;   // see cloneDatabaseDirect
       log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
     });
-    if (platformInput) {
-      const output = await withDatabaseConnection(targetDb,
-        execute => platformPreview.sanitize(targetDb, execute),
-        { server, as: { user: ownerRole, password: redactionPassword }, queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS });
-      if ((await platformPreview.inspect(sourceDb, execInTarget)).schema !== platformInput.schema) throw platformPreview.refuse('source schema changed during copy');
-      await asOwner(targetDb, require('../db/schema-migrations').snapshotHistorySql());
-      await stampPlatformCopy(targetDb, sourceDb, platformInput.schema, output.schema, { server });
-    } else await redactPrivateData(targetDb, asOwner);
+    await redactPrivateData(targetDb, asOwner);
   } catch (err) {
     buildErr = err;
   }
@@ -1526,6 +1517,7 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
 
 // Rebuild the template from the live source, then swap it in.
 async function refreshStagingTemplate(sourceDb, { server = PRIMARY_SERVER } = {}) {
+  refusePlatformCopy(sourceDb);
   const inAdmin = adminExecutor(server);
   const templateDb = stagingTemplateDbName(sourceDb);
   const next = `${templateDb}_next`;
@@ -1546,8 +1538,7 @@ async function refreshStagingTemplate(sourceDb, { server = PRIMARY_SERVER } = {}
 
   await inAdmin(`REVOKE CONNECT ON DATABASE ${next} FROM PUBLIC`);
   const stamp = new Date().toISOString();
-  const dataStamp = platformPreview.sourceIdentity(sourceDb) ? await databaseComment(next, { server }) : '';
-  await inAdmin(`COMMENT ON DATABASE ${next} IS 'staging-template source=${sourceDb} refreshed_at=${stamp}${dataStamp}'`);
+  await inAdmin(`COMMENT ON DATABASE ${next} IS 'staging-template source=${sourceDb} refreshed_at=${stamp}'`);
   // A template nobody can connect to is one CREATE DATABASE … TEMPLATE can
   // always copy (the "being accessed by other users" refusal needs a
   // session, and there can be none) and one the reap sweep never mistakes
@@ -1649,14 +1640,8 @@ async function ensureStagingTemplate(sourceDb, {
   if (templateDb.length > MAX_TEMPLATE_IDENT) throw new Error(`ensureStagingTemplate: name too long for ${sourceDb}`);
   // A wiped preview server answers "no such template" here like any server
   // that never had one, so the next build rebuilds it without being told.
-  let policyValid = true;
-  if (platformPreview.sourceIdentity(sourceDb)) {
-    const input = await platformPreview.inspect(sourceDb, execInTarget);
-    const comment = await databaseComment(templateDb, { server });
-    policyValid = platformPreview.validStamp(comment, sourceDb)
-      && comment.includes(` preview_schema=${input.schema}`);
-  }
-  const refreshedAt = policyValid ? await readTemplateRefreshedAt(templateDb, { server }) : null;
+  refusePlatformCopy(sourceDb);
+  const refreshedAt = await readTemplateRefreshedAt(templateDb, { server });
   const age = refreshedAt === null ? null : now - refreshedAt;
   if (age !== null && age <= maxAgeMs) return { template: templateDb, refreshed: false, stale: false };
   if (age !== null && age <= Math.max(hardMaxAgeMs, maxAgeMs)) {
@@ -1697,7 +1682,7 @@ async function cloneFromTemplate(templateDb, targetDb, {
   if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneFromTemplate: unsafe identifiers ${templateDb}/${targetDb}`);
   }
-  const platformProvenance = await platformTemplateProvenance(templateDb, { server });
+  refusePlatformCopy(templateDb);
   const templateRole = ownerRoleName(templateDb);
   const targetRole = ownerRoleName(targetDb);
   if (!SAFE_IDENT.test(templateRole) || !SAFE_IDENT.test(targetRole)) {
@@ -1738,13 +1723,8 @@ async function cloneFromTemplate(templateDb, targetDb, {
   // failure, and a later preview must not inherit this session.
   await withDatabaseConnection(targetDb, async (execute) => {
     try {
-      if (platformProvenance) {
-        const output = await platformPreview.sanitize(targetDb, execute);
-        if (output.schema !== platformProvenance.copySchema) throw platformPreview.refuse('template schema provenance mismatch');
-        await execute(targetDb, require('../db/schema-migrations').snapshotHistorySql());
-      } else await redactPrivateData(targetDb, execute, { onProgress });
-    }
-    catch (error) {
+      await redactPrivateData(targetDb, execute, { onProgress });
+    } catch (error) {
       if (!/^Database clone /.test(String(error.message || ''))) {
         error.message = `Database clone redact_private: ${error.message}`;
       }
@@ -1755,8 +1735,7 @@ async function cloneFromTemplate(templateDb, targetDb, {
   log.info('db-manager', 'Database cloned from staging template', {
     templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
   });
-  if (platformProvenance) await stampPlatformCopy(targetDb, platformProvenance.source, platformProvenance.schema, platformProvenance.copySchema, { server });
-  return { password, ...(platformProvenance ? { platformPreviewPolicy: platformPreview.DIGEST } : {}) };
+  return { password };
 }
 
 // #2380: freeze ONE redacted staging-template generation for a paired
@@ -1784,6 +1763,7 @@ function isPreparedCloneSource(name) {
 
 async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
   if (!sourceId) throw new Error('prepareStagingCloneSource: sourceId is required');
+  if (platformPreview.sourceIdentity(sourceDb)) return prepareEmptyPlatformSource(sourceDb, sourceId);
   if (!stagingTemplatesEnabled()) {
     throw new Error('prepareStagingCloneSource: staging templates are disabled');
   }
@@ -1866,15 +1846,12 @@ async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
           await reassignUserObjectsTo(preparedDb, ownerRoleName(sharedTemplate), preparedRole, execute);
         }, { queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS, server });
       }
-      const platformProvenance = platformPreview.sourceIdentity(sourceDb)
-        ? await platformTemplateProvenance(builtDirectly ? preparedDb : sharedTemplate, { server }) : null;
-      const dataStamp = platformProvenance ? platformPreview.stamp(sourceDb, platformProvenance.schema, platformProvenance.copySchema) : '';
       await inAdmin(`REVOKE CONNECT ON DATABASE ${preparedDb} FROM PUBLIC`);
       const fingerprint = crypto.createHash('sha256')
-        .update(`${sourceDb}\n${sharedTemplate}\n${new Date(refreshedAtMs).toISOString()}\n${preparedDb}${dataStamp}`)
+        .update(`${sourceDb}\n${sharedTemplate}\n${new Date(refreshedAtMs).toISOString()}\n${preparedDb}`)
         .digest('hex');
       await inAdmin(
-        `COMMENT ON DATABASE ${preparedDb} IS 'shots-clone-source source=${sourceDb} refreshed_at=${new Date(refreshedAtMs).toISOString()} fingerprint=${fingerprint}${dataStamp}'`
+        `COMMENT ON DATABASE ${preparedDb} IS 'shots-clone-source source=${sourceDb} refreshed_at=${new Date(refreshedAtMs).toISOString()} fingerprint=${fingerprint}'`
       );
       await inAdmin(`ALTER DATABASE ${preparedDb} WITH ALLOW_CONNECTIONS false`);
       return {
@@ -1898,6 +1875,18 @@ async function cloneFromPreparedSource(prepared, targetDb, { onProgress = null }
   if (!isPreparedCloneSource(templateDb)) {
     throw new Error(`cloneFromPreparedSource: invalid prepared source ${JSON.stringify(templateDb)}`);
   }
+  if (platformPreview.sourceIdentity(templateDb)) {
+    // Both sides start empty and their own code builds and seeds them, so
+    // the pair differs only where its two revisions do.
+    const server = serverKey(typeof prepared === 'object' ? prepared.server : null);
+    const empty = await createEmptyPlatformDatabase(targetDb, server);
+    return {
+      ...empty,
+      ...(server === PRIMARY_SERVER ? {} : { server }),
+      via: 'empty',
+      fixtureFingerprint: typeof prepared === 'object' ? prepared.fingerprint || null : null,
+    };
+  }
   // Paired shots resets repeat this clone and have their own bounded
   // lifetime. A large ownership/redaction query may exceed the ordinary
   // preview's 30-second ceiling without being stuck.
@@ -1914,6 +1903,35 @@ async function cloneFromPreparedSource(prepared, targetDb, { onProgress = null }
     via: 'prepared-template',
     fixtureFingerprint: typeof prepared === 'object' ? prepared.fingerprint || null : null,
   };
+}
+
+// The platform's shots source: an empty, connectionless database of the
+// prepared-source shape, so the run holds, names and releases it as any
+// other. Nothing is read from the platform's database.
+async function prepareEmptyPlatformSource(sourceDb, sourceId) {
+  const server = previewCreateServer();
+  const inAdmin = adminExecutor(server);
+  await assertPreviewServerReachable(server);
+  const preparedDb = preparedCloneSourceName(sourceDb, sourceId);
+  const preparedRole = ownerRoleName(preparedDb);
+  const at = new Date().toISOString();
+  await dropOldTarget(preparedDb, server);
+  await inAdmin(`CREATE ROLE ${preparedRole} NOLOGIN`);
+  try {
+    await inAdmin(`CREATE DATABASE ${preparedDb} TEMPLATE template0 OWNER ${preparedRole}`);
+    await inAdmin(`REVOKE CONNECT ON DATABASE ${preparedDb} FROM PUBLIC`);
+    const fingerprint = crypto.createHash('sha256')
+      .update(`${sourceDb}\nempty\n${platformPreview.DIGEST}\n${preparedDb}`).digest('hex');
+    await inAdmin(`COMMENT ON DATABASE ${preparedDb} IS 'shots-clone-source source=${sourceDb} refreshed_at=${at} fingerprint=${fingerprint} empty'`);
+    await inAdmin(`ALTER DATABASE ${preparedDb} WITH ALLOW_CONNECTIONS false`);
+    return {
+      templateDb: preparedDb, sourceDb, refreshedAt: at, fingerprint,
+      ...(server === PRIMARY_SERVER ? {} : { server }),
+    };
+  } catch (err) {
+    await dropDatabase(preparedDb).catch(() => {});
+    throw err;
+  }
 }
 
 async function releasePreparedCloneSource(prepared) {
@@ -2596,7 +2614,7 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], opts = {}) {
   return onMainServer(PRIMARY_SERVER, () => dumpRestoreNow(sourceDb, targetDb, excludeData, opts));
 }
 
-async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER, as = null, platformInput = null } = {}) {
+async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`dumpRestore: unsafe identifiers ${sourceDb}/${targetDb}`);
   }
@@ -2613,8 +2631,7 @@ async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServ
   // role at its CREATE EXTENSION. The administrator creates those first, in
   // the copy while it is still empty, so no app-defined object exists yet
   // for the extension's script to meet, and the dump leaves them out.
-  const adminExtensions = as && !platformInput ? await extensionsOnlyAnAdminCanCreate(sourceDb, targetServer) : [];
-  const platformTables = platformInput ? await prepareTrustedPlatformSchema(targetDb, { server: targetServer, as }) : null;
+  const adminExtensions = as ? await extensionsOnlyAnAdminCanCreate(sourceDb, targetServer) : [];
   for (const { name, schema } of adminExtensions) {
     if (databaseAccess.enabled()) {
       const found = await execInTarget(targetDb,
@@ -2643,9 +2660,7 @@ async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServ
   // and why it must include the FK closure.
   const dumpArgs = [
     '-Fc',
-    ...(platformInput
-      ? ['--data-only', '--no-large-objects', ...platformPreview.retainedTables().map(name => `--table=${name}`)]
-      : excludeData.map((qualified) => `--exclude-table-data=${qualified}`)),
+    ...excludeData.map((qualified) => `--exclude-table-data=${qualified}`),
     ...adminExtensions.map(({ name }) => `--exclude-extension=${name}`),
   ];
   const dump = spawn('pg_dump', dumpArgs, {
@@ -2692,7 +2707,6 @@ async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServ
   }
   const stderr = `${dumpStderr}\n${restoreStderr}`.trim();
   if (dumpResult.code !== 0 || restoreResult.code !== 0) {
-    if (platformInput) throw new Error(`Platform preview data copy failed (pg_dump=${dumpResult.code ?? dumpResult.signal}, pg_restore=${restoreResult.code ?? restoreResult.signal})`);
     throw new Error(
       `dumpRestore ${sourceDb} → ${targetDb} failed ` +
       `(pg_dump=${dumpResult.code ?? dumpResult.signal}, pg_restore=${restoreResult.code ?? restoreResult.signal}): ` +
@@ -2709,18 +2723,16 @@ async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServ
   // missing schema/rows, which is worse than failing the build loudly.
   const ignored = /errors ignored on restore:\s*(\d+)/i.exec(stderr || '');
   if (ignored && Number(ignored[1]) > 0) {
-    if (platformInput) throw new Error('Platform preview data copy reported restore errors');
     throw new Error(
       `dumpRestore ${sourceDb} → ${targetDb}: pg_restore reported ${ignored[1]} ` +
       `error(s). stderr: ${stderr.slice(0, 2000)}`
     );
   }
-  if (!platformInput && stderr && stderr.trim()) {
+  if (stderr && stderr.trim()) {
     log.debug('db-manager', 'pg_dump|pg_restore stderr (non-fatal)', {
       sourceDb, targetDb, stderr: stderr.slice(0, 2000),
     });
   }
-  if (platformTables) await execInTarget(targetDb, platformTables.map(name => `ALTER TABLE ${name} ENABLE TRIGGER USER;`).join('\n'), { server: targetServer, as });
 }
 
 function pgRestoreArgs(targetDb) {
@@ -2975,23 +2987,6 @@ async function captureAndDisableUserTriggers(targetDb, execute) {
     for (const sql of rows) await execute(targetDb, sql);
   };
   return { restore };
-}
-
-async function prepareTrustedPlatformSchema(targetDb, { server, as }) {
-  const env = postgresEnv(targetDb, server, as);
-  // No source-defined schema, comments, routine bodies, type labels, index
-  // expressions or trigger code enter the copy. This is the deployed file.
-  await execFileAsync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-f', require('../db/schema-source').ensureSchema()],
-    { env, timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
-  const execute = (db, sql, opts = {}) => execInTarget(db, sql, { ...opts, server, as });
-  const copy = await platformPreview.inspect(targetDb, execute);
-  const names = copy.catalog.relations.map(r => r.name);
-  await execute(targetDb, `TRUNCATE ${names.join(', ')} RESTART IDENTITY;`);
-  // User triggers must not turn imported production rows into new audit or
-  // membership rows during COPY. Internal FK triggers stay on; pg_dump's
-  // data-only dependency order supplies users -> communities -> apps.
-  await execute(targetDb, names.map(name => `ALTER TABLE ${name} DISABLE TRIGGER USER;`).join('\n'));
-  return names;
 }
 
 // The whole redaction of a copy, over an owner-authenticated `execute`: user
