@@ -47,6 +47,10 @@ test('only a literal "offline": false opts an app out, and the platform is never
   assert.equal(offlineCache.forApp({ manifest_snapshot: {} }, on), true);
   assert.equal(offlineCache.forApp({ manifest_snapshot: { offline: false } }, on), false);
   assert.equal(offlineCache.forApp({ self_hosted: true, manifest_snapshot: {} }, on), false);
+  // A view-private app's `/` needs its token, which never reaches the gate
+  // from the address after `#`; framing it there nested the shell (#6226).
+  assert.equal(offlineCache.forApp({ view_visibility: 'private', manifest_snapshot: {} }, on), false);
+  assert.equal(offlineCache.forApp({ view_visibility: 'public', manifest_snapshot: {} }, on), true);
   assert.equal(offlineCache.forApp({ manifest_snapshot: {} }, {}), false, 'switch off');
   assert.equal(offlineCache.forApp(null, on), false);
 });

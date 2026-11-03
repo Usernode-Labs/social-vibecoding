@@ -926,6 +926,15 @@ function readVisibility(parsed) {
   return { build, view };
 }
 
+// Normalize the optional top-level `offline` switch:
+//   "offline": false
+// The browser-cache opt-out offlineCache.optedOut reads. Only a literal
+// false means anything; an absent key or any other value stays null, so a
+// manifest that says nothing keeps today's behaviour. Never throws.
+function readOffline(parsed) {
+  return parsed?.offline === false ? false : null;
+}
+
 // Human description of a (collab, view) visibility pair — shared by the
 // reconcile chat message and the visibility-PR title so every surface
 // describes the same state with the same words. Matches the wording the
@@ -1506,9 +1515,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
+    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
   }
 
   let parsed;
@@ -1516,7 +1525,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -1538,6 +1547,7 @@ function read(cloneDir) {
     topics: readTopics(parsed),
     category: readCategory(parsed),
     followOriginal: readFollowOriginal(parsed),
+    offline: readOffline(parsed),
   };
 }
 

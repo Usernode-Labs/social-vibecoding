@@ -64,6 +64,12 @@ function optedOut(manifest) {
 function forApp(app, env = process.env) {
   if (!enabled(env) || !app) return false;
   if (app.self_hosted) return false;
+  // A view-private app's `/` cannot load without its token, and the shell
+  // puts that token after `#`, so the gate never sees it: framing such an
+  // app at the cacheable address sends the request through the access
+  // gate's sign-in hop, which frames the shell again and nests it inside
+  // itself (#6226). Only the tokened address is right for these.
+  if (app.view_visibility === 'private') return false;
   return !optedOut(app.manifest_snapshot);
 }
 
