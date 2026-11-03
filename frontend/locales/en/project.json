@@ -6051,6 +6051,22 @@
     "text": "A change for this request is on <0>#{{on}}</0>",
     "description": "Line on a request's page when a change that would close it, and has no number yet, lives on another request's page (a change for several requests is shown on the first one's). {{on}} is the other request's number, and <0></0> links to that request's page, at the change."
   },
+  "topic.thread.page.alsoCloses": {
+    "text": "Also closes <0>{{numbers}}</0>",
+    "description": "Under a change's title on a request's page: the other requests it will close when it merges. <0></0> is the list of request numbers, each a link to its page, possibly ending in \"N more\"."
+  },
+  "topic.thread.page.alsoClosed": {
+    "text": "Also closed <0>{{numbers}}</0>",
+    "description": "Under a change's title on a request's page, once the change has merged: the other requests it closed. <0></0> is the list of request numbers, each a link to its page, possibly ending in \"N more\"."
+  },
+  "topic.thread.page.alsoMore_one": {
+    "text": "{{count}} more",
+    "description": "Last item of the list of other requests a change also closes, on its request's page, when one request is hidden. Tapping it shows the hidden numbers in the same line."
+  },
+  "topic.thread.page.alsoMore_other": {
+    "text": "{{count}} more",
+    "description": "Last item of the list of other requests a change also closes, on its request's page, when some are hidden. Tapping it shows the hidden numbers in the same line."
+  },
   "topic.thread.ballot.close": {
     "text": "Close it",
     "description": "A choice of the one vote between a request's changes and a proposal to close the request, in place of Neither: the person wants the request closed with none of the changes."

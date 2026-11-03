@@ -302,7 +302,7 @@ test('D5: a change folded under its ballot has no Vote of its own', () => {
   const head = read(`${TOPIC}/change-head.tsx`);
   assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} \/>/);
   const src = read(`${TOPIC}/thread-changes.tsx`);
-  assert.match(src, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot \/>/);
+  assert.match(src, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot request=\{request\} \/>/);
   assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>/);
   assert.match(src, /querySelector<HTMLElement>\('\[data-change-gate="ballot"\]'\)/, 'a door to one of them lands on the ballot');
 });
@@ -318,6 +318,73 @@ test('D4: a change for this request on another request\'s page is one line that 
   assert.match(html, /data-thread-elsewhere="1"/);
   assert.match(html, /Change #12 for this request is on <a [^>]*data-thread-elsewhere-on="10"[^>]*>#10<\/a>/);
   assert.equal(message('project:topic.thread.page.elsewhereUnnumbered', { on: 10 }), 'A change for this request is on <0>#10</0>');
+});
+
+// #6224: a change for several requests lives on its first one's page, so its
+// section there must say which other requests it closes: the first three as
+// links, then "N more" that unfolds the rest, from its linked_issues.
+const TEN = [6159, 6207, 6210, 6212, 6214, 6215, 6218, 6219, 6220, 6221];
+
+test('#6224: alsoCloses is the change\'s linked requests minus this page\'s, unique and ascending', () => {
+  const { alsoCloses } = loadTsx(`${TOPIC}/thread-model.ts`);
+  const closes = (numbers) => JSON.parse(JSON.stringify(alsoCloses(review(91, 6223, numbers), 6207)));
+  assert.deepEqual(closes([6221, 6207, 6159, 6159]), [6159, 6221], 'ascending, without duplicates');
+  assert.deepEqual(closes([6207]), [], 'only this request: nothing to say');
+  assert.deepEqual(closes([6210]), [], 'it does not close this request at all');
+  assert.deepEqual(closes([]), []);
+});
+
+test('#6224: a change that closes ten requests names the others, links three, and folds the rest', () => {
+  const item = review(91, 6223, TEN);
+  const wasWindow = globalThis.window;
+  globalThis.window = { AppView: { appData: { slug: 'club' } }, addEventListener() {}, removeEventListener() {} };
+  let html;
+  try {
+    html = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+      slug: 'club', data: thread([request, item]), number: 6207, changes: [item], close: null, onChanged: () => {},
+    });
+  } finally {
+    if (wasWindow === undefined) delete globalThis.window; else globalThis.window = wasWindow;
+  }
+  assert.match(html, /data-thread-change-also="91"/);
+  assert.match(html, /data-thread-change-also-state="closes"/);
+  assert.match(html, /Also closes <a /, 'the line starts with the words');
+  const links = [...html.matchAll(/data-thread-change-also-on="(\d+)"/g)].map((m) => m[1]);
+  assert.deepEqual(links, ['6159', '6210', '6212'], 'the first three others, ascending');
+  assert.match(html, /href="#app\/club\/dev\/issues\/6159"/, 'each number opens that request\'s page');
+  assert.match(html, /data-thread-change-also-more="6"[^>]*>6 more<\/button>/, 'the rest folded behind one tap');
+  assert.equal(message('project:topic.thread.page.alsoMore', { count: 6 }), '6 more');
+  assert.ok(html.indexOf('data-thread-change-title="91"') < html.indexOf('data-thread-change-also="91"'), 'under the title');
+  const src = read(`${TOPIC}/thread-changes.tsx`);
+  assert.ok(src.indexOf('<AlsoCloses item={item} request={request} />') < src.indexOf('data-thread-change-summary'), 'above the summary');
+});
+
+test('#6224: once the change has merged the line says "Also closed"; three others need no fold', () => {
+  const merged = { ...review(91, 6223, TEN), state: 'merged' };
+  const html = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club', data: thread([request, merged]), number: 6207, changes: [merged], close: null, onChanged: () => {},
+  });
+  assert.match(html, /data-thread-change-also-state="closed"/);
+  assert.match(html, /Also closed <a /);
+
+  const three = review(92, 6064, [10, 11, 12, 13]);
+  const short = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club', data: thread([request, three]), number: 10, changes: [three], close: null, onChanged: () => {},
+  });
+  assert.equal((short.match(/data-thread-change-also-on=/g) || []).length, 3);
+  assert.doesNotMatch(short, /data-thread-change-also-more=/);
+  assert.match(short, /Also closes /);
+});
+
+test('#6224: a change closing only this request shows no "Also closes" line', () => {
+  const only = review(91, 6063, [10]);
+  const html = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club', data: thread([request, only]), number: 10, changes: [only], close: null, onChanged: () => {},
+  });
+  assert.doesNotMatch(html, /data-thread-change-also=/);
+  assert.doesNotMatch(html, /Also closes/);
+
+  assert.equal(message('project:topic.thread.page.alsoMore', { count: 1 }), '1 more');
 });
 
 test('D2: a change built for a request lands on the request\'s page, at it; one with no request keeps its page', () => {

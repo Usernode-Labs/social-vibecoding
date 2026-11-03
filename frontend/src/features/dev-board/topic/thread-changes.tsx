@@ -58,6 +58,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { i18n } from '../../../lib/i18n/runtime';
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { Html } from '../../../lib/html';
 import { ActionButton, StatusPill } from '../card/dev-card';
@@ -72,6 +73,7 @@ import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view'
 import { pageSlug } from './thread-items';
 import { WorkWithBotButton } from './work-with-bot';
 import {
+  alsoCloses,
   ballotOf,
   ballotVotes,
   elsewhereFor,
@@ -316,19 +318,106 @@ function useInView(id: number, ready: boolean, box: RefObject<HTMLElement | null
   }, [id, ready, target]);
 }
 
+/** "#6159, #6210, #6212, and 6 more": the numbers, as the language lists them. */
+function numberText(numbers: number[], locale: string): string {
+  const all = numbers.map((n) => `#${n}`);
+  try {
+    return new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(all);
+  } catch {
+    return all.join(', ');
+  }
+}
+
 /**
- * What a change's section draws under its line: its summary, the plan it
- * was built from, its before and after, then its Votes and Testing cards
- * (or, still being built, the line that says so), and the sheets its ⋯
- * opens. `ballot`: folded under the ballot, which is where it is voted on.
+ * The parts, joined the way the language joins a list: its `literal` parts
+ * are the punctuation between the links, and each `element` is one of them.
  */
-function ChangeBody({ item, view, plan = null, ballot = false }: {
-  item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean;
+function joinParts(parts: ReactNode[], locale: string): ReactNode[] {
+  try {
+    const marks = parts.map((_, i) => `\u0000${i}\u0000`);
+    // formatToParts is ES2021 and may be missing from an older TypeScript lib.
+    const formatter: { formatToParts(values: string[]): Array<{ type: string; value: string }> } = new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' });
+    return formatter.formatToParts(marks).map((part) => (part.type === 'element'
+      ? parts[Number(part.value.replace(/\u0000/g, ''))]
+      : part.value));
+  } catch {
+    return parts.flatMap((part, i) => (i ? [', ', part] : [part]));
+  }
+}
+
+/** RichMessage's one tag: the list, joined by joinParts. */
+function Joined({ parts }: { parts: ReactNode[] }): ReactNode {
+  return <>{parts}</>;
+}
+
+/**
+ * #6224: a change for several requests lives on its first request's page,
+ * so its section says which other requests it closes when it merges, from
+ * its own `closes` (linked_issues, exactly what the merge closes). The first
+ * three link to their pages; "N more" unfolds the rest in place. Nothing
+ * unless it closes this request and another.
+ */
+function AlsoCloses({ item, request }: { item: ThreadItem; request: number }): ReactNode {
+  const t = useMessages('project');
+  const [open, setOpen] = useState(false);
+  const others = alsoCloses(item, request);
+  if (!others.length) return null;
+  const shown = open || others.length <= 3 ? others : others.slice(0, 3);
+  const rest = others.length - shown.length;
+  const slug = appView()?.appData?.slug || '';
+  const merged = item.state === 'merged';
+  const linkClass = 'font-semibold text-violet-700 hover:underline dark:text-violet-300';
+  const parts: ReactNode[] = shown.map((n) => (
+    <a
+      key={`n${n}`}
+      href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${n}` : `#${n}`}
+      className={linkClass}
+      data-thread-change-also-on={n}
+    >
+      {`#${n}`}
+    </a>
+  ));
+  if (rest > 0) {
+    parts.push(
+      <button
+        key="more"
+        type="button"
+        className={linkClass}
+        aria-expanded="false"
+        data-thread-change-also-more={rest}
+        onClick={() => setOpen(true)}
+      >
+        {t('project:topic.thread.page.alsoMore', { count: rest })}
+      </button>,
+    );
+  }
+  const locale = i18n.language || 'en';
+  return (
+    <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-also={item.id} data-thread-change-also-state={merged ? 'closed' : 'closes'}>
+      <RichMessage
+        id={merged ? 'project:topic.thread.page.alsoClosed' : 'project:topic.thread.page.alsoCloses'}
+        values={{ numbers: numberText(others, locale) }}
+        components={[<Joined key="also" parts={joinParts(parts, locale)} />]}
+      />
+    </p>
+  );
+}
+
+/**
+ * What a change's section draws under its line: which other requests it
+ * also closes, its summary, the plan it was built from, its before and
+ * after, then its Votes and Testing cards (or, still being built, the line
+ * that says so), and the sheets its ⋯ opens. `ballot`: folded under the
+ * ballot, which is where it is voted on.
+ */
+function ChangeBody({ item, view, plan = null, ballot = false, request }: {
+  item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean; request: number;
 }): ReactNode {
   const t = useMessages('project');
   const summary = view?.body.summaryHtml || '';
   return (
     <>
+      <AlsoCloses item={item} request={request} />
       {summary ? <div className="dev-thread-change-summary" data-thread-change-summary={item.id}><RequestWords html={summary} /></div> : null}
       {plan ? <PlanLine plan={plan} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} s={view.v.shots} /> : null}
@@ -345,14 +434,14 @@ function ChangeBody({ item, view, plan = null, ballot = false }: {
 }
 
 /** One change, on its own: its line, then everything its page had. */
-function ChangeBlock({ item, plan = null }: { item: ThreadItem; plan?: RequestSpecCard | null }): ReactNode {
+function ChangeBlock({ item, plan = null, request }: { item: ThreadItem; plan?: RequestSpecCard | null; request: number }): ReactNode {
   const [view] = useChangeViews([item]);
   const box = useRef<HTMLDivElement>(null);
   useInView(item.id, !!view || item.state === 'underway', box);
   return (
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
       <ChangeLine item={item} view={view} />
-      <ChangeBody item={item} view={view} plan={plan} />
+      <ChangeBody item={item} view={view} plan={plan} request={request} />
       {/* 1 Nov 2026: ask about it, or sketch a revision, privately. */}
       <WorkWithBotButton slug={pageSlug()} number={item.number} />
     </div>
@@ -364,8 +453,8 @@ function ChangeBlock({ item, plan = null }: { item: ThreadItem; plan?: RequestSp
  * the rest of its section. `open` is the ballot's, so a tap on the change's
  * row in the ballot opens it too.
  */
-function FoldedChange({ item, i, view, plan, open, onToggle }: {
-  item: ThreadItem; i: number; view: ChangeView | null; plan: RequestSpecCard | null; open: boolean; onToggle: () => void;
+function FoldedChange({ item, i, view, plan, request, open, onToggle }: {
+  item: ThreadItem; i: number; view: ChangeView | null; plan: RequestSpecCard | null; request: number; open: boolean; onToggle: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const kicker = useKicker(item, letterOf(i));
@@ -385,7 +474,7 @@ function FoldedChange({ item, i, view, plan, open, onToggle }: {
         {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
         <ChangeMenu item={item} view={view} />
       </div>
-      {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot /></div> : null}
+      {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot request={request} /></div> : null}
     </div>
   );
 }
@@ -639,7 +728,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
       {/* D5: each change folded under the ballot, its section one tap away. */}
       <div className="mt-2 flex flex-col" data-thread-folds={options.length}>
         {options.map((o, i) => (
-          <FoldedChange key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null}
+          <FoldedChange key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null} request={Number(anchor[0])}
             open={open.has(o.id)} onToggle={() => toggle(o.id)} />
         ))}
       </div>
@@ -767,7 +856,7 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged, p
         <Competing key={ballot.options.map((o) => o.id).join(',')} slug={slug} data={data} anchor={anchor}
           options={ballot.options} close={ballot.close} onChanged={onChanged} plans={plans} />
       ) : null}
-      {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} /></Fragment>)}
+      {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} /></Fragment>)}
       {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
       <Elsewhere list={elsewhere} />
     </section>

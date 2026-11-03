@@ -207,7 +207,7 @@ test('a change gets the quiet version: under its cards, on its request\'s page a
   // One page per thread: under the change's section, after its body (its
   // summary, before and after, Votes and Testing cards); not inside a
   // ballot's fold, where the ballot is what asks something.
-  assert.match(changes, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} \/>\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton slug=\{pageSlug\(\)\} number=\{item\.number\} \/>/);
+  assert.match(changes, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} request=\{request\} \/>\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton slug=\{pageSlug\(\)\} number=\{item\.number\} \/>/);
   const page = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.match(page, /\{v\.shots \? <ShotsCard s=\{v\.shots\} \/> : null\}\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton slug=\{pageSlug\(\)\} number=\{v\.number\} \/>/,
     'the last of the change page\'s root post, under its cards');
