@@ -2941,7 +2941,7 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   // The first line: the small glyph (This week's), the title, then the
   // card's own status pill and its Vote at the line's end, the pill first.
   assert.match(html, /^<div class="dev-ws-wrow dev-ws-lrow" data-ws-row="[^"]+" data-ws-kind="change" data-ws-open="proposal:34"><span class="dev-ws-hrow-glyph" data-kind="change" aria-hidden="true"><svg/);
-  assert.match(html, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/34">[^<]+<\/a><span class="dev-ws-wvote" data-ws-vote=""><span class="dev-ws-row-state [^"]*dev-ws-wvote-state"[^>]*>[^<]+<\/span><span class="dev-ws-wvote-btn"><button type="button" class="dev-vote-btn"[^]*?<\/button><\/span><\/span><\/span>/,
+  assert.match(html, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/34"[^>]*>[^<]+<\/a><span class="dev-ws-wvote" data-ws-vote=""><span class="dev-ws-row-state [^"]*dev-ws-wvote-state"[^>]*>[^<]+<\/span><span class="dev-ws-wvote-btn"><button type="button" class="dev-vote-btn"[^]*?<\/button><\/span><\/span><\/span>/,
     'the title, then the pill, then Vote, closing the first line');
   // The second: the number and its maker (somebody else's, so named), then
   // the tags, and no vote. No age (#4716).

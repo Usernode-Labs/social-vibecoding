@@ -310,12 +310,13 @@ export function WorkRow({
                 ref={linkRef}
                 className="dev-ws-wrow-link"
                 href={href}
+                title={card.title.text}
                 aria-current={on ? 'true' : undefined}
                 onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
               >
                 {card.title.text}
               </a>
-            ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
+            ) : <span className="dev-ws-wrow-link" title={card.title.text}>{card.title.text}</span>}
             {end}
           </span>
           {/* One line that scrolls sideways (app.css), so it sits above the
@@ -354,12 +355,13 @@ export function WorkRow({
           <a
             className="dev-ws-wrow-link"
             href={href}
+            title={card.title.text}
             aria-current={on ? 'true' : undefined}
             onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
           >
             {card.title.text}
           </a>
-        ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
+        ) : <span className="dev-ws-wrow-link" title={card.title.text}>{card.title.text}</span>}
         <span className="dev-ws-wrow-sub">{rowWords(b)}</span>
         {status ? (
           <span className="dev-ws-wrow-status">
@@ -492,12 +494,13 @@ export function ActRow({
           <a
             className="dev-ws-wrow-link"
             href={href}
+            title={card.title.text}
             aria-current={on ? 'true' : undefined}
             onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
           >
             {card.title.text}
           </a>
-        ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
+        ) : <span className="dev-ws-wrow-link" title={card.title.text}>{card.title.text}</span>}
         {sub ? <span className="dev-ws-wrow-sub">{sub}</span> : null}
       </span>
       {act ? <span className="dev-ws-arow-act">{act}</span> : null}

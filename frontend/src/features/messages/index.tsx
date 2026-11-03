@@ -240,6 +240,9 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
 }) {
   const t = useMessages('messages');
   const peer = directPerson(conversation);
+  // #6118: the name is its own hover hint, so a row the layout ellipsises can
+  // still be read whole without opening the conversation.
+  const rowName = conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title;
   const invited = conversation.membershipStatus === 'invited';
   const unread = conversation.unreadCount > 0;
   // #1808: the shared ago ladder, which stops being relative at a week — a
@@ -282,7 +285,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
             "2 new" in grey (#18: grey is new to read, the accent is waiting
             on you) — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
+          <span className="messages-row-name" title={rowName || undefined}>{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
@@ -1388,6 +1391,10 @@ function ThreadHeader() {
   const withBot = active.kind === 'direct' && !!active.homeroomBot;
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
+  // #6118: the header ellipsises its name, so the name is also its hover hint.
+  const threadName = active.kind === 'direct' && person
+    ? senderName(person, { bare: true })
+    : channel ? `#${active.channelKey || active.title}` : active.title;
   // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
@@ -1425,7 +1432,7 @@ function ThreadHeader() {
         className="min-w-0 text-start flex-1"
         onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
-        <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
+        <div className="messages-thread-name" title={threadName || undefined}>{active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
         {/* One request, one story: what the bot is doing is the strip under
             this header (./bot-strip.tsx); the line under its name says what
             it is for. */}
@@ -2816,6 +2823,8 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const mainTitle = inMain
     ? privateThreadTitle(root, replies, meId) || (started ? startedThreadTitle(t, started.changeKind) : t('messages:replies.title'))
     : null;
+  // #6118: the name the reply header ellipsises, computed once for its hint.
+  const replyTitle = started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title');
   // #5219: on a request's thread the request's public discussion rides
   // along, and the two read in one transcript, in the order they were said.
   // Ties keep the DM replies first (the sort is stable); a reply still in
@@ -2896,7 +2905,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
         {inMain ? (
           // 1 Nov 2026: the thread alone in Main Chat's place, under its own
           // name and the line that says it is theirs alone.
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1" title={mainTitle || undefined}>
             <div className="messages-thread-name min-w-0 truncate" data-reply-title="">{mainTitle}</div>
             <div className="messages-thread-sub flex min-w-0 items-center gap-1" data-private-thread-sub="">
               <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -2907,7 +2916,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
           <div className="min-w-0 flex-1">
             <div className="messages-thread-name flex min-w-0 items-center gap-2">
               {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
-              <span className="min-w-0 truncate">{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
+              <span className="min-w-0 truncate" title={replyTitle}>{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
             </div>
             {where ? <div className="messages-thread-sub">{where}</div> : null}
           </div>
