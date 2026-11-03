@@ -353,6 +353,10 @@ export function AiScreen(): ReactNode {
   const threadUp = !!openRoot || blank;
   const columnShows = mounted && (phone ? !!botId : docked && !panel.open);
   const lit = !columnShows || blank ? null : openRoot ? `private:${openRoot}` : 'main';
+  // #6218: a page the panel holds in the column lights its own row: the
+  // panel's route is the address a row opened (no leading '#'). Main and a
+  // private thread keep the rule above, which says nothing while a page is up.
+  const litHref = mounted && !phone && docked && panel.open && panel.route ? panel.route : null;
   // 1 Nov 2026 (C1): a design's preview beside the thread it is in, while
   // that thread is the column's (./preview.ts).
   const preview = usePreview();
@@ -495,6 +499,7 @@ export function AiScreen(): ReactNode {
           hero={hero}
           main={{ lit: lit === 'main', unread, open: openMain }}
           lit={lit}
+          litHref={litHref}
           ready={!!work && !!needs}
           failed={failed}
           onRetry={() => setMoved((n) => n + 1)}

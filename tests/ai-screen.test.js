@@ -752,6 +752,48 @@ test('Main Chat is the list\'s first row: the bot\'s mark, its name, what is new
   assert.match(read('frontend/src/features/ai/index.tsx'), /const lit = !columnShows \|\| blank \? null : openRoot \? `private:\$\{openRoot\}` : 'main';/);
 });
 
+// #6218 (3 Nov 2026): with a request, a change or a decision open beside the
+// list, no row was lit at all. The row whose address that page is is lit now,
+// and Main Chat is not, as Main's own row is lit while Main is the column's.
+test('#6218: the row whose page is open beside the list is lit, and Main Chat is not', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const props = (extra = {}) => ({
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    progress: [], waiting: [], live: [], openRow() {}, openThread() {}, ...extra,
+  });
+  const need = {
+    key: 'need:proposal:6212', title: 'Show the reason beside each credit', app,
+    who: 'all', sub: { id: 'messages:ai.row.where', values: { project: 'Garden club', number: 6212 } },
+    pill: null, href: '#app/garden/dev/issues/6212', rootId: null,
+  };
+
+  // A Needs you row: its page in the column lights it, and only it.
+  const needs = renderComponent(LISTS, 'AiLists', props({ rows: [need], litHref: 'app/garden/dev/issues/6212' }));
+  assert.equal((needs.match(/data-ai-lit=""/g) || []).length, 1, 'one row, the open page\'s own');
+  assert.match(needs, /data-ai-line="need" data-ai-lit="" aria-current="true">[\s\S]*?Show the reason beside each credit/);
+  assert.doesNotMatch(needs, /data-ai-main-row="" data-ai-lit/, 'Main Chat is not lit while a page holds the column');
+
+  // A Waiting row and a Live row, by their addresses: each lights on its own page.
+  const waiting = thread(7, 6212, 'vote');
+  const live = thread(8, 6213, 'live', { group: 'live' });
+  const busy = renderComponent(LISTS, 'AiLists', props({ waiting: [waiting], live: [live], litHref: 'app/garden/dev/issues/6212' }));
+  assert.match(busy, /data-ai-line="vote" data-ai-lit="" aria-current="true">/);
+  assert.equal((busy.match(/data-ai-lit=""/g) || []).length, 1, 'only the row whose address is the open page');
+  const liveOpen = renderComponent(LISTS, 'AiLists', props({ waiting: [waiting], live: [live], litHref: 'app/garden/dev/issues/6213' }));
+  assert.match(liveOpen, /data-ai-line="live" data-ai-lit="" aria-current="true">/);
+  assert.equal((liveOpen.match(/data-ai-lit=""/g) || []).length, 1);
+
+  // A page no row names: no row lit, and Main Chat not lit either.
+  const none = renderComponent(LISTS, 'AiLists', props({ rows: [need], litHref: 'app/garden/dev/issues/9999' }));
+  assert.ok(!none.includes('data-ai-lit'), 'no row names the open page');
+
+  // The page lights a row only on a desktop, where the column is docked beside the list.
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /const litHref = mounted && !phone && docked && panel\.open && panel\.route \? panel\.route : null;/);
+  assert.match(src, /litHref=\{litHref\}/);
+});
+
 // #6160 (2 Nov 2026): In progress and Waiting were two sections inside the
 // Needs you card, under a line each, so on a busy account that card of
 // to-dos ran on long past what needed you. They are one quieter card of

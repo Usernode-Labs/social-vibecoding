@@ -49,6 +49,8 @@
  * #6153: a design thread filed as a request is that request's row (In
  * progress, Waiting or Live, with the track's word on its right), which
  * opens the thread and is lit while it is in the column.
+ * #6218: a page the side panel holds there (a request, a change or a
+ * decision opened from a row) lights the row whose address is its own.
  */
 import { useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
@@ -428,7 +430,7 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
   );
 }
 
-export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread }: {
+export function AiLists({ hero, main, lit = null, litHref = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
@@ -438,6 +440,12 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
    * a private thread's row, or the row of the request it was filed as (#6153).
    */
   lit?: string | null;
+  /**
+   * #6218: the route of the page the side panel holds beside the list, with
+   * no leading '#'. A row whose address is that page is lit, as Main Chat's
+   * is while Main is the column's.
+   */
+  litHref?: string | null;
   /** The lists have been read: until then Needs you says nothing, not "nothing needs you". */
   ready: boolean;
   /** A list could not be read and none was kept: Needs you says so (index.tsx ListsFailure). */
@@ -454,6 +462,10 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
 }): ReactNode {
   const t = useMessages('messages');
   const say = (p: Phrase | null) => (p ? t(p.id, p.values) : null);
+  // #6218: whether a row's address is the page the side panel holds beside
+  // the list, ignoring the leading '#' (the panel's route has none).
+  const byHref = (href: string | null | undefined) => !!litHref && !!href
+    && href.replace(/^#/, '') === litHref.replace(/^#/, '');
   // The projects in any list, the ones that need you most first; the ones
   // picked; the chips the rail shows; and More, open under its chip.
   const [only, setOnly] = useState<string[]>([]);
@@ -479,7 +491,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     tooltip: say(row.sub)!,
     why: say(whyOf(row)),
     owe: !!row.pill,
-    lit: !!lit && row.key === lit,
+    lit: (!!lit && row.key === lit) || byHref(row.href),
     open: () => openRow(row),
   }));
   const threadLine = (glyph: (th: AiThread) => ReactNode) => (th: AiThread): Line => ({
@@ -495,7 +507,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     owe: false,
     // #6153: a request filed from a private thread opens that thread, and
     // is where you are while it is in the column.
-    lit: !!lit && !!th.rootId && lit === `private:${th.rootId}`,
+    lit: (!!lit && !!th.rootId && lit === `private:${th.rootId}`) || byHref(th.href),
     open: () => openThread(th),
   });
   const progressShown = progress.filter((x) => shows(x.app));
