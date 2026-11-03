@@ -7785,10 +7785,17 @@ const AppView = {
     }
     if (phase === 'queued' || phase === 'deferred') {
       const copy = AppView._checksPhaseCopy(phase, item);
+      // #6122: a queued run also says how long its wait should be.
+      const note = [copy.title];
+      if (phase === 'queued') {
+        const eta = AppView._checksEta(item);
+        if (eta && eta.kind === 'wait') note.push(PlatformI18n.t('changes:checks.pending.wait', { count: Math.max(1, eta.minutes) }));
+        else if (eta && eta.kind === 'waitLonger') note.push(PlatformI18n.t('changes:checks.pending.waitLonger'));
+      }
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: phase === 'queued' ? PlatformI18n.t('changes:page.testing.figure.queued') : PlatformI18n.t('changes:page.testing.figure.deferred'), tone: 'muted', done: false,
         segments: [{ weight: est ? est.buildMs : 1, pct: 100, state: 'moving' }, { weight: est ? est.checksMs : 3, pct: 0, state: 'moving' }],
-        label: PlatformI18n.t('changes:page.testing.label.waiting'), note: [copy.title], actions,
+        label: PlatformI18n.t('changes:page.testing.label.waiting'), note, actions,
         ...(phase === 'deferred' ? { noteDetail: copy.detail } : {}),
       };
     }
@@ -7806,16 +7813,22 @@ const AppView = {
     if (est) {
       const left = (1 - buildFrac) * est.buildMs + (1 - checksFrac) * est.checksMs;
       const usual = Math.max(1, Math.round((est.buildMs + est.checksMs) / 60000));
+      // #6122: past its usual total the run says so instead of counting down.
+      const started = item.checks_checked_at ? new Date(item.checks_checked_at).getTime() : NaN;
+      const elapsed = Number.isFinite(started) ? Math.max(0, Date.now() - started) : null;
+      const past = elapsed != null && elapsed >= est.buildMs + est.checksMs;
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'),
-        figure: left < 60000 ? PlatformI18n.t('changes:page.testing.figure.underMinuteLeft') : PlatformI18n.t('changes:page.testing.figure.minutesLeft', { minutes: Math.round(left / 60000) }),
+        figure: past
+          ? PlatformI18n.t('changes:page.testing.figure.longer')
+          : left < 60000 ? PlatformI18n.t('changes:page.testing.figure.underMinuteLeft') : PlatformI18n.t('changes:page.testing.figure.minutesLeft', { minutes: Math.round(left / 60000) }),
         tone: 'muted', done: false,
         segments: [
           { weight: est.buildMs, pct: Math.round(buildFrac * 100), state: buildFrac >= 1 ? 'done' : 'moving' },
           { weight: est.checksMs, pct: Math.round(checksFrac * 100), state: 'moving' },
         ],
         label: PlatformI18n.t('changes:page.testing.label.whereLeft', { where, count: Math.max(1, Math.round(left / 60000)) }),
-        note: [PlatformI18n.t('changes:page.testing.note.whereUsual', { where, count: usual })], actions,
+        note: [PlatformI18n.t(est.rough ? 'changes:page.testing.note.whereUsualRough' : 'changes:page.testing.note.whereUsual', { where, count: usual })], actions,
       };
     }
     return {
@@ -19506,6 +19519,47 @@ const AppView = {
     return { bar: { phase, ran, passed, failed, skipped, expected, done, ...(reused ? { reused } : {}) }, sub, sentence };
   },
 
+  // #6122: how much longer a pending run expects, from the same estimate
+  // the Testing card draws with (`checks_estimate`, the median of the app's
+  // recent finished runs, or a rough figure from across Homeroom). Returns
+  // null when there is nothing honest to say: no estimate, no start time, or
+  // a run held back by a conflict with main (which is not running at all).
+  // A queued run's wait counts the runs ahead, the queue's slot count and the
+  // time it has already waited.
+  _checksEta(item, now = Date.now()) {
+    if (!item || item.check_state !== 'pending' || item.check_phase === 'deferred') return null;
+    const est = item.checks_estimate;
+    const buildMs = Number(est && est.buildMs);
+    const checksMs = Number(est && est.checksMs);
+    if (!(buildMs > 0) || !(checksMs > 0)) return null;
+    const usual = buildMs + checksMs;
+    const rough = !!(est && est.rough);
+    const slots = est && Number.isInteger(est.slots) && est.slots > 0 ? est.slots : 1;
+    const at = (value) => {
+      if (!value) return null;
+      const t = new Date(value).getTime();
+      return Number.isFinite(t) ? t : null;
+    };
+    const started = at(item.checks_checked_at);
+    const elapsed = started == null ? null : Math.max(0, now - started);
+    if (item.check_phase === 'queued') {
+      const progress = item.checks_progress && typeof item.checks_progress === 'object' ? item.checks_progress : null;
+      const q = progress && progress.queue && typeof progress.queue === 'object' ? progress.queue : null;
+      if (!q || !Number.isInteger(q.ahead) || q.ahead < 0) return null;
+      const since = at(q.since);
+      const waitedFrom = since == null ? started : since;
+      if (waitedFrom == null) return null;
+      const waited = Math.max(0, now - waitedFrom);
+      const waitMs = Math.ceil((q.ahead + 1) / slots) * checksMs - waited;
+      return waitMs > 0
+        ? { kind: 'wait', minutes: Math.round(waitMs / 60000), usual, rough }
+        : { kind: 'waitLonger', minutes: 0, usual, rough };
+    }
+    if (elapsed == null) return null;
+    if (elapsed < usual) return { kind: 'left', minutes: Math.round((usual - elapsed) / 60000), usual, rough };
+    return { kind: 'longer', minutes: 0, usual, rough };
+  },
+
   _checksStatusNotes(pr) {
     if (!pr) return [];
     const state = pr.check_state;
@@ -19584,6 +19638,25 @@ const AppView = {
       if (pr.checks_checked_at) {
         const when = relTime(pr.checks_checked_at);
         rows.push({ t: 'line', parts: [queued ? PlatformI18n.t('changes:checks.pending.waitingSince', { when }) : PlatformI18n.t('changes:checks.pending.started', { when })], weight: 'foot' });
+      }
+      // #6122: how much longer it expects, or that it has gone past its usual
+      // time. A queued run gets its wait instead, beside its place in line.
+      const eta = AppView._checksEta(pr);
+      if (eta) {
+        let said = null;
+        if (eta.kind === 'left') {
+          said = eta.minutes < 1
+            ? PlatformI18n.t('changes:checks.pending.leftUnder')
+            : PlatformI18n.t('changes:checks.pending.left', { count: eta.minutes });
+        } else if (eta.kind === 'longer') {
+          said = PlatformI18n.t('changes:checks.pending.longer', { count: Math.max(1, Math.round(eta.usual / 60000)) });
+        } else if (eta.kind === 'wait') {
+          said = PlatformI18n.t('changes:checks.pending.wait', { count: Math.max(1, eta.minutes) });
+        } else if (eta.kind === 'waitLonger') {
+          said = PlatformI18n.t('changes:checks.pending.waitLonger');
+        }
+        if (said) rows.push({ t: 'line', parts: [said], weight: 'foot' });
+        if (eta.rough) rows.push({ t: 'line', parts: [PlatformI18n.t('changes:checks.pending.rough')], weight: 'foot' });
       }
       // …and WHY it started. "Started 4 minutes ago" answers a different
       // question from "who asked for this": a run kicked off by the
