@@ -421,8 +421,8 @@ test('the answers that ask something tag whoever filed the issue and took part; 
 
   h.posts.length = 0;
   lookups.length = 0;
-  await act(h, { verdict: 'question', question: 'x' }, { capSuppressed: 'question_tripwire' });
-  assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions]), [['held_question_tripwire', []]]);
+  await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'proposals_per_app' });
+  assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions]), [['held_proposals_per_app', []]]);
   assert.equal(lookups.length, 0, 'a held note looks nobody up');
 
   for (const kind of ['proposal', 'build_failed', 'spec', 'plan', 'blocked', 'empty', 'followup_answer', 'followup_revise',
@@ -893,17 +893,15 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.deepEqual(h.posts.map((p) => p.kind), ['question', 'person', 'empty']);
 
   h.posts.length = 0;
-  assert.equal(await act(h, { verdict: 'question', question: 'Which feed?' }, { capSuppressed: 'question_tripwire' }), 'held');
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'proposals_per_app' }), 'held');
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'builds_per_app' }), 'held');
-  assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire', 'held_proposals_per_app', 'held_builds_per_app'],
-    'the caps hold the question and the build, and say so in one line (#3152)');
-  assert.ok(!/Which feed/.test(h.posts[0].text), 'the held question itself is not posted');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app', 'held_builds_per_app'],
+    'the caps hold the build, and say so in one line (#3152)');
   // One request, one story: in whole sentences, the project by its name.
   // #6156: the number is the cap that held it: its changes waiting for votes,
   // or its builds, and each says what it waits for.
-  assert.equal(h.posts[1].text, `Homeroom bot will build this when one of its ${bot.WAITING_PER_APP} changes on RSS reader is voted in or closed.`);
-  assert.equal(h.posts[2].text, `Homeroom bot will build this when one of the ${bot.BUILDS_PER_APP} changes it is building on RSS reader at once is done.`);
+  assert.equal(h.posts[0].text, `Homeroom bot will build this when one of its ${bot.WAITING_PER_APP} changes on RSS reader is voted in or closed.`);
+  assert.equal(h.posts[1].text, `Homeroom bot will build this when one of the ${bot.BUILDS_PER_APP} changes it is building on RSS reader at once is done.`);
 
   live.buildAndPropose = async (args) => {
     await args.onSession({ id: 5001 });
@@ -1058,8 +1056,45 @@ test('a held issue is told once, not again on every retry that is held again (#3
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, held), 'held');
   assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app'], 'the second hold says nothing new');
   // Held for a different reason than the newest post: that is news.
-  await act(h, { verdict: 'question', question: 'q' }, { capSuppressed: 'question_tripwire' });
-  assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app', 'held_question_tripwire']);
+  await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'builds_per_app' });
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app', 'held_builds_per_app']);
+});
+
+test('3 Nov 2026: a project past ten questions and notes today is still read and answered, with no held line', async (t) => {
+  // The bot's runs on the project today: 25 questions and notes, far past
+  // the 10 a day that used to hold the next one ('question_tripwire').
+  const counted = [];
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (s === bot.SLOT_HOLDERS_SQL) return { rows: [] };
+      if (/COUNT\(\*\)/.test(s)) { counted.push(s); return { rows: [{ cnt: 25 }] }; }
+      return { rows: [] };
+    },
+  };
+  for (const verdict of ['question', 'empty', 'person']) {
+    assert.equal(await bot.simulateCaps(pool, BOT, 9, verdict, {}), null, `a ${verdict} verdict is never held`);
+  }
+  assert.ok(!counted.some((s) => /homeroom_bot_runs/.test(s)), 'and nothing counts what the bot said today');
+  // A complicated change's plan, which asks its requester before it is built,
+  // is held only by the project's slots, which are free here.
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), null);
+  assert.equal(bot.planTripwire, undefined);
+  assert.equal(bot.QUESTION_TRIPWIRE_PER_DAY, undefined);
+  assert.equal(bot.TRIPWIRE_VERDICTS, undefined);
+  assert.deepEqual(Object.keys(await bot.capRoomFor(pool, BOT, 9, {})).sort(), ['builds_per_app', 'proposals_per_app', 'proposals_total'],
+    'the refresh has no room left to count for questions either');
+
+  const h = actHarness();
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind, text: args.text }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
+  const caps = await bot.simulateCaps(pool, BOT, 9, 'question', {});
+  assert.equal(await act(h, { verdict: 'question', question: 'Which feed should it read first?' }, { capSuppressed: caps }), 'question');
+  assert.equal(await act(h, { verdict: 'empty', reason: 'Nothing to build here.' }, { capSuppressed: caps }), 'empty');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['question', 'empty'], 'the eleventh question and note are posted as ever');
+  assert.match(h.posts[0].text, /Which feed should it read first\?/);
+  assert.ok(!h.posts.some((p) => /^held_/.test(p.kind) || /questions and notes|a day old/.test(p.text || '')), 'no held line');
 });
 
 test('a backlog pass holds silently, and still speaks when it has something to say (#3509)', async (t) => {
@@ -1069,7 +1104,7 @@ test('a backlog pass holds silently, and still speaks when it has something to s
   live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
   const quiet = { quietHold: true };
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { ...quiet, capSuppressed: 'proposals_per_app' }), 'held');
-  assert.equal(await act(h, { verdict: 'question', question: 'q' }, { ...quiet, capSuppressed: 'question_tripwire' }), 'held');
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { ...quiet, capSuppressed: 'builds_per_app' }), 'held');
   assert.deepEqual(h.posts, [], 'held is still the verdict, and the cap_freed refresh brings it back; no note');
   assert.equal(await act(h, { verdict: 'question', question: 'Which feed?' }, quiet), 'question');
   assert.deepEqual(h.posts.map((p) => p.kind), ['question'], 'a verdict that is not held is said as ever');
@@ -1254,10 +1289,11 @@ test('the held lines name the limit and never promise more than the refresh does
   assert.equal(turn, 'Homeroom bot will build this when one of the 5 changes it is building on Plant Pal at once is done.');
   assert.ok(!/vote/.test(turn));
   assert.ok(!/\u2014/.test(turn));
-  const q = live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10 });
-  assert.match(q, /has a question about this request, but it has already posted 10 questions and notes on this project today/);
-  assert.match(live.heldText({ cap: 'question_tripwire', verdict: 'empty', limit: 10 }), /has a note on this request/);
-  for (const text of [q, live.heldText({ cap: 'proposals_per_app', limit: 2 })]) assert.ok(!/\u2014/.test(text));
+  const total = live.heldText({ cap: 'proposals_total', limit: 500 });
+  assert.equal(total, 'Homeroom bot will build this when one of its 500 changes across Homeroom is voted in or closed.');
+  for (const text of [total, live.heldText({ cap: 'proposals_per_app', limit: 2 })]) assert.ok(!/\u2014/.test(text));
+  // 3 Nov 2026: there is no daily limit on questions and notes to name.
+  assert.doesNotMatch(String(live.heldText), /posted|questions and notes|a day old/);
 });
 test('runTriage acts only through the live module, and only when the app is live', () => {
   // Shadow mode stays structurally silent: none of the posting or proposing

@@ -521,7 +521,7 @@ const POSTABLE = new Set(['open', 'posted', 'filed']);
 // has it in hand, and the limits it waits at.
 const FILED_BUILDS = new Set(['queued', 'planning', 'building']);
 // #6156: 'builds', the project's builds all under way, among them.
-const FILED_LIMITS = new Set(['builds', 'slots', 'bot_wide', 'questions', 'allowance']);
+const FILED_LIMITS = new Set(['builds', 'slots', 'bot_wide', 'allowance']);
 
 /**
  * Pure (#6151): what the filed line says happens next, from the new

@@ -97,7 +97,6 @@ const LINES: Record<string, string> = {
   'held.builds': 'messages:bot.track.line.held.builds',
   'held.slots': 'messages:bot.track.line.held.slots',
   'held.bot_wide': 'messages:bot.track.line.held.bot_wide',
-  'held.questions': 'messages:bot.track.line.held.questions',
   'held.allowance': 'messages:bot.track.line.held.allowance',
   'held.taken': 'messages:bot.track.line.held.takenNoName',
   'stopped.needs_person': 'messages:bot.track.line.stopped.needs_person',
@@ -181,7 +180,6 @@ const FILED_HELD_LINES: Record<string, string> = {
   builds: 'messages:bot.track.filed.held.builds',
   slots: 'messages:bot.track.filed.held.slots',
   bot_wide: 'messages:bot.track.filed.held.bot_wide',
-  questions: 'messages:bot.track.filed.held.questions',
   allowance: 'messages:bot.track.filed.held.allowance',
 };
 

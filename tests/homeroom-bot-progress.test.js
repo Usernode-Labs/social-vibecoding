@@ -333,7 +333,7 @@ test('#4539: on a closed request no build still to start reads as in progress', 
   const ready = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50) };
   const toStart = {
     held: { cap_suppressed: 'proposals_per_app' },
-    heldDaily: { cap_suppressed: 'questions_per_day' },
+    heldTurn: { cap_suppressed: 'builds_per_app' },
     build_queued: { build_waiting_at: ago(45) },
     stalled: {},
   };

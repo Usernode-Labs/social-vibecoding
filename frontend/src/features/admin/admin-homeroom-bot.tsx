@@ -447,7 +447,7 @@ interface Payload {
   // votes (proposalsPerApp) by default, and byApp, by slug, the projects
   // with numbers of their own.
   caps: {
-    buildsPerApp?: number; proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number;
+    buildsPerApp?: number; proposalsPerApp: number; proposalsTotal: number;
     byApp?: Record<string, { appId?: number; buildsPerApp?: number; proposalsPerApp?: number }>;
   };
   mentionOptOuts: { total: number; items: MentionOptOut[] };
@@ -554,7 +554,6 @@ export function heldLine(cap: string | null | undefined, caps?: Partial<Payload[
   if (cap === 'builds_per_app') return `held: ${n(own?.buildsPerApp ?? caps?.buildsPerApp)}builds under way on this app`;
   if (cap === 'proposals_per_app') return `held: ${n(own?.proposalsPerApp ?? caps?.proposalsPerApp)}proposals waiting for votes on this app`;
   if (cap === 'proposals_total') return `held: the bot's ceiling of ${n(caps?.proposalsTotal)}proposals open across Homeroom`;
-  if (cap === 'question_tripwire') return `held: ${n(caps?.questionsPerAppPerDay)}questions asked on this app today`;
   return `held: ${cap.replace(/_/g, ' ')}`;
 }
 
@@ -1949,7 +1948,7 @@ function HomeroomBotSection() {
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-identity">
               {`${bot
                 ? `Runs as ${bot.username} on ${bot.model || 'the platform default model'}, ${bot.hasIncludedKey ? 'with its included OpenRouter key' : 'with no OpenRouter key yet (the first pass mints one)'}.`
-                : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before building anything the live rules hold a ready verdict at ${payload?.caps.buildsPerApp ?? '?'} builds under way or ${payload?.caps.proposalsPerApp ?? '?'} proposals waiting for votes per app, unless the app has numbers of its own (Settings), and at ${payload?.caps.proposalsTotal ?? '?'} proposals across all apps; and a question at ${payload?.caps.questionsPerAppPerDay ?? '?'} per app per day. Rows below say when they did.`}
+                : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before building anything the live rules hold a ready verdict at ${payload?.caps.buildsPerApp ?? '?'} builds under way or ${payload?.caps.proposalsPerApp ?? '?'} proposals waiting for votes per app, unless the app has numbers of its own (Settings), and at ${payload?.caps.proposalsTotal ?? '?'} proposals across all apps. Rows below say when they did.`}
             </p>
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-cadence">
               The loop wakes the moment a request is filed, edited or discussed here, drains the queue, then sleeps until the next one. A sweep of GitHub every five minutes catches what happens there directly.
