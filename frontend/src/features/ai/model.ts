@@ -12,7 +12,9 @@
  *   Waiting     yours with nothing to do on the row: other people's votes, a
  *               free builder or slot, the clock. Each says which, and where
  *               a vote you owe would move it, says that too (30 Oct 2026:
- *               "Up next" read as yours to do next).
+ *               "Up next" read as yours to do next). #6160: In progress and
+ *               Waiting are one card of their own on the page, work under
+ *               way first, then what waits.
  *   Live        yours that went live this week.
  *
  * The last four are GET /api/ai/work's, and where Homeroom bot works on a
@@ -183,9 +185,10 @@ export interface WorkRow {
 /**
  * How many rows each project shows in a section before its own Show more
  * (./lists.tsx groups every section's rows by project). Needs you shows the
- * most: it is what you came for.
+ * most: it is what you came for. Waiting & in progress is ONE section of the
+ * work under way and the work waiting, so it keeps the same three.
  */
-export const GROUP_FIRST = { needs: 5, next: 3, waiting: 3, live: 3 } as const;
+export const GROUP_FIRST = { needs: 5, busy: 3, live: 3 } as const;
 
 /** Pure: rows under their project, once each, in the order the projects first come. */
 export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: AiApp | null; items: T[] }[] {
