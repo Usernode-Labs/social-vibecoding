@@ -1012,47 +1012,49 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
 test('on a phone the list and Main Chat are one drawer, as Messages\' are; a request opens on its page', () => {
   const src = read('frontend/src/features/ai/index.tsx');
   const drawer = read('frontend/src/features/ai/phone-drawer.tsx');
-  // Messages' own strip, slide and landing rule.
-  assert.match(drawer, /import \{ isPan, landingIn, MESSAGES_AT, SLIDE_EASE, SLIDE_MS \} from '\.\.\/nav-drawer\/drawer-math';/);
+  // Messages' own slide and landing rule.
+  assert.match(drawer, /import \{ isPan, landingIn, SLIDE_EASE, SLIDE_MS \} from '\.\.\/nav-drawer\/drawer-math';/);
   assert.match(drawer, /transition: still \? 'none' : `transform \$\{SLIDE_MS\}ms \$\{SLIDE_EASE\}`/);
-  assert.match(drawer, /const still = drag != null \|\| snap \|\| reducedMotion\(\);/, 'none under Reduce Motion');
+  assert.match(drawer, /const still = drag != null \|\| reducedMotion\(\);/, 'none under Reduce Motion');
   // The level not in view is out of reach, not only out of sight.
   assert.match(drawer, /<div className="ai-drawer-list" inert=\{level === 1\} aria-hidden=\{level === 1 \? true : undefined\}>\{list\}<\/div>/);
   assert.match(drawer, /<div className="ai-drawer-pane" inert=\{level === 0\} aria-hidden=\{level === 0 \? true : undefined\}>\{pane\}<\/div>/);
-  assert.match(drawer, /<button type="button" className="messages-peek-open ai-drawer-peek" aria-label=\{peekLabel\} onClick=\{\(\) => onLevel\(1\)\} \/>/, 'the peek opens it');
+  assert.ok(!drawer.includes('ai-drawer-peek'), 'nothing peeks beside the list (3 Nov 2026)');
   // Only Main Chat: no page in a frame (Evan, 30 Oct: "the Messages approach").
   assert.ok(!drawer.includes('<iframe'), 'a request is never drawn in the drawer');
   assert.match(src, /setAt\(\{ \.\.\.next \}\);\s+if \(phone\) setLevel\(1\);/, 'a row slides the column in, at it');
   assert.match(src, /onClick=\{\(e\) => \{ if \(phone\) \{ e\.preventDefault\(\); openMain\(\); \} \}\}/, 'and so does the Ask bar');
-  // 1 Nov 2026: a thread alone in the column, its own arrow back to the list.
-  assert.match(drawer, /\{threadUp \? null : <header className="ai-drawer-head" data-ai-drawer-head="">/);
-  assert.match(drawer, /<EmbeddedConversation conversationId=\{botId\} active=\{active\} at=\{at\} mainChat onBack=\{onBack\} \/>/);
-  assert.match(src, /pane=\{<MainPane botId=\{botId\} active=\{visible\} at=\{at\} onBack=\{toList\} threadUp=\{threadUp\} \/>\}/);
+  // Main Chat draws no bar of its own: the platform header names it (3 Nov 2026).
+  assert.ok(!drawer.includes('ai-drawer-head'), 'one header: the platform\'s');
+  assert.match(drawer, /return botId \? <EmbeddedConversation conversationId=\{botId\} active=\{active\} at=\{at\} mainChat onBack=\{onBack\} \/> : null;/);
+  assert.match(src, /pane=\{<MainPane botId=\{botId\} active=\{visible\} at=\{at\} onBack=\{toList\} \/>\}/);
   assert.match(src, /data-ai-drawer=\{phone \? level : undefined\}/);
   assert.match(drawer, /const PHONE_QUERY = '\(max-width: 767\.98px\)';/);
-  const css = read('public/css/app.css');
-  assert.match(css, /\.ai-drawer-list \{\s+position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 85%;/);
-  assert.match(css, /\.ai-drawer-back::after \{ content: ""; position: absolute; inset: -6px; \}/, 'its arrow is pressed as a 44px target');
-  assert.match(css, /\.ai-drawer\[data-level="0"\] :is\(\.ai-drawer-back, \.messages-thread-back\) \{ opacity: 0;/, 'neither arrow shows in the peek');
-  assert.equal(message('messages:ai.drawer.peek', { title: message('messages:store.header.main') }), 'Open Main Chat');
 });
 
-test('on a phone the list is the whole screen until a thread has been opened, then the drawer peeks (Evan, 1 Nov 2026)', () => {
+test('on a phone the list is always the whole screen, and Main Chat\'s name and arrow are the platform header\'s (3 Nov 2026)', () => {
   const drawer = read('frontend/src/features/ai/phone-drawer.tsx');
-  assert.match(drawer, /export const FULL_AT: readonly \[number, number\] = \[0, 1\];/, 'with no peek the column rests a whole screen to the right');
-  assert.match(drawer, /const OPENED_KEY = 'homeroom:botDrawer:threadOpened';/, 'remembered per device');
-  assert.match(drawer, /const at = opened \? MESSAGES_AT : FULL_AT;/);
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(drawer, /export const FULL_AT: readonly \[number, number\] = \[0, 1\];/, 'the column rests a whole screen to the right');
+  assert.match(drawer, /const at = FULL_AT;/);
+  assert.ok(!drawer.includes('OPENED_KEY'), 'no per-device switch into a drawer that peeks');
   assert.match(drawer, /const offset = drag \?\? at\[level\];/, 'rest, drag and landing all read the one table');
-  assert.match(drawer, /onLevel\(landingIn\(at, p\.from, now, \(e\.clientX - p\.x\) \* dirSign\(\)\) as 0 \| 1\);/);
-  assert.match(drawer, /\{opened && level === 0 && drag == null \? \(/, 'no peek button before a thread was opened');
-  assert.match(drawer, /data-peek=\{opened \? '' : undefined\}/);
-  // Laid out once the slide has landed, and switched with no slide.
-  assert.match(drawer, /if \(opened \|\| level !== 1\) return undefined;\s+rememberThreadOpened\(\);\s+const id = window\.setTimeout\(\(\) => \{ setSnap\(true\); setOpened\(true\); \}, SLIDE_MS \+ 50\);/);
-  assert.match(drawer, /const still = drag != null \|\| snap \|\| reducedMotion\(\);/);
+  assert.match(drawer, /const lands = landingIn\(at, p\.from, now, \(e\.clientX - p\.x\) \* dirSign\(\)\) as 0 \| 1;\s+botDepth\.slide\(lands\);\s+onLevel\(lands\);/);
+  // The header moves with the strip.
+  assert.match(drawer, /useEffect\(\(\) => \{ botDepth\.slide\(level\); \}, \[level\]\);/);
+  assert.match(drawer, /setDrag\(next\);\s+botDepth\.set\(next\);/);
+  // The screen says when the header is Main Chat's: a phone, on show, no private thread.
+  assert.match(src, /publishBotDrawer\(\{ on: phone && visible && !threadUp, level, title: mainTitle, sub: mainSub \}\);/);
+  assert.match(src, /useEffect\(\(\) => registerBotBack\(\(\) => toListRef\.current\(\)\), \[\]\);/);
+  const store = read('frontend/src/features/nav-drawer/bot-drawer.ts');
+  assert.match(store, /export const botDepth = createDepthChannel\(0, 1\);/);
+  const header = read('frontend/src/features/nav-drawer/header-drawer.tsx');
+  assert.match(header, /return on \? 'communities' : messages \? 'messages' : bot \? 'bot' : null;/);
+  assert.match(header, /if \(mode === 'bot'\) return <BackDisc mode=\{mode\} label=\{t\('core:header\.drawer\.toBot'\)\} onBack=\{botBack\} \/>;/);
   const css = read('public/css/app.css');
   assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-list \{ width: 100%; \}/);
   assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-thread \{ inset-inline-start: 100%; \}/);
-  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\)\[data-level="0"\]:not\(\[data-panning\]\) \.ai-drawer-thread \{ box-shadow: none; border-inline-start-color: transparent; \}/, 'no shadow at the list\'s edge');
+  assert.equal(message('core:header.drawer.toBot'), 'Back to the list');
 });
 
 test('what a row opens rides along in Main Chat\'s composer, and only there', () => {

@@ -250,7 +250,7 @@ test('For you on a project nobody else is in: Your work and the Discussion from 
   const src = read(HUB);
   assert.equal(hub.hubWorkEmpty, undefined, 'no other words for an empty Your work');
   assert.match(src, /if \(!cards\.length && !mine\?\.viewer\) return null;/);
-  assert.match(src, /const work = cards \|\| !!mine\?\.viewer;\s*const talk = !!\(data && data\.channel\);/);
+  assert.match(src, /const work = cards \|\| !!mine\?\.viewer \|\| places;\s*const talk = !!\(data && data\.channel\);/);
   assert.doesNotMatch(src, /hub\.work\.emptyBot|hub\.work\.emptyMenu|hub\.channel\.sayHi/);
 });
 

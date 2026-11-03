@@ -44,18 +44,18 @@ import { ChevronLeftIcon, HomeIcon, XIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useBackSlot } from '../header/platform-header';
-import { drawerStore } from '../nav-drawer/drawer-store';
 import { DrawerBack } from '../nav-drawer/header-drawer';
 import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
 
 /**
  * The veil over a drawer while it runs under the strip (app.css, THE VEIL
  * OVER THE DRAWER UNDER THE STRIP; it was a blur, which stuttered the
- * slides, and is a fill now). Out while a level is: Communities off
- * its page (the places, or your communities, peeking under the strip), or
- * Messages on its list (a conversation peeking beside it; app.css leaves it
- * out when the list is alone). It takes the drawer's LEVEL, not its live
- * depth, and app.css fades it over the slide's own 300ms and curve.
+ * slides, and is a fill now). Out while Messages is on its list and a
+ * conversation peeks beside it; app.css leaves it out when the list is
+ * alone, which since 3 Nov 2026 it always is (no drawer peeks any more: a
+ * community's places and your communities are pages now). It takes the
+ * drawer's LEVEL, not its live depth, and app.css fades it over the slide's
+ * own 300ms and curve.
  *
  * NOT FROM THE LIVE DEPTH, and that was tried: written from the depth
  * channel the veil's opacity was set by script on every frame of a slide,
@@ -68,9 +68,8 @@ import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
  * prerender, so the first render is the shipped one.
  */
 function StripFrost() {
-  const communities = useStoreState(drawerStore);
   const messages = useStoreState(messagesDrawerStore);
-  const out = communities.on ? communities.level !== 2 : messages.on && messages.level === 0;
+  const out = messages.on && messages.level === 0;
   return <div className="platform-side-strip-frost" aria-hidden="true" {...(out ? { 'data-out': '' } : {})} />;
 }
 

@@ -191,5 +191,5 @@ test('in the First version card\'s place, under the hero, and no second card aft
   assert.equal(hub.FirstLookCard, undefined);
   // Versions (docs/plans/versions.md) added the Update card and From its
   // versions to the same import; still no FirstLookCard.
-  assert.match(lander, /import \{\s*FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, UpdateCard, hubAlone, owesVote,\s*\} from '\.\/hub-cards';/);
+  assert.match(lander, /import \{\s*FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,\s*\} from '\.\/hub-cards';/);
 });

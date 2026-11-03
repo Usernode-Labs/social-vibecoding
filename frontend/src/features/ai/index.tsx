@@ -90,6 +90,7 @@ import {
 } from './door';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
+import { publishBotDrawer, registerBotBack } from '../nav-drawer/bot-drawer';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import { closePreview, previewLayout, THREE_COLUMNS, usePreview } from './preview';
 import {
@@ -530,6 +531,19 @@ export function AiScreen(): ReactNode {
     setLevel(0);
     showAddress(BOT_TAB);
   };
+  // THE HEADER IS MAIN CHAT'S on a phone (3 Nov 2026,
+  // ../nav-drawer/bot-drawer.ts): "Homeroom bot" over the list, the arrow and
+  // "Main Chat" over its line once it slides in. A private thread keeps its
+  // own head, so the header is the tab's plain one while a thread is open.
+  const toListRef = useRef(toList);
+  toListRef.current = toList;
+  useEffect(() => registerBotBack(() => toListRef.current()), []);
+  const mainTitle = t('messages:store.header.main');
+  const mainSub = t('messages:ai.main.sub');
+  useEffect(() => {
+    publishBotDrawer({ on: phone && visible && !threadUp, level, title: mainTitle, sub: mainSub });
+  }, [phone, visible, threadUp, level, mainTitle, mainSub]);
+  useEffect(() => () => publishBotDrawer({ on: false, level: 0, title: '', sub: '' }), []);
 
   // #6071 follow-up: "+" starts a new blank thread with the bot, in the
   // column (../messages/new-thread.tsx), slid in on a phone.
@@ -613,12 +627,7 @@ export function AiScreen(): ReactNode {
           level={level}
           onLevel={setLevel}
           list={listContent}
-          peekLabel={t('messages:ai.drawer.peek', {
-            title: openRoot
-              ? work?.private.find((p) => p.rootId === openRoot)?.title || t('messages:replies.title')
-              : t('messages:store.header.main'),
-          })}
-          pane={<MainPane botId={botId} active={visible} at={at} onBack={toList} threadUp={threadUp} />}
+          pane={<MainPane botId={botId} active={visible} at={at} onBack={toList} />}
         />
       ) : listContent}
 
