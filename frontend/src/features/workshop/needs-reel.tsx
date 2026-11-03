@@ -382,10 +382,12 @@ export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
   }
   return (
     <>
-      <VoteTypeChips tallies={tallies} pressed={filter} onPress={setFilter} />
       <div className="workshop-needs-feed" data-needs-reel="">
+        <VoteTypeChips tallies={tallies} pressed={filter} onPress={setFilter} />
+        {/* #6199: `key` is the filter, so a press on a chip remounts the
+            deck: it opens at the first row of the kind picked instead of
+            holding an index into a list that is no longer on screen. */}
         <NeedsFeed
-          key={filter}
           rows={rows}
           models={models}
           slug=""
@@ -401,6 +403,7 @@ export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
               onAnswered(row.askAbout.ref as number, epochs.get(row.key) ?? null);
             }
           } : undefined}
+          key={filter}
         />
       </div>
       {capped && shown.length ? (

@@ -18297,6 +18297,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   margin: 4px 16px 0;
   display: flex; flex-direction: column;
 }
+/* #6199: the vote-type chips sit INSIDE this box, above the deck, so the feed
+   is still the pane's one child (tests/communities-followups.test.js, #3516).
+   The box already carries the page's inset, so the rail's own 16px would set
+   the chips 16px in from the card's edge; they line up with it instead. */
+.workshop-needs-feed > .needs-vote-chips { padding-inline: 0; }
 /* ON A PHONE THE FEED ENDS WHERE #workshop-screen'S CLEARANCE BEGINS (#3516).
 
    It was `height: calc(100dvh - 180px - var(--browser-banner-h, 0px))`: the
