@@ -3109,6 +3109,35 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   assert.match(CSS, /\.dev-ws-wrow\[data-on\] \{ background: var\(--lit-tint\); \}/);
 });
 
+test('#6208: the open panel takes the room the list leaves, and the list sits at the inset', () => {
+  const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  // One width on body, read by both: the list (a descendant) and the panel
+  // (portalled into body). It is the container box — the usable width less
+  // the two gutters — less the 616px the panel, inset and gap need, capped
+  // at the list's reading width.
+  assert.match(stripped, /--dev-ws-side-list-w: min\(760px, calc\(var\(--platform-usable-w\) - 2 \* var\(--platform-gutter, 0px\) - 616px\)\);/);
+  // The usable box's edge on the rail's side, mirrored in Arabic.
+  assert.match(stripped, /--dev-ws-side-start: calc\(var\(--platform-usable-left\) \* \(1 \+ var\(--rtl-sign\)\) \/ 2 \+ var\(--platform-usable-right\) \* \(1 - var\(--rtl-sign\)\) \/ 2\);/);
+  // The panel starts a 32px gap past the list's end and runs to the 24px
+  // inset: both insets, no width of its own.
+  const panel = stripped.slice(stripped.indexOf('.dev-ws-side {'));
+  const panelRule = panel.slice(0, panel.indexOf('}'));
+  assert.match(panelRule, /inset-inline-start: calc\(var\(--dev-ws-side-start\) \+ var\(--platform-gutter, 0px\) \+ 24px \+ var\(--dev-ws-side-list-w\) \+ 32px\);/);
+  assert.match(panelRule, /inset-inline-end: 24px;/);
+  assert.doesNotMatch(panelRule, /(^|\s)width: 560px;/);
+  // The figures the rule gives (sidebar 212px, gutter 24px): at 1280px the
+  // list keeps today's 404px and the panel today's 560px; at 1720px the
+  // list is at its 760px and the panel takes the rest.
+  const layout = (win) => {
+    const usable = win - 212;
+    const list = Math.min(760, usable - 2 * 24 - 616);
+    const start = 212 + 24 + 24 + list + 32;
+    return { list, start, panel: win - 24 - start };
+  };
+  assert.deepEqual(layout(1720), { list: 760, start: 1052, panel: 644 });
+  assert.deepEqual(layout(1280), { list: 404, start: 696, panel: 560 });
+});
+
 test('#4480: a page opened from the side panel keeps its thread when the panel goes', () => {
   // The panel's change page is up; its "Addresses #77" chip opens the
   // request's page. The panel outlives the switch (its host is detached but
