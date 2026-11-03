@@ -28,7 +28,6 @@ test('check visual uploads, atomic publication against PostgreSQL', { timeout: 3
   pool.on('error', () => {});
   t.after(async () => { await pool.end(); await admin.query(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end(); });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
-    await require('./lib/media-store').dropMediaByteColumns(pool);
   const store = useMemoryMedia(t, { now: () => 0 });
   const { rows: [user] } = await pool.query("INSERT INTO users (username, password) VALUES ('visual-test', 'x') RETURNING id");
   const { rows: [app] } = await pool.query("INSERT INTO apps (name, slug, created_by) VALUES ('Visual', 'visual', $1) RETURNING id", [user.id]);

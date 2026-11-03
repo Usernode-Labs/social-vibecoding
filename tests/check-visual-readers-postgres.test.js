@@ -57,7 +57,7 @@ test('check visual reader release publishes keys and retains merged visuals inde
   const { rows: [row] } = await pool.query('SELECT * FROM session_visuals WHERE id = $1', [artifactId]);
   assert.ok(row);
   assert.equal(row.object_key, media.objectKey(data));
-  assert.equal(row.data, null); assert.equal(row.legacy_etag, meta.legacyEtag);
+  assert.equal(row.data, undefined); assert.equal(row.legacy_etag, meta.legacyEtag);
   assert.deepEqual(await media.bytes(store, row), data);
   assert.equal((await pool.query('SELECT * FROM check_run_media WHERE session_id = $1', [session.id])).rowCount, 0);
   await pool.query("UPDATE chat_sessions SET status = 'merged', merged_at = NOW() - INTERVAL '365 days' WHERE id = $1", [session.id]);
@@ -69,5 +69,4 @@ test('check visual reader release publishes keys and retains merged visuals inde
   try { assert.equal((await within(sweep, 2000, 'cleanup to retain a locked merged visual')).removed, 0); }
   finally { await lock.query('ROLLBACK'); lock.release(); await sweep; }
   assert.deepEqual(await media.bytes(store, row), data);
-  await pool.query(schema);
 });

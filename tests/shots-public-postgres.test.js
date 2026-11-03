@@ -86,7 +86,7 @@ test('public before & after stills against the full PostgreSQL schema', { timeou
         `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, theme, content_type, object_key,
                                      width, height, bytes, sha256, public_safe)
          VALUES ($1, $2, 'c1', $3, $4, $5, 'png', 'light', 'image/png', $8, 390, 844, 4, $6, $7)`,
-        [id, run, viewport, side, variant, SHA(side === 'base' ? 'd' : 'e').padEnd(64, '0'), safe, await fixtureKey(pool, Buffer.from('89504e47', 'hex'))]);
+        [id, run, viewport, side, variant, crypto.createHash('sha256').update(Buffer.from('89504e47', 'hex')).digest('hex'), safe, await fixtureKey(pool, Buffer.from('89504e47', 'hex'))]);
     }
     return { id: s.id, ids };
   }
