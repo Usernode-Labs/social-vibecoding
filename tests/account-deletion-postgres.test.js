@@ -3,7 +3,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const express = require('express');
@@ -36,9 +35,9 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // migration is boot-idempotent, including retained FKs
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   // #5104: accounts start out reachable only by people they share a project
   // with, and out of searches. This file's people are strangers who write
   // to, invite and find each other, which is what it pins, so here they

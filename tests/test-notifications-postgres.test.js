@@ -32,7 +32,6 @@ require.cache[wsId] = {
 const testNotifications = require('../src/services/test-notifications');
 
 test('the catalogue: every kind the push registry knows, and words in the bell for each', () => {
-  const schema = read('src/db/schema.sql');
   // Every (kind, category, default) the registry is seeded with, wherever
   // in the schema a later change added one.
   const categories = 'direct_interactions|invitations|shared_work|developer_sessions|proposal_alerts|lightweight_activity|messages|app_alerts|builds|invite_activity';
@@ -66,8 +65,9 @@ test('test notifications against the full PostgreSQL schema', { timeout: 180000 
     await admin.end();
   });
   const schema = read('src/db/schema.sql');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const user = async (username, extra = '') => (await pool.query(
     `INSERT INTO users (username, password${extra ? ', ' + extra.split('=')[0] : ''})

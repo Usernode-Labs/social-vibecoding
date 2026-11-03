@@ -15,7 +15,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -46,9 +45,10 @@ test('a first version\'s timings are recorded where a run report reads them', { 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
-  // The schema is idempotent: the new columns survive a second apply.
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  // A second boot verifies receipts and leaves the new columns intact.
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const user = async (username) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access) VALUES ($1, 'x', TRUE) RETURNING id, username`,

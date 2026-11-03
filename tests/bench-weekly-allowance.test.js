@@ -47,7 +47,7 @@ test('a new benchmark account is made with $500 a week, and its included key is 
   assert.deepEqual(ensured.map((a) => [a.userId, a.reason]), [[77, 'homeroom_bench']]);
 });
 
-test('schema.sql raises the existing benchmark account to $500 once', { timeout: 120000 }, async (t) => {
+test('the historical migration raises the existing benchmark account to $500 once', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -64,13 +64,17 @@ test('schema.sql raises the existing benchmark account to $500 once', { timeout:
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
+  const baseline = fs.readFileSync(require.resolve('../src/db/migrations/0001-baseline.sql'), 'utf8');
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
   const marker = async () => (await pool.query(
     "SELECT value FROM platform_settings WHERE key = 'bench_weekly_limit_500'",
   )).rows[0]?.value || null;
   assert.equal(await marker(), 'true', 'a fresh database has no account to raise and is marked done');
 
+  // Exercise the historical one-time transformation in isolation; current
+  // boots never replay it over an already-migrated database.
+  const allowanceSql = baseline.match(/DO \$\$\nBEGIN\n  IF NOT EXISTS \(SELECT 1 FROM platform_settings WHERE key = 'bench_weekly_limit_500'\)[\s\S]*?END \$\$;/)[0];
   // Production before this release: the account made with the old $100.
   await pool.query("DELETE FROM platform_settings WHERE key = 'bench_weekly_limit_500'");
   const { rows: [bench] } = await pool.query(
@@ -82,19 +86,20 @@ test('schema.sql raises the existing benchmark account to $500 once', { timeout:
   );
   const weekly = async (id) => (await pool.query('SELECT weekly_limit_cents FROM users WHERE id = $1', [id])).rows[0].weekly_limit_cents;
 
-  await pool.query(schema);
+  await pool.query(allowanceSql);
   assert.equal(await weekly(bench.id), 50000);
   assert.equal(await weekly(person.id), 10000, 'nobody else');
   assert.equal(await marker(), 'true');
 
   // An admin lowers it afterwards in Admin > Limits; the next boot keeps it.
   await pool.query('UPDATE users SET weekly_limit_cents = 20000 WHERE id = $1', [bench.id]);
-  await pool.query(schema);
+  await pool.query(allowanceSql);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   assert.equal(await weekly(bench.id), 20000);
 
   // Already above $500: never lowered.
   await pool.query("DELETE FROM platform_settings WHERE key = 'bench_weekly_limit_500'");
   await pool.query('UPDATE users SET weekly_limit_cents = 80000 WHERE id = $1', [bench.id]);
-  await pool.query(schema);
+  await pool.query(allowanceSql);
   assert.equal(await weekly(bench.id), 80000);
 });

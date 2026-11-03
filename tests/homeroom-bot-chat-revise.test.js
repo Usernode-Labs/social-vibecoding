@@ -157,7 +157,6 @@ test('what the card and the chip say, at every stage', () => {
   const row = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(row, /onTry: \(sessionId\) => chat\?\.tryBotChange\?\.\(sessionId\),\s*onChange: \(sessionId\) => chat\?\.openBotChange\?\.\(sessionId\),/);
   // The schema keeps the change a fix went to.
-  const schema = read('src/db/schema.sql');
   assert.match(schema, /ALTER TABLE chat_bot_requests ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions\(id\) ON DELETE SET NULL;/);
 });
 
@@ -185,8 +184,9 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     await admin.end();
   });
   const schema = read('src/db/schema.sql');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
   // Rows a machine owns (a request's queue row, a proposal's move into
   // merged) are fixtures here, written as the kernel writes them.

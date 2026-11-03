@@ -12,7 +12,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const snapshots = require('../src/services/homeroom-bot-snapshots');
@@ -38,9 +37,9 @@ test('run snapshots and ratings against the full PostgreSQL schema', { timeout: 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const { rows: [app] } = await pool.query(
     "INSERT INTO apps (name, slug, status, repo_url) VALUES ('todo', 'todo', 'running', 'https://github.com/o/todo') RETURNING id",

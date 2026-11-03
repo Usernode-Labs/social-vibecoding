@@ -2,7 +2,7 @@
 
 // Communities (src/services/communities.js and the "Communities" block at the
 // end of src/db/schema.sql) against the REAL schema in a throwaway PostgreSQL
-// database: schema.sql applied twice (the boot migration is idempotent), then
+// database: tracked migrations applied on startup and verified on reboot, then
 // the triggers, the one-time backfill and the service's join/leave/gate.
 // Skipped when no server is reachable, and required when TEST_DATABASE_URL is
 // set — the same contract as tests/user-merge-postgres.test.js.
@@ -32,9 +32,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  const baseline = fs.readFileSync(require.resolve('../src/db/migrations/0001-baseline.sql'), 'utf8');
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   let seq = 0;
   async function user({ platform = true, isAdmin = false } = {}) {
@@ -365,8 +366,9 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
   });
 
   await t.test('the backfill runs once and takes in today\'s participants', async () => {
-    // A second database state: rows written with the marker absent, as on
-    // the first boot after this ships.
+    // Exercise only the historical membership transformation with its marker
+    // absent. Current boots verify receipts rather than replaying the baseline.
+    const backfillSql = baseline.match(/DO \$\$\nBEGIN\n  IF NOT EXISTS \(SELECT 1 FROM platform_settings WHERE key = 'community_members_backfilled'\)[\s\S]*?END \$\$;/)[0];
     const owner = await user();
     const regular = await user();
     const voter = await user();
@@ -385,14 +387,15 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       [a.id, owner.id]
     );
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s[0].id, voter.id]);
-    await pool.query(schema);
+    await pool.query(backfillSql);
     const got = await members(a.id);
     assert.deepEqual(got.map((m) => [m.user_id, m.source]), [
       [owner.id, 'creator'], [regular.id, 'active'], [voter.id, 'voter'],
     ]);
     await communities.leave(pool, a, regular.id);
-    await pool.query(schema);
-    assert.ok(!(await members(a.id)).some((m) => m.user_id === regular.id), 'the marker keeps a leaver out');
+    await pool.query(backfillSql);
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+    assert.ok(!(await members(a.id)).some((m) => m.user_id === regular.id), 'the marker and a reboot keep a leaver out');
   });
   await t.test('#general is the Homeroom community\'s channel: members post, everyone reads; its old channel is archived', async () => {
     const owner = await user();

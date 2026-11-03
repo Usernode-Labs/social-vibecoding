@@ -174,9 +174,9 @@ test('topics against the full schema', { timeout: 120000 }, async (t) => {
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent, the new table and columns included
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   require('../src/db/pool').getPool = () => pool;
   const wsBus = require('../src/services/ws-bus');

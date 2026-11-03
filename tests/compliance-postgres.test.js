@@ -11,7 +11,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const express = require('express');
 
@@ -50,10 +49,10 @@ test('the compliance report reads, saves statuses and keeps scans', { timeout: 1
     await admin.end();
   });
 
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  // Applying the schema a second time is what every boot does.
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  // A second boot verifies the recorded migrations without replaying DDL.
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   await pool.query(
     `INSERT INTO users (id, username, password, is_admin, admin_readonly) VALUES

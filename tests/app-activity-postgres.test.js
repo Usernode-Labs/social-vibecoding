@@ -3,7 +3,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const activity = require('../src/services/app-activity');
 
@@ -34,9 +33,9 @@ test('activity receipts deduplicate concurrent delivery and preserve occurrence 
       await admin.query(`DROP DATABASE ${name}`);
       await admin.end();
     });
-    const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-    await pool.query(schema);
-    await pool.query(schema);
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+    await require('../src/db/reference-data').seedReferenceData(pool);
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
     const user = (await pool.query(
       `INSERT INTO users (username, password) VALUES ('usage_tester', 'unused') RETURNING id`

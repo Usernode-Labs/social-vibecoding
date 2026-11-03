@@ -55,8 +55,9 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
+  const baseline = fs.readFileSync(require.resolve('../src/db/migrations/0001-baseline.sql'), 'utf8');
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
   const CATALOG = [
     { id: GLM, pricing: { prompt: '0.0000001', completion: '0.0000004' }, architecture: { input_modalities: ['text'] } },
     { id: OPUS, pricing: { prompt: '0.000005', completion: '0.000025' }, architecture: { input_modalities: ['text', 'image'] } },
@@ -101,8 +102,12 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
        VALUES ($1, $2, 1, $3::jsonb, 'current', $4)`,
       [first.key, first.label, JSON.stringify(first.recipe), first.seedKey],
     );
-    await pool.query(schema); // the deploy's boot
-    await pool.query(schema); // and the next: idempotent
+    // Test the historical scope upgrade without replaying unrelated baseline
+    // DDL over the final schema. A current boot then verifies receipts only.
+    const scopeSql = baseline.match(/ALTER TABLE bot_config_versions ADD COLUMN IF NOT EXISTS scope[\s\S]*?ON bot_config_versions \(seed_key\) WHERE seed_key IS NOT NULL;/)[0];
+    await pool.query(scopeSql);
+    await pool.query(scopeSql); // the historical DDL itself is idempotent
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
     const { rows: idx } = await pool.query(
       "SELECT indexname FROM pg_indexes WHERE tablename = 'bot_config_versions' AND indexname LIKE 'idx_bot_config_versions_one_current%'",
     );
