@@ -598,11 +598,17 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null }
  * What the request page and the slots view draw. Never throws. `people`:
  * issueHolders' Map for the project, when the caller has read it already.
  */
-async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps = {}, people = null }) {
+async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps = {}, people = null, settings = null }) {
   const out = new Map();
   const asked = [...new Set((numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!appId || !asked.length) return out;
   try {
+    const botSvc = deps.botSvc || require('./homeroom-bot');
+    // A project's builds under way at once: its own number, or the setting.
+    const s = settings || (typeof botSvc.readSettings === 'function'
+      ? await botSvc.readSettings(pool).catch(() => null) : null);
+    const perProject = (typeof botSvc.appCapsOf === 'function'
+      ? botSvc.appCapsOf(s, appId) : require('./homeroom-bot').appCapsOf(s, appId)).building;
     // A board's whole list comes through here: only the requests the bot has
     // read or queued are worth the full read below.
     const wanted = asked.length > 1
@@ -631,7 +637,7 @@ async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps 
     const queuedBuilds = jobs.filter(([, job]) => job.stage === 'build_queued');
     if (queuedBuilds.length && typeof progress.buildWait === 'function') {
       const busy = await progress.projectsBusy(pool, queuedBuilds.map(([row]) => row));
-      for (const [row, job] of queuedBuilds) job.waitingFor = progress.buildWait(row, { busy, now }).waitingFor || null;
+      for (const [row, job] of queuedBuilds) job.waitingFor = progress.buildWait(row, { busy, now, perProject }).waitingFor || null;
     }
     let held = new Map();
     if (jobs.some(([, job]) => job.outcome === 'held' || job.stage === 'held')) {
@@ -741,7 +747,7 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
     paused: Array.isArray(s?.pausedApps) && s.pausedApps.includes(app.slug),
     buildCap: caps.building,
     waitCap: caps.waiting,
-    buildsAtOnce: botSvc.BUILDS_PER_PROJECT || null,
+    buildsAtOnce: caps.building,
     slots: [],
     waiting: [],
     taken: [],
@@ -777,7 +783,7 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
   const numbers = [...holders.map((h) => Number(h.issue_number)), ...waiting.map((w) => w.issueNumber),
     ...taken.map((w) => w.issueNumber), ...onHold.map((q) => Number(q.issue_number))].filter((n) => n > 0);
   const [tracks, asked] = await Promise.all([
-    tracksForRequests(pool, { appId: app.id, numbers, deps, people }),
+    tracksForRequests(pool, { appId: app.id, numbers, deps, people, settings: s }),
     askersFor(pool, app.id, numbers),
   ]);
   // Who asked, its title and a line of it: GitHub's list first, then what
@@ -852,7 +858,7 @@ async function placeTheRest(pool, view, { app, open, queue, people, tracks, aske
     const rest = openNumbers.filter((n) => !people.has(n));
     const isRest = new Set(rest);
     view.withPeople = openNumbers.length - rest.length;
-    const more = await tracksForRequests(pool, { appId: app.id, numbers: rest.filter((n) => !tracks.has(n)), deps, people });
+    const more = await tracksForRequests(pool, { appId: app.id, numbers: rest.filter((n) => !tracks.has(n)), deps, people, settings });
     const trackOfN = (n) => tracks.get(n) || more.get(n) || null;
     // Titles for the ones the first read did not ask about.
     const missing = rest.filter((n) => !asked.has(n));
@@ -944,7 +950,7 @@ function demoSlots(app, now = Date.now(), mocks = []) {
     paused: false,
     buildCap: botSvc.BUILDS_PER_APP,
     waitCap: botSvc.WAITING_PER_APP,
-    buildsAtOnce: 3,
+    buildsAtOnce: botSvc.BUILDS_PER_APP,
     slots: [
       slot('build', 900001, 'Staging demo: a total under the list', 'staging-demo-ana', { stage: 'building', since: ago(15) }),
       slot('build', 900003, 'Staging demo: darker buttons', 'staging-demo-ben', { stage: 'fixing', since: ago(4) }, {

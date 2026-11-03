@@ -175,14 +175,16 @@ test('the bot\'s slots on a project count its builds under way, against the full
     const view = await track.slotsView(pool, { app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings, deps: { liveSvc } });
     assert.equal(view.buildCap, bot.BUILDS_PER_APP);
     assert.equal(view.waitCap, bot.WAITING_PER_APP);
+    assert.equal(view.buildsAtOnce, view.buildCap, '#6216: the builds at once are the project\'s real number');
     assert.equal(view.acts, true);
     assert.deepEqual(view.slots.map((s) => `${s.kind}#${s.issueNumber}`),
       ['proposal#1', 'proposal#2', 'build#6', 'build#7', 'build#14', 'build#15', 'build#16']);
     // A project's own numbers are the page's.
     const own = await track.slotsView(pool, {
-      app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings: { ...settings, appCaps: { [String(app.id)]: { waiting: 30 } } }, deps: { liveSvc },
+      app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' },
+      settings: { ...settings, appCaps: { [String(app.id)]: { waiting: 30, building: 2 } } }, deps: { liveSvc },
     });
-    assert.deepEqual([own.buildCap, own.waitCap], [bot.BUILDS_PER_APP, 30]);
+    assert.deepEqual([own.buildCap, own.waitCap, own.buildsAtOnce], [2, 30, 2]);
     const six = view.slots.find((s) => s.issueNumber === 6);
     assert.equal(six.title, 'Sunlight log');
     assert.equal(six.track.state, 'queued', 'ready, waiting its turn to be built');

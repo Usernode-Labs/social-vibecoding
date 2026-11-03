@@ -3,7 +3,8 @@
 // the workflow: at most `liveAtOnce` looks and builds in all, `perPerson`
 // for any one person, `readsPerApp` reads at once on a project, each on a
 // triage session of its own (its read slot, named in its grant: never two
-// reads on one), BUILDS_PER_PROJECT builds per project. A request owed a look tells it
+// reads on one), the project's builds-per-project setting at once on it
+// (BUILDS_PER_APP, or its own number). A request owed a look tells it
 // (Look); it grants slots under its lock, in the queue's order, as messages
 // (Granted), and reads what is in use from the requests themselves (their
 // `slot`, and grants not applied yet), so a slot is never counted from this
@@ -18,7 +19,7 @@
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Event, Json, MessageRequest, Outcome, TransitionContext, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import {
-  BOT_LANE, BOT_REQUEST, BUDGET_PAUSE_MS, LANE_KEY, REFRESH_EVERY_MS, REFRESH_SOON_MS,
+  BOT_LANE, BOT_REQUEST, BUILDS_PER_APP, BUDGET_PAUSE_MS, LANE_KEY, REFRESH_EVERY_MS, REFRESH_SOON_MS,
   faultMs, pickLive, pickLiveBuilds, requestKey,
 } from '../rules/bot-loop.ts';
 import type { Slot } from '../rules/bot-loop.ts';
@@ -115,7 +116,10 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
       inUse.push({ kind, appId: Number(pick.app_id), person: pick.person, ...(readSlot != null ? { readSlot } : {}) });
     }
     room = Math.max(0, f.settings.liveAtOnce - inUse.length);
-    const builds = pickLiveBuilds(f.builds, { inUse, slots: room, perPerson: f.settings.perPerson, raised: f.raised });
+    const builds = pickLiveBuilds(f.builds, {
+      inUse, slots: room, perPerson: f.settings.perPerson, perProject: BUILDS_PER_APP,
+      perApp: f.settings.buildsByApp, raised: f.raised,
+    });
     for (const pick of builds) {
       const grant = d.grants + 1;
       d = { ...d, grants: grant };

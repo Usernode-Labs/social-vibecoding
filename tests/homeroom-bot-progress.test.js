@@ -275,27 +275,62 @@ test('a ready request waiting for its build slot says so, and what it waits for'
   assert.notEqual(progress.stageOf({ ...row, build_session_id: 5001, build_status: 'active' }, { now }).stage, 'build_queued');
 
   // Newest first, as projectsBusy lists them.
-  const three = [
+  const five = [
     { issueNumber: 13, since: '2026-10-03T12:35:00Z', what: 'building' },
     { issueNumber: 11, since: '2026-10-03T12:30:00Z', what: 'building' },
     { issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' },
+    { issueNumber: 16, since: '2026-10-03T12:22:00Z', what: 'building' },
+    { issueNumber: 17, since: '2026-10-03T12:18:00Z', what: 'building' },
   ];
-  const busy = new Map([[7, [...three, { issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
+  const busy = new Map([[7, [...five, { issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
   assert.deepEqual(progress.buildWait(row, { busy, now }), {
-    doing: 'ready to build; Ear Trainer is building requests #12, #11, #13 first (up to 3 builds per project at a time)',
-    waitingFor: { reason: 'project_building', number: 12, building: 3, most: 3, minutesSoFar: 14 },
-  }, 'three under way hold the next; the one started first is the one it waits on');
-  const two = new Map([[7, three.slice(0, 2)]]);
-  assert.equal(progress.buildWait(row, { busy: two, now }).doing, 'ready to build; its build starts next',
-    'two under way leave room for a third');
-  assert.equal(progress.buildWait(row, { busy: new Map([[7, three.slice(2)]]), now, perProject: 1 }).doing,
-    'ready to build; Ear Trainer is building request #12 first (up to 1 build per project at a time)');
+    doing: 'ready to build; Ear Trainer is building requests #17, #16, #12, #11, #13 first (up to 5 builds per project at a time)',
+    waitingFor: { reason: 'project_building', number: 17, building: 5, most: 5, minutesSoFar: 22 },
+  }, 'five under way hold the next; the one started first is the one it waits on');
+  const four = new Map([[7, five.slice(0, 4)]]);
+  assert.equal(progress.buildWait(row, { busy: four, now }).doing, 'ready to build; its build starts next',
+    'four under way leave room for a fifth');
+  assert.equal(progress.buildWait(row, { busy: new Map([[7, five.slice(2)]]), now, perProject: 2 }).doing,
+    'ready to build; Ear Trainer is building requests #17, #16, #12 first (up to 2 builds per project at a time)',
+    'a project\'s own number is the one it says');
   const reading = new Map([[7, [{ issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
   assert.equal(progress.buildWait(row, { busy: reading, now }).doing, 'ready to build; its build starts next',
     'a request being read on the project does not hold a build');
   assert.equal(progress.buildWait(row, { working: 2, perPerson: 2 }).waitingFor.reason, 'person_limit');
   const tray = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-tray.js'), 'utf8');
   assert.match(tray, /build_queued: 'queued',/, 'the tray draws it as waiting its turn');
+});
+
+test('#6216: a person\'s request says its project\'s own build number, not the default', async () => {
+  const requested = {
+    app_id: 7, slug: 'ear-trainer', name: 'Ear Trainer', repo_url: null, issue_number: 14, issue_title: 'Practice',
+    first_version: false, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null, held_until: null,
+    run_id: 1, mode: 'live', verdict: 'ready', run_at: '2026-10-03T12:30:00Z', run_duration_ms: null,
+    cap_suppressed: null, build_ok: null, build_error: null, build_session_id: null, run_proposal: null,
+    build_waiting_at: '2026-10-03T12:31:00Z', plan_waiting_at: null,
+    review_state: null, review_started_at: null, review_round: null, review_max_rounds: null, review_minutes: null,
+    build_status: null, build_started_at: null, build_last_activity: null, build_turn_mode: null, build_turn_at: null,
+    spec_at: null, proposal_session_id: null, proposal_status: null, check_state: null, check_phase: null,
+    checks_progress: null, checks_at: null, test_results: null, checks_sha: null, reviewed_head_sha: null,
+    imported_pr_head_sha: null, proposal_source: null, proposal_at: null, merged_at: null,
+    request_closed: false, question_at: null,
+  };
+  // Two builds under way on the project, and the project's own number is 2:
+  // the third waits, and the words use the project's number, not the default.
+  const building = [13, 12].map((issueNumber, i) => ({ app_id: 7, issue_number: issueNumber, since: `2026-10-03T12:3${5 - i}:00Z`, what: 'building' }));
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (/WITH mine AS \(/.test(s)) return { rows: [requested] };
+      if (/'building' AS what/.test(s)) return { rows: building };
+      return { rows: [] };
+    },
+  };
+  const settings = { mode: 'live', perPerson: 3, readsPerApp: 3, appCaps: { 7: { building: 2 } } };
+  const [, state] = (await progress.requestStates(pool, { userId: 5, settings }))
+    .map((s) => [s, s.state]).find(([s]) => Number(s.row.issue_number) === 14);
+  assert.equal(state.waitingFor?.most, 2, 'the project\'s own number');
+  assert.match(state.doing, /up to 2 builds per project at a time/);
 });
 
 // #4539: a request closed while its plan waited for Build it, or while the

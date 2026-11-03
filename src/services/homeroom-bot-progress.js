@@ -120,9 +120,12 @@ const BOT_USERNAME = 'homeroom_bot';
 // A live build older than this is not holding its project up any more (the
 // longest one, a platform build's plan and build turn, is under two hours).
 const BUSY_BUILD_HOURS = 4;
-// How many of one project's builds run at once (homeroom-bot.js). Lazy, as
-// every read of that module here is.
-function buildsPerProject() { return require('./homeroom-bot').BUILDS_PER_PROJECT; }
+// How many of one project's builds run at once: BUILDS_PER_APP, or the
+// project's own number (homeroom-bot.js appCapsOf). Lazy, as every read of
+// that module here is.
+function buildCapOf(settings, appId) {
+  return require('./homeroom-bot').appCapsOf(settings, appId).building;
+}
 
 // #4053: a first version's steps are named for what is happening, never as
 // an instruction: "Step 4 of 7: Build it" read to an invited member as if
@@ -585,9 +588,9 @@ function stageOf(input, { now = new Date() } = {}) {
         doing: 'the plan is ready and waits for Build it',
       };
     }
-    // Built after the turn that read it, up to BUILDS_PER_PROJECT per project
-    // at once (homeroom-bot.js buildLive): waiting its turn until its build
-    // starts.
+    // Built after the turn that read it, up to the project's build number
+    // per project at once (homeroom-bot.js appCapsOf): waiting its turn
+    // until its build starts.
     if (row.build_waiting_at && !row.build_session_id) {
       return { stage: 'build_queued', since: row.build_waiting_at, doing: 'ready to build; waiting its turn to be built' };
     }
@@ -958,7 +961,8 @@ async function queuePositions(pool, rows, settings) {
  * than a follow-up on its own proposal, which runs beside it), or one it is
  * building (a live ready run with no proposal yet, whose queue row is gone).
  * A read holds the project's other reads (its one session); builds hold its
- * other builds once BUILDS_PER_PROJECT are under way. By app id:
+ * other builds once the project's build number (appCapsOf) are under way. By
+ * app id:
  * [{ issueNumber, since, what }], newest first.
  */
 async function projectsBusy(pool, rows) {
@@ -1204,12 +1208,14 @@ function queuedWait(row, {
 
 /**
  * Pure: what a build waiting its turn waits for, as the `build_queued`
- * stage's words and `waitingFor`: its project's other builds, once
- * `perProject` are under way (homeroom-bot.js BUILDS_PER_PROJECT), the most
- * the bot does for one person at once, or nothing: it starts next.
+ * stage's words and `waitingFor`: its project's other builds, once its
+ * build number (homeroom-bot.js appCapsOf(settings, appId).building) are
+ * under way, the most the bot does for one person at once, or nothing: it
+ * starts next.
  */
 function buildWait(row, {
-  busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null, perProject = buildsPerProject(),
+  busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null,
+  perProject = require('./homeroom-bot').BUILDS_PER_APP,
 } = {}) {
   // 2026-10-05: no build on a project starts while its first version is
   // not live (rules/bot-loop.ts BUILD_CANDIDATES_SQL).
@@ -1413,7 +1419,8 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
       };
     }
     if (s.state?.stage === 'build_queued') {
-      return { row: s.row, state: { ...s.state, ...buildWait(s.row, { busy, working: busyCount, perPerson, now, holds }) } };
+      const perProject = buildCapOf(settings, s.row.app_id);
+      return { row: s.row, state: { ...s.state, ...buildWait(s.row, { busy, working: busyCount, perPerson, now, holds, perProject }) } };
     }
     return { row: s.row, state: s.state };
   });

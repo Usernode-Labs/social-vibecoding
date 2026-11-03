@@ -325,15 +325,6 @@ const MAX_PER_PERSON = 6;
 // own while it runs (ensureBotSession's read slots); at rest a session holds
 // no worker (pauseIdleSession).
 const MAX_READS_PER_APP = 6;
-// How many live builds one project may have under way at once. Each build
-// is a session and a branch of its own (live.buildAndPropose), so they do
-// not share a worker; one at a time made a busy project's ready requests
-// (Homeroom's own above all, where a build can take almost two hours) wait
-// in a line behind each other. The lane enforces its copy in
-// rules/bot-loop.ts (pickLiveBuilds); this one is what the Mayor, a
-// request's progress and the slots page say. Reads at once are their own
-// number (readsPerApp, MAX_READS_PER_APP above).
-const BUILDS_PER_PROJECT = 3;
 const MAX_PROPOSAL_CEILING = 1000;
 // The automatic ceiling. It was 100 (what twenty live apps had under "5 per
 // live app") while every proposal waiting for votes kept a running preview.
@@ -408,9 +399,17 @@ const PAUSED_SESSION_WINDOW_DAYS = 7;
 // bot's behaviour and not only the raw model's.
 //
 // #6156: a project's slots are two numbers, not one (slotHolders' two
-// kinds). BUILDS_PER_APP is its builds waiting or under way, the bot's own
-// work, and what paces it; a full one holds a ready verdict as
-// 'builds_per_app'. WAITING_PER_APP is its changes up for a vote or being
+// kinds). BUILDS_PER_APP is its builds waiting or under way, and how many
+// of them run at once (a project's own number is appCapsOf). That one
+// number is the bot's own work, and what paces it; a full one holds a ready
+// verdict as 'builds_per_app'. Each build is a session and a branch of its
+// own (live.buildAndPropose), so they do not share a worker; one at a time
+// made a busy project's ready requests (Homeroom's own above all, where a
+// build can take almost two hours) wait in a line behind each other. The
+// lane enforces the same number in rules/bot-loop.ts (pickLiveBuilds); the
+// Mayor, a request's progress and the slots page say it. Reads at once are
+// their own number (readsPerApp, MAX_READS_PER_APP above).
+// WAITING_PER_APP is its changes up for a vote or being
 // merged, which wait on people; a full one holds it as 'proposals_per_app'.
 // One cap of 5 for both (#3576) let proposals waiting for votes stop every
 // build: on 2 Nov 2026 eight ready requests in a row were held at "5
@@ -6995,8 +6994,8 @@ async function usePersonPlan(pool, { runId, app, issueNumber, firstVersion = fal
 
 /**
  * A live 'ready' verdict's build, waiting its turn: started by the lane
- * (dispatch) as soon as its project has fewer than BUILDS_PER_PROJECT
- * running. Never throws.
+ * (dispatch) as soon as its project has fewer than its build number
+ * (appCapsOf(settings, appId).building) running. Never throws.
  */
 // Once: a run already waiting keeps its place, and one already building or
 // built is left alone.
@@ -8388,16 +8387,16 @@ function setupCheckFor(pool, appId, waiting = {}) {
   };
 }
 
-// ── Live builds, up to BUILDS_PER_PROJECT per project (buildLive) ───────
+// ── Live builds, up to a project's build number (buildLive) ─────────────
 //
 // A live 'ready' verdict is built after the turn that read it, in a slot of
 // its own: `build:<runId>`. The project's read slot is free again the moment
 // the verdict is recorded, so its next request is read (and asked about, or
 // left for a person, or queued to build) while the build runs. Each build is
-// a session and a branch of its own, so up to BUILDS_PER_PROJECT of one
-// project's run side by side; two that touch the same files meet as any two
-// proposals do, at merge. Each waits on its run (live_build_waiting_at), so a
-// restart loses none of them.
+// a session and a branch of its own, so up to appCapsOf(settings,
+// appId).building of one project's run side by side; two that touch the same
+// files meet as any two proposals do, at merge. Each waits on its run
+// (live_build_waiting_at), so a restart loses none of them.
 
 /**
  * The bot's own proposal for a request, up for a vote or merging, or merged
@@ -10438,7 +10437,6 @@ module.exports = {
   reuseHeldVerdict,
   CAP_FREED_REASON,
   buildsNow,
-  BUILDS_PER_PROJECT,
   // A project's first version goes first.
   FIRST_VERSION_PENDING_SQL,
   FIRST_VERSION_HOLD,

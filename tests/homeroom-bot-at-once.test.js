@@ -337,17 +337,35 @@ test('a follow-up whose proposal has gone is put back untouched, to be taken in 
 // the project's one slot was held for the whole build (up to 50 minutes,
 // 110 on the platform's repository) and every other request on it waited
 // unread. Now the build waits on its run and gets a slot of its own (a
-// `build` slot its request holds while bot-build runs it): up to
-// BUILDS_PER_PROJECT builds per project at a time, each on a session and
-// branch of its own, reading beside them.
+// `build` slot its request holds while bot-build runs it): up to the
+// project's build number (BUILDS_PER_APP, or its own number) builds per
+// project at a time, each on a session and branch of its own, reading
+// beside them.
 
 const waitingBuild = (id, appId, issueNumber, personId) => ({
   id, app_id: appId, issue_number: issueNumber, run_id: id, person_id: personId,
 });
 
-test('three builds per project at once: Homeroom\'s own requests stopped waiting in a line', () => {
-  assert.equal(rules.BUILDS_PER_PROJECT, 3);
-  assert.equal(bot.BUILDS_PER_PROJECT, rules.BUILDS_PER_PROJECT);
+test('one build number per project: the lane and the words read the setting, not a fixed 3', () => {
+  assert.equal(rules.BUILDS_PER_APP, 5);
+  assert.equal(rules.BUILDS_PER_APP, bot.BUILDS_PER_APP, 'the lane and the service name the same default');
+  assert.equal(rules.MAX_BUILDS_PER_APP, bot.MAX_BUILDS_PER_APP);
+  assert.equal(rules.KEY_APP_CAPS, bot.KEY_APP_CAPS);
+  assert.ok(rules.LANE_SETTING_KEYS.includes(rules.KEY_APP_CAPS), 'the lane reads the projects\' own numbers');
+  assert.equal(rules.BUILDS_PER_PROJECT, undefined, 'no hidden number in the lane');
+  assert.equal(bot.BUILDS_PER_PROJECT, undefined, 'no hidden number in the words');
+});
+
+test('laneSettings: a project\'s own building number, clamped, and nothing for a bad entry', () => {
+  const rows = (value) => [{ key: rules.KEY_APP_CAPS, value }];
+  assert.deepEqual(rules.laneSettings([]).buildsByApp, {}, 'nothing set');
+  assert.deepEqual(rules.laneSettings(rows('{"10": {"building": 2}}')).buildsByApp, { 10: 2 });
+  assert.deepEqual(rules.laneSettings(rows('{"10": {"building": 0}, "11": {"building": 99}}')).buildsByApp, { 10: 1, 11: 10 },
+    'clamped to 1..10');
+  assert.deepEqual(rules.laneSettings(rows('{"10": {"waiting": 30}, "x": {"building": 4}, "11": {"building": 3}}')).buildsByApp, { 11: 3 },
+    'only a valid app id with a building');
+  assert.deepEqual(rules.laneSettings(rows('not json')).buildsByApp, {});
+  assert.deepEqual(rules.laneSettings(rows('[1,2]')).buildsByApp, {});
 });
 
 test('pickLiveBuilds: up to perProject builds per project, counting those running, perPerson and slots counted', () => {
@@ -355,14 +373,14 @@ test('pickLiveBuilds: up to perProject builds per project, counting those runnin
     waitingBuild(900, 10, 1, 7), waitingBuild(901, 10, 2, 8), waitingBuild(902, 10, 5, 9), waitingBuild(903, 10, 6, 9),
     waitingBuild(904, 11, 3, 8), waitingBuild(905, 12, 4, 7),
   ];
-  assert.deepEqual(rules.pickLiveBuilds(rows, { slots: 9, perPerson: 2 }).map((p) => p.id), [900, 901, 902, 904, 905],
+  assert.deepEqual(rules.pickLiveBuilds(rows, { slots: 9, perPerson: 2, perProject: 3 }).map((p) => p.id), [900, 901, 902, 904, 905],
     'three on project 10 at once; its fourth waits');
   const building = (n) => Array.from({ length: n }, (_, i) => slot('build', 10, `u${90 + i}`));
-  assert.deepEqual(rules.pickLiveBuilds(rows, { inUse: building(2), slots: 9, perPerson: 2 }).map((p) => p.id), [900, 904, 905],
+  assert.deepEqual(rules.pickLiveBuilds(rows, { inUse: building(2), slots: 9, perPerson: 2, perProject: 3 }).map((p) => p.id), [900, 904, 905],
     'each build already under way counts against its project');
-  assert.deepEqual(rules.pickLiveBuilds(rows, { inUse: building(3), slots: 9, perPerson: 2 }).map((p) => p.id), [904, 905],
+  assert.deepEqual(rules.pickLiveBuilds(rows, { inUse: building(3), slots: 9, perPerson: 2, perProject: 3 }).map((p) => p.id), [904, 905],
     'a project with three under way starts no fourth');
-  assert.deepEqual(rules.pickLiveBuilds(rows, { inUse: [slot('read', 10, 'u90')], slots: 9, perPerson: 2 }).map((p) => p.id), [900, 901, 902, 904, 905],
+  assert.deepEqual(rules.pickLiveBuilds(rows, { inUse: [slot('read', 10, 'u90')], slots: 9, perPerson: 2, perProject: 3 }).map((p) => p.id), [900, 901, 902, 904, 905],
     'a read on the project is not one of its builds');
   assert.deepEqual(rules.pickLiveBuilds(rows, { slots: 9, perPerson: 2, perProject: 1 }).map((p) => p.id), [900, 904, 905],
     'perProject is the limit it reads');
@@ -371,6 +389,43 @@ test('pickLiveBuilds: up to perProject builds per project, counting those runnin
   assert.deepEqual(rules.pickLiveBuilds(rows, { slots: 9, perPerson: 1 }).map((p) => p.id), [900, 901, 902],
     'and perPerson still holds across projects');
   assert.deepEqual(rules.pickLiveBuilds(rows, { slots: 1, perPerson: 2 }).map((p) => p.id), [900]);
+});
+
+test('pickLiveBuilds: the setting is the cap at once, 5 by default, and a project\'s own number applies', () => {
+  const six = Array.from({ length: 6 }, (_, i) => waitingBuild(900 + i, 10, i + 1, 7 + i));
+  assert.deepEqual(rules.pickLiveBuilds(six, { slots: 20, perPerson: 20 }).map((p) => p.id), [900, 901, 902, 903, 904],
+    'five start on the project; the sixth waits');
+  const mixed = [
+    waitingBuild(900, 10, 1, 7), waitingBuild(901, 10, 2, 8), waitingBuild(902, 10, 3, 9),
+    waitingBuild(903, 11, 4, 7), waitingBuild(904, 11, 5, 8),
+  ];
+  assert.deepEqual(rules.pickLiveBuilds(mixed, { slots: 20, perPerson: 20, perApp: { 10: 2 } }).map((p) => p.id),
+    [900, 901, 903, 904], 'project 10 starts its own two, project 11 uses perProject');
+  const running = [slot('build', 10, 'u19'), slot('build', 10, 'u20')];
+  assert.deepEqual(rules.pickLiveBuilds(mixed, { inUse: running, slots: 20, perPerson: 20, perApp: { 10: 2 } }).map((p) => p.id),
+    [903, 904], 'builds already under way count against the project\'s number');
+  const raised = { '10:1': 4 };
+  assert.deepEqual(rules.pickLiveBuilds(mixed, { inUse: running, slots: 20, perPerson: 20, perApp: { 10: 2 }, raised }).map((p) => p.id),
+    [900, 903, 904], 'a batch raise above the project\'s number still applies');
+});
+
+test('the lane hands each project its own build number', () => {
+  const lane = require('../src/workflow/bot-lane/machine.ts');
+  const m = lane.botLane({ staging: false });
+  const now = new Date('2026-11-03T12:00:00Z');
+  const data = { grants: 0, fault: null, budget: null, refresh: { due: '2026-11-03T13:00:00.000Z', asked: [], soon: null, n: 1, running: null } };
+  const build = (n, personId) => ({ app_id: 10, issue_number: n, run_id: n, person_id: personId });
+  const facts = (buildsByApp) => ({
+    settings: { mode: 'live', pausedApps: [], liveAtOnce: 12, perPerson: 3, readsPerApp: 3, buildsByApp }, acting: true, inUse: [],
+    reads: [], builds: [build(1, 7), build(2, 8), build(3, 9)], nextEligible: null, raised: {},
+  });
+  const look = (f) => m.entryFor('open', 'Look').to({ name: 'open', data }, { id: 1, type: 'Look', payload: {}, source: { kind: 'system' } }, f,
+    { machine: lane.MACHINE, key: lane.KEY, appId: null, version: 1, now });
+  const granted = (out) => out.messages.map((g) => g.event.payload.issueNumber);
+  assert.deepEqual(granted(look(facts({ 10: 2 }))), [1, 2], 'the project\'s own number, not the default 5');
+  assert.deepEqual(granted(look(facts({}))), [1, 2, 3], 'with no number of its own, the setting\'s default');
+  const src = require('node:fs').readFileSync(require.resolve('../src/workflow/bot-lane/machine.ts'), 'utf8');
+  assert.match(src, /perApp: f\.settings\.buildsByApp,/, 'the lane passes the projects\' numbers, as it passes a batch raise');
 });
 
 test('the lane\'s build candidates are requests whose build waits for a slot, not held, not on a paused app, oldest first', () => {

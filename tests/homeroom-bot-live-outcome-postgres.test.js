@@ -237,10 +237,10 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     const candidates = await buildable();
     assert.deepEqual(candidates.map((c) => Number(c.run_id)), [first, second], 'oldest first, only where the bot acts');
     assert.ok(!candidates.some((c) => Number(c.run_id) === quietRun));
-    assert.deepEqual(rules.pickLiveBuilds(candidates, { slots: 6, perPerson: 2 }).map((p) => Number(p.run_id)), [first, second],
-      'two builds on one project at once, under its BUILDS_PER_PROJECT');
+    assert.deepEqual(rules.pickLiveBuilds(candidates, { slots: 6, perPerson: 2, perProject: 2 }).map((p) => Number(p.run_id)), [first, second],
+      'two builds on one project at once, under its builds-per-project number');
     const building = [0, 1].map((i) => ({ kind: 'build', appId: recipebot.id, person: `u${900 + i}` }));
-    assert.deepEqual(rules.pickLiveBuilds(candidates, { slots: 6, perPerson: 2, inUse: building }).map((p) => Number(p.run_id)), [first],
+    assert.deepEqual(rules.pickLiveBuilds(candidates, { slots: 6, perPerson: 2, perProject: 3, inUse: building }).map((p) => Number(p.run_id)), [first],
       'and only up to it, counting the builds already under way');
     assert.deepEqual(await buildable(['quiet-app', 'recipebot']), [], 'a paused project builds nothing');
     await pool.query('DELETE FROM homeroom_bot_runs');
