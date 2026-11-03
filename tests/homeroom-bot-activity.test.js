@@ -824,7 +824,8 @@ test('the staging preview\'s declared check follows the demo DM to the Homeroom 
   assert.ok(!tests.some((t) => t.id === 'homeroom-bot-dm-activity-tray'), 'the bar\'s check is retired');
   const check = tests.find((t) => t.id === 'homeroom-bot-main-chat-row');
   assert.equal(check.path, '/?demo=1#messages/910005', 'its old address, which lands on the tab');
-  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):has\(#ai-main-pane\[data-ai-column=main\] > \[data-ai-main-head\] \+ \.messages-layout\[data-main-chat\] \[data-bot-news-state=needs\]\)/);
+  // #6207: Main Chat holds no request's news, so the check no longer waits for a news row in it.
+  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):has\(#ai-main-pane\[data-ai-column=main\] > \[data-ai-main-head\] \+ \.messages-layout\[data-main-chat\]\)/);
   assert.match(check.expectSelector, /\[data-ai-sheet=main\] > \[data-ai-main-row\]\[data-ai-lit\]\[aria-current=true\]$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   assert.equal(check.expectText, 'Main Chat');

@@ -501,25 +501,19 @@ test('the drawer under the strip is veiled while it is out, coming in at the str
   assert.match(block, /\.platform-side-strip-frost\[data-out\] \{\s*visibility: visible;\s*opacity: 1;\s*transition: opacity 300ms cubic-bezier\(0\.33, 1, 0\.68, 1\), visibility 0s;/);
   assert.match(block, /html\[data-side-strip\] body:has\(#platform-header\.hidden\) \.platform-side-strip-frost \{\s*display: none;/);
   assert.match(block, /body:has\(#messages-screen:not\(\.hidden\) \.messages-drawer-alone\) \.platform-side-strip-frost \{\s*visibility: hidden;/);
-  // Out from the drawers' LEVELS: Communities off its page, Messages on its list.
+  // Out from the drawer's LEVEL: Messages on its list. A community's page has
+  // no levels off it since 3 Nov 2026 (its places are the Hub's rows).
   const strip = read('frontend/src/features/nav/strip-back.tsx');
-  assert.match(strip, /const out = communities\.on \? communities\.level !== 2 : messages\.on && messages\.level === 0;/);
+  assert.match(strip, /const out = messages\.on && messages\.level === 0;/);
   assert.match(strip, /<div className="platform-side-strip-frost" aria-hidden="true" \{\.\.\.\(out \? \{ 'data-out': '' \} : \{\}\)\} \/>/);
   assert.doesNotMatch(strip, /style\.opacity/, 'no script writes the glass\'s opacity');
 });
 
-test('a project\'s pages and the drawer over them run under the strip', () => {
+test('a project\'s pages run under the strip', () => {
   assert.match(block, /html\[data-side-strip="right"\] :is\(#app-view\[data-app-surface="platform"\], #app-view\[data-app-surface="platform"\] > #app-content, #app-view\[data-app-surface="platform"\] > #app-content > \.dc-lift-strip\) \{\s*margin-right: calc\(-1 \* var\(--platform-strip-w, 0px\)\);\s*padding-right: var\(--platform-strip-w, 0px\);/,
     'the page, its host and its sheet reach under the strip; their content stays beside it');
-  // The drawer is the screen's width; its levels are fractions of the width
-  // beside the strip, which is what nav-drawer.tsx pans by.
-  assert.doesNotMatch(block, /html\[data-side-strip="right"\] \.nav-drawer \{\s*right:/);
-  assert.match(block, /html\[data-side-strip="right"\] \.nav-drawer-outer \{\s*width: calc\(\(100% - var\(--platform-strip-w, 0px\)\) \* 0\.85\);/);
-  assert.match(block, /html\[data-side-strip="right"\] \.nav-drawer-places \{\s*left: calc\(\(100% - var\(--platform-strip-w, 0px\)\) \* 0\.85\);\s*width: calc\(\(100% - var\(--platform-strip-w, 0px\)\) \* 0\.8\);/);
-  const math = loadTsx('frontend/src/features/nav-drawer/drawer-math.ts');
-  assert.equal(math.OUTER_SHARE, 0.85, 'the CSS fractions are the pan\'s');
-  assert.equal(math.PLACES_SHARE, 0.8);
-  assert.match(read('frontend/src/features/nav-drawer/nav-drawer.tsx'), /return Math\.max\(1, \(document\.documentElement\.clientWidth \|\| window\.innerWidth \|\| 1\) - stripWidth\(\)\);/);
+  // 3 Nov 2026: no drawer over them any more, so no levels to fit beside it.
+  assert.doesNotMatch(block, /\.nav-drawer-outer|\.nav-drawer-places/);
 });
 
 test('Messages\' drawer runs under the strip the same way', () => {
@@ -539,7 +533,7 @@ test('Messages\' drawer runs under the strip the same way', () => {
   // It pans by the width beside the strip.
   const drawer = read('frontend/src/features/messages/phone-drawer.tsx');
   assert.match(drawer, /Math\.max\(1, \(layout\?\.clientWidth \|\| 1\) - stripWidth\(\)\)/);
-  assert.equal((drawer.match(/- stripWidth\(\)/g) || []).length, 3, 'placement, the pointer pan and the touch pan');
+  assert.equal((drawer.match(/- stripWidth\(\)/g) || []).length, 2, 'placement and the touch pan back (no peek to pan toward since 3 Nov 2026)');
   const { stripWidth } = loadTsx('frontend/src/lib/side-strip.ts');
   const root = (attr, w) => ({ documentElement: { hasAttribute: () => attr, style: { getPropertyValue: () => w } } });
   assert.equal(stripWidth(root(true, '84px')), 84);
@@ -567,7 +561,6 @@ test('one pill down the strip: the four places, then the apps, then you', () => 
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'), /markerBoxFor\(el, tabContentRect\(el\), inStrip\)/);
   // The phone's Resume strip stands aside: the section offers the app you left.
   assert.match(block, /html\[data-side-strip\] #platform-parked \{\s*display: none;/);
-  assert.match(block, /html\[data-side-strip\] \.nav-drawer \{\s*bottom: 0;/);
   assert.match(read('frontend/src/features/nav/strip-back.tsx'), /<div className="platform-side-strip-ground" aria-hidden="true" \/>/);
 });
 

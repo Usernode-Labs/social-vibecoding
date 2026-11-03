@@ -1867,6 +1867,10 @@
     "text": "+{{count}}",
     "description": "Last circle in the row of faces at the top of a project's Hub: how many more people were active this week than the faces shown. Keep it as short as a plus sign and a number."
   },
+  "hub.topics.title": {
+    "text": "Topics",
+    "description": "On a phone, small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under the For you card. Pressing a row opens that topic's channel."
+  },
   "hub.forYou.title": {
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."
@@ -3506,6 +3510,46 @@
   "topic.request.stage.voted": {
     "text": "Voted in",
     "description": "Last of the four stops on the progress line of a request's page (Asked, Plan, Built, Voted in): the change that answers the request was approved by the members' vote and went live."
+  },
+  "topic.request.botPlan.subYours": {
+    "text": "Plan for #{{number}} · waiting for you",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it: the plan waits for the reader, who asked for it, to press Build it. {{number}} is the request's number."
+  },
+  "topic.request.botPlan.subTheirs": {
+    "text": "@{{requester}}'s plan for #{{number}} · any member can build it",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it, for anyone but the person who asked for it: whose request it is, and that any member of the community may press Build it. {{requester}} is that person's username; {{number}} is the request's number."
+  },
+  "topic.request.botPlan.subAnyone": {
+    "text": "Plan for #{{number}} · any member can build it",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it, when the person who asked for it is not known: any member of the community may press Build it. {{number}} is the request's number."
+  },
+  "topic.request.botPlan.readWhole": {
+    "text": "Read the whole plan",
+    "description": "On a request's page, a row under the lines of Homeroom bot's plan: opens the whole written plan."
+  },
+  "topic.request.botPlan.readLength": {
+    "text": "about {{chars}} characters",
+    "description": "On a request's page, beside \"Read the whole plan\": how long the whole plan is. {{chars}} is a rounded number of characters, already formatted (for example 20,000)."
+  },
+  "topic.request.botPlan.quote": {
+    "text": "Homeroom bot's plan",
+    "description": "On a request's page, the words a reply quoting Homeroom bot's plan shows when the plan has no title (Change something stages that quote in the reply box)."
+  },
+  "topic.request.botPlan.refused.changing": {
+    "text": "Somebody asked for a change to this plan, and the next plan is on its way. Build it comes back with it.",
+    "description": "On a request's page, under Homeroom bot's plan, after Build it was pressed: it did not build, because a change to the plan was asked for and a newer plan is being written."
+  },
+  "topic.request.botPlan.refused.allowance": {
+    "text": "Your building time for this week is used up, so this plan was not built. It resets on Monday.",
+    "description": "On a request's page, under Homeroom bot's plan, after Build it was pressed: it did not build, because the presser's weekly allowance of Homeroom bot's building time is spent. The allowance resets each Monday."
+  },
+  "topic.request.botPlan.refused.gone": {
+    "text": "This plan is no longer waiting: it was built, replaced or stopped.",
+    "description": "On a request's page, under Homeroom bot's plan, after Build it was pressed: the plan had already been built, replaced by a newer one, or stopped, so nothing was built."
+  },
+  "topic.request.botPlan.refused.other": {
+    "text": "Build it did not go through. Try again in a moment.",
+    "description": "On a request's page, under Homeroom bot's plan, after Build it was pressed: the request failed for another reason, such as the connection."
   },
   "topic.request.spec.kicker": {
     "text": "Plan",

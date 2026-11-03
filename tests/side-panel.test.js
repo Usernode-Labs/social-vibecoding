@@ -1587,3 +1587,42 @@ test('the divider is drawn on the line between the two halves, not inside the pa
     'beside the bot\'s list, the middle of the 16px gutter before Main');
   assert.match(CSS, /\.side-panel-divider::after \{[^}]*inset-inline-start: calc\(50% - 1\.5px\);/, 'the bar on the line too');
 });
+
+test('beside the bot page the column\'s heading links the item to its own page, and ⋯ copies it', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  // The words "Request #N" are the link: the same page Expand opens.
+  assert.match(SRC, /const link = pageLinkFor\(route\);/);
+  assert.match(SRC, /href=\{link\}/);
+  assert.match(SRC, /try \{ \(window as any\)\.Improve\?\.enterTopicFrom\?\.\(window\.location\.hash\); \} catch \{ \/\* the page as it opens \*\/ \}\s+controller\.expand\(\);/);
+  // A modified press or a middle one gives the real address, as a link does.
+  assert.match(SRC, /if \(e\.button !== 0 \|\| e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey\) return;/);
+  // ⋯ › Copy link copies the item's own page, not the tab's address.
+  assert.match(SRC, /<PanelMore route=\{s\.route\} \/>/);
+  assert.match(SRC, /data-side-panel-copy-link=""/);
+  assert.match(SRC, /copyToClipboard\(window\.location\.origin \+ link, t\('agent:sidePanel\.linkCopied'\)\)/);
+  assert.match(SRC, /aria-label=\{t\('agent:sidePanel\.moreLabel'\)\}/);
+  // The catalog says it, in English, with tag 1 as the item's page.
+  const agent = JSON.parse(read('frontend/locales/en/agent.json'));
+  for (const [key, text] of [
+    ['sidePanel.where.request', '<0>{{project}}</0> · <1>Request #{{number}}</1>'],
+    ['sidePanel.where.change', '<0>{{project}}</0> · <1>Change #{{number}}</1>'],
+    ['sidePanel.where.decision', '<0>{{project}}</0> · <1>Decision</1>'],
+  ]) assert.equal(agent[key].text, text, key);
+  assert.equal(agent['sidePanel.moreLabel'].text, 'More actions');
+  assert.equal(agent['sidePanel.menu.copyLink'].text, 'Copy link');
+  assert.equal(agent['sidePanel.linkCopied'].text, 'Link copied');
+  // The ⋯ is in the row only beside the bot page, and at its end.
+  assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
+  assert.match(CSS, /\.side-panel-more \{ margin-inline-start: auto; align-self: center; \}/);
+  // The item's page link is what the heading draws; a page with none is plain words.
+  api._resetForTests();
+  api.sidePanelStore.set({
+    open: true, frameSrc: '/?panel=1#app/x/dev/issues/6214', frameKey: 1,
+    route: 'app/x/dev/issues/6214', title: 'Request', canBack: false, loading: false,
+  });
+  const html = renderToHtml(createElement(api.SidePanelIsland, {}));
+  assert.match(html, /href="\/app\/x\/dev\/issues\/6214">Request #6214<\/a>/);
+  assert.match(html, /aria-haspopup="menu" aria-expanded="false"/, 'the ⋯ opens a menu, closed at first');
+  api._resetForTests();
+});

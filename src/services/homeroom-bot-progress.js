@@ -491,7 +491,14 @@ function stageOf(input, { now = new Date() } = {}) {
   if (row.started_at) {
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
-  if (row.question_at && !closed) {
+  // #6219 (3 Nov 2026): a plan waiting for Build it is what the person acts
+  // on now, so a question left open from before the look that made the plan
+  // (asked before that run started, like a note from a pass the day's limit
+  // held) does not hide it. A question the plan's own look asked still wins.
+  const planWaits = row.mode === 'live' && row.verdict === 'ready' && row.build_ok == null && !row.run_proposal
+    && !!row.plan_waiting_at && !row.build_waiting_at && !row.build_session_id && !row.cap_suppressed;
+  const olderQuestion = planWaits && !!row.question_at && !!row.run_at && new Date(row.question_at) < new Date(row.run_at);
+  if (row.question_at && !closed && !olderQuestion) {
     return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
   }
   // The newest look decided to build it, and nothing has finished it yet.

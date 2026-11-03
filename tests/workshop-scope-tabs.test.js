@@ -85,16 +85,10 @@ test('picking a community keeps the page you were on, and All communities goes t
   assert.match(SWITCHER, /data-switcher-start=""\s*onClick=\{\(\) => \{ closeSwitcher\(\); \(window as any\)\.App\?\.showCreateModal\?\.\(\); \}\}/);
 });
 
-test('#5581: on a phone All communities is the drawer\'s list, not the full-screen page', () => {
+test('3 Nov 2026: on a phone All communities is the page again, drawn as a grid, as on a wide window', () => {
   const calls = [];
-  let drawerOn = false;
   const mod = loadTsx('frontend/src/features/workshop/community-scope.ts', {
     stubs: {
-      '../nav-drawer/drawer-store': {
-        drawerStore: { get: () => ({ on: drawerOn }) },
-        go: (n) => calls.push(['go', n]),
-        requestOuter: () => calls.push(['outer']),
-      },
       '../dev-board/workshop/place-store': {
         landKeepingPlace: (slug) => { calls.push(['land', slug]); return 'status'; },
       },
@@ -114,32 +108,18 @@ test('#5581: on a phone All communities is the drawer\'s list, not the full-scre
   };
   global.document = { querySelector: () => null };
   try {
-    // A phone: the list is the drawer's level 0 over a community's page, so
-    // the press asks for the list and opens the most recent community.
-    mod.goToCommunity(null);
-    assert.deepEqual(calls, [['outer'], ['land', 'garden'], ['nav', 'garden', 'dev']],
-      'the drawer\'s list over the most recent community');
-    assert.equal(location.hash, '#home', 'never the full-screen All communities page');
-    // The community the tab is on wins over the most recent.
-    calls.length = 0;
-    mod.communityScopeStore.set({ slug: 'swap', list: ['garden', 'swap'] });
-    mod.goToCommunity(null);
-    assert.deepEqual(calls, [['outer'], ['land', 'swap'], ['nav', 'swap', 'dev']]);
-    // Already over its page: the list opens in place, with no navigation.
-    calls.length = 0;
-    drawerOn = true;
-    mod.goToCommunity(null);
-    assert.deepEqual(calls, [['go', 0]]);
-    drawerOn = false;
-    // A new account with no community to show it over keeps the page, which
-    // is where Join and Start are.
-    calls.length = 0;
-    mod.communityScopeStore.set({ slug: null, list: [] });
+    // A phone: the page, with no community opened behind it (#5581's drawer
+    // list over the most recent community is gone with the drawer).
     mod.goToCommunity(null);
     assert.equal(location.hash, '#communities');
     assert.deepEqual(calls, [], 'nothing opened behind it');
+    // The community the tab is on does not change that.
+    location.hash = '#home';
+    mod.communityScopeStore.set({ slug: 'swap', list: ['garden', 'swap'] });
+    mod.goToCommunity(null);
+    assert.equal(location.hash, '#communities');
+    assert.deepEqual(calls, []);
     // A wide window is the sidebar's own All row: the page, as before.
-    calls.length = 0;
     phone = false;
     location.hash = '#home';
     mod.communityScopeStore.set({ slug: 'garden', list: ['garden'] });

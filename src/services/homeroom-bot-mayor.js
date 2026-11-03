@@ -432,6 +432,9 @@ function otherThreadLines(thread) {
     // 1 Nov 2026: "Status? How is it going?" in a "+" design thread was
     // answered with their whole page (my_work), and none of it this thread.
     ...THREAD_STATUS_LINES,
+    // #6159: a private thread can be finished, by them or by you.
+    '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it',
+    '  up again." Never tell them to close it on their side: there is no such control.',
   ];
   const d = thread.draft;
   if (d?.kind === 'ask' && d.about) {
@@ -899,6 +902,14 @@ const TOOLS = [
         required: ['what', 'title'],
         additionalProperties: false,
       },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'close_thread',
+      description: 'Mark this private thread done, when they ask you to close or finish it (#6159). It leaves their Homeroom bot page\'s lists; nothing in it is deleted, and anything they write in it brings it back. It closes only the private thread you are in: never Main Chat, and never a request (a request closes by its group\'s vote, which offer_close_request offers). Takes no arguments. After it, reply "Done. Reply here to pick it up again."',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
   {
@@ -1477,7 +1488,36 @@ const DRAWING_CLAIM = new RegExp(
   'i',
 );
 
+/**
+ * #6159 (3 Nov 2026): "close it from your side", "I can't close threads":
+ * there is no such control on their side, and the bot can close this thread
+ * itself (close_thread).
+ */
+const NO_CONTROL_CLAIM = /\b(?:from|on) your (?:side|end)\b|\bI\s+(?:can['’]?t|cannot|am not able to)\s+close\b[^.?!]{0,30}\bthreads?\b|\bclose (?:it|this thread|the thread) yourself\b/i;
+
+/**
+ * #6159: close_thread. Marks the private thread this turn is in done
+ * (private-threads.js markDone), for the person who asked. Refuses Main
+ * Chat, a request's thread, and anything not theirs.
+ */
+async function closeThread(pool, ctx) {
+  if (ctx.deps?.threadRequest) return { ok: false, error: 'This is a request\'s thread. A request closes only by its group\'s vote (offer_close_request).' };
+  const rootId = Number(ctx.deps?.threadRootId) || null;
+  if (!rootId) return { ok: false, error: 'Main Chat cannot be closed. Only a private thread can.' };
+  const went = await require('./private-threads').markDone(pool, { user: ctx.user, rootId, bot: ctx.bot, deps: ctx.deps || {} });
+  if (!went.ok) return { ok: false, error: 'No such thread.' };
+  ctx.closedThread = rootId;
+  return { ok: true, state: 'done', reply: 'Done. Reply here to pick it up again.' };
+}
+
 const CLAIMS = Object.freeze([
+  {
+    kind: 'no_control',
+    re: NO_CONTROL_CLAIM,
+    backed: () => false,
+    said: 'tells them to do something there is no control for, or says you cannot close this thread',
+    instead: 'To finish this thread, ask me to close it, or tap Mark done in its ⋯ menu.',
+  },
   {
     kind: 'filed',
     // "Filed: …" opening a line, "I filed …", or "I opened / created a
@@ -1679,6 +1719,10 @@ function checkNote(problems) {
   const drawing = problems.some((p) => p.kind === 'drawing')
     ? ' Your reply says you are drawing a screen, but you did not call draw_screen in this turn, so nothing is being drawn. If they asked for a screen, call draw_screen now with what to draw and its title, and do not reply. If you cannot, say so plainly.'
     : '';
+  // #6159: there is no control on their side; close_thread finishes a thread.
+  const noControl = problems.some((p) => p.kind === 'no_control')
+    ? ' There is no such control on their side: to finish this private thread, call close_thread.'
+    : '';
   return [
     `[Homeroom check, not from them: your reply ${list}.`,
     'No tool you called in this turn did that.',
@@ -1686,7 +1730,7 @@ function checkNote(problems) {
     'offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts',
     'one, revise_proposal changes your proposal, withdraw_proposal withdraws one of your proposals, report_problem',
     'tells the Homeroom team. Otherwise say plainly that it has not been done.',
-    `${promised}${drafted}${drawing}${unknown} Then call reply again.]`,
+    `${promised}${drafted}${drawing}${noControl}${unknown} Then call reply again.]`,
   ].join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -2744,6 +2788,7 @@ async function runTool(pool, ctx, name, args) {
       }
       case 'comment_on_request': return await commentOnRequest(pool, ctx, args);
       case 'draw_screen': return await drawScreen(pool, ctx, args);
+      case 'close_thread': return await closeThread(pool, ctx);
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'start_project_thread': return await startProjectThread(pool, ctx, args);
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
@@ -5757,6 +5802,8 @@ module.exports = {
   checkNote,
   stripClaims,
   DRAWING_CLAIM,
+  NO_CONTROL_CLAIM,
+  closeThread,
   announcesOnly,
   goesOnAfter,
   PREAMBLE_NOTE,

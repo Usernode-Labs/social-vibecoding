@@ -413,6 +413,67 @@ export function firstSpecScreen(source: string): SpecScreen | null {
   };
 }
 
+/**
+ * #6221 (3 Nov 2026): one numbered change of a plan, cropped for its card's
+ * fold-out: the line the plan wrote for it, the screen that marks it, and
+ * the part of that screen to show. Nothing is measured inside the frames,
+ * which stay script-free and cross-origin (`sandbox=""`): the plan says where
+ * the change is (its <li data-area="x y w h">, in the screen's pixels), and
+ * a change that names no area shows its screen's own focus. Which sides
+ * have it is read from its marks: a change marked only data-side="after" was
+ * not there before, one marked only "before" is gone after.
+ */
+export interface SpecChangeCrop {
+  n: number;
+  text: string;
+  screen: SpecScreen;
+  /** The side it is missing from, when it is on one side only. */
+  missing: 'before' | 'after' | null;
+}
+
+function parseArea(value: string | null, width: number, height: number): [number, number, number, number] | null {
+  const nums = String(value || '').trim().split(/[\s,]+/).map(Number);
+  if (nums.length !== 4 || nums.some((n) => !Number.isFinite(n))) return null;
+  const [x, y, w, h] = nums;
+  if (w < 40 || h < 20 || x < 0 || y < 0 || x >= width || y >= height) return null;
+  return [x, y, Math.min(w, width - x), Math.min(h, height - y)];
+}
+
+/** Pure but for the DOM parser: each numbered change of a plan, as its card crops it; [] for a plan with no screens. */
+export function specChangeCrops(source: string): SpecChangeCrop[] {
+  if (typeof source !== 'string' || !source.trim() || typeof DOMParser === 'undefined') return [];
+  const parsed = new DOMParser().parseFromString(source, 'text/html');
+  const article = parsed.querySelector('article[data-spec]') || parsed.body;
+  const styles: SpecStyles = article.getAttribute('data-spec-styles') === 'platform' ? 'platform' : 'kit';
+  const templates = Array.from(article.querySelectorAll('figure[data-screens] template[data-screen]'));
+  const out: SpecChangeCrop[] = [];
+  for (const li of Array.from(article.querySelectorAll('figure[data-screens] ol[data-changes] > li[data-change]'))) {
+    const n = parseInt(li.getAttribute('data-change') || '', 10);
+    if (!Number.isInteger(n) || n <= 0 || out.some((c) => c.n === n)) continue;
+    const tpl = templates.find((el) => (el as HTMLTemplateElement).content.querySelector(`[data-change="${n}"]`));
+    if (!tpl) continue;
+    const marks = Array.from((tpl as HTMLTemplateElement).content.querySelectorAll(`[data-change="${n}"]`));
+    const sides = new Set(marks.map((el) => el.closest('[data-side]')?.getAttribute('data-side') || 'both'));
+    const missing = sides.size === 1 && sides.has('after') ? 'before' : sides.size === 1 && sides.has('before') ? 'after' : null;
+    const g = geometryOf(tpl);
+    const markup = cleanScreenMarkup((tpl as HTMLTemplateElement).innerHTML);
+    if (!markup.trim()) continue;
+    out.push({
+      n,
+      text: String(li.textContent || '').replace(/\s+/g, ' ').trim(),
+      missing,
+      screen: {
+        width: g.width,
+        height: g.height,
+        focus: parseArea(li.getAttribute('data-area'), g.width, g.height) || g.focus,
+        before: frameDoc(markup, 'before', styles),
+        after: frameDoc(markup, 'after', styles),
+      },
+    });
+  }
+  return out;
+}
+
 const cache = new Map<string, SpecHtmlDoc>();
 const CACHE_MAX = 24;
 
