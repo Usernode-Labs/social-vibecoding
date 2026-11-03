@@ -26348,16 +26348,29 @@ html.in-side-panel body {
 }
 
 /* The item's page beside the list, on a wide window (workshop/side-panel.tsx).
-   The list is centered in the room left of the panel (its 560px, the 24px
-   inset and the 32px gap = 616px): 24px + (100% - 640px - 760px) / 2, floored
-   at the 24px inset. Below a 1400px container the margin is 24px and the
-   column fills that room, as before. */
+   The list keeps its reading width at the 24px inset and the panel takes the
+   room it leaves (#6208) — the rule #6206 asks for on Main Chat, here as one
+   width both of them read. `--dev-ws-side-list-w` is the list's width: its
+   760px, or the container less the 616px the panel needs (its 560px floor,
+   the 24px inset and the 32px gap). `--dev-ws-side-start` is the usable box's
+   edge on the rail's side, mirrored in Arabic as `--platform-usable-left` and
+   `-right` are. Both live on body because the panel is portalled into it: a
+   property set on #dev-workshop would never reach the panel. `--platform-
+   usable-w - 2 × gutter` is the Workshop's own container box — the `100%`
+   these rules used to spend — so the value means the same under the rail as
+   inside the page. */
+body {
+  --dev-ws-side-list-w: min(760px, calc(var(--platform-usable-w) - 2 * var(--platform-gutter, 0px) - 616px));
+  --dev-ws-side-start: calc(var(--platform-usable-left) * (1 + var(--rtl-sign)) / 2 + var(--platform-usable-right) * (1 - var(--rtl-sign)) / 2);
+}
 #dev-workshop:has(> .dev-ws[data-ws-side-open]) {
-  margin-inline-start: max(24px, calc((100% - 1352px) / 2)); margin-inline-end: 0;
-  max-width: min(760px, calc(100% - 616px));
+  margin-inline-start: 24px; margin-inline-end: 0;
+  max-width: var(--dev-ws-side-list-w);
 }
 .dev-ws-side {
-  position: fixed; z-index: 40; inset-inline-end: 24px; width: 560px;
+  position: fixed; z-index: 40;
+  inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px + var(--dev-ws-side-list-w) + 32px);
+  inset-inline-end: 24px;
   top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h, 3.25rem) + var(--platform-safe-top, 0px) + 8px);
   bottom: 12px;
   display: flex; flex-direction: column; overflow: hidden; border-radius: 20px;
@@ -26523,7 +26536,7 @@ html.in-side-panel body {
    A row opens its page in the Workshop's panel; the board keeps its place
    to its left, its columns 316px, and scrolls sideways (the Workshop brings
    the tapped column beside the panel). */
-#dev-workshop.dev-ws-has-board:has(> .dev-ws[data-ws-side-open]) { margin-inline-start: 24px; max-width: calc(100% - 616px); }
+#dev-workshop.dev-ws-has-board:has(> .dev-ws[data-ws-side-open]) { margin-inline-start: 24px; max-width: var(--dev-ws-side-list-w); }
 .dev-ws[data-ws-side-open] :is(#dev-kanban, .dev-kanban-stages) { grid-template-columns: repeat(4, 316px); }
 
 @media (max-width: 639px) {
