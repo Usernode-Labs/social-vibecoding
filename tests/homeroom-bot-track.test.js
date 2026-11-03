@@ -293,3 +293,26 @@ test('a plan said in a private thread names that thread on its track, for its do
   assert.equal([...tray.threadsOf(rows(true)).values()][0].ask.threadRootId, 58);
   assert.equal([...tray.threadsOf(rows(false)).values()][0].ask.threadRootId, undefined);
 });
+
+// #6228 (3 Nov 2026): the read the bot started after somebody's reply is
+// still the existing planning state, with the reply's own line. No new
+// state and no new step.
+test('#6228: a read of somebody\'s reply is planning, why "reply"', () => {
+  const replied = track.trackOf({ job: job({ stage: 'reading', reply: true, since: ago(2) }) });
+  assert.equal(replied.state, 'planning');
+  assert.equal(replied.step, 'plan');
+  assert.equal(replied.why, 'reply');
+  assert.equal(replied.busy, true);
+  const plain = track.trackOf({ job: job({ stage: 'reading', since: ago(2) }) });
+  assert.equal(plain.why, 'reading', 'a plain read is unchanged');
+  // Handed back with no reply is still stopped / needs_person.
+  assert.equal(track.fromOutcome('person').why, 'needs_person');
+  // jobOfRow carries the flag from stageOf.
+  const progress = require('../src/services/homeroom-bot-progress');
+  const j = track.jobOfRow({
+    slug: 'homeroom', name: 'Homeroom', issue_number: 6228, mode: 'live', verdict: 'person',
+    run_at: ago(10), reply_at: ago(1), queue_id: 3, enqueued_at: ago(2),
+  }, { stageOf: progress.stageOf, outcomeOf: () => null });
+  assert.equal(j.reply, true);
+  assert.equal(j.stage, 'reading');
+});

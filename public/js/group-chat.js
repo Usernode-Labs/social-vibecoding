@@ -198,6 +198,11 @@ const GroupChat = {
   _historyFailed: false,
   activeThread: null,       // { type, ref } | null — the mounted thread
   _threadTypingTimer: null,
+  // #6228: what Homeroom bot is doing with the newest reply on each request
+  // thread, kept by threadKey so reopening a thread shows it again, and the
+  // timer that takes a "nothing to add" line down.
+  _botStatus: new Map(),
+  _botStatusTimers: new Map(),
   // #4640: the container the open thread was mounted INTO. The Workshop side
   // panel is portalled to the end of <body>, while #messages-screen's reply
   // pane keeps a hidden thread shell of its own — so a lookup by document
@@ -812,6 +817,11 @@ const GroupChat = {
         GroupChat._applyThreadSummary(msg);
         break;
       }
+      case 'bot_status': {
+        // #6228: Homeroom bot has the newest reply on a request's thread.
+        GroupChat._applyBotStatus(msg);
+        break;
+      }
       case 'typing': {
         // #194: thread typing renders inside the mounted thread only;
         // general typing keeps the original #gc-typing slot.
@@ -873,6 +883,14 @@ const GroupChat = {
   _handleThreadIncoming(msg) {
     const { type, ref } = msg.thread;
     const st = GroupChat._threadState(type, ref);
+    // #6228: the bot's own answer is the end of its reply line.
+    if (type === 'issue' && msg.username === 'homeroom_bot') {
+      const key = GroupChat.threadKey('issue', ref);
+      clearTimeout(GroupChat._botStatusTimers.get(key));
+      GroupChat._botStatusTimers.delete(key);
+      GroupChat._botStatus.delete(key);
+      GroupChat._syncBotStatus();
+    }
     // Already in hand from a catch-up read (#4177).
     if (st.messages.some((m) => String(m.id) === String(msg.id))) return;
     st.messages.push(msg);
@@ -930,8 +948,57 @@ const GroupChat = {
     GroupChat._publishComposer('thread', { status: PlatformI18n.t('chat:group.typing.one', { name: username }) });
     clearTimeout(GroupChat._threadTypingTimer);
     GroupChat._threadTypingTimer = setTimeout(() => {
+      // Only the typing line: the bot's line (kept apart) shows again.
       GroupChat._publishComposer('thread', { status: '' });
     }, 3000);
+  },
+
+  // #6228: a `bot_status` frame from the server: what Homeroom bot is doing
+  // with the newest reply on one request thread. Kept by thread key so a
+  // thread reopened while the bot still reads shows it, and shown only by
+  // the thread on screen.
+  _applyBotStatus(msg) {
+    if (!msg || !msg.thread || msg.thread.type !== 'issue') return;
+    const ref = Number(msg.thread.ref);
+    const key = GroupChat.threadKey('issue', ref);
+    clearTimeout(GroupChat._botStatusTimers.get(key));
+    GroupChat._botStatusTimers.delete(key);
+    const authorId = msg.authorId == null ? null : Number(msg.authorId);
+    if (msg.status) {
+      GroupChat._botStatus.set(key, {
+        state: msg.status,
+        mine: authorId != null && Number(App.user?.id) === authorId,
+      });
+      // "Nothing to add" fades, as the typing line does.
+      if (msg.status === 'quiet') {
+        GroupChat._botStatusTimers.set(key, setTimeout(() => {
+          GroupChat._botStatusTimers.delete(key);
+          GroupChat._botStatus.delete(key);
+          GroupChat._syncBotStatus();
+        }, 8000));
+      }
+    } else {
+      GroupChat._botStatus.delete(key);
+    }
+    GroupChat._syncBotStatus();
+    // The request's page re-reads its track (and the Homeroom bot page its
+    // row) from this same frame.
+    const a = GroupChat.activeThread;
+    if (a && a.type === 'issue' && Number(a.ref) === ref && a.language === 'request'
+      && typeof AppView !== 'undefined' && AppView.refreshDevData) {
+      void AppView.refreshDevData('homeroom-bot');
+    }
+  },
+
+  // What the mounted thread's status slot should say about the bot, or null.
+  _syncBotStatus() {
+    const a = GroupChat.activeThread;
+    const kept = a && a.type === 'issue'
+      ? GroupChat._botStatus.get(GroupChat.threadKey('issue', a.ref)) || null
+      : null;
+    GroupChat._publishComposer('thread', {
+      bot: kept ? { state: kept.state, mine: kept.mine === true } : null,
+    });
   },
 
   // Hard cap on the offline queue. Picked to be large enough that
@@ -1502,6 +1569,8 @@ const GroupChat = {
     // #4640: the thread renders into the container it was mounted in, not
     // whichever `#gc-thread-messages` a document-wide lookup finds first.
     GroupChat._threadHost = container;
+    // #6228: switching threads shows the new thread's kept bot line, or none.
+    GroupChat._syncBotStatus();
 
     const threadKey = GroupChat.threadKey(type, ref);
     // A quote staged in the general composer must not ride along into a
@@ -1686,6 +1755,8 @@ const GroupChat = {
     if (GroupChat.activeThread && GroupChat.replyDraft) GroupChat.clearQuote();
     GroupChat.activeThread = null;
     GroupChat._threadHost = null;
+    // #6228: no thread on screen, so no bot line.
+    GroupChat._syncBotStatus();
     // #4517: nothing typed into a left thread's composer may still post to it.
     GroupChat._threadComposerWiring?.abort();
     GroupChat._threadComposerWiring = null;

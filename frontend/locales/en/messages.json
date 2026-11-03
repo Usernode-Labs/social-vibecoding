@@ -4451,6 +4451,10 @@
     "text": "Reading the request",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"planning\" when the reason is \"reading\"."
   },
+  "bot.track.line.planning.reply": {
+    "text": "Reading the newest reply",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"planning\" when the reason is \"reply\": Homeroom bot is reading the reply somebody just posted on the request."
+  },
   "bot.track.line.planning.planning": {
     "text": "Writing the plan",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"planning\" when the reason is \"planning\"."
@@ -4983,6 +4987,10 @@
     "text": "{{project}} · #{{number}} · Homeroom bot is reading it",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is reading the request to decide whether to ask a question or build it. \"it\" is the request."
   },
+  "ai.next.readingReply": {
+    "text": "{{project}} · #{{number}} · Homeroom bot is reading the newest reply",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is reading the reply somebody just posted on the request."
+  },
   "ai.next.building": {
     "text": "{{project}} · #{{number}} · Being built",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): somebody other than the person and Homeroom bot is building a change for it."
@@ -5242,6 +5250,10 @@
   "ai.short.reading": {
     "text": "Reading it",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is reading the request."
+  },
+  "ai.short.readingReply": {
+    "text": "Reading the reply",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is reading the reply somebody just posted on the request."
   },
   "ai.short.bot": {
     "text": "Homeroom bot",

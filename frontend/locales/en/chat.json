@@ -207,6 +207,22 @@
     "text": "Try it",
     "description": "Chip under a chat message that asked Homeroom bot for something, once the change is built: opens a preview of the change so anyone can try it out. 'It' is the change."
   },
+  "group.botStatus.willRead": {
+    "text": "Homeroom bot will read this in a moment",
+    "description": "Line under the messages of a request's thread, where the typing line goes, after somebody replied to Homeroom bot: the bot has the reply and will read it shortly. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botStatus.readingYours": {
+    "text": "Homeroom bot is reading your reply",
+    "description": "Line under the messages of a request's thread, where the typing line goes, seen by the person who wrote the reply: Homeroom bot is reading what they just wrote. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botStatus.reading": {
+    "text": "Homeroom bot is reading the reply",
+    "description": "Line under the messages of a request's thread, where the typing line goes, seen by everybody except the person who wrote the reply: Homeroom bot is reading what somebody else just wrote. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botStatus.quiet": {
+    "text": "Homeroom bot read this and has nothing to add",
+    "description": "Line under the messages of a request's thread, where the typing line goes, after Homeroom bot read a reply addressed to it and chose not to answer. It fades after a few seconds. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
   "group.botCard.label": {
     "text": "Homeroom bot, only you can see this",
     "description": "Accessible name of Homeroom bot's private card under the person's own chat message. Nobody else in the channel sees the card. Homeroom bot is the product's assistant that builds changes; keep its name."

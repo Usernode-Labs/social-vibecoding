@@ -58,6 +58,59 @@ const MINUTE_MS = 60 * 1000;
 // A ready verdict with no build session yet is a build starting. Past this,
 // nothing about it is recorded, and that is what is said.
 const START_GRACE_MS = 15 * MINUTE_MS;
+// 3 Nov 2026 (#6228): how long a reply nobody has queued a read for still
+// reads as waiting to be read. After it, a reply the bot does not pick up
+// goes back to how the request was (Decide, Stopped), so a request does not
+// say "reading" forever.
+const REPLY_WAIT_MS = 2 * MINUTE_MS;
+
+/**
+ * #6228: the newest message a person wrote in a request's own thread after
+ * the run that decided about it: what tells whether the bot has a reply
+ * waiting to be read. `$`-free SQL, so progress and track can share one
+ * definition: the aliases are the caller's (`m.app_id` in requestRows,
+ * `a.id` in the track's read).
+ */
+function replyLateralSql({
+  appId = 'm.app_id', issueNumber = 'm.issue_number', runAt = 'run.created_at',
+} = {}) {
+  return `LEFT JOIN LATERAL (
+    SELECT cm.id AS reply_id, cm.created_at AS reply_at, cm.user_id AS reply_user_id
+      FROM chat_messages cm
+      JOIN users ru ON ru.id = cm.user_id
+     WHERE cm.app_id = ${appId}
+       AND cm.thread_type = 'issue'
+       AND cm.thread_ref = ${issueNumber}
+       AND cm.msg_type = 'message'
+       AND cm.deleted_at IS NULL
+       AND ru.is_synthetic IS NOT TRUE
+       AND cm.created_at > ${runAt}
+     ORDER BY cm.id DESC LIMIT 1
+  ) reply ON TRUE`;
+}
+
+/**
+ * Pure (#6228): whether a person's reply on a request is newer than the
+ * bot's last look and still waiting to be read, from a requestRows row (with
+ * the `reply` lateral). A read that has started, or a queue row not on hold,
+ * is a read coming. Otherwise the reply only counts for REPLY_WAIT_MS: a
+ * reply the refresh did not queue goes back to what it was.
+ */
+function replyWaits(row, { now = new Date() } = {}) {
+  if (!row || !row.reply_at) return false;
+  const at = new Date(row.reply_at).getTime();
+  const runAt = row.run_at ? new Date(row.run_at).getTime() : NaN;
+  if (!Number.isFinite(at) || !Number.isFinite(runAt) || at <= runAt) return false;
+  if (row.request_closed === true) return false;
+  if (row.proposal_status === 'promoted' || row.proposal_status === 'merging') return false;
+  if (row.started_at) return true;
+  if (row.queue_id) {
+    const held = row.held_until ? new Date(row.held_until) : null;
+    if (held && !Number.isNaN(held.getTime()) && held > now) return false;
+    return true;
+  }
+  return now.getTime() - at <= REPLY_WAIT_MS;
+}
 // What finished lately, for "is it ready yet?".
 const FINISHED_WITHIN_DAYS = 14;
 const MAX_FINISHED = 3;
@@ -486,6 +539,10 @@ function stageOf(input, { now = new Date() } = {}) {
     return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests are ${checks}` };
   }
   if (row.started_at) {
+    // #6228: a read under way after a person replied is reading that reply.
+    if (replyWaits(row, { now })) {
+      return { stage: 'reading', reply: true, since: row.started_at, doing: 'reading the newest reply', limit: 'reading' };
+    }
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
   // #6219 (3 Nov 2026): a plan waiting for Build it is what the person acts
@@ -575,11 +632,20 @@ function stageOf(input, { now = new Date() } = {}) {
     }
     // Not its number in the queue: that counts every project's requests, and
     // the per-project and per-person limits decide more (queuedWait).
+    // #6228: a reply waiting for the read the bot has queued reads as that
+    // read about to happen, not as a request waiting its turn.
+    if (replyWaits(row, { now })) {
+      return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
+    }
     return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder' };
+  }
+  // #6228: a reply nobody has queued a read for yet still reads as one
+  // coming, for REPLY_WAIT_MS: the bot's refresh sees it and queues it.
+  if (replyWaits(row, { now })) {
+    return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
   }
   return null;
 }
-
 /**
  * Pure (14 Oct 2026, newcomer run eight): whether a first version's build
  * stopped, from its request row (requestRows) while nothing about it is in
@@ -738,7 +804,8 @@ async function requestRows(pool, userId) {
                          ORDER BY ri.id DESC LIMIT 1), FALSE)
                 OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
                             WHERE cr.app_id = m.app_id AND cr.issue_number = m.issue_number AND cr.closed_at IS NOT NULL)) AS request_closed,
-            oq.created_at AS question_at
+            oq.created_at AS question_at,
+            reply.reply_id, reply.reply_at, reply.reply_user_id
        FROM mine m
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
@@ -753,6 +820,7 @@ async function requestRows(pool, userId) {
           WHERE app_id = m.app_id AND issue_number = m.issue_number
           ORDER BY id DESC LIMIT 1
        ) run ON TRUE
+       ${replyLateralSql({ appId: 'm.app_id', issueNumber: 'm.issue_number', runAt: 'run.created_at' })}
        LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
        LEFT JOIN LATERAL (
          SELECT created_at FROM homeroom_bot_posts
@@ -1460,6 +1528,10 @@ module.exports = {
   BUSY_STAGES,
   IN_FLIGHT_STAGES,
   START_GRACE_MS,
+  // #6228: a reply on a request waiting to be read.
+  REPLY_WAIT_MS,
+  replyWaits,
+  replyLateralSql,
   inFlight,
   stageOf,
   checksOnHead,

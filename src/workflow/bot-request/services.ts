@@ -32,12 +32,27 @@ export function botRequestServices({ config, pool }: Deps): Record<string, WorkH
         const { input } = ctx;
         const key = requestKey(Number(input.appId), Number(input.issueNumber));
         const steps = ctx.steps({ owner: `${MACHINE}/${key}/look:${input.n}` });
-        const out = await bot().lookAt(config, pool, {
-          input, steps, signal: ctx.signal, owner: turnOwner(ctx, MACHINE, key), last: ctx.attempt >= 2,
-        });
-        await steps.flush();
-        steps.fence();
-        return JSON.parse(JSON.stringify(out ?? { outcome: 'done' })) as Json;
+        // #6228: the request's thread shows the bot has the reply as soon as
+        // this look starts, and what it made of it when it ends. Best-effort.
+        const noteStatus = () => {
+          try {
+            const replyStatus = legacy('services/homeroom-bot-reply-status');
+            void replyStatus.publish(pool, {
+              appId: Number(input.appId), issueNumber: Number(input.issueNumber),
+            }).catch(() => {});
+          } catch { /* best effort */ }
+        };
+        noteStatus();
+        try {
+          const out = await bot().lookAt(config, pool, {
+            input, steps, signal: ctx.signal, owner: turnOwner(ctx, MACHINE, key), last: ctx.attempt >= 2,
+          });
+          await steps.flush();
+          steps.fence();
+          return JSON.parse(JSON.stringify(out ?? { outcome: 'done' })) as Json;
+        } finally {
+          noteStatus();
+        }
       },
     },
     [WORK.build]: {

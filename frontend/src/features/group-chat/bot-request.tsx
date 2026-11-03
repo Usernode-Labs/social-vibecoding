@@ -44,7 +44,7 @@ import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcri
 
 // `max-w-full`: on a narrow phone a sentence wraps inside the chip rather
 // than running past the message.
-const CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-start text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
+export const BOT_CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-start text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
 
 /**
  * What each chip says (`words`), and what a screen reader hears (`said`)
@@ -84,7 +84,7 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
     return (
       <button
         type="button"
-        className={CHIP_CLASS}
+        className={BOT_CHIP_CLASS}
         data-bot-request={chip.status}
         disabled={!chip.sessionId}
         onClick={() => { if (chip.sessionId) onTry?.(chip.sessionId); }}
@@ -97,12 +97,12 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
   const { glyph, words } = CHIP_WORDS[chip.status];
   const label = chipLabel(chip.status);
   return mine ? (
-    <button type="button" className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label} onClick={() => onProgress?.()}>
+    <button type="button" className={BOT_CHIP_CLASS} data-bot-request={chip.status} aria-label={label} onClick={() => onProgress?.()}>
       <span aria-hidden="true">{glyph}</span>
       <span>{t(words)}</span>
     </button>
   ) : (
-    <span className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label}>
+    <span className={BOT_CHIP_CLASS} data-bot-request={chip.status} aria-label={label}>
       <span aria-hidden="true">{glyph}</span>
       <span>{t(words)}</span>
     </span>

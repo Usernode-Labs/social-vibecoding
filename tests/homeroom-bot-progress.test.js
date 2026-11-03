@@ -391,3 +391,44 @@ test('#6219: a plan waiting for Build it wins over a question left open from bef
   const { BOT_STANDING } = require('../src/services/ai-work');
   assert.deepEqual(BOT_STANDING.plan, { group: 'needs', what: 'plan' });
 });
+
+// #6228 (3 Nov 2026): a person's reply on a request the bot handed back is
+// the bot's to read, so the request leaves Decide at once: it reads as
+// 'reading' with `reply`, waiting until the bot's turn starts. The window
+// keeps a reply the refresh does not queue from saying "reading" forever.
+test('#6228: a fresh reply on a handed-back request reads as waiting to be read', () => {
+  const handed = { mode: 'live', verdict: 'person', run_at: ago(10) };
+  // Not queued yet: the refresh's window.
+  assert.deepEqual(stage({ ...handed, reply_at: ago(1), reply_user_id: 7 }), {
+    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'about to read the newest reply',
+  });
+  // handedBack still says Decide on its own; stageOf answers first.
+  assert.equal(progress.handedBack({ ...handed, reply_at: ago(1) }), 'decide');
+  // Past the window with no queue row: back to how it was.
+  assert.equal(stage({ ...handed, reply_at: ago(3) }), null);
+  assert.equal(progress.REPLY_WAIT_MS, 2 * 60 * 1000);
+  // Queued, on hold: it waits for the week, not a read.
+  assert.equal(stage({ ...handed, queue_id: 4, enqueued_at: ago(45), held_until: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(), reply_at: ago(30) }).stage, 'on_hold');
+  assert.deepEqual(stage({ ...handed, queue_id: 4, enqueued_at: ago(2), reply_at: ago(1) }), {
+    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'about to read the newest reply',
+  });
+  // The read started: reading the reply, with the reading clock.
+  assert.deepEqual(stage({ ...handed, started_at: ago(1), reply_at: ago(2) }), {
+    stage: 'reading', reply: true, since: ago(1), doing: 'reading the newest reply', limit: 'reading',
+  });
+  // A reply older than the look was already read.
+  assert.equal(stage({ ...handed, reply_at: ago(20), run_at: ago(10) }), null);
+  // The request closed, or its change is up: unchanged.
+  assert.equal(stage({ ...handed, request_closed: true, reply_at: ago(1) }), null);
+  assert.equal(stage({ ...handed, proposal_status: 'promoted', proposal_at: ago(20), check_state: 'passing', reply_at: ago(1) }).stage, 'vote');
+});
+
+test('#6228: the reply read is one SQL definition, shared with the track', () => {
+  const sql = progress.replyLateralSql();
+  assert.match(sql, /cm\.thread_type = 'issue'/);
+  assert.match(sql, /ru\.is_synthetic IS NOT TRUE/);
+  assert.match(sql, /cm\.created_at > run\.created_at/);
+  assert.match(progress.replyLateralSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.app_id = a\.id/);
+  const trackSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-track.js'), 'utf8');
+  assert.match(trackSrc, /replyLateralSql\(\{ appId: 'a\.id', issueNumber: 'w\.n', runAt: 'run\.created_at' \}\)/);
+});
