@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { englishPlatformI18n } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const CONTROLLER_TEXT = fs.readFileSync(
@@ -27,6 +28,7 @@ const DIALOG_TEXT = fs.readFileSync(
   path.join(ROOT, 'frontend', 'src', 'features', 'dialogs', 'feedback.tsx'),
   'utf8'
 );
+const { arrowStep } = loadTsx('frontend/src/lib/i18n/direction.ts');
 const FEEDBACK_SRC = CONTROLLER_TEXT
   .replace(/^import .*$/gm, '')
   .replace(/^export /gm, '')
@@ -175,6 +177,7 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     FeedbackQueue: feedbackQueue || undefined,
     App: {},
     alert: () => {},
+    arrowStep,
   };
   if (unNative) sandbox.unNative = unNative;
   sandbox.window = sandbox;
@@ -608,6 +611,23 @@ test('#6127: the arrow keys move a focused picture earlier and later', async () 
   h.type('Second picture first');
   await h.submit();
   assert.deepEqual(h.filed()[0].screenshotIds, ['2'.repeat(32), '1'.repeat(32)]);
+});
+
+test('#6127: in Arabic, where the row starts on the right, Left moves a picture later', async () => {
+  const h = makeHarness();
+  h.open();
+  await h.pick('a.png', 'b.png');
+  const before = globalThis.document;
+  try {
+    globalThis.document = { documentElement: { dir: 'rtl' } };
+    const preventDefault = () => {};
+    await h.thumbOpen(h.list()[0]).fire('keydown', { key: 'ArrowRight', preventDefault });
+    assert.deepEqual(h.list().map((item) => h.thumbImg(item).src), ['blob:a.png', 'blob:b.png'], 'the first picture is already at the right end');
+    await h.thumbOpen(h.list()[0]).fire('keydown', { key: 'ArrowLeft', preventDefault });
+    assert.deepEqual(h.list().map((item) => h.thumbImg(item).src), ['blob:b.png', 'blob:a.png']);
+  } finally {
+    globalThis.document = before;
+  }
 });
 
 test('#6127: the reorder hint shows only with two or more pictures', async () => {

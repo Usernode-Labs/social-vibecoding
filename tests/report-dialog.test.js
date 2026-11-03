@@ -40,8 +40,7 @@ test('the reasons are a list to tap, not a drop-down', () => {
 
 test('the list works from the keyboard like a radio group', () => {
   assert.match(REPORT, /tabIndex=\{key === focusable \? 0 : -1\}/, 'one row in the tab order');
-  assert.match(REPORT, /'ArrowDown'/);
-  assert.match(REPORT, /'ArrowUp'/);
+  assert.match(REPORT, /const step = arrowStep\(event\.key\);/, 'Up, Down, and Left and Right as they read on screen (tests/rtl-geometry)');
   assert.match(REPORT, /onPick\(key\);\s*const row = [^;]+;\s*row\?\.focus\(\);/,
     'an arrow key picks the next reason and moves focus to it');
 });

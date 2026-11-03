@@ -47,6 +47,7 @@
 // `window.ScreenshotSelect`, which the capture path below reads by name.
 import './screenshot-select';
 
+import { arrowStep } from '../../lib/i18n/direction';
 import { t } from '../../lib/i18n/runtime';
 import { isRepoAddress } from '../../lib/repo-link.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
@@ -1279,14 +1280,14 @@ export function init() {
         Feedback._preview({ kind: 'image', src: shot.objectUrl, alt: shot.img.alt, pins: shot.pins || null });
       });
       // #6127: with a keyboard, a focused picture moves with the arrow keys.
-      // Left/up moves it earlier, right/down later, and at either end it
-      // stays put (so the page keeps its own scrolling there).
+      // Up moves it earlier and down later; left and right move it that way
+      // on screen, which in Arabic, where the row starts on the right, is the
+      // other way through the list. At either end it stays put (so the page
+      // keeps its own scrolling there).
       openBtn.addEventListener('keydown', (e) => {
         const from = screenshots.indexOf(shot);
-        const key = e && e.key;
-        const to = key === 'ArrowLeft' || key === 'ArrowUp' ? from - 1
-          : key === 'ArrowRight' || key === 'ArrowDown' ? from + 1
-            : -1;
+        const step = arrowStep(e && e.key);
+        const to = step ? from + step : -1;
         if (from < 0 || to < 0 || to >= screenshots.length) return;
         if (e.preventDefault) e.preventDefault();
         if (moveScreenshot(from, to)) {
