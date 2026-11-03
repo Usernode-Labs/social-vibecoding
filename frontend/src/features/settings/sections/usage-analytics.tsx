@@ -105,12 +105,14 @@ export function UsageAnalyticsSection() {
         disabled={!loaded || saving}
         describedBy="settings-usage-analytics-description"
         description={(
-          // #5926: what is true now, then what it records and what it never
-          // records, each on its own line.
+          // #5926: what is true now, then what it records, what it never
+          // records and what switching off leaves in place (item 5), each on
+          // its own line. Off only stops new rows: nothing deletes the old ones.
           <>
             <span className="block">{t(on ? 'settings:privacy.usageAnalytics.stateOn' : 'settings:privacy.usageAnalytics.stateOff')}</span>
             <span className="block">{t('settings:privacy.usageAnalytics.records')}</span>
             <span className="block">{t('settings:privacy.usageAnalytics.neverRecords')}</span>
+            <span className="block">{t('settings:privacy.usageAnalytics.alreadyRecorded')}</span>
           </>
         )}
         onChange={(e) => void change(e.currentTarget.checked)}
