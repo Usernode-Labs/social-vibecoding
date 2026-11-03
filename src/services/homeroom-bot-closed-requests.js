@@ -9,7 +9,7 @@
 // it stayed up for a vote, and since classifyIssue never reads a closed
 // request again, the bot never looked at it again either. On 15 October three
 // of the five proposals the platform project allows the bot
-// (PROPOSALS_PER_APP_CAP) were for closed requests: #4817 shipped by a
+// (then PROPOSALS_PER_APP_CAP, now WAITING_PER_APP) were for closed requests: #4817 shipped by a
 // person's PR, #4389 shipped by another change, #4968 closed by a vote. Every
 // other ready request on the project waited behind them.
 //

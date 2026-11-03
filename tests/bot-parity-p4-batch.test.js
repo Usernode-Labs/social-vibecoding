@@ -178,7 +178,7 @@ test('work_through puts the batch card under the reply, and only reads it starte
   assert.equal(proposed[0].conversationId, 5);
   assert.deepEqual(out.notRequests, [77]);
   assert.match(out.readingNow, /#9/);
-  assert.match(out.raised, /up to 6 of these at once and hold up to 10/);
+  assert.match(out.raised, /up to 6 of these at once and build up to 10 of your changes on it at once/, '#6156: the raise is to the builds');
   assert.match(out.shown, /Build for the 2 ready ones/);
   assert.ok(ctx.appIds.has(2));
 });
@@ -235,6 +235,47 @@ test('the proposal hold reads a running batch\'s raise for its own requests, and
   // simulateCaps passes the request it decides for.
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
   assert.equal((src.match(/simulateCaps\(pool, bot, app\.id, [^)]*\{ issueNumber \}\)/g) || []).length, 3);
+});
+
+test('#6156: a batch raising its project to 8 lets its 6th build start; the changes waiting for votes are held as before', async () => {
+  const homeroomBot = require('../src/services/homeroom-bot');
+  const BOT = { id: 77, username: 'homeroom_bot' };
+  let builds = 0;
+  let proposals = 0;
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (s === homeroomBot.SLOT_HOLDERS_SQL) {
+        return { rows: [
+          ...Array.from({ length: proposals }, (_, i) => ({ kind: 'proposal', issue_number: 100 + i })),
+          ...Array.from({ length: builds }, (_, i) => ({ kind: 'build', issue_number: 200 + i })),
+        ] };
+      }
+      // The running batch started request 1, and raised its project to 8.
+      if (/FROM homeroom_bot_batches/.test(s)) return { rows: [{ cap: Number(params[1]) === 1 ? 8 : null }] };
+      if (/FROM homeroom_bot_flake_fixes/.test(s)) return { rows: [] };
+      if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: proposals }] };
+      return { rows: [{ cnt: 0 }] };
+    },
+  };
+  const caps = (n) => homeroomBot.simulateCaps(pool, BOT, 9, 'ready', {}, n == null ? {} : { issueNumber: n });
+  assert.equal(homeroomBot.BUILDS_PER_APP, 5);
+  builds = homeroomBot.BUILDS_PER_APP;
+  assert.equal(await caps(1), null, 'its 6th build starts');
+  assert.equal(await caps(2), 'builds_per_app', 'a request it did not start waits for the bot\'s turn');
+  assert.equal(await caps(null), 'builds_per_app', 'no request named: the ordinary hold');
+  builds = 8;
+  assert.equal(await caps(1), 'builds_per_app', 'never past the batch\'s 8');
+  // The waiting count is the project's own, raised by no batch.
+  builds = 0;
+  proposals = homeroomBot.WAITING_PER_APP;
+  assert.equal(await caps(1), 'proposals_per_app');
+  proposals = homeroomBot.WAITING_PER_APP - 1;
+  builds = 7;
+  assert.equal(await caps(1), null);
+  const room = await homeroomBot.capRoomFor(pool, BOT, 9, {});
+  assert.equal(room.proposals_per_app, 1, 'the waiting room is the project\'s, with or without a batch');
+  assert.equal(room.builds_per_app, 0, 'and the building room is the project\'s own, which the batch went past');
 });
 
 test('a refresh never costs its caller: a missing pool or a bad app does nothing', () => {

@@ -19,6 +19,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { hashSecret } = require('../src/services/cli-auth');
 const constants = require('../src/services/cli-auth-constants');
@@ -58,10 +60,13 @@ const db = {
       handoff_base_sha: null, checks_commit_sha: null, handoff_uploaded_sha: null,
       agent_session_id: null, is_headless: false, source: 'cli_handoff',
       app_id: 3, app_slug: 'demo-app', repo_url: 'https://github.com/o/r',
+      collab_visibility: 'invite', view_visibility: 'invite', moderation_suspended_at: null,
     };
     this.updated = null;
     // How many more reads of the lease find it (null: every one).
     this.leaseReads = null;
+    // How many more reads find the user still a collaborator (null: every one).
+    this.collabReads = null;
   },
 };
 
@@ -101,6 +106,13 @@ const pool = {
     }
     if (/FROM chat_sessions cs JOIN apps/.test(sql)) {
       return { rows: db.session ? [db.session] : [] };
+    }
+    if (/FROM app_collaborators WHERE app_id = \$1 AND user_id = \$2 AND status = 'member'/.test(sql)) {
+      if (db.collabReads !== null) {
+        if (db.collabReads <= 0) return { rows: [] };
+        db.collabReads -= 1;
+      }
+      return { rows: [{ '?column?': 1 }] };
     }
     if (/SELECT \* FROM local_agent_turns/.test(sql)) {
       return { rows: db.turn ? [db.turn] : [] };
@@ -575,4 +587,69 @@ test('a lease lost between the route and the conductor refuses the commit before
   assert.equal(uploads.length, 0, 'nothing reached the code host');
   assert.equal(db.updated, null, 'the turn row was not advanced');
   assert.equal(inputs.size, 0, 'no files kept');
+});
+
+test('someone no longer building on the project uploads nothing', async (t) => {
+  const { uploads, inputs } = commitHarness(t);
+  const asked = t.mock.method(require('../src/services/platform-operations'), 'request');
+  db.turn.base_sha = 'a'.repeat(40);
+  db.collabReads = 0;
+  const r = await call('POST', '/api/cli/agent/turns/11/commit', COMMIT_BODY);
+  assert.equal(r.status, 404);
+  assert.equal(r.json.error, 'not_found');
+  assert.equal(asked.mock.callCount(), 0, 'the route refuses it without asking a conductor');
+  assert.equal(uploads.length, 0, 'nothing reached the code host');
+  assert.equal(db.updated, null, 'the turn row was not advanced');
+  assert.equal(inputs.size, 0, 'no files kept');
+});
+
+test('collab access lost between the route and the conductor refuses the commit before it is made', async (t) => {
+  const { uploads, inputs } = commitHarness(t);
+  db.turn.base_sha = 'a'.repeat(40);
+  // The route's own read finds it; the conductor's does not.
+  db.collabReads = 1;
+  const r = await call('POST', '/api/cli/agent/turns/11/commit', COMMIT_BODY);
+  assert.equal(r.status, 404);
+  assert.equal(r.json.error, 'not_found');
+  assert.equal(db.collabReads, 0, 'the conductor read it again');
+  assert.equal(uploads.length, 0, 'nothing reached the code host');
+  assert.equal(db.updated, null, 'the turn row was not advanced');
+  assert.equal(inputs.size, 0, 'no files kept');
+});
+
+// ── The platform's own dispatch path ──────────────────────────────────────
+//
+// A local turn is enqueued by the platform before anything else can fail: a
+// throw, or an interrupted wait, used to leave the row live while the
+// machine's lease kept heartbeating, so every later dispatch answered
+// session_busy with no run anywhere. These tests read the dispatch blocks
+// themselves (as tests/local-agent-tail.test.js does), because what matters is
+// that the guard sits around BOTH ways the wait can end without a terminal
+// row, in BOTH tools.
+
+const sessionsSource = fs.readFileSync(path.join(__dirname, '..', 'src/routes/sessions.js'), 'utf8');
+
+function dispatchBlock(name) {
+  const start = sessionsSource.indexOf(name);
+  assert.ok(start > 0, `found ${name}`);
+  return sessionsSource.slice(start, sessionsSource.indexOf('let result;', start));
+}
+
+test('both local dispatches close a turn the wait left live', () => {
+  for (const name of ['const dispatchLocalBuild = async ()', 'const dispatchLocalScout = async ()']) {
+    const block = dispatchBlock(name);
+    assert.match(block, /try \{[\s\S]{0,500}await localAgent\.awaitTurnResult/,
+      `${name} wraps the wait in a try`);
+    // Aborted: the signal fired before the machine answered.
+    assert.match(block, /outcome === 'aborted'/);
+    assert.match(block, /abandonTurn\(pool, turnId, 'The turn was interrupted before it finished\.'\)/);
+    // Thrown: an error (for example the database) after the row was written.
+    assert.match(block, /catch \(err\)/);
+    assert.match(block, /abandonTurn\(pool, turnId, `Sending the turn failed: \$\{agentTurn\.sanitizeError\(err\)/);
+    // Restart recovery owns the adopted turn and its tail: never abandon it.
+    assert.match(block, /err\?\.code !== 'local_turn_adopted'/);
+    // And the reason reaches the tail's result, which is the change page's
+    // existing error line.
+    assert.match(block, /buildTurnResult\(\{[\s\S]{0,160}turn: finished/);
+  }
 });

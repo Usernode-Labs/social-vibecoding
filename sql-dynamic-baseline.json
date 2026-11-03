@@ -523,16 +523,16 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "476bc6cbc89e56feb04a",
+      "fingerprint": "88f4499c338d7f3adb7a",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
     },
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "88f4499c338d7f3adb7a",
+      "fingerprint": "b8cdda3a464d8ae27cce",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, a.moderation_suspended_at, ${SESSION_WORK_COLUMNS} FRO"
     },
     {
       "source": "src/routes/proposal-handoff.js",
@@ -554,13 +554,6 @@
       "fingerprint": "42c89c7dc3cd0cb79eb0",
       "count": 1,
       "preview": "`SELECT DISTINCT ON (s.session_id) s.session_id, s.version, s.built_at FROM chat_session_specs s JOIN chat_sessions owner_session ON owner_session.id = s.sessio"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "828c54db9a579ee9fdcb",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.transcript_shar"
     },
     {
       "source": "src/routes/sessions.js",
@@ -596,6 +589,13 @@
       "fingerprint": "e16f1722cca1c2b80269",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "fabaee96d9bc2d5b41ea",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
     },
     {
       "source": "src/routes/status.js",
@@ -1426,7 +1426,7 @@
     {
       "source": "src/services/leaderboard-users.js",
       "kind": "structural-template",
-      "fingerprint": "eeb751bfd8007b901e6a",
+      "fingerprint": "14f82b20dfde2217cf98",
       "count": 1,
       "preview": "`SELECT u.id AS user_id, u.username, (COUNT(pk.id) + COALESCE(ab.received, 0))::int AS kudos_received, COUNT(DISTINCT pk.session_id)::int AS prs_kudosed, (COUNT"
     },
@@ -1639,6 +1639,13 @@
       "fingerprint": "dd7dfd2983ae4a231fb1",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
+    },
+    {
+      "source": "src/services/preview-sleep.js",
+      "kind": "structural-template",
+      "fingerprint": "aa74331ecdcc54d02ff3",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions cs SET staging_asleep_at = now(), staging_asleep_db_bytes = NULL WHERE cs.id = $1 AND cs.staging_asleep_at IS NULL AND cs.staging_url IS N"
     },
     {
       "source": "src/services/private-threads.js",

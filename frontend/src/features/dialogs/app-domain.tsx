@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { shortDate } from '../../lib/timestamp';
 import { useDialog } from './use-dialog';
 
 type DomainStatus = 'pending' | 'verified' | 'live' | 'failed' | 'disabled';
@@ -85,7 +86,7 @@ function statusText(row: DomainRow): string {
   if (!STATUS_LINE[row.status]) return row.last_error ? `${row.status}. ${row.last_error}` : `${row.status}.`;
   if (row.status === 'live') {
     return row.live_at
-      ? translate('dialogs:appDomain.status.liveSince', { date: new Date(row.live_at).toLocaleDateString() })
+      ? translate('dialogs:appDomain.status.liveSince', { date: shortDate(row.live_at) })
       : translate('dialogs:appDomain.status.live');
   }
   if (row.last_error) return translate(STATUS_WITH_REASON[row.status], { reason: row.last_error });

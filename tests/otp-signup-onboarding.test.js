@@ -81,7 +81,7 @@ test('the password step says the account is new, and asks for its handle with th
   assert.match(LOGIN, /if \(handle === ''\) \{\s+setOtpUsernameError\(translate\('auth:login\.signup\.usernameMissing'\)\);/);
   assert.equal(message('auth:login.signup.usernameMissing'), 'Enter a username.');
   assert.match(LOGIN, /\.\.\.\(handle \? \{ username: handle \} : \{\}\)/);
-  assert.match(LOGIN, /if \(data\.field === 'username' && data\.error\) \{\s+setOtpUsernameError\(data\.error\);/);
+  assert.match(LOGIN, /if \(data\.field === 'username' && data\.error\) \{\s+setOtpUsernameError\(errorText\(data\)\);/);
 });
 
 test('the set-password step asks for no password, and says how they sign in (#4891)', () => {

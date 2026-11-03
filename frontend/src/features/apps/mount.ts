@@ -19,6 +19,8 @@ import { flushSync } from 'react-dom';
 
 import './browse.js';
 import { browseStore } from './browse-store.js';
+import { navStore } from '../nav/nav-store.js';
+import { recentAppEntries, recentAppsStore } from '../nav/recent-apps-store.js';
 
 browseStore.setFlush(flushSync);
 
@@ -29,7 +31,18 @@ if (typeof window !== 'undefined') {
     Browse?: Record<string, unknown>;
     UsernodeReact?: Record<string, unknown>;
   };
-  if (host.Browse) host.Browse._store = browseStore;
+  if (host.Browse) {
+    host.Browse._store = browseStore;
+    // The Opened recently switch's list (#4809), read when the filter runs and
+    // so never during the first render, and for the same name it is stored under.
+    host.Browse._recentEntries = () => recentAppEntries(navStore.get().viewer);
+    // A microtask, not at once: nav.setViewer replaces this list BEFORE it
+    // records the new viewer, and a read in between would pair the new
+    // account's list with the previous account's stored one.
+    recentAppsStore.subscribe(() => {
+      queueMicrotask(() => (host.Browse as any)?.recentChanged?.());
+    });
+  }
   const bridge = (host.UsernodeReact ||= {});
   bridge.browse = host.Browse;
 }

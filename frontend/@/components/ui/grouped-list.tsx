@@ -159,6 +159,11 @@ export interface ListRowProps
    * label has no other way to ask for one — and dropping the hint was the last
    * thing keeping the app detail page's rows hand-rolled (#2446). Rendered as
    * the attribute, so `undefined` writes nothing at all.
+   *
+   * #6118: a caller whose title can be ellipsised passes the same string here,
+   * as `bot-slots.tsx` and `thread-items.tsx` do. It is opt-in rather than
+   * implied by a string title: a fixed label ("Your work") truncates nothing,
+   * and a hint on it is noise.
    */
   tooltip?: string;
   /** The leading rounded-square glyph tile. */

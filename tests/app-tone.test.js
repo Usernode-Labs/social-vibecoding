@@ -24,22 +24,36 @@ async function loadTone() {
 }
 
 // A document with just the two nodes the module writes: <html> and the
-// theme-color meta.
+// theme-color metas. The head carries a media-keyed PAIR now (#6130), light
+// then dark, so both are here and both have to take an app's tone.
 function fakeDocument({ withMeta = true } = {}) {
   const attrs = new Map();
-  const metaAttrs = new Map([['content', '#f4f2e4']]);
-  const meta = {
-    getAttribute: (k) => (metaAttrs.has(k) ? metaAttrs.get(k) : null),
-    setAttribute: (k, v) => metaAttrs.set(k, String(v)),
+  const makeMeta = (content) => {
+    const metaAttrs = new Map([['content', content]]);
+    return {
+      metaAttrs,
+      meta: {
+        getAttribute: (k) => (metaAttrs.has(k) ? metaAttrs.get(k) : null),
+        setAttribute: (k, v) => metaAttrs.set(k, String(v)),
+      },
+    };
   };
+  const present = withMeta ? [makeMeta('#f4f2e4'), makeMeta('#0b0d1b')] : [];
   return {
     documentElement: {
       getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
       setAttribute: (k, v) => attrs.set(k, String(v)),
       removeAttribute: (k) => attrs.delete(k),
     },
-    querySelector: (sel) => (withMeta && sel === 'meta[name="theme-color"]' ? meta : null),
-    attrs, meta, metaAttrs,
+    querySelector: (sel) => (withMeta && sel === 'meta[name="theme-color"]'
+      ? present[0].meta : null),
+    querySelectorAll: (sel) => (withMeta && sel === 'meta[name="theme-color"]'
+      ? present.map((m) => m.meta) : []),
+    attrs,
+    meta: present.length ? present[0].meta : null,
+    metaAttrs: present.length ? present[0].metaAttrs : new Map(),
+    metas: present.map((m) => m.meta),
+    metaAttrsList: present.map((m) => m.metaAttrs),
   };
 }
 
@@ -168,6 +182,21 @@ test('publishAppTone writes the attribute and the theme-color meta, and clears b
   // Theme.apply from here.
   assert.equal(publishAppTone(doc, { slug: '', active: false, background: '' }, win), null);
   assert.equal(applied, 1);
+});
+
+test('a tone reaches every media-keyed theme-color meta', async () => {
+  // #6130 split the one meta into a light/dark pair. Writing only the first
+  // would leave the half the device matches showing the shell's ground over
+  // an app whose page is the other tone.
+  const { publishAppTone, TONE_GROUND } = await loadTone();
+  const doc = fakeDocument();
+  assert.equal(doc.metas.length, 2, 'the pair the head ships');
+  assert.equal(publishAppTone(doc, ON('#0b0d1b'), {}), 'dark');
+  assert.deepEqual(doc.metaAttrsList.map((m) => m.get('content')),
+    [TONE_GROUND.dark, TONE_GROUND.dark]);
+  assert.equal(publishAppTone(doc, ON('#fafafa'), {}), 'light');
+  assert.deepEqual(doc.metaAttrsList.map((m) => m.get('content')),
+    [TONE_GROUND.light, TONE_GROUND.light]);
 });
 
 test('publishAppTone survives a document with no meta, no Theme, or no root', async () => {

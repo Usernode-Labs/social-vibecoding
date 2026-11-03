@@ -3827,6 +3827,42 @@
     "text": "If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.",
     "description": "Small print in the checks note on a proposal's or agent session's page when a run of the checks has been going for over ten minutes; a \"Re-run checks\" button follows it. \"re-run them now\" addresses the reader."
   },
+  "checks.pending.left_one": {
+    "text": "About {{count}} minute left.",
+    "description": "Small print in the checks note on a proposal's or agent session's page while the automated checks run: how much longer they should take, from this project's usual time. {{count}} is the estimated number of minutes."
+  },
+  "checks.pending.left_other": {
+    "text": "About {{count}} minutes left.",
+    "description": "Small print in the checks note on a proposal's or agent session's page while the automated checks run: how much longer they should take, from this project's usual time. {{count}} is the estimated number of minutes."
+  },
+  "checks.pending.leftUnder": {
+    "text": "Less than a minute left.",
+    "description": "Small print in the checks note on a proposal's or agent session's page while the automated checks run: under a minute should remain."
+  },
+  "checks.pending.longer_one": {
+    "text": "This is taking longer than usual (usually about {{count}} minute).",
+    "description": "Small print in the checks note on a proposal's or agent session's page when a run has gone past its usual total time. {{count}} is how many minutes a whole run usually takes here."
+  },
+  "checks.pending.longer_other": {
+    "text": "This is taking longer than usual (usually about {{count}} minutes).",
+    "description": "Small print in the checks note on a proposal's or agent session's page when a run has gone past its usual total time. {{count}} is how many minutes a whole run usually takes here."
+  },
+  "checks.pending.wait_one": {
+    "text": "About {{count}} minute until it starts.",
+    "description": "Small print in the checks note on a proposal's or agent session's page while a run waits for a free slot: how long its wait should be. {{count}} is the estimated number of minutes."
+  },
+  "checks.pending.wait_other": {
+    "text": "About {{count}} minutes until it starts.",
+    "description": "Small print in the checks note on a proposal's or agent session's page while a run waits for a free slot: how long its wait should be. {{count}} is the estimated number of minutes."
+  },
+  "checks.pending.waitLonger": {
+    "text": "This wait is longer than usual.",
+    "description": "Small print in the checks note on a proposal's or agent session's page when a run has waited for a free slot longer than its rough wait suggested."
+  },
+  "checks.pending.rough": {
+    "text": "A rough estimate from other projects, since this one has few finished runs.",
+    "description": "Small print in the checks note on a proposal's or agent session's page when the time shown is borrowed from recent runs across Homeroom: the project has too few finished runs of its own."
+  },
   "checks.error.heading": {
     "text": "⚠ Checks couldn't run.",
     "description": "Heading of the checks note on a proposal's or agent session's page when the automated checks could not be run at all (the build or the test run broke). Keep the warning sign."
@@ -7759,6 +7795,14 @@
     "text": "Your vote is saved. This proposal can’t go live until its code is back.",
     "description": "Brief notice after a vote on a proposal whose code did not come across when Homeroom moved off GitHub: the vote was recorded, but nothing can be merged until the code (its branch) is restored or submitted again."
   },
+  "vote.toast.alreadyMerged": {
+    "text": "This change has already merged, so it no longer needs your vote.",
+    "description": "Brief notice when a Yes or No was pressed on a change that merged after the list showing it was read: the vote was not counted because the change is already live."
+  },
+  "vote.toast.noLongerUp": {
+    "text": "This change is no longer up for a vote.",
+    "description": "Brief notice when a Yes or No was pressed on a change that left the vote after the list showing it was read: the vote was not counted because the change is no longer being decided."
+  },
   "vote.toast.undoFailedHttp": {
     "text": "Couldn't take your vote back (HTTP {{status}}).",
     "description": "Brief notice when the viewer pressed Undo after voting on a proposal and the server refused without giving a reason; their vote still stands. {{status}} is the HTTP status code, a number."
@@ -7830,6 +7874,10 @@
   "frame.loader.rebuildingSub": {
     "text": "The preview was paused after a while of inactivity. Rebuilding it from the session’s latest changes. This usually takes 20–60 seconds.",
     "description": "Text under \"Spinning the preview back up…\" on the preview's loading screen. A session is a chat with the coding agent."
+  },
+  "frame.loader.wakingSub": {
+    "text": "Nobody had opened this preview for a while, so it was asleep. Waking it up now, with nothing rebuilt. This usually takes 10 to 30 seconds.",
+    "description": "Text under \"Spinning the preview back up…\" on the preview's loading screen when the preview was asleep (stopped to save resources, everything else kept) and is being started again rather than rebuilt."
   },
   "frame.loader.slow": {
     "text": "This is taking longer than expected",
@@ -8230,6 +8278,10 @@
   "request.status.lead.botHeld": {
     "text": "Homeroom bot will start when one of its changes here is voted in or closed.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it already has as many changes waiting for a vote on this project as it may, so it starts on this request when one of them is approved or closed. \"Here\" is the project."
+  },
+  "request.status.lead.botHeldTurn": {
+    "text": "Homeroom bot will start when one of the changes it is building here is done.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it is already building as many changes on this project at once as it may, so it starts on this request when one of those builds is done. \"Here\" is the project."
   },
   "request.status.lead.upForVote": {
     "text": "Up for a vote.",
@@ -8735,6 +8787,10 @@
     "text": "Waiting",
     "description": "The large figure on the Testing card of a change's page while the test run is held back for the moment."
   },
+  "page.testing.figure.longer": {
+    "text": "Taking longer than usual",
+    "description": "The large figure on the Testing card of a change's page when the run has gone past its usual total time and is still going."
+  },
   "page.testing.figure.underMinuteLeft": {
     "text": "under a minute left",
     "description": "The large figure on the Testing card of a change's page while testing runs and less than a minute is expected to remain. Lower case, as a measure."
@@ -8870,6 +8926,14 @@
   "page.testing.note.whereUsual_other": {
     "text": "{{where}} Usually about {{count}} minutes here.",
     "description": "The line under the figure on the Testing card of a change's page while testing runs and a time estimate is known. {{where}} is a whole sentence saying where the run is, for example \"Preview built, checks half done.\"; what follows says how long a whole run usually takes on this project, and {{count}} is that number of minutes."
+  },
+  "page.testing.note.whereUsualRough_one": {
+    "text": "{{where}} Usually about {{count}} minute on Homeroom, a rough estimate.",
+    "description": "The line under the figure on the Testing card of a change's page while testing runs, when the project has too few finished runs to know its own usual time. {{where}} is a whole sentence saying where the run is, and {{count}} is the usual number of minutes across Homeroom."
+  },
+  "page.testing.note.whereUsualRough_other": {
+    "text": "{{where}} Usually about {{count}} minutes on Homeroom, a rough estimate.",
+    "description": "The line under the figure on the Testing card of a change's page while testing runs, when the project has too few finished runs to know its own usual time. {{where}} is a whole sentence saying where the run is, and {{count}} is the usual number of minutes across Homeroom."
   },
   "page.testing.where.building": {
     "text": "Building the preview, step {{step}} of {{steps}}.",

@@ -227,9 +227,12 @@ test('#6151: held at a limit, the filed line names the wait in the track\'s own 
   const held = await fileDesign(track({ state: 'held', step: 'build', why: 'slots', held: { limit: 'slots', position: 2, until: null } }));
   assert.deepEqual(held.sent[0].metadata.filedNext, { say: 'held', limit: 'slots' });
   assert.equal(filedNextLine(held.sent[0].metadata.filedNext),
-    'Homeroom bot builds it when a slot frees: all of the project\'s are in use. Its progress shows here and on the request.');
+    'Homeroom bot builds it when one of its changes is voted in or closed: it is at its limit of changes up for a vote here. Its progress shows here and on the request.');
+  // #6156: held for its turn among the project's builds.
+  const turn = await fileDesign(track({ state: 'held', step: 'build', why: 'builds', held: { limit: 'builds', position: 1, until: null } }));
+  assert.deepEqual(turn.sent[0].metadata.filedNext, { say: 'held', limit: 'builds' });
   // The limit in the track's own words (bot.track.line.held.*), after its colon.
-  for (const limit of ['slots', 'bot_wide', 'questions', 'allowance']) {
+  for (const limit of ['builds', 'slots', 'bot_wide', 'questions', 'allowance']) {
     const words = filedNextLine({ say: 'held', limit });
     const own = message(`messages:bot.track.line.held.${limit}`).split(': ')[1].replace(/^Homeroom bot is /, 'it is ');
     assert.ok(words.includes(`: ${own}.`), `${limit}: ${words}`);

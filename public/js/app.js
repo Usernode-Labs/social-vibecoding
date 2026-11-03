@@ -3828,6 +3828,10 @@ const App = {
     // no-op unless a matching pending marker is parked, so this is cheap.
     if (data.event === 'staging_ready') {
       AppView.onStagingRebuildResult(data.sessionId, { url: data.url });
+    } else if (data.event === 'staging_awake') {
+      // #6157: a sleeping preview woke (ensure-staging scaled it back up
+      // rather than rebuilding it): its loader opens it the same way.
+      AppView.onStagingRebuildResult(data.sessionId, { url: data.url });
     } else if (data.event === 'staging_failed') {
       AppView.onStagingRebuildResult(data.sessionId, { failed: true, error: data.error });
     }
@@ -4318,6 +4322,8 @@ const App = {
   //   opts.merged   a merge: the row moves to Completed
   //   opts.home     the work drawer and Home track this event
   //   opts.dev      false: nothing for the Workshop in it
+  //   opts.chatSlug the chat the caller posted from; a vote burst re-reads
+  //                 its vote snapshot wherever that chat is mounted
   //
   // Returns a promise for the refresh (castVote holds its optimistic vote
   // until the read after it lands).
@@ -4326,7 +4332,10 @@ const App = {
   _liveRefresh(kind, sessionIds, opts = {}) {
     let b = App._liveBurst;
     if (!b) {
-      b = { kinds: new Set(), ids: new Set(), unscoped: false, merged: false, home: false, dev: false, resolve: null };
+      b = {
+        kinds: new Set(), ids: new Set(), voteSlugs: new Set(),
+        unscoped: false, merged: false, home: false, dev: false, resolve: null,
+      };
       b.promise = new Promise((resolve) => { b.resolve = resolve; });
       App._liveBurst = b;
       setTimeout(() => App._flushLiveRefresh(b), App.LIVE_REFRESH_MS);
@@ -4337,6 +4346,15 @@ const App = {
       b.dev = true;
       b.kinds.add(kind);
       if (!ids.length) b.unscoped = true;
+    }
+    // #6109: the vote tally on a proposal's row in a chat thread follows
+    // votes cast by other people. The dev refresh reads it only on the dev
+    // tab's chat sub-tab, so the flush below re-reads the snapshot of the
+    // chat on screen for any slug this vote burst names, whichever tab it
+    // is mounted in.
+    if (kind === 'vote') {
+      if (opts.appSlug) b.voteSlugs.add(opts.appSlug);
+      if (opts.chatSlug) b.voteSlugs.add(opts.chatSlug);
     }
     for (const id of ids) {
       const n = Number(id);
@@ -4357,6 +4375,22 @@ const App = {
         });
       } catch { out = undefined; }
     }
+    // The chat on screen re-reads its vote snapshot for this vote burst
+    // (#6109). loadVoteState rewrites AppView.voteState and patches the vote
+    // hosts through GroupChat.refreshVoteControls, so the count changes in
+    // place: no toast, no re-render, no remount, no scroll. Skipped when the
+    // dev path above already read that slug (refreshDevData reads it on the
+    // dev tab's own chat sub-tab), and when no vote row is on screen.
+    let chatRead = null;
+    const chatSlug = typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null;
+    if (chatSlug && b.voteSlugs.has(chatSlug)
+      && !(App.currentTab === 'dev' && App.currentApp === chatSlug && b.dev)
+      && typeof AppView !== 'undefined' && AppView.loadVoteState
+      && document.querySelector('#gc-messages [data-vote-controls], #gc-thread-messages [data-vote-controls]')) {
+      try {
+        chatRead = AppView.loadVoteState(chatSlug);
+      } catch { chatRead = null; }
+    }
     // A change's page (topic-head.tsx's ChangeDetail) re-reads its row when
     // told to, rather than every ten seconds. The Workshop's own refresh
     // hands the open topic its row directly; every other mounted page for
@@ -4368,7 +4402,7 @@ const App = {
     }
     if (typeof AppView !== 'undefined' && AppView._liveHandedOff) AppView._liveHandedOff = null;
     if (b.home) App._refreshHomeLive();
-    Promise.resolve(out).then(b.resolve, () => b.resolve(undefined));
+    Promise.all([out, chatRead]).then(() => b.resolve(out), () => b.resolve(undefined));
   },
   // The drawer and Home for a live burst. Home's grid is one request for
   // every app the viewer can see (670 KB on production), so a stream of

@@ -849,7 +849,7 @@ test('the browser sends the line, and re-reads the roster once the vote lands', 
   assert.match(fn, /reason = await AppView\._resolveVoteReason\(vote === 'down' \? 'no' : 'yes', opts\);/,
     'castVote\'s own resolver: a string is the line, null asks nothing, an absent key prompts');
   assert.match(fn, /body: JSON\.stringify\(\{ vote, \.\.\.\(reason \? \{ reason \} : \{\}\) \}\)/);
-  assert.match(fn, /PlatformUI\.toast\(data\.error \|\|/,
+  assert.match(fn, /PlatformUI\.toast\(PlatformI18n\.errorText\(data\) \|\|/,
     'a refused vote says so in the server\'s words');
   assert.doesNotMatch(fn, /reason_required/, 'no No-specific refusal is read any more');
   assert.match(fn, /AppView\._invalidateGovVoteRoster\(issueId\);/);

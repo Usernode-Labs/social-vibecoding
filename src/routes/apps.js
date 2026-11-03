@@ -1,4 +1,5 @@
 const appAllowance = require('../services/app-allowance');
+const mailLanguage = require('../services/mail/language');
 const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
 const { NAME_BEING_PURGED, NAME_BEING_PURGED_ERROR } = require('../services/app-data-retention');
@@ -17,6 +18,7 @@ const platformEnv = require('../services/platform-env');
 const pendingSecrets = require('../services/pending-secrets');
 const { encrypt: encryptSecret } = require('../services/secrets');
 const appManifest = require('../services/app-manifest');
+const offlineCache = require('../services/offline-cache');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
@@ -1060,6 +1062,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // of this payload (see summarizeManifestSnapshot). GET
           // /api/apps/:slug still answers the whole snapshot.
           manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
+          // Offline apps (services/offline-cache.js): the shell frames this app
+          // at its cacheable address.
+          offline_cache: offlineCache.forApp(a),
           contributor_count: contributorCount,
           first_version_line: firstVersionLines.get(Number(a.id)) || null,
           first_version_phase: firstVersionPhases.get(Number(a.id)) || null,
@@ -1536,6 +1541,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (inviteEmails.length) {
         const byEmail = await emailInvites.inviteByEmail(pool, config, {
           app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+          locale: req.user.locale || mailLanguage.requestLanguage(req),
         });
         invited += byEmail.invited + byEmail.mailed;
       }
@@ -1974,6 +1980,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
           : {}),
         demo_partner: demoPartner,
+        offline_cache: offlineCache.forApp(appRow),
         contributor_count: contributorCount,
         // Server-built icon URL so the client never assembles ids into
         // paths (and staging demo rows can inject arbitrary sources) —
@@ -2704,7 +2711,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   const MAX_DECL_DEFAULT_LEN = 2048;        // matches MAX_PLATFORM_ENV_DEFAULT_LEN
   const MAX_DECL_GROUP_LEN = 48;            // matches MAX_PLATFORM_ENV_GROUP_LEN
 
-  router.post('/api/apps/:slug/secret-declaration-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/secret-declaration-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool), async (req, res) => {
     const body = req.body || {};
     const key = typeof body.key === 'string' ? body.key.trim() : '';
     // Trimmed up front so every value rule below (the length cap, the
@@ -2731,7 +2738,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // Same access shape the secrets panel itself has: collab-level, and
       // for the self-app the Phase-4 public-voting gate. Deliberately NOT
       // canManageApp — proposing an env-var change is the `secret_change`
-      // authority level, which any collaborator already has.
+      // authority level, which any collaborator already has. Proposing is
+      // taking part, so it is also a member's (requireAppMembership above).
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
         return res.status(404).json({ error: 'App not found' });
       }
@@ -2966,7 +2974,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // rebuild re-reads dapp.json and reconciles apps.name (see
   // services/app-manifest.js reconcileAppName + staging.deployProduction).
   // This replaces the old issue-based rename proposal in routes/issues.js.
-  router.post('/api/apps/:slug/rename', drainGuard, issueCreateLimiter, async (req, res) => {
+  // Proposing is taking part, so it is for members (requireAppMembership,
+  // AGENTS.md) who may build here.
+  router.post('/api/apps/:slug/rename', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool), async (req, res) => {
     const newName = typeof req.body?.newName === 'string' ? req.body.newName.trim() : '';
     if (!newName) {
       return res.status(400).json({ error: 'newName is required' });
@@ -3107,7 +3117,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // services/app-manifest.js applyVisibilityChange). The old instant
   // PATCH /api/apps/:slug/visibility is gone; admins fast-track by
   // force-merging the PR (POST /api/sessions/:id/admin-merge).
-  router.post('/api/apps/:slug/visibility-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/visibility-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool, { manage: true }), async (req, res) => {
     const collabVisibility = req.body?.collabVisibility;
     const viewVisibility = req.body?.viewVisibility;
     const visibilityError = validateVisibilityCombo(collabVisibility, viewVisibility);
@@ -3188,7 +3198,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // gets one PR on dapp.json. Same proposers as the two single-block routes
   // it stands in for: the creator, an app admin or a platform admin. The
   // platform's own app may change its rule here, never its visibility.
-  router.post('/api/apps/:slug/who-decides-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/who-decides-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool, { manage: true }), async (req, res) => {
     const whoDecides = require('../services/who-decides-pr');
     let change;
     try {
@@ -3418,7 +3428,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // admins can't force-merge it (only a platform admin can).
   // Body: { admins: string[] } — the FULL declared list ([] clears the
   // roster; that's how revocation is expressed).
-  router.post('/api/apps/:slug/admins-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/admins-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool, { manage: true }), async (req, res) => {
     const raw = req.body?.admins;
     if (!Array.isArray(raw) || raw.some((u) => typeof u !== 'string')) {
       return res.status(400).json({ error: 'admins must be an array of usernames' });
@@ -3511,7 +3521,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.post('/api/apps/:slug/governance-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/governance-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool, { manage: true }), async (req, res) => {
     const approverPolicy = req.body?.approverPolicy;
     let approvalsRequired = req.body?.approvalsRequired;
     if (approverPolicy !== 'anyone' && approverPolicy !== 'invited') {

@@ -39,6 +39,50 @@
     "text": "Copy the MCP server URL",
     "description": "Accessible name of the Copy button beside the MCP server URL field in Settings > Connectors."
   },
+  "connectors.test.button": {
+    "text": "Test connection",
+    "description": "Button beside Copy in Settings > Connectors. It checks this site's MCP server and the person's own connection, without connecting anything."
+  },
+  "connectors.test.running": {
+    "text": "Testing…",
+    "description": "Label of the Test connection button in Settings > Connectors while the check runs. The button cannot be pressed again until it finishes."
+  },
+  "connectors.test.unknownProduct": {
+    "text": "your chat product",
+    "description": "Fills the {{product}} slot in the passing lines under the Test connection button in Settings > Connectors when the connected chat product's name is not known. Lowercase, because it sits inside a sentence."
+  },
+  "connectors.test.result.ok": {
+    "text": "Working: your MCP server answers and {{product}} is connected. If it still fails in {{product}}, go through its setup steps below again.",
+    "description": "Passing line under the Test connection button in Settings > Connectors when a chat product is connected and has never been used. {{product}} is the chat product's name (for example Claude.ai), taken from the Connected list below. MCP is the protocol name; keep it."
+  },
+  "connectors.test.result.okUsed": {
+    "text": "Working: your MCP server answers and {{product}} is connected, last used {{lastUsed}}. If it still fails in {{product}}, go through its setup steps below again.",
+    "description": "Passing line under the Test connection button in Settings > Connectors when the chat product was used before. {{product}} is its name (for example Claude.ai); {{lastUsed}} is a date and time formatted the same way as in the Connected list below."
+  },
+  "connectors.test.result.not_connected": {
+    "text": "Your MCP server works, but no chat product is connected yet. Choose your app below and follow its steps.",
+    "description": "Result under the Test connection button in Settings > Connectors when the server answers and the person has not connected a chat product yet."
+  },
+  "connectors.test.result.connection_expired": {
+    "text": "Your MCP server works, but your connection has expired. Reconnect from your chat product, following its steps below.",
+    "description": "Result under the Test connection button in Settings > Connectors when the person's connection exists but is no longer active."
+  },
+  "connectors.test.result.unavailable_here": {
+    "text": "Connectors are not available on this copy of Homeroom. Use the Homeroom site at its usual address.",
+    "description": "Result under the Test connection button in Settings > Connectors on a preview copy of the site, where connecting a chat product is switched off."
+  },
+  "connectors.test.result.discovery_failed": {
+    "text": "The sign-in details for the MCP server did not answer. This is on Homeroom's side: try again in a few minutes, and report it if it keeps happening.",
+    "description": "Result under the Test connection button in Settings > Connectors when the server's OAuth discovery metadata did not answer correctly. Homeroom is the product name; MCP is the protocol name."
+  },
+  "connectors.test.result.server_unreachable": {
+    "text": "The MCP server did not answer. This is on Homeroom's side: try again in a few minutes, and report it if it keeps happening.",
+    "description": "Result under the Test connection button in Settings > Connectors when the MCP server itself did not answer. Homeroom is the product name; MCP is the protocol name."
+  },
+  "connectors.test.result.test_failed": {
+    "text": "The test could not run. Check your internet connection and try again.",
+    "description": "Result under the Test connection button in Settings > Connectors when the check could not reach the site at all, for example because the person is offline."
+  },
   "connectors.howItWorks.summary": {
     "text": "How it works",
     "description": "Tappable line under the MCP server URL field in Settings > Connectors: opens a short explanation of what the address is."
@@ -1451,6 +1495,10 @@
     "text": "Couldn't save that change. Try again in a moment.",
     "description": "Error on the Settings > Privacy page when saving a change failed; the control goes back to what it was."
   },
+  "privacy.saved": {
+    "text": "Saved",
+    "description": "Short confirmation under a block of the Settings > Privacy page when a change to one of its settings has been saved. It goes away after about three seconds."
+  },
   "privacy.usageAnalytics.title": {
     "text": "Usage analytics",
     "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
@@ -1478,6 +1526,10 @@
   "privacy.usageAnalytics.neverRecords": {
     "text": "We never record: what you type or what is on screen.",
     "description": "Last line under the Share usage analytics switch in Settings > Privacy: what is never recorded, whether the switch is on or off."
+  },
+  "privacy.usageAnalytics.alreadyRecorded": {
+    "text": "Turning this off doesn't delete what was already recorded.",
+    "description": "Last line under the Share usage analytics switch in Settings > Privacy, shown whether the switch is on or off: switching off only stops new recording."
   },
   "privacy.usageAnalytics.saveFailed": {
     "text": "Could not save that. Try again.",

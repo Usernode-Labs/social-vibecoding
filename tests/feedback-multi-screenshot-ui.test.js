@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { englishPlatformI18n } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const CONTROLLER_TEXT = fs.readFileSync(
@@ -27,6 +28,7 @@ const DIALOG_TEXT = fs.readFileSync(
   path.join(ROOT, 'frontend', 'src', 'features', 'dialogs', 'feedback.tsx'),
   'utf8'
 );
+const { arrowStep } = loadTsx('frontend/src/lib/i18n/direction.ts');
 const FEEDBACK_SRC = CONTROLLER_TEXT
   .replace(/^import .*$/gm, '')
   .replace(/^export /gm, '')
@@ -78,6 +80,14 @@ function makeEl(tag, id = '') {
       child.parentNode = el;
       return child;
     },
+    insertBefore(child, ref) {
+      if (child.parentNode) child.remove();
+      const at = ref ? el.children.indexOf(ref) : -1;
+      if (at < 0) el.children.push(child);
+      else el.children.splice(at, 0, child);
+      child.parentNode = el;
+      return child;
+    },
     replaceChildren(...nodes) {
       for (const child of [...el.children]) child.remove();
       for (const node of nodes) el.appendChild(node);
@@ -96,7 +106,7 @@ function makeEl(tag, id = '') {
   return el;
 }
 
-function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, feedbackQueue = null } = {}) {
+function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, feedbackQueue = null, unNative = null } = {}) {
   const els = new Map();
   const fetchCalls = [];
   const revoked = [];
@@ -167,7 +177,9 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     FeedbackQueue: feedbackQueue || undefined,
     App: {},
     alert: () => {},
+    arrowStep,
   };
+  if (unNative) sandbox.unNative = unNative;
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -181,7 +193,14 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
   const flush = async () => {
     for (let i = 0; i < 6; i += 1) await new Promise((r) => setImmediate(r));
   };
-  const list = () => el('feedback-screenshot-preview').children;
+  // The row also holds the #6127 reorder hint, which is not a thumbnail.
+  const list = () => Array.prototype.filter.call(
+    el('feedback-screenshot-preview').children,
+    (child) => child.getAttribute('data-feedback-screenshot') !== null,
+  );
+  const orderHint = () => el('feedback-screenshot-preview').children.find(
+    (child) => child.id === 'feedback-screenshot-order-hint',
+  );
   // #5687: the picture now sits inside the thumbnail's preview button (or in
   // the pin frame inside it), so the image is found at any depth.
   const thumbImg = (item) => {
@@ -207,6 +226,7 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     revoked,
     flush,
     list,
+    orderHint,
     thumbImg,
     thumbOpen,
     thumbRemove,
@@ -536,4 +556,98 @@ test('#5687: an attached clip opens full size from its first frame', async () =>
   h.sandbox.Feedback._preview = (entry) => seen.push(entry);
   await open.click();
   assert.equal(JSON.stringify(seen), JSON.stringify([{ kind: 'video', src: 'blob:clip.mp4' }]));
+});
+
+// #6127: "uploaded a few images and the first one picked is the cover with no
+// way to change it. let me drag which one shows first". The row reorders, and
+// the request is filed with the pictures in the order on screen.
+test('#6127: a dragged picture is filed in its new position', async () => {
+  const calls = [];
+  const h = makeHarness({
+    unNative: {
+      attachReorder: (listEl, opts) => {
+        calls.push({ listEl, opts });
+        return { detach() {} };
+      },
+    },
+  });
+  h.open();
+  await h.pick('a.png', 'b.png', 'c.png');
+
+  assert.equal(calls.length, 1, 'wired once, on the row the controller owns');
+  assert.equal(calls[0].listEl, h.el('feedback-screenshot-preview'));
+  assert.equal(calls[0].opts.grid, true);
+  assert.equal(calls[0].opts.itemSelector, '[data-feedback-screenshot]');
+  assert.equal(typeof calls[0].opts.onReorder, 'function');
+
+  // What the kit does before it calls back: the node is already moved.
+  const [first, , third] = h.list();
+  h.el('feedback-screenshot-preview').insertBefore(third, first);
+  calls[0].opts.onReorder(2, 0);
+
+  assert.deepEqual(h.list().map((item) => h.thumbImg(item).src), ['blob:c.png', 'blob:a.png', 'blob:b.png']);
+  assert.equal(h.thumbRemove(h.list()[0]).getAttribute('aria-label'), 'Remove image 1', 'labels follow the new order');
+
+  h.type('Three pictures, the third one first');
+  await h.submit();
+  assert.deepEqual(h.filed()[0].screenshotIds, ['3'.repeat(32), '1'.repeat(32), '2'.repeat(32)]);
+});
+
+test('#6127: the arrow keys move a focused picture earlier and later', async () => {
+  const h = makeHarness();
+  h.open();
+  await h.pick('a.png', 'b.png');
+
+  let prevented = 0;
+  const preventDefault = () => { prevented += 1; };
+  await h.thumbOpen(h.list()[0]).fire('keydown', { key: 'ArrowLeft', preventDefault });
+  assert.equal(prevented, 0, 'the first picture has nowhere earlier to go');
+  assert.deepEqual(h.list().map((item) => h.thumbImg(item).src), ['blob:a.png', 'blob:b.png']);
+
+  await h.thumbOpen(h.list()[0]).fire('keydown', { key: 'ArrowRight', preventDefault });
+  assert.equal(prevented, 1);
+  assert.deepEqual(h.list().map((item) => h.thumbImg(item).src), ['blob:b.png', 'blob:a.png']);
+
+  h.type('Second picture first');
+  await h.submit();
+  assert.deepEqual(h.filed()[0].screenshotIds, ['2'.repeat(32), '1'.repeat(32)]);
+});
+
+test('#6127: in Arabic, where the row starts on the right, Left moves a picture later', async () => {
+  const h = makeHarness();
+  h.open();
+  await h.pick('a.png', 'b.png');
+  const before = globalThis.document;
+  try {
+    globalThis.document = { documentElement: { dir: 'rtl' } };
+    const preventDefault = () => {};
+    await h.thumbOpen(h.list()[0]).fire('keydown', { key: 'ArrowRight', preventDefault });
+    assert.deepEqual(h.list().map((item) => h.thumbImg(item).src), ['blob:a.png', 'blob:b.png'], 'the first picture is already at the right end');
+    await h.thumbOpen(h.list()[0]).fire('keydown', { key: 'ArrowLeft', preventDefault });
+    assert.deepEqual(h.list().map((item) => h.thumbImg(item).src), ['blob:b.png', 'blob:a.png']);
+  } finally {
+    globalThis.document = before;
+  }
+});
+
+test('#6127: the reorder hint shows only with two or more pictures', async () => {
+  const h = makeHarness();
+  h.open();
+  assert.equal(h.orderHint(), undefined, 'nothing to reorder yet');
+  assert.equal(h.el('feedback-screenshot-preview').classList.contains('hidden'), true);
+
+  await h.pick('a.png');
+  assert.equal(h.orderHint(), undefined, 'one picture has nothing to reorder');
+  assert.equal(h.thumbOpen(h.list()[0]).getAttribute('aria-describedby'), null);
+
+  await h.pick('b.png');
+  assert.equal(h.orderHint().classList.contains('hidden'), false);
+  assert.equal(h.orderHint().textContent, h.sandbox.t('dialogs:feedback.screenshot.reorderHint'));
+  assert.equal(h.thumbOpen(h.list()[1]).getAttribute('aria-describedby'), 'feedback-screenshot-order-hint');
+  const children = h.el('feedback-screenshot-preview').children;
+  assert.equal(children[children.length - 1], h.orderHint(), 'it wraps under the pictures');
+
+  await h.thumbRemove(h.list()[1]).click();
+  assert.equal(h.orderHint().classList.contains('hidden'), true, 'back to one picture');
+  assert.equal(h.thumbOpen(h.list()[0]).getAttribute('aria-describedby'), null);
 });

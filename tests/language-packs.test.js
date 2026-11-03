@@ -290,6 +290,19 @@ test('a device language is matched to a shipped one before anything is fetched',
     'English only: every device gets English');
 });
 
+test('a date takes its language from the interface and its region from the device (#6103)', () => {
+  const { dateLocale } = loadTsx('frontend/src/lib/i18n/locale.ts');
+  // The interface language decides the words; the first device tag naming a
+  // region decides day-first or month-first.
+  assert.equal(dateLocale('en', ['en-GB']), 'en-GB');
+  assert.equal(dateLocale('fr', ['en-US']), 'fr-US', 'a French interface stays French in the US order');
+  assert.equal(dateLocale('en', ['fr-FR', 'en-US']), 'en-FR', 'the first tag with a region wins');
+  assert.equal(dateLocale('en', []), 'en', 'no device region: the interface language alone');
+  assert.equal(dateLocale('en', ['fr', 'de']), 'en', 'a tag with no region names none');
+  assert.equal(dateLocale('en', ['bad!', 'en-AU']), 'en-AU', 'a malformed tag is skipped, never thrown');
+  assert.equal(dateLocale('pt-BR', ['en-GB']), 'pt-GB', 'the region joins the interface base language');
+});
+
 test('the build, the images and the server all know where the catalogs and packs are', () => {
   assert.match(read('frontend/scripts/build-shell.mjs'), /scripts\/language-packs\.js'\)\)\.buildLanguagePacks\(ROOT\)/);
   const stamp = read('scripts/shell-stamp.js');

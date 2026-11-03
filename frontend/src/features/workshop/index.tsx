@@ -946,6 +946,7 @@ export function WorkshopScreen() {
                 onDone={() => workshopController.setTab('status')}
                 onAnswered={(id, epoch) => workshopController.answered(id, epoch)}
                 onRetracted={(id) => workshopController.retracted(id)}
+                onSettled={(id) => workshopController.settled(id)}
               />
             ) : (
               <NeedsReel
@@ -954,6 +955,7 @@ export function WorkshopScreen() {
                 capped={state.feedCapped}
                 onDone={() => workshopController.setTab('status')}
                 onAnswered={(id, epoch) => workshopController.answered(id, epoch)}
+                onSettled={(id) => workshopController.settled(id)}
               />
             )}
           </div>
@@ -1141,6 +1143,21 @@ export const workshopController = {
     if (state.feed) patch.feed = stripAnswered(state.feed);
     if (state.rows) patch.rows = stripAnsweredCounts(state.rows);
     if (patch.feed || patch.rows) workshopStore.set(patch);
+  },
+  /**
+   * #6101: a vote refused because the change had already merged (or left the
+   * vote) while this feed was on screen. No epoch is recorded — the id alone
+   * matches, so no read at any epoch can draw the card as still owed — and
+   * the store's copies lose it at once, then are read again.
+   */
+  settled(id: number) {
+    answeredVotes.add(answeredVoteKey(id, null));
+    const state = workshopStore.get();
+    const patch: { feed?: NeedsFeedItem[]; rows?: WorkshopRow[] } = {};
+    if (state.feed) patch.feed = stripAnswered(state.feed);
+    if (state.rows) patch.rows = stripAnsweredCounts(state.rows);
+    if (patch.feed || patch.rows) workshopStore.set(patch);
+    void this.refreshNeeds();
   },
   /**
    * The quiet reload behind a tab switch: the counts and the Needs you feed

@@ -34,7 +34,7 @@
  * effect; nothing here is in the prerendered document.
  */
 
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import type { DevWorkshopView } from '../dev-board/card/model';
 import { callAppView } from '../dev-board/card/fold';
@@ -43,6 +43,7 @@ import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view'
 import { useMessages } from '../../lib/i18n/react';
 import { listText, t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
+import { filterByVoteType, itemVoteType, voteTallies, VoteTypeChips, type VoteFilter } from './vote-filter';
 
 /**
  * #6019: a ballot's choices (the server's ballotOf): the changes up for a
@@ -310,7 +311,7 @@ function ReelApp(item: FeedRow): ReactNode {
 
 const NO_MODELS: DevWorkshopView['models'] = { list: [], selected: null };
 
-export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
+export function NeedsReel({ items, error, capped, onDone, onAnswered, onSettled }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   /** The read stopped at its bound: there may be more than these. */
@@ -323,22 +324,37 @@ export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
    * whose refresh already drops the row.
    */
   onAnswered?: (id: number, epoch: number | null) => void;
+  /**
+   * #6101: a vote refused because the change is not up for a vote any more.
+   * The controller drops it from every copy of the feed, so it cannot come
+   * back with live Yes and No.
+   */
+  onSettled?: (id: number) => void;
 }) {
   // `t` changes with the language on screen, so the rows' words (reelRows)
   // are read again when it does.
   const t = useMessages('communities');
+  // #6199: the vote-type filter. Held here, so it starts on All whenever
+  // Needs you opens (the choice is not remembered), and the chips hide
+  // themselves on a feed with only one kind of vote.
+  const [filter, setFilter] = useState<VoteFilter>('all');
+  const tallies = useMemo(() => voteTallies(items || [], itemVoteType), [items]);
+  const shownItems = useMemo(
+    () => (items ? filterByVoteType(items, filter, itemVoteType) : []),
+    [items, filter],
+  );
   // `epochs` is each row's source item's epoch, keyed by the row key
   // NeedsFeed answers by: the vote's third argument, which the answered set
   // matches on.
   const { rows, epochs } = useMemo(() => {
-    const built = items ? reelRows(items, (md) => {
+    const built = reelRows(shownItems, (md) => {
       const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
       return typeof out === 'string' ? out : '';
-    }) : [];
+    });
     const epochs = new Map<string, number | null>();
-    items?.forEach((item, i) => epochs.set(built[i].key, item.epoch));
+    shownItems.forEach((item, i) => epochs.set(built[i].key, item.epoch));
     return { rows: built, epochs };
-  }, [items, t]);
+  }, [shownItems, t]);
   // The ask box's models: the dev session's own list, as on a project page.
   const models = useMemo(() => {
     const m = callAppView('_workshopModels') as DevWorkshopView['models'] | undefined;
@@ -373,6 +389,10 @@ export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
   return (
     <>
       <div className="workshop-needs-feed" data-needs-reel="">
+        <VoteTypeChips tallies={tallies} pressed={filter} onPress={setFilter} />
+        {/* #6199: `key` is the filter, so a press on a chip remounts the
+            deck: it opens at the first row of the kind picked instead of
+            holding an index into a list that is no longer on screen. */}
         <NeedsFeed
           rows={rows}
           models={models}
@@ -389,6 +409,12 @@ export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
               onAnswered(row.askAbout.ref as number, epochs.get(row.key) ?? null);
             }
           } : undefined}
+          onSettled={onSettled ? (row) => {
+            if (row.askAbout && row.askAbout.kind === 'proposal') {
+              onSettled(row.askAbout.ref as number);
+            }
+          } : undefined}
+          key={filter}
         />
       </div>
       {capped && shown.length ? (

@@ -1517,6 +1517,30 @@ const TopochainChallenges = {
     TopochainChallenges._store?.set({ detail: TopochainChallenges.detailView() });
   },
 
+  // A row an older server sent has no `counts`, and it counts. A change with no
+  // usable address is a plain row under the credit's own words. A First
+  // challenge's count also holds its credits from an earlier season.
+  _creditsOf(mine) {
+    const str = TopochainChallenges.str;
+    const own = mine && Array.isArray(mine.activities) ? mine.activities : [];
+    const earlier = mine && Array.isArray(mine.earlier_activities) ? mine.earlier_activities : [];
+    const activities = earlier.length
+      ? [...own, ...earlier].sort((a, b) => Date.parse(b.activity_at) - Date.parse(a.activity_at))
+      : own;
+    return activities.filter((a) => a.counts !== false).map((a) => {
+      const c = a.change;
+      const linked = c && typeof c.app_slug === 'string' && c.app_slug
+        && Number.isInteger(c.session_id) && c.session_id > 0;
+      return {
+        text: str((linked && c.title) || a.description),
+        points: Number(a.points) || 0,
+        at: a.activity_at,
+        precision: a.activity_time_precision,
+        change: linked ? { slug: c.app_slug, sessionId: c.session_id, prNumber: c.pr_number } : null,
+      };
+    });
+  },
+
   detailView() {
     const challenge = TopochainChallenges._detailChallenge;
     if (!challenge) return null;
@@ -1591,6 +1615,10 @@ const TopochainChallenges = {
       // organiser's link, which could only ever name one destination.
       blockProduction: bpStep,
       cta: bpStep ? null : TopochainChallenges.ctaView(dm, challenge),
+      // #3247: the credits behind the count, newest first. Raw fields, never
+      // an href: the pane builds the one address a change has.
+      credits: TopochainChallenges._creditsOf(mine),
+      creditsWeekly: TopochainChallenges._isWeekly(challenge),
       requirements: dm.requirements ? str(dm.requirements) : null,
     };
   },

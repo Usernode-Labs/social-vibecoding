@@ -24,28 +24,44 @@
     "description": "Title of the page under a project's Workshop that lists what holds each of Homeroom bot's slots on the project and what waits for one."
   },
   "botSlots.door": {
-    "text": "Homeroom bot: {{used}} of {{cap}} slots in use",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page. {{used}} is how many slots are taken, {{cap}} how many the project has."
+    "text": "Homeroom bot: building {{used}} of {{cap}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page, and the first of its facts, which are shown joined by a middle dot: how many builds the bot has waiting or under way on the project. {{used}} is how many, {{cap}} how many it may have at once."
+  },
+  "botSlots.doorVotes_one": {
+    "text": "{{count}} waiting for votes",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. One of the facts on the link to the page at the bottom of the Workshop's overview card, after \"Homeroom bot: building 3 of 5\" and a middle dot: how many of the bot's changes on the project are up for a vote. {{count}} is that number."
+  },
+  "botSlots.doorVotes_other": {
+    "text": "{{count}} waiting for votes",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. One of the facts on the link to the page at the bottom of the Workshop's overview card, after \"Homeroom bot: building 3 of 5\" and a middle dot: how many of the bot's changes on the project are up for a vote. {{count}} is that number."
   },
   "botSlots.doorWaiting_one": {
-    "text": "Homeroom bot: {{used}} of {{cap}} slots in use, {{count}} request waiting",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page, when requests wait for a slot. {{used}} is how many slots are taken, {{cap}} how many the project has, {{count}} how many requests wait."
+    "text": "{{count}} request in line",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. The last of the facts on the link to the page at the bottom of the Workshop's overview card, after a middle dot, when requests the bot is ready to build wait for a slot. {{count}} is how many requests wait."
   },
   "botSlots.doorWaiting_other": {
-    "text": "Homeroom bot: {{used}} of {{cap}} slots in use, {{count}} requests waiting",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page, when requests wait for a slot. {{used}} is how many slots are taken, {{cap}} how many the project has, {{count}} how many requests wait."
+    "text": "{{count}} requests in line",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. The last of the facts on the link to the page at the bottom of the Workshop's overview card, after a middle dot, when requests the bot is ready to build wait for a slot. {{count}} is how many requests wait."
   },
   "botSlots.slots.title": {
     "text": "Slots",
     "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the card listing what holds each slot."
   },
-  "botSlots.slots.used": {
-    "text": "{{used}} of {{cap}} in use",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card: how many of the project's slots are taken. {{used}} is how many, {{cap}} how many there are."
+  "botSlots.slots.building": {
+    "text": "Building {{used}} of {{cap}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card: how many builds the bot has waiting or under way on the project, of how many it may have at once. {{used}} is how many, {{cap}} how many there may be."
+  },
+  "botSlots.slots.votes_one": {
+    "text": "{{count}} of {{cap}} waiting for votes",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card, under the builds: how many of the bot's changes on the project are up for a vote or being merged, of how many it may have waiting at once. {{count}} is how many, {{cap}} how many there may be."
+  },
+  "botSlots.slots.votes_other": {
+    "text": "{{count}} of {{cap}} waiting for votes",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card, under the builds: how many of the bot's changes on the project are up for a vote or being merged, of how many it may have waiting at once. {{count}} is how many, {{cap}} how many there may be."
   },
   "botSlots.slots.frees": {
-    "text": "A slot frees when a change merges or is withdrawn, or when its request closes.",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note in the Slots card saying what frees a slot."
+    "text": "A build frees its slot when it is done. A change waiting for votes frees one when it merges or is withdrawn, or when its request closes.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note in the Slots card saying what frees each kind of slot: a build's, and a change's that waits for votes."
   },
   "botSlots.slots.empty": {
     "text": "No slots in use: a request found ready is built at once.",
@@ -438,6 +454,14 @@
   "boardEmpty.readOnly": {
     "text": "Nothing on the board yet.",
     "description": "Note shown in place of the items on a project's Hub or All items page when the project has no requests or proposals, for a person who can only look. The board is the project's list of work."
+  },
+  "boardEmpty.start": {
+    "text": "Start a change",
+    "description": "Button under the note on a project's Hub or All items page when the project has no requests or proposals, for a person who builds changes here. It opens a new session to build a change. \"Change\" is a noun."
+  },
+  "boardEmpty.startBot": {
+    "text": "Tell Homeroom bot what to change",
+    "description": "Button under the note on a project's Hub or All items page when the project has no requests or proposals, for a person Homeroom bot builds changes for on this project. It opens their chat with Homeroom bot with this project attached. Keep \"Homeroom bot\" as it is; here \"change\" is a verb."
   },
   "boardEmpty.press.hub.collab.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement or import a PR; to make one yourself, use Build it now there.",
@@ -2938,6 +2962,10 @@
   "topic.thread.state.underway": {
     "text": "Being made",
     "description": "Where a change in the list stands: someone is still building it."
+  },
+  "topic.thread.state.ready": {
+    "text": "Ready for a vote",
+    "description": "Where a change in the list stands: it has finished building and its checks pass, and it waits for its author to put it up for a vote."
   },
   "topic.thread.state.voting": {
     "text": "Up for a vote",
@@ -5935,6 +5963,10 @@
     "text": "Being built. Its votes open once it is up for a vote.",
     "description": "Line under a change on a request's page, under the request: its changes and its vote to close that is still being built, where its Votes and Testing cards will be."
   },
+  "topic.thread.page.ready": {
+    "text": "Built, and its checks pass. Its votes open once it is put up for a vote.",
+    "description": "Line under a change on a request's page, where its Votes and Testing cards will be: the change has finished building and its checks pass, and nothing happens until it is put up for a vote."
+  },
   "topic.thread.page.rowBy": {
     "text": "{{by}} · #{{number}}",
     "description": "Second line of one competing change's row on a request's page, under the request: its changes and its vote to close: who built it and the change's number."
@@ -6058,6 +6090,10 @@
   "topic.thread.pill.close": {
     "text": "Vote to close",
     "description": "Status pill beside a request's number in its page's header: a proposal to close the request is up for a vote."
+  },
+  "topic.thread.pill.ready": {
+    "text": "Ready for a vote",
+    "description": "Status pill beside a request's number in its page's header: a change for it has finished building and its checks pass, and it waits to be put up for a vote."
   },
   "topic.thread.pill.building": {
     "text": "Being built",

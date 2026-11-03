@@ -208,7 +208,8 @@ test('a proposal row still opens its proposal', () => {
   const { N, calls } = load();
   N.items = [row({ kind: 'pr_proposed', sessionId: 77 })];
   N._onItemClick(1);
-  assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'proposals', ref: 77 }]]);
+  // #6099: by the row's own session id, as a typed topic ref.
+  assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 77 } }]]);
 });
 
 test('a saved app message opens the discussion on it, and stays saved', () => {

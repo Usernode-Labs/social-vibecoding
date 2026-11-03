@@ -164,8 +164,9 @@ test('Settings > Privacy carries the switch, off until the saved choice is read'
     'and waits for the server');
   assert.ok(html.includes(message('settings:privacy.usageAnalytics.label')));
   // #5926: the first line says what is true now (off, in the first
-  // render); what is recorded and what never is are lines of their own.
-  for (const id of ['stateOff', 'records', 'neverRecords']) {
+  // render); what is recorded, what never is and what switching off leaves
+  // in place are lines of their own.
+  for (const id of ['stateOff', 'records', 'neverRecords', 'alreadyRecorded']) {
     assert.ok(html.includes(message(`settings:privacy.usageAnalytics.${id}`).replace(/'/g, '&#x27;')),
       `with the ${id} line`);
   }
@@ -173,6 +174,7 @@ test('Settings > Privacy carries the switch, off until the saved choice is read'
     'not the on line while the switch is off');
   assert.match(message('settings:privacy.usageAnalytics.records'), /^When it's on, we record: /);
   assert.match(message('settings:privacy.usageAnalytics.neverRecords'), /^We never record: what you type or what is on screen\.$/);
+  assert.match(message('settings:privacy.usageAnalytics.alreadyRecorded'), /doesn't delete what was already recorded\.$/);
 
   const pane = read('frontend/src/features/settings/sections/usage-analytics.tsx');
   assert.match(pane, /detail\?\.section === 'contact-privacy'\) void load\(\);/, 'read again when the page opens');

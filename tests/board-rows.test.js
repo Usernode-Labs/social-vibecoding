@@ -124,7 +124,7 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   const under = column(html, 'inprogress');
   assert.match(under, /<div class="dev-ws-wrow dev-ws-brow" data-ws-row="issue:1575" data-ws-kind="request" data-ws-open="issue:1575" data-issue-row="1575">/,
     'the item’s hook rides on the row, as on the folded card it replaces');
-  assert.match(under, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/issues\/1575">Replace the oversized Game Corner header with bottom tabs<\/a><span class="dev-ws-wrow-sub">#1575 · sam · 4d ago<\/span>/);
+  assert.match(under, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Replace the oversized Game Corner header with bottom tabs<\/a><span class="dev-ws-wrow-sub">#1575 · sam · 4d ago<\/span>/);
   assert.match(under, /<span class="dev-ws-wrow-status"><button type="button" class="attr-chip dev-badge [^"]*" data-attr-chip="" data-attr-field="category"[^>]*>[\s\S]*?Bug[\s\S]*?<\/button><span class="dev-chat-badge dev-badge [^"]*" data-count="3"[^>]*>💬 3<\/span><span class="dev-ws-tag" data-tone="plain">Picked up · zura<\/span><\/span>/,
     'category chip, then 💬, then who is on it');
   assert.ok(!/data-attr-field="assignee"/.test(under), 'no @ chip: the tag says who');

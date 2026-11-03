@@ -1,0 +1,714 @@
+{
+  "generic.body": {
+    "text": "You have new activity",
+    "description": "Phone notification text under the title: used when a notification has nothing more specific to say."
+  },
+  "join.app": {
+    "text": "{{title}} · {{app}}",
+    "description": "Phone notification title: what happened, then the project it happened in. {{title}} is the rest of the title, already in the language; {{app}} is the project's name. Keep the middle dot unless the language separates them differently."
+  },
+  "join.conversation": {
+    "text": "{{title}} · {{conversation}}",
+    "description": "Phone notification title: what happened, then the conversation it happened in. {{title}} is the rest of the title, already in the language; {{conversation}} is the conversation's name. Keep the middle dot unless the language separates them differently."
+  },
+  "testAlert.title": {
+    "text": "Homeroom test alert",
+    "description": "Phone notification title: the test a person sends themselves from Settings to check notifications work. Homeroom is the product's name."
+  },
+  "testAlert.body": {
+    "text": "Your phone can receive push notifications from Homeroom.",
+    "description": "Phone notification text under the title: the test a person sends themselves from Settings. Homeroom is the product's name."
+  },
+  "conversationInvite.title.person": {
+    "text": "@{{actor}} invited you to a conversation",
+    "description": "Phone notification title: somebody invited the reader to a private conversation. {{actor}} is a username: keep the @ in front of it."
+  },
+  "conversationInvite.title.unnamed": {
+    "text": "You have a conversation invitation",
+    "description": "Phone notification title: an invitation to a private conversation from somebody whose name is not known."
+  },
+  "conversationInvite.body": {
+    "text": "Open Messages to accept or decline",
+    "description": "Phone notification text under the title: an invitation to a conversation. Messages is the name of the screen."
+  },
+  "conversationMessage.title.person": {
+    "text": "@{{actor}} sent you a message",
+    "description": "Phone notification title: a new message in a private conversation. {{actor}} is a username: keep the @ in front of it."
+  },
+  "conversationMessage.title.unnamed": {
+    "text": "New message",
+    "description": "Phone notification title: a new message in a private conversation from somebody whose name is not known."
+  },
+  "conversationMention.title": {
+    "text": "@{{actor}} mentioned you",
+    "description": "Phone notification title: somebody named the reader in a private conversation. {{actor}} is a username: keep the @ in front of it."
+  },
+  "conversationReply.title": {
+    "text": "@{{actor}} replied to you",
+    "description": "Phone notification title: somebody answered the reader in a private conversation. {{actor}} is a username: keep the @ in front of it."
+  },
+  "conversationThreadReply.title": {
+    "text": "@{{actor}} replied in a thread",
+    "description": "Phone notification title: somebody answered in a reply thread of a private conversation the reader is in. {{actor}} is a username: keep the @ in front of it."
+  },
+  "conversationReaction.title.emoji": {
+    "text": "@{{actor}} reacted {{reaction}} to your message",
+    "description": "Phone notification title: somebody reacted to the reader's message in a private conversation. {{actor}} is a username: keep the @ in front of it. {{reaction}} is the emoji they used."
+  },
+  "conversationReaction.title.plain": {
+    "text": "@{{actor}} reacted to your message",
+    "description": "Phone notification title: somebody reacted to the reader's message in a private conversation. {{actor}} is a username: keep the @ in front of it."
+  },
+  "conversationReaction.body": {
+    "text": "You said: {{message}}",
+    "description": "Phone notification text under the title: the reader's own message that somebody reacted to, in a private conversation. {{message}} is that message, as written."
+  },
+  "friendRequest.title": {
+    "text": "@{{actor}} sent you a friend request",
+    "description": "Phone notification title: somebody asked to be the reader's friend. {{actor}} is a username: keep the @ in front of it."
+  },
+  "friendRequest.body": {
+    "text": "Accept or decline in Notifications",
+    "description": "Phone notification text under the title: a friend request. Notifications is the name of the screen where the buttons are."
+  },
+  "friendAccept.title": {
+    "text": "@{{actor}} accepted your friend request",
+    "description": "Phone notification title: somebody accepted the reader's friend request. {{actor}} is a username: keep the @ in front of it."
+  },
+  "friendAccept.body": {
+    "text": "You're friends now. They show up first when you start a message",
+    "description": "Phone notification text under the title: a friend request was accepted. \"They\" is the new friend."
+  },
+  "mention.title.named": {
+    "text": "@{{actor}} mentioned you in \"{{title}}\"",
+    "description": "Phone notification title: somebody named the reader in a project's chat about a change. {{actor}} is a username: keep the @ in front of it. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "mention.title.plain": {
+    "text": "@{{actor}} mentioned you",
+    "description": "Phone notification title: somebody named the reader in a project's chat. {{actor}} is a username: keep the @ in front of it."
+  },
+  "issueMention.title.numbered": {
+    "text": "@{{actor}} mentioned you in request #{{number}}",
+    "description": "Phone notification title: somebody named the reader in a request filed on a project's board. {{actor}} is a username: keep the @ in front of it. {{number}} is the request's number."
+  },
+  "issueMention.title.plain": {
+    "text": "@{{actor}} mentioned you in request",
+    "description": "Phone notification title: somebody named the reader in a request filed on a project's board, when its number is not known. {{actor}} is a username: keep the @ in front of it."
+  },
+  "issueMention.body": {
+    "text": "Open the request to see what they wrote",
+    "description": "Phone notification text under the title: somebody named the reader in a request on a project's board."
+  },
+  "reply.title.named": {
+    "text": "@{{actor}} replied in \"{{title}}\"",
+    "description": "Phone notification title: somebody answered in a project's chat about a change. {{actor}} is a username: keep the @ in front of it. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "reply.title.plain": {
+    "text": "@{{actor}} replied to you",
+    "description": "Phone notification title: somebody answered the reader in a project's chat. {{actor}} is a username: keep the @ in front of it."
+  },
+  "threadReply.title": {
+    "text": "@{{actor}} replied in a thread",
+    "description": "Phone notification title: somebody answered in a reply thread of a project's chat the reader is in. {{actor}} is a username: keep the @ in front of it."
+  },
+  "issueThreadReply.title.numbered": {
+    "text": "@{{actor}} replied on request #{{number}}",
+    "description": "Phone notification title: somebody posted in the discussion of a request the reader filed or posted in. {{actor}} is a username: keep the @ in front of it. {{number}} is the request's number."
+  },
+  "issueThreadReply.title.plain": {
+    "text": "@{{actor}} replied on a request",
+    "description": "Phone notification title: somebody posted in the discussion of a request the reader filed or posted in, when its number is not known. {{actor}} is a username: keep the @ in front of it."
+  },
+  "changeThreadReply.title.numbered": {
+    "text": "@{{actor}} replied on change #{{number}}",
+    "description": "Phone notification title: somebody posted in the discussion of a proposed change the reader is in. {{actor}} is a username: keep the @ in front of it. {{number}} is the change's number."
+  },
+  "changeThreadReply.title.decision": {
+    "text": "@{{actor}} replied on a decision",
+    "description": "Phone notification title: somebody posted in the discussion of a community decision the reader is in. {{actor}} is a username: keep the @ in front of it."
+  },
+  "channelMessage.many.title.where_one": {
+    "text": "{{count}} new message in {{place}}",
+    "description": "Phone notification title: A person's messages in a small private group's discussion, several since the notification was first due: {{count}} is how many, always more than one in English, so the singular is rarely seen. {{place}} is the group's name."
+  },
+  "channelMessage.many.title.where_other": {
+    "text": "{{count}} new messages in {{place}}",
+    "description": "Phone notification title: A person's messages in a small private group's discussion, several since the notification was first due: {{count}} is how many, always more than one in English, so the singular is rarely seen. {{place}} is the group's name."
+  },
+  "channelMessage.many.title_one": {
+    "text": "{{count}} new message",
+    "description": "Phone notification title: A person's messages in a small private group's discussion, several since the notification was first due: {{count}} is how many, always more than one in English, so the singular is rarely seen."
+  },
+  "channelMessage.many.title_other": {
+    "text": "{{count}} new messages",
+    "description": "Phone notification title: A person's messages in a small private group's discussion, several since the notification was first due: {{count}} is how many, always more than one in English, so the singular is rarely seen."
+  },
+  "channelMessage.many.body": {
+    "text": "@{{actor}}: {{message}}",
+    "description": "Phone notification text under the title: the latest of several messages in a small group's discussion. {{actor}} is its writer's username: keep the @. {{message}} is what they wrote, as written."
+  },
+  "channelMessage.one.title.where": {
+    "text": "@{{actor}} in {{place}}",
+    "description": "Phone notification title: one message in a small private group's discussion. {{actor}} is a username: keep the @ in front of it. {{place}} is the group's name."
+  },
+  "channelMessage.one.title": {
+    "text": "@{{actor}} wrote in the discussion",
+    "description": "Phone notification title: one message in a small private group's discussion. {{actor}} is a username: keep the @ in front of it."
+  },
+  "reaction.title.emoji": {
+    "text": "@{{actor}} reacted {{reaction}} to your message",
+    "description": "Phone notification title: somebody reacted to the reader's message in a project's chat. {{actor}} is a username: keep the @ in front of it. {{reaction}} is the emoji they used."
+  },
+  "reaction.title.plain": {
+    "text": "@{{actor}} reacted to your message",
+    "description": "Phone notification title: somebody reacted to the reader's message in a project's chat. {{actor}} is a username: keep the @ in front of it."
+  },
+  "reaction.body": {
+    "text": "You said: {{message}}",
+    "description": "Phone notification text under the title: the reader's own message that somebody reacted to, in a project's chat. {{message}} is that message, as written."
+  },
+  "kudos.title.named": {
+    "text": "@{{actor}} gave you kudos for \"{{title}}\"",
+    "description": "Phone notification title: somebody thanked the reader for a change. {{actor}} is a username: keep the @ in front of it. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "kudos.title.plain": {
+    "text": "@{{actor}} gave you kudos",
+    "description": "Phone notification title: somebody thanked the reader. {{actor}} is a username: keep the @ in front of it."
+  },
+  "kudos.body": {
+    "text": "Your work is getting noticed",
+    "description": "Phone notification text under the title: somebody thanked the reader for their work."
+  },
+  "inviteOpened.title.app": {
+    "text": "Someone opened your invite to {{app}}",
+    "description": "Phone notification title: somebody opened an invite link the reader made. {{app}} is a project's name."
+  },
+  "inviteOpened.title.plain": {
+    "text": "Someone opened your invite",
+    "description": "Phone notification title: somebody opened an invite link the reader made."
+  },
+  "inviteOpened.body": {
+    "text": "You hear when they join",
+    "description": "Phone notification text under the title: somebody opened an invite link the reader made: the reader gets another notification if they join."
+  },
+  "memberJoined.title.app": {
+    "text": "@{{actor}} joined {{app}}",
+    "description": "Phone notification title: somebody joined through the reader's invite link. {{actor}} is a username: keep the @ in front of it. {{app}} is a project's name."
+  },
+  "memberJoined.title.plain": {
+    "text": "@{{actor}} joined",
+    "description": "Phone notification title: somebody joined through the reader's invite link. {{actor}} is a username: keep the @ in front of it."
+  },
+  "memberJoined.body": {
+    "text": "They came in through your invite. Say hello",
+    "description": "Phone notification text under the title: somebody joined through the reader's invite link."
+  },
+  "firstMessage.title.app": {
+    "text": "@{{actor}} said hi in {{app}}",
+    "description": "Phone notification title: somebody the reader invited wrote their first message in a project. {{actor}} is a username: keep the @ in front of it. {{app}} is a project's name."
+  },
+  "firstMessage.title.plain": {
+    "text": "@{{actor}} said hi",
+    "description": "Phone notification title: somebody the reader invited wrote their first message. {{actor}} is a username: keep the @ in front of it."
+  },
+  "collabInvite.join.title.app": {
+    "text": "@{{actor}} invited you to join {{app}}",
+    "description": "Phone notification title: an invitation to join a private project. {{actor}} is a username: keep the @ in front of it. {{app}} is a project's name."
+  },
+  "collabInvite.join.title.plain": {
+    "text": "@{{actor}} invited you to join them",
+    "description": "Phone notification title: an invitation to join somebody's private project, when its name is not known. {{actor}} is a username: keep the @ in front of it."
+  },
+  "collabInvite.join.title.unnamed": {
+    "text": "You have an invite to join",
+    "description": "Phone notification title: an invitation to join a private project, from somebody whose name is not known."
+  },
+  "collabInvite.join.body": {
+    "text": "Accept or decline in the app",
+    "description": "Phone notification text under the title: an invitation to join a private project."
+  },
+  "collabInvite.build.title.app": {
+    "text": "@{{actor}} wants to build {{app}} with you",
+    "description": "Phone notification title: an invitation to build a project together. {{actor}} is a username: keep the @ in front of it. {{app}} is a project's name."
+  },
+  "collabInvite.build.title.plain": {
+    "text": "@{{actor}} wants to build with you",
+    "description": "Phone notification title: an invitation to build something together. {{actor}} is a username: keep the @ in front of it."
+  },
+  "collabInvite.build.title.unnamed": {
+    "text": "You have a collaboration invite",
+    "description": "Phone notification title: an invitation to build something together, from somebody whose name is not known."
+  },
+  "collabInvite.build.body": {
+    "text": "Join them to build it. Accept or decline in the app",
+    "description": "Phone notification text under the title: an invitation to build a project together."
+  },
+  "collabInviteAccepted.title": {
+    "text": "@{{actor}} is in!",
+    "description": "Phone notification title: somebody accepted the reader's invitation to build together. {{actor}} is a username: keep the @ in front of it."
+  },
+  "collabInviteAccepted.body": {
+    "text": "Your invite was accepted. You can start building together",
+    "description": "Phone notification text under the title: somebody accepted the reader's invitation to build together."
+  },
+  "approverInvite.title.person": {
+    "text": "@{{actor}} asked you to help approve changes",
+    "description": "Phone notification title: an invitation to become one of the people who vote on a project's changes. {{actor}} is a username: keep the @ in front of it."
+  },
+  "approverInvite.title.unnamed": {
+    "text": "You were asked to help approve changes",
+    "description": "Phone notification title: an invitation to become one of the people who vote on a project's changes, from somebody whose name is not known."
+  },
+  "approverInvite.body": {
+    "text": "You'd try changes and vote on them. Accept in the app",
+    "description": "Phone notification text under the title: an invitation to help approve a project's changes."
+  },
+  "approverInviteAccepted.title": {
+    "text": "@{{actor}} can approve changes now",
+    "description": "Phone notification title: somebody accepted the reader's invitation to help approve changes. {{actor}} is a username: keep the @ in front of it."
+  },
+  "approverInviteAccepted.body": {
+    "text": "They can try changes and vote on them from now on",
+    "description": "Phone notification text under the title: somebody accepted the reader's invitation to help approve changes."
+  },
+  "specShared.title.named": {
+    "text": "@{{actor}} shared \"{{title}}\" with you",
+    "description": "Phone notification title: somebody shared a plan with the reader. {{actor}} is a username: keep the @ in front of it. {{title}} is the plan's name, kept as written, in quotation marks of the language."
+  },
+  "specShared.title.plain": {
+    "text": "@{{actor}} shared a plan with you",
+    "description": "Phone notification title: somebody shared a plan with the reader. {{actor}} is a username: keep the @ in front of it."
+  },
+  "specShared.title.unnamed": {
+    "text": "A plan was shared with you",
+    "description": "Phone notification title: a plan was shared with the reader by somebody whose name is not known."
+  },
+  "specShared.body.version": {
+    "text": "Plan v{{version}}. Take a look and leave feedback",
+    "description": "Phone notification text under the title: a plan shared with the reader. {{version}} is the plan's version number; \"v\" stands for version."
+  },
+  "specShared.body.plain": {
+    "text": "Take a look and leave feedback",
+    "description": "Phone notification text under the title: a plan shared with the reader."
+  },
+  "sessionDone.title": {
+    "text": "Your build is ready",
+    "description": "Phone notification title: a coding session the reader started has finished."
+  },
+  "sessionDone.body": {
+    "text": "\"{{title}}\" finished. Review it while it's fresh",
+    "description": "Phone notification text under the title: a coding session the reader started has finished. {{title}} is the session's name, kept as written, in quotation marks of the language."
+  },
+  "sessionStalled.title.app": {
+    "text": "Your session on {{app}} stopped before finishing",
+    "description": "Phone notification title: a coding session ended on an error or was paused. {{app}} is a project's name."
+  },
+  "sessionStalled.title.plain": {
+    "text": "Your session stopped before finishing",
+    "description": "Phone notification title: a coding session ended on an error or was paused."
+  },
+  "sessionStalled.body.named": {
+    "text": "Open \"{{title}}\" to continue",
+    "description": "Phone notification text under the title: a coding session stopped. {{title}} is the session's name, kept as written, in quotation marks of the language."
+  },
+  "sessionStalled.body.plain": {
+    "text": "Open it to continue",
+    "description": "Phone notification text under the title: a coding session stopped; \"it\" is the session."
+  },
+  "autoSolve.question.title": {
+    "text": "Auto-solve is waiting on you",
+    "description": "Phone notification title: an automatic run on a request stopped to ask the reader something. Auto-solve is the feature's name."
+  },
+  "autoSolve.question.body.named": {
+    "text": "\"{{title}}\" needs an answer before it can continue",
+    "description": "Phone notification text under the title: an automatic run stopped to ask the reader something. {{title}} is the run's name, kept as written, in quotation marks of the language."
+  },
+  "autoSolve.question.body.plain": {
+    "text": "Your run needs an answer before it can continue",
+    "description": "Phone notification text under the title: an automatic run stopped to ask the reader something."
+  },
+  "autoSolve.failed.title": {
+    "text": "Auto-solve hit a wall",
+    "description": "Phone notification title: an automatic run on a request failed. Auto-solve is the feature's name."
+  },
+  "autoSolve.failed.body.named": {
+    "text": "\"{{title}}\" failed. Open the log to see what happened",
+    "description": "Phone notification text under the title: an automatic run failed. {{title}} is the run's name, kept as written, in quotation marks of the language."
+  },
+  "autoSolve.failed.body.plain": {
+    "text": "The run failed. Open the log to see what happened",
+    "description": "Phone notification text under the title: an automatic run failed."
+  },
+  "autoSolve.done.title.named": {
+    "text": "Auto-solve finished \"{{title}}\"",
+    "description": "Phone notification title: an automatic run on a request finished. {{title}} is the run's name, kept as written, in quotation marks of the language."
+  },
+  "autoSolve.done.title.plain": {
+    "text": "Auto-solve finished",
+    "description": "Phone notification title: an automatic run on a request finished. Auto-solve is the feature's name."
+  },
+  "autoSolve.done.body.spec": {
+    "text": "Plan ready. Review it in the app",
+    "description": "Phone notification text under the title: an automatic run finished with a plan."
+  },
+  "autoSolve.done.body.code": {
+    "text": "Code ready. Review and promote when you're happy",
+    "description": "Phone notification text under the title: an automatic run finished with code. To promote is to put the change up for a vote."
+  },
+  "autoSolve.done.body.specCode": {
+    "text": "Plan and code ready. Review and promote when you're happy",
+    "description": "Phone notification text under the title: an automatic run finished with a plan and code. To promote is to put the change up for a vote."
+  },
+  "changeReady.title": {
+    "text": "A change is ready to try",
+    "description": "Phone notification title: a change the reader can vote on is ready, when its name is not known."
+  },
+  "changeReady.body.person": {
+    "text": "@{{actor}}'s change is ready to try. Try it and vote.",
+    "description": "Phone notification text under the title: a change is ready for the reader's vote. {{actor}} is a username: keep the @ in front of it."
+  },
+  "changeReady.body.unnamed": {
+    "text": "This change is ready to try. Try it and vote.",
+    "description": "Phone notification text under the title: a change is ready for the reader's vote, when who asked for it is not known."
+  },
+  "prProposed.title.named": {
+    "text": "@{{actor}} proposed \"{{title}}\"",
+    "description": "Phone notification title: somebody proposed a change to a project. {{actor}} is a username: keep the @ in front of it. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "prProposed.title.plain": {
+    "text": "@{{actor}} proposed a change",
+    "description": "Phone notification title: somebody proposed a change to a project. {{actor}} is a username: keep the @ in front of it."
+  },
+  "prProposed.body": {
+    "text": "@{{actor}} would love your eyes on this",
+    "description": "Phone notification text under the title: somebody proposed a change and asks the reader to look at it. {{actor}} is a username: keep the @ in front of it."
+  },
+  "proposalVote.yes.title.named": {
+    "text": "@{{actor}} voted yes on \"{{title}}\"",
+    "description": "Phone notification title: somebody voted for the reader's change. {{actor}} is a username: keep the @ in front of it. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "proposalVote.yes.title.plain": {
+    "text": "@{{actor}} voted yes on your change",
+    "description": "Phone notification title: somebody voted for the reader's change. {{actor}} is a username: keep the @ in front of it."
+  },
+  "proposalVote.no.title.named": {
+    "text": "@{{actor}} voted no on \"{{title}}\"",
+    "description": "Phone notification title: somebody voted against the reader's change. {{actor}} is a username: keep the @ in front of it. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "proposalVote.no.title.plain": {
+    "text": "@{{actor}} voted no on your change",
+    "description": "Phone notification title: somebody voted against the reader's change. {{actor}} is a username: keep the @ in front of it."
+  },
+  "proposalVote.body.reason": {
+    "text": "“{{reason}}”",
+    "description": "Phone notification text under the title: the reason a voter gave, in quotation marks of the language. {{reason}} is their own words, as written."
+  },
+  "proposalVote.body.plain": {
+    "text": "Open the change to see their vote",
+    "description": "Phone notification text under the title: somebody voted on the reader's change and left no reason."
+  },
+  "prMerged.title.approved.named": {
+    "text": "\"{{title}}\" was approved",
+    "description": "Phone notification title: the reader's change to Homeroom itself was approved and will be live in minutes. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "prMerged.title.approved.plain": {
+    "text": "Your change was approved",
+    "description": "Phone notification title: the reader's change to Homeroom itself was approved and will be live in minutes."
+  },
+  "prMerged.title.live.named": {
+    "text": "\"{{title}}\" is live",
+    "description": "Phone notification title: the reader's change is live: everybody using the project has it now. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "prMerged.title.live.plain": {
+    "text": "Your change is live",
+    "description": "Phone notification title: the reader's change is live: everybody using the project has it now."
+  },
+  "prMerged.body.forced.soon": {
+    "text": "An admin approved it. Your change will be live in a few minutes",
+    "description": "Phone notification text under the title: an admin approved the reader's change to Homeroom itself without a vote."
+  },
+  "prMerged.body.forced.live": {
+    "text": "An admin made it live. Your change is live",
+    "description": "Phone notification text under the title: an admin put the reader's change live without a vote."
+  },
+  "prMerged.body.credits": {
+    "text": "The vote carried. {{credits}}",
+    "description": "Phone notification text under the title: the vote on the reader's change passed. {{credits}} is a sentence naming the people who backed it, in English for now."
+  },
+  "prMerged.body.carried.soon": {
+    "text": "The vote carried. Your change will be live in a few minutes",
+    "description": "Phone notification text under the title: the vote on the reader's change to Homeroom itself passed."
+  },
+  "prMerged.body.carried.live": {
+    "text": "The vote carried. Your change is live",
+    "description": "Phone notification text under the title: the vote on the reader's change passed."
+  },
+  "revisionRecheck.title.named": {
+    "text": "Still good? {{change}}",
+    "description": "Phone notification title: A change the reader voted yes on was updated, so their yes needs a look again. {{change}} is the change's name, perhaps followed by its project, kept as written."
+  },
+  "revisionRecheck.title.plain": {
+    "text": "Still good? A change you backed was updated",
+    "description": "Phone notification title: A change the reader voted yes on was updated, so their yes needs a look again."
+  },
+  "revisionRecheck.body.person.you": {
+    "text": "@{{actor}} updated it after you asked for a change. One tap keeps your yes.",
+    "description": "Phone notification text under the title: A change the reader voted yes on was updated, so their yes needs a look again. The reader asked for the update. {{actor}} is a username: keep the @ in front of it."
+  },
+  "revisionRecheck.body.person.asker": {
+    "text": "@{{actor}} updated it after @{{asker}} asked for a change. One tap keeps your yes.",
+    "description": "Phone notification text under the title: A change the reader voted yes on was updated, so their yes needs a look again. {{asker}} is the username of who asked for the update: keep the @. {{actor}} is a username: keep the @ in front of it."
+  },
+  "revisionRecheck.body.person.bot": {
+    "text": "@{{actor}} updated it after a request for changes. One tap keeps your yes.",
+    "description": "Phone notification text under the title: A change the reader voted yes on was updated, so their yes needs a look again. The Homeroom bot updated it on request. {{actor}} is a username: keep the @ in front of it."
+  },
+  "revisionRecheck.body.person.plain": {
+    "text": "@{{actor}} updated it. One tap keeps your yes.",
+    "description": "Phone notification text under the title: A change the reader voted yes on was updated, so their yes needs a look again. {{actor}} is a username: keep the @ in front of it."
+  },
+  "revisionRecheck.body.unnamed.you": {
+    "text": "Someone updated it after you asked for a change. One tap keeps your yes.",
+    "description": "Phone notification text under the title: A change the reader voted yes on was updated, so their yes needs a look again. The reader asked for the update. Who updated it is not known."
+  },
+  "revisionRecheck.body.unnamed.asker": {
+    "text": "Someone updated it after @{{asker}} asked for a change. One tap keeps your yes.",
+    "description": "Phone notification text under the title: A change the reader voted yes on was updated, so their yes needs a look again. {{asker}} is the username of who asked for the update: keep the @. Who updated it is not known."
+  },
+  "revisionRecheck.body.unnamed.bot": {
+    "text": "Someone updated it after a request for changes. One tap keeps your yes.",
+    "description": "Phone notification text under the title: A change the reader voted yes on was updated, so their yes needs a look again. The Homeroom bot updated it on request. Who updated it is not known."
+  },
+  "revisionRecheck.body.unnamed.plain": {
+    "text": "Someone updated it. One tap keeps your yes.",
+    "description": "Phone notification text under the title: A change the reader voted yes on was updated, so their yes needs a look again. Who updated it is not known."
+  },
+  "projectOpened.title.app": {
+    "text": "{{app}} is open",
+    "description": "Phone notification title: a project the reader joined while it was being made has its first version live. {{app}} is a project's name."
+  },
+  "projectOpened.title.plain": {
+    "text": "A project you joined is open",
+    "description": "Phone notification title: a project the reader joined while it was being made has its first version live."
+  },
+  "projectOpened.body": {
+    "text": "It’s ready to use. Take a look",
+    "description": "Phone notification text under the title: a project the reader joined has its first version live."
+  },
+  "votedChangeMerged.title.soon": {
+    "text": "A change you voted on was approved",
+    "description": "Phone notification title: a change to Homeroom itself that the reader voted on was approved."
+  },
+  "votedChangeMerged.title.live": {
+    "text": "A change you voted on is live",
+    "description": "Phone notification title: a change the reader voted on is live."
+  },
+  "votedChangeMerged.body.soon.yes": {
+    "text": "Approved. It will be live in a few minutes. You voted yes.",
+    "description": "Phone notification text under the title: a change to Homeroom itself that the reader voted yes on was approved."
+  },
+  "votedChangeMerged.body.soon.voted": {
+    "text": "Approved. It will be live in a few minutes. You voted on it.",
+    "description": "Phone notification text under the title: a change to Homeroom itself that the reader voted on was approved."
+  },
+  "votedChangeMerged.body.live.yes": {
+    "text": "It's live. You voted yes.",
+    "description": "Phone notification text under the title: a change the reader voted yes on is live."
+  },
+  "votedChangeMerged.body.live.voted": {
+    "text": "It's live. You voted on it.",
+    "description": "Phone notification text under the title: a change the reader voted on is live."
+  },
+  "weeklyDigest.title.app": {
+    "text": "This week on {{app}}",
+    "description": "Phone notification title: the Friday summary of a project. {{app}} is a project's name."
+  },
+  "weeklyDigest.title.plain": {
+    "text": "This week",
+    "description": "Phone notification title: the Friday summary."
+  },
+  "weeklyDigest.body.nothing": {
+    "text": "Nothing landed this week.",
+    "description": "Phone notification text under the title: the Friday summary, when no change went live this week."
+  },
+  "weeklyDigest.body.shipped_one": {
+    "text": "{{count}} change went live.",
+    "description": "Phone notification text under the title: the Friday summary: how many changes went live this week. {{count}} is that number."
+  },
+  "weeklyDigest.body.shipped_other": {
+    "text": "{{count}} changes went live.",
+    "description": "Phone notification text under the title: the Friday summary: how many changes went live this week. {{count}} is that number."
+  },
+  "weeklyDigest.body.waiting_one": {
+    "text": "One change is waiting for approval",
+    "description": "Phone notification text under the title: the Friday summary: how many proposed changes are waiting for a vote. {{count}} is that number; English spells out the singular, and a translation of any form may use {{count}}."
+  },
+  "weeklyDigest.body.waiting_other": {
+    "text": "{{count}} changes are waiting for approval",
+    "description": "Phone notification text under the title: the Friday summary: how many proposed changes are waiting for a vote. {{count}} is that number; English spells out the singular, and a translation of any form may use {{count}}."
+  },
+  "weeklyDigest.body.both": {
+    "text": "{{shipped}} {{waiting}}",
+    "description": "Phone notification text under the title: the Friday summary: two sentences, in reading order. {{shipped}} says what went live this week and {{waiting}} what is waiting for approval; each is already a whole sentence in the language."
+  },
+  "issueOpened.title.person.numbered": {
+    "text": "@{{actor}} filed request #{{number}}",
+    "description": "Phone notification title: somebody filed a request on a project's board. {{actor}} is a username: keep the @ in front of it. {{number}} is the request's number."
+  },
+  "issueOpened.title.person.plain": {
+    "text": "@{{actor}} filed request",
+    "description": "Phone notification title: somebody filed a request on a project's board, when its number is not known. {{actor}} is a username: keep the @ in front of it."
+  },
+  "issueOpened.title.unnamed.numbered": {
+    "text": "New request #{{number}}",
+    "description": "Phone notification title: a new request on a project's board. {{number}} is the request's number."
+  },
+  "issueOpened.title.unnamed.plain": {
+    "text": "New request",
+    "description": "Phone notification title: a new request on a project's board."
+  },
+  "issueOpened.body": {
+    "text": "Open the request to see what needs attention",
+    "description": "Phone notification text under the title: a new request on a project's board."
+  },
+  "voteDigest.title_one": {
+    "text": "{{count}} change is waiting for your approval",
+    "description": "Phone notification title: a daily reminder of the changes waiting for the reader's vote. {{count}} is how many."
+  },
+  "voteDigest.title_other": {
+    "text": "{{count}} changes are waiting for your approval",
+    "description": "Phone notification title: a daily reminder of the changes waiting for the reader's vote. {{count}} is how many."
+  },
+  "voteDigest.title.plain": {
+    "text": "Changes are waiting for your approval",
+    "description": "Phone notification title: a daily reminder of the changes waiting for the reader's vote, when how many is not known."
+  },
+  "voteDigest.body.one": {
+    "text": "Open it to try it and approve it",
+    "description": "Phone notification text under the title: a reminder of the one change waiting for the reader's vote."
+  },
+  "voteDigest.body.many": {
+    "text": "See them under Needs you in Communities",
+    "description": "Phone notification text under the title: a reminder of the changes waiting for the reader's vote. Needs you is a section of the Communities screen, and both are names on screen."
+  },
+  "checkFailed.title.named": {
+    "text": "Testing found a problem with \"{{title}}\"",
+    "description": "Phone notification title: automatic testing failed on the reader's change. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "checkFailed.title.plain": {
+    "text": "Testing found a problem with your change",
+    "description": "Phone notification title: automatic testing failed on the reader's change."
+  },
+  "checkFailed.body": {
+    "text": "It needs a fix before it can go live",
+    "description": "Phone notification text under the title: automatic testing failed on the reader's change."
+  },
+  "stalePr.blocked.title.named": {
+    "text": "\"{{title}}\" is approved but can't go live",
+    "description": "Phone notification title: the reader's change has its votes but cannot be merged. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "stalePr.blocked.title.plain": {
+    "text": "Your approved change can't go live",
+    "description": "Phone notification title: the reader's change has its votes but cannot be merged."
+  },
+  "stalePr.blocked.body": {
+    "text": "It needs a fix before it can go live, or it will be set aside",
+    "description": "Phone notification text under the title: the reader's change has its votes but cannot be merged."
+  },
+  "stalePr.waiting.title.named": {
+    "text": "\"{{title}}\" is waiting for approval",
+    "description": "Phone notification title: the reader's change has been waiting a while for votes. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "stalePr.waiting.title.plain": {
+    "text": "Your change needs attention",
+    "description": "Phone notification title: the reader's change has been waiting a while for votes."
+  },
+  "stalePr.waiting.body.days_one": {
+    "text": "Nobody has weighed in for {{count}} day. Share the preview or ask a friend to try it",
+    "description": "Phone notification text under the title: the reader's change has been waiting for votes. {{count}} is how many days."
+  },
+  "stalePr.waiting.body.days_other": {
+    "text": "Nobody has weighed in for {{count}} days. Share the preview or ask a friend to try it",
+    "description": "Phone notification text under the title: the reader's change has been waiting for votes. {{count}} is how many days."
+  },
+  "stalePr.waiting.body.plain": {
+    "text": "Share the preview or ask a friend to try it",
+    "description": "Phone notification text under the title: the reader's change has been waiting for votes."
+  },
+  "connectorSubmitted.title.named": {
+    "text": "Your agent submitted \"{{title}}\"",
+    "description": "Phone notification title: the reader's coding agent, working from outside Homeroom, submitted a change. {{title}} is the name of a change, kept as written, in quotation marks of the language."
+  },
+  "connectorSubmitted.title.plain": {
+    "text": "Your agent submitted work",
+    "description": "Phone notification title: the reader's coding agent, working from outside Homeroom, submitted a change."
+  },
+  "connectorSubmitted.body.shared": {
+    "text": "It is visible in the in-progress area (no vote yet)",
+    "description": "Phone notification text under the title: where the reader's agent put its work: shared in progress, not yet up for a vote."
+  },
+  "connectorSubmitted.body.waiting": {
+    "text": "It is waiting for approval, and it is being tested",
+    "description": "Phone notification text under the title: where the reader's agent put its work: up for a vote, and being tested."
+  },
+  "agentAwaiting.title": {
+    "text": "Claude asked you something",
+    "description": "Phone notification title: the reader's Claude agent stopped to ask them a question. Claude is a name. Say that it asked, not that it is waiting: the reader may have answered already."
+  },
+  "agentAwaiting.body.minutes_one": {
+    "text": "Asked {{count}} minute ago. It is holding for your answer",
+    "description": "Phone notification text under the title: the reader's Claude agent asked them a question. {{count}} is how many minutes ago."
+  },
+  "agentAwaiting.body.minutes_other": {
+    "text": "Asked {{count}} minutes ago. It is holding for your answer",
+    "description": "Phone notification text under the title: the reader's Claude agent asked them a question. {{count}} is how many minutes ago."
+  },
+  "agentAwaiting.body.plain": {
+    "text": "It is holding for your answer",
+    "description": "Phone notification text under the title: the reader's Claude agent asked them a question just now."
+  },
+  "appHealth.storageWarn.title": {
+    "text": "Storage is nearly full",
+    "description": "Phone notification title: a project the reader runs has used most of its storage."
+  },
+  "appHealth.storageWarn.body.app": {
+    "text": "{{app}} has used most of its storage. Clean up old data or ask an admin to raise the limit",
+    "description": "Phone notification text under the title: a project the reader runs has used most of its storage. {{app}} is a project's name."
+  },
+  "appHealth.storageWarn.body.plain": {
+    "text": "Your app has used most of its storage. Clean up old data or ask an admin to raise the limit",
+    "description": "Phone notification text under the title: a project the reader runs has used most of its storage."
+  },
+  "appHealth.storageFull.title": {
+    "text": "Out of storage",
+    "description": "Phone notification title: a project the reader runs has used all its storage."
+  },
+  "appHealth.storageFull.body": {
+    "text": "New data cannot be saved until an admin raises the limit or allows time to clean up",
+    "description": "Phone notification text under the title: a project the reader runs has used all its storage."
+  },
+  "appHealth.deployFailed.title": {
+    "text": "Deploy failed",
+    "description": "Phone notification title: the latest version of a project the reader runs could not be put live."
+  },
+  "appHealth.deployFailed.body": {
+    "text": "The latest change did not go live. Open the app to see what failed",
+    "description": "Phone notification text under the title: the latest version of a project the reader runs could not be put live."
+  },
+  "appHealth.releaseStalled.title": {
+    "text": "Approved but not live yet",
+    "description": "Phone notification title: a change to Homeroom itself was approved and has not reached people yet."
+  },
+  "appHealth.releaseStalled.body": {
+    "text": "An approved change is not live yet. Open the board to see where it stopped",
+    "description": "Phone notification text under the title: a change to Homeroom itself was approved and has not reached people yet. The board is the project's list of work."
+  },
+  "appHealth.other.title": {
+    "text": "App needs attention",
+    "description": "Phone notification title: something is wrong with a project the reader runs."
+  },
+  "appHealth.other.body": {
+    "text": "Open the app to see what needs attention",
+    "description": "Phone notification text under the title: something is wrong with a project the reader runs."
+  }
+}

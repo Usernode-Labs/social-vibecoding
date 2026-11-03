@@ -1,6 +1,9 @@
 import catalogs from './catalogs.generated.json';
 import { saveAccountLocale } from './account';
 import { createLanguageRuntime } from './core';
+import { errorText } from './server-error';
+
+export { errorText };
 
 /**
  * The shell's language runtime: ./core.ts built from this build's catalogs
@@ -11,7 +14,7 @@ const runtime = createLanguageRuntime(catalogs);
 
 export const {
   i18n, t, htmlText, htmlRich, listText, languageName, registerNamespace, ensureNamespace,
-  changeLanguage, applySessionLanguage, getLanguage, getPreference,
+  changeLanguage, applySessionLanguage, getLanguage, getDateLocale, getPreference,
   getNotice, subscribeNotice, dismissNotice, getLanguages, subscribeLanguages,
 } = runtime;
 
@@ -65,7 +68,9 @@ export function switchToEnglish(): Promise<boolean> {
 // The legacy modules' adapter. Translate at render time, never at module
 // initialization, and repaint on `homeroom:language-changed`.
 (globalThis as unknown as { PlatformI18n: unknown }).PlatformI18n = {
-  t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, changeLanguage,
+  t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, changeLanguage, errorText,
+  // #6103: the classic scripts' date formatters read the same rule.
+  dateLocale: getDateLocale,
   applySessionLanguage, saveAccountLocale, getLanguages,
 };
 

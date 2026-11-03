@@ -184,6 +184,10 @@ test('a turn the lease sweeper failed is finished with what happened, and the be
   const turn = {
     row: turnRow({
       status: 'abandoned', head_sha: null, summary: null,
+      // A turn the lease sweeper abandoned had been accepted and was
+      // running: the machine really did go away mid-run, so it keeps the
+      // "disconnected before finishing" words.
+      accepted_at: new Date(Date.now() - 60_000).toISOString(),
       error_detail: 'The local coding agent stopped responding.',
     }),
   };

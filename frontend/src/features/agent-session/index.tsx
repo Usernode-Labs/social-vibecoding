@@ -801,7 +801,12 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
       </section>
     );
   }
-  const checks = checksSummary(change?.checkState, change?.checkFailing, change?.checkSkipReason);
+  const checks = checksSummary(change?.checkState, change?.checkFailing, change?.checkSkipReason, {
+    phase: change?.checkPhase,
+    checkedAt: change?.checksCheckedAt,
+    queueAhead: change?.checksQueueAhead,
+    estimate: change?.checksEstimate,
+  });
   const changeHref = change && change.appSlug && item.changeId != null
     ? changeLink(change.appSlug, item.changeId, prNumber)
     : null;

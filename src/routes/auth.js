@@ -68,6 +68,7 @@ const { getPlatformApp } = require('../services/platform-app');
 // Deliberately NOT destructured: tests (and the never-throws mail contract)
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
+const mailLanguage = require('../services/mail/language');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { requireAdultAttestation } = require('../services/adult-attestation');
 
@@ -368,7 +369,7 @@ function authRoutes(config) {
   // Browser JavaScript never receives a mobile bearer.
   router.post('/api/auth/otp/request', otpRequestLimiter, otpRequestEmailLimiter, async (req, res) => {
     try {
-      await emailSignup.requestCode(pool, config, req.body?.email);
+      await emailSignup.requestCode(pool, config, req.body?.email, { locale: mailLanguage.requestLanguage(req) });
       return res.json({ ok: true });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
@@ -1995,7 +1996,7 @@ function authRoutes(config) {
     }
     try {
       const { rows } = await pool.query(
-        `SELECT id, email FROM users
+        `SELECT id, email, locale FROM users
           WHERE lower(email) = lower($1) AND email_confirmed = TRUE`,
         [email]
       );
@@ -2015,7 +2016,9 @@ function authRoutes(config) {
         if (!issued.rowCount) return res.json({ ok: true });
         // Never throws (mail-door contract); a transport failure is logged
         // there and must not turn this into an account oracle.
-        await mail.sendPasswordResetMail(config, user.email, token);
+        // The account's own language only: whoever asked may not be its owner.
+        if (user.locale) await mail.sendPasswordResetMail(config, user.email, token, { locale: user.locale });
+        else await mail.sendPasswordResetMail(config, user.email, token);
         log.info('auth', 'Password reset link issued', { userId: user.id });
       }
       res.json({ ok: true });

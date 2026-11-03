@@ -24,7 +24,7 @@ import { SectionHeading } from '@/components/ui/field';
 import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
 
-import { HELP, PrivacySwitch } from './privacy-text';
+import { PrivacySwitch, SaveStatus, useSavedFlash } from './privacy-text';
 
 type Answer = { enabled?: unknown; uiTelemetryEligible?: unknown };
 
@@ -48,6 +48,7 @@ export function UsageAnalyticsSection() {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const { saved, flash, clear } = useSavedFlash();
 
   const load = useCallback(async () => {
     try {
@@ -71,6 +72,7 @@ export function UsageAnalyticsSection() {
     setOn(next);
     setSaving(true);
     setError('');
+    clear();
     try {
       const res = await fetch('/api/me/usage-analytics', {
         method: 'PUT',
@@ -82,6 +84,7 @@ export function UsageAnalyticsSection() {
       const body = (await res.json()) as Answer;
       setOn(body.enabled === true);
       publish(body.uiTelemetryEligible === true);
+      flash();
     } catch {
       setOn(previous);
       setError(t('settings:privacy.usageAnalytics.saveFailed'));
@@ -101,16 +104,21 @@ export function UsageAnalyticsSection() {
         checked={on}
         disabled={!loaded || saving}
         describedBy="settings-usage-analytics-description"
+        description={(
+          // #5926: what is true now, then what it records, what it never
+          // records and what switching off leaves in place (item 5), each on
+          // its own line. Off only stops new rows: nothing deletes the old ones.
+          <>
+            <span className="block">{t(on ? 'settings:privacy.usageAnalytics.stateOn' : 'settings:privacy.usageAnalytics.stateOff')}</span>
+            <span className="block">{t('settings:privacy.usageAnalytics.records')}</span>
+            <span className="block">{t('settings:privacy.usageAnalytics.neverRecords')}</span>
+            <span className="block">{t('settings:privacy.usageAnalytics.alreadyRecorded')}</span>
+          </>
+        )}
         onChange={(e) => void change(e.currentTarget.checked)}
       />
-      {/* #5926: what is true now, then what it records and what it never
-          records, each on its own line. */}
-      <div id="settings-usage-analytics-description" className={`${HELP} mt-2 space-y-1`}>
-        <p>{t(on ? 'settings:privacy.usageAnalytics.stateOn' : 'settings:privacy.usageAnalytics.stateOff')}</p>
-        <p>{t('settings:privacy.usageAnalytics.records')}</p>
-        <p>{t('settings:privacy.usageAnalytics.neverRecords')}</p>
-      </div>
       {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
+      <SaveStatus saved={saved} />
     </div>
   );
 }

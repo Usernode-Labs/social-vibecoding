@@ -649,9 +649,14 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       const waiting = reason && reason.stopping === true ? null : checked;
       leaseCheck = waiting;
       try {
-        mayorRun = async () => { abort.abort(reason); };
+        // The turn is held open until the lease check has decided: its
+        // finally must not clear `running` before the check reads it.
+        mayorRun = async () => {
+          abort.abort(reason);
+          if (waiting) await within(checked.promise, 5000, 'the turn to read its item after its lease was lost');
+          else await new Promise((r) => setImmediate(r));
+        };
         await turns.run(ctx, { config: {}, pool });
-        if (waiting) await within(checked.promise, 5000, 'the turn to read its item after its lease was lost');
       } finally {
         leaseCheck = null;
       }

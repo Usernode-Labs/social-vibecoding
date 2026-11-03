@@ -301,6 +301,56 @@ preview whose row no longer names it keeps its staging database until the
 orphan database pass (`STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS`, 6 h) finds nothing
 connected to it.
 
+## Sleeping previews
+
+A preview nobody has used for `PREVIEW_SLEEP_AFTER_MS` (2 h by default; 0
+switches it off) sleeps (#6157, `src/services/preview-sleep.js`): the
+`preview-sleep` clock (every 5 minutes, a few previews a run) scales its
+Deployment to `replicas: 0`. Its image, Deployment, Service, env Secret,
+database copy and the session's row stay; `chat_sessions.staging_asleep_at`
+records the sleep and `staging_asleep_db_bytes` the copy's size, which
+Admin → Stale previews totals. Previews backing a live vote sleep too. A
+preview sleeps only while nothing works on it: no worker turn, shots run,
+recorded operation, build or checks run.
+
+Whatever opens it wakes it: a Preview click (`ensure-staging`, behind the
+"spinning back up" loader), a checks run (before it starts; one that does not
+wake in time is a platform-fault retry), and a direct link. A wake scales it
+back to one replica and waits for the pod and its public address; nothing is
+rebuilt and no checks run again. One built with another platform environment
+is rebuilt instead, as the stale pass would have done. A build of a new head
+deploys one replica, which ends the sleep too.
+
+The direct link's door depends on the app-host gate:
+
+- `APP_GATE=on`: the gate proxies to the preview's Service, finds no pod, and
+  falls back to the platform's `/__app_unavailable`, which answers a sleeping
+  preview's host with the "Waking this preview…" page and wakes it.
+- `APP_GATE=off` (the default, and production's today): Cilium's Envoy has no
+  custom error backend, so a Service with no endpoints would answer a bare
+  503. While a preview sleeps, its Ingress catch-all path is pointed at the
+  shared `usernode-platform-assets` Service in the same namespace instead,
+  which serves the same waking page for a preview's host
+  (`scripts/serve-platform-assets.js`), and it is pointed back when the
+  preview wakes. The page asks the platform to wake it with a POST to
+  `https://<platform domain>/__preview_wake` from the visitor's browser, so
+  no new network path is needed in the cluster: the ingress controller
+  already reaches the asset backend for every app's asset paths. The asset
+  backend runs the platform's image and picks the page up when the release
+  upserts it (`ensurePlatformAssetBackend`).
+
+No operator step is required. Check: `kubectl -n social-apps get deploy -l
+social.usernode.io/environment=staging` shows sleeping previews at `0/0`;
+open one's address and expect the waking page, then the app.
+
+Nothing is put to sleep while a workflow process of another build still
+serves (a rollout or a rollback): a build from before sleep would start a
+checks run on a sleeping preview without waking it. A rollback past this
+change leaves the previews already asleep as they are, and the older build
+reads each as stopped: it rebuilds one when it is opened, and its
+`preview-runtimes` clock rebuilds the vote-backed ones, so expect a burst of
+preview builds after such a rollback.
+
 ## A separate server for preview databases
 
 By default one PostgreSQL server holds everything: the platform's database,
@@ -1046,8 +1096,9 @@ change; the single-server `rollback.sh` is not a cluster rollback mechanism.
 Cilium's Envoy has no forward-auth hook, so on this runtime nothing
 platform-owned sat in front of app and preview hosts: a view-private app was
 gated only by its own code, and an app opened at its own address could not
-sign anyone in. `APP_GATE=on` (chart `config.appGate`) puts a small proxy in
-front of every managed app and preview Ingress: the `usernode-app-gate`
+sign anyone in. `APP_GATE=on` (chart `config.appGate`, `"on"` by default since
+2 Nov 2026) puts a small proxy in front of every managed app and preview
+Ingress: the `usernode-app-gate`
 Deployment in the app namespace (two replicas, `maxUnavailable: 0`, the
 platform's own image running `scripts/app-gate.js`). It asks the platform's
 `/__caddy/access` about each request, exactly as Caddy does on the standalone
@@ -1057,7 +1108,8 @@ prefixes keep going straight to `usernode-platform-assets`.
 The gate holds no keys and reads no database. It fails closed: if the platform
 cannot be asked for 15 seconds, the visitor gets 503.
 
-Before turning it on:
+What it needs (the infra repository's foundation chart provides both in its
+tenant network policy, `tenantNetworkPolicy.enabled`):
 
 1. The app namespace's network policy (foundation repository) must allow the
    ingress controller to reach pods labelled
@@ -1068,7 +1120,7 @@ Before turning it on:
 2. `PLATFORM_INTERNAL_URL` must be set (the chart sets it from
    `config.internalUrl`).
 
-Turning it on: set `config.appGate: "on"` and sync. The app-gate clock (a
+Turning it on (the default): `config.appGate: "on"` and sync. The app-gate clock (a
 workflow job only the newest build runs, every ten minutes) brings the gate
 up, waits for it to be ready, and only then repoints every managed Ingress's
 catch-all path at it. If the gate does not come up, no Ingress is
@@ -1092,3 +1144,13 @@ This applies at once. Then set `config.appGate: "off"` too, or the clock's
 next run, or an app deploy, routes through the gate again. `config.appHostSignin: "off"`
 (`APP_HOST_SIGNIN`) separately turns off signing people in at an app's own
 address, on both runtimes; the gate still keeps private apps members-only.
+
+**Offline apps** (`config.appOfflineCache`, `APP_OFFLINE_CACHE`, `"on"` by
+default; `src/services/offline-cache.js`). With the gate on, it makes the
+gate give production app pages and files a 30-day fresh lifetime (never
+`/api/`, never a preview, never over an app's own `no-store` or `private`),
+serves the shared `/usernode-*` files stale-while-revalidate, and tells the
+shell to open apps from the browser's cache when offline. `"off"` and a sync
+turn it off; nothing in any app changes either way.
+Check: an app page's response through the gate carries
+`Cache-Control: max-age=2592000`.

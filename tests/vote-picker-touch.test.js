@@ -281,7 +281,8 @@ test('#3984: while a vote is on its way the button reads "Sending…" and takes 
   assert.doesNotMatch(draw(), /Sending…|aria-busy/, 'nothing on its way: the plain face');
   mod.voteSendingStore.set({ 'castVote:7': 'yes' });
   const html = draw();
-  assert.match(html, /<button type="button" class="dev-vote-btn"[^>]*title="Sending your vote\."[^>]*aria-busy="true"[^>]*disabled=""[^>]*>Sending…<\/button>/);
+  assert.match(html, /<button type="button" class="dev-vote-btn"[^>]*title="Sending your vote\."[^>]*aria-busy="true"[^>]*aria-disabled="true"[^>]*>Sending…<\/button>/);
+  assert.doesNotMatch(html, /disabled=""/, '#6098: shown busy, not switched off, so it keeps keyboard focus');
   assert.doesNotMatch(html, /dev-vote-caret/, 'no caret: there is nothing to pick until it lands');
   const other = { ...yes, act: { fn: 'castVote', args: [8, 'yes', 3] } };
   assert.doesNotMatch(draw(other, { ...no, act: { fn: 'castVote', args: [8, 'no', 3] } }), /Sending…/, 'only that change\'s buttons');

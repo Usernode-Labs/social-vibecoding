@@ -39,14 +39,19 @@ test('castVote tells Your votes and the Kudos history, only after the server too
   );
   assert.match(fn, /window\.UsernodeReact\?\.profileProposals\?\.voted\?\.\(\);/);
   assert.match(fn, /window\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
+  // #6101: a refusal that means "not up for a vote any more" DOES re-read
+  // Your votes, so the row moves to Decided. Every ordinary refusal still
+  // returns before the ok-path call below.
   const refused = fn.indexOf('return false;', fn.indexOf('if (!res.ok)'));
-  const called = fn.indexOf('profileProposals?.voted');
+  const settledCall = fn.indexOf('profileProposals?.voted', fn.indexOf("data.code === 'not_up_for_vote'"));
+  assert.ok(settledCall > -1 && settledCall < refused,
+    'the settled refusal names the profile controller before it returns');
+  const ordinary = fn.indexOf('profileProposals?.voted', fn.indexOf('await AppView.refreshDevData(\'vote\');'));
+  assert.ok(ordinary > refused, 'an ordinary refusal still returns before it');
   // The network catch is the function's last one; the reason resolver's own
   // try/catch sits ahead of the vote and must not be mistaken for it.
   const caught = fn.lastIndexOf('} catch {');
-  assert.ok(refused > -1, 'the refusal branch is found');
-  assert.ok(called > refused, 'never on a refused vote');
-  assert.ok(caught > -1 && called < caught, 'and never in the catch: a vote that did not reach the server lists nothing');
+  assert.ok(caught > -1 && ordinary < caught, 'and never in the catch: a vote that did not reach the server lists nothing');
 });
 
 test('castIssueVote does the same, only on an ok response', () => {
@@ -56,7 +61,7 @@ test('castIssueVote does the same, only on an ok response', () => {
   );
   assert.match(fn, /window\.UsernodeReact\?\.profileProposals\?\.voted\?\.\(\);/);
   assert.match(fn, /window\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
-  const refused = fn.indexOf('PlatformUI.toast(data.error ||');
+  const refused = fn.indexOf('PlatformUI.toast(PlatformI18n.errorText(data) ||');
   const called = fn.indexOf('profileProposals?.voted');
   const caught = fn.indexOf('} catch (err) {');
   assert.ok(refused > -1, 'the refusal branch is found');

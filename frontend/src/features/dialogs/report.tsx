@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { CheckIcon } from '@/components/ui/icons';
+import { arrowStep } from '../../lib/i18n/direction';
 import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from './use-dialog';
 
@@ -32,8 +33,7 @@ function ReasonList({ reasons, value, onPick, labelId }: {
   const t = useMessages('dialogs');
   const focusable = reasons.some(([key]) => key === value) ? value : reasons[0]?.[0];
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1
-      : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0;
+    const step = arrowStep(event.key);
     if (!step) return;
     event.preventDefault();
     const at = Math.max(0, reasons.findIndex(([key]) => key === value));

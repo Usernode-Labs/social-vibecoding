@@ -32,7 +32,7 @@ import { SectionHeading } from '@/components/ui/field';
 import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
 
-import { HELP, PrivacySwitch } from './privacy-text';
+import { HELP, PrivacySwitch, SaveStatus, useSavedFlash } from './privacy-text';
 
 type Choice = 'marketingEmail' | 'activityEmail' | 'marketingSms';
 
@@ -64,6 +64,7 @@ export function ContactPreferencesSection() {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState<Choice | null>(null);
   const [error, setError] = useState('');
+  const { saved, flash, clear } = useSavedFlash();
 
   const load = useCallback(async () => {
     try {
@@ -86,6 +87,7 @@ export function ContactPreferencesSection() {
     setPrefs({ ...prefs, [choice]: next });
     setSaving(choice);
     setError('');
+    clear();
     try {
       const res = await fetch('/api/me/contact-preferences', {
         method: 'PUT',
@@ -95,6 +97,7 @@ export function ContactPreferencesSection() {
       });
       if (!res.ok) throw new Error(String(res.status));
       setPrefs(fromBody((await res.json()) as Record<string, unknown>));
+      flash();
     } catch {
       setPrefs(previous);
       setError(t('settings:privacy.contact.saveFailed'));
@@ -116,13 +119,11 @@ export function ContactPreferencesSection() {
             checked={prefs.marketingEmail}
             disabled={!loaded || saving !== null || (!prefs.email && !prefs.marketingEmail)}
             describedBy="settings-contact-marketing-email-help"
-            onChange={(e) => void change('marketingEmail', e.currentTarget.checked)}
-          />
-          <p id="settings-contact-marketing-email-help" className={`${HELP} mt-1`}>
-            {loaded && !prefs.email
+            description={loaded && !prefs.email
               ? t('settings:privacy.contact.marketingEmail.noEmail')
               : t('settings:privacy.contact.marketingEmail.help')}
-          </p>
+            onChange={(e) => void change('marketingEmail', e.currentTarget.checked)}
+          />
         </div>
         <div>
           <PrivacySwitch
@@ -131,11 +132,9 @@ export function ContactPreferencesSection() {
             checked={prefs.activityEmail}
             disabled={!loaded || saving !== null}
             describedBy="settings-contact-activity-email-help"
+            description={t('settings:privacy.contact.activityEmail.help')}
             onChange={(e) => void change('activityEmail', e.currentTarget.checked)}
           />
-          <p id="settings-contact-activity-email-help" className={`${HELP} mt-1`}>
-            {t('settings:privacy.contact.activityEmail.help')}
-          </p>
         </div>
         {prefs.phone ? (
           <div>
@@ -145,17 +144,16 @@ export function ContactPreferencesSection() {
               checked={prefs.marketingSms}
               disabled={!loaded || saving !== null}
               describedBy="settings-contact-marketing-sms-help"
+              description={t('settings:privacy.contact.marketingSms.help', { phone: prefs.phone })}
               onChange={(e) => void change('marketingSms', e.currentTarget.checked)}
             />
-            <p id="settings-contact-marketing-sms-help" className={`${HELP} mt-1`}>
-              {t('settings:privacy.contact.marketingSms.help', { phone: prefs.phone })}
-            </p>
           </div>
         ) : loaded ? (
           <p data-settings-contact-no-phone="" className={HELP}>{t('settings:privacy.contact.marketingSms.noPhone')}</p>
         ) : null}
       </div>
       {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
+      <SaveStatus saved={saved} />
     </div>
   );
 }

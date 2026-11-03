@@ -130,7 +130,7 @@ test('each section groups its rows by project, and a project shows its first few
     ['games', ['need:proposal:2']],
     [null, ['private:91']],
   ], 'under each project once, in the order the projects first come; a private idea in no project apart');
-  assert.deepEqual({ ...GROUP_FIRST }, { needs: 5, next: 3, waiting: 3, live: 3 }, 'Needs you shows the most: it is what you came for');
+  assert.deepEqual({ ...GROUP_FIRST }, { needs: 5, busy: 3, live: 3 }, 'Needs you shows the most: it is what you came for');
   const lists = read('frontend/src/features/ai/lists.tsx');
   // 1 Nov 2026: the row whose chat is in the column is never folded away:
   // past the first rows, it joins them.
@@ -245,7 +245,7 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
     row('vote', { myVote: 'yes' }), row('vote', { myVote: 'no' }), row('vote', { myVote: null }),
     row('checking'),
     row('fix_queued'), row('followup_queued'), row('build_queued'),
-    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('stalled'),
+    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'turn' }), row('held', { heldBy: 'daily' }), row('stalled'),
     row('queued'), row('on_hold'),
     row('not_picked_up'), row('not_picked_up', { quietDays: 10 }), row('not_picked_up', { number: null }),
   ].map((r) => words(nextWords(r))), [
@@ -256,13 +256,14 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
     'Garden club · #7 · Waiting for a free builder to follow up on the replies',
     'Garden club · #7 · Ready to build · waiting its turn',
     'Garden club · #7 · Ready to build · waits until a change up for a vote is decided',
+    'Garden club · #7 · Ready to build · waits for Homeroom bot\'s turn on this project',
     'Garden club · #7 · Ready to build · held by today\'s limit on this project',
     'Garden club · #7 · Ready to build · its build has not started',
     'Garden club · #7 · Waiting for a free builder',
     'Garden club · #7 · On hold until Monday',
-    'Garden club · #7 · Nobody is building it yet',
-    'Garden club · #7 · Nobody is building it yet · quiet 10 days',
-    'Garden club · Nobody is building it yet',
+    'Garden club · #7 · Nobody is on it',
+    'Garden club · #7 · Nobody is on it · quiet 10 days',
+    'Garden club · Nobody is on it',
   ], 'a row with no number (a decision) says no "#"');
   // 30 Oct 2026: a decision up for a vote waits for votes, not a builder.
   assert.deepEqual([
@@ -272,8 +273,7 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
     'Garden club · Waiting for votes', 'Garden club · Waiting for votes · you voted Yes',
     'Garden club · Waiting for votes · you voted No',
   ]);
-  assert.equal(message('messages:ai.next.titleCount', { count: 2 }), 'In progress · 2');
-  assert.equal(message('messages:ai.up.titleCount', { count: 2 }), 'Waiting · 2');
+  assert.equal(message('messages:ai.busy.title', { count: 2 }), 'Waiting & in progress · 2');
   assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
   assert.equal(words(heroWords(0, 3)), 'In progress: 3');
   // Y03: a zero says nothing, and with neither there is no line.
@@ -287,10 +287,10 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   assert.deepEqual([
     row('going_live'), row('building', { by: 'bot' }), row('building', { by: 'you' }), row('building', { by: 'someone', claimedBy: 'snait' }),
     row('building', { by: 'someone' }), row('vote'), row('checking'), row('decision'), row('queued'), row('build_queued'),
-    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('on_hold'), row('not_picked_up'), row('mystery'),
+    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'turn' }), row('held', { heldBy: 'daily' }), row('on_hold'), row('not_picked_up'), row('mystery'),
   ].map((r) => words(shortWords(r))), [
     'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Checks', 'Votes', 'A builder', 'In line',
-    'A slot', 'Tomorrow', 'Monday', 'Nobody yet', 'Waiting',
+    'A slot', 'In line', 'Tomorrow', 'Monday', 'Nobody on it', 'Waiting',
   ]);
   // Every id is one whole literal, so the inventory can check it exists.
   assert.ok(!read(MODEL).includes('messages:ai.short.${'));
@@ -321,6 +321,48 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   assert.match(lists, /const ROW = 'flex w-full min-h-\[44px\] md:min-h-\[36px\]/, 'a phone\'s 44px tap target');
 });
 
+test('#6158: a Waiting row says what it waits on, and the rows nobody is moving fold under "Not moving"', () => {
+  const { shortWords, nextWords, NOT_MOVING } = loadTsx(MODEL);
+  const row = (what, extra = {}) => thread(1, 7, what, extra);
+  assert.deepEqual([
+    row('queued', { place: 4 }), row('held', { heldBy: 'approvals', place: 2 }), row('held', { heldBy: 'turn', place: 2 }),
+    row('needs_person'), row('nothing_to_build'), row('not_read'), row('operator'), row('not_picked_up', { quietDays: 12 }),
+  ].map((r) => words(shortWords(r))), [
+    '#4 in line', 'Held · #2 for a slot', '#2 in line', 'Needs a person', 'Nothing to build', 'Not read yet', 'Operator task',
+    'Nobody on it · quiet 12 days',
+  ]);
+  // The tooltip carries Homeroom bot's own reason, on one line.
+  assert.equal(words(nextWords(row('needs_person', { reason: 'A person must choose.' }))),
+    'Garden club · #7 · Homeroom bot left it for a person to decide: A person must choose.');
+  assert.equal(words(nextWords(row('nothing_to_build', { reason: 'A question, not a change.' }))),
+    'Garden club · #7 · Homeroom bot found nothing to build in it: A question, not a change.');
+  assert.equal(words(nextWords(row('not_read'))),
+    'Garden club · #7 · Homeroom bot has not read it yet · ask it from the request\'s page');
+  assert.equal(words(nextWords(row('operator'))), 'Garden club · #7 · An operator task: nobody can do it from Homeroom');
+  assert.equal(words(nextWords(row('queued', { place: 4 }))), 'Garden club · #7 · #4 in line for Homeroom bot to read it');
+  assert.equal(words(nextWords(row('held', { heldBy: 'approvals', place: 2 }))), 'Garden club · #7 · Ready to build · #2 for a slot');
+  assert.deepEqual([...NOT_MOVING].sort(), ['needs_person', 'not_picked_up', 'not_read', 'nothing_to_build', 'operator']);
+  // The part is folded, with its count, over the rows that are not moving;
+  // the ones that are moving stay in the section above it.
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    progress: [], live: [], openRow() {}, openThread() {},
+    waiting: [thread(1, 71, 'queued', { place: 2 }), thread(2, 72, 'not_read'), thread(3, 73, 'operator')],
+  });
+  assert.match(html, /data-ai-still=""/, 'the folded head');
+  assert.match(html, /Not moving · 2/, 'its count is only the rows nobody is moving');
+  assert.match(html, /data-ai-still-rest=""/, 'and a fold of its own');
+  assert.match(html, /aria-expanded="false"/, 'closed until pressed');
+  // #6160 moved these rows to the card of their own, whose head counts the
+  // whole card: the rows moving and the rows folded under Not moving.
+  assert.match(html, /Waiting &amp; in progress · 3/, 'the card\'s head still counts every row');
+  assert.match(html, /#2 in line/, 'the moving rows lead the list');
+  const src = read('frontend/src/features/ai/lists.tsx');
+  assert.match(src, /const stillShown = stillOpen \|\| !!still\?\.lines\.some\(\(l\) => l\.lit\);/, 'a row where you are opens it');
+  assert.match(src, /onClick=\{\(\) => setStillOpen\(\(o\) => !o\)\}/, 'and a press toggles it');
+});
+
 test('the server: a vote you have given waits on others (Up next), and the bot\'s stage decides where its requests go', () => {
   const aiWork = require('../src/services/ai-work');
   const now = new Date('2026-10-29T12:00:00Z');
@@ -344,6 +386,8 @@ test('the server: a vote you have given waits on others (Up next), and the bot\'
   assert.deepEqual(bot('held', { capSuppressed: 'proposals_per_app' }), { group: 'waiting', what: 'held', at, heldBy: 'approvals' },
     'held back until a change up for a vote is decided, as the bot says in Main');
   assert.equal(bot('held', { capSuppressed: 'daily_notes' }).heldBy, 'daily');
+  // #6156: held for the bot's turn among the project's builds, which no vote frees.
+  assert.equal(bot('held', { capSuppressed: 'builds_per_app' }).heldBy, 'turn');
   assert.deepEqual(bot('build_queued'), { group: 'waiting', what: 'build_queued', at });
   assert.deepEqual(bot('queued'), { group: 'waiting', what: 'queued', at }, 'not "Not picked up yet": it is in the bot\'s queue');
   assert.deepEqual(bot('reading'), { group: 'next', what: 'reading', at });
@@ -365,6 +409,32 @@ test('the server: a vote you have given waits on others (Up next), and the bot\'
   assert.deepEqual(aiWork.standing({ ...open, claimed_by: 'aw_me', claimed_mine: true }, ME, now),
     { group: 'next', what: 'building', at, by: 'you' }, 'their own claim');
   assert.equal(aiWork.standing({ ...open, own: false, claimed_by: 'snait' }, ME, now), null, 'one they only wrote in, claimed, asks nothing of them');
+  // #6158: what a request waits on, from the bot's own records, whoever
+  // filed it (botStages covers only its requesters).
+  const facts = (extra = {}) => ({ run: null, queuePlace: null, heldPlace: null, labels: [], viewerDecides: true, ...extra });
+  const personRun = { verdict: 'person', reason: 'A person must choose which column.\nMore detail follows.', held: false };
+  const numbered = { ...open, number: 7 };
+  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({ run: personRun })),
+    { group: 'needs', what: 'decide', at, quietDays: 0, reason: 'A person must choose which column.' },
+    'handed back to a person: Needs you when the viewer decides, with the bot\'s reason');
+  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({ run: personRun, viewerDecides: false })),
+    { group: 'waiting', what: 'needs_person', at, quietDays: 0, reason: 'A person must choose which column.' },
+    'anyone else following it waits on that person');
+  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({ queuePlace: 4 })),
+    { group: 'waiting', what: 'queued', at, quietDays: 0, place: 4 }, 'its place in the queue');
+  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({
+    run: { verdict: 'ready', reason: null, capSuppressed: 'proposals_per_app', held: true }, heldPlace: 2,
+  })), { group: 'waiting', what: 'held', at, quietDays: 0, heldBy: 'approvals', place: 2 }, 'held for a slot, with its place');
+  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({ run: { verdict: 'empty', reason: 'It is a question, not a change.', held: false } })),
+    { group: 'waiting', what: 'nothing_to_build', at, quietDays: 0, reason: 'It is a question, not a change.' });
+  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts()),
+    { group: 'waiting', what: 'not_read', at, quietDays: 0 }, 'never read yet');
+  assert.deepEqual(aiWork.standing({ ...numbered, request_title: 'Operator: rotate the mail key' }, ME, now, null, null, facts()),
+    { group: 'waiting', what: 'operator', at, quietDays: 0 }, 'an operator task, read from its title');
+  assert.equal(aiWork.standing(numbered, ME, now, null, null, facts({ labels: ['Infra'] })).what, 'operator', 'or its label');
+  // A bot stage still wins, and carries its place.
+  assert.deepEqual(aiWork.standing(numbered, ME, now, null, { stage: 'queued', since: at }, facts({ queuePlace: 3 })),
+    { group: 'waiting', what: 'queued', at, place: 3 }, 'the bot\'s own stage keeps its place in line');
   // A decision up for a vote waits for votes; one whose vote is owed is the feed's.
   const decision = { state: 'open', own: true, kind: 'decision', number: null, created_at: at, decision_status: 'open' };
   assert.deepEqual(aiWork.standing({ ...decision, decision_mine: true }, ME, now), { group: 'waiting', what: 'decision', at, myVote: null });
@@ -680,6 +750,73 @@ test('Main Chat is the list\'s first row: the bot\'s mark, its name, what is new
   assert.match(src, /const LIT_ROW = '[^']*bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\]';/, 'the lit tint and ink, as the rail\'s rows are');
   // The page lights Main, a thread, or nothing while a page or a blank thread holds the column.
   assert.match(read('frontend/src/features/ai/index.tsx'), /const lit = !columnShows \|\| blank \? null : openRoot \? `private:\$\{openRoot\}` : 'main';/);
+});
+
+// #6160 (2 Nov 2026): In progress and Waiting were two sections inside the
+// Needs you card, under a line each, so on a busy account that card of
+// to-dos ran on long past what needed you. They are one quieter card of
+// their own now, between Needs you and Live this week, drawn as that is.
+test('#6160: Waiting & in progress is a card of its own between Needs you and Live this week, quieter rows, work under way first', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const bakery = { slug: 'bakery', name: 'Bakery orders', icon_url: null, icon_emoji: null };
+  const row = (threadId, a, what, extra = {}) => ({
+    threadId, number: 100 + threadId, kind: 'work', title: `${a.name} ${what} ${threadId}`, app: a, change: null,
+    href: `#app/${a.slug}/dev/issues/${100 + threadId}`, group: 'next', what, at: null, ...extra,
+  });
+  // Under way first, then what waits: two projects, one with more rows than
+  // it shows before its own Show more.
+  const progress = [row(1, app, 'going_live'), row(2, bakery, 'building', { by: 'bot' })];
+  const waiting = [
+    row(3, app, 'vote'), row(4, bakery, 'not_picked_up'),
+    row(5, app, 'checking'), row(6, bakery, 'held', { heldBy: 'approvals' }),
+    row(7, app, 'queued'), row(8, app, 'not_picked_up'),
+  ];
+  const live = [{ ...row(9, app, 'live'), group: 'live' }];
+  const props = (extra = {}) => ({
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    progress: [], waiting: [], live: [], openRow() {}, openThread() {}, ...extra,
+  });
+  const html = renderComponent(LISTS, 'AiLists', props({ progress, waiting, live }));
+
+  const open = html.indexOf('data-ai-sheet="open"');
+  const busy = html.indexOf('data-ai-sheet="busy"');
+  const liveAt = html.indexOf('data-ai-sheet="live"');
+  assert.ok(open >= 0 && busy > open && liveAt > busy, 'a sheet between Needs you and Live this week');
+
+  // Needs you's card ends where your to-dos end: no In progress or Waiting
+  // section, no lines, and none of their rows.
+  const openSheet = html.slice(open, busy);
+  assert.doesNotMatch(openSheet, /data-ai-list="(?:next|up)"/, 'the two sections are gone from Needs you');
+  assert.doesNotMatch(openSheet, /data-ai-line="going_live"/);
+  assert.match(openSheet, /data-ai-list="work"[^>]*><div class="[^"]*" data-ai-band="">/, 'Needs you keeps its own band');
+
+  // A card like Live this week: its own band, the quieter rows, and a count
+  // of everything in it, work under way and waiting together.
+  const busySheet = html.slice(busy, liveAt);
+  assert.match(busySheet, /data-ai-list="busy"><div class="[^"]*" data-ai-band="">/);
+  assert.match(busySheet, /Waiting &amp; in progress · 8/);
+  assert.match(busySheet, /class="flex w-full min-h-\[40px\] md:min-h-\[32px\][^"]*"[^>]*data-ai-line="going_live"/, 'the quiet row');
+  assert.match(busySheet, /text-\[13px\] leading-5 text-zinc-600 dark:text-zinc-400/, 'the quiet title');
+  assert.equal((busySheet.match(/data-ai-band=""/g) || []).length, 1, 'one band, as Live this week has');
+
+  // One list, grouped by project: under way before waiting, and each
+  // project's rows under its own name.
+  const garden = busySheet.slice(busySheet.indexOf('data-ai-group="garden"'), busySheet.indexOf('data-ai-group="bakery"'));
+  assert.ok(garden.indexOf('data-ai-line="going_live"') < garden.indexOf('data-ai-line="vote"'), 'work under way comes first');
+  assert.match(garden, />Garden club</, 'under its project\'s name');
+  // Four of the garden's rows are moving: three, then its own Show more for
+  // the last. Its two not picked up rows fold under Not moving below.
+  assert.match(garden, /Show 1 more/);
+  assert.match(garden, /data-ai-group-rest=""/);
+  assert.match(busySheet, /Not moving · 2/);
+  // The bakery's two moving rows show whole.
+  assert.doesNotMatch(busySheet.slice(busySheet.indexOf('data-ai-group="bakery"')), /data-ai-group-rest=""/);
+
+  // Nothing under way or waiting, no card, as Live this week has none.
+  const empty = renderComponent(LISTS, 'AiLists', props());
+  assert.doesNotMatch(empty, /data-ai-sheet="busy"/);
+  assert.doesNotMatch(empty, /data-ai-list="busy"/);
 });
 
 // #6153 (2 Nov 2026): a design thread filed as request #14 was listed twice,

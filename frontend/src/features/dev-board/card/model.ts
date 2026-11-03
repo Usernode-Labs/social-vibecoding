@@ -134,6 +134,13 @@ export interface ActionSpec {
   title?: string;
   cls?: string;
   disabled?: boolean;
+  /**
+   * The action is in flight: its press was received and the work is under
+   * way, so the button draws the spinner arc beside its label and says
+   * `aria-busy`. It does NOT disable the button on its own — `disabled`
+   * still does that, and the two are usually set together.
+   */
+  busy?: boolean;
   act?: ActionRef;
   /**
    * Append the clicked button itself to the call — the model can't hold a

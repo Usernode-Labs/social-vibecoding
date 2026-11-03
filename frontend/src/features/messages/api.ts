@@ -37,7 +37,7 @@ import type {
   HomeroomBotCard,
   HomeroomBotLooked,
 } from './types';
-import { t } from '../../lib/i18n/runtime';
+import { t, errorText } from '../../lib/i18n/runtime';
 import { countOf } from './approval-words';
 import { forgetKept, keepCopy, keepRecent, keptCopy } from '../../lib/kept-copies';
 import { releaseOf } from '../../lib/release-eta';
@@ -331,7 +331,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   };
 }
 
-const FILED_LIMITS: ReadonlySet<string> = new Set(['slots', 'bot_wide', 'questions', 'allowance']);
+const FILED_LIMITS: ReadonlySet<string> = new Set(['builds', 'slots', 'bot_wide', 'questions', 'allowance']);
 
 /** #6151: a filed design's next step as the server sends it (design-threads.js filedNext), or null for one this client does not know. */
 export function normalizeFiledNext(input: unknown): BotFiledNext | null {
@@ -658,7 +658,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (pick(body, 'code') === 'contact_restricted') {
       throw new MessagesApiError(response.status, t('messages:api.contactRestricted'));
     }
-    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), t('messages:api.requestFailed', { status: response.status })));
+    throw new MessagesApiError(response.status, errorText(body) || text(pick(body, 'message'), t('messages:api.requestFailed', { status: response.status })));
   }
   return data as T;
 }
@@ -1100,7 +1100,7 @@ export async function uploadAttachment(conversationId: number, file: File): Prom
   });
   let data: unknown = null;
   try { data = await response.json(); } catch { data = null; }
-  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), t('messages:api.uploadFailed', { status: response.status })));
+  if (!response.ok) throw new MessagesApiError(response.status, errorText(data) || text(pick(record(data), 'message'), t('messages:api.uploadFailed', { status: response.status })));
   return normalizeAttachment(pick(record(data), 'attachment') ?? data, conversationId);
 }
 
@@ -1273,7 +1273,7 @@ export async function withdrawChange(sessionId: number): Promise<{ ok: boolean; 
   }
   if (response.ok) return { ok: true, error: null };
   const data = record(await response.json().catch(() => ({})));
-  return { ok: false, error: text(pick(data, 'error')) || t('messages:api.withdraw.failed') };
+  return { ok: false, error: errorText(data) || t('messages:api.withdraw.failed') };
 }
 
 export async function decideBotAction(actionId: number, choice: string, answers?: string[]): Promise<{ label: string | null }> {
@@ -1579,7 +1579,8 @@ export function normalizeBotSlots(input: unknown): BotSlotsView | null {
     botOn: bool(pick(view, 'botOn')),
     acts: bool(pick(view, 'acts')),
     paused: bool(pick(view, 'paused')),
-    cap: strictId(pick(view, 'cap')) || 5,
+    buildCap: strictId(pick(view, 'buildCap')),
+    waitCap: strictId(pick(view, 'waitCap')),
     buildsAtOnce: strictId(pick(view, 'buildsAtOnce')),
     slots: array(pick(view, 'slots')).map(normalizeSlotEntry).slice(0, 50),
     waiting: array(pick(view, 'waiting')).map(normalizeSlotEntry).slice(0, 100),
@@ -1628,7 +1629,7 @@ export async function getHomeroomBotWork(options?: ReadOptions): Promise<Homeroo
  * stopped, never as one still going.
  */
 const STOP_CAUSES = new Set(['time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other']);
-const HELD_BY = new Set(['proposals_per_app', 'proposals_total', 'questions_per_day']);
+const HELD_BY = new Set(['builds_per_app', 'proposals_per_app', 'proposals_total', 'questions_per_day']);
 
 export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
   return array(pick(record(input), 'cards')).map((entry): HomeroomBotActivity | null => {

@@ -193,6 +193,12 @@ function settingsOf(p = {}) {
     voiceChat: s.voiceChat !== false,
     continueReads: s.continueReads !== false,
     proposalCeiling: num(s.proposalCeiling),
+    // #6156: a project's builds and changes waiting for votes, by default,
+    // and the projects an admin set numbers of their own for: one row each,
+    // with its id and slug, a number not set being the default.
+    buildsPerApp: num(p.caps?.buildsPerApp),
+    waitingPerApp: num(p.caps?.proposalsPerApp),
+    appCaps: appCapsOf(s.appCaps, p.apps, p.caps),
     userWeeklyCents: num(s.userWeeklyCents),
     adminWeeklyCents: num(s.adminWeeklyCents),
     // The rest of the console's Settings, so a save through saveSettings
@@ -202,6 +208,29 @@ function settingsOf(p = {}) {
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     liveBuildStream: s.liveBuildStream !== false,
   };
+}
+
+/**
+ * #6156: the stored per-project numbers (settings.appCaps, keyed by app id)
+ * as get_homeroom_bot carries them: [{ appId, app, building, waiting }],
+ * `app` the project's slug where the payload names it (its apps, or the
+ * caps' byApp), and a number not set the default. Pure.
+ */
+function appCapsOf(appCaps, apps = [], caps = {}) {
+  const slugOf = new Map([
+    ...Object.entries(caps?.byApp || {}).map(([slug, own]) => [Number(own?.appId), slug]),
+    ...(apps || []).filter((a) => a && a.id != null).map((a) => [Number(a.id), a.slug]),
+  ]);
+  return Object.entries(appCaps || {}).map(([id, own]) => {
+    const appId = num(id);
+    const app = slugOf.get(appId) || null;
+    return {
+      appId,
+      app: app && SLUG_RE.test(app) ? app : null,
+      building: num(own?.building) ?? num(caps?.buildsPerApp),
+      waiting: num(own?.waiting) ?? num(caps?.proposalsPerApp),
+    };
+  }).filter((row) => row.appId != null).slice(0, 1000);
 }
 
 /**
@@ -239,7 +268,7 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     readReason: READ_REASON_RE.test(String(r.read_reason || '')) ? r.read_reason : null,
     // Held by a cap (homeroom-bot.js simulateCaps): which, and its limit,
     // so a held ready verdict says why it has no build.
-    held: heldOf(r.cap_suppressed, p.caps),
+    held: heldOf(r.cap_suppressed, p.caps, r.app_slug),
     // A held ready verdict acted on again with no read of its own, because
     // the request had not changed: the run it reused (homeroom-bot.js
     // reuseHeldVerdict).
@@ -448,25 +477,34 @@ function moveOffersOf(m) {
 }
 
 // The caps that hold a verdict (homeroom-bot.js simulateCaps).
-const HELD_CAPS = Object.freeze(['proposals_per_app', 'proposals_total', 'question_tripwire']);
+const HELD_CAPS = Object.freeze(['builds_per_app', 'proposals_per_app', 'proposals_total', 'question_tripwire']);
 
 /**
  * A run a cap held: { cap, limit, why } with the cap's limit from the
- * payload's caps and its reason in words, or null when none held it. Pure.
+ * payload's caps and its reason in words, or null when none held it.
+ * #6156: a project's own numbers (caps.byApp, by its slug `app`) over the
+ * defaults. Pure.
  */
-function heldOf(cap, caps = {}) {
+function heldOf(cap, caps = {}, app = null) {
   if (!cap) return null;
   const code = HELD_CAPS.includes(cap) ? cap : null;
   if (!code) return { cap: null, limit: null, why: 'held by a cap' };
-  const limit = num(code === 'proposals_per_app' ? caps?.proposalsPerApp
+  const own = (app && caps?.byApp?.[app]) || {};
+  const limit = num(code === 'builds_per_app' ? own.buildsPerApp ?? caps?.buildsPerApp
+    : code === 'proposals_per_app' ? own.proposalsPerApp ?? caps?.proposalsPerApp
     : code === 'proposals_total' ? caps?.proposalsTotal : caps?.questionsPerAppPerDay);
   return { cap: code, limit, why: heldWords(code, limit) };
 }
 
-/** A cap's hold in words, shared with the console (admin-homeroom-bot.tsx heldLine). Pure. */
+/**
+ * A cap's hold in words, shared with the console (admin-homeroom-bot.tsx
+ * heldLine). #6156: the project's builds and its proposals waiting for
+ * votes are said apart. Pure.
+ */
 function heldWords(cap, limit) {
   const n = limit == null ? '' : `${limit} `;
-  if (cap === 'proposals_per_app') return `held: ${n}proposals open on this app`;
+  if (cap === 'builds_per_app') return `held: ${n}builds under way on this app`;
+  if (cap === 'proposals_per_app') return `held: ${n}proposals waiting for votes on this app`;
   if (cap === 'proposals_total') return `held: the bot's ceiling of ${n}proposals open across Homeroom`;
   if (cap === 'question_tripwire') return `held: ${n}questions asked on this app today`;
   return 'held by a cap';
@@ -520,6 +558,8 @@ const SETTINGS_FIELDS = Object.freeze([
   'weeklyLimitCents', 'userWeeklyCents', 'adminWeeklyCents',
   'turnSeconds', 'turnInputTokens', 'concurrency', 'batchSize', 'buildConcurrency',
   'liveAtOnce', 'perPerson', 'proposalCeiling',
+  // #6156: some projects' own numbers of builds and changes waiting for votes.
+  'appCaps',
   'shadowBuilds', 'shadowBuildPlatform', 'dmChat', 'voiceSession', 'voiceIssue', 'voiceChat',
   'continueReads', 'liveBuildStream',
   // Homeroom bot parity, P8: pictures' model and weekly cap.

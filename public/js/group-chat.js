@@ -1303,7 +1303,7 @@ const GroupChat = {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ choice }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(data.error || PlatformI18n.t('chat:group.botOffer.failed'));
+      if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('chat:group.botOffer.failed'));
     } catch {
       if (window.PlatformUI) PlatformUI.toast(PlatformI18n.t('chat:group.botOffer.failed'));
     }
@@ -3320,7 +3320,7 @@ const GroupChat = {
       });
       const data = await res.json().catch(() => ({}));
       if (data && data.card) GroupChat.applyBotRequestCard({ appSlug: slug, card: data.card });
-      else if (!res.ok && window.PlatformUI) PlatformUI.toast(data.error || PlatformI18n.t('chat:group.bot.askFailed'));
+      else if (!res.ok && window.PlatformUI) PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('chat:group.bot.askFailed'));
     } catch {
       if (window.PlatformUI) PlatformUI.toast(PlatformI18n.t('chat:group.bot.askFailed'));
     }
@@ -3445,16 +3445,22 @@ const GroupChat = {
     const d = new Date(ts == null ? NaN : ts);
     if (isNaN(d.getTime())) return { text: '', title: '' };
     const today = now || new Date();
+    // The date's locale is the interface language with the device's region
+    // (#6103) — the same rule lib/timestamp.ts reads. The device default
+    // stands where the runtime predates it, or where this file is evaluated
+    // without one (a bare test sandbox).
+    const locale = typeof PlatformI18n !== 'undefined' && PlatformI18n.dateLocale
+      ? PlatformI18n.dateLocale() : undefined;
     // No zero-padded hour (polish N5): "4:14 AM", as lib/timestamp.ts.
-    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const title = d.toLocaleString([], {
+    const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+    const title = d.toLocaleString(locale, {
       year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
     const sameDay = d.getFullYear() === today.getFullYear()
       && d.getMonth() === today.getMonth()
       && d.getDate() === today.getDate();
     if (sameDay) return { text: time, title };
-    const date = d.toLocaleDateString([], d.getFullYear() === today.getFullYear()
+    const date = d.toLocaleDateString(locale, d.getFullYear() === today.getFullYear()
       ? { month: 'short', day: 'numeric' }
       : { year: 'numeric', month: 'short', day: 'numeric' });
     return { text: `${date}, ${time}`, title };
@@ -4068,7 +4074,7 @@ const GroupChat = {
           body: file,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || PlatformI18n.t('chat:group.attach.uploadFailedStatus', { status: res.status }));
+        if (!res.ok) throw new Error(PlatformI18n.errorText(data) || PlatformI18n.t('chat:group.attach.uploadFailedStatus', { status: res.status }));
         entry.id = data.id;
         entry.kind = data.kind;
         entry.meta = data.meta || null;

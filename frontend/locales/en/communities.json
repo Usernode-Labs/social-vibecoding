@@ -243,6 +243,46 @@
     "text": "Needs you",
     "description": "Title of the page of the Communities screen that shows, one at a time, every vote waiting for this person across their projects."
   },
+  "needsYou.filter.label": {
+    "text": "Show votes",
+    "description": "Accessible name of the row of filter chips above the Needs you feed (All, Votes that decide, Advisory), which narrows the votes waiting on the person to one kind."
+  },
+  "needsYou.filter.all": {
+    "text": "All",
+    "description": "Filter chip above the Needs you feed: shows every vote waiting on the person, whether their vote decides it or is advisory."
+  },
+  "needsYou.filter.deciding": {
+    "text": "Votes that decide",
+    "description": "Filter chip above the Needs you feed: shows only the votes that count toward whether a change goes in."
+  },
+  "needsYou.filter.advisory": {
+    "text": "Advisory",
+    "description": "Filter chip above the Needs you feed: shows only the changes where the person's vote is recorded but does not decide the outcome."
+  },
+  "needsYou.filter.allCount_one": {
+    "text": "All, {{count}} vote",
+    "description": "Accessible name of the All filter chip above the Needs you feed, with how many votes wait on the person. {{count}} is that number."
+  },
+  "needsYou.filter.allCount_other": {
+    "text": "All, {{count}} votes",
+    "description": "Accessible name of the All filter chip above the Needs you feed, with how many votes wait on the person. {{count}} is that number."
+  },
+  "needsYou.filter.decidingCount_one": {
+    "text": "Votes that decide, {{count}} vote",
+    "description": "Accessible name of the Votes that decide filter chip above the Needs you feed, with how many of the person's votes decide their outcome. {{count}} is that number."
+  },
+  "needsYou.filter.decidingCount_other": {
+    "text": "Votes that decide, {{count}} votes",
+    "description": "Accessible name of the Votes that decide filter chip above the Needs you feed, with how many of the person's votes decide their outcome. {{count}} is that number."
+  },
+  "needsYou.filter.advisoryCount_one": {
+    "text": "Advisory, {{count}} vote",
+    "description": "Accessible name of the Advisory filter chip above the Needs you feed, with how many advisory votes wait on the person. {{count}} is that number."
+  },
+  "needsYou.filter.advisoryCount_other": {
+    "text": "Advisory, {{count}} votes",
+    "description": "Accessible name of the Advisory filter chip above the Needs you feed, with how many advisory votes wait on the person. {{count}} is that number."
+  },
   "reel.fallbackTitle.change": {
     "text": "A change",
     "description": "Stands in for the title of a proposal (a change to a project put up for a vote) in the Needs you feed when the proposal has no title."

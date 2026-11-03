@@ -85,6 +85,22 @@ function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
 }
 
+/**
+ * #6098: a vote sent from the keyboard leaves focus where it was. A button
+ * that was `disabled` while its vote went out dropped focus to the page, so
+ * the next Tab started again at the top. The buttons are `aria-disabled` now;
+ * a redraw that replaced the node is found again by the key it carries —
+ * `data-ballot-option` or `data-close-vote`.
+ */
+function refocusAfterVote(host: HTMLElement | null, attr: string, from: HTMLElement | null, wasFocused: boolean): void {
+  if (!wasFocused || typeof document === 'undefined') return;
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  const key = from?.getAttribute(`data-${attr}`) || '';
+  if (!key) return;
+  host?.querySelector<HTMLElement>(`[data-${attr}="${key}"]`)?.focus({ preventScroll: true });
+}
+
 interface ChangeView {
   row: any;
   card: DevCardModel;
@@ -222,10 +238,11 @@ function ChangeLine({ item, view, letter = null }: { item: ThreadItem; view: Cha
 function PlanLine({ plan }: { plan: RequestSpecCard }): ReactNode {
   const t = useMessages('project');
   const [loading, setLoading] = useState(false);
+  const fromPlan = t('project:topic.thread.page.fromPlan', { title: plan.title });
   return (
     <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-plan={plan.key}>
       <span aria-hidden="true">📋</span>
-      <span className="min-w-0 truncate">{t('project:topic.thread.page.fromPlan', { title: plan.title })}</span>
+      <span className="min-w-0 truncate" title={fromPlan}>{fromPlan}</span>
       <button
         type="button"
         className="shrink-0 font-semibold text-violet-700 hover:underline disabled:opacity-60 dark:text-violet-300"
@@ -316,7 +333,9 @@ function ChangeBody({ item, view, plan = null, ballot = false }: {
       {plan ? <PlanLine plan={plan} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} s={view.v.shots} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
-        <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('project:topic.thread.page.underway')}</p>
+        <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'building'}>
+          {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
+        </p>
       ) : view ? (
         <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} />
       ) : null}
@@ -526,9 +545,13 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
     }, 50);
   };
   const project = appView()?.appData?.name || '';
-  const choose = async (pick: number | 'neither' | 'close') => {
+  const choose = async (pick: number | 'neither' | 'close', from: HTMLElement | null = null) => {
     const av = appView();
     if (busy || !av) return;
+    // #6098: keep the reader's place. The button is `aria-disabled` while the
+    // votes are on their way, so it keeps focus; a redraw that replaced it
+    // is found again by the key it carries.
+    const wasFocused = !!from && document.activeElement === from;
     setBusy(true);
     try {
       for (const v of ballotVotes(ballot, pick, counts)) {
@@ -540,6 +563,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
       setBusy(false);
       setRevision((n) => n + 1);
       onChanged();
+      refocusAfterVote(box.current, 'ballot-option', from, wasFocused);
     }
   };
   const choices = [
@@ -598,9 +622,9 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
                   aria-checked={on}
                   className="dev-vote-btn"
                   data-ballot-option={c.key}
-                  disabled={busy}
+                  aria-disabled={busy || undefined}
                   style={on ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
-                  onClick={() => { if (!on) void choose(c.pick); }}
+                  onClick={(e) => { if (!on) void choose(c.pick, e.currentTarget); }}
                 >
                   {on ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}{c.label}
                 </button>
@@ -647,21 +671,26 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
   const row = useCloseRow(slug, close, revision);
-  const vote = async (side: 'up' | 'down') => {
+  const box = useRef<HTMLDivElement>(null);
+  const vote = async (side: 'up' | 'down', from: HTMLElement | null = null) => {
     const av = appView();
     if (busy || !av || typeof av.castIssueVote !== 'function') return;
+    // #6098: the same rule as the ballot's: the button keeps focus while the
+    // vote is sent, and is found again if a redraw replaced it.
+    const wasFocused = !!from && document.activeElement === from;
     setBusy(true);
     try { await av.castIssueVote(close.id, side); } finally {
       setBusy(false);
       setRevision((n) => n + 1);
       onChanged();
+      refocusAfterVote(box.current, 'close-vote', from, wasFocused);
     }
   };
   const mine = row ? row.myVote : close.myVote || null;
   const yes = row ? row.yes : 0;
   const need = row ? row.need : 1;
   return (
-    <div className="mt-3" data-close-proposal={close.id}>
+    <div ref={box} className="mt-3" data-close-proposal={close.id}>
       <div className={KICKER}>{t('project:topic.thread.close.kicker', { by: close.by || t('project:topic.thread.page.someone') })}</div>
       <button type="button" className="mt-0.5 block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => appView()?.openTopic?.('gov', close.id)}>
         {close.reason || close.title || t('project:topic.thread.item.close')}
@@ -684,10 +713,10 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
                   type="button"
                   className="dev-vote-btn"
                   aria-pressed={on}
-                  disabled={busy}
+                  aria-disabled={busy || undefined}
                   data-close-vote={side}
                   style={on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
-                  onClick={() => { void vote(side); }}
+                  onClick={(e) => { void vote(side, e.currentTarget); }}
                 >
                   {side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />}
                   {side === 'up' ? t('project:topic.thread.close.yes') : t('project:topic.thread.close.no')}

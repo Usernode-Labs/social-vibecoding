@@ -248,3 +248,55 @@ test('notifyReleased tolerates the shapes the callers actually pass it', () => {
   assert.doesNotThrow(() => localAgent.notifyReleased({ released: 0, sessionIds: [] }));
   assert.doesNotThrow(() => localAgent.notifyReleased({ released: 1, sessionIds: [42] }));
 });
+
+// ── A turn nothing picked up ───────────────────────────────────────────────
+
+test('a queued or offered turn older than the offer timeout is released', async () => {
+  const pool = makePool([
+    [/UPDATE local_agent_turns/, [{ session_id: 42 }, { session_id: 43 }]],
+  ]);
+  const woken = [];
+  const onTurn = (id) => () => woken.push(id);
+  const listeners = [[42, onTurn(42)], [43, onTurn(43)]];
+  for (const [id, fn] of listeners) localAgent._bus.on(`turn:${id}`, fn);
+  try {
+    assert.equal(await localAgent.sweepUnclaimedTurns(pool), 2);
+  } finally {
+    for (const [id, fn] of listeners) localAgent._bus.removeListener(`turn:${id}`, fn);
+  }
+  const sweep = pool.calls[0];
+  assert.match(sweep.sql, /status = 'abandoned'/);
+  assert.match(sweep.sql, /status IN \('queued', 'offered'\)/,
+    'a turn the machine accepted is never released by age');
+  assert.match(sweep.sql, /created_at <= NOW\(\) - \(\$1 \|\| ' milliseconds'\)::INTERVAL/);
+  assert.match(sweep.sql, /finished_at = NOW\(\)/, 'the terminal row must say when it ended');
+  assert.deepEqual(sweep.params, ['90000', 'Nothing picked up the turn within 90 seconds.']);
+  assert.deepEqual(woken.sort(), [42, 43], 'each waiting session is woken to re-read the row');
+
+  // Nothing old enough: the update touched no row, so nothing is notified.
+  const quiet = makePool([[/UPDATE local_agent_turns/, []]]);
+  assert.equal(await localAgent.sweepUnclaimedTurns(quiet), 0);
+  assert.match(quiet.calls[0].params[0], /^\d+$/);
+});
+
+test('abandonTurn ends only a live turn, with a bounded reason', async () => {
+  const pool = makePool([
+    [/UPDATE local_agent_turns/, [{ id: '11', session_id: 42 }]],
+  ]);
+  const row = await localAgent.abandonTurn(pool, '11', 'Sending the turn failed: boom');
+  assert.equal(row.id, '11');
+  const update = pool.calls[0];
+  assert.match(update.sql, /status = 'abandoned'/);
+  assert.match(update.sql, /WHERE id = \$1 AND status = ANY\(\$3::TEXT\[\]\)/);
+  assert.deepEqual(update.params, ['11', 'Sending the turn failed: boom', localAgent.LIVE_TURN_STATUSES]);
+  // Terminal rows keep their own outcome: the conditional update matches
+  // nothing, so nothing is rewritten or notified.
+  assert.equal(await localAgent.abandonTurn(makePool([[/UPDATE local_agent_turns/, []]]), '11', 'x'), null);
+
+  // The error_detail column's CHECK is 4096 characters, so a long reason is
+  // cut rather than making the whole update fail.
+  const long = makePool([[/UPDATE local_agent_turns/, []]]);
+  await localAgent.abandonTurn(long, '11', 'x'.repeat(5000));
+  assert.equal(long.calls[0].params[1].length, 4096);
+  assert.equal(localAgent.MAX_ERROR_DETAIL_CHARS, 4096);
+});

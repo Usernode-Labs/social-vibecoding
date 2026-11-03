@@ -23,7 +23,7 @@
 // The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
 // both are published by sibling modules the island imports BEFORE this one, and
 // every read happens at call time, long after the bundle has evaluated.
-import { t as message, htmlText } from '../../lib/i18n/runtime';
+import { t as message, htmlText, errorText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { linkKind } from '../../lib/repo-link.js';
 import { rankSearch, searchKey } from '../../lib/search-rank.js';
@@ -2453,7 +2453,7 @@ const Home = {
         body: JSON.stringify({ favorited: desired }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(errorText(data) || `HTTP ${res.status}`);
       PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
       // #4600: a pin that JOINED (the server says so: `joined`, after it has
       // counted "Join a community") is a join, and says so as setMembership
@@ -2583,7 +2583,7 @@ const Home = {
       const retry = typeof window !== 'undefined' ? window.UsernameFirstRun?.publicRetry : null;
       const res = desired && retry ? await retry(write) : await write();
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(errorText(data) || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
       PlatformUI.toast(desired ? message('home:membership.joined', { community: name }) : message('home:membership.left', { community: name }));
       Home._announceMembership(slug, desired);
@@ -2630,7 +2630,7 @@ const Home = {
         body: JSON.stringify({ favorited: desired }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(errorText(data) || `HTTP ${res.status}`);
       if (desired) Home._revealSlug = slug;
       PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
       if (desired && data && data.joined === true) Home._announceMembership(slug, true);
@@ -4824,7 +4824,7 @@ const Home = {
       const res = await fetch(`/api/apps/${app.slug}/check-updates`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        PlatformUI.toast(data.error || message('home:menu.checkUpdates.failedHttp', { status: res.status }));
+        PlatformUI.toast(errorText(data) || message('home:menu.checkUpdates.failedHttp', { status: res.status }));
       } else {
         Home.reportCheckResult(data);
       }
@@ -4846,7 +4846,7 @@ const Home = {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        PlatformUI.toast(data.error || message('home:menu.lock.failedHttp', { status: res.status }));
+        PlatformUI.toast(errorText(data) || message('home:menu.lock.failedHttp', { status: res.status }));
         return;
       }
       Home.updateAppCardLock(app.slug, nextLocked);

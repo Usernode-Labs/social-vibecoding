@@ -1138,11 +1138,22 @@ test('#4818: weekDate formats in the interface language, never a fixed en-US', (
     Date.prototype.toLocaleDateString = original;
   }
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].locales, 'en', 'the interface language (getLanguage) is the locale, not the device default');
+  // #6103: the locale is the date rule — the interface language with the
+  // device's region. node's own navigator supplies one where it has it.
+  const { dateLocale } = loadTsx('frontend/src/lib/i18n/locale.ts');
+  const device = typeof navigator === 'undefined' ? []
+    : (navigator.languages?.length ? navigator.languages : [navigator.language].filter(Boolean));
+  assert.equal(seen[0].locales, dateLocale('en', device),
+    'the date locale (getDateLocale), not the bare device default');
   assert.equal(seen[0].options.timeZone, 'UTC', 'a week is still named by its UTC days');
-  assert.equal(original.call(new Date(ms), 'fr', { month: 'short', day: 'numeric', timeZone: 'UTC' }), '25 août',
-    'so a French interface reads "25 août"');
-  assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'), /toLocaleDateString\(getLanguage\(\), \{/);
+  const options = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+  assert.equal(original.call(new Date(ms), 'en-GB', options), '25 Aug',
+    'an English interface on a UK device reads the day first');
+  assert.equal(original.call(new Date(ms), 'en', options), 'Aug 25',
+    'with no device region the English default keeps the month first');
+  assert.equal(original.call(new Date(ms), 'fr', options), '25 août',
+    'and a French interface reads "25 août"');
+  assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'), /toLocaleDateString\(getDateLocale\(\), \{/);
 });
 
 // ── #4717: the page fetches its week, and says so while it does ───────
@@ -2941,7 +2952,7 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   // The first line: the small glyph (This week's), the title, then the
   // card's own status pill and its Vote at the line's end, the pill first.
   assert.match(html, /^<div class="dev-ws-wrow dev-ws-lrow" data-ws-row="[^"]+" data-ws-kind="change" data-ws-open="proposal:34"><span class="dev-ws-hrow-glyph" data-kind="change" aria-hidden="true"><svg/);
-  assert.match(html, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/34">[^<]+<\/a><span class="dev-ws-wvote" data-ws-vote=""><span class="dev-ws-row-state [^"]*dev-ws-wvote-state"[^>]*>[^<]+<\/span><span class="dev-ws-wvote-btn"><button type="button" class="dev-vote-btn"[^]*?<\/button><\/span><\/span><\/span>/,
+  assert.match(html, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/34"[^>]*>[^<]+<\/a><span class="dev-ws-wvote" data-ws-vote=""><span class="dev-ws-row-state [^"]*dev-ws-wvote-state"[^>]*>[^<]+<\/span><span class="dev-ws-wvote-btn"><button type="button" class="dev-vote-btn"[^]*?<\/button><\/span><\/span><\/span>/,
     'the title, then the pill, then Vote, closing the first line');
   // The second: the number and its maker (somebody else's, so named), then
   // the tags, and no vote. No age (#4716).
@@ -4499,7 +4510,7 @@ test('what app.css reads off the page\'s hosts is a class, never a :has() that l
   // What each one means. The skeleton has no band, no board and no tab; the
   // board is the All items page read by stage and nothing else draws one.
   assert.match(WORKSHOP, /useWorkshopHostState\(\s*hostRef,\s*!v\.loading,\s*!v\.loading && tab === 'all' && group === 'stage',\s*!v\.loading && tab === 'needs',\s*\);/);
-  assert.match(WORKSHOP, /\{group === 'stage' \? \(\s*<div className="dev-ws-board"/, 'the pane the class stands for');
+  assert.match(WORKSHOP, /\{group === 'stage' \? \(\s*<>\s*\{v\.emptyNote \? \([\s\S]*?\) : null\}\s*<div className="dev-ws-board"/, 'the pane the class stands for');
 
   // The stylesheet reads exactly those three, with the weight the `:has()`
   // forms had (a `:has()` weighs what its argument weighs). The one
@@ -4891,7 +4902,91 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   assert.equal(message('project:boardEmpty.press.hub.plain.full'),
     'Nothing on the board yet. Press <0>⋯</0> to suggest an improvement; to make one yourself, use Build it now there.');
   assert.match(WORKSHOP, /\{startHere \? <StartHereBanner slug=\{slug\} name=\{projectName\} bot=\{!!\(v\.mine && v\.mine\.bot\)\} \/> : null\}/);
-  assert.match(WORKSHOP, /\{v\.emptyNote && !building && !startHere \? \(\s*<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+onHub\s*\/>/);
+  assert.match(WORKSHOP, /\{v\.emptyNote && !building && !startHere \? \(\s*<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+start=\{emptyStart\}\s+onHub\s*\/>/);
+});
+
+test('#6111: an empty board offers the one action that starts the first change', async () => {
+  const empty = (over, appOver) => {
+    const AppView = makeAppView(appOver);
+    seed(AppView);
+    AppView._ghIssues = [];
+    AppView._proposals = [];
+    AppView._merged = [];
+    AppView._mergedTotal = 0;
+    Object.assign(AppView, over || {});
+    return AppView;
+  };
+  const START = / data-ws-empty-start=""[^>]*>Start a change<\/button>/;
+  const START_BOT = / data-ws-empty-start-bot=""[^>]*>Tell Homeroom bot what to change<\/button>/;
+
+  // All items, By category: the note, then one primary action.
+  const category = workshopHtml(empty(), 'all');
+  assert.match(category, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /, 'the note is unchanged');
+  assert.match(category, START, 'with Start a change under it');
+  assert.doesNotMatch(category, / data-ws-empty-start-bot=""/);
+  assert.equal(message('project:boardEmpty.start'), 'Start a change');
+  assert.equal(message('project:boardEmpty.startBot'), 'Tell Homeroom bot what to change');
+
+  // Where Homeroom bot builds for this viewer, the one action is its chat.
+  const botty = empty();
+  botty._ghIssuesMeta = { ...botty._ghIssuesMeta, homeroomBot: { typicalMinutes: 8 } };
+  const bot = workshopHtml(botty, 'all');
+  assert.match(bot, START_BOT, 'the bot door replaces the session');
+  assert.doesNotMatch(bot, / data-ws-empty-start=""/, 'never both');
+
+  // By stage used to show only a column of "Nothing here yet"s: the note and
+  // its action now lead the columns.
+  const stageApp = empty({}, { localStorage: { devWorkshopGroup: 'stage' } });
+  const stage = workshopHtml(stageApp, 'all');
+  assert.ok(stage.includes('data-ws-stage'), 'the columns render');
+  assert.match(stage, START);
+  assert.ok(stage.indexOf('data-ws-empty') < stage.indexOf('data-ws-stage'), 'the note comes before the columns');
+
+  // A board with entries is not empty, and By stage says nothing.
+  const full = makeAppView({ localStorage: { devWorkshopGroup: 'stage' } });
+  seed(full);
+  assert.ok(!workshopHtml(full, 'all').includes('data-ws-empty'), 'no note on a board with cards');
+
+  // A search that hides everything is not an empty board.
+  const searched = empty();
+  searched._workshopThemes = themes([{ id: 't1', name: 'Voting', items: ['issue:12'] }]);
+  searched._kanbanFilters = { ...searched._defaultKanbanFilters(), q: 'nothing matches this' };
+  const filtered = workshopHtml(searched, 'all');
+  assert.match(filtered, /Nothing here matches the current search and filters\./);
+  assert.doesNotMatch(filtered, START, 'no start action for a search');
+
+  // Nor is a list that could not load.
+  const failed = empty();
+  failed._ghIssuesMeta = { ...failed._ghIssuesMeta, note: 'could not load' };
+  const unloaded = workshopHtml(failed, 'all');
+  assert.match(unloaded, /Couldn&#x27;t load open requests right now\./);
+  assert.doesNotMatch(unloaded, START, 'no start action when we cannot tell');
+
+  // A viewer who can only look has nowhere to start.
+  withDevActions({ readOnly: true }, () => {
+    const html = workshopHtml(empty(), 'all');
+    assert.match(html, /data-ws-empty=""[^>]*>Nothing on the board yet\.<\/div>/);
+    assert.doesNotMatch(html, START, 'no button for a reader');
+  });
+
+  // While Homeroom bot builds the first version the board is empty too, but
+  // "start the first change" would be the change already being made. The
+  // community read runs in an effect, which static rendering does not run,
+  // so this half is pinned at the gate that reads it.
+  assert.match(WORKSHOP, /const emptyStart = v\.emptyNote && !v\.emptyNote\.loadFailed && !building/,
+    'no start while the bot builds the first version');
+
+  // The hub carries the same note and button once it has shipped, and none
+  // while the start-here banner holds its place.
+  const finished = empty({ _mergedTotal: 3 });
+  const hub = workshopHtml(finished, 'status');
+  assert.match(hub, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /);
+  assert.match(hub, START);
+  const unstarted = empty();
+  const banner = workshopHtml(unstarted, 'status');
+  assert.match(banner, /data-ws-start-here=""/);
+  assert.ok(!banner.includes('data-ws-empty'), 'the banner says it');
+  assert.doesNotMatch(banner, START);
 });
 
 test('exactly one surface draws the toolbar, so its ids stay unique', () => {
@@ -7241,4 +7336,36 @@ test('the Hub has its own address, #app/<slug>/dev/hub, for links that mean the 
   assert.match(appSrc, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /id: 'open_community'[^\n]*target: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`/);
   assert.match(read('src/services/shared-objects.js'), /href: link\.type === 'hub' \? `#app\/\$\{slug\}\/dev\/hub`/);
+});
+
+// ── #6098: a keyboard vote keeps the reader's place ──────────────────
+//
+// A vote button used to be `disabled` while its vote was on its way, which
+// dropped keyboard focus to the page: the next Tab started again at the top.
+// It is shown busy (`aria-disabled`) instead, so it keeps focus, and each
+// handler refuses a second press itself.
+
+test('#6098: the card\'s Vote button keeps focus while its vote is sent, and takes focus back after the picker sends', () => {
+  // Only the spec's own `disabled` and an approval switch the face off.
+  assert.match(CARD_TSX, /disabled=\{disabled \|\| approved\}/);
+  assert.doesNotMatch(CARD_TSX, /disabled=\{[^}]*!!sending[^}]*\}/, 'never by its own send');
+  assert.match(CARD_TSX, /aria-disabled=\{sending \? 'true' : undefined\}/, 'shown busy instead, which keeps keyboard focus');
+  assert.match(CARD_TSX, /if \(sending\) return;\n    if \(open \|\| sheetRef\.current\)/, 'and the second press is refused');
+  // A send from the desktop popover returns focus to the face with no scroll:
+  // the popover is a portal and would take focus down with it.
+  assert.match(CARD_TSX, /const btn = open \? btnRef\.current : null;\s*shut\(\);\s*if \(btn\?\.isConnected\) btn\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(CSS, /\.dev-vote-btn\[aria-disabled="true"\] \{ cursor: progress; opacity: 0\.75; \}/);
+});
+
+test('#6098: the request\'s ballot and its vote to close keep the button that was pressed focused', () => {
+  const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
+  assert.doesNotMatch(src, /disabled=\{busy\}/, 'neither the ballot nor the close vote is switched off mid-vote');
+  assert.match(src, /data-ballot-option=\{c\.key\}\s*aria-disabled=\{busy \|\| undefined\}/);
+  assert.match(src, /aria-pressed=\{on\}\s*aria-disabled=\{busy \|\| undefined\}\s*data-close-vote=\{side\}/);
+  assert.match(src, /onClick=\{\(e\) => \{ if \(!on\) void choose\(c\.pick, e\.currentTarget\); \}\}/, 'the pressed button is what comes back');
+  assert.match(src, /onClick=\{\(e\) => \{ void vote\(side, e\.currentTarget\); \}\}/);
+  assert.match(src, /if \(active && active !== document\.body\) return;/, 'only where focus was actually lost');
+  assert.match(src, /focus\(\{ preventScroll: true \}\)/, 'and the page does not scroll under it');
+  assert.match(src, /refocusAfterVote\(box\.current, 'ballot-option', from, wasFocused\)/);
+  assert.match(src, /refocusAfterVote\(box\.current, 'close-vote', from, wasFocused\)/);
 });

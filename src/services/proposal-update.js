@@ -986,7 +986,11 @@ async function withProposedSummary(ctx, result) {
 //
 //   - No PR yet: store it as the name the lazily-created PR will take at
 //     propose time (chat_sessions.proposed_pr_title; used by
-//     routes/votes.js's promote path via pr-metadata's preferredTitle).
+//     routes/votes.js's promote path via pr-metadata's preferredTitle) AND
+//     as the change's own name now (session_title), which is the column the
+//     change's cards read (#6124). Writing only the deferred name left a
+//     corrected title saved but invisible: the cards kept the old
+//     session_title. PATCH /api/sessions/:id/title already writes both.
 //   - A PR exists: RENAME it — pr_title/session_title in the panel, the PR
 //     on GitHub best-effort after. This is how an auto-titled proposal
 //     ("Initialize repository" over a Klondike rebuild — PR #171) gets its
@@ -1048,10 +1052,15 @@ async function applyProposedTitle({ pool, gh, session, owner, repo, title, viewe
     });
     return { changed: true, rejected: null };
   }
-  if ((session.proposed_pr_title || null) === title) return nothing;
+  // Both columns, not just the deferred name: a row saved before #6124
+  // carries the title in proposed_pr_title alone and still shows the old
+  // session_title on its card, so a resubmit heals it here.
+  if ((session.proposed_pr_title || null) === title && (session.session_title || null) === title) return nothing;
   try {
     await pool.query(
-      'UPDATE chat_sessions SET proposed_pr_title = $1 WHERE id = $2',
+      // ::text on both: proposed_pr_title is varchar(256) and session_title
+      // is text, so one parameter used for both needs its type pinned.
+      'UPDATE chat_sessions SET proposed_pr_title = $1::text, session_title = $1::text WHERE id = $2',
       [title, Number(session.id)]
     );
   } catch (err) {
@@ -1061,6 +1070,7 @@ async function applyProposedTitle({ pool, gh, session, owner, repo, title, viewe
     return { changed: false, rejected: 'write_failed' };
   }
   session.proposed_pr_title = title;
+  session.session_title = title;
   log.info('proposal-update', 'stored the revision\'s proposed title', {
     sessionId: Number(session.id),
   });

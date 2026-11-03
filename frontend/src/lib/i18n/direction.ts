@@ -68,6 +68,26 @@ export function dirSign(): 1 | -1 {
 }
 
 /**
+ * The step a left or right arrow key takes through a row, in the row's own
+ * order: `1` toward its end, `-1` toward its start, `0` for any other key.
+ * The arrow moves to what is on that side of the screen, so in Arabic, where
+ * the row starts on the right, Left is forward. A browser's own radio buttons
+ * do the same.
+ */
+export function inlineStep(key: string): -1 | 0 | 1 {
+  if (key === 'ArrowRight') return dirSign();
+  if (key === 'ArrowLeft') return dirSign() === 1 ? -1 : 1;
+  return 0;
+}
+
+/** `inlineStep`, for a group that also answers Up and Down, which read the same in every language. */
+export function arrowStep(key: string): -1 | 0 | 1 {
+  if (key === 'ArrowDown') return 1;
+  if (key === 'ArrowUp') return -1;
+  return inlineStep(key);
+}
+
+/**
  * Something a person wrote, for a line of a right-to-left screen that has no
  * element of its own to carry `dir="auto"` (a list row's preview, inside a
  * translated sentence). Unicode's isolates give it its own direction, so an

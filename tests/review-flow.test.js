@@ -515,7 +515,8 @@ test('a No asks why first: four answers and the optional line, and nothing is ca
   // The composed reason is the answer, then the line when one is written,
   // within the server's limit.
   assert.match(src, /const text = \(detail\s*\? t\('communities:review\.why\.withDetail', \{ choice: choiceText, detail \}\)\s*: choiceText\)\.slice\(0, NO_LINE_MAX\);/);
-  assert.match(src, /if \(await cast\('no', text\)\) setShared\(text\);/);
+  // #6098: a sent No comes back to No, so the next Tab carries on from it.
+  assert.match(src, /if \(await cast\('no', text\)\) \{ setShared\(text\); setRefocus\(\(n\) => n \+ 1\); \}/);
   // A No this page did not cast has no known line: the link opens the sheet.
   const offered = sheetHtml({ vote: 'no', state: 'voted' });
   assert.match(offered, /data-rf-voted="no"/);
@@ -820,4 +821,49 @@ test('from 768px the change page is a panel under the header, its vote sheet at 
   assert.match(block, /\.rf-page-dim \{ display: block; position: absolute; inset: 0; [^}]*pointer-events: auto; \}/);
   assert.match(src, /<div ref=\{dimRef\} className="rf-page-dim" onClick=\{onDone\} aria-hidden="true" \/>\s*<div ref=\{pageRef\} className="rf-page"/);
   assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 0 \}, \{ opacity: 1 \}\], \{ duration: OPEN_MS, easing: EASE \}\)/, 'the dim fades in as the run comes up');
+});
+
+// ── #6098: a keyboard vote keeps the reader's place ────────────────────
+//
+// The pair used to be `disabled` while a vote was on its way, which dropped
+// keyboard focus to the page. It is shown busy (`aria-disabled`) instead, so
+// it keeps focus, and a No sent with its reason comes back to No.
+
+test('#6098: the vote pair is shown busy, not switched off, so it keeps keyboard focus', () => {
+  const vs = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  assert.doesNotMatch(vs, /rf-pair-btn"[^>]*disabled=\{busy\}/, 'no pair button is switched off mid-vote');
+  assert.match(vs, /data-rf-vote="yes" aria-disabled=\{busy \|\| undefined\}/);
+  assert.match(vs, /data-rf-vote="no" aria-disabled=\{busy \|\| undefined\}/);
+  // A button that can still be pressed has to refuse the press itself.
+  assert.match(vs, /const tap = \(v: Vote\) => \{\s*\/\/[\s\S]*?if \(busy\) return;/);
+  // The rendered pair carries no disabled attribute, at rest or on a vote.
+  for (const props of [{}, { state: 'voted', vote: 'yes' }]) {
+    assert.doesNotMatch(sheetHtml(props), /rf-pair-btn[^>]*\sdisabled=/, JSON.stringify(props));
+  }
+  // A No sent with its reason comes back to No once the sheet has redrawn.
+  assert.match(vs, /await cast\('no', text\)\) \{ setShared\(text\); setRefocus\(\(n\) => n \+ 1\); \}/);
+  assert.match(vs, /querySelector<HTMLElement>\('\[data-rf-vote="no"\]'\)\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(read('public/css/app.css'), /\.rf-pair-btn\[aria-disabled="true"\] \{ opacity: \.6; \}/);
+});
+
+// #6199: the run's order is the feed's — the changes that decide come first
+// (the server's decidingFirst) — and the vote-type chips narrow the run
+// without reordering it. A fresh or remounted run opens on the first change,
+// so a feed of [deciding, advisory] opens on the deciding one rather than on
+// the advisory row below it.
+test('#6199: the run opens on the change that decides, and a filter holds only its kind', () => {
+  const voteFilter = loadTsx('frontend/src/features/workshop/vote-filter.tsx');
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /const \[filter, setFilter\] = useState<VoteFilter>\('all'\);/);
+  assert.match(src, /const run = list \? filterByVoteType\(list, filter, reviewVoteType\) : \[\];/);
+  const feed = [feedItem({ id: 41 }), feedItem({ id: 42, advisory: true })];
+  const shaped = model.orderForReview(model.toReviewItems(feed, () => null));
+  const openOn = (which) => {
+    const run = voteFilter.filterByVoteType(shaped, which, (it) => (it.advisory || it.uncounted ? 'advisory' : 'deciding'));
+    return run.find((it) => it.kind !== 'governance');
+  };
+  assert.equal(openOn('all').id, 41, 'the deciding change is where a remounted run opens');
+  assert.equal(openOn('deciding').id, 41);
+  assert.equal(openOn('advisory').id, 42, 'the advisory filter holds only the advisory change');
+  assert.equal(shaped.filter((it) => it.advisory).length, 1, 'the advisory mark survives to the flow');
 });

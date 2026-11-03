@@ -1796,6 +1796,7 @@ const AppView = {
   // dropped with the cached feed when a session ends (App._dropCachedSession).
   clearOfflineReady() {
     try { localStorage.removeItem(AppView.OFFLINE_READY_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(AppView.OFFLINE_CACHE_KEY); } catch { /* ignore */ }
   },
 
   // Bridge -> shell. Mirrors handleIssueStateMessage: only the mounted
@@ -1816,6 +1817,158 @@ const AppView = {
     // did not prime). Whatever this device knew stands.
     if (type === 'registered') return;
     AppView.markOfflineReady(slug, type === 'ready');
+  },
+
+  // ── Offline apps from the browser's own cache ────────────────────────
+  //
+  // An app that brings no service worker of its own can still open with no
+  // connection: the app gate gives its pages and files a 30-day fresh
+  // lifetime (src/services/offline-cache.js), and a fresh copy is used with
+  // no request at all. The iOS app's web view allows three service workers
+  // in all, Homeroom's own among them, so this is how more than two apps
+  // open offline there (docs/plans/project-apps-offline.md).
+  //
+  // Three things make it work, all here and in the bridge:
+  //   * ONE address per app, whatever the token: buildAppIframeSrc puts the
+  //     token and the theme after `#`, and the bridge moves them into the
+  //     query before the app's code runs.
+  //   * A copy that keeps up: when the app's build differs from the one this
+  //     device last opened, the address carries `un-refresh`, and the bridge
+  //     downloads the app's files and page again, past the cache, and
+  //     reloads. Online only.
+  //   * A way back: the frame must say it opened (the bridge's
+  //     `__usernode_offline_cache: 'open'`). Online, a page that never says so
+  //     (one that needs the token to load, or loads no bridge) is framed the
+  //     old way on this device for a week. Offline, it gives way to the
+  //     "needs a connection" placeholder.
+  //
+  // Per device and per viewer, like the offline-ready map: dropped with the
+  // session (clearOfflineReady).
+  OFFLINE_CACHE_KEY: 'usernode:offline-cache',
+  OFFLINE_CACHE_MAX: 50,
+  // How long the old address is kept for an app whose page did not open.
+  OFFLINE_CACHE_RETRY_MS: 7 * 24 * 60 * 60 * 1000,
+  // After the frame's load event, how long its bridge has to say it opened.
+  OFFLINE_CACHE_GRACE_MS: 1500,
+  // Offline, the most a frame waits to say it opened before the placeholder.
+  OFFLINE_CACHE_OFFLINE_CAP_MS: 4000,
+
+  _readOfflineCache() {
+    try {
+      const map = JSON.parse(localStorage.getItem(AppView.OFFLINE_CACHE_KEY));
+      return (map && typeof map === 'object' && !Array.isArray(map)) ? map : {};
+    } catch {
+      return {};
+    }
+  },
+
+  _writeOfflineCache(map) {
+    try {
+      const keep = Object.keys(map)
+        .filter((s) => map[s] && typeof map[s] === 'object' && typeof map[s].at === 'number')
+        .sort((a, b) => map[b].at - map[a].at)
+        .slice(0, AppView.OFFLINE_CACHE_MAX);
+      const out = {};
+      keep.forEach((s) => { out[s] = map[s]; });
+      localStorage.setItem(AppView.OFFLINE_CACHE_KEY, JSON.stringify(out));
+    } catch { /* quota or private mode: the old address, as before */ }
+  },
+
+  _offlineCacheEntry(slug) {
+    const entry = slug ? AppView._readOfflineCache()[slug] : null;
+    return entry && typeof entry === 'object' ? entry : null;
+  },
+
+  // Is this app framed at its cacheable address? The platform says whether
+  // the switch is on for it (`offline_cache` on the app's row); this device
+  // says whether its page opened that way last time. A deep link that is a
+  // `#` route of the app's own keeps the old address.
+  offlineCacheFor(appData) {
+    if (!appData || !appData.offline_cache || !appData.slug) return false;
+    if (AppView.pendingInnerPath && String(AppView.pendingInnerPath).includes('#')) return false;
+    const entry = AppView._offlineCacheEntry(appData.slug);
+    return !(entry && entry.oldAddressUntil && Date.now() < entry.oldAddressUntil);
+  },
+
+  // Opened at its cacheable address, online, on this device: the browser
+  // has the page to open with no connection.
+  offlineCacheOpenable(appData) {
+    if (!AppView.offlineCacheFor(appData)) return false;
+    const entry = AppView._offlineCacheEntry(appData.slug);
+    return !!(entry && entry.build);
+  },
+
+  // The copy this device keeps is of another build than the one live now
+  // (or of none it knows), so the bridge refreshes it. Never offline.
+  _offlineCacheNeedsRefresh(slug) {
+    if (window.Offline && Offline.isOffline()) return false;
+    const build = AppView.buildFor(slug);
+    if (!build) return false;
+    const entry = AppView._offlineCacheEntry(slug);
+    return !entry || entry.build !== build;
+  },
+
+  _offlineCacheWatch: null,
+
+  // Just before setSrc, for a frame at the cacheable address: wait for its
+  // bridge to say it opened. The frame's own load handlers (renderAppTab's
+  // and the launch's watchSurfaceLoad) call _offlineCacheFrameLoaded, so
+  // this never touches the React-owned element.
+  _watchOfflineCacheOpen(slug, src) {
+    AppView._offlineCacheWatch = null;
+    if (!slug || !src || !/#un-/.test(String(src))) return;
+    const watch = { slug, opened: false, offline: !!(window.Offline && Offline.isOffline()) };
+    watch.give = () => {
+      if (AppView._offlineCacheWatch !== watch || watch.opened) return;
+      AppView._offlineCacheWatch = null;
+      AppView._offlineCacheDidNotOpen(slug, watch.offline);
+    };
+    AppView._offlineCacheWatch = watch;
+    if (watch.offline) setTimeout(watch.give, AppView.OFFLINE_CACHE_OFFLINE_CAP_MS);
+  },
+
+  // The app frame's document is up: its bridge has a moment to say so.
+  _offlineCacheFrameLoaded() {
+    const watch = AppView._offlineCacheWatch;
+    if (watch && !watch.opened) setTimeout(watch.give, AppView.OFFLINE_CACHE_GRACE_MS);
+  },
+
+  _offlineCacheDidNotOpen(slug, offline) {
+    const map = AppView._readOfflineCache();
+    if (offline) {
+      // No copy to open after all (dropped by the browser): forget it, so
+      // the next render offline is the placeholder.
+      if (map[slug]) { delete map[slug].build; map[slug].at = Date.now(); }
+    } else {
+      // The page did not open without the token in its query: the old
+      // address, on this device, for a while.
+      map[slug] = { at: Date.now(), oldAddressUntil: Date.now() + AppView.OFFLINE_CACHE_RETRY_MS };
+    }
+    AppView._writeOfflineCache(map);
+    if (AppView.appData && AppView.appData.slug === slug) AppView.renderAppTab();
+  },
+
+  // Bridge -> shell: `{ __usernode_offline_cache: 'open', fresh }`, from the
+  // mounted production frame only, like the offline-ready message. `fresh`
+  // is false while the bridge is still refreshing an old copy, or when that
+  // refresh could not fetch the page: the next open asks again.
+  handleOfflineCacheMessage(e) {
+    const data = e.data;
+    if (!data || data.__usernode_offline_cache !== 'open') return;
+    const appIframe = document.getElementById('app-iframe');
+    if (!appIframe || e.source !== appIframe.contentWindow) return;
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    const watch = AppView._offlineCacheWatch;
+    if (watch && watch.slug === slug) watch.opened = true;
+    if (data.fresh !== true) return;
+    if (window.Offline && Offline.isOffline()) return;
+    // Online: the copy the browser now keeps is of the build live now.
+    const build = AppView.buildFor(slug);
+    if (!build) return;
+    const map = AppView._readOfflineCache();
+    map[slug] = { at: Date.now(), build };
+    AppView._writeOfflineCache(map);
   },
 
   // A frame mounted with no token in its src (an offline mount, or any
@@ -1863,10 +2016,24 @@ const AppView = {
     } catch {
       try { url = new URL(appUrl); } catch { return null; }
     }
+    const slug = AppView.appData && AppView.appData.slug;
     const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
-    if (token) url.searchParams.set('token', token);
-    // #3257: the platform's resolved theme, for the app's pre-paint read.
-    url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
+    if (AppView.offlineCacheFor(AppView.appData) && !url.hash) {
+      // An offline app (see offlineCacheFor): one address whatever the token,
+      // so the page the browser kept is the page asked for, online or not.
+      // The token and the theme go after `#`, which is never sent and is not
+      // part of the cache key; the bridge moves them into the query before
+      // the app's own code reads them.
+      const own = new URLSearchParams();
+      if (token) own.set('un-token', token);
+      own.set(AppView.THEME_PARAM, AppView.resolvedTheme());
+      if (AppView._offlineCacheNeedsRefresh(slug)) own.set(AppView.REFRESH_PARAM, '1');
+      url.hash = own.toString();
+    } else {
+      if (token) url.searchParams.set('token', token);
+      // #3257: the platform's resolved theme, for the app's pre-paint read.
+      url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
+    }
     const src = url.toString();
     return AppView._isSafeAppIframeSrc(src) ? src : null;
   },
@@ -2094,8 +2261,9 @@ const AppView = {
     // Offline, only an app whose own service worker can serve the document
     // (#487 follow-up). Anything else falls through to renderAppTab's
     // placeholder rather than animating open onto a frame that can't paint.
-    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(slug)) return false;
     const rec = AppView.launchRecordFor(slug);
+    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(slug)
+        && !AppView.offlineCacheOpenable(rec)) return false;
     if (!rec) return false;
     if (rec.demo) return false;
     if (rec.self_hosted) return false;
@@ -2624,6 +2792,7 @@ const AppView = {
       AppView._watchLaunchLoad(iframe, launchId);
       // `slug`, not appData: on the launch path the detail fetch may not
       // have landed yet, and grantedForSlug answers [] for the wrong app.
+      AppView._watchOfflineCacheOpen(slug, src);
       frame.setSrc(src, { granted: AppView.grantedForSlug(slug), build: AppView.buildFor(slug) });
     };
 
@@ -2722,6 +2891,7 @@ const AppView = {
       if (!held() && !hold.revealed) reveal();
       // The app is in: the dev caches' warm-up may have the connection now.
       if (iframeId === 'app-iframe' && AppView._afterAppFrameLoad) AppView._afterAppFrameLoad();
+      if (iframeId === 'app-iframe') AppView._offlineCacheFrameLoaded();
     };
     iframe.onerror = () => {
       if (!iframe.getAttribute('src')) return;
@@ -4175,7 +4345,11 @@ const AppView = {
     // mount comes out of ITS cache and needs no network — and refusing to
     // mount it was the one thing standing between the user and the offline
     // support the app had already built. See offlineReadyFor().
-    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(appData.slug)) {
+    // And an app the browser keeps a copy of (offlineCacheOpenable): its page
+    // and files were kept fresh by the app gate, so the same address opens
+    // from the browser's cache.
+    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(appData.slug)
+        && !AppView.offlineCacheOpenable(appData)) {
       AppView._teardownLaunch();
       // Same as the status branch above: offline, the frame would render a
       // broken cross-origin document, so it goes rather than parks.
@@ -4277,7 +4451,9 @@ const AppView = {
       // this frame's rect. Also covers the token-refresh re-src, which
       // reloads the frame without re-rendering.
       AppView.scheduleSafeAreaBroadcast();
+      AppView._offlineCacheFrameLoaded();
     });
+    AppView._watchOfflineCacheOpen(appData.slug, iframeSrc);
     frame.setSrc(iframeSrc, { granted: AppView._grantedNow(), build: AppView.buildFor(appData.slug) });
     // A fresh load is of the build that is live now, so an offer to reload
     // onto it is spent (the ?shot=app-update-ready state pins its own).
@@ -5494,6 +5670,26 @@ const AppView = {
   },
 
   /**
+   * True when the dev-data LIST caches (`_ghIssues`, `_proposals`, `_merged`,
+   * …) belong to the app on screen.
+   *
+   * The lists hold whichever app's board was last loaded, and a topic page
+   * opened from a link can now paint before that load lands (#4524). Issue
+   * numbers repeat across every app's repo, so the lists answer only for the
+   * app their load named — `_devDataSlug`, set beside `_devDataReady` and not
+   * cleared on an app switch, because the lists keep the previous app's rows
+   * until the new load overwrites them. An UNSET slug means no board load has
+   * ever succeeded this visit, so there is no previous app the lists could
+   * belong to (they are empty, or a load that never finished for the app now
+   * open) and the lookup reads them as today's code always did —
+   * `openTopic`'s PR lookup at card tap time runs on exactly that state.
+   */
+  _boardListsCurrent() {
+    return !AppView._devDataSlug
+      || AppView._devDataSlug === (AppView.appData && AppView.appData.slug);
+  },
+
+  /**
    * One item, by kind and id — the lookup `_findTopicItem` has always done,
    * with the current topic no longer baked into it.
    *
@@ -5503,22 +5699,11 @@ const AppView = {
    */
   _findItem(kind, id) {
     const t = { kind, id };
-    // The LIST caches hold whichever app's board was last loaded, and a
-    // topic page opened from a link can now paint before that load lands
-    // (#4524). Issue numbers repeat across every app's repo, so the lists
-    // answer only for the app their load named — `_devDataSlug`, set beside
-    // `_devDataReady` and not cleared on an app switch, because the lists
-    // keep the previous app's rows until the new load overwrites them. An
-    // UNSET slug means no board load has ever succeeded this visit, so there
-    // is no previous app the lists could belong to (they are empty, or a
-    // load that never finished for the app now open) and the lookup reads
-    // them as today's code always did — `openTopic`'s PR lookup at card tap
-    // time runs on exactly that state.
     // The one-shot caches are keyed differently (`_topicIssue` carries its
     // own slug; proposal and governance ids are global and the caches are
-    // cleared per topic), so they need no guard here.
-    const listsCurrent = !AppView._devDataSlug
-      || AppView._devDataSlug === (AppView.appData && AppView.appData.slug);
+    // cleared per topic), so they need no guard here — only the LIST caches
+    // do, through `_boardListsCurrent()`.
+    const listsCurrent = AppView._boardListsCurrent();
     if (t.kind === 'issue') {
       // _ghIssues holds OPEN issues only; _topicIssue is the fetch-on-demand
       // fallback (#2365) for a closed one — checked last, and keyed by number
@@ -6127,7 +6312,8 @@ const AppView = {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
         : who ? PlatformI18n.t('changes:request.status.lead.reviewNamed', { username: who }) : PlatformI18n.t('changes:request.status.lead.review');
     } else if (st.key === 'bot') {
-      lead = bot && bot.held ? PlatformI18n.t('changes:request.status.lead.botHeld')
+      // #6156: held for its turn among the project's builds (`turn`), not for a vote.
+      lead = bot && bot.held ? (bot.turn ? PlatformI18n.t('changes:request.status.lead.botHeldTurn') : PlatformI18n.t('changes:request.status.lead.botHeld'))
         : bot && bot.plan
           // B06 (audit 2 Nov 2026): the person it waits for reads "you", not their own @name.
           ? (bot.mine ? PlatformI18n.t('changes:request.status.lead.botPlanYours')
@@ -6152,11 +6338,12 @@ const AppView = {
     } else if (ref && ref.state === 'review' && !upForVote && !(st && st.key === 'in_review')) note = PlatformI18n.t('changes:request.status.note.review');
     else if (ref && ref.state === 'underway') note = PlatformI18n.t('changes:request.status.note.underway');
 
-    // The claim's lapse, which the work-state sentence used to bury.
+    // The claim's lapse, which the work-state sentence used to bury. The
+    // date takes the shared locale (#6103): language from the interface,
+    // region from the device, month always spelled.
     let fine = null;
     if (st && st.clearAt && (st.key === 'claimed' || st.key === 'paused') && !closed) {
-      let date = '';
-      try { date = new Date(st.clearAt).toLocaleDateString([], { month: 'short', day: 'numeric' }); } catch { date = ''; }
+      const date = AppView._workDateText(st.clearAt);
       if (date) fine = PlatformI18n.t('changes:request.status.fine.lapses', { date });
     }
 
@@ -7023,7 +7210,13 @@ const AppView = {
     }
     AppView._changeItems.set(Number(item.id), item);
     body.canEditIssues = !AppView.readOnly && (mine || !!App.user?.canAdminWrite);
-    body.issueOptions = (AppView._ghIssues || []).map((issue) => ({
+    // #6123: the picker says it searches open requests in THIS project, so it
+    // reads the board list only while that list belongs to the app on screen —
+    // the same guard `_findItem` applies. A change page painted before this
+    // app's board load (a fast open from a link, or the first paint after a
+    // switch) would otherwise offer the previous app's requests. The repaint
+    // when the board lands (`openTopic`'s `_loadDevData().then`) fills them in.
+    body.issueOptions = (AppView._boardListsCurrent() ? (AppView._ghIssues || []) : []).map((issue) => ({
       n: Number(issue.number),
       title: issue.title || PlatformI18n.t('changes:request.fallbackTitle', { number: issue.number }),
       href: `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${issue.number}`,
@@ -7132,7 +7325,7 @@ const AppView = {
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
         label: pending ? PlatformI18n.t('changes:page.actions.submitting') : PlatformI18n.t('changes:page.actions.submitForReview'),
-        title: submission.note, disabled: !ready || !!busy,
+        title: submission.note, disabled: !ready || !!busy, busy: pending,
         act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
   },
@@ -7612,13 +7805,21 @@ const AppView = {
   // The failure's own words, which the Testing card shows until the
   // plain-words sentence is read (and when there is none): the first failing
   // test and the message it failed with, or the first failing check and
-  // what it reported.
+  // what it reported. A unit suite that stopped before any test reported
+  // (a broken install, a setup failure) has no per-test excerpt, so its own
+  // first line stands in for one, rather than leaving the sentence empty.
   _failureInWords(v) {
     const r = AppView._failureRow(v);
     if (!r) return null;
     if (r.unit) {
       const d = r.details && r.details[0];
-      if (!d) return null;
+      if (!d) {
+        const reason = String(r.reason || '').split(' | ')[0].replace(/\s+/g, ' ').trim();
+        const said = reason.length > 160 ? `${reason.slice(0, 159).trimEnd()}…` : reason;
+        return said
+          ? PlatformI18n.t('changes:page.testing.why.checkSaid', { check: r.name, said })
+          : PlatformI18n.t('changes:page.testing.why.check', { check: r.name });
+      }
       return d.said
         ? PlatformI18n.t('changes:page.testing.why.testSaid', { test: d.test, said: d.said })
         : PlatformI18n.t('changes:page.testing.why.test', { test: d.test });
@@ -7782,10 +7983,17 @@ const AppView = {
     }
     if (phase === 'queued' || phase === 'deferred') {
       const copy = AppView._checksPhaseCopy(phase, item);
+      // #6122: a queued run also says how long its wait should be.
+      const note = [copy.title];
+      if (phase === 'queued') {
+        const eta = AppView._checksEta(item);
+        if (eta && eta.kind === 'wait') note.push(PlatformI18n.t('changes:checks.pending.wait', { count: Math.max(1, eta.minutes) }));
+        else if (eta && eta.kind === 'waitLonger') note.push(PlatformI18n.t('changes:checks.pending.waitLonger'));
+      }
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: phase === 'queued' ? PlatformI18n.t('changes:page.testing.figure.queued') : PlatformI18n.t('changes:page.testing.figure.deferred'), tone: 'muted', done: false,
         segments: [{ weight: est ? est.buildMs : 1, pct: 100, state: 'moving' }, { weight: est ? est.checksMs : 3, pct: 0, state: 'moving' }],
-        label: PlatformI18n.t('changes:page.testing.label.waiting'), note: [copy.title], actions,
+        label: PlatformI18n.t('changes:page.testing.label.waiting'), note, actions,
         ...(phase === 'deferred' ? { noteDetail: copy.detail } : {}),
       };
     }
@@ -7803,16 +8011,22 @@ const AppView = {
     if (est) {
       const left = (1 - buildFrac) * est.buildMs + (1 - checksFrac) * est.checksMs;
       const usual = Math.max(1, Math.round((est.buildMs + est.checksMs) / 60000));
+      // #6122: past its usual total the run says so instead of counting down.
+      const started = item.checks_checked_at ? new Date(item.checks_checked_at).getTime() : NaN;
+      const elapsed = Number.isFinite(started) ? Math.max(0, Date.now() - started) : null;
+      const past = elapsed != null && elapsed >= est.buildMs + est.checksMs;
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'),
-        figure: left < 60000 ? PlatformI18n.t('changes:page.testing.figure.underMinuteLeft') : PlatformI18n.t('changes:page.testing.figure.minutesLeft', { minutes: Math.round(left / 60000) }),
+        figure: past
+          ? PlatformI18n.t('changes:page.testing.figure.longer')
+          : left < 60000 ? PlatformI18n.t('changes:page.testing.figure.underMinuteLeft') : PlatformI18n.t('changes:page.testing.figure.minutesLeft', { minutes: Math.round(left / 60000) }),
         tone: 'muted', done: false,
         segments: [
           { weight: est.buildMs, pct: Math.round(buildFrac * 100), state: buildFrac >= 1 ? 'done' : 'moving' },
           { weight: est.checksMs, pct: Math.round(checksFrac * 100), state: 'moving' },
         ],
         label: PlatformI18n.t('changes:page.testing.label.whereLeft', { where, count: Math.max(1, Math.round(left / 60000)) }),
-        note: [PlatformI18n.t('changes:page.testing.note.whereUsual', { where, count: usual })], actions,
+        note: [PlatformI18n.t(est.rough ? 'changes:page.testing.note.whereUsualRough' : 'changes:page.testing.note.whereUsual', { where, count: usual })], actions,
       };
     }
     return {
@@ -14560,7 +14774,9 @@ const AppView = {
         // Dev sessions: match the label the card actually shows, and their
         // linked issue numbers (so "#900002" finds the session working on
         // that issue, matching the reverse #N chips on the card).
-        title = it.session_title || it.pr_title || it.branch_name || '';
+        // #6124: same order as _sessionCardLabel, so a search finds the
+        // title the card actually shows.
+        title = it.pr_title || it.proposed_pr_title || it.session_title || it.branch_name || '';
         num = it.pr_number != null ? it.pr_number : null;
       } else {
         // proposal | merged — mirror the card renderers' title fallback.
@@ -15686,7 +15902,10 @@ const AppView = {
   // card. The agent-session Mayor names changes in prose, quotes and all,
   // which is how it surfaced.
   _sessionCardLabel(s) {
-    return String(s.session_title || s.pr_title || s.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id: s.id }));
+    // #6124: a title chosen before the change has a pull request lands in
+    // proposed_pr_title, which outranks the session's old name on every
+    // card. A pull request's own title still comes first.
+    return String(s.pr_title || s.proposed_pr_title || s.session_title || s.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id: s.id }));
   },
 
   // #1038: busy is read live from window.SessionState, falling back to the
@@ -16036,7 +16255,8 @@ const AppView = {
   _sharedSessionCardModel(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
-    const editableTitle = String(s.session_title || s.pr_title || s.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id: s.id }));
+    // #6124: the editor opens on the name the card shows, not a stale one.
+    const editableTitle = label;
     const imported = s.source === 'imported';
     const canEditTitle = !!(noNav && !AppView.readOnly && !imported
       && ['active', 'paused'].includes(s.status)
@@ -16252,7 +16472,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/${shared ? 'share' : 'unshare'}`, { method: 'POST' });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.visibility.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.visibility.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -16315,7 +16535,7 @@ const AppView = {
       );
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.shareChat.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.shareChat.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -16356,7 +16576,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/unarchive`, { method: 'POST' });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.unarchive.failed'));
+        PlatformUI.toast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.unarchive.failed'));
         btn.textContent = original;
         btn.disabled = false;
         return;
@@ -16391,7 +16611,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:session.archive.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:session.archive.failedHttp', { status: resp.status }));
         return false;
       }
     } catch (err) {
@@ -17512,7 +17732,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:step.resume.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:step.resume.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:step.resume.label'); }
         return;
       }
@@ -19497,6 +19717,47 @@ const AppView = {
     return { bar: { phase, ran, passed, failed, skipped, expected, done, ...(reused ? { reused } : {}) }, sub, sentence };
   },
 
+  // #6122: how much longer a pending run expects, from the same estimate
+  // the Testing card draws with (`checks_estimate`, the median of the app's
+  // recent finished runs, or a rough figure from across Homeroom). Returns
+  // null when there is nothing honest to say: no estimate, no start time, or
+  // a run held back by a conflict with main (which is not running at all).
+  // A queued run's wait counts the runs ahead, the queue's slot count and the
+  // time it has already waited.
+  _checksEta(item, now = Date.now()) {
+    if (!item || item.check_state !== 'pending' || item.check_phase === 'deferred') return null;
+    const est = item.checks_estimate;
+    const buildMs = Number(est && est.buildMs);
+    const checksMs = Number(est && est.checksMs);
+    if (!(buildMs > 0) || !(checksMs > 0)) return null;
+    const usual = buildMs + checksMs;
+    const rough = !!(est && est.rough);
+    const slots = est && Number.isInteger(est.slots) && est.slots > 0 ? est.slots : 1;
+    const at = (value) => {
+      if (!value) return null;
+      const t = new Date(value).getTime();
+      return Number.isFinite(t) ? t : null;
+    };
+    const started = at(item.checks_checked_at);
+    const elapsed = started == null ? null : Math.max(0, now - started);
+    if (item.check_phase === 'queued') {
+      const progress = item.checks_progress && typeof item.checks_progress === 'object' ? item.checks_progress : null;
+      const q = progress && progress.queue && typeof progress.queue === 'object' ? progress.queue : null;
+      if (!q || !Number.isInteger(q.ahead) || q.ahead < 0) return null;
+      const since = at(q.since);
+      const waitedFrom = since == null ? started : since;
+      if (waitedFrom == null) return null;
+      const waited = Math.max(0, now - waitedFrom);
+      const waitMs = Math.ceil((q.ahead + 1) / slots) * checksMs - waited;
+      return waitMs > 0
+        ? { kind: 'wait', minutes: Math.round(waitMs / 60000), usual, rough }
+        : { kind: 'waitLonger', minutes: 0, usual, rough };
+    }
+    if (elapsed == null) return null;
+    if (elapsed < usual) return { kind: 'left', minutes: Math.round((usual - elapsed) / 60000), usual, rough };
+    return { kind: 'longer', minutes: 0, usual, rough };
+  },
+
   _checksStatusNotes(pr) {
     if (!pr) return [];
     const state = pr.check_state;
@@ -19575,6 +19836,25 @@ const AppView = {
       if (pr.checks_checked_at) {
         const when = relTime(pr.checks_checked_at);
         rows.push({ t: 'line', parts: [queued ? PlatformI18n.t('changes:checks.pending.waitingSince', { when }) : PlatformI18n.t('changes:checks.pending.started', { when })], weight: 'foot' });
+      }
+      // #6122: how much longer it expects, or that it has gone past its usual
+      // time. A queued run gets its wait instead, beside its place in line.
+      const eta = AppView._checksEta(pr);
+      if (eta) {
+        let said = null;
+        if (eta.kind === 'left') {
+          said = eta.minutes < 1
+            ? PlatformI18n.t('changes:checks.pending.leftUnder')
+            : PlatformI18n.t('changes:checks.pending.left', { count: eta.minutes });
+        } else if (eta.kind === 'longer') {
+          said = PlatformI18n.t('changes:checks.pending.longer', { count: Math.max(1, Math.round(eta.usual / 60000)) });
+        } else if (eta.kind === 'wait') {
+          said = PlatformI18n.t('changes:checks.pending.wait', { count: Math.max(1, eta.minutes) });
+        } else if (eta.kind === 'waitLonger') {
+          said = PlatformI18n.t('changes:checks.pending.waitLonger');
+        }
+        if (said) rows.push({ t: 'line', parts: [said], weight: 'foot' });
+        if (eta.rough) rows.push({ t: 'line', parts: [PlatformI18n.t('changes:checks.pending.rough')], weight: 'foot' });
       }
       // …and WHY it started. "Started 4 minutes ago" answers a different
       // question from "who asked for this": a run kicked off by the
@@ -20084,7 +20364,7 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:checks.recheck.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:checks.recheck.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:recheck.label'); }
         return;
       }
@@ -20920,7 +21200,7 @@ const AppView = {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.askApproval.failedHttp', { status: resp.status }));
+          PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.askApproval.failedHttp', { status: resp.status }));
         }
         if (btn) {
           btn.disabled = false;
@@ -20963,7 +21243,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.withdraw.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.withdraw.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
@@ -20999,7 +21279,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/unpromote`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.moveBack.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.moveBack.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
@@ -21032,7 +21312,7 @@ const AppView = {
       const resp = await fetch(`/api/issues/${issueId}/close`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:governance.withdraw.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:governance.withdraw.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
@@ -21801,7 +22081,7 @@ const AppView = {
         body: JSON.stringify({ field, value }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { PlatformUI.toast(data.error || PlatformI18n.t('changes:attributes.vote.saveFailed')); return; }
+      if (!res.ok) { PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:attributes.vote.saveFailed')); return; }
       // #780: adopt the refreshed vocabulary FIRST — a just-typed category
       // has no entry yet, and the chip repaint below needs its label+colour.
       AppView._setAppCategories(data.categories);
@@ -21833,7 +22113,7 @@ const AppView = {
         method: 'DELETE',
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { PlatformUI.toast(data.error || PlatformI18n.t('changes:attributes.vote.removeFailed')); return; }
+      if (!res.ok) { PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:attributes.vote.removeFailed')); return; }
       AppView._applyAttrSummary(targetType, targetRef, field, data);
       AppView._refreshAttrCards();
       if (AppView._attrPopover && AppView._attrPopover.field === field
@@ -21993,7 +22273,7 @@ const AppView = {
         // 409 means a revert is already in flight, or eligibility was
         // lost between render and click. Show the message and re-fetch
         // so the UI reflects reality.
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.undo.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.undo.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
@@ -22053,7 +22333,7 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:governance.adminApply.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:governance.adminApply.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
@@ -22524,7 +22804,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || typeof data.href !== 'string' || !data.href.startsWith('#homeroom-bot/thread/')) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bot.threadFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.bot.threadFailed'));
         return;
       }
       // The page says the bot waits for their plan when they are back.
@@ -22695,7 +22975,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bot.askFailedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.bot.askFailedHttp', { status: resp.status }));
         // #4530: it is waiting on an answer this page did not know about:
         // read again, so the card offers to answer it instead.
         if (data.code === 'awaiting_reply') AppView.refreshDevData('issue');
@@ -22965,7 +23245,7 @@ const AppView = {
         body: JSON.stringify({ title: newTitle }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return showError(data.error || PlatformI18n.t('changes:issue.title.updateFailed'));
+      if (!res.ok) return showError(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.title.updateFailed'));
       issue.title = data.title || newTitle;
       issue.title_fallback = false;
       AppView._editingIssueTitle = null;
@@ -23052,7 +23332,7 @@ const AppView = {
         body: JSON.stringify({ title: newTitle }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return showError(data.error || PlatformI18n.t('changes:proposal.title.updateFailed'));
+      if (!res.ok) return showError(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.title.updateFailed'));
       AppView._cacheSessionTitle(id, data.title || newTitle, data.prTitle || null);
       AppView._editingSessionTitle = null;
       AppView._renderTopicHead();
@@ -23349,7 +23629,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bounty.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.bounty.failedHttp', { status: resp.status }));
         return;
       }
       // Reflect the new state locally: mark this issue bountied, set its
@@ -23387,7 +23667,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.claim.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.claim.failedHttp', { status: resp.status }));
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -23430,7 +23710,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.claim.clearFailedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.claim.clearFailedHttp', { status: resp.status }));
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -23558,7 +23838,7 @@ const AppView = {
         // read and dismiss. Every other failure keeps the toast.
         if (data.code === 'budget_exceeded') {
           if (provider === 'openrouter') {
-            PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.autoRun.openRouterStartFailed'));
+            PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.autoRun.openRouterStartFailed'));
             return;
           }
           AppView._showCreditOptionsModal(data.error, {
@@ -23566,7 +23846,7 @@ const AppView = {
           });
           return;
         }
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.autoRun.startFailedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.autoRun.startFailedHttp', { status: resp.status }));
         return;
       }
       // Deliberate flag/beta policy fallbacks are still reported. Credential,
@@ -26622,9 +26902,20 @@ const AppView = {
     '||building': 'changes:chips.workNote.also.botBuilding',
   },
 
+  // One short spell of a day — "2 Nov", or "2 Nov 2025" outside this year —
+  // in the same locale as every stamp (#6103): language from the interface,
+  // order from the device's region. Never digits alone, because 04/11/2026
+  // reads as two different days on two phones.
   _workDateText(ms) {
     if (!Number.isFinite(ms) || !ms) return '';
-    try { return new Date(ms).toLocaleDateString(); } catch { return ''; }
+    try {
+      const d = new Date(ms);
+      const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+      const other = d.getFullYear() !== new Date().getFullYear();
+      return d.toLocaleDateString(locale, {
+        month: 'short', day: 'numeric', ...(other ? { year: 'numeric' } : {}),
+      });
+    } catch { return ''; }
   },
 
   // The sentence the topic head prints under the title, and the chip's
@@ -27093,7 +27384,7 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
@@ -27331,12 +27622,44 @@ const AppView = {
         if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
+        // #6101: the change merged or left the vote after this page read it.
+        // The vote did not count, but there is nothing to put back: mark the
+        // rows settled and repaint, so no Yes or No is left offering a vote
+        // that can no longer be cast, then read the lists fresh.
+        if (data.code === 'not_up_for_vote') {
+          const reported = typeof data.status === 'string' ? data.status : '';
+          const status = reported && reported !== 'promoted' && reported !== 'merging'
+            ? reported : 'closed';
+          const settledRows = targets.map((t) => t.row);
+          if (pr) settledRows.push(pr);
+          if (live) settledRows.push(live);
+          settledRows.forEach((r) => { if (r) r.status = status; });
+          AppView._repaintAfterVote(sessionId);
+          const refresh = AppView.refreshDevData('vote');
+          // As on the ok path: a chat mounted outside the dev tab re-reads
+          // its snapshot too, where refreshDevData does nothing.
+          const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
+            && typeof GroupChat !== 'undefined' && GroupChat.appSlug
+            ? AppView.loadVoteState(GroupChat.appSlug) : null;
+          void Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).catch(() => {});
+          // The feed that drew this card hears it is over, so it can drop it
+          // instead of restoring the pin this press added.
+          const onSettled = opts && typeof opts.onSettled === 'function' ? opts.onSettled : null;
+          if (onSettled) {
+            try { onSettled(status); } catch { /* the caller's paint, never the vote's */ }
+          }
+          PlatformUI.toast(PlatformI18n.t(status === 'merged'
+            ? 'changes:vote.toast.alreadyMerged' : 'changes:vote.toast.noLongerUp'));
+          // Your votes moves it out of Still open (#6101).
+          window.UsernodeReact?.profileProposals?.voted?.();
+          return false;
+        }
         await AppView.refreshDevData('vote');
         // A public app's vote counts from a verified account: the sheet that
         // verifies, then the same vote again (features/auth/verify-identity.tsx).
         if (data.code === 'identity_required' && AppView._verifyThenVote(
           () => AppView.castVote(sessionId, vote, expectedEpoch, opts))) return false;
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
@@ -27361,21 +27684,23 @@ const AppView = {
       // costs one refresh rather than one for the POST and one for the
       // event: the server broadcasts before it answers, so the two land
       // within the window of each other.
-      const refresh = typeof App !== 'undefined' && App._liveRefresh
-        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
-        : AppView.refreshDevData('vote');
       // #5458: refreshDevData returns before doing anything outside the dev
       // tab, so a chat mounted on Messages never re-read its snapshot and
       // the settled counts on its card stayed the optimistic ones until
-      // opening the proposal page rewrote the row. When a chat is mounted
-      // (GroupChat.appSlug) outside the board, re-read its snapshot here;
-      // the dev tab's own sub-views are covered by refreshDevData as before.
-      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
-        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
-        ? AppView.loadVoteState(GroupChat.appSlug) : null;
+      // opening the proposal page rewrote the row. #6109: the burst names
+      // the chat the vote came from (chatSlug), and its flush reads that
+      // chat's snapshot wherever it is mounted, so the vote costs one read
+      // and the settle waits for the burst alone.
+      const refresh = typeof App !== 'undefined' && App._liveRefresh
+        ? App._liveRefresh('vote', sessionId, {
+          appSlug: AppView.appData && AppView.appData.slug,
+          chatSlug: typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null,
+        })
+        : AppView.refreshDevData('vote');
       // The pending-vote overlay inside loadVoteState keeps the vote on a
-      // read that started before it landed, so the settle waits for both.
-      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
+      // read that started before it landed, so the settle waits for the
+      // burst, which holds that read.
+      Promise.resolve(refresh).then(settle, settle);
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
@@ -27486,7 +27811,7 @@ const AppView = {
       if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
         AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
       }
-      window.PlatformUI?.toast?.(data.error || PlatformI18n.t('changes:vote.toast.queuedRefused'));
+      window.PlatformUI?.toast?.(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.queuedRefused'));
     }
     AppView.refreshDevData('vote');
     if (typeof GroupChat !== 'undefined' && GroupChat.appSlug) AppView.loadVoteState(GroupChat.appSlug);
@@ -27565,7 +27890,7 @@ const AppView = {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
         await AppView.refreshDevData('vote');
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.undoFailedHttp', { status: res.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.undoFailedHttp', { status: res.status }));
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
@@ -27573,13 +27898,15 @@ const AppView = {
       window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
+      // #6109: the burst reads the chat's snapshot for this vote wherever it
+      // is mounted (chatSlug), so the undo does not read it a second time.
       const refresh = typeof App !== 'undefined' && App._liveRefresh
-        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
+        ? App._liveRefresh('vote', sessionId, {
+          appSlug: AppView.appData && AppView.appData.slug,
+          chatSlug: typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null,
+        })
         : AppView.refreshDevData('vote');
-      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
-        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
-        ? AppView.loadVoteState(GroupChat.appSlug) : null;
-      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
+      Promise.resolve(refresh).then(settle, settle);
       window.Notifications?.refresh?.();
       window.UsernodeReact?.profileProposals?.voted?.();
       window.Leaderboard?.invalidateHistory?.();
@@ -27689,7 +28016,7 @@ const AppView = {
           return;
         }
         // #2603: the server's own words when it refuses this vote.
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         AppView.refreshDevData('vote');
         return;
       }
@@ -28487,9 +28814,11 @@ const AppView = {
     // the loader up. A client-side give-up keeps the loader honest if the
     // event never lands (the server rebuild is still allowed to finish on
     // its own).
+    // #6157: `waking` is a preview that slept, scaled back up rather than
+    // rebuilt: the same loader, saying so.
     AppView._setStagingLoader(true, {
       title: PlatformI18n.t('changes:frame.loader.rebuilding'),
-      sub: PlatformI18n.t('changes:frame.loader.rebuildingSub'),
+      sub: PlatformI18n.t(data.waking ? 'changes:frame.loader.wakingSub' : 'changes:frame.loader.rebuildingSub'),
     });
     AppView._pendingStagingPreview = {
       sessionId, slug, jump, testing, dock, loadId, retry,
@@ -30033,6 +30362,8 @@ const AppView = {
   // The bridge turns both into `usernode.theme` and a
   // `usernode:theme-changed` event. It reports; it never restyles the app.
   THEME_PARAM: 'un-theme',
+  // An offline app's one-off "refresh your copies" flag, after `#`.
+  REFRESH_PARAM: 'un-refresh',
 
   // A staging preview shown as of a chosen moment (src/services/preview-
   // clock.js). The ensure answer's `previewAt` ({ at, label }) becomes
@@ -30067,6 +30398,15 @@ const AppView = {
       try {
         const url = new URL(src);
         url.searchParams.delete(AppView.THEME_PARAM);
+        // An offline app's address (buildAppIframeSrc) carries the platform's
+        // parameters after `#`: its theme is ignored like the query's, and so
+        // is the one-off refresh flag.
+        if (url.hash.startsWith('#un-')) {
+          const own = new URLSearchParams(url.hash.slice(1));
+          own.delete(AppView.THEME_PARAM);
+          own.delete(AppView.REFRESH_PARAM);
+          url.hash = own.toString();
+        }
         return url.toString();
       } catch {
         return src;
@@ -31007,6 +31347,7 @@ if (typeof window !== 'undefined') {
     try { AppView.handleIssueStateMessage(e); } catch {}
     // #487 follow-up: "my own service worker is serving this document".
     try { AppView.handleOfflineReadyMessage(e); } catch {}
+    try { AppView.handleOfflineCacheMessage(e); } catch {}
     // #752: file-storage relay (uploadFile/deleteFile/getStorageUsage).
     try { AppView.handleStorageBridgeMessage(e); } catch {}
     // #1195: user-directory relay (lookupUser/searchUsers).
@@ -31077,13 +31418,16 @@ function relStamp(iso, now) {
   const date = iso instanceof Date ? iso : new Date(iso ?? NaN);
   if (Number.isNaN(date.getTime())) return { text: '', title: '' };
   const ref = now || new Date();
-  const title = date.toLocaleString(undefined, {
+  // Interface language, device region (#6103), as GroupChat._stamp and
+  // lib/timestamp.ts read it; the device default where the runtime predates it.
+  const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+  const title = date.toLocaleString(locale, {
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
   const elapsed = ref.getTime() - date.getTime();
   if (elapsed >= REL_FLOOR_MS) {
     return {
-      text: date.toLocaleDateString(undefined, date.getFullYear() === ref.getFullYear()
+      text: date.toLocaleDateString(locale, date.getFullYear() === ref.getFullYear()
         ? { month: 'short', day: 'numeric' }
         : { year: 'numeric', month: 'short', day: 'numeric' }),
       title,

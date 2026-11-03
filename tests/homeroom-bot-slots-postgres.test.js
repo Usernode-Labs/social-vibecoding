@@ -1,11 +1,12 @@
 'use strict';
 
 // The bot's slots on a project, against the full PostgreSQL schema
-// (16 Oct 2026). PROPOSALS_PER_APP_CAP counts a slot for every change of
-// the bot's up for a vote or being merged AND for every build under way
-// that will become one (homeroom-bot.js slotHolders). Before, only the
-// changes counted, and on 15 October the bot started eleven builds at once
-// as slots freed, ending with seven open changes against five slots.
+// (16 Oct 2026). A slot is every change of the bot's up for a vote or being
+// merged AND every build under way that will become one (homeroom-bot.js
+// slotHolders). Before, only the changes counted, and on 15 October the bot
+// started eleven builds at once as slots freed, ending with seven open
+// changes against five slots. #6156: each kind is counted against its own
+// cap, BUILDS_PER_APP and WAITING_PER_APP.
 //
 // Like the repository's other postgres tests it skips when no database is
 // reachable, unless TEST_DATABASE_URL is set.
@@ -76,7 +77,10 @@ test('the bot\'s slots on a project count its builds under way, against the full
     const building = await session({ status: 'active' });
     await run(7, { buildSession: building, ago: 2 }); // being built
     assert.deepEqual(await slots(), ['proposal#1', 'proposal#2', 'build#6', 'build#7'], 'oldest first');
-    assert.equal((await bot.capRoomFor(pool, botUser, app.id)).proposals_per_app, 1, 'four of five taken');
+    assert.deepEqual(await bot.slotCounts(pool, botUser, app.id), { builds: 2, proposals: 2 });
+    const room = await bot.capRoomFor(pool, botUser, app.id);
+    assert.equal(room.builds_per_app, bot.BUILDS_PER_APP - 2, 'two builds of five');
+    assert.equal(room.proposals_per_app, bot.WAITING_PER_APP - 2, 'two changes waiting for votes, each counted against its own cap');
   });
 
   await t.test('a held, finished, abandoned or superseded build takes none', async () => {
@@ -144,12 +148,20 @@ test('the bot\'s slots on a project count its builds under way, against the full
     await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = ANY($1::int[])`, [[recent, touched, passing, moved, platform]]);
   });
 
-  await t.test('a fifth slot taken by a build holds the next ready verdict', async () => {
-    assert.equal(await bot.simulateCaps(pool, botUser, app.id, 'ready', {}), null, 'four taken: room for one');
+  await t.test('a fifth build holds the next ready verdict; the changes up for a vote are not builds', async () => {
     await run(14, { waiting: true });
-    assert.equal(await bot.simulateCaps(pool, botUser, app.id, 'ready', {}), 'proposals_per_app',
-      'five taken, one of them a build not yet proposed');
-    assert.equal((await bot.capRoomFor(pool, botUser, app.id)).proposals_per_app, 0);
+    await run(15, { waiting: true });
+    assert.equal(await bot.simulateCaps(pool, botUser, app.id, 'ready', {}), null, 'four builds: room for one');
+    await run(16, { waiting: true });
+    assert.equal(await bot.simulateCaps(pool, botUser, app.id, 'ready', {}), 'builds_per_app',
+      'five builds, three of them not under way yet');
+    const room = await bot.capRoomFor(pool, botUser, app.id);
+    assert.equal(room.builds_per_app, 0);
+    assert.equal(room.proposals_per_app, bot.WAITING_PER_APP - 2, 'the changes waiting for votes still have room');
+    // A project given more builds of its own builds the sixth.
+    const own = { appCaps: { [String(app.id)]: { building: 6 } } };
+    assert.equal(await bot.simulateCaps(pool, botUser, app.id, 'ready', own), null);
+    assert.equal((await bot.capRoomFor(pool, botUser, app.id, own)).builds_per_app, 1);
   });
 
   await t.test('the slots view: what holds each slot, what waits for one, with their tracks', async () => {
@@ -161,9 +173,16 @@ test('the bot\'s slots on a project count its builds under way, against the full
     const settings = { mode: 'live', pausedApps: [] };
     const liveSvc = { isLiveFor: () => true };
     const view = await track.slotsView(pool, { app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings, deps: { liveSvc } });
-    assert.equal(view.cap, 5);
+    assert.equal(view.buildCap, bot.BUILDS_PER_APP);
+    assert.equal(view.waitCap, bot.WAITING_PER_APP);
     assert.equal(view.acts, true);
-    assert.deepEqual(view.slots.map((s) => `${s.kind}#${s.issueNumber}`), ['proposal#1', 'proposal#2', 'build#6', 'build#7', 'build#14']);
+    assert.deepEqual(view.slots.map((s) => `${s.kind}#${s.issueNumber}`),
+      ['proposal#1', 'proposal#2', 'build#6', 'build#7', 'build#14', 'build#15', 'build#16']);
+    // A project's own numbers are the page's.
+    const own = await track.slotsView(pool, {
+      app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings: { ...settings, appCaps: { [String(app.id)]: { waiting: 30 } } }, deps: { liveSvc },
+    });
+    assert.deepEqual([own.buildCap, own.waitCap], [bot.BUILDS_PER_APP, 30]);
     const six = view.slots.find((s) => s.issueNumber === 6);
     assert.equal(six.title, 'Sunlight log');
     assert.equal(six.track.state, 'queued', 'ready, waiting its turn to be built');
@@ -176,6 +195,13 @@ test('the bot\'s slots on a project count its builds under way, against the full
     assert.equal(view.waiting[0].track.state, 'held');
     assert.deepEqual(view.waiting[0].track.held, { limit: 'slots', position: 1, until: null });
     assert.equal(view.week, null, 'nobody signed in, no week');
+    // #6156: one held because the builds are all in use waits in a line of its own, for the bot's turn.
+    await run(17, { waiting: true, cap: 'builds_per_app', ago: 0 });
+    const turn = await track.slotsView(pool, { app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings, deps: { liveSvc } });
+    assert.deepEqual(turn.waiting.map((w) => [w.issueNumber, w.position, w.limit]), [[8, 1, 'slots'], [17, 1, 'builds']]);
+    assert.equal(turn.waiting[1].track.why, 'builds');
+    assert.deepEqual(turn.waiting[1].track.held, { limit: 'builds', position: 1, until: null });
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 17', [app.id]);
 
     // The request page's track for a request somebody else shipped.
     await run(30, { verdict: 'person' });

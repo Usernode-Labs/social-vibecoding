@@ -677,7 +677,16 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   //
   // #3984: a vote already on its way is not sent again.
   const send = (a: ActionSpec, reason: string | null) => {
+    // #6098: a vote sent from the desktop picker puts focus back on the face
+    // button, so the next Tab carries on from the vote just cast instead of
+    // starting again at the top of the page. The popover is a portal: it
+    // unmounts with `shut()` and would drop focus to the page. The touch
+    // sheet and the action sheet are the kit's, and take focus back
+    // themselves. A card redrawn under the send has replaced the button, and
+    // there is none left to return focus to (`isConnected`).
+    const btn = open ? btnRef.current : null;
     shut();
+    if (btn?.isConnected) btn.focus({ preventScroll: true });
     if (!a.act) return;
     if (!isVote) { call(a.act); return; }
     if (voteSendingStore.get()[sendKey]) return;
@@ -913,7 +922,11 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
         title={sending ? t('project:card.vote.title.sending') : title}
         aria-busy={sending ? 'true' : undefined}
-        disabled={disabled || approved || !!sending}
+        // #6098: a vote on its way is shown busy, not switched off, so the
+        // button keeps keyboard focus while it is sent. `toggle` refuses a
+        // second press.
+        aria-disabled={sending ? 'true' : undefined}
+        disabled={disabled || approved}
         onClick={toggle}
       >
         {sending ? t('project:card.vote.sending') : (
@@ -1143,13 +1156,15 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
   // JavaScript source.
   return (
     <button
-      className={a.cls || 'gc-vote-btn'}
+      className={`${a.cls || 'gc-vote-btn'}${a.busy ? ' gap-1.5' : ''}`}
       disabled={a.disabled}
+      aria-busy={a.busy ? 'true' : undefined}
       title={a.title}
       {...foldAttrs}
       data-act={a.act?.fn}
       onClick={a.act ? (e) => call(a.act, a.passNode ? e.currentTarget : undefined) : undefined}
     >
+      {a.busy ? <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true" /> : null}
       {a.label}
     </button>
   );

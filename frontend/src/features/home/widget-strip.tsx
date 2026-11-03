@@ -80,7 +80,7 @@ export function WidgetTile({ tile }: { tile: WidgetTileView }) {
       >
         <TileIcon icon={tile.icon} />
       </div>
-      <span className="text-[0.65rem] leading-tight truncate w-full text-center">{tile.name}</span>
+      <span className="text-[0.65rem] leading-tight truncate w-full text-center" title={tile.name}>{tile.name}</span>
       <button
         type="button"
         className="widget-remove-btn absolute -top-1.5 end-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500"

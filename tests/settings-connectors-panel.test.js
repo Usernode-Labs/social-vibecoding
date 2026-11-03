@@ -39,7 +39,7 @@ const { englishPlatformI18n } = require('./lib/platform-i18n');
 const PANEL_IDS = [
   'connectors-section', 'connectors-list', 'connectors-status', 'connector-url',
   'connector-case-cc-local', 'connector-case-cc-web', 'connector-case-chat',
-  'connector-hint-status',
+  'connector-hint-status', 'connector-url-test', 'connector-test-status',
 ];
 
 function node(id) {
@@ -62,7 +62,7 @@ function node(id) {
   };
 }
 
-function harness(payload) {
+function harness(payload, options = {}) {
   const nodes = new Map(PANEL_IDS.map((id) => [id, node(id)]));
   const context = vm.createContext({
     window: {
@@ -75,11 +75,12 @@ function harness(payload) {
       querySelectorAll: () => [],
       createElement: (tag) => node(`created:${tag}`),
     },
-    fetch: async () => ({
+    fetch: options.fetch || (async () => ({
       ok: true,
       status: 200,
       json: async () => payload,
-    }),
+      headers: { get: () => null },
+    })),
     setTimeout,
     clearTimeout,
     setInterval,
@@ -207,4 +208,202 @@ test('the status line is read-only — there is no control that writes throttle 
     /<p id="connector-hint-status" className="hidden[^"]*"><\/p>/,
     'the initial render emits the empty, hidden markup the shell shipped'
   );
+});
+
+// ── #6135: Test connection ─────────────────────────────────────────────
+//
+// The button reads one route and paints one line. These drive the real
+// _testConnector against the real English catalog, with fetch stubbed at the
+// network boundary only.
+
+const { message } = require('./lib/platform-i18n');
+const { demoConnectionTest } = require('../src/routes/mcp-remote');
+
+function response(body, { status = 200, headers = {} } = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    headers: { get: (name) => headers[String(name).toLowerCase()] || null },
+  };
+}
+
+function testHarness(fetchImpl) {
+  const { Settings, nodes } = harness(null, { fetch: fetchImpl });
+  return { Settings, nodes };
+}
+
+const statusLine = (nodes) => nodes.get('connector-test-status');
+const shown = (nodes) => !statusLine(nodes).hidden();
+const errorInk = (nodes) => statusLine(nodes).classList.contains('text-red-700');
+
+test('a passing test names the product and when it was last used', async () => {
+  const fixture = demoConnectionTest('1');
+  const { Settings, nodes } = testHarness(async () => response(fixture));
+  await Settings._testConnector();
+
+  const lastUsed = new Date(fixture.connection.last_used_at).toLocaleString();
+  assert.equal(
+    statusLine(nodes).textContent,
+    message('settings:connectors.test.result.okUsed', {
+      product: fixture.connection.client_name,
+      lastUsed,
+    }),
+    'the line names the product and its last use, in the Connected list date format'
+  );
+  assert.ok(shown(nodes), 'a result is revealed');
+  assert.equal(errorInk(nodes), false, 'a passing result is ordinary text');
+  assert.equal(nodes.get('connector-url-test').disabled, false, 'the button can be pressed again');
+});
+
+test('a passing test with no last use omits the date', async () => {
+  const fixture = demoConnectionTest('1');
+  fixture.connection.last_used_at = null;
+  const { Settings, nodes } = testHarness(async () => response(fixture));
+  await Settings._testConnector();
+
+  assert.equal(
+    statusLine(nodes).textContent,
+    message('settings:connectors.test.result.ok', {
+      product: fixture.connection.client_name,
+    })
+  );
+  assert.equal(errorInk(nodes), false);
+});
+
+test('a working server with nothing connected is a failure-looking line with its next step', async () => {
+  const { Settings, nodes } = testHarness(async () => response(demoConnectionTest('connectors-test-none')));
+  await Settings._testConnector();
+
+  assert.equal(statusLine(nodes).textContent, message('settings:connectors.test.result.not_connected'));
+  assert.ok(shown(nodes));
+  assert.equal(errorInk(nodes), true, 'failures take the error ink');
+});
+
+test('a 404 from the surface gate is "not available here"', async () => {
+  const { Settings, nodes } = testHarness(async () => response({ error: 'not_found' }, { status: 404 }));
+  await Settings._testConnector();
+
+  assert.equal(statusLine(nodes).textContent, message('settings:connectors.test.result.unavailable_here'));
+  assert.equal(errorInk(nodes), true);
+});
+
+test('a server error is a test that could not run', async () => {
+  const { Settings, nodes } = testHarness(async () => response({ error: 'temporarily_unavailable' }, { status: 503 }));
+  await Settings._testConnector();
+  assert.equal(statusLine(nodes).textContent, message('settings:connectors.test.result.test_failed'));
+});
+
+test('an unknown leg is settled by the page, against its own origin', async () => {
+  // The deployment could not hairpin to its public origin, so the server
+  // said 'unknown' for discovery. The page fetches the two metadata
+  // documents itself and recomputes the same code.
+  const origin = 'https://social-vibecoding.usernodelabs.org';
+  const calls = [];
+  const fixture = {
+    code: 'ok',
+    enabled: true,
+    discovery: 'unknown',
+    mcp: 'ok',
+    connection: { active: 1, inactive: 0, client_name: 'Claude.ai', last_used_at: null },
+    checked_at: new Date().toISOString(),
+  };
+  const { Settings, nodes } = testHarness(async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method || 'GET' });
+    if (String(url).indexOf('/api/me/connectors/test') === 0) return response(fixture);
+    if (String(url) === `${origin}/.well-known/oauth-protected-resource/mcp`) {
+      return response({ resource: `${origin}/mcp` });
+    }
+    if (String(url) === `${origin}/.well-known/oauth-authorization-server`) {
+      return response({ issuer: origin });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  await Settings._testConnector();
+
+  const urls = calls.map((call) => call.url);
+  assert.ok(urls.includes(`${origin}/.well-known/oauth-protected-resource/mcp`));
+  assert.ok(urls.includes(`${origin}/.well-known/oauth-authorization-server`));
+  assert.equal(
+    statusLine(nodes).textContent,
+    message('settings:connectors.test.result.ok', { product: 'Claude.ai' }),
+    'the settled leg recomputes the passing code'
+  );
+});
+
+test('a browser fallback that cannot reach the network is test_failed', async () => {
+  const fixture = {
+    code: 'ok',
+    enabled: true,
+    discovery: 'unknown',
+    mcp: 'ok',
+    connection: { active: 1, inactive: 0, client_name: 'Claude.ai', last_used_at: null },
+    checked_at: new Date().toISOString(),
+  };
+  const { Settings, nodes } = testHarness(async (url) => {
+    if (String(url).indexOf('/api/me/connectors/test') === 0) return response(fixture);
+    throw new TypeError('Failed to fetch');
+  });
+  await Settings._testConnector();
+  assert.equal(statusLine(nodes).textContent, message('settings:connectors.test.result.test_failed'));
+  assert.equal(errorInk(nodes), true);
+});
+
+test('the browser fallback probes /mcp without a credential', async () => {
+  const origin = 'https://social-vibecoding.usernodelabs.org';
+  let mcpInit = null;
+  const fixture = {
+    code: 'ok',
+    enabled: true,
+    discovery: 'ok',
+    mcp: 'unknown',
+    connection: { active: 1, inactive: 0, client_name: 'Claude.ai', last_used_at: null },
+    checked_at: new Date().toISOString(),
+  };
+  const { Settings, nodes } = testHarness(async (url, init = {}) => {
+    if (String(url).indexOf('/api/me/connectors/test') === 0) return response(fixture);
+    if (String(url) === `${origin}/mcp`) {
+      mcpInit = init;
+      return response({}, {
+        status: 401,
+        headers: { 'www-authenticate': 'Bearer resource_metadata="https://x/.well-known/oauth-protected-resource/mcp"' },
+      });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  await Settings._testConnector();
+
+  assert.ok(mcpInit, 'the MCP leg was probed');
+  assert.equal(mcpInit.method, 'POST');
+  assert.equal(mcpInit.body, '{}');
+  assert.equal(
+    (mcpInit.headers || {}).authorization,
+    undefined,
+    'no Authorization header: the 401 challenge is the reachable result'
+  );
+  assert.equal(
+    statusLine(nodes).textContent,
+    message('settings:connectors.test.result.ok', { product: 'Claude.ai' })
+  );
+});
+
+test('a stale answer cannot overwrite a newer test', async () => {
+  const first = demoConnectionTest('connectors-test-none');
+  const second = demoConnectionTest('1');
+  let resolveFirst;
+  const gate = new Promise((resolve) => { resolveFirst = resolve; });
+  let calls = 0;
+  const { Settings, nodes } = testHarness(async () => {
+    calls += 1;
+    if (calls === 1) { await gate; return response(first); }
+    return response(second);
+  });
+
+  const slow = Settings._testConnector();
+  await Settings._testConnector();
+  resolveFirst();
+  await slow;
+
+  assert.match(statusLine(nodes).textContent, /^Working:/,
+    'the newer passing result stands');
 });

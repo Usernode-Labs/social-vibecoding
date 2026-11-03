@@ -613,6 +613,12 @@
         },
       });
 
+      // Test the connector: this site's MCP server and this account's own
+      // connection. Read-only, and beside Copy rather than replacing it —
+      // Copy is the thing the user came here to do.
+      const testConnector = document.getElementById('connector-url-test');
+      if (testConnector) testConnector.addEventListener('click', () => this._testConnector());
+
       // Copy the read-only allow rules. Two blocks with identical content and
       // different destinations: the user's PERSONAL ~/.claude/settings.json,
       // which covers every repo on their machine, and the per-repo
@@ -2132,6 +2138,153 @@
         if (flag === '1' || (flag && flag.startsWith('connectors-'))) return flag;
         return null;
       } catch { return null; }
+    },
+
+    // Pressing Test connection. Read-only, and nothing is kept: every press
+    // is a fresh test and the line goes away with the page.
+    //
+    // The SERVER runs every leg it can. A leg it could not reach over its own
+    // public origin comes back 'unknown', and this settles that one with a
+    // same-origin fetch — the origin the address field shows is the page's
+    // own, which is exactly what a browser here can reach.
+    async _testConnector() {
+      const btn = document.getElementById('connector-url-test');
+      const status = document.getElementById('connector-test-status');
+      if (!btn || !status) return;
+
+      // A load-generation guard, like _connectorLoadId: a slow answer must
+      // never repaint over a newer test's.
+      const runId = (this._connectorTestRun || 0) + 1;
+      this._connectorTestRun = runId;
+      const current = () => this._connectorTestRun === runId;
+
+      btn.disabled = true;
+      btn.textContent = tr('settings:connectors.test.running');
+      status.textContent = '';
+      status.classList.add('hidden');
+      status.classList.remove(...STATUS_PALETTE.error);
+
+      let result = null;
+      try {
+        const demo = this._connectorsDemo();
+        const suffix = demo ? `?demo=${encodeURIComponent(demo)}` : '';
+        const response = await fetch(`/api/me/connectors/test${suffix}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { accept: 'application/json' },
+        });
+        // Staging, and a deployment with connectors switched off, answer 404
+        // through the surface gate.
+        if (response.status === 404) result = { code: 'unavailable_here', enabled: false };
+        else if (!response.ok) result = { code: 'test_failed' };
+        else result = await response.json();
+      } catch {
+        result = { code: 'test_failed' };
+      }
+      if (!current()) return;
+      if (!result) result = { code: 'test_failed' };
+
+      if (result.discovery === 'unknown' || result.mcp === 'unknown') {
+        result = await this._settleConnectorTest(result);
+        if (!current()) return;
+      }
+
+      const KNOWN = [
+        'ok', 'not_connected', 'connection_expired', 'unavailable_here',
+        'discovery_failed', 'server_unreachable', 'test_failed',
+      ];
+      const code = KNOWN.indexOf(result.code) !== -1 ? result.code : 'test_failed';
+      const connection = result.connection || {};
+      const params = {};
+      let id = `settings:connectors.test.result.${code}`;
+      if (code === 'ok') {
+        // The same product name the Connected list shows, and the same date
+        // format it uses.
+        params.product = connection.client_name || tr('settings:connectors.test.unknownProduct');
+        if (connection.last_used_at) {
+          params.lastUsed = new Date(connection.last_used_at).toLocaleString();
+          id = 'settings:connectors.test.result.okUsed';
+        } else {
+          id = 'settings:connectors.test.result.ok';
+        }
+      }
+
+      paintStatus(status, tr(id, params), code === 'ok' ? 'info' : 'error');
+      btn.disabled = false;
+      btn.textContent = tr('settings:connectors.test.button');
+    },
+
+    // The browser's half of a test: only the legs the server reported as
+    // 'unknown' are tried, and only against the page's own origin. A network
+    // failure here is the one thing the person can act on, so it becomes
+    // test_failed rather than a claim about the server.
+    async _settleConnectorTest(result) {
+      const origin = window.location.origin;
+      const probe = async (fn) => {
+        try {
+          const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+            ? AbortSignal.timeout(3000)
+            : undefined;
+          return await fn(signal);
+        } catch { return 'unknown'; }
+      };
+
+      if (result.discovery === 'unknown') {
+        result.discovery = await probe(async (signal) => {
+          const headers = { accept: 'application/json' };
+          const [resource, issuer] = await Promise.all([
+            fetch(`${origin}/.well-known/oauth-protected-resource/mcp`, {
+              headers, credentials: 'same-origin', cache: 'no-store', signal,
+            }),
+            fetch(`${origin}/.well-known/oauth-authorization-server`, {
+              headers, credentials: 'same-origin', cache: 'no-store', signal,
+            }),
+          ]);
+          if (!resource.ok || !issuer.ok) return 'failed';
+          const [resourceDoc, issuerDoc] = await Promise.all([
+            resource.json().catch(() => null),
+            issuer.json().catch(() => null),
+          ]);
+          return resourceDoc && issuerDoc
+            && resourceDoc.resource === `${origin}/mcp`
+            && issuerDoc.issuer === origin
+            ? 'ok'
+            : 'failed';
+        });
+      }
+
+      if (result.mcp === 'unknown') {
+        result.mcp = await probe(async (signal) => {
+          const response = await fetch(`${origin}/mcp`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store',
+            body: '{}',
+            signal,
+          });
+          const challenge = (response.headers && response.headers.get
+            ? response.headers.get('www-authenticate')
+            : '') || '';
+          return response.status === 401
+            && challenge.startsWith('Bearer')
+            && challenge.indexOf('resource_metadata=') !== -1
+            ? 'ok'
+            : 'failed';
+        });
+      }
+
+      const connection = result.connection || {};
+      if (result.discovery === 'unknown' || result.mcp === 'unknown') {
+        result.code = 'test_failed';
+      } else {
+        result.code = result.discovery === 'failed' ? 'discovery_failed'
+          : result.mcp === 'failed' ? 'server_unreachable'
+            : !connection.active && !connection.inactive ? 'not_connected'
+              : !connection.active ? 'connection_expired'
+                : 'ok';
+      }
+      return result;
     },
 
     // ── Rewriting the allow rules for a different connector name ─────────

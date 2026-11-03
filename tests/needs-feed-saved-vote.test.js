@@ -92,3 +92,34 @@ test('the saved-vote effect records the answer and moves nothing, tells nobody',
   assert.match(feed, /if \(!savedVoteFor\(prior, savedAll\)\) continue;/,
     'a row voted elsewhere is pinned at its old index');
 });
+
+// ── #6101: a change that merged under the card ─────────────────────────
+
+test('a settled refusal drops the card instead of re-pinning it, and tells the screen', () => {
+  const feed = body(WORKSHOP, 'function NeedsFeed(', '\nfunction GroupStrip(');
+  // castVote's refusal for a change no longer up for a vote marks the key
+  // before its promise settles false.
+  assert.match(feed, /const onSettle = \(\) => \{ settledRef\.current\.add\(key\); \};/);
+  assert.match(feed, /onSettled: onSettle/, 'the options bag carries it beside onSend');
+  const refused = body(feed, '        } else if (settledRef.current.has(key)) {', '        } else if (pinnedHere) {');
+  assert.match(refused, /setGone\(\(cur\) => \(\{ \.\.\.cur, \[key\]: true \}\)\)/, 'the row leaves the drawn rows');
+  assert.match(refused, /onSettled\(row\)/, 'the screen that owns the store copy hears it');
+  assert.ok(!/setAnswered/.test(refused), 'nothing was saved, so nothing is confirmed');
+  assert.ok(!/pinsRef\.current\.delete/.test(refused), 'the pin is not what removes it');
+  // The drawn rows drop it in a second pass, so the published order the feed
+  // keeps above is untouched; a pin is never put back for a settled row.
+  assert.match(feed, /const out = live\.filter\(\(r\) => !gone\[r\.key\]\);/);
+  assert.match(feed, /if \(!have\.has\(key\) && !gone\[key\]\) out\.splice/);
+});
+
+test('the controller forgets the change for every copy it holds, then reads again', () => {
+  const src = read('frontend/src/features/workshop/index.tsx');
+  const method = body(src, '  settled(id: number) {', '  /**\n   * The quiet reload');
+  assert.match(method, /answeredVotes\.add\(answeredVoteKey\(id, null\)\)/,
+    'no epoch: the id alone matches at any revision');
+  assert.match(method, /patch\.feed = stripAnswered\(state\.feed\)/);
+  assert.match(method, /patch\.rows = stripAnsweredCounts\(state\.rows\)/);
+  assert.match(method, /void this\.refreshNeeds\(\)/);
+  // Both feeds the Communities screen can draw are handed the hook.
+  assert.equal((src.match(/onSettled=\{\(id\) => workshopController\.settled\(id\)\}/g) || []).length, 2);
+});
