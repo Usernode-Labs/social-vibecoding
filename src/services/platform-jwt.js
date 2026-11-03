@@ -374,11 +374,16 @@ function verifyAppIdentityToken(token, { appId, allowPreview = process.env.USERN
     try {
       const claims = verifyWith(token, key, opts);
       // Preview/capture identities may enter a preview, never production
-      // resources. Old unmarked identities remain valid for their original
-      // <=1h TTL so a rolling deployment and its own preview checks can boot.
-      // Only the trusted signer can add/remove this claim.
+      // resources. Only the trusted signer can add/remove this claim, and
+      // every signer has set it since #5873, so a production consumer refuses
+      // an identity without it. A preview still takes one: the in-loop and
+      // bench workers sign their own viewer tokens without it
+      // (worker/usernode-run-inloop, worker/usernode-bench-capture.js).
       if (claims.env !== undefined && claims.env !== 'preview' && claims.env !== 'production') {
         throw new Error('invalid app identity environment');
+      }
+      if (claims.env === undefined && !allowPreview) {
+        throw new Error('app identity has no environment');
       }
       if (claims.env === 'preview' && !allowPreview) {
         throw new Error('preview identity cannot access production resources');

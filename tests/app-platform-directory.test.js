@@ -262,7 +262,7 @@ test('a user token minted for another app is rejected', async () => {
 
 test('a scoped infrastructure token is rejected even when otherwise valid', async () => {
   const forged = jwt.sign(
-    { id: 7, username: 'tester', pur: 'iframe', scope: 'infra' },
+    { id: 7, username: 'tester', pur: 'iframe', env: 'production', scope: 'infra' },
     keys.IFRAME_JWT_PRIVATE_KEY,
     { algorithm: 'RS256', issuer: 'usernode', audience: `usernode:app:${APP_A_ID}`, expiresIn: '1h' }
   );

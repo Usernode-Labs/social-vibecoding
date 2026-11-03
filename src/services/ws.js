@@ -970,10 +970,9 @@ async function handleEventsFrame(pool, client, raw) {
     replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false });
     return;
   }
-  if (client.watching && client.watching.has(sessionId)) {
-    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: true });
-    return;
-  }
+  // A session this socket already watches is checked again like a new one:
+  // its answer reflects access now (after a demotion, say), not when the
+  // watch began, and a refusal ends the watch.
   if (client.wantWatch.size >= MAX_WATCHED_SESSIONS_PER_SOCKET && !client.wantWatch.has(sessionId)) {
     replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false, code: 'too_many' });
     return;
@@ -990,6 +989,7 @@ async function handleEventsFrame(pool, client, raw) {
   if (client.wantWatch.get(sessionId) !== token) return;
   if (!allowed || !globalClients.has(client)) {
     client.wantWatch.delete(sessionId);
+    unwatchSession(client, sessionId);
     replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false, code: 'not_found' });
     return;
   }

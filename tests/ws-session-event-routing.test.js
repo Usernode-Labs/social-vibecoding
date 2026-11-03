@@ -171,6 +171,23 @@ test('a watch adds a socket to the audience, an unwatch takes it out', async () 
   admin.terminate();
 });
 
+test('a repeated watch is checked again: after a demotion it is refused and the watch ends', async () => {
+  const admin = await openEvents('admin');
+  await settle();
+  assert.equal((await watch(admin, 100)).watching, true);
+  USERS.admin.is_admin = false;
+  try {
+    assert.deepEqual(await watch(admin, 100), { type: 'session_watch', sessionId: 100, watching: false, code: 'not_found' },
+      'answered from access now, not from the socket\'s own list');
+  } finally {
+    USERS.admin.is_admin = true;
+  }
+  ws.broadcastGlobal(progress(100, 'after the refusal'));
+  await settle();
+  assert.equal(sessionEvents(admin, 100).length, 0, 'the refused watch ended: admin again, but no longer watching');
+  admin.terminate();
+});
+
 test('a watch on a session the user may not open is refused, and hears nothing', async () => {
   const stranger = await openEvents('stranger');
   await settle();
