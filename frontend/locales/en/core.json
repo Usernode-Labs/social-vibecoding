@@ -31,6 +31,14 @@
     "text": "Unread messages from the Homeroom bot",
     "description": "Spoken name of the small count on the AI tab in the main navigation: how many messages from the Homeroom bot the person has not read."
   },
+  "tabs.unreadAiTitle_one": {
+    "text": "{{count}} unread message from the Homeroom bot",
+    "description": "Tooltip on the count badge of the Homeroom bot tab in the main navigation: how many messages from the Homeroom bot the person has not read."
+  },
+  "tabs.unreadAiTitle_other": {
+    "text": "{{count}} unread messages from the Homeroom bot",
+    "description": "Tooltip on the count badge of the Homeroom bot tab in the main navigation: how many messages from the Homeroom bot the person has not read."
+  },
   "tabs.messages": {
     "text": "Messages",
     "description": "Tab in the main navigation: opens the person's conversations with people and agents."
