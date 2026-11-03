@@ -99,7 +99,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.deepEqual(rows[4].plan, { slug: 'garden', number: 410 });
   assert.equal(rows[0].plan, undefined, 'a vote is decided on its page');
   const index = read('frontend/src/features/ai/index.tsx');
-  assert.match(index, /if \(row\.plan\) \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+void openBotRequest\(row\.plan\.slug, row\.plan\.number\);\s+return;\s+\}/,
+  assert.match(index, /if \(row\.plan\) \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+void openBotRequest\(row\.plan\.slug, row\.plan\.number\);[\s\S]{0,700}return;\s+\}/,
     'a plan row opens Main Chat at the plan, as See progress on its page does');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
@@ -942,7 +942,7 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.equal(isTopicHref('#app/garden/dev/governance/3'), true);
   assert.equal(isTopicHref('#app/garden/workshop'), false, 'a Workshop is no topic: the origin would wait for the next one');
   // A private thread is the column's: the panel gives its place back first (showAt).
-  assert.match(src, /const openPrivate = \(rootId: number\) => \{\s+const next = \{ threadRootId: rootId, focusMessageId: null \};[\s\S]{0,120}showAt\(next\);\s+showAddress\(botTabAddress\(next\)\);/);
+  assert.match(src, /const openPrivate = \(rootId: number\) => \{[\s\S]{0,200}const next = \{ threadRootId: rootId, focusMessageId: null \};[\s\S]{0,120}showAt\(next\);\s+showAddress\(botTabAddress\(next\)\);/);
   assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
   // The panel may stand beside the AI tab's page, and stays while it is up.
   const controller = read('frontend/src/features/side-panel/controller.ts');
@@ -1002,15 +1002,36 @@ test('on a phone the list is the whole screen until a thread has been opened, th
 
 test('what a row opens rides along in Main Chat\'s composer, and only there', () => {
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /window\.dispatchEvent\(new CustomEvent\('usernode:messages-object-selected', \{ detail: \{ \.\.\.about, conversationId: botId \} \}\)\);/);
+  assert.match(src, /window\.dispatchEvent\(new CustomEvent\('usernode:messages-object-selected', \{ detail: \{ \.\.\.about, conversationId: botId, source: 'list' \} \}\)\);/);
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /const \{ conversationId: to, \.\.\.object \} = detail;\s+if \(to != null && to !== conversationId\) return;\s+setObject\(object\);/,
+  assert.match(composer, /const \{ conversationId: to, source, \.\.\.object \} = detail;\s+if \(to != null && to !== conversationId\) return;/,
     'a composer under another conversation, mounted under a hidden screen, keeps what it had');
   const { aboutRow } = loadTsx('frontend/src/features/ai/index.tsx');
   assert.deepEqual(aboutRow({ href: '#app/garden/dev/issues/12', title: 'Dark mode', app }), { type: 'issue', appSlug: 'garden', issueNumber: 12, title: 'Dark mode' });
   assert.deepEqual(aboutRow({ key: 'need:governance:4', href: '#app/garden/dev/governance/4', title: 'Rename', app }),
     { type: 'governance', appSlug: 'garden', proposalId: 4, title: 'Rename' });
   assert.equal(aboutRow({ href: '#app/garden/workshop', title: 'x', app }), null, 'a Workshop is no item');
+});
+
+test('#6212: the list\'s attachment follows the row you open, and ‹ Main Chat keeps it', () => {
+  const src = read('frontend/src/features/ai/index.tsx');
+  // The list's own attach says it is the list's, so the composer never lets it
+  // replace an item the person chose themselves.
+  assert.match(src, /detail: \{ \.\.\.about, conversationId: botId, source: 'list' \}/);
+  // A page that names no item (a Workshop) takes the list's attachment off.
+  assert.match(src, /function clearListAttach\(botId: number \| null\): void \{\s+if \(botId == null\) return;\s+window\.dispatchEvent\(new CustomEvent\('usernode:messages-object-cleared', \{ detail: \{ conversationId: botId \} \}\)\);/);
+  assert.match(src, /if \(about && botId\) \{[\s\S]{0,260}\} else \{[\s\S]{0,200}clearListAttach\(botId\);/, 'the panel took a place with no item');
+  // Main's own row and a private thread are not "back from that page": the
+  // list's attachment goes.
+  assert.match(src, /const openMain = \(\) => \{[\s\S]{0,200}clearListAttach\(botId\);/, 'the Main Chat row');
+  assert.match(src, /const openPrivate = \(rootId: number\) => \{[\s\S]{0,200}clearListAttach\(botId\);/, 'a private thread, and the phone Ask bar through openMain');
+  // A ▷ row opens Main at that request's plan and names that request in its place.
+  assert.match(src, /void openBotRequest\(row\.plan\.slug, row\.plan\.number\);[\s\S]{0,420}type: 'issue', appSlug: row\.plan\.slug, issueNumber: row\.plan\.number, title: row\.title \|\| null, conversationId: botId, source: 'list'/);
+  // ‹ Main Chat on the page the panel holds dispatches nothing, so the chip
+  // it came with is still there.
+  const panel = read('frontend/src/features/side-panel/side-panel.tsx');
+  assert.match(panel, /onClick=\{\(\) => controller\.close\(\)\}/);
+  assert.doesNotMatch(panel, /messages-object-cleared/);
 });
 
 test('beside this page the panel is the page\'s own column: ‹ Main and the project, no Expand, Close or Back', () => {

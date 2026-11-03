@@ -190,6 +190,17 @@ export function aboutRow(row: { key?: string; href: string | null; title?: strin
   return null;
 }
 
+/**
+ * #6212: the bot page attached an item to Main's composer and you opened
+ * somewhere else, so its own attachment comes off and the next message is
+ * about what is on screen. The composer keeps an item the person chose
+ * themselves (Share, Ask for changes, the picker); only the list's goes.
+ */
+function clearListAttach(botId: number | null): void {
+  if (botId == null) return;
+  window.dispatchEvent(new CustomEvent('usernode:messages-object-cleared', { detail: { conversationId: botId } }));
+}
+
 /** The Improve controller, which records where a topic page was opened from. */
 function improve(): { enterTopicFrom?: (href: string) => void } | null {
   return typeof window === 'undefined' ? null : (window as any).Improve || null;
@@ -213,7 +224,11 @@ function openPublic(href: string | null, app: AiApp | null, label: string | null
       // addressed to Main alone: the Messages screen's composer, mounted
       // under its hidden screen, keeps whatever it had.
       if (about && botId) {
-        window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', { detail: { ...about, conversationId: botId } }));
+        window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', { detail: { ...about, conversationId: botId, source: 'list' } }));
+      } else {
+        // A page with no request, change or decision (a Workshop): there is
+        // nothing to ask about, so the list's earlier attachment goes.
+        clearListAttach(botId);
       }
       return true;
     }
@@ -410,6 +425,9 @@ export function AiScreen(): ReactNode {
   }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMain = () => {
+    // #6212: Main on its own row is not "back from that page": the list's
+    // attachment stays with the page it came from.
+    clearListAttach(botId);
     if (!(wide || phone)) { go(botTabAddress(null)); return; }
     showAt({ threadRootId: null, focusMessageId: null });
     showAddress(botTabAddress(null));
@@ -424,6 +442,8 @@ export function AiScreen(): ReactNode {
   };
   // A private thread is the column's, alone, in Main's place.
   const openPrivate = (rootId: number) => {
+    // #6212: a private thread is the column's, not that request's page.
+    clearListAttach(botId);
     const next = { threadRootId: rootId, focusMessageId: null };
     if (!(wide || phone)) { go(botTabAddress(next)); return; }
     showAt(next);
@@ -439,6 +459,13 @@ export function AiScreen(): ReactNode {
     if (row.plan) {
       sidePanel()?.close?.();
       void openBotRequest(row.plan.slug, row.plan.number);
+      // #6212: Main opens at this plan, so its composer names this request,
+      // in place of whatever the list attached before.
+      if (botId != null) {
+        window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', {
+          detail: { type: 'issue', appSlug: row.plan.slug, issueNumber: row.plan.number, title: row.title || null, conversationId: botId, source: 'list' },
+        }));
+      }
       return;
     }
     if (openPublic(row.href, row.app, row.title, aboutRow(row), botId)) underPanel();

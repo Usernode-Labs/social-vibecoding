@@ -95,6 +95,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
   const [uploading, setUploading] = useState(0);
   const [object, setObject] = useState<StagedObject | null>(null);
+  // #6212: where the chip came from. The bot page's list attaches what a row
+  // opens, and that one follows the row you open next; one the person chose
+  // themselves (Share, Ask for changes, the picker) stays until they send it
+  // or press ×. `objectRef` mirrors `object` for the events, which are
+  // registered once per conversation and would otherwise read it stale.
+  const objectFrom = useRef<'list' | 'person' | null>(null);
+  const objectRef = useRef<StagedObject | null>(null);
+  const setChip = (next: StagedObject | null, from: 'list' | 'person' | null) => {
+    objectRef.current = next;
+    objectFrom.current = next ? from : null;
+    setObject(next);
+  };
   // Ask for changes (store.openBot): what the box asks while its change is attached.
   const [prompt, setPrompt] = useState<string | null>(null);
   // The caret goes in the box once it is drawn: an attach can arrive before
@@ -127,7 +139,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const friendIds = useFriendIds();
 
   useEffect(() => {
-    setValue(draftFor(scope)); setAttachments([]); setObject(null); setPrompt(null); setError(''); setAskReply(false);
+    setValue(draftFor(scope)); setAttachments([]); setChip(null, null); setPrompt(null); setError(''); setAskReply(false);
   }, [scope]);
 
   // Reply puts the caret here where there is a hardware keyboard, so the
@@ -140,20 +152,32 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   useEffect(() => {
     if (inThread) return undefined;
     const onSelected = (event: Event) => {
-      const detail = (event as CustomEvent<SharedObjectReference & { conversationId?: number }>).detail;
+      const detail = (event as CustomEvent<SharedObjectReference & { conversationId?: number; source?: 'list' | 'person' }>).detail;
       if (!detail) return;
       // Addressed to one conversation (the Homeroom bot tab's Main): every
       // other composer mounted under a hidden screen leaves it alone.
-      const { conversationId: to, ...object } = detail;
+      const { conversationId: to, source, ...object } = detail;
       if (to != null && to !== conversationId) return;
-      setObject(object); setPrompt(null); inputRef.current?.focus();
+      // #6212: the list's attach follows the row you open; it never replaces
+      // an item the person chose themselves.
+      if (source === 'list' && objectFrom.current === 'person' && objectRef.current) return;
+      setChip(object, source === 'list' ? 'list' : 'person'); setPrompt(null); inputRef.current?.focus();
+    };
+    // #6212: the list opened something else, or nothing, so its own
+    // attachment comes off. One the person chose stays until they send it
+    // or press its ×.
+    const onCleared = (event: Event) => {
+      const to = (event as CustomEvent<{ conversationId?: number } | undefined>).detail?.conversationId;
+      if (to != null && to !== conversationId) return;
+      if (objectFrom.current !== 'list') return;
+      setChip(null, null); setPrompt(null);
     };
     // Ask for changes: the change itself, attached, and the caret in the box.
     const attachPending = () => {
       if (!conversationId) return;
       const pending = takePendingAttach(conversationId);
       if (!pending) return;
-      setObject(pending.object); setPrompt(pending.placeholder); setFocusWanted(true);
+      setChip(pending.object, 'person'); setPrompt(pending.placeholder); setFocusWanted(true);
     };
     const onShare = (event: Event) => {
       // A bare Messages screen is asking the user to choose a destination;
@@ -167,6 +191,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       window.UsernodeReact?.dialogs?.messagesShare?.open(detail || undefined);
     };
     window.addEventListener('usernode:messages-object-selected', onSelected);
+    window.addEventListener('usernode:messages-object-cleared', onCleared);
     window.addEventListener('usernode:messages-share', onShare);
     window.addEventListener('usernode:messages-attach', attachPending);
     // An app/card share can navigate into Messages before this conversation
@@ -178,6 +203,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     }
     return () => {
       window.removeEventListener('usernode:messages-object-selected', onSelected);
+      window.removeEventListener('usernode:messages-object-cleared', onCleared);
       window.removeEventListener('usernode:messages-share', onShare);
       window.removeEventListener('usernode:messages-attach', attachPending);
     };
@@ -521,7 +547,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     setError(''); notifyTyping(false, threadRootId); setPrompt(null);
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
     const answerable = active?.homeroomBot !== true;
-    setValue(''); setAttachments([]); setObject(null);
+    setValue(''); setAttachments([]); setChip(null, null);
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
     send({ ...input, threadRootId })
       .then(() => { if (answerable) setAskReply(true); })
@@ -592,7 +618,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">{reply.sender.unnamed ? (reply.sender.id ? t('messages:composer.replyingToUnknownHandle') : t('messages:composer.replyingToUnknown')) : t('messages:composer.replyingTo', { name: senderName(reply.sender, { bare: active.kind === 'direct' }) })}</span><p className="truncate">{plainText(reply.content) || t('messages:composer.replyAttachment')}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{t('messages:bot.draft.reply')}</p> : null}{planReply ? <p className="messages-bot-note">{planReply.firstVersion ? t('messages:composer.planReplyNote') : t('messages:composer.planReplyNotePublic')}</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label={t('messages:composer.cancelReply')}>×</button></div> : null}
-      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setObject(null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
+      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setChip(null, null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
       {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.channelsMenu')}>{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
       {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.peopleMenu')}>{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}

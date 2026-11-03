@@ -397,6 +397,29 @@ test('composer and moderation payloads match the backend contracts', () => {
 
 });
 
+test('#6212: the composer keeps the list\'s attachment apart from the person\'s own', () => {
+  // Where the chip came from decides whether moving around the bot page may
+  // take it off; the person's own (Share, Ask for changes, the picker) stays.
+  assert.match(composer, /const objectFrom = useRef<'list' \| 'person' \| null>\(null\);/);
+  assert.match(composer, /const objectRef = useRef<StagedObject \| null>\(null\);/);
+  assert.match(composer, /const \{ conversationId: to, source, \.\.\.object \} = detail;/, 'the source never rides along as part of the item');
+  assert.match(composer, /if \(source === 'list' && objectFrom\.current === 'person' && objectRef\.current\) return;/,
+    'the list never replaces an item the person chose');
+  assert.match(composer, /setChip\(object, source === 'list' \? 'list' : 'person'\)/, 'a detail with no source is the person\'s');
+  assert.match(composer, /setChip\(pending\.object, 'person'\)/, 'Ask for changes is the person\'s');
+  assert.match(composer, /window\.addEventListener\('usernode:messages-object-cleared', onCleared\);/);
+  assert.match(composer, /window\.removeEventListener\('usernode:messages-object-cleared', onCleared\);/);
+  assert.match(composer, /const onCleared = \(event: Event\) => \{[\s\S]{0,420}if \(objectFrom\.current !== 'list'\) return;\s+setChip\(null, null\);/,
+    'a clear takes off only what the list attached');
+  // Sending, changing scope and × also forget where the chip came from.
+  assert.match(composer, /setValue\(''\); setAttachments\(\[\]\); setChip\(null, null\);/);
+  assert.match(composer, /onClick=\{\(\) => \{ setChip\(null, null\); setPrompt\(null\); \}\}/);
+  // A request page opened from a bot message in Main Chat is the same
+  // automatic attach the list itself makes.
+  assert.match(read('frontend/src/features/messages/request-page.ts'),
+    /issueNumber: page\.issueNumber, title: page\.label, conversationId, source: 'list' \}/);
+});
+
 test('blocking and access-revocation purge an active direct thread locally', () => {
   assert.match(screen, /await setUserBlocked\(peer\.id, true\)/);
   assert.match(store, /await api\.setBlock\(userId, blocked\)/);
