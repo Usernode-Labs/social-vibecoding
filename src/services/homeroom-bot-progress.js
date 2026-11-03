@@ -504,7 +504,11 @@ function stageOf(input, { now = new Date() } = {}) {
       return {
         stage: 'held',
         since: row.run_at,
-        doing: row.cap_suppressed === 'proposals_per_app' || row.cap_suppressed === 'proposals_total'
+        // #6156: the project's builds are a limit of their own, freed by a
+        // build finishing rather than by a vote.
+        doing: row.cap_suppressed === 'builds_per_app'
+          ? 'ready to build, but waiting for its turn: the bot is already building as many changes on this project as it may at once'
+          : row.cap_suppressed === 'proposals_per_app' || row.cap_suppressed === 'proposals_total'
           ? 'ready to build, but held back until one of the changes waiting for approval goes live or is closed (only so many may wait at once)'
           : 'ready to build, but held back by the daily limit on questions and notes on this project',
       };
@@ -988,7 +992,8 @@ async function botWorkByIssue(pool, appId) {
     if (!out.has(n)) out.set(n, { what: 'queued', since: q.enqueued_at, ...(q.plan === true ? { plan: true } : {}) });
   }
   // And a request whose build its own limit holds: it starts when one of
-  // its changes on the project is voted in or closed (live.heldText).
+  // its changes on the project is voted in or closed, or (#6156) one of its
+  // builds there finishes (live.heldText).
   const { rows: held } = await pool.query(
     `SELECT DISTINCT ON (r.issue_number) r.issue_number, r.created_at, r.cap_suppressed
        FROM homeroom_bot_runs r
@@ -999,8 +1004,8 @@ async function botWorkByIssue(pool, appId) {
   ).catch(() => ({ rows: [] }));
   for (const h of held) {
     const n = Number(h.issue_number);
-    if (out.has(n) || !['proposals_per_app', 'proposals_total'].includes(h.cap_suppressed)) continue;
-    out.set(n, { what: 'queued', since: h.created_at, held: true });
+    if (out.has(n) || !['builds_per_app', 'proposals_per_app', 'proposals_total'].includes(h.cap_suppressed)) continue;
+    out.set(n, { what: 'queued', since: h.created_at, held: true, ...(h.cap_suppressed === 'builds_per_app' ? { turn: true } : {}) });
   }
   return out;
 }

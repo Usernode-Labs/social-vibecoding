@@ -34,6 +34,7 @@ import { useRef, type ReactNode } from 'react';
 import { ChevronLeftIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { dirSign } from '../../lib/i18n/direction';
 import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';

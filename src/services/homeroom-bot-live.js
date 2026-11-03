@@ -304,6 +304,11 @@ function retryCommentText() {
 // issue is queued again as soon as the cap that held it has room.
 function heldText({ cap, verdict, limit, project = null }) {
   const name = project ? clipText(project, 80) : 'this project';
+  // #6156: the project's builds are full. It waits for the bot's turn, not
+  // for a vote.
+  if (cap === 'builds_per_app') {
+    return `Homeroom bot will build this when one of the ${limit} changes it is building on ${name} at once is done.`;
+  }
   if (cap === 'proposals_per_app') {
     return `Homeroom bot will build this when one of its ${limit} changes on ${name} is voted in or closed.`;
   }

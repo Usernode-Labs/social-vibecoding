@@ -26,6 +26,7 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const appAdmins = require('./app-admins');
 const { positiveId } = require('./row-id');
 
 // The three audiences, in the order the Workshop lists them.
@@ -237,28 +238,34 @@ function joinRequiredBody(app) {
 
 // The columns every gate below reads, off an `apps` row aliased `a`, with
 // `$2` the caller's user id.
-const GATE_COLUMNS = `a.id, a.slug, a.name, a.community_id, a.collab_visibility, a.view_visibility,
+const GATE_COLUMNS = `a.id, a.slug, a.name, a.community_id, a.created_by, a.collab_visibility, a.view_visibility,
                 EXISTS (SELECT 1 FROM community_members m
                          WHERE m.community_id = a.community_id AND m.user_id = $2) AS is_member`;
 
 // Whether `app` (a row carrying GATE_COLUMNS) should be refused with
 // join_required for `user`. Only ever TRUE for someone who could otherwise
 // take part — see the notes on requireSessionMembership (below) for the
-// three ways it answers false.
-async function refusesToJoin(pool, app, user) {
+// three ways it answers false. `manage` is for a write only the creator or
+// an app admin may make (a proposal about who sees, builds or decides): they
+// are the ones asked, whether or not they build here, since joining needs
+// only view access (POST /api/apps/:slug/membership); anyone else gets the
+// route's own refusal.
+async function refusesToJoin(pool, app, user, { manage = false } = {}) {
   if (!app || user?.isAdmin) return false;
   if (app.community_id == null || app.is_member) return false;
-  return appAccess.checkAppAccess(pool, app, user, 'collab');
+  if (!manage) return appAccess.checkAppAccess(pool, app, user, 'collab');
+  return (await appAccess.checkAppAccess(pool, app, user, 'view'))
+    && appAdmins.canManageApp(pool, app, user);
 }
 
 // The same gate as middleware over a resolved row, for the three route
 // gates below, which differ only in how they find the app.
-function gate(pool, findApp, what) {
+function gate(pool, findApp, what, opts) {
   return async (req, res, next) => {
     if (req.user?.isAdmin) return next();
     try {
       const app = await findApp(req);
-      if (await refusesToJoin(pool, app, req.user)) return res.status(403).json(joinRequiredBody(app));
+      if (await refusesToJoin(pool, app, req.user, opts)) return res.status(403).json(joinRequiredBody(app));
       return next();
     } catch (err) {
       log.error('communities', `membership guard failed (${what})`, { err: err.message });
@@ -268,9 +275,11 @@ function gate(pool, findApp, what) {
 }
 
 // For `/api/apps/:slug/...` write routes: starting a change, filing a
-// request, importing a pull request, posting to the app's chat over HTTP.
+// request, importing a pull request, posting to the app's chat over HTTP,
+// proposing a settings change (`{ manage: true }` for the ones only the
+// creator or an app admin may propose).
 // A slug that does not resolve falls through to the route's own 404.
-function requireAppMembership(pool) {
+function requireAppMembership(pool, opts = {}) {
   return gate(pool, async (req) => {
     if (!req.params.slug) return null;
     const { rows } = await pool.query(
@@ -278,7 +287,7 @@ function requireAppMembership(pool) {
       [req.params.slug, req.user?.id || null]
     );
     return rows[0] || null;
-  }, 'app');
+  }, 'app', opts);
 }
 
 // For `/api/issues/:id/...` write routes: voting on a request or a
@@ -299,14 +308,14 @@ function requireIssueMembership(pool) {
 // B8: Suggest an improvement (POST /api/feedback) files a request on the app its
 // body names rather than one in the path: the same gate, by slug. Returns the
 // join_required body to answer with, or null to let it through.
-async function appNeedsJoin(pool, slug, user) {
+async function appNeedsJoin(pool, slug, user, opts = {}) {
   if (!slug || user?.isAdmin) return null;
   const { rows } = await pool.query(
     `SELECT ${GATE_COLUMNS} FROM apps a WHERE a.slug = $1`,
     [slug, user?.id || null]
   );
   const app = rows[0];
-  return (await refusesToJoin(pool, app, user)) ? joinRequiredBody(app) : null;
+  return (await refusesToJoin(pool, app, user, opts)) ? joinRequiredBody(app) : null;
 }
 
 // The WebSocket chat write (src/services/ws.js, a 'chat' message). Returns

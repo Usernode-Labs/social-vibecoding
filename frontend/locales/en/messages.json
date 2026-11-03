@@ -663,6 +663,10 @@
     "text": "I’ll start when one of my changes on {{project}} is voted in or closed",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Waiting\": the bot has as many changes up for a vote on this project as it may, and starts once one is decided. {{project}} is the project's name."
   },
+  "bot.state.line.heldBuilds": {
+    "text": "I’ll start when one of the changes I’m building on {{project}} is done",
+    "description": "The line under a Homeroom bot activity card's title, under the heading \"Waiting\": the bot is building as many changes on this project at once as it may, so this request waits for its turn, and starts once one of those builds is done. {{project}} is the project's name. The bot speaks as I."
+  },
   "bot.state.line.heldTotal": {
     "text": "I’ll start when one of my changes across Homeroom is voted in or closed",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Waiting\": the bot has as many changes up for a vote across all of Homeroom as it may, and starts once one is decided."
@@ -936,8 +940,12 @@
     "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: building time for this week is used up. Sentence case: it is a line of its own."
   },
   "bot.news.slots": {
-    "text": "Waiting for a slot",
-    "description": "A row in the chat with Homeroom bot standing for one request, beside its title: the request is ready to build, but all of the project's slots for the bot's changes are in use, so it waits for one to free."
+    "text": "Waiting for votes on other changes",
+    "description": "A row in the chat with Homeroom bot standing for one request, beside its title: the request is ready to build, but as many of the bot's changes as may wait for a vote at once are waiting, so it waits for one of them to be voted in or closed."
+  },
+  "bot.news.builds": {
+    "text": "Waiting its turn to be built",
+    "description": "A row in the chat with Homeroom bot standing for one request, beside its title: the request is ready to build, but the bot is already building as many changes on the project at once as it may, so it waits for one of those builds to be done."
   },
   "bot.news.doneElsewhere": {
     "text": "Done another way",
@@ -4511,9 +4519,13 @@
     "text": "It's live",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"live\"."
   },
+  "bot.track.line.held.builds": {
+    "text": "Waiting for its turn: Homeroom bot is building as much on this project as it may at once",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"builds\": the bot is already building as many changes on the project at once as it may."
+  },
   "bot.track.line.held.slots": {
-    "text": "Waiting for a slot: all of the project's are in use",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"slots\"."
+    "text": "Waiting for votes: Homeroom bot is at its limit of changes up for a vote here",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"slots\": as many of the bot's changes on the project as may wait for a vote at once are waiting, so it waits for one of them to be voted in or closed."
   },
   "bot.track.line.held.bot_wide": {
     "text": "Waiting: Homeroom bot is at its limit across projects",
@@ -4635,6 +4647,18 @@
     "text": "Waiting for a slot, {{count}} requests ahead of it",
     "description": "A request Homeroom bot is ready to build but holds because all of its project's slots are in use, in one short line under the On hold heading of the activity drawer, and on the bot's slots page under Waiting for a slot. {{count}} is how many requests the bot will take up before it."
   },
+  "bot.track.held.nextBuild": {
+    "text": "Next in line to be built",
+    "description": "A request Homeroom bot is ready to build but holds because it is already building as many changes on the project at once as it may, in one short line under the On hold heading of the activity drawer, and on the bot's slots page under Waiting for a slot: it is the next one the bot will build."
+  },
+  "bot.track.held.aheadBuild_one": {
+    "text": "Waiting its turn to be built, {{count}} request ahead of it",
+    "description": "A request Homeroom bot is ready to build but holds because it is already building as many changes on the project at once as it may, in one short line under the On hold heading of the activity drawer, and on the bot's slots page under Waiting for a slot. {{count}} is how many requests the bot will build before it."
+  },
+  "bot.track.held.aheadBuild_other": {
+    "text": "Waiting its turn to be built, {{count}} requests ahead of it",
+    "description": "A request Homeroom bot is ready to build but holds because it is already building as many changes on the project at once as it may, in one short line under the On hold heading of the activity drawer, and on the bot's slots page under Waiting for a slot. {{count}} is how many requests the bot will build before it."
+  },
   "bot.track.held.ahead_one": {
     "text": "{{count}} request ahead of it",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Small note on a held request: how many requests the bot will take up before it. {{count}} is that number."
@@ -4703,9 +4727,13 @@
     "text": "Homeroom bot reads it next and builds it from version {{version}}. Its progress shows here and on the request.",
     "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the bot has the new request in its queue. {{version}} is the number of the design's version the request's plan holds, which the bot builds from. \"Here\" is the person's chat with Homeroom bot."
   },
+  "bot.track.filed.held.builds": {
+    "text": "Homeroom bot builds it when one of its builds is done: it is building as much on this project as it may at once. Its progress shows here and on the request.",
+    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits for its turn because the bot is already building as many changes on the project at once as it may. \"Here\" is the person's chat with Homeroom bot."
+  },
   "bot.track.filed.held.slots": {
-    "text": "Homeroom bot builds it when a slot frees: all of the project's are in use. Its progress shows here and on the request.",
-    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits for one of the project's slots (the changes the bot may have waiting for a vote at once), all of which are in use. \"Here\" is the person's chat with Homeroom bot."
+    "text": "Homeroom bot builds it when one of its changes is voted in or closed: it is at its limit of changes up for a vote here. Its progress shows here and on the request.",
+    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because as many of the bot's changes on the project as may wait for a vote at once are waiting. \"Here\" is the person's chat with Homeroom bot."
   },
   "bot.track.filed.held.bot_wide": {
     "text": "Homeroom bot builds it when a slot frees: it is at its limit across projects. Its progress shows here and on the request.",
@@ -4990,6 +5018,10 @@
   "ai.up.heldDaily": {
     "text": "{{project}} · #{{number}} · Ready to build · held by today's limit on this project",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but the project's daily limit on Homeroom bot's questions and notes is used up."
+  },
+  "ai.up.heldTurn": {
+    "text": "{{project}} · #{{number}} · Ready to build · waits for Homeroom bot's turn on this project",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but it is already building as many changes on the project at once as it may, so it starts once one of those builds is done."
   },
   "ai.up.heldYours_one": {
     "text": "{{project}} · #{{number}} · Ready to build · a vote you owe can free its slot",

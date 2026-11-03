@@ -274,6 +274,12 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           // starts over under this claim's own id.
           await clearRun(input.sessionId, input.runId);
         }
+        // The preview it checks, awake (#6157: a preview nobody used sleeps,
+        // services/preview-sleep.js). One that slept and did not wake in time
+        // is the platform's fault, never the change's: its error lane runs
+        // it again.
+        const awake = await legacy('services/preview-sleep').wakeForRun(config, pool, input.sessionId);
+        if (!awake.ok) return { outcome: 'blocked', reason: awake.detail, platformFault: true };
         const stagingResult = { runtimeName: input.runtimeName, runtimeKind: input.runtimeKind, stagingUrl: input.url, timings: null };
         const report: { uiAffecting?: boolean } = {};
         const result = await visuals().captureForSession(config, row, a, input.head, stagingResult, {

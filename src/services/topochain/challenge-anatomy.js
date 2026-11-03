@@ -48,8 +48,10 @@ const READS = {
     tables: ['chat_sessions', 'apps'],
     key: 'session:',
     keyLabel: 'session:<session id>',
-    text: () => 'Proposals put to the group vote inside the window. Only the promote button writes '
-      + '`promoted_at`, so the platform\'s own maintenance proposals never count.',
+    text: () => 'Proposals put to the group vote inside the window, credited to the session\'s owner. '
+      + 'Every promote and every Settings proposal writes `promoted_at`, so a Homeroom bot build '
+      + 'is credited to the bot\'s account and a maintenance campaign\'s to usernode-platform, '
+      + 'never to the person who asked.',
   },
   PROPOSAL_ACCEPTED: {
     tables: ['events', 'chat_sessions', 'apps'],
