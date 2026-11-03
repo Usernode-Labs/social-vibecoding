@@ -249,6 +249,9 @@ test('only the read-only connector Settings read survives on staging', () => {
   // Social identities are a separate account surface with their own
   // staging fixture; the connector gate owns only this read.
   assert.equal(mcpOauth.isStagingReadableConnectorPath('GET', '/api/me/connectors'), true);
+  // #6135: Test connection is the second read-only status read. It answers
+  // from a fixture (or "not available here") and never touches credentials.
+  assert.equal(mcpOauth.isStagingReadableConnectorPath('GET', '/api/me/connectors/test'), true);
   assert.equal(mcpOauth.isStagingReadableConnectorPath('GET', '/api/me/github'), false);
 
   // Nothing that mints, presents or revokes a credential is exempt.
@@ -263,6 +266,7 @@ test('only the read-only connector Settings read survives on staging', () => {
     ['GET', '/.well-known/oauth-authorization-server'],
     // Right path, wrong method: a write must not ride the read exemption.
     ['DELETE', '/api/me/connectors'],
+    ['POST', '/api/me/connectors/test'],
     ['POST', '/api/me/github'],
   ]) {
     assert.equal(

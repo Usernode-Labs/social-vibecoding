@@ -380,6 +380,9 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6135: Test connection, Settings > Connectors ───────────────────
+  'connector-url-test': 'The Test connection button beside Copy in Settings > Connectors (features/settings/sections/connectors.tsx). Read-only: it checks this site\'s MCP server and the account\'s connection. settings.js labels it and disables it while a check runs.',
+  'connector-test-status': 'The line under the MCP server URL that reports the last Test connection result (features/settings/sections/connectors.tsx). Ships hidden and empty; settings.js fills it and colours a failure.',
   // ── #6000: propose reopening a closed request ───────────────────────
   'reopen-issue-modal': 'The Propose reopening dialog (features/dialogs/reopen-issue.tsx), the mirror of #close-issue-modal, opened from a closed request\'s status card or its ⋯ menu. Ships hidden.',
   'reopen-issue-number': 'The dialog title\'s #N span, filled from the issue the dialog was opened for.',
