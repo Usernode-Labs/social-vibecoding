@@ -255,13 +255,21 @@ const PILLS: Record<string, string> = {
   build_stopped: 'messages:ai.pill.tryAgain',
 };
 
-/** Pure: the page a Needs you card is decided on. */
+/**
+ * Pure: the page a Needs you card is decided on. A change built for a
+ * request has no page of its own (one page per thread): its address lands on
+ * the request's page, so a Vote row links there too, and the row it lights is
+ * that page's (3 Nov 2026, #6227: the numbers can differ, so matching the
+ * change's own route never lit it).
+ */
 export function needHref(item: NeedItem): string | null {
   if (item.href) return item.href;
   const slug = item.app?.slug;
   if (!slug) return null;
   const app = encodeURIComponent(slug);
   if (item.kind === 'governance') return `#app/${app}/dev/governance/${Number(item.id)}`;
+  const closes = item.kind === 'proposal' ? Number(item.request?.number) : 0;
+  if (closes > 0) return `#app/${app}/dev/issues/${closes}`;
   const number = needNumber(item);
   if (number) {
     // A ballot is decided on its request's page, where its changes are.

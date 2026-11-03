@@ -520,6 +520,37 @@ function authMiddleware(config) {
   };
 }
 
+// SEC-06: a reviewer this preview has no row for (an account made after its
+// database was copied, or any reviewer once it starts empty) gets one on
+// their first verified sign-in: the synthetic handle the platform gives them
+// (platform-preview-data-policy.js previewIdentity), no password anyone can
+// use, member rights with platform access. Only that handle, for that very
+// id, is accepted, so a production handle never lands here; the screenshot
+// personas are seeded instead (db/migrate.js).
+// The users sequence is moved past the id, so a row this preview makes
+// itself never takes it. False when the handle is not a reviewer's.
+async function createPreviewReviewer(pool, payload) {
+  if (!Number.isSafeInteger(payload.id) || payload.id < 1 || payload.username !== `preview-user-${payload.id}`) return false;
+  const { rowCount } = await pool.query(
+    `INSERT INTO users (id, username, password, can_create_apps,
+       has_platform_access, private_member_since, created_at)
+     VALUES ($1, $2, '__staging_redacted__', FALSE, TRUE,
+       '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
+     ON CONFLICT DO NOTHING`,
+    [payload.id, payload.username]
+  );
+  if (rowCount) {
+    await pool.query(
+      `SELECT setval(q.seq, GREATEST($1::bigint, COALESCE(s.last_value, 0)))
+         FROM (SELECT pg_get_serial_sequence('users', 'id') AS seq) q
+         JOIN pg_sequences s ON format('%I.%I', s.schemaname, s.sequencename) = q.seq`,
+      [payload.id]
+    );
+    log.info('auth', 'Staging iframe-JWT created the reviewer', { id: payload.id });
+  }
+  return true;
+}
+
 // Verify the parent-issued JWT, look up the matching user in the local
 // (cloned) users table, mint a session row + set the cookie. Returns the
 // resolved req.user shape on success, null on any failure (caller falls
@@ -545,17 +576,18 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     return null;
   }
 
-  // The clone keeps stable IDs with synthetic handles for iframe sign-in. Its
-  // trusted export policy resets profiles and production roles; synthetic
-  // capture personas receive their fixture roles locally. Username match is defense-in-depth
-  // against a token whose id was renumbered between clone and now.
+  // The preview knows a reviewer by their production id and synthetic handle
+  // (a row made on first sign-in, createPreviewReviewer), and the screenshot
+  // personas by their fixed ids, seeded with their fixture roles. Username
+  // match is defense-in-depth against a token naming another row's id.
+  const findUser = async () => (await pool.query(
+    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, review_flow_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+    [payload.id]
+  )).rows[0];
   let userRow;
   try {
-    const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, review_flow_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
-      [payload.id]
-    );
-    userRow = rows[0];
+    userRow = await findUser();
+    if (!userRow && await createPreviewReviewer(pool, payload)) userRow = await findUser();
   } catch (err) {
     log.error('auth', 'Staging iframe-JWT user lookup failed', { err: err.message });
     return null;

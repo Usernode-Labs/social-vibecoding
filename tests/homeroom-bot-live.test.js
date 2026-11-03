@@ -248,6 +248,10 @@ function postHarness({ claimed = true, githubFails = false } = {}) {
       calls.messages.push({ appId, content, msgType, metadata, thread });
       return { id: 777 };
     },
+    async sendBotMessage(pool_, appId, { user, content, msgType, metadata, thread }) {
+      calls.messages.push({ appId, content, msgType, metadata, thread, user });
+      return { id: 778 };
+    },
   };
   return { pool, github, ws, calls };
 }
@@ -310,6 +314,106 @@ test('a GitHub failure still posts in Homeroom, and never throws', async () => {
   assert.equal(out.github, false);
   assert.equal(out.thread, true);
   assert.equal(out.githubCreatedAt, null, 'nothing to mark as seen');
+});
+
+// ── #6229: one bot note, on the page where it is read ──────────────────
+//
+// A change built for a request has no page of its own (1 Nov 2026), so a
+// note written on both threads shows twice on the request's page. When a
+// request leads the change's thread, post() says it once, tagged with the
+// change; a change with no request still gets its own copy.
+
+function leadPool(hasLead) {
+  const h = postHarness();
+  const base = h.pool.query.bind(h.pool);
+  h.pool.query = async (sql, params) => {
+    if (/JOIN threads t ON t\.id = s\.thread_id/.test(sql)) return { rows: hasLead ? [{ ok: 1 }] : [] };
+    return base(sql, params);
+  };
+  return h;
+}
+
+test('a change on its request page is said once, on the request, tagged with the change', async () => {
+  const h = leadPool(true);
+  const out = await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'followup_person',
+    text: 'I cannot get this change past its checks on my own.', sender: BOT, proposalSessionId: 12428,
+  });
+  assert.equal(h.calls.messages.length, 1, 'one note, not two');
+  const [m] = h.calls.messages;
+  assert.deepEqual(m.thread, { type: 'issue', ref: 12 });
+  assert.deepEqual(m.metadata.aboutChange, { sessionId: 12428 }, 'the kept copy says which change it is about');
+  assert.equal(m.metadata.hrbotPost, '55');
+  assert.equal(out.thread, true);
+});
+
+test('a change with no request still gets its note on its own thread', async () => {
+  const h = leadPool(false);
+  await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'followup_person',
+    text: 'x', sender: BOT, proposalSessionId: 12428,
+  });
+  assert.deepEqual(h.calls.messages.map((m) => m.thread), [
+    { type: 'issue', ref: 12 }, { type: 'session', ref: 12428 },
+  ]);
+  assert.equal(h.calls.messages[1].metadata, null, 'the change\'s copy, as today');
+});
+
+test('onlyProposal writes the change\'s copy alone, even on its request\'s page', async () => {
+  const h = leadPool(true);
+  await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question',
+    text: 'x', sender: BOT, proposalSessionId: 12428, onlyProposal: true,
+  });
+  assert.deepEqual(h.calls.messages.map((m) => m.thread), [{ type: 'session', ref: 12428 }]);
+});
+
+function specHarness({ hasLead, hasIssueCard }) {
+  const calls = { sent: [], queries: [] };
+  const pool = {
+    async query(sql, params) {
+      calls.queries.push({ sql: String(sql), params });
+      if (/JOIN threads t ON t\.id = s\.thread_id/.test(sql)) return { rows: hasLead ? [{ ok: 1 }] : [] };
+      if (/FROM chat_messages\s+WHERE app_id = \$1 AND thread_type = 'issue' AND msg_type = 'spec_share'/.test(sql)) {
+        return { rows: hasIssueCard ? [{ ok: 1 }] : [] };
+      }
+      return { rows: [] };
+    },
+  };
+  const ws = {
+    async sendBotMessage(_pool, _appId, args) { calls.sent.push(args); return { id: 900 }; },
+  };
+  return { pool, ws, calls };
+}
+
+test('the plan already on the request is not posted again as a proposed card', async () => {
+  const h = specHarness({ hasLead: true, hasIssueCard: true });
+  const out = await live.postSpecOnProposal({
+    ...h, app: APP, bot: BOT, sessionId: 12428, version: 1, spec: '# Fix it\n\nDo the thing.',
+  });
+  assert.equal(out, null);
+  assert.deepEqual(h.calls.sent, []);
+  assert.ok(h.calls.queries.some((q) => /UPDATE chat_session_specs SET shared_to_group_at/.test(q.sql)),
+    'the version is still made readable');
+});
+
+test('an updated plan still posts on the change', async () => {
+  const h = specHarness({ hasLead: true, hasIssueCard: true });
+  const out = await live.postSpecOnProposal({
+    ...h, app: APP, bot: BOT, sessionId: 12428, version: 2, spec: '# Fix it\n\nDo the thing.', revised: true,
+  });
+  assert.ok(out);
+  assert.equal(h.calls.sent.length, 1);
+  assert.equal(h.calls.sent[0].thread.type, 'session');
+});
+
+test('a change with no request still gets its proposed plan', async () => {
+  const h = specHarness({ hasLead: false, hasIssueCard: true });
+  const out = await live.postSpecOnProposal({
+    ...h, app: APP, bot: BOT, sessionId: 12428, version: 1, spec: '# Fix it\n\nDo the thing.',
+  });
+  assert.ok(out);
+  assert.equal(h.calls.sent.length, 1);
 });
 
 // ── Naming the person who filed the issue ──────────────────────────────
