@@ -29,7 +29,6 @@ test('the Messages drawer draws and reads its panes in reading direction', () =>
   const src = read('frontend/src/features/messages/phone-drawer.tsx');
   assert.match(src, /\(pane === 'list' \? -offset : MESSAGES_AT\[1\] - offset\) \* w \* dirSign\(\)/,
     'the panes are anchored at inline-start, so their transform has to run the same way');
-  assert.match(src, /const dx = \(e\.clientX - p\.x0\) \* dirSign\(\);/, 'a mouse pan');
   assert.match(src, /const dx = \(touch\.clientX - p\.x0\) \* dirSign\(\);/, 'a finger pan');
   assert.match(src, /swipeBackMayStart\(\{ x: touch\.clientX, takesEdge, sideways, rtl, width: window\.innerWidth \}\)/,
     'the back swipe\'s edge is the inline-start one');

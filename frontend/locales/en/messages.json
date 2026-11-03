@@ -4751,10 +4751,6 @@
     "text": "This needs a person, not Homeroom bot: the people on the project decide who builds it.",
     "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when Homeroom bot does not build requests on that project, or a person has to decide about it first."
   },
-  "drawer.peek.open": {
-    "text": "Open {{name}}",
-    "description": "On a phone, what a screen reader says for the last conversation, peeking in beside the list of conversations; pressing it opens that conversation. {{name}} is the conversation's name: a person's name or a group's title."
-  },
   "privateThread.label": {
     "text": "Only you can see this thread.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab): nothing in it is public until they file it or post it."
@@ -5110,10 +5106,6 @@
   "ai.drawer.back": {
     "text": "Back to the list",
     "description": "The AI tab on a phone: the back arrow over what is open beside the list (Main Chat, the chat with Homeroom bot, or one of its threads), which slides the list back in. Its accessible name and tooltip."
-  },
-  "ai.drawer.peek": {
-    "text": "Open {{title}}",
-    "description": "The AI tab on a phone: accessible name of the open thread peeking in beside the list, which opens it. {{title}} is the thread's name."
   },
   "ai.filter.label": {
     "text": "Show the work of",

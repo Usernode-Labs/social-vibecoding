@@ -247,7 +247,9 @@ is no replay plan to write and nothing to verify locally.
   (`frontend/src/features/ai/`) is the list, Main Chat its first row, and
   from 768px a column beside it holding Main Chat or one private thread,
   alone under its own head; on a phone the two are one drawer, Messages'
-  own strip (`phone-drawer.tsx`). Every way into the chat (an address, a
+  own strip (`phone-drawer.tsx`): the list the whole screen, and Main
+  Chat's name and arrow in the platform header (`nav-drawer/bot-drawer.ts`).
+  Every way into the chat (an address, a
   bell row, a door that asks Homeroom bot) lands there through
   `features/ai/door.ts`; `#messages/<the bot's chat>` is swapped for
   `#homeroom-bot/main` or `/thread/<id>`. A request, a change or a decision
@@ -289,8 +291,12 @@ is no replay plan to write and nothing to verify locally.
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
   Above Hub, the list's first row is **App**, the project's own app
   (Homeroom's community has none: the platform is its app). On a phone the
-  list is the drawer's middle level (`features/nav-drawer/`), or, where the
-  drawer is off, a tray behind the place bar that names where you are
+  Hub's rows are the way to the places (For you's Needs you, Workshop and
+  #general, then a Topics card, `hub-cards.tsx`): no drawer lists them beside
+  the page since 3 Nov 2026. The header's left button is the grid on the Hub,
+  which opens All communities (a grid of tiles on a phone), and the arrow up
+  to the Hub on any other place (`features/nav-drawer/header-drawer.tsx`);
+  where that header is off, a tray behind the place bar names where you are
   (`place-bar.tsx`, `places-tray.tsx`); from 768px it nests under the
   community's row in the sidebar (`rail-communities.tsx`,
   `rail-nest.tsx`), and the page publishes where it is for it
@@ -331,10 +337,10 @@ is no replay plan to write and nothing to verify locally.
   first, so it opens on the hub; every door or switch that names its place
   goes through `AppView._landOnTab`, and the router takes that decision
   over the link's (`_takePlaceDecision`). A switch is not a door: the
-  header's ⌄ menu, a row of All communities and the phone drawer's list
-  open the other community on the place you were on when it has it, else
-  its hub (`landKeepingPlace` in `place-store.ts`, `keepPlace` in the
-  drawer), and the Communities tab reopens the page you left on its place.
+  header's ⌄ menu and a row of All communities open the other community on
+  the place you were on when it has it, else its hub (`landKeepingPlace` in
+  `place-store.ts`); a phone's grid of All communities is a door to the hub
+  (`CommunityTile`), and the Communities tab reopens the page you left on its place.
   Back, Forward and a reload are not doors either: the page reopens on the
   place its history entry names, read fresh when it mounts. A request's
   "‹" chip names where its press goes: a step Back to the place the page

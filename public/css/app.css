@@ -18720,24 +18720,10 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 .ai-drawer-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .ai-drawer-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
 .ai-drawer-thread .messages-thread-pane { border-radius: 0; border-top: 0; box-shadow: none; }
-.ai-drawer-head {
-  flex: none; display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; border-bottom: 1px solid var(--app-sheet-line);
-  background-color: var(--dc-sheet-fill);
-}
-.ai-drawer-back {
-  flex: none; width: 32px; height: 32px; border-radius: 999px;
-  display: inline-flex; align-items: center; justify-content: center;
-  color: var(--brand-ink); background: var(--brand-tint);
-  transition: opacity 300ms, transform 300ms;
-  position: relative;
-}
-/* A 32px disc, pressed as the shell's 44px tap target. */
-.ai-drawer-back::after { content: ""; position: absolute; inset: -6px; }
-/* On the list the arrow has nowhere to go: it arrives as the thread opens.
-   A thread alone in the column has its own (1 Nov 2026), the same way. */
-.ai-drawer[data-level="0"] :is(.ai-drawer-back, .messages-thread-back) { opacity: 0; transform: translateX(calc(8px * var(--rtl-sign))); pointer-events: none; }
-.ai-drawer-thread > .ai-drawer-peek { z-index: 5; }
+/* On the list a thread's arrow has nowhere to go: it arrives as the thread
+   opens. Main Chat's is the platform header's (3 Nov 2026,
+   features/nav-drawer/bot-drawer.ts), which moves with the strip itself. */
+.ai-drawer[data-level="0"] .messages-thread-back { opacity: 0; transform: translateX(calc(8px * var(--rtl-sign))); pointer-events: none; }
 /* The Ask bar sits at the list's foot, in its column, not over the screen.
    ON THE TAB BAR, NOT UNDER IT (overnight audit B14, 2 November 2026). The
    list runs to the foot of the screen, under the tab bar, and the bar stuck
@@ -18752,12 +18738,11 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
   margin-bottom: var(--platform-tabs-h, 0px);
 }
 #ai-screen .ai-drawer-list .ai-askbar-gap { display: none; }
-@media (prefers-reduced-motion: reduce) { .ai-drawer-back { transition: none; } }
 .ai-drawer[data-panning] { user-select: none; -webkit-user-select: none; }
-/* Until a thread has been opened the list is the whole screen and the
-   column waits off its right edge, with no peek (phone-drawer.tsx, FULL_AT;
-   Evan, 1 Nov 2026). Its shadow would show at the list's edge, so it comes
-   only with the slide. */
+/* The list is the whole screen and the column waits off its right edge,
+   with no peek (phone-drawer.tsx, FULL_AT; Evan, 1 Nov 2026, and always
+   since 3 Nov). Its shadow would show at the list's edge, so it comes only
+   with the slide. */
 .ai-drawer:not([data-peek]) .ai-drawer-list { width: 100%; }
 .ai-drawer:not([data-peek]) .ai-drawer-thread { inset-inline-start: 100%; }
 .ai-drawer:not([data-peek])[data-level="0"]:not([data-panning]) .ai-drawer-thread { box-shadow: none; border-inline-start-color: transparent; }
@@ -20104,125 +20089,20 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .dev-ws-tray-root.is-closing .dev-ws-tray, .dev-ws-tray-root.is-closing .dev-ws-tray-scrim { animation: none; }
 }
 
-/* ── THE PHONE'S NAVIGATION DRAWER (features/nav-drawer/) ─────────────
-   Evan's design (18 Oct 2026): under 768px, a community's page is the
-   deepest of three levels on one strip, fixed between the header's foot
-   and the tab bar (the tray's offset): your communities at 85%, the
-   community's places at 80% (the tray's list, in its colour), then the
-   page itself, #app-view, which the drawer moves with a transform while it
-   is off its rest and leaves untransformed on it. Each level peeks in at
-   the right of the one before it, a little dimmed, and a press on it goes
-   there. Transform and opacity only; the widths change at once, never by
-   transition. Nothing here draws at 768px and up: the island renders
-   nothing there, and the header's rules below are the phone's. */
-.nav-drawer {
-  position: fixed; inset-inline-start: 0; inset-inline-end: 0; z-index: 20;
-  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
-  bottom: var(--platform-tabs-h, 0px);
-  overflow: hidden;
-  /* Up and down are the lists' own scrolls; sideways is the pan's. */
-  touch-action: pan-y;
-}
-.nav-drawer.is-resting { visibility: hidden; pointer-events: none; }
-/* touch-action stops at a scroller: a list inside says pan-y itself, or the
-   browser takes a sideways drag that starts on it (a pointercancel, and the
-   strip never moves). The page says it too while the drawer holds it, so a
-   swipe right on it is the drawer's; its own sideways scrollers and
-   swipe-to-vote cards say their own, and keep theirs
-   (features/nav-drawer/sideways.ts). */
-html[data-nav-drawer] #app-view { touch-action: pan-y; }
-.nav-drawer-strip { position: absolute; inset: 0; will-change: transform; }
-.nav-drawer-outer {
-  position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 85%;
-  display: flex; flex-direction: column;
-}
-.nav-drawer.is-searching .nav-drawer-outer { width: 100%; }
-.nav-drawer-places {
-  position: absolute; top: 0; bottom: 0; inset-inline-start: 85%; width: 80%;
-  overflow: hidden;
-  background: var(--dc-sheet-solid, var(--bg-primary));
-  box-shadow: calc(-1px * var(--rtl-sign)) 0 0 var(--app-sheet-line);
-  transition: transform 300ms cubic-bezier(0.33, 1, 0.68, 1);
-}
-/* The search widens level 0 to the screen: the places slide off its edge. */
-.nav-drawer.is-searching .nav-drawer-places { transform: translate3d(15vw, 0, 0); }
-.nav-drawer-places-scroll {
-  position: absolute; inset: 0;
-  overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
-  padding: 16px 12px 24px;
-}
-.nav-drawer-places.is-peek { cursor: pointer; }
-.nav-drawer-places.is-peek * { pointer-events: none; }
-.nav-drawer-places.is-peek::after,
-.nav-drawer[data-nav-drawer-level="1"] .nav-drawer-cover::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: rgba(0, 0, 0, 0.05);
-}
-.nav-drawer-who { padding: 0 10px 12px; }
-.nav-drawer-who-name {
-  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 17px; font-weight: 650; line-height: 22px; color: var(--text-primary);
-}
-.nav-drawer-who-line { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
-/* The page's edge, peeking: what a press goes back to, and the shadow it
-   casts on the places. It moves with #app-view, over it. */
-.nav-drawer-cover {
-  position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 100%;
-  margin: 0; padding: 0; border: 0; background: transparent;
-  box-shadow: calc(-8px * var(--rtl-sign)) 0 24px rgba(0, 0, 0, 0.08);
-  cursor: pointer; -webkit-tap-highlight-color: transparent;
-  will-change: transform;
-}
-.nav-drawer-cover:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
-:is(.dark) .nav-drawer-places.is-peek::after,
-:is(.dark) .nav-drawer[data-nav-drawer-level="1"] .nav-drawer-cover::after { background: rgba(0, 0, 0, 0.22); }
+/* ── THE PHONE'S COMMUNITY HEADER (features/nav-drawer/) ──────────────
+   Evan's design (18 Oct 2026). Under 768px a community's page drew its
+   header from a drawer: your communities at 85%, the community's places at
+   80%, then the page, on one strip. The strip is gone (3 Nov 2026): the
+   Hub's rows lead to the places and All communities is a page, so only the
+   header's rules are left, below. */
 
-/* Level 0: your communities, the search at its top. The field's text is
-   16px so iOS does not zoom the page to it. */
-.nav-drawer-search { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 16px 4px; }
-.nav-drawer-search-box {
-  flex: 1 1 auto; min-width: 0; height: 36px; padding: 0 12px;
-  display: flex; align-items: center; gap: 8px;
-  border-radius: 12px; background: var(--dc-sheet-solid, var(--bg-primary));
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-  color: var(--text-muted);
-}
-.nav-drawer-search-box:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
-.nav-drawer-search-glyph { flex: none; width: 18px; height: 18px; }
-.nav-drawer-search-input {
-  flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; border: 0; outline: none;
-  background: transparent; color: var(--text-primary);
-  font: inherit; font-size: 16px;
-  -webkit-appearance: none; appearance: none;
-}
-.nav-drawer-search-input::placeholder { color: var(--text-muted); }
-.nav-drawer-search-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
-.nav-drawer-search-cancel {
-  flex: none; padding: 0 2px; border: 0; background: none; cursor: pointer;
-  font: inherit; font-size: 15px; font-weight: 600; color: var(--accent);
-}
-.nav-drawer-outer-list {
-  flex: 1 1 auto; min-height: 0;
-  overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
-  padding-bottom: 24px;
-}
-.nav-drawer-outer-list:focus { outline: none; }
-.nav-drawer-outer-none { margin: 20px 20px 0; font-size: 15px; line-height: 20px; color: var(--text-muted); }
-/* THE CHIPS SIT A SMALL GAP UNDER THE NEEDS YOU CARD (#5821), the twelve
-   the Communities screen keeps under the same card (section + .workshop-search).
-   Only when the card heads the list: without it the chips follow the search. */
-.nav-drawer-outer-list section + .audience-chips { margin-top: 12px; }
-/* The community the drawer is on: its tile ringed in "where you are". */
-.nav-drawer-outer [aria-current="true"] .app-icon-tile { outline: 2px solid var(--lit-ink); outline-offset: 2px; }
-
-/* THE HEADER WITH THE DRAWER (header-drawer.tsx). The arrow is the bar's
-   back disc; the titles are absolutely placed in the h1, so the h1 lets
-   "Communities" sit out past its edge where the arrow is not, and each
-   title shortens itself. The bar's colour: the tinted rules above still
-   paint it, and DrawerUntint lays the bar as it is off a community over
-   them, faded out with depth (`--nav-k`, 0 on your communities, 1 from the
-   places in); the ink goes from the bar's own to white with it. At rest on
-   a page the bar is exactly the tinted bar. */
+/* THE HEADER WITH THE DRAWER (header-drawer.tsx). The arrow (on a Hub,
+   the grid) is the bar's back disc; the titles are absolutely placed in the
+   h1, so the h1 lets a list's title ("Messages") sit out past its edge where
+   the arrow is not, and each title shortens itself. The bar's colour: the
+   tinted rules above still paint it, and DrawerUntint lays the bar as it is
+   off a community over them, faded out with depth (`--nav-k`); a
+   community's page rests at 1, the tinted bar with white ink. */
 @media (max-width: 767.98px) {
   html[data-nav-drawer] body {
     --nav-brand-ink: var(--brand-ink);
@@ -20262,10 +20142,6 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
     font-size: 12px; font-weight: 600; opacity: 0.78;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .nav-drawer-places { transition: none; }
-}
-
 /* ── MESSAGES ON THE SAME DRAWER (features/messages/phone-drawer.tsx) ──
    Evan's design (18 Oct 2026), on a phone: the conversation list at 85% of
    the screen in the column's styling (the desktop's sidebar rows: no cards,
@@ -20322,18 +20198,6 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-group-tag { display: none; }
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; }
-  /* The peek: a picture of the conversation, pressed as one. */
-  .messages-thread-peek { overflow: hidden; }
-  .messages-thread-peek > .messages-peek-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-  .messages-thread-peek .messages-thread-scroll { overflow: hidden; }
-  .messages-thread-peek .messages-peek-head { flex: none; display: flex; padding: 14px 16px 8px; }
-  .messages-thread-peek .messages-message > :first-child { visibility: hidden; }
-  .messages-peek-open {
-    position: absolute; inset: 0; margin: 0; padding: 0; border: 0;
-    background: rgba(0, 0, 0, 0.05); cursor: pointer; -webkit-tap-highlight-color: transparent;
-  }
-  :is(.dark) .messages-peek-open { background: rgba(0, 0, 0, 0.22); }
-  .messages-peek-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
   /* In a conversation the header names it, so its sheet keeps only its discs.
      Over the Homeroom bot's Activity strip they float at the top-right
      corner, on the strip's right end, which it leaves them (polish N15: a
@@ -23764,23 +23628,10 @@ html[data-side-strip="left"] #platform-header {
      padding and pads itself by the same width, and so do its content host
      and its sheet, the chain the clip runs through; everything inside stays
      beside the strip. Only on the platform's surface: a running app keeps
-     the width beside the strip and no more. The drawer is the screen's
-     width; its levels stay the fractions of the width BESIDE the strip that
-     features/nav-drawer/nav-drawer.tsx pans by (screenWidth), so the last
-     one on screen runs on past it. */
+     the width beside the strip and no more. */
   html[data-side-strip="right"] :is(#app-view[data-app-surface="platform"], #app-view[data-app-surface="platform"] > #app-content, #app-view[data-app-surface="platform"] > #app-content > .dc-lift-strip) {
     margin-right: calc(-1 * var(--platform-strip-w, 0px));
     padding-right: var(--platform-strip-w, 0px);
-  }
-  html[data-side-strip="right"] .nav-drawer-outer {
-    width: calc((100% - var(--platform-strip-w, 0px)) * 0.85);
-  }
-  html[data-side-strip="right"] .nav-drawer.is-searching .nav-drawer-outer {
-    width: calc(100% - var(--platform-strip-w, 0px));
-  }
-  html[data-side-strip="right"] .nav-drawer-places {
-    left: calc((100% - var(--platform-strip-w, 0px)) * 0.85);
-    width: calc((100% - var(--platform-strip-w, 0px)) * 0.8);
   }
   /* …AND MESSAGES' DRAWER DOES THE SAME (Evan, 24 Oct 2026): the list, the
      conversation peeking beside it and the conversation open run on under
@@ -23812,20 +23663,6 @@ html[data-side-strip="left"] #platform-header {
     right: calc(12px + var(--platform-strip-w, 0px));
   }
 
-  /* A strip on the left (Split View) keeps the drawer beside it. */
-  html[data-side-strip="left"] .nav-drawer {
-    left: var(--platform-strip-w, 0px);
-  }
-  /* …and runs to the floor: it stopped on the bar's band, and with the bar
-     in the strip that left a band of the page under it. Its lists clear the
-     home indicator themselves. */
-  html[data-side-strip] .nav-drawer {
-    bottom: 0;
-  }
-  html[data-side-strip] .nav-drawer-outer-list,
-  html[data-side-strip] .nav-drawer-places-scroll {
-    padding-bottom: calc(24px + var(--platform-safe-bottom, 0px));
-  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
