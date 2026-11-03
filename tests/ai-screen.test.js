@@ -1046,6 +1046,23 @@ test('beside this page the panel is the page\'s own column: ‹ Main and the pro
     'and the page in it leaves out its own "‹ Workshop"');
 });
 
+test('a request opened beside the bot list fills the column, not a box inside it (3 Nov 2026)', () => {
+  const css = read('public/css/app.css');
+  // One rule set, both panels: the AI column's document and the Workshop's
+  // own side panel draw the same request page.
+  const scope = ':is\\(html\\.in-side-panel\\.side-panel-beside-ai, \\.dev-ws-side\\)';
+  assert.match(css, new RegExp(`${scope} #dev-topic-thread \\{\\s*padding-top: 0;\\s*\\}`),
+    'the host drops its 12px top shoulder');
+  assert.match(css, new RegExp(`${scope} \\.dev-request \\{\\s*max-width: none;\\s*margin-inline: 0;\\s*padding-inline: 0;\\s*\\}`),
+    'the page drops its 780px cap and centred 12px side margins');
+  assert.match(css, new RegExp(`${scope} \\.dev-request-sheet \\{[^}]*background: transparent;[^}]*backdrop-filter: none;`),
+    'the sheet takes the column\'s surface instead of painting its own fill and frost');
+  assert.match(css, new RegExp(`${scope} \\.dev-request-sheet \\{[^}]*box-shadow: none;`),
+    'and lifts no shadow off it');
+  assert.match(css, new RegExp(`${scope} :is\\(\\.dev-request-bar, \\.dev-request-scroll\\) \\{\\s*padding-inline: 12px;\\s*\\}`),
+    'the 12px the wrapper gave the content stays on the bar and the transcript');
+});
+
 test('Main\'s column is held inside the window, and the panel takes its place at its width', () => {
   const css = read('public/css/app.css');
   // A width chosen beside an app on a wide monitor must not run Main under
