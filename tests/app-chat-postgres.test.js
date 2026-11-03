@@ -793,8 +793,12 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
       [twin.id, user, content, msgType, JSON.stringify(metadata), type, ref, when]
     )).rows[0];
     const note = 'I cannot get this change past its checks on my own.';
-    // The 13:27 pair: the request's copy leads with the handle it named.
-    await msg({ user: robot.id, content: `@alice ${note}`, type: 'issue', ref: 71, when: at('.000Z') });
+    // The 13:27 pair: the request's copy leads with the handle it named and
+    // carries the mark post() writes; the change's copy is the unmarked one.
+    await msg({
+      user: robot.id, content: `@alice ${note}`, type: 'issue', ref: 71,
+      metadata: { hrbotPost: '901' }, when: at('.000Z'),
+    });
     await msg({ user: robot.id, content: note, type: 'session', ref: change.id, when: at('.004Z') });
     // The plan, once for the request and once more when it was proposed.
     await msg({
@@ -812,7 +816,7 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     });
     await msg({
       user: robot.id, content: 'I built this. It\'s up for a vote', type: 'issue', ref: 71, msgType: 'vote',
-      metadata: { vote: { sessionId: change.id } }, when: at('.301Z'),
+      metadata: { vote: { sessionId: change.id }, hrbotPost: '902' }, when: at('.301Z'),
     });
     // A person's identical words on the change are their own reply, not a twin.
     await msg({ user: alice.id, content: note, type: 'session', ref: change.id, when: at('.500Z') });

@@ -650,8 +650,10 @@ function chatRoutes(config) {
         // (the same post mark, or the same bot's same words within 10 s,
         // the request's copy possibly leading with @handles), a plan card
         // for the same version, and the workflow's promote line beside the
-        // bot's own "I built this" note for the same change. A person's
-        // rows are never folded.
+        // bot's own "I built this" note for the same change. The bot is
+        // known by the mark post() writes on its issue copy, so this reads
+        // chat_messages alone (no users join). A person's rows are never
+        // folded.
         where += ` AND NOT (m.thread_type = 'session' AND EXISTS (
           SELECT 1 FROM chat_messages twin
            WHERE twin.app_id = $1 AND twin.thread_type = 'issue'
@@ -659,8 +661,8 @@ function chatRoutes(config) {
              AND (
                (m.metadata->>'hrbotPost' IS NOT NULL
                 AND twin.metadata->>'hrbotPost' = m.metadata->>'hrbotPost')
-               OR (EXISTS (SELECT 1 FROM users bu WHERE bu.id = m.user_id AND bu.is_synthetic)
-                   AND twin.user_id = m.user_id
+               OR (twin.metadata->>'hrbotPost' IS NOT NULL
+                   AND twin.user_id IS NOT NULL AND twin.user_id = m.user_id
                    AND ABS(EXTRACT(EPOCH FROM (twin.created_at - m.created_at))) <= 10
                    AND (twin.content = m.content
                         OR right(twin.content, length(m.content) + 1) = ' ' || m.content))
@@ -670,9 +672,9 @@ function chatRoutes(config) {
                    AND twin.metadata->'specShare'->>'version' = m.metadata->'specShare'->>'version')
                OR (m.msg_type = 'vote' AND m.user_id IS NULL
                    AND twin.user_id IS NOT NULL
+                   AND twin.metadata->>'hrbotPost' IS NOT NULL
                    AND twin.metadata->'vote'->>'sessionId' IS NOT NULL
-                   AND twin.metadata->'vote'->>'sessionId' = m.metadata->'vote'->>'sessionId'
-                   AND EXISTS (SELECT 1 FROM users bu WHERE bu.id = twin.user_id AND bu.is_synthetic))
+                   AND twin.metadata->'vote'->>'sessionId' = m.metadata->'vote'->>'sessionId')
              )
         ))`;
       } else {
