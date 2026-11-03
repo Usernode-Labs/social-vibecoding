@@ -2307,6 +2307,40 @@ test('index.html hosts #browse-screen with its own search field and grid', () =>
   assert.match(main, /id="browse-detail" class="hidden/);
 });
 
+// The dark theme's contrast pass (#6196): the field's placeholder and edge sit
+// one step brighter on the existing zinc scale than they did, while the light
+// theme keeps every class it had.
+test('#browse-search-input raises its placeholder and edge in the dark theme', () => {
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const field = /id="browse-search-input"[\s\S]*?className="([^"]+)"/.exec(src);
+  assert.ok(field, '#browse-search-input has a class string');
+  assert.match(field[1], /(?:^|\s)dark:placeholder-zinc-300(?:\s|$)/, 'dark placeholder');
+  assert.match(field[1], /(?:^|\s)dark:border-zinc-700(?:\s|$)/, 'dark border');
+  assert.match(field[1], /(?:^|\s)placeholder-zinc-400(?:\s|$)/, 'light placeholder unchanged');
+  assert.match(field[1], /(?:^|\s)border-zinc-200(?:\s|$)/, 'light border unchanged');
+});
+
+// The strip is shared, so the Discover switch, the Leaderboard and the
+// proposals strip all take the same dark treatment from the primitive.
+test('the shared tab strip lifts its dark text and draws an edge', () => {
+  const src = read('frontend/@/components/ui/tabs.tsx');
+  const constant = (name) => {
+    const start = src.indexOf(`export const ${name} =`);
+    assert.notEqual(start, -1, `${name} is exported`);
+    const decl = src.slice(start, src.indexOf(';', start));
+    const parts = Array.from(decl.matchAll(/'([^']*)'/g), (m) => m[1]);
+    assert.ok(parts.length > 0, `${name} is a literal class string`);
+    return parts.join('');
+  };
+  assert.match(constant('SECTION_TAB_INACTIVE'), /(?:^|\s)dark:text-zinc-300(?:\s|$)/);
+  const track = constant('SECTION_TABS_LIST_BASE');
+  assert.match(track, /(?:^|\s)dark:ring-1(?:\s|$)/);
+  assert.match(track, /(?:^|\s)dark:ring-inset(?:\s|$)/);
+  assert.match(track, /(?:^|\s)dark:ring-zinc-700(?:\s|$)/);
+  // The Discover switch's replace must still find the token it swaps.
+  assert.match(track, /(?:^|\s)inline-flex(?:\s|$)/);
+});
+
 // browse.js used to be a classic <script> loaded after home.js, and this test
 // pinned that order plus its own precache entry. #1083 chunk F moved it into
 // the React bundle, so both registers change at once: the island imports it,

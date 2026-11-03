@@ -226,7 +226,7 @@ export function BrowseScreen() {
             autoComplete="off"
             placeholder={t('discover:search.placeholder')}
             aria-label={t('discover:search.label')}
-            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-300 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
               // Enter opens the site when the field holds a web address —
