@@ -583,3 +583,59 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(payload.voice.turns, summary.turns);
   });
 });
+
+// 3 Nov 2026 (#6213): one live set of suggested replies per thread. A newer
+// word (the bot's, or a person's, both call this) closes the open sets before
+// it in that thread and tells every reader, leaving a set already closed, a
+// message with an offer, and another thread's sets alone.
+test('retireThreadSuggestions closes only older open sets in the same thread', { timeout: 120000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+  const { rows: [app] } = await pool.query(
+    "INSERT INTO apps (name, slug) VALUES ('Suggest demo', 'suggest-demo') RETURNING id",
+  );
+  const insert = async (ref, meta) => (await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata)
+     VALUES ($1, NULL, 'the bot said something', 'message', 'issue', $2, $3) RETURNING id`,
+    [app.id, ref, JSON.stringify(meta)],
+  )).rows[0].id;
+  const suggest = (status = 'open') => ({
+    homeroomBot: {
+      kind: 'note',
+      suggest: { status, forUserIds: [9] },
+      actions: [{ id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt' }],
+    },
+  });
+  const older = await insert(7, suggest());
+  const kept = await insert(7, suggest());
+  const closed = await insert(7, suggest('closed'));
+  const elsewhere = await insert(12, suggest());
+  const offered = await insert(7, {
+    homeroomBot: { kind: 'voice', offer: { id: 1, status: 'open' }, actions: [{ id: 'yes', label: 'File it' }] },
+  });
+  const after = await insert(7, suggest());
+
+  const frames = [];
+  await voice.retireThreadSuggestions(pool, {
+    appId: app.id,
+    thread: { type: 'issue', ref: 7 },
+    keepMessageId: after,
+    deps: { ws: { broadcast(appId, frame) { frames.push({ appId, frame }); } } },
+  });
+
+  const metaOf = async (id) => (await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [id])).rows[0].metadata;
+  const retired = await metaOf(older);
+  assert.equal(retired.homeroomBot.suggest.status, 'closed');
+  assert.deepEqual(retired.homeroomBot.actions, []);
+  assert.equal((await metaOf(kept)).homeroomBot.suggest.status, 'closed', 'anything before the newer word');
+  assert.equal((await metaOf(closed)).homeroomBot.suggest.status, 'closed');
+  assert.equal((await metaOf(elsewhere)).homeroomBot.suggest.status, 'open', 'another thread is untouched');
+  assert.deepEqual((await metaOf(offered)).homeroomBot.actions, [{ id: 'yes', label: 'File it' }], 'an offer keeps its own lifecycle');
+  assert.equal((await metaOf(after)).homeroomBot.suggest.status, 'open', 'the newer word keeps its own set open');
+  assert.deepEqual(frames.map((f) => f.frame.id), [older, kept], 'each closed set is broadcast once');
+  assert.ok(frames.every((f) => f.frame.type === 'chat_message_updated' && f.frame.thread.ref === 7));
+
+  // Nothing to retire, and a thread the voice has no place in: a quiet no-op.
+  await voice.retireThreadSuggestions(pool, { appId: app.id, thread: { type: 'chat', ref: null }, keepMessageId: 1, deps: {} });
+  await voice.retireThreadSuggestions(pool, { appId: app.id, thread: { type: 'issue', ref: 7 }, keepMessageId: 0, deps: {} });
+});

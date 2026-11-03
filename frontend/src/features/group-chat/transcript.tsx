@@ -94,6 +94,7 @@ import {
   transcriptStore,
   type Attachment,
   type BotOfferView,
+  type BotSuggestView,
   type Quote,
   type TranscriptMarker,
   type TranscriptMessage,
@@ -130,6 +131,40 @@ function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView
           key={action.id}
           type="button"
           onClick={() => { void decide(action.id); }}
+          disabled={busy}
+          variant={action.primary ? 'pillAccent' : 'pillNeutral'}
+          ink={action.primary ? 'solid' : 'neutral'}
+          size="sm"
+          className="font-semibold"
+        >
+          {action.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 3 Nov 2026: the suggested replies under Homeroom bot's message in a
+ * request's or a change's discussion, for the people it names. A tap sends
+ * its words as that person's own reply (GroupChat.sendBotSuggestion), and
+ * the row waits for the room to retire it.
+ */
+export function BotSuggestButtons({ id, suggest }: { id: number | null; suggest: BotSuggestView }) {
+  const [busy, setBusy] = useState(false);
+  if (id == null) return null;
+  const send = (label: string) => {
+    if (busy) return;
+    setBusy(true);
+    controller()?.sendBotSuggestion?.(id, label);
+  };
+  return (
+    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-suggest="">
+      {suggest.actions.map((action) => (
+        <Button
+          key={action.id}
+          type="button"
+          onClick={() => send(action.label)}
           disabled={busy}
           variant={action.primary ? 'pillAccent' : 'pillNeutral'}
           ink={action.primary ? 'solid' : 'neutral'}
@@ -872,6 +907,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {/* Homeroom bot's offer in a thread: its buttons, for the person it was offered to. */}
           {msg.botOffer && msg.botOffer.forMe && msg.botOffer.status === 'open' && msg.botOffer.actions.length ? (
             <BotOfferButtons id={msg.id} offer={msg.botOffer} />
+          ) : null}
+          {/* 3 Nov 2026: suggested replies under Homeroom bot's message in a thread. */}
+          {msg.botSuggest && msg.botSuggest.forMe && msg.botSuggest.status === 'open' && msg.botSuggest.actions.length ? (
+            <BotSuggestButtons id={msg.id} suggest={msg.botSuggest} />
           ) : null}
           {grouped && msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>

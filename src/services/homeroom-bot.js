@@ -1452,6 +1452,7 @@ function plainVerdict(v) {
       questions: v.plan.questions.map((q) => ({ question: plain(q.question), answers: q.answers.map(plain) })),
     } : v.plan,
     reason: plain(v.reason),
+    firstStep: plain(v.firstStep),
   };
 }
 
@@ -1651,6 +1652,10 @@ function readVerdict(text) {
       // not for the bot"). Only a person verdict carries it, and its news
       // rings nobody: they said so themselves (actOnVerdict).
       builder: verdict === 'person' ? builderName(obj.builder) : null,
+      // 3 Nov 2026: the smaller first step a person verdict would build, as
+      // a reply in the requester's own words (at most 60 characters). The
+      // note offers it as a button to tap beside Go ahead.
+      firstStep: verdict === 'person' ? firstStepOf(obj.first_step) : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
     };
@@ -1663,6 +1668,18 @@ function builderName(value) {
   if (typeof value !== 'string') return null;
   const name = value.trim().replace(/^@+/, '').trim();
   return /^[A-Za-z0-9_.-]{1,64}$/.test(name) ? name : null;
+}
+
+// The note's smaller-first-step reply is a button label: one short line, at
+// most MAX_SUGGESTION_CHARS (60, homeroom-bot-mayor.js). Longer is dropped
+// rather than cut, since tapping it sends the words as the person's own.
+const FIRST_STEP_MAX_CHARS = 60;
+
+/** Pure: a person verdict's optional `first_step`, a short reply, or null. */
+function firstStepOf(value) {
+  if (typeof value !== 'string') return null;
+  const text = withoutEmDashes(value).replace(/\s+/g, ' ').trim();
+  return text && text.length <= FIRST_STEP_MAX_CHARS ? text : null;
 }
 
 // ── Eligibility (pure) ──────────────────────────────────────────────────
@@ -2388,7 +2405,7 @@ ${designGuidance}
 // it. A re-read and the repair ask restate it too (VERDICT_KEYS_LINE):
 // without it, a re-read answered in keys of its own (`next_step`,
 // `ask_reporter`) that nothing reads, and so did the ask to repair it.
-const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}';
+const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "..."}';
 const VERDICT_KEYS_LINE = 'Use these keys and the others your instructions name (such as `answers`, `blocker`, `assumptions`, `platform`): a block with keys of its own, or no `verdict`, cannot be read.';
 
 function triageClosing(issueNumber) {
@@ -2670,6 +2687,25 @@ async function whoDecides(pool, app, requester) {
     ...(Array.isArray(row.admins) ? row.admins : []).filter(Boolean).map((username) => ({ username, role: 'admin' })),
   ].slice(0, DECIDERS_SHOWN);
   return deciders.length ? { ...decider, deciders } : decider;
+}
+
+/**
+ * The user ids of these usernames, in the order given and with unknown names
+ * left out. Never throws: the caller keeps whoever it can.
+ */
+async function idsOfUsernames(pool, names) {
+  const list = (Array.isArray(names) ? names : []).filter(Boolean);
+  if (!list.length) return [];
+  try {
+    const { rows } = await pool.query('SELECT id, username FROM users WHERE username = ANY($1::text[])', [list]);
+    const byName = new Map(rows.map((row) => [String(row.username).toLowerCase(), Number(row.id)]));
+    return list
+      .map((name) => byName.get(String(name).toLowerCase()))
+      .filter((id) => Number.isSafeInteger(id) && id > 0);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read who a note is for', { err: err.message });
+    return [];
+  }
 }
 
 /**
@@ -6852,8 +6888,20 @@ async function actOnVerdict({
     const asker = deciders.length || parsed.platform ? null
       : await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
     const project = app.name || app.slug;
+    // 3 Nov 2026: the note offers the person it names Go ahead, a smaller
+    // first step and Not now, to send as their own reply. Only they see
+    // them: the deciders it names, else the requester.
+    const suggestFor = deciders.length
+      ? await idsOfUsernames(pool, deciders)
+      : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
+    const suggestActions = live.personSuggestions({
+      firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
+    });
     await say('person', live.personText({ ...parsed, project }), {
       homeroomText: live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders }),
+      ...(suggestActions.length && suggestFor.length
+        ? { metadata: { homeroomBot: { kind: 'note', suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions } } }
+        : {}),
       dm: {
         reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
         ...(parsed.done ? { done: true } : {}),

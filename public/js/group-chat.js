@@ -1275,6 +1275,9 @@ const GroupChat = {
       // with its buttons for the person it was offered to. Only that
       // metadata, which a person's post cannot set.
       botOffer: GroupChat._botOfferView(kind === 'message' && !deleted ? meta : null),
+      // 3 Nov 2026: the suggested replies under the bot's message in a
+      // request's or a change's discussion, for the people it names.
+      botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
     };
   },
 
@@ -1291,6 +1294,44 @@ const GroupChat = {
       .filter((a) => a && (a.id === 'yes' || a.id === 'no') && typeof a.label === 'string' && a.label)
       .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
     return { status, forMe: me != null && Number(bot.offer.forUserId) === me, actions };
+  },
+
+  // The suggested replies under Homeroom bot's message in a request's or a
+  // change's discussion (homeroom-bot-live.js, homeroom-bot-voice.js): the
+  // prompt actions its metadata carries, for the people it names
+  // (forUserIds) and only while the set is open. Closed draws nothing.
+  _botSuggestView(meta) {
+    const bot = meta && meta.homeroomBot;
+    if (!bot || !bot.suggest || typeof bot.suggest !== 'object') return null;
+    const status = bot.suggest.status === 'open' ? 'open' : (bot.suggest.status === 'closed' ? 'closed' : null);
+    if (!status) return null;
+    const me = window.App && App.user ? Number(App.user.id) : null;
+    const ids = (Array.isArray(bot.suggest.forUserIds) ? bot.suggest.forUserIds : []).map(Number);
+    const actions = (Array.isArray(bot.actions) ? bot.actions : [])
+      .filter((a) => a && a.type === 'prompt' && typeof a.label === 'string' && a.label)
+      .map((a) => ({ id: String(a.id || a.label), label: a.label.slice(0, 60), primary: a.style === 'primary' }));
+    return {
+      status,
+      forMe: me != null && ids.includes(me) && !GroupChat._readOnly(),
+      actions,
+    };
+  },
+
+  // A tap on one of the bot's suggested replies sends its words as this
+  // person's own reply in the message's thread, exactly as if they typed it.
+  sendBotSuggestion(messageId, label) {
+    if (GroupChat._readOnly()) return;
+    const text = String(label || '').trim();
+    if (!text) return;
+    let msg = null;
+    GroupChat._eachCopy(Number(messageId), (m) => { if (!msg) msg = m; });
+    if (!msg) return;
+    const type = msg.thread_type || (msg.thread && msg.thread.type) || null;
+    const ref = Number(msg.thread_type ? msg.thread_ref : (msg.thread && msg.thread.ref));
+    const thread = type && Number.isSafeInteger(ref) && ref > 0
+      ? { type, ref }
+      : (GroupChat.activeThread || null);
+    GroupChat.send(text, thread);
   },
 
   // Yes or No under one of Homeroom bot's offers. The buttons go when the
@@ -1322,6 +1363,7 @@ const GroupChat = {
     const view = GroupChat._messageView(msg);
     GroupChat._react()?.patchTranscriptMessage(Number(frame.id), {
       botOffer: view.botOffer,
+      botSuggest: view.botSuggest,
       ...(frame.metadata.specShare ? { specShare: view.specShare } : {}),
     });
   },

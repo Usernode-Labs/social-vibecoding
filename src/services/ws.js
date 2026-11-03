@@ -1573,6 +1573,13 @@ async function handleMessage(pool, client, msg) {
       }
       // #3264: a reply in the discussion of the bot's own proposal.
       if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
+      // 3 Nov 2026: any reply in a request's or a change's discussion retires
+      // the bot's older suggested replies there, as one in its chat does.
+      if (thread && (thread.type === 'issue' || thread.type === 'session')) {
+        void require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
+          appId: client.appId, thread, keepMessageId: rows[0].id,
+        });
+      }
       // #2387: a reply thread grew — every row showing its root redraws its
       // "N replies" line from this frame.
       if (thread && thread.type === appChat.MESSAGE_THREAD) {
