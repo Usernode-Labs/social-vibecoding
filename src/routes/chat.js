@@ -642,6 +642,39 @@ function chatRoutes(config) {
                            WHERE s.id = m.thread_ref AND s.app_id = $1 AND s.thread_id = m.thread_id
                              AND s.is_headless = FALSE
                              AND ${threadsService.visibleChangeSql('s', `$${reader}`)})))`;
+        // #6229: a bot note written both on the request and on the change's
+        // own thread is one note. The change's page IS this page now (1 Nov
+        // 2026), so its copy is the twin of the request's and is not drawn:
+        // the issue copy is kept. Three shapes are folded, each only for a
+        // session row with an issue twin in the same thread: a bot post
+        // (the same post mark, or the same bot's same words within 10 s,
+        // the request's copy possibly leading with @handles), a plan card
+        // for the same version, and the workflow's promote line beside the
+        // bot's own "I built this" note for the same change. A person's
+        // rows are never folded.
+        where += ` AND NOT (m.thread_type = 'session' AND EXISTS (
+          SELECT 1 FROM chat_messages twin
+           WHERE twin.app_id = $1 AND twin.thread_type = 'issue'
+             AND twin.thread_id = m.thread_id
+             AND (
+               (m.metadata->>'hrbotPost' IS NOT NULL
+                AND twin.metadata->>'hrbotPost' = m.metadata->>'hrbotPost')
+               OR (EXISTS (SELECT 1 FROM users bu WHERE bu.id = m.user_id AND bu.is_synthetic)
+                   AND twin.user_id = m.user_id
+                   AND ABS(EXTRACT(EPOCH FROM (twin.created_at - m.created_at))) <= 10
+                   AND (twin.content = m.content
+                        OR right(twin.content, length(m.content) + 1) = ' ' || m.content))
+               OR (m.msg_type = 'spec_share' AND twin.msg_type = 'spec_share'
+                   AND m.metadata->'specShare'->>'sessionId' IS NOT NULL
+                   AND twin.metadata->'specShare'->>'sessionId' = m.metadata->'specShare'->>'sessionId'
+                   AND twin.metadata->'specShare'->>'version' = m.metadata->'specShare'->>'version')
+               OR (m.msg_type = 'vote' AND m.user_id IS NULL
+                   AND twin.user_id IS NOT NULL
+                   AND twin.metadata->'vote'->>'sessionId' IS NOT NULL
+                   AND twin.metadata->'vote'->>'sessionId' = m.metadata->'vote'->>'sessionId'
+                   AND EXISTS (SELECT 1 FROM users bu WHERE bu.id = twin.user_id AND bu.is_synthetic))
+             )
+        ))`;
       } else {
         where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
       }
