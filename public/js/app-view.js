@@ -29969,20 +29969,23 @@ const AppView = {
     try { localStorage.removeItem(AppView.APP_DATA_KEY); } catch { /* nothing kept */ }
   },
 
+  // Settles once the answer is posted (or none is due). The message listener
+  // ignores it; it is there for the tests to wait on, since the derivation
+  // runs on WebCrypto's worker threads and takes no fixed time.
   handleAppDataKeyMessage(e) {
     const data = e.data;
-    if (!data || data.__usernode_kept !== 'key' || typeof data.id !== 'string' || data.id.length > 100) return;
+    if (!data || data.__usernode_kept !== 'key' || typeof data.id !== 'string' || data.id.length > 100) return Promise.resolve();
     const frameId = AppView.ownedFrameFor(e.source);
-    if (!frameId) return;
+    if (!frameId) return Promise.resolve();
     const bridge = AppView._bridgeRequest(e, frameId);
-    if (!bridge) return;
-    const answer = (key) => bridge.post({ __usernode_kept: 'key', id: data.id, key });
+    if (!bridge) return Promise.resolve();
+    const answer = (key) => { bridge.post({ __usernode_kept: 'key', id: data.id, key }); };
     const userId = typeof App !== 'undefined' ? App.user?.id : null;
     if (frameId !== 'app-iframe' || !bridge.slug || userId == null) {
       answer(null);
-      return;
+      return Promise.resolve();
     }
-    AppView.appDataKeyFor(userId, e.origin).then(answer, () => answer(null));
+    return AppView.appDataKeyFor(userId, e.origin).then(answer, () => answer(null));
   },
 
   // ── Safe-area inset forwarding (issue #970) ────────────────────────

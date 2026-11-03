@@ -125,6 +125,18 @@ function load({
   };
 }
 
+// Waits for what the code does in the background (a read keeps its copy
+// without waiting for it). The deadline is only a failure's: WebCrypto runs
+// on worker threads, and on a loaded machine it takes no fixed time, which a
+// fixed 20 ms wait here once lost to (proposal 12252's first check run).
+async function eventually(check, what, ms = 5000) {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) assert.fail(`never happened: ${what}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 const unreachable = () => Promise.reject(new TypeError('Failed to fetch'));
 const answered = (status) => () => Promise.reject(Object.assign(new Error(`HTTP ${status}`), { status }));
 // Values built in the vm realm compare by shape, not prototype.
@@ -140,8 +152,7 @@ test('a read that worked is kept, and comes back with its time when the next one
   assert.equal(fresh.fromCopy, false);
   assert.deepEqual(plain(fresh.value), { chores: [{ id: 1, name: 'Bins' }] });
   assert.equal(await first.offline.available(), true);
-  await new Promise((r) => setTimeout(r, 20));
-  assert.ok(storage.getItem('usernode:kept:chores'), 'the copy is in the app\'s own storage');
+  await eventually(() => storage.getItem('usernode:kept:chores'), 'the copy is in the app\'s own storage');
 
   const later = load({ storage, shell: key, now: Date.UTC(2026, 10, 2, 18, 5) });
   const copy = await later.offline.read('chores', unreachable);
@@ -361,8 +372,9 @@ function shellHarness({ user = { id: 7 }, slug = 'chores-abc' } = {}) {
     const frame = frames[frameId];
     const origin = new URL(frame.src).origin;
     const before = frame.contentWindow.posted.length;
-    AppView.handleAppDataKeyMessage({ source: frame.contentWindow, origin, data: { __usernode_kept: 'key', id } });
-    await new Promise((r) => setTimeout(r, 20));
+    // Settles once the shell has posted its answer, however long the
+    // derivation took.
+    await AppView.handleAppDataKeyMessage({ source: frame.contentWindow, origin, data: { __usernode_kept: 'key', id } });
     const sent = frame.contentWindow.posted.slice(before);
     return sent.length ? { ...sent[0].msg, target: sent[0].target } : undefined;
   };
@@ -405,8 +417,7 @@ test('a staging preview and a signed-out shell are told there is no key; other f
   const signedOut = shellHarness({ user: null });
   assert.equal((await signedOut.ask('app-iframe')).key, null);
   const stranger = { posted: [], postMessage(m) { this.posted.push(m); } };
-  h.AppView.handleAppDataKeyMessage({ source: stranger, origin: 'https://evil.example', data: { __usernode_kept: 'key', id: 'x' } });
-  await new Promise((r) => setTimeout(r, 20));
+  await h.AppView.handleAppDataKeyMessage({ source: stranger, origin: 'https://evil.example', data: { __usernode_kept: 'key', id: 'x' } });
   assert.deepEqual(stranger.posted, []);
 });
 
