@@ -54,28 +54,40 @@ test('current WebSocket authority against the full PostgreSQL schema', {
   let outage = false, routeFailure = false, gateQueries = 0;
   let holdNext;
   const heldBatches = new Set();
-  // open() waits for the server to finish authorizing its socket. The check
-  // runs right after joinRoom (or, on /ws/events, right after the client is
-  // added to globalClients), so its query arriving proves the socket is
-  // registered for delivery. A fixed sleep was too short under load.
+  // open() waits until the server has SETTLED its connection-time authority
+  // check, plus one macrotask, rather than until the query arrives. The
+  // socket is registered for delivery before the check, but on /ws/chat/ the
+  // `message` handler is installed only after it resolves
+  // (src/services/ws.js, wss.on('connection')), and everything between is
+  // synchronous microtasks. Marking a waiter when the query arrives would let
+  // a test frame reach a socket with no frame handler and be dropped.
   const pendingOpens = [];
   const webPool = {
     connect: (...args) => pool.connect(...args),
     query: async (sql, params) => {
       if (sql === AUTHORIZE_SQL) {
         gateQueries++;
+        const matched = [];
         for (const d of JSON.parse(params[0])) {
           const key = `${d.token}|${d.app_required ? 'app' : 'events'}`;
           const at = pendingOpens.findIndex(w => w.key === key);
-          if (at !== -1) pendingOpens.splice(at, 1)[0].seen = true;
+          if (at !== -1) matched.push(pendingOpens.splice(at, 1)[0]);
         }
-        if (holdNext) {
-          const hold = holdNext;
-          holdNext = null;
-          hold.started = true;
-          await hold.waiting;
+        try {
+          if (holdNext) {
+            const hold = holdNext;
+            holdNext = null;
+            hold.started = true;
+            await hold.waiting;
+          }
+          if (outage) throw new Error('fake authority unavailable');
+          return await pool.query(sql, params);
+        } finally {
+          // The check has settled (or failed, as the fake outage does); the
+          // server's continuation runs in the microtasks after this wrapper,
+          // so one macrotask later its frame handler is attached.
+          setImmediate(() => { for (const w of matched) w.seen = true; });
         }
-        if (outage) return Promise.reject(new Error('fake authority unavailable'));
       }
       if (routeFailure && /FROM chat_sessions cs LEFT JOIN apps/.test(sql)) {
         return Promise.reject(new Error('fake route lookup failed'));
@@ -108,9 +120,11 @@ test('current WebSocket authority against the full PostgreSQL schema', {
       sock.on('close', code => { sock.closeCode = code; });
       await new Promise((resolve, reject) => { sock.once('open', resolve); sock.once('error', reject); });
       if (path === '/ws/events') await waitFor(() => sock.frames.length, { label: 'platform handshake' });
-      // The server closes a socket it refuses before it ever authorizes it
-      // (a 4004 reconnect), so a close counts as settled too.
-      await waitFor(() => waiter.seen || sock.readyState >= WebSocket.CLOSING, { label: 'post-upgrade authority check' });
+      // `seen` means the connection-time check settled and a macrotask has
+      // passed, so a chat socket is listening for frames. The server closes a
+      // socket it refuses before it ever authorizes it (a 4004 reconnect), so
+      // a close counts as settled too.
+      await waitFor(() => waiter.seen || sock.readyState >= WebSocket.CLOSING, { label: 'post-upgrade authority check settled' });
       return sock;
     } finally {
       const at = pendingOpens.indexOf(waiter);
