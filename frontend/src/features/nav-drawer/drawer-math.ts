@@ -1,31 +1,25 @@
 /**
- * THE PHONE'S NAVIGATION DRAWER, AS NUMBERS (pure, so the tests drive it).
+ * THE PHONE'S DRAWERS, AS NUMBERS (pure, so the tests drive it).
  *
- * Under the Communities tab a phone shows three levels side by side on one
- * strip, one window of it at a time (./nav-drawer.tsx):
+ * Messages and the Homeroom bot tab are two levels side by side on one
+ * strip, one window of it at a time: the list, then the conversation
+ * (../messages/phone-drawer.tsx, ../ai/phone-drawer.tsx). A level is a
+ * resting place; between two of them the strip is at a fractional DEPTH
+ * (0.4 is 40% of the way from the list to the conversation), which is what
+ * a finger leaves it at and what the header is drawn from (`headerFrame`).
+ * Everything here is in screen widths, so it holds at any phone's size.
  *
- *   0  your communities, 85% of the screen, the places peeking at its right
- *   1  the community's places, 80%, the page peeking at its right
- *   2  the place's page, the whole screen
- *
- * A level is a resting place; between two of them the strip is at a
- * fractional DEPTH (1.4 is 40% of the way from the places to the page),
- * which is what a finger leaves it at and what the header is drawn from
- * (`headerFrame`). Everything here is in screen widths, so it holds at any
- * phone's size.
+ * A community's page was the deepest of three levels (your communities at
+ * 85%, its places at 80%, then the page) until 3 Nov 2026; it is a page of
+ * its own now, and its header rests at depth 2, the page's.
  */
 
-export type Level = 0 | 1 | 2;
-
-/** Level 0's share of the screen. */
+/** How far the conversation sits from the list's start, in screen widths. */
 export const OUTER_SHARE = 0.85;
-/** Level 1's share of the screen. */
-export const PLACES_SHARE = 0.8;
-/** Where each level starts on the strip, in screen widths. */
-export const LEVEL_AT: readonly [number, number, number] = [0, OUTER_SHARE, OUTER_SHARE + PLACES_SHARE];
 /**
- * Messages on the same drawer (./messages-drawer.ts): the conversation list
- * at 85%, then the conversation, the whole screen.
+ * Messages' strip (./messages-drawer.ts): the list, then the conversation,
+ * the whole screen. The list is alone on its level, the whole screen
+ * (`messages-drawer-alone`, app.css), so the conversation slides in over it.
  */
 export const MESSAGES_AT: readonly [number, number] = [0, OUTER_SHARE];
 /** How far into the next level a pan must be let go to land there. */
@@ -52,14 +46,6 @@ export function clampDepth(f: number): number {
   return Number.isFinite(f) ? Math.max(0, Math.min(2, f)) : 2;
 }
 
-/** How far a strip of levels at `stops` is moved left at depth `f`, in screen widths. */
-export function offsetIn(stops: readonly number[], f: number): number {
-  const deepest = stops.length - 1;
-  const d = Math.max(0, Math.min(deepest, Number.isFinite(f) ? f : deepest));
-  const lo = Math.min(deepest - 1, Math.floor(d));
-  return stops[lo] + (stops[lo + 1] - stops[lo]) * (d - lo);
-}
-
 /** The depth a strip of levels at `stops` is at when moved left by `offset` screen widths. */
 export function depthIn(stops: readonly number[], offset: number): number {
   const deepest = stops.length - 1;
@@ -69,32 +55,17 @@ export function depthIn(stops: readonly number[], offset: number): number {
   return lo + (o - stops[lo]) / (stops[lo + 1] - stops[lo]);
 }
 
-/** How far the strip is moved left at depth `f`, in screen widths. */
-export function offsetAt(f: number): number {
-  return offsetIn(LEVEL_AT, f);
-}
-
-/** The depth the strip is at when moved left by `offset` screen widths. */
-export function depthAt(offset: number): number {
-  return depthIn(LEVEL_AT, offset);
-}
-
 /** Whether a finger that has moved `dx, dy` is panning sideways. */
 export function isPan(dx: number, dy: number): boolean {
   return Math.abs(dx) > PAN_SLOP_PX && Math.abs(dx) > Math.abs(dy) * 1.2;
 }
 
 /**
- * Where a pan that started on `from` and was let go at `offset` (screen
- * widths) lands. Past a quarter of the way into a level is enough, in the
- * direction the finger went (`dx` < 0 is in, toward the page); a pan that
- * crossed a whole level and a quarter more goes two.
+ * Where a pan on a strip of levels at `stops`, started on `from` and let go
+ * at `offset` (screen widths), lands. Past a quarter of the way into a level
+ * is enough, in the direction the finger went (`dx` < 0 is in, toward the
+ * conversation).
  */
-export function landing(from: Level, offset: number, dx: number): Level {
-  return landingIn(LEVEL_AT, from, offset, dx) as Level;
-}
-
-/** `landing`, for a strip of levels at `stops`. */
 export function landingIn(stops: readonly number[], from: number, offset: number, dx: number): number {
   const deepest = stops.length - 1;
   let to = from;
@@ -109,7 +80,9 @@ export function landingIn(stops: readonly number[], from: number, offset: number
 /**
  * THE HEADER AT DEPTH `f` (Evan's design, 18 Oct 2026). One value moves all
  * of it, so a tap (which animates `f`) and a drag (which sets it from the
- * finger) draw the same frames:
+ * finger) draw the same frames. A community's header rests at 2, the page's
+ * (3 Nov 2026: its drawer is gone), and on its Hub draws the name as at 1,
+ * alone (./header-drawer.tsx); the frames between are the drawer's as it was:
  *
  *   - the community's colour blends in with depth: none on your communities,
  *     all of it on the places and the page;
