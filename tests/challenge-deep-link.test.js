@@ -1044,3 +1044,32 @@ test('the page says a proposal counts once it goes to a vote, that the bot\'s ow
   assert.equal(pane.detailView().countNote, null);
   pane._detailChallenge = null;
 });
+
+test('#3247: the page lists the credits that count, by the change title when it may link', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const change = { app_slug: 'one', session_id: 41, pr_number: 7, title: 'Add a dark mode' };
+  pane._mine = new Map([[900500, { id: 900500, activities_total: 900, activities: [
+    { points: 500, description: 'Accepted proposal on One', activity_at: 'a', activity_time_precision: 'instant', change, counts: true },
+    { points: 300, description: 'Last week', activity_at: 'b', change: { ...change }, counts: false },
+    { points: 100, description: 'Older server', activity_at: 'c' },
+    { points: 50, description: 'No title', change: { app_slug: 'one', session_id: 43, pr_number: null, title: null } },
+    { points: 25, description: 'No address', change: { app_slug: '', session_id: 44, title: 'Hidden' } },
+  ] }]]);
+  pane._detailChallenge = CH[0];
+  const { credits, creditsWeekly } = JSON.parse(JSON.stringify(pane.detailView()));
+  assert.deepEqual(credits.map((c) => [c.text, c.points, c.change]), [
+    ['Add a dark mode', 500, { slug: 'one', sessionId: 41, prNumber: 7 }],
+    ['Older server', 100, null],
+    ['No title', 50, { slug: 'one', sessionId: 43, prNumber: null }],
+    ['No address', 25, null],
+  ]);
+  assert.equal(credits[0].precision, 'instant');
+  assert.equal(creditsWeekly, false);
+
+  pane._mine = new Map([[900500, { id: 900500, activities: [{ points: 2, description: 'New', activity_at: '2026-10-01T00:00:00Z' }],
+    earlier_activities: [{ points: 1, description: 'Old', activity_at: '2025-10-01T00:00:00Z' }] }]]);
+  assert.deepEqual(Array.from(pane.detailView().credits, (c) => c.text), ['New', 'Old'], 'a First challenge\'s earlier credits, newest first');
+
+  pane._mine = new Map();
+  assert.equal(pane.detailView().credits.length, 0, 'signed out or nothing credited: no list');
+});
