@@ -1615,6 +1615,38 @@
     "text": "Replaced by a newer plan",
     "description": "Line on an older plan card from Homeroom bot once the bot has sent a newer plan for the same project."
   },
+  "bot.plan.crops.summary_one": {
+    "text": "Before and after · {{count}} change",
+    "description": "On Homeroom bot's plan card, the row that opens the plan's pictures: one close-up, before and after, for each numbered change. {{count}} is how many changes have one."
+  },
+  "bot.plan.crops.summary_other": {
+    "text": "Before and after · {{count}} changes",
+    "description": "On Homeroom bot's plan card, the row that opens the plan's pictures: one close-up, before and after, for each numbered change. {{count}} is how many changes have one."
+  },
+  "bot.plan.crops.before": {
+    "text": "Before",
+    "description": "On Homeroom bot's plan card, the small label over the close-up of a change as the screen is today."
+  },
+  "bot.plan.crops.after": {
+    "text": "After",
+    "description": "On Homeroom bot's plan card, the small label over the close-up of a change as the plan would make it."
+  },
+  "bot.plan.crops.beforeLabel": {
+    "text": "Change {{number}}, before",
+    "description": "Accessible name of the close-up of one numbered change of Homeroom bot's plan, as the screen is today. {{number}} is the change's number, as its badge shows it."
+  },
+  "bot.plan.crops.afterLabel": {
+    "text": "Change {{number}}, after",
+    "description": "Accessible name of the close-up of one numbered change of Homeroom bot's plan, as the plan would make it. {{number}} is the change's number, as its badge shows it."
+  },
+  "bot.plan.crops.notBefore": {
+    "text": "Not there before",
+    "description": "On Homeroom bot's plan card, in place of the before close-up of a change that adds something new: there was nothing there before."
+  },
+  "bot.plan.crops.goneAfter": {
+    "text": "Gone after",
+    "description": "On Homeroom bot's plan card, in place of the after close-up of a change that removes something: it is gone after the change."
+  },
   "bot.plan.build": {
     "text": "Build it",
     "description": "Main button on Homeroom bot's plan card: tells the bot to build what the plan describes. \"Build\" is a verb."

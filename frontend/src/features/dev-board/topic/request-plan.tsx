@@ -27,6 +27,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useMessages } from '../../../lib/i18n/react';
 import { PlanCardView, type PlanCardState } from '../../messages/bot-plan-view';
 import { WORK_CHANGED_EVENT } from '../../messages/bot-shared';
+import { PlanCrops } from '../../messages/plan-crops';
 import type { HomeroomBotPlan } from '../../messages/types';
 import { openRequestSpec, type RequestSpecCard } from './request-model';
 
@@ -91,6 +92,22 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
     window.addEventListener(WORK_CHANGED_EVENT, again);
     return () => window.removeEventListener(WORK_CHANGED_EVENT, again);
   }, [slug, number, read]);
+  // #6221: the plan's HTML, for its fold-out of before-and-after crops.
+  const specKey = plan?.spec?.version ? `${plan.spec.sessionId}/${plan.spec.version}` : '';
+  const [specHtml, setSpecHtml] = useState<string | null>(null);
+  useEffect(() => {
+    setSpecHtml(null);
+    if (!specKey) return undefined;
+    let live = true;
+    fetch(`/api/sessions/${specKey.split('/')[0]}/specs/${specKey.split('/')[1]}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        const html = body?.spec?.content_html;
+        if (live && typeof html === 'string' && html.trim()) setSpecHtml(html);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [specKey]);
   if (!plan) return null;
 
   const build = async (answers: Array<string | null>) => {
@@ -152,6 +169,7 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
         request={plan.title || ''}
         sub={sub}
         card={{ summary: plan.summary, lines: plan.lines }}
+        planSpec={<PlanCrops html={specHtml} />}
         readWhole={spec ? (
           <button type="button" className="dev-request-plan-read" data-request-plan-read="" onClick={() => { void openRequestSpec(spec); }}>
             <span>{t('project:topic.request.botPlan.readWhole')}</span>

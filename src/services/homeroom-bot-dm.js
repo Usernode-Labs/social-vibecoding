@@ -2417,7 +2417,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
       firstVersion: !complicated,
       plan: {
         bullets: plan.bullets, questions,
-        ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}) } : {}),
+        ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}), ...(plan.card ? { card: plan.card } : {}) } : {}),
       },
       actionId: Number(action.id), status: 'open',
     },

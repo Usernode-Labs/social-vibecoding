@@ -2197,10 +2197,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const message = snap.messages[index];
     // B6: a card Build it moved under its plan is drawn there, not here.
     if (isMovedActivity(message)) continue;
-    // #4046: and a card whose step its plan carries is not drawn at all.
-    if (plans.hidden.has(message.id)) continue;
     // #6207: Main Chat is the conversation; a request's news is on its page.
     if (botDm && isRequestNews(message)) continue;
+    // #4046: and a card whose step its plan carries is not drawn at all.
+    if (plans.hidden.has(message.id)) continue;
     // One request, one row: news drawn inside a newer row about its request.
     if (newsFold?.hidden.has(message.id)) continue;
     const day = dayKey(message);
