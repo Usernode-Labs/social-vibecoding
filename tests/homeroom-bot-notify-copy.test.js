@@ -46,6 +46,8 @@ const BODIES = [
   ['on_hold', 'allowance', {}, 'On hold until Monday: your building time for this week is used up.'],
   ['on_hold', 'paused', {}, 'On hold until Monday: I\'ve used my budget for this week.'],
   ['on_hold', 'slots', {}, 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.'],
+  // #6156: its builds are all under way: it waits for the bot's turn.
+  ['on_hold', 'builds', {}, 'Waiting for my turn: I\'m building as much on this project as I may at once. I\'ll start when one is done.'],
   // 16 Oct 2026: a person took on what the bot had promised.
   ['on_hold', 'taken', { takenBy: 'maya' }, 'On hold: @maya has taken it on, so I\'m leaving it to them.'],
   ['on_hold', 'taken', {}, 'On hold: somebody has taken it on, so I\'m leaving it to them.'],

@@ -8,7 +8,7 @@
 // head is then "looked at", so the bot never tries again until the head
 // moves. Nothing after that ever let the change go: it stayed up for a vote,
 // red, holding one of the five slots the project gives the bot
-// (PROPOSALS_PER_APP_CAP), and every ready request on the project waited
+// (then PROPOSALS_PER_APP_CAP, now WAITING_PER_APP), and every ready request on the project waited
 // behind it. #5193 sat red for two days that way.
 //
 // So a change of the bot's is withdrawn once all of this holds:

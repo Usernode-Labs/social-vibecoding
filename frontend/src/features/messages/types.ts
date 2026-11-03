@@ -190,7 +190,7 @@ export interface HomeroomBotMeta {
  * (services/design-threads.js filedNext): Homeroom bot builds it from
  * `version`, builds it once `limit` frees, or a person decides.
  */
-export type BotFiledLimit = 'slots' | 'bot_wide' | 'questions' | 'allowance';
+export type BotFiledLimit = 'builds' | 'slots' | 'bot_wide' | 'questions' | 'allowance';
 export type BotFiledNext =
   | { say: 'builds'; version: number }
   | { say: 'held'; limit: BotFiledLimit }
@@ -497,7 +497,14 @@ export interface BotSlotsView {
   botOn: boolean;
   acts: boolean;
   paused: boolean;
-  cap: number;
+  /**
+   * #6156: how many builds the bot may have waiting or under way on the
+   * project (`slots` of kind `build`), and how many of its changes may wait
+   * for votes there (kind `proposal`), as the server sends them; null when
+   * it did not.
+   */
+  buildCap: number | null;
+  waitCap: number | null;
   buildsAtOnce: number | null;
   slots: BotSlotEntry[];
   waiting: BotSlotEntry[];
@@ -557,8 +564,12 @@ export interface HomeroomBotActivity {
   waitingOn?: string;
   /** A `build_failed` ending: why the build stopped. */
   stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other';
-  /** A `held` ending: which of the bot's limits holds it back. */
-  heldBy?: 'proposals_per_app' | 'proposals_total' | 'questions_per_day';
+  /**
+   * A `held` ending: which of the bot's limits holds it back. #6156: the
+   * project's builds (`builds_per_app`: it waits for the bot's turn) and its
+   * changes waiting for votes (`proposals_per_app`) are told apart.
+   */
+  heldBy?: 'builds_per_app' | 'proposals_per_app' | 'proposals_total' | 'questions_per_day';
   /**
    * `going_live`, on a merge of the platform's own app: when the platform's
    * next release carries it (services/release-watch.js), which the card

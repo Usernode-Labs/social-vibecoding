@@ -520,7 +520,8 @@ const POSTABLE = new Set(['open', 'posted', 'filed']);
 // request's track (homeroom-bot-track.js): the track states in which the bot
 // has it in hand, and the limits it waits at.
 const FILED_BUILDS = new Set(['queued', 'planning', 'building']);
-const FILED_LIMITS = new Set(['slots', 'bot_wide', 'questions', 'allowance']);
+// #6156: 'builds', the project's builds all under way, among them.
+const FILED_LIMITS = new Set(['builds', 'slots', 'bot_wide', 'questions', 'allowance']);
 
 /**
  * Pure (#6151): what the filed line says happens next, from the new

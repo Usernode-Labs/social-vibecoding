@@ -193,7 +193,7 @@ test('the bot keeps its promises and reads its older requests, one at a time', {
     async getIssue() { return null; },
   };
   const settings = { mode: 'live', pausedApps: [], everyoneSince: EVERYONE, voiceSession: true, voiceIssue: true };
-  const room = { proposals_per_app: 3, proposals_total: 20, question_tripwire: 10 };
+  const room = { builds_per_app: 2, proposals_per_app: 3, proposals_total: 20, question_tripwire: 10 };
   const dm = { async recordRequester() { return null; }, async sendDm() { return null; } };
   const refresh = async (capRoom = room) => {
     const out = await bot.refreshApp(pool, app, { github, capRoom, bot: botUser, everyoneSince: EVERYONE, settings, dm });
@@ -243,9 +243,11 @@ test('the bot keeps its promises and reads its older requests, one at a time', {
     await lookedAt();
     await refresh();
     assert.deepEqual(await queued(), ['34:backlog:4']);
-    // No free slot: nothing older is read.
+    // No free slot: nothing older is read. #6156: of either kind.
     await lookedAt();
     await refresh({ ...room, proposals_per_app: 0 });
+    assert.deepEqual(await queued(), []);
+    await refresh({ ...room, builds_per_app: 0 });
     assert.deepEqual(await queued(), []);
     // A project the bot only tries things on (no capRoom) reads everything
     // in the background, as before: nothing is an older request there.

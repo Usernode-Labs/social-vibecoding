@@ -113,8 +113,12 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
 test('get_homeroom_bot: the queue, a held run, the mode, the week and the move offers', async () => {
   const fake = {
     adminPayload: async () => ({
-      settings: { mode: 'shadow' }, bot: null, totals: { days: 7 },
-      caps: { proposalsPerApp: 5, proposalsTotal: 40, questionsPerAppPerDay: 10 },
+      settings: { mode: 'shadow', appCaps: { 9: { waiting: 30 }, 12: { building: 2 } } }, bot: null, totals: { days: 7 },
+      apps: [{ id: 9, slug: 'notes', name: 'Notes' }],
+      caps: {
+        buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40, questionsPerAppPerDay: 10,
+        byApp: { notes: { appId: 9, buildsPerApp: 5, proposalsPerApp: 30 }, 'gym-tracker': { appId: 12, buildsPerApp: 2, proposalsPerApp: 15 } },
+      },
       queue: {
         depth: 15, running: 1, listedWaiting: 12, listedRunning: 1,
         items: [
@@ -126,6 +130,7 @@ test('get_homeroom_bot: the queue, a held run, the mode, the week and the move o
       },
       runs: [
         { id: 900, app_slug: 'notes', issue_number: 4, mode: 'live', verdict: 'ready', cap_suppressed: 'proposals_per_app' },
+        { id: 901, app_slug: 'gym-tracker', issue_number: 6, mode: 'live', verdict: 'ready', cap_suppressed: 'builds_per_app' },
         { id: 899, app_slug: 'notes', issue_number: 3, mode: 'live', verdict: 'question', cap_suppressed: 'question_tripwire' },
         { id: 898, app_slug: 'notes', issue_number: 2, mode: 'live', verdict: 'ready', build_queued_at: '2026-10-12T11:00:00Z' },
       ],
@@ -152,11 +157,23 @@ test('get_homeroom_bot: the queue, a held run, the mode, the week and the move o
   assert.deepEqual(out.runs[0].build, {
     state: 'held', ok: undefined, branch: null, sha: null, commits: null, error: null, at: null, queuedAt: null, sessionId: null,
   });
-  assert.deepEqual(out.runs[0].held, { cap: 'proposals_per_app', limit: 5, why: 'held: 5 proposals open on this app' });
-  assert.deepEqual(out.runs[1].held, { cap: 'question_tripwire', limit: 10, why: 'held: 10 questions asked on this app today' });
-  assert.equal(out.runs[1].build, null, 'a held question has no build');
-  assert.equal(out.runs[2].held, null);
-  assert.equal(out.runs[2].build.state, 'queued', 'a build under way is not read as held');
+  // #6156: held for votes and held for the bot's turn are said apart, each
+  // with its project's own number where it has one.
+  assert.deepEqual(out.runs[0].held, { cap: 'proposals_per_app', limit: 30, why: 'held: 30 proposals waiting for votes on this app' });
+  assert.deepEqual(out.runs[1].held, { cap: 'builds_per_app', limit: 2, why: 'held: 2 builds under way on this app' });
+  assert.deepEqual(out.runs[2].held, { cap: 'question_tripwire', limit: 10, why: 'held: 10 questions asked on this app today' });
+  assert.equal(out.runs[2].build, null, 'a held question has no build');
+  assert.equal(out.runs[3].held, null);
+  assert.equal(out.runs[3].build.state, 'queued', 'a build under way is not read as held');
+  assert.deepEqual(data.heldOf('builds_per_app', { buildsPerApp: 5 }), { cap: 'builds_per_app', limit: 5, why: 'held: 5 builds under way on this app' });
+  // The defaults, and the projects with numbers of their own by id and slug.
+  assert.equal(out.settings.buildsPerApp, 5);
+  assert.equal(out.settings.waitingPerApp, 15);
+  assert.deepEqual(out.settings.appCaps, [
+    { appId: 9, app: 'notes', building: 5, waiting: 30 },
+    { appId: 12, app: 'gym-tracker', building: 2, waiting: 15 },
+  ]);
+  assert.ok(data.SETTINGS_FIELDS.includes('appCaps'), 'set_homeroom_bot_settings may change them');
   assert.deepEqual(data.heldOf('not_a_cap', {}), { cap: null, limit: null, why: 'held by a cap' });
   // Week-to-date, said so; the totals are 7 days.
   assert.equal(out.dmChat.period, 'this_week');
@@ -209,14 +226,21 @@ test('the console says why each row waits, counts waiting and running alike, and
   assert.equal(queueMoreLine({ ...queue, depth: 12 }), '');
   assert.equal(queueCountLine(null), '');
 
-  const caps = { proposalsPerApp: 5, proposalsTotal: 40, questionsPerAppPerDay: 10 };
-  assert.equal(heldLine('proposals_per_app', caps), 'held: 5 proposals open on this app');
+  const caps = {
+    buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40, questionsPerAppPerDay: 10,
+    byApp: { homeroom: { appId: 1, buildsPerApp: 5, proposalsPerApp: 30 } },
+  };
+  // #6156: a run held for the bot's turn and one held for votes read apart.
+  assert.equal(heldLine('builds_per_app', caps), 'held: 5 builds under way on this app');
+  assert.equal(heldLine('proposals_per_app', caps), 'held: 15 proposals waiting for votes on this app');
+  assert.equal(heldLine('proposals_per_app', caps, 'homeroom'), 'held: 30 proposals waiting for votes on this app', 'a project\'s own number');
+  assert.notEqual(heldLine('builds_per_app', caps), heldLine('proposals_per_app', caps));
   assert.equal(heldLine('proposals_total', caps), 'held: the bot\'s ceiling of 40 proposals open across Homeroom');
   assert.equal(heldLine('question_tripwire', caps), 'held: 10 questions asked on this app today');
   assert.equal(heldLine(null, caps), '');
   // The console and the connector say a hold alike.
-  for (const cap of ['proposals_per_app', 'proposals_total', 'question_tripwire']) {
-    assert.equal(heldLine(cap, caps), data.heldOf(cap, caps).why, cap);
+  for (const cap of ['builds_per_app', 'proposals_per_app', 'proposals_total', 'question_tripwire']) {
+    for (const app of [null, 'homeroom']) assert.equal(heldLine(cap, caps, app), data.heldOf(cap, caps, app).why, `${cap} ${app}`);
   }
 
   assert.equal(moveOffersLine(null), '');
@@ -230,7 +254,7 @@ test('the console says why each row waits, counts waiting and running alike, and
   assert.match(tsx, /id="admin-homeroom-bot-queue-depth">\s*\{queueCountLine\(payload\?\.queue\)\}/);
   assert.match(tsx, /id="admin-homeroom-bot-queue-more"/);
   assert.match(tsx, /id="admin-homeroom-bot-move-offers">\{movesLine\}/);
-  assert.match(tsx, /<span data-run-held=\{run\.cap_suppressed\}>\{heldLine\(run\.cap_suppressed, payload\?\.caps\)\}<\/span>/);
+  assert.match(tsx, /<span data-run-held=\{run\.cap_suppressed\}>\{heldLine\(run\.cap_suppressed, payload\?\.caps, run\.app_slug\)\}<\/span>/, "#6156: with its project's own numbers");
   assert.doesNotMatch(tsx, /would be held/, 'the caps act now');
 });
 

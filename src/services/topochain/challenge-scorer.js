@@ -183,8 +183,10 @@ const USE_APPS_MINUTES_SQL = `
    LIMIT $4
 `;
 
-// `promoted_at` is written by the human promote route only, so the rename and
-// fleet-maintenance robots' own proposals are not somebody's first proposal.
+// `promoted_at` is written on every promote and by a Settings proposal's insert,
+// for bots and campaigns as much as people. Credit goes to the session's owner
+// (`cs.user_id`), so a Homeroom bot build credits the bot's account and a
+// campaign's credits usernode-platform, never the person who asked.
 const PROPOSAL_SENT_SQL = `
   SELECT cs.user_id, cs.id AS session_id, cs.promoted_at, cs.pr_title, a.name AS app_name
     FROM chat_sessions cs
