@@ -37,7 +37,7 @@ import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
 
 import { ContactPreferencesSection } from './contact-preferences';
-import { HELP, PrivacySwitch } from './privacy-text';
+import { HELP, PrivacySwitch, SaveStatus, useSavedFlash } from './privacy-text';
 import { UsageAnalyticsSection } from './usage-analytics';
 
 type WhoCanContact = 'shared' | 'anyone';
@@ -72,13 +72,16 @@ function parse(value: unknown): ContactPrivacy | null {
   return { whoCanContact: row.whoCanContact, discoverable: row.discoverable === true };
 }
 
+/** The input is the `peer` just before it, and sr-only: this is what focus shows on. */
+const RADIO_FOCUS = 'peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[color:var(--accent)]';
+
 function Radio({ on }: { on: boolean }) {
   return on ? (
-    <span aria-hidden="true" className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent)]">
+    <span aria-hidden="true" className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent)] ${RADIO_FOCUS}`}>
       <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" />
     </span>
   ) : (
-    <span aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 rounded-full ring-[1.5px] ring-inset ring-zinc-300 dark:ring-zinc-600" />
+    <span aria-hidden="true" className={`mt-0.5 h-5 w-5 shrink-0 rounded-full ring-[1.5px] ring-inset ring-zinc-300 dark:ring-zinc-600 ${RADIO_FOCUS}`} />
   );
 }
 
@@ -87,6 +90,7 @@ export function PrivacySection() {
   const [settings, setSettings] = useState<ContactPrivacy | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const { saved, flash, clear } = useSavedFlash();
   // A read that started before a save must not paint over the save.
   const generation = useRef(0);
 
@@ -113,6 +117,7 @@ export function PrivacySection() {
     setSettings({ ...settings, ...change });
     setSaving(true);
     setError('');
+    clear();
     try {
       const res = await fetch(ENDPOINT, {
         method: 'POST',
@@ -123,6 +128,7 @@ export function PrivacySection() {
       if (!res.ok) throw new Error(String(res.status));
       const next = parse(await res.json());
       if (seq === generation.current && next) setSettings(next);
+      flash();
     } catch {
       if (seq === generation.current) {
         setSettings(previous);
@@ -151,7 +157,7 @@ export function PrivacySection() {
               <label key={option.value} className={index === 0 ? ROW_FIRST : ROW_NEXT} data-who-can-message={option.value}>
                 <input
                   type="radio"
-                  className="sr-only"
+                  className="peer sr-only"
                   name="settings-who-can-message"
                   value={option.value}
                   checked={on}
@@ -182,19 +188,14 @@ export function PrivacySection() {
             label={t('settings:privacy.discoverable.label')}
             checked={!!settings?.discoverable}
             disabled={!settings || saving}
-            onChange={(e) => { void save({ discoverable: e.currentTarget.checked }); }}
-          />
-          <p className={`${HELP} mt-2`}>
-            {t(settings?.discoverable
+            describedBy="settings-profile-discoverable-description"
+            description={t(settings?.discoverable
               ? 'settings:privacy.discoverable.descriptionOn'
               : 'settings:privacy.discoverable.descriptionOff')}
-          </p>
+            onChange={(e) => { void save({ discoverable: e.currentTarget.checked }); }}
+          />
         </div>
-        {error ? (
-          <p id="settings-contact-privacy-status" role="status" className="text-xs mt-3 text-red-700 dark:text-red-400">
-            {error}
-          </p>
-        ) : null}
+        <SaveStatus id="settings-contact-privacy-status" saved={saved} error={error} />
       </div>
       {/* #6044: Email & texts, what Homeroom may send you; its own state and
           its own endpoint (./contact-preferences.tsx). */}

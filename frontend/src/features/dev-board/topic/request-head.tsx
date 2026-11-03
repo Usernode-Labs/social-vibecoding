@@ -59,6 +59,7 @@ import { requestShots, togglePinShot } from './request-shots';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
 import { ThreadChanges } from './thread-changes';
 import { requestPill, threadLayout, type ThreadHere } from './thread-model';
+import { rereadOnChangeNews } from './change-detail-refresh';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 import { OwnAgentLink } from './own-agent-link';
@@ -467,6 +468,9 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     publishRequestChanges(r.number, layout.changes);
     (window as any).GroupChat?.setThreadMembers?.('issue', r.number, layout.changes.map((c) => c.id));
   }, [r.number, changeKey, !!threadRead.data]);
+  // #6139: the pill and the line say whether a change underway has finished.
+  const underwayKey = layout.changes.filter((c) => c.state === 'underway').map((c) => c.id).join(',');
+  useEffect(() => rereadOnChangeNews(window, layout.changes, threadRead.reread, (window as any).SessionState), [underwayKey]);
   // #5987, 31 Oct 2026: Build it with your own Claude Code is a ⋯ row; it
   // opens its panel under the request.
   const agentSlug = r.slug || '';

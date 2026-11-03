@@ -1292,3 +1292,46 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   const src = read('public/js/app-view.js');
   assert.match(src, /earlierYes,\n\s+earlierNo,\n\s+yesNames: Array\.isArray\(data\.yes\) \? data\.yes\.slice\(\) : \[\],\n\s+approvers: Array\.isArray\(data\.approvers\) \? data\.approvers\.length : 0,/);
 });
+
+// #6140: a request's page draws a change's two cards from the row
+// GET /proposals/:id answers (tests/proposal-by-id.test.js), with no board
+// row under it: the same ChangeGates, the Testing card's button from the row.
+test('the Testing card on a request\'s page offers the preview its row says it has', () => {
+  const { ChangeGates } = loadTsx('frontend/src/features/dev-board/topic/change-head.tsx');
+  const testing = (av, over) => {
+    const built = av._topicViewFor('proposal', { ...PR, ...over });
+    const html = renderToHtml(createElement(ChangeGates, { id: PR.id, card: built.card, v: built.body.thread }));
+    return html.slice(html.indexOf('data-change-gate="testing"'));
+  };
+  const av = context();
+  const label = message('project:card.preview.label');
+  const open = /<button[^>]*gc-vote-btn-preview/;
+
+  const live = testing(av, { staging_url: 'https://preview.example', can_preview: true, preview_state: 'ready' });
+  assert.match(live, open);
+  assert.ok(live.includes(label));
+  // A row with neither field is what this page had before.
+  assert.doesNotMatch(testing(av, { staging_url: undefined }), open);
+  // Asleep: it can be woken, and the title says so.
+  const asleep = testing(av, { staging_url: null, can_preview: true, preview_state: 'unavailable' });
+  assert.match(asleep, open);
+  assert.ok(asleep.includes(message('changes:frame.open.proposalRebuild')));
+  // A failed preview is never offered, however wakeable: the card retries it.
+  const failed = testing(av, {
+    staging_url: null, can_preview: true, preview_state: 'failed', staging_error: 'did not boot',
+    check_state: 'error', check_error_detail: 'did not boot', test_results: [],
+  });
+  assert.doesNotMatch(failed, open);
+  assert.ok(failed.includes(message('changes:page.actions.retryPreview')));
+  // Being built: the disabled pill, not a rebuild.
+  const building = testing(av, {
+    staging_url: null, can_preview: false, staging_building: true, preview_state: 'building',
+    check_state: 'pending', check_phase: 'building', test_results: [],
+  });
+  assert.doesNotMatch(building, open);
+  assert.match(building, /gc-vote-btn-building/);
+  // A read-only viewer cannot wake one, and opens one that is up.
+  av.appData.can_collaborate = false;
+  assert.doesNotMatch(testing(av, { staging_url: null, can_preview: true }), open);
+  assert.match(testing(av, { staging_url: 'https://preview.example', can_preview: true }), open);
+});

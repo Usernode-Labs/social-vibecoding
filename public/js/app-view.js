@@ -16248,7 +16248,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/${shared ? 'share' : 'unshare'}`, { method: 'POST' });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.visibility.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.visibility.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -16311,7 +16311,7 @@ const AppView = {
       );
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.shareChat.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.shareChat.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -16352,7 +16352,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/unarchive`, { method: 'POST' });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.unarchive.failed'));
+        PlatformUI.toast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.unarchive.failed'));
         btn.textContent = original;
         btn.disabled = false;
         return;
@@ -16387,7 +16387,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:session.archive.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:session.archive.failedHttp', { status: resp.status }));
         return false;
       }
     } catch (err) {
@@ -17508,7 +17508,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:step.resume.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:step.resume.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:step.resume.label'); }
         return;
       }
@@ -20080,7 +20080,7 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:checks.recheck.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:checks.recheck.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:recheck.label'); }
         return;
       }
@@ -20916,7 +20916,7 @@ const AppView = {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.askApproval.failedHttp', { status: resp.status }));
+          PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.askApproval.failedHttp', { status: resp.status }));
         }
         if (btn) {
           btn.disabled = false;
@@ -20959,7 +20959,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.withdraw.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.withdraw.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
@@ -20995,7 +20995,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/unpromote`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.moveBack.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.moveBack.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
@@ -21028,7 +21028,7 @@ const AppView = {
       const resp = await fetch(`/api/issues/${issueId}/close`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:governance.withdraw.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:governance.withdraw.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
@@ -21797,7 +21797,7 @@ const AppView = {
         body: JSON.stringify({ field, value }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { PlatformUI.toast(data.error || PlatformI18n.t('changes:attributes.vote.saveFailed')); return; }
+      if (!res.ok) { PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:attributes.vote.saveFailed')); return; }
       // #780: adopt the refreshed vocabulary FIRST — a just-typed category
       // has no entry yet, and the chip repaint below needs its label+colour.
       AppView._setAppCategories(data.categories);
@@ -21829,7 +21829,7 @@ const AppView = {
         method: 'DELETE',
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { PlatformUI.toast(data.error || PlatformI18n.t('changes:attributes.vote.removeFailed')); return; }
+      if (!res.ok) { PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:attributes.vote.removeFailed')); return; }
       AppView._applyAttrSummary(targetType, targetRef, field, data);
       AppView._refreshAttrCards();
       if (AppView._attrPopover && AppView._attrPopover.field === field
@@ -21989,7 +21989,7 @@ const AppView = {
         // 409 means a revert is already in flight, or eligibility was
         // lost between render and click. Show the message and re-fetch
         // so the UI reflects reality.
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.undo.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.undo.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
@@ -22049,7 +22049,7 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:governance.adminApply.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:governance.adminApply.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
@@ -22520,7 +22520,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || typeof data.href !== 'string' || !data.href.startsWith('#homeroom-bot/thread/')) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bot.threadFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.bot.threadFailed'));
         return;
       }
       // The page says the bot waits for their plan when they are back.
@@ -22691,7 +22691,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bot.askFailedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.bot.askFailedHttp', { status: resp.status }));
         // #4530: it is waiting on an answer this page did not know about:
         // read again, so the card offers to answer it instead.
         if (data.code === 'awaiting_reply') AppView.refreshDevData('issue');
@@ -22961,7 +22961,7 @@ const AppView = {
         body: JSON.stringify({ title: newTitle }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return showError(data.error || PlatformI18n.t('changes:issue.title.updateFailed'));
+      if (!res.ok) return showError(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.title.updateFailed'));
       issue.title = data.title || newTitle;
       issue.title_fallback = false;
       AppView._editingIssueTitle = null;
@@ -23048,7 +23048,7 @@ const AppView = {
         body: JSON.stringify({ title: newTitle }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return showError(data.error || PlatformI18n.t('changes:proposal.title.updateFailed'));
+      if (!res.ok) return showError(PlatformI18n.errorText(data) || PlatformI18n.t('changes:proposal.title.updateFailed'));
       AppView._cacheSessionTitle(id, data.title || newTitle, data.prTitle || null);
       AppView._editingSessionTitle = null;
       AppView._renderTopicHead();
@@ -23345,7 +23345,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bounty.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.bounty.failedHttp', { status: resp.status }));
         return;
       }
       // Reflect the new state locally: mark this issue bountied, set its
@@ -23383,7 +23383,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.claim.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.claim.failedHttp', { status: resp.status }));
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -23426,7 +23426,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.claim.clearFailedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.claim.clearFailedHttp', { status: resp.status }));
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -23554,7 +23554,7 @@ const AppView = {
         // read and dismiss. Every other failure keeps the toast.
         if (data.code === 'budget_exceeded') {
           if (provider === 'openrouter') {
-            PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.autoRun.openRouterStartFailed'));
+            PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.autoRun.openRouterStartFailed'));
             return;
           }
           AppView._showCreditOptionsModal(data.error, {
@@ -23562,7 +23562,7 @@ const AppView = {
           });
           return;
         }
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.autoRun.startFailedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.autoRun.startFailedHttp', { status: resp.status }));
         return;
       }
       // Deliberate flag/beta policy fallbacks are still reported. Credential,
@@ -27100,7 +27100,7 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
@@ -27343,7 +27343,7 @@ const AppView = {
         // verifies, then the same vote again (features/auth/verify-identity.tsx).
         if (data.code === 'identity_required' && AppView._verifyThenVote(
           () => AppView.castVote(sessionId, vote, expectedEpoch, opts))) return false;
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
@@ -27493,7 +27493,7 @@ const AppView = {
       if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
         AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
       }
-      window.PlatformUI?.toast?.(data.error || PlatformI18n.t('changes:vote.toast.queuedRefused'));
+      window.PlatformUI?.toast?.(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.queuedRefused'));
     }
     AppView.refreshDevData('vote');
     if (typeof GroupChat !== 'undefined' && GroupChat.appSlug) AppView.loadVoteState(GroupChat.appSlug);
@@ -27572,7 +27572,7 @@ const AppView = {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
         await AppView.refreshDevData('vote');
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.undoFailedHttp', { status: res.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.undoFailedHttp', { status: res.status }));
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
@@ -27696,7 +27696,7 @@ const AppView = {
           return;
         }
         // #2603: the server's own words when it refuses this vote.
-        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         AppView.refreshDevData('vote');
         return;
       }

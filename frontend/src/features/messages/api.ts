@@ -37,7 +37,7 @@ import type {
   HomeroomBotCard,
   HomeroomBotLooked,
 } from './types';
-import { t } from '../../lib/i18n/runtime';
+import { t, errorText } from '../../lib/i18n/runtime';
 import { countOf } from './approval-words';
 import { forgetKept, keepCopy, keepRecent, keptCopy } from '../../lib/kept-copies';
 import { releaseOf } from '../../lib/release-eta';
@@ -658,7 +658,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (pick(body, 'code') === 'contact_restricted') {
       throw new MessagesApiError(response.status, t('messages:api.contactRestricted'));
     }
-    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), t('messages:api.requestFailed', { status: response.status })));
+    throw new MessagesApiError(response.status, errorText(body) || text(pick(body, 'message'), t('messages:api.requestFailed', { status: response.status })));
   }
   return data as T;
 }
@@ -1100,7 +1100,7 @@ export async function uploadAttachment(conversationId: number, file: File): Prom
   });
   let data: unknown = null;
   try { data = await response.json(); } catch { data = null; }
-  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), t('messages:api.uploadFailed', { status: response.status })));
+  if (!response.ok) throw new MessagesApiError(response.status, errorText(data) || text(pick(record(data), 'message'), t('messages:api.uploadFailed', { status: response.status })));
   return normalizeAttachment(pick(record(data), 'attachment') ?? data, conversationId);
 }
 
@@ -1273,7 +1273,7 @@ export async function withdrawChange(sessionId: number): Promise<{ ok: boolean; 
   }
   if (response.ok) return { ok: true, error: null };
   const data = record(await response.json().catch(() => ({})));
-  return { ok: false, error: text(pick(data, 'error')) || t('messages:api.withdraw.failed') };
+  return { ok: false, error: errorText(data) || t('messages:api.withdraw.failed') };
 }
 
 export async function decideBotAction(actionId: number, choice: string, answers?: string[]): Promise<{ label: string | null }> {

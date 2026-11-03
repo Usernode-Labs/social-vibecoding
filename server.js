@@ -172,6 +172,14 @@ app.use(inflightRequests.inflightRequests());
 // src/services/server-error-counts.js). It only listens for `finish`.
 app.use(require('./src/middleware/request-counts').requestCounts());
 
+// A server error people commonly see also says itself in their language, as
+// `error_message` beside the unchanged `error`. It wraps res.json here, ahead
+// of every router, so the ones mounted before auth and the error handler all
+// pass through it; it reads req.user when res.json runs, by which time auth has
+// set it. It never waits and never changes what a handler wrote
+// (src/middleware/error-language.js).
+app.use(require('./src/middleware/error-language').errorLanguage(() => getPool(config)));
+
 // Express never trusts forwarding headers globally. Docker mode resolves one
 // configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
 // address without a proxy hostname. Direct child/worker calls carry no

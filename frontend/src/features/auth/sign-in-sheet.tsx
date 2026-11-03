@@ -185,7 +185,7 @@ import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
+import { t as translate, errorText } from '../../lib/i18n/runtime';
 import { CodeBoxes, CODE_LENGTH, codeDigits } from './code-boxes';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
@@ -501,7 +501,7 @@ export async function requestPasswordReset(address: string): Promise<{ ok: true 
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      return { ok: false, error: data.error || translate('auth:signInSheet.forgot.sendFailed') };
+      return { ok: false, error: errorText(data) || translate('auth:signInSheet.forgot.sendFailed') };
     }
     return { ok: true };
   } catch {
@@ -687,7 +687,7 @@ export async function saveAccount(
   if (!res.ok || !data.user) {
     return {
       ok: false,
-      error: data.error || translate('auth:signInSheet.account.failed'),
+      error: errorText(data) || translate('auth:signInSheet.account.failed'),
       field: typeof data.field === 'string' ? data.field : null,
     };
   }
@@ -1072,14 +1072,14 @@ export function SignInSheet({
         // limiter says.
         if (res.status === 429) {
           setStep('code');
-          setError(data.error || translate('auth:signInSheet.email.tooMany'));
+          setError(errorText(data) || translate('auth:signInSheet.email.tooMany'));
           const retryAfter = Number(res.headers.get('Retry-After'));
           setCooldownUntil(Date.now() + (Number.isFinite(retryAfter) && retryAfter > 0
             ? Math.min(retryAfter, 900) * 1000 : RESEND_COOLDOWN_MS));
           return;
         }
         setStep('email');
-        setError(data.error || translate('auth:signInSheet.email.sendFailed'));
+        setError(errorText(data) || translate('auth:signInSheet.email.sendFailed'));
         return;
       }
       if (codeField.current) codeField.current.value = '';
@@ -1229,12 +1229,12 @@ export function SignInSheet({
         if (data.code === 'password_required') {
           identifierPrefill.current = email;
           setStep('password');
-          setError(data.error || translate('auth:signInSheet.code.passwordAccount'));
+          setError(errorText(data) || translate('auth:signInSheet.code.passwordAccount'));
           return;
         }
         setError(res.status === 429
-          ? data.error || translate('auth:signInSheet.code.tooManyAttempts')
-          : data.error || translate('auth:signInSheet.code.rejected'));
+          ? errorText(data) || translate('auth:signInSheet.code.tooManyAttempts')
+          : errorText(data) || translate('auth:signInSheet.code.rejected'));
         return;
       }
       if (data.next === 'signed-in') {
@@ -1285,13 +1285,13 @@ export function SignInSheet({
         // code is still the one to type, with the resend held.
         if (res.status === 429 && phoneSession.current && value === phoneNumber) {
           setStep('phone-code');
-          setError(data.error || translate('auth:signInSheet.phone.tooMany'));
+          setError(errorText(data) || translate('auth:signInSheet.phone.tooMany'));
           setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
           setNow(Date.now());
           return;
         }
         setStep('phone');
-        setError(data.error || translate('auth:signInSheet.phone.sendFailed'));
+        setError(errorText(data) || translate('auth:signInSheet.phone.sendFailed'));
         return;
       }
       phoneSession.current = data.sessionInfo;
@@ -1351,8 +1351,8 @@ export function SignInSheet({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         setError(res.status === 429
-          ? data.error || translate('auth:signInSheet.phoneCode.tooManyAttempts')
-          : data.error || translate('auth:signInSheet.phoneCode.rejected'));
+          ? errorText(data) || translate('auth:signInSheet.phoneCode.tooManyAttempts')
+          : errorText(data) || translate('auth:signInSheet.phoneCode.rejected'));
         return;
       }
       if (data.next === 'signed-in') {
@@ -1491,13 +1491,13 @@ export function SignInSheet({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
         if (data.field === 'username') {
-          setError(data.error || translate('auth:signInSheet.username.refused'));
+          setError(errorText(data) || translate('auth:signInSheet.username.refused'));
           providerUsernameField.current?.focus({ preventScroll: true });
           return;
         }
         // The continuation is gone: start over from the first step.
         setStep(firstStep);
-        setError(data.error || translate('auth:signInSheet.username.expired'));
+        setError(errorText(data) || translate('auth:signInSheet.username.expired'));
         return;
       }
       await finish('new');

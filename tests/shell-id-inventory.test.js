@@ -700,6 +700,9 @@ const ADDED_IDS = {
   // ── #6043: the other two legal pages the terms name ──────────────────
   'settings-about-child-safety': 'Its Child safety standards row (#6043): a new-tab link to child_safety_link from GET /api/public/waitlist/options (src/services/marketing-links.js), the page the terms cite for child safety. Opened like the privacy row.',
   'settings-about-account-deletion': 'Its "Delete your account and data" row (#6043): a new-tab link to account_deletion_link from the same options, the page the terms and the app stores name for deleting an account. Opened like the privacy row.',
+  // ── #5926: Settings › Privacy says when a change saved ───────────────
+  'settings-contact-privacy-status': 'The status line under Who can find me: "Saved" for a few seconds, or what went wrong. Always in the pane now, empty until then, so a screen reader announces its words.',
+  'settings-profile-discoverable-description': 'The line under "Let people find my profile", inside its label; the switch\'s aria-describedby.',
   // ── #6044: Settings › Privacy › Email & texts ─────────────────────────
   'settings-contact-preferences-section': 'Settings › Privacy\'s Email & texts block (#6044), before Share usage analytics: what Homeroom may send you. Its own state and GET/PUT /api/me/contact-preferences (src/services/contact-preferences.js).',
   'settings-contact-marketing-email': 'Its "Homeroom news by email" switch: marketing email, off until switched on, disabled without a confirmed address. Every change is recorded as proof of consent.',
