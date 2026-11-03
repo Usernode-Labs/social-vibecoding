@@ -1,4 +1,5 @@
 'use strict';
+const { dmStream } = require('./lib/bot-dm-stream');
 
 // The before & after shots demo states (src/services/shots-demo-states.js)
 // against the REAL schema in two throwaway PostgreSQL databases, named as a
@@ -501,7 +502,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // cards' reader. Its build waits its turn, so its line is Building it,
   // and the plan carries its state. Under it: the close offer's pair and,
   // newest of all, the drafted request's pair (#4605).
-  const { messages } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);
+  const { messages } = await dmStream(pool, viewer, demoStates.IDS.botConversation);
   const { planLayout, isPlanMessage, planState } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
   const { isThanksMessage, thanksLine } = loadTsx('frontend/src/features/messages/bot-thanks-card.tsx');
   const plan = messages.find(isPlanMessage);
@@ -579,7 +580,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     user: viewer, actionId: action.id, choice: 'yes', deps: { replies: tapsNow(pool, {}, { github: { isEnabled: () => false } }) },
   });
   assert.equal(tapped.ok, true);
-  const { messages: after } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);
+  const { messages: after } = await dmStream(pool, viewer, demoStates.IDS.botConversation);
   assert.equal(after.at(-1).content, 'I couldn\'t propose closing it just now. Try again in a minute.');
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
 

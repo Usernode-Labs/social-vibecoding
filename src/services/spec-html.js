@@ -581,7 +581,78 @@ function screenStats(text) {
     });
 }
 
+// ── The plan card's own text (#6220, 3 Nov 2026) ─────────────────────────
+//
+// A plan's card used to be cut out of its spec (homeroom-bot-live.js
+// specCardLines: the first sentence or bold lead of each point, clipped at
+// 120 characters), which gave broken lines ('The status line says "Your plan
+// is ready'), bare sub-headings and repeats. The plan writer now writes the
+// card's text itself, in two places the format already has: the one or two
+// sentence summary under the <h1>, and one whole sentence per change in the
+// screens' <ol data-changes>, each numbered as its screens mark it. specCard
+// reads them and checks them: whole sentences, at most CARD_LINE_MAX
+// characters a line, numbers that match the screens' marks. It never clips:
+// text that fails is left out, and the card falls back to its old lines.
+
+const CARD_LINE_MAX = 110;
+const CARD_SUMMARY_MAX = 280;
+const SENTENCE_END_RE = /[.!?]["'”’)]?$/;
+
+function plainText(tokens) {
+  return decodeEntities(tokens.filter((t) => t.type === 'text').map((t) => t.text).join('')).replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Pure: the card a spec's HTML carries, { summary, lines: [{ n, text }],
+ * problems }, or null when it has neither. `problems` names what fails the
+ * checks (a line too long, a line that is not a whole sentence, a number the
+ * screens do not mark); a card with problems is not used, and is never cut
+ * to fit.
+ */
+function specCard(html) {
+  const tokens = tokenize(extractHtmlSpec(String(html || '')) || String(html || ''));
+  let summary = '';
+  const lines = [];
+  const marked = new Set();
+  let depth = 0;
+  let sawSection = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i];
+    if (tok.type === 'raw' && tok.name === 'template') {
+      for (const m of String(tok.raw).matchAll(/\bdata-change\s*=\s*["']?(\d+)/g)) marked.add(Number(m[1]));
+      continue;
+    }
+    if (tok.type === 'open' && tok.name === 'section') sawSection = true;
+    // The summary: the first <p> straight under the article, before its sections.
+    if (!summary && !sawSection && tok.type === 'open' && tok.name === 'p') {
+      const end = tokens.findIndex((t, j) => j > i && t.type === 'close' && t.name === 'p');
+      summary = plainText(tokens.slice(i + 1, end < 0 ? tokens.length : end));
+      continue;
+    }
+    if (tok.type === 'open' && tok.name === 'ol' && 'data-changes' in (tok.attrs || {})) { depth += 1; continue; }
+    if (depth && tok.type === 'close' && tok.name === 'ol') { depth -= 1; continue; }
+    if (depth && tok.type === 'open' && tok.name === 'li') {
+      const end = tokens.findIndex((t, j) => j > i && t.type === 'close' && t.name === 'li');
+      const n = Number(tok.attrs?.['data-change']);
+      lines.push({ n: Number.isInteger(n) && n > 0 ? n : null, text: plainText(tokens.slice(i + 1, end < 0 ? tokens.length : end)) });
+    }
+  }
+  if (!summary && !lines.length) return null;
+  const problems = [];
+  if (summary && summary.length > CARD_SUMMARY_MAX) problems.push(`the summary is ${summary.length} characters`);
+  lines.forEach((line, index) => {
+    const which = line.n || index + 1;
+    if (!line.text) problems.push(`line ${which} is empty`);
+    else if (line.text.length > CARD_LINE_MAX) problems.push(`line ${which} is ${line.text.length} characters`);
+    else if (!SENTENCE_END_RE.test(line.text)) problems.push(`line ${which} is not a whole sentence`);
+    if (line.n && marked.size && !marked.has(line.n)) problems.push(`no screen marks change ${line.n}`);
+  });
+  return { summary, lines, problems };
+}
+
 module.exports = {
+  specCard,
+  CARD_LINE_MAX,
   planImageIds,
   planImageUrl,
   MAX_SPEC_HTML_CHARS,

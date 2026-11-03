@@ -248,6 +248,8 @@ export interface HomeroomBotPlan {
    */
   complicated?: boolean;
   spec?: { sessionId: number; version: number } | null;
+  /** #6220: the card's own text, as the plan writer wrote it: a summary and numbered whole lines. */
+  card?: { summary: string; lines: Array<{ n: number | null; text: string }> } | null;
 }
 
 /**

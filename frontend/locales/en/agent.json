@@ -2164,20 +2164,32 @@
     "description": "Accessible name of the link over a request's or proposal's page beside the Homeroom bot tab's list, showing the project the page belongs to: opens that project's page. {{project}} is the project's name. \"Open\" is a verb."
   },
   "sidePanel.where.request": {
-    "text": "<0>{{project}}</0> · Request #{{number}}",
-    "description": "Beside the AI tab's page: the line under the title of a request opened in the column. {{project}} is the project's name, a link to its page (the tags); {{number}} is the request's number."
+    "text": "<0>{{project}}</0> · <1>Request #{{number}}</1>",
+    "description": "Beside the AI tab's page: the line under the title of a request opened in the column. {{project}} is the project's name, a link to its page (tag 0); {{number}} is the request's number. Tag 1 is the request's own page: pressing it opens that page full width."
   },
   "sidePanel.where.change": {
-    "text": "<0>{{project}}</0> · Change #{{number}}",
-    "description": "Beside the AI tab's page: the line under the title of a change (a proposal) opened in the column. {{project}} is the project's name, a link to its page (the tags); {{number}} is the change's number."
+    "text": "<0>{{project}}</0> · <1>Change #{{number}}</1>",
+    "description": "Beside the AI tab's page: the line under the title of a change (a proposal) opened in the column. {{project}} is the project's name, a link to its page (tag 0); {{number}} is the change's number. Tag 1 is the change's own page: pressing it opens that page full width."
   },
   "sidePanel.where.decision": {
-    "text": "<0>{{project}}</0> · Decision",
-    "description": "Beside the AI tab's page: the line under the title of a group decision (a vote on a new name, a card picture, …) opened in the column. {{project}} is the project's name, a link to its page (the tags)."
+    "text": "<0>{{project}}</0> · <1>Decision</1>",
+    "description": "Beside the AI tab's page: the line under the title of a group decision (a vote on a new name, a card picture, …) opened in the column. {{project}} is the project's name, a link to its page (tag 0). Tag 1 is the decision's own page: pressing it opens that page full width."
   },
   "sidePanel.where.project": {
     "text": "<0>{{project}}</0>",
     "description": "Beside the AI tab's page: the line under the title of any other page of a project opened in the column. {{project}} is the project's name, a link to its page (the tags)."
+  },
+  "sidePanel.moreLabel": {
+    "text": "More actions",
+    "description": "Screen-reader label and tooltip of the ⋯ button at the end of the heading beside the AI tab's page: it opens a small menu of actions for the request, change or decision shown in the column."
+  },
+  "sidePanel.menu.copyLink": {
+    "text": "Copy link",
+    "description": "The one row of the ⋯ menu in the heading beside the AI tab's page: copies a link to the request's, change's or decision's own page, which can be shared with anyone who can see the project."
+  },
+  "sidePanel.linkCopied": {
+    "text": "Link copied",
+    "description": "Confirmation toast after Copy link beside the AI tab's page: the item's own page address is on the clipboard."
   },
   "sidePanel.resize": {
     "text": "Resize panel",
