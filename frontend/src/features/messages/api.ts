@@ -15,6 +15,7 @@ import type {
   HomeroomBotPastJob,
   HomeroomBotPhase,
   HomeroomBotPlan,
+  HomeroomBotPlanChange,
   HomeroomBotPlanQuestion,
   HomeroomBotReadyNow,
   HomeroomBotWork,
@@ -178,6 +179,24 @@ function normalizePlanQuestions(input: unknown): HomeroomBotPlanQuestion[] {
 }
 
 /**
+ * #6220: a plan's own numbered lines, in order 1..N with words in each, or
+ * [] for anything else (a plan written before the card text, or a broken
+ * one; its bullets are drawn then).
+ */
+function normalizePlanChanges(input: unknown): HomeroomBotPlanChange[] {
+  const out: HomeroomBotPlanChange[] = [];
+  for (const entry of array(input)) {
+    if (out.length >= 5) break;
+    const row = record(entry);
+    const n = strictId(pick(row, 'n'));
+    const line = text(pick(row, 'text')).trim();
+    if (!n || !line) return [];
+    out.push({ n, text: line });
+  }
+  return out.every((change, i) => change.n === i + 1) ? out : [];
+}
+
+/**
  * B6: a first version's plan, or null: at most five bullets. #4488: or a
  * complicated change's, with the spec version it asks about. Until 20 Oct
  * 2026 both were dropped here, so the card's note never showed and it could
@@ -188,6 +207,13 @@ function normalizePlan(input: unknown): HomeroomBotPlan | null {
   const bullets = array(pick(row, 'bullets')).filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 5);
   if (!bullets.length) return null;
   const plan: HomeroomBotPlan = { bullets, questions: normalizePlanQuestions(pick(row, 'questions')) };
+  // #6220: the plan's own card text, kept only when both parts are whole.
+  const summary = text(pick(row, 'summary')).trim();
+  const changes = normalizePlanChanges(pick(row, 'changes'));
+  if (summary && changes.length) {
+    plan.summary = summary;
+    plan.changes = changes;
+  }
   if (pick(row, 'complicated') !== true) return plan;
   const spec = record(pick(row, 'spec'));
   const sessionId = strictId(pick(spec, 'sessionId'));

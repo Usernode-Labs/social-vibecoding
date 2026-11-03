@@ -846,6 +846,55 @@ function earlyLookLines(screen) {
   ];
 }
 
+// 3 Nov 2026 (#6220): the plan card's own text, written with the plan. It
+// used to be cut out of the plan's prose (specCardLines): the title again,
+// bare sub-headings, and lines clipped at 120 characters. A plan-only spec
+// now writes a summary and one whole numbered line per change, and the
+// numbers match the screens' data-change marks (spec-html.js
+// checkPlanCard reads and checks it).
+const PLAN_CARD_BRIEF = [
+  'THE PLAN CARD: before anything is built, the person who asked for this sees a short card. That card reads the',
+  'text below, not the plan\'s prose. Write it inside <article data-spec>, directly after the summary <p>:',
+  '',
+  '<template data-card>',
+  '  <p data-card-summary>One or two sentences on what the change does.</p>',
+  '  <ol data-card-lines>',
+  '    <li data-card-line="1">One whole sentence for change 1.</li>',
+  '  </ol>',
+  '</template>',
+  '',
+  '- The summary says what the change does, as you would tell the person who asked for it, in one or two',
+  '  sentences. It is not the title again.',
+  '- Write one line for each numbered change, with the same number as its data-change mark in the screens and',
+  '  its item in the numbered before and after list: 1, 2, 3, in order.',
+  '- Each line is ONE whole sentence of at most 100 characters. It reads on its own, without the line before it,',
+  '  and says what will be true after the change, not the old problem.',
+  '- No em dash, no quote cut short and no bare heading: a line is a sentence, with its full stop.',
+  '- The block is required and is checked when the plan is saved. A plan that fails is written again once.',
+].join('\n');
+
+/**
+ * Pure: what the one repair turn says (draftSpec's `spec_card_fix`): every
+ * fault the card's check found (spec-html.js checkPlanCard), and the whole
+ * spec again with only the card block fixed. Nothing is shortened to fit.
+ */
+function planCardRepairPrompt(faults) {
+  const list = (Array.isArray(faults) ? faults : []).map((f) => `- ${f.message}`);
+  return [
+    'The plan you just wrote has faults in its plan-card block, the text the person who asked for it reads',
+    'before anything is built:',
+    ...list,
+    '',
+    'Write the WHOLE HTML spec again, exactly as you wrote it otherwise, changing only <template data-card>:',
+    '- one summary of one or two sentences saying what the change does, not the title again;',
+    '- one whole sentence per numbered change, at most 100 characters, numbered 1 to N in order, with the same',
+    '  number as its data-change mark in the screens and its item in the numbered before and after list;',
+    '- each line reads on its own and says what will be true after the change, with no em dash and no cut quote.',
+    '',
+    'Reply with only the HTML spec, starting with <article data-spec> and ending with </article>.',
+  ].join('\n');
+}
+
 function specPrompt({
   seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null, starter = null,
   // #4645: the requester's locale, for the language rule below.
@@ -856,8 +905,11 @@ function specPrompt({
   // Newcomer run six: a first version's early first look, the screen its
   // HTML spec starts its main screen from (earlyLookLines), or null.
   earlyLook = null,
+  // #6220: a plan-only (complicated) spec also writes the plan card's own
+  // text (PLAN_CARD_BRIEF).
+  planCard = false,
 }) {
-  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter, locale, tweaks, earlyLook });
+  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter, locale, tweaks, earlyLook, planCard });
   const leanPlan = firstVersion && Array.isArray(tweaks) && tweaks.includes('lean_plan');
   return [
     seed,
@@ -912,7 +964,7 @@ function specPrompt({
   ].join('\n');
 }
 
-function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null, locale = null, tweaks = [], earlyLook = null }) {
+function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null, locale = null, tweaks = [], earlyLook = null, planCard = false }) {
   const leanPlan = firstVersion && Array.isArray(tweaks) && tweaks.includes('lean_plan');
   return [
     seed,
@@ -951,6 +1003,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     ...requestRulesLines(),
     '',
     specHtmlContract(platformStyles),
+    ...(planCard && !firstVersion ? ['', PLAN_CARD_BRIEF] : []),
     ...(firstVersion ? ['', firstVersionScreensBrief({ leanPlan })] : []),
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
@@ -3529,6 +3582,10 @@ async function draftSpec({
   // Newcomer run six: the early first look's screen, to start the main
   // screen from (specPrompt `earlyLook`), or null.
   earlyLook = null,
+  // #6220: a plan-only spec writes the plan card's own text, and it is
+  // checked when the spec is saved (specHtml.checkPlanCard). A faulty card
+  // gets exactly one repair turn; nothing is ever cut to fit.
+  planCard = false,
 }) {
   const { worker, sessions, agentTurn } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -3546,7 +3603,7 @@ async function draftSpec({
   let stopped = false;
   const startedAt = Date.now();
   const prompt = specPrompt({
-    seed, buildNote, firstVersion, guidance, starter, locale, tweaks, earlyLook: firstVersion ? earlyLook : null,
+    seed, buildNote, firstVersion, guidance, starter, locale, tweaks, earlyLook: firstVersion ? earlyLook : null, planCard,
     html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
@@ -3554,14 +3611,25 @@ async function draftSpec({
   // A durable build's spec turn is a durable step (services/durable-turn.js):
   // a restart's next attempt follows it instead of writing the plan again.
   const steps = durableSteps.of(deps);
-  const dispatch = (extra = {}) => sessions.runCodexAttemptLoop({
+  const dispatch = (extra = {}) => {
+    // A repair turn continues the spec's conversation (`resumeThreadId`), and
+    // carries `freshPrompt` for a runtime that could not resume it, as the
+    // build's nudge does (buildTurnRunner).
+    const turnPrompt = typeof extra.prompt === 'string' ? extra.prompt : prompt;
+    const resumeThreadId = extra.resumeThreadId || null;
+    const freshPrompt = typeof extra.freshPrompt === 'string' ? extra.freshPrompt : null;
+    const workerExtra = { ...extra };
+    delete workerExtra.prompt;
+    delete workerExtra.resumeThreadId;
+    delete workerExtra.freshPrompt;
+    return sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
-      turnModel: model, resumeThreadId: null, mode: 'scout',
+      turnModel: model, resumeThreadId, mode: 'scout',
       telemetryComponent,
       // The build's own work item (durable-turn hands it on): on the record.
       owner: extra.owner || null,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
-        pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        pool, session, userId: bot.id, model, resumeThreadId, config,
         // The platform's per-model choice of CLI, as the dev chat's scout
         // makes it (#3296): GLM runs in Claude Code. A configuration's
         // Anthropic model runs there too (recipeHarness).
@@ -3570,13 +3638,14 @@ async function draftSpec({
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
-        prompt,
+        prompt: freshPrompt && !ctx?.resumeSessionId ? freshPrompt : turnPrompt,
+        ...(freshPrompt && ctx?.resumeSessionId && ctx.agentHarness === 'claude' ? { resumeFallbackPrompt: freshPrompt } : {}),
         model,
         commitMsg: '',
-        resumeSessionId: null,
+        resumeSessionId: resumeThreadId,
         branchName: session.branch_name,
         ...(ctx || {}),
-        ...extra,
+        ...workerExtra,
         telemetryComponent,
         onProgress: teeProgress(progress, watching),
       }),
@@ -3587,6 +3656,7 @@ async function draftSpec({
       classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
       containerName,
     });
+  };
   try {
     const turn = await durableTurn.runTurn(steps, 'spec', {
       pool, session, mode: 'scout', budgetMs, deps,
@@ -3604,7 +3674,7 @@ async function draftSpec({
   await noteSavedScreens(pool, {
     screens: specHtml.htmlSpecsEnabledFor(config, session.app_slug) ? savedScreens : null, session, startedAt, model, ok: !!(routed && !routed.error), stopped,
   });
-  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  let costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
   // The turn's ledger rows, for its tokens in a cost breakdown (stage-costs.js).
   const turn = routed?.logicalTurnId ? { turnId: routed.logicalTurnId } : {};
   if (stopped) return { ok: false, stopped: true, costUsd, ...turn, error: `the spec ran past its time limit${progress.suffix()}` };
@@ -3620,16 +3690,76 @@ async function draftSpec({
     return { ...read, costUsd, ...turn };
   }
   if (read.joined) log.info('homeroom-bot', 'The spec came in several messages; kept it whole', { sessionId: session.id });
-  const { specMd } = read;
-  const version = await publishSpec({ pool, sessions, session, specMd, specHtml: read.specHtml, model });
+  // #6220: a plan-only HTML spec also carries the plan card's own text.
+  // Nothing is cut to fit: a faulty card gets exactly one repair turn, and a
+  // plan whose repair fails too keeps the lines the card derives from prose.
+  let specRead = read;
+  let cardText = null;
+  if (planCard && read.specHtml) {
+    const checked = specHtml.checkPlanCard(read.specHtml);
+    const asCard = (card) => ({
+      summary: card.summary,
+      changes: card.lines.map((l) => ({ n: l.n, text: l.text })),
+    });
+    if (checked.ok) {
+      cardText = asCard(checked.card);
+    } else {
+      const leftMs = Math.max(0, budgetMs - (Date.now() - startedAt));
+      // A restart mid-repair follows the step it saved, never runs it again.
+      if (leftMs > 0 || steps.has('turn:spec_card_fix')) {
+        const repairPrompt = planCardRepairPrompt(checked.faults);
+        const repairFresh = [prompt, '', repairPrompt].join('\n');
+        let repairRouted = null;
+        let repairStopped = false;
+        try {
+          const repairTurn = await durableTurn.runTurn(steps, 'spec_card_fix', {
+            pool, session, mode: 'scout', budgetMs: leftMs, deps,
+            stop: () => stopOnClock(pool, worker, session.id),
+            onProgress: teeProgress(progress, watching),
+            dispatch: (extra) => dispatch({
+              ...extra,
+              prompt: repairPrompt,
+              freshPrompt: repairFresh,
+              resumeThreadId: routed?.result?.agentThreadId || null,
+            }),
+          });
+          repairRouted = repairTurn.routed;
+          repairStopped = repairTurn.stopped || !!repairTurn.stoppedBy;
+        } catch (err) {
+          durableSteps.rethrowStop(err, 'spec card repair turn');
+          repairRouted = { error: `dispatch: ${err.message}` };
+        }
+        const repairCost = Number.isFinite(repairRouted && repairRouted.estimatedCostUsd) ? repairRouted.estimatedCostUsd : null;
+        if (repairCost) costUsd = (costUsd || 0) + repairCost;
+        if (repairRouted && !repairRouted.error && !repairStopped) {
+          const repaired = readSpec(repairRouted.result?.lastResultText, { parts: repairRouted.result?.answerParts });
+          if (repaired.ok && repaired.specHtml) {
+            const rechecked = specHtml.checkPlanCard(repaired.specHtml);
+            if (rechecked.ok) {
+              specRead = repaired;
+              cardText = asCard(rechecked.card);
+            }
+          }
+        }
+      }
+      if (!cardText) {
+        log.warn('homeroom-bot', 'A plan\'s card text failed its check; the card uses the lines it derives', {
+          sessionId: session.id, faults: checked.faults.map((f) => f.code),
+        });
+      }
+    }
+  }
+  const { specMd } = specRead;
+  const version = await publishSpec({ pool, sessions, session, specMd, specHtml: specRead.specHtml, model });
   // How much its drawn screens hold (spec-html.js screenStats): measured,
   // never cut.
-  const screens = read.specHtml ? specHtml.screenStats(read.specHtml) : [];
+  const screens = specRead.specHtml ? specHtml.screenStats(specRead.specHtml) : [];
   // #4387: the HTML too, for a first version's first look (buildAndPropose
   // `onFirstLook`); never carried onto a result (specOut).
   return {
     ok: true, specMd, version, costUsd, ...turn, ...(screens.length ? { screens } : {}),
-    ...(read.specHtml ? { specHtml: read.specHtml } : {}),
+    ...(specRead.specHtml ? { specHtml: specRead.specHtml } : {}),
+    ...(cardText ? { planCard: cardText } : {}),
   };
 }
 
@@ -4500,6 +4630,9 @@ async function buildAndPropose({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
       locale, onScreen, tweaks: buildTweaks, earlyLook: typeof startingLook === 'string' ? startingLook : null,
+      // #6220: a plan-only spec writes the plan card's own text; a first
+      // version keeps its own 3 to 5 lines.
+      planCard: planOnly && !firstVersion,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
@@ -4535,6 +4668,7 @@ async function buildAndPropose({
     return {
       ok: false, planned: true, sessionId: session.id, specMd: spec.specMd, specVersion: spec.version ?? null,
       specHtml: spec.specHtml || null, costUsd: spec.costUsd ?? null, ...costsOut(),
+      ...(spec.planCard ? { planCard: spec.planCard } : {}),
     };
   }
   if (spec.ok) {
@@ -5313,6 +5447,8 @@ module.exports = {
   draftSpec,
   fillSavedScreens,
   FIRST_VERSION_SCREENS_FIRST,
+  PLAN_CARD_BRIEF,
+  planCardRepairPrompt,
   EARLY_LOOK_MAX_CHARS,
   earlyLookLines,
   noteSavedScreens,

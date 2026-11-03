@@ -18,6 +18,9 @@ const {
   specHtmlToMarkdown,
   stripHtmlWrapperFence,
   MAX_SPEC_HTML_CHARS,
+  PLAN_CARD_LINE_MAX,
+  readPlanCard,
+  checkPlanCard,
 } = require('../src/services/spec-html.js');
 const { specHasBlockingQuestions } = require('../src/routes/sessions.js');
 
@@ -228,4 +231,82 @@ test('a plan\'s own pictures go into the GitHub copy as images, at the platform\
   // A screen's own markup is the screen's: its pictures are not the text's.
   const screen = `<article data-spec><h1>T</h1><section data-spec-tab="user"><figure data-screens><template data-screen data-size="phone"><img src="/issue-images/${a}"></template></figure></section></article>`;
   assert.deepEqual(planImageIds(screen), []);
+});
+
+// ── A plan's own card text (#6220) ──────────────────────────────────────
+
+const CARD_SUMMARY = "A request's page names who has voted, so you can see who is still to answer.";
+const CARD_SPEC = `<article data-spec>
+  <h1>Show who voted on a request</h1>
+  <p>A request shows who has voted.</p>
+  <template data-card>
+    <p data-card-summary>${CARD_SUMMARY}</p>
+    <ol data-card-lines>
+      <li data-card-line="1">The Votes card lists each member who has voted, newest first.</li>
+      <li data-card-line="2">Members still to vote are named under it, with the day voting closes.</li>
+    </ol>
+  </template>
+  <section data-spec-tab="user">
+    <figure data-screens>
+      <ol data-changes>
+        <li data-change="1" data-steps="A request">The Votes card lists who voted</li>
+        <li data-change="2">Members still to vote are named</li>
+      </ol>
+      <template data-screen data-size="desktop">
+        <div><p data-change="1">Voted</p><p data-change="2">Still to vote</p></div>
+      </template>
+    </figure>
+  </section>
+</article>`;
+
+const cardFaults = (html) => checkPlanCard(html).faults.map((f) => f.code);
+
+test('#6220: the plan card\'s summary and numbered lines are read from its block, never from prose', () => {
+  assert.deepEqual(readPlanCard(CARD_SPEC), {
+    summary: CARD_SUMMARY,
+    lines: [
+      { n: 1, text: 'The Votes card lists each member who has voted, newest first.' },
+      { n: 2, text: 'Members still to vote are named under it, with the day voting closes.' },
+    ],
+  });
+  assert.equal(readPlanCard(SPEC), null, 'a plan written before the block has none');
+  // The block is stored with the plan but is not the plan's prose: the
+  // markdown copy and the viewer never draw it.
+  const md = specHtmlToMarkdown(CARD_SPEC);
+  assert.doesNotMatch(md, /data-card/, 'not copied into the markdown');
+  assert.doesNotMatch(md, /names who has voted/, 'its summary is not drawn as prose');
+  assert.match(md, /The Votes card lists who voted/, 'the before and after list is still there');
+});
+
+test('#6220: a plan\'s card text is checked when the plan is saved, and nothing is cut to fit', () => {
+  const pass = checkPlanCard(CARD_SPEC);
+  assert.equal(pass.ok, true);
+  assert.deepEqual(pass.faults, []);
+  assert.equal(pass.card.lines.length, 2);
+
+  assert.deepEqual(cardFaults(CARD_SPEC.replace(/<template data-card>[\s\S]*?<\/template>/, '')), ['missing']);
+  assert.deepEqual(cardFaults(CARD_SPEC.replace(`<p data-card-summary>${CARD_SUMMARY}</p>`, '<p data-card-summary></p>')), ['summary_empty']);
+  assert.ok(cardFaults(CARD_SPEC.replace(CARD_SUMMARY, 'One. Two. Three.')).includes('summary_long'), 'more than two sentences');
+  assert.ok(cardFaults(CARD_SPEC.replace(CARD_SUMMARY, 'A'.repeat(241))).includes('summary_long'), 'over 240 characters');
+
+  assert.ok(cardFaults(CARD_SPEC.replace('newest first.', 'newest first')).includes('line_not_sentence'), 'no full stop');
+  assert.ok(cardFaults(CARD_SPEC.replace('newest first.', 'newest first…')).includes('line_not_sentence'), 'cut with an ellipsis');
+  assert.ok(cardFaults(CARD_SPEC.replace('The Votes card lists', 'the votes card lists')).includes('line_not_sentence'), 'no capital');
+  // A line over the limit is a fault, and the text itself is never clipped.
+  const long = `${'A'.repeat(PLAN_CARD_LINE_MAX)}.`;
+  const longSpec = CARD_SPEC.replace('The Votes card lists each member who has voted, newest first.', long);
+  assert.ok(cardFaults(longSpec).includes('line_long'));
+  assert.equal(readPlanCard(longSpec).lines[0].text, long, 'the whole line is kept');
+
+  assert.ok(cardFaults(CARD_SPEC.replace('data-card-line="2"', 'data-card-line="3"')).includes('numbers'), '1 then 3');
+  assert.ok(cardFaults(CARD_SPEC.replace('<li data-change="2">Members still to vote are named</li>', '<li data-change="3">Members still to vote are named</li>'))
+    .includes('changes_mismatch'), 'the before and after list says 1 and 3');
+  assert.ok(cardFaults(CARD_SPEC.replace('<p data-change="2">Still to vote</p>', '<p>Still to vote</p>'))
+    .includes('marks_mismatch'), 'line 2 is marked nowhere on the screens');
+  assert.ok(cardFaults(CARD_SPEC.replace('<p data-change="1">Voted</p>', '<p data-change="4">Voted</p>'))
+    .includes('marks_mismatch'), 'a screen marks a number the card has no line for');
+
+  const six = ['1', '2', '3', '4', '5', '6'].map((n) => `<li data-card-line="${n}">Line ${n} is whole.</li>`).join('');
+  const noScreens = `<article data-spec><h1>Six</h1><p>x</p><template data-card><p data-card-summary>It does six things.</p><ol data-card-lines>${six}</ol></template><section data-spec-tab="user"><p>No screens.</p></section></article>`;
+  assert.deepEqual(cardFaults(noScreens), ['too_many']);
 });

@@ -2347,7 +2347,14 @@ function isPlanGoWord(text) {
 
 /** Pure (B6): a plan card's words, for the inbox, the push and anything that does not draw the card. */
 function planCardText({ appName, plan, issueNumber = null }) {
-  const bullets = (plan?.bullets || []).map((b) => `- ${b}`).join('\n');
+  // #6220: a plan that wrote its own card text says its summary and one
+  // numbered line per change; every other plan keeps its "- " bullets.
+  const changes = Array.isArray(plan?.changes) ? plan.changes : [];
+  const summary = typeof plan?.summary === 'string' ? plan.summary.trim() : '';
+  const lines = changes.length
+    ? changes.map((c) => `${c.n}. ${c.text}`).join('\n')
+    : (plan?.bullets || []).map((b) => `- ${b}`).join('\n');
+  const body = summary && changes.length ? `${summary}\n\n${lines}` : lines;
   const asks = (plan?.questions || []).length
     ? `\n\n${plan.questions.length === 1 ? 'One choice' : 'Two choices'} for you, or I'll go with what I suggest.`
     : '';
@@ -2355,10 +2362,10 @@ function planCardText({ appName, plan, issueNumber = null }) {
   // and its before and after screens, are on the request too.
   if (plan?.complicated) {
     const line = issueNumber ? `**${appName}** request #${issueNumber}` : `your request on **${appName}**`;
-    return `Before I build ${line}, here's my plan:\n\n${bullets}${asks}\n\nIts before and after screens are on the request. `
+    return `Before I build ${line}, here's my plan:\n\n${body}${asks}\n\nIts before and after screens are on the request. `
       + `Tap ${BUILD_IT} when it looks right, or Change something.`;
   }
-  return `Here's my plan for **${appName}**:\n\n${bullets}${asks}\n\nTap ${BUILD_IT} when it looks right, or Change something.`;
+  return `Here's my plan for **${appName}**:\n\n${body}${asks}\n\nTap ${BUILD_IT} when it looks right, or Change something.`;
 }
 
 /** The plan cards a person was sent about one request, newest first, with their state. */
@@ -2400,11 +2407,14 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   // #4488: a complicated change on an existing project: not a first version,
   // with its spec (read on the request, whose card goes under the plan).
   const complicated = plan.complicated === true;
+  // #6220: the plan's own card text, when its writer wrote it.
+  const summary = typeof plan.summary === 'string' && plan.summary.trim() ? plan.summary : '';
+  const changes = Array.isArray(plan.changes) && plan.changes.length ? plan.changes : null;
   const planStarted = await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
   const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
-    content: planCardText({ appName: name, plan: { bullets: plan.bullets, questions, complicated }, issueNumber }),
+    content: planCardText({ appName: name, plan: { bullets: plan.bullets, summary, changes, questions, complicated }, issueNumber }),
     idempotencyKey: `hrbot-plan-${runId}`,
     metadata: {
       kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber),
@@ -2415,6 +2425,8 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
       firstVersion: !complicated,
       plan: {
         bullets: plan.bullets, questions,
+        ...(summary ? { summary } : {}),
+        ...(changes ? { changes } : {}),
         ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}) } : {}),
       },
       actionId: Number(action.id), status: 'open',

@@ -581,7 +581,167 @@ function screenStats(text) {
     });
 }
 
+// ── A plan's card text (#6220) ─────────────────────────────────────────
+//
+// The plan card in Main Chat used to cut its lines out of the plan's prose
+// (homeroom-bot-live.js specCardLines): the title again, bare sub-headings,
+// and lines clipped at 120 characters. Now the plan writer writes the card
+// text with the plan, in a <template data-card> block inside the article,
+// and it is checked when the spec is saved. A template is used on purpose:
+// specHtmlToMarkdown copies only template[data-screen] into the markdown
+// copy, and the viewer's sanitizer draws no template, so the card text is
+// stored with the plan without being drawn in the spec twice.
+const PLAN_CARD_LINE_MAX = 110;
+const PLAN_CARD_SUMMARY_MAX = 240;
+const PLAN_CARD_LINES_MAX = 5;
+// The same sentence split homeroom-bot-live.js firstSentence uses.
+const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+(?=["“(]?[A-Z0-9])/;
+
+function sentenceCount(value) {
+  return String(value || '').split(SENTENCE_SPLIT_RE).filter((part) => part.trim()).length;
+}
+
+function planCardBlock(html) {
+  const text = stripHtmlWrapperFence(String(html || '')).trim();
+  return tokenize(text).find((tok) => tok.type === 'raw' && tok.name === 'template' && tok.attrs && 'data-card' in tok.attrs) || null;
+}
+
+/**
+ * Pure: the plan card's text as the plan wrote it, or null when the document
+ * holds no `template[data-card]`. `{ summary, lines: [{ n, text }] }`, in
+ * document order; `n` is the line's `data-card-line` number, NaN when it has
+ * none. Nothing is cut or rewritten.
+ */
+function readPlanCard(html) {
+  const block = planCardBlock(html);
+  if (!block) return null;
+  let summary = '';
+  const lines = [];
+  let inSummary = false;
+  let line = null;
+  for (const tok of tokenize(block.raw)) {
+    if (tok.type === 'text') {
+      const value = decodeEntities(tok.text);
+      if (inSummary) summary += value;
+      else if (line) line.text += value;
+      continue;
+    }
+    if (tok.type === 'open') {
+      if (tok.name === 'p' && tok.attrs && 'data-card-summary' in tok.attrs) { inSummary = true; continue; }
+      if (tok.name === 'li' && tok.attrs && 'data-card-line' in tok.attrs) {
+        lines.push({ n: Number(String(tok.attrs['data-card-line']).trim()), text: '' });
+        line = lines[lines.length - 1];
+      }
+      continue;
+    }
+    if (tok.type === 'close') {
+      if (tok.name === 'p') inSummary = false;
+      if (tok.name === 'li') line = null;
+    }
+  }
+  return {
+    summary: summary.replace(/\s+/g, ' ').trim(),
+    lines: lines.map((l) => ({ n: l.n, text: l.text.replace(/\s+/g, ' ').trim() })),
+  };
+}
+
+// The numbered before and after list's numbers, or null when the spec has no
+// such list. Read through spec-visible-changes.js (lazily: it reads this
+// module on load).
+function planChangeListNumbers(html) {
+  const text = stripHtmlWrapperFence(String(html || '')).trim();
+  const listed = tokenize(text).some((tok) => tok.type === 'open' && tok.name === 'ol' && tok.attrs && 'data-changes' in tok.attrs);
+  if (!listed) return null;
+  let changes = [];
+  try { changes = require('./spec-visible-changes').readSpecChanges(text).changes; } catch { changes = []; }
+  return changes.map((c) => Number(String(c.n).trim())).filter((n) => Number.isInteger(n));
+}
+
+// Every data-change number the plan's screens mark, and how many screens it
+// draws at all.
+function planScreenMarks(html) {
+  const tokens = tokenize(stripHtmlWrapperFence(String(html || '')).trim());
+  const marks = new Set();
+  let screens = 0;
+  for (const tok of tokens) {
+    if (tok.type !== 'raw' || tok.name !== 'template' || !tok.attrs || !('data-screen' in tok.attrs)) continue;
+    screens += 1;
+    const re = /\bdata-change\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+    let m;
+    while ((m = re.exec(String(tok.raw || '')))) {
+      for (const part of String(m[1] ?? m[2] ?? m[3] ?? '').split(/[\s,]+/)) {
+        const n = Number(part);
+        if (Number.isInteger(n)) marks.add(n);
+      }
+    }
+  }
+  return { screens, marks };
+}
+
+/**
+ * Pure: whether a plan's card text passes, `{ ok, card, faults }`. Each fault
+ * is `{ code, message, n? }`, where `n` is the card line it is about, and its
+ * message names the fault in one plain sentence. Nothing is cut or rewritten
+ * to fit: a faulty plan is written again once (homeroom-bot-live.js
+ * draftSpec), and a plan that still fails keeps the lines the card derives.
+ */
+function checkPlanCard(html) {
+  const card = readPlanCard(html);
+  const faults = [];
+  const fail = (code, message, n = null) => {
+    faults.push({ code, message, ...(Number.isInteger(n) ? { n } : {}) });
+  };
+  if (!card || !card.lines.length) {
+    fail('missing', 'There is no card block with numbered lines.');
+    return { ok: false, card, faults };
+  }
+  const { summary, lines } = card;
+  if (!summary) fail('summary_empty', 'The summary is empty.');
+  else if (summary.length > PLAN_CARD_SUMMARY_MAX) {
+    fail('summary_long', `The summary is ${summary.length} characters; at most ${PLAN_CARD_SUMMARY_MAX}.`);
+  } else if (sentenceCount(summary) > 2) {
+    fail('summary_long', 'The summary is more than two sentences.');
+  }
+  for (const line of lines) {
+    const text = String(line.text || '');
+    const whole = /^[A-Z0-9]/.test(text) && /[.!?]$/.test(text)
+      && !/(…|\.\.\.)$/.test(text) && sentenceCount(text) <= 1;
+    if (!whole) fail('line_not_sentence', `Line ${Number.isInteger(line.n) ? line.n : '?'} is not one whole sentence.`, line.n);
+    if (text.length > PLAN_CARD_LINE_MAX) {
+      fail('line_long', `Line ${Number.isInteger(line.n) ? line.n : '?'} is ${text.length} characters; at most 100.`, line.n);
+    }
+  }
+  if (!lines.every((line, i) => Number.isInteger(line.n) && line.n === i + 1)) {
+    fail('numbers', 'The numbered lines must run 1 to N in order.');
+  }
+  const expected = Array.from({ length: lines.length }, (_, i) => i + 1);
+  const listed = planChangeListNumbers(html);
+  if (listed) {
+    const same = listed.length === expected.length && expected.every((n) => listed.includes(n));
+    if (!same) {
+      fail('changes_mismatch', `The numbered lines do not match the plan's numbered before and after list (${listed.join(', ') || 'none'}).`);
+    }
+  }
+  const { screens, marks } = planScreenMarks(html);
+  if (screens) {
+    for (const n of expected) {
+      if (!marks.has(n)) fail('marks_mismatch', `Line ${n} has no mark on the plan's screens.`, n);
+    }
+    for (const n of marks) {
+      if (n < 1 || n > lines.length) {
+        fail('marks_mismatch', `The plan's screens mark change ${n}, which is not one of the numbered lines.`);
+      }
+    }
+  } else if (lines.length > PLAN_CARD_LINES_MAX) {
+    fail('too_many', `A plan with no screens may have at most ${PLAN_CARD_LINES_MAX} numbered lines.`);
+  }
+  return { ok: faults.length === 0, card, faults };
+}
+
 module.exports = {
+  PLAN_CARD_LINE_MAX,
+  readPlanCard,
+  checkPlanCard,
   planImageIds,
   planImageUrl,
   MAX_SPEC_HTML_CHARS,

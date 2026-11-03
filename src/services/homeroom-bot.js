@@ -7405,8 +7405,17 @@ async function planBeforeBuilding({
     await settle();
     return acted;
   }
+  // #6220: a plan written with its own card text (live.draftSpec `planCard`)
+  // carries that instead of the lines cut out of the spec's prose. Its
+  // bullets are the same lines, so the build note, the inbox preview and
+  // older screens that read them keep working.
+  const card = drafted.planCard && Array.isArray(drafted.planCard.changes) && drafted.planCard.changes.length
+    ? drafted.planCard
+    : null;
   const shown = {
-    bullets: complicatedPlanBullets(plan, drafted.specMd), questions, complicated: true,
+    bullets: card ? card.changes.map((c) => c.text) : complicatedPlanBullets(plan, drafted.specMd),
+    ...(card ? { summary: card.summary, changes: card.changes } : {}),
+    questions, complicated: true,
     ...(drafted.specVersion ? { spec: { sessionId: Number(drafted.sessionId), version: Number(drafted.specVersion) } } : {}),
   };
   // Once: a plan another drafting of this run already put to its requester

@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const dm = require('../src/services/homeroom-bot-dm');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -133,4 +134,65 @@ test('#4046: the plan is the one place its request\'s step shows: the cards abov
   assert.match(host, /const state = planState\(meta, pressed\);\s*const card = cardId \? activity\.cards\.get\(cardId\) : null;/);
   assert.match(host, /progress=\{planProgress\(card, state\)\}/);
   for (const s of ['Step 3 of 7', 'My plan for', 'Change something']) assert.doesNotMatch(s, /—|!/);
+});
+
+// ── #6220: the plan's own card text ─────────────────────────────────────
+
+const CARD_PLAN = {
+  bullets: ['The Votes card lists each member who has voted.', 'Members still to vote are named under it.'],
+  summary: "A request's page names who has voted, so you can see who is still to answer.",
+  changes: [
+    { n: 1, text: 'The Votes card lists each member who has voted.' },
+    { n: 2, text: 'Members still to vote are named under it.' },
+  ],
+  questions: [],
+};
+
+test('#6220: a plan with its own card text says its summary and numbered lines', () => {
+  const words = dm.planCardText({ appName: 'Chores', plan: CARD_PLAN });
+  assert.match(words, /A request's page names who has voted, so you can see who is still to answer\./);
+  assert.match(words, /1\. The Votes card lists each member who has voted\.\n2\. Members still to vote are named under it\./);
+  assert.doesNotMatch(words, /^- /m, 'numbered lines, not bullets');
+  // An older plan keeps its bullets, exactly as it said them.
+  const old = dm.planCardText({ appName: 'Chores', plan: { bullets: ['A list', 'A Today view'], questions: [] } });
+  assert.match(old, /- A list\n- A Today view/);
+});
+
+test('#6220: the chat keeps a plan\'s summary and numbered lines, and drops an incomplete pair', () => {
+  const { normalizeBotMeta } = loadTsx('frontend/src/features/messages/api.ts');
+  const plan = (p) => normalizeBotMeta({ homeroomBot: { kind: 'plan', plan: p } })?.homeroomBot.plan;
+  const changes = [{ n: 1, text: 'One.' }, { n: 2, text: 'Two.' }];
+  assert.deepEqual(plan({ bullets: ['One.', 'Two.'], summary: 'It does two things.', changes }), {
+    bullets: ['One.', 'Two.'], questions: [], summary: 'It does two things.', changes,
+  });
+  // Numbers not 1..N, a line with no words, or no summary: both are dropped
+  // and the bullets are drawn as before.
+  for (const bad of [
+    { bullets: ['One.', 'Two.'], summary: 'x', changes: [{ n: 2, text: 'Two.' }, { n: 1, text: 'One.' }] },
+    { bullets: ['One.'], summary: 'x', changes: [{ n: 1, text: '' }] },
+    { bullets: ['One.', 'Two.'], changes },
+    { bullets: ['One.', 'Two.'], summary: '', changes },
+  ]) {
+    const out = plan(bad);
+    assert.equal(out.summary, undefined);
+    assert.equal(out.changes, undefined);
+    assert.deepEqual(out.bullets, bad.bullets);
+  }
+});
+
+test('#6220: the card draws its summary and numbered lines, the number in a grey disc', () => {
+  const { PlanCardView } = loadTsx('frontend/src/features/messages/bot-plan-view.tsx');
+  const html = renderToHtml(createElement(PlanCardView, { appName: 'Plant Pal', plan: CARD_PLAN, state: 'open' }));
+  assert.match(html, /<p class="mt-1\.5 text-\[0\.9375rem\] leading-\[22px\] text-zinc-700 dark:text-zinc-300" data-bot-plan-summary="">A request(?:&#x27;|')s page names who has voted, so you can see who is still to answer\.<\/p>/);
+  assert.match(html, /<ol class="mt-1 flex flex-col" data-bot-plan-lines="">/);
+  assert.match(html, /data-bot-plan-line="1"><span aria-hidden="true" data-bot-plan-n="1" class="[^"]*rounded-full[^"]*">1<\/span><span>The Votes card lists each member who has voted\.<\/span>/);
+  assert.match(html, /data-bot-plan-n="2"[^>]*>2<\/span>/);
+  // Both surfaces draw the numbered lines; the App tab's card has no dots.
+  const app = renderToHtml(createElement(PlanCardView, { appName: 'Plant Pal', plan: CARD_PLAN, state: 'open', surface: 'app' }));
+  assert.match(app, /data-bot-plan-n="1"/);
+  assert.doesNotMatch(app, /h-1\.5 w-1\.5 shrink-0 rounded-full/);
+  // An older plan, with only bullets, is drawn exactly as it was.
+  const old = renderToHtml(createElement(PlanCardView, { appName: 'Plant Pal', plan: { bullets: ['A list'], questions: [] }, state: 'open' }));
+  assert.doesNotMatch(old, /data-bot-plan-summary|data-bot-plan-n=/);
+  assert.match(old, /data-bot-plan-lines=""><li class="text-pretty py-3/);
 });

@@ -1228,11 +1228,16 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       [ada.id, conversationId, app.id, reply.message.id],
     );
     await pool.query('UPDATE conversation_messages SET reply_to_id = $2 WHERE id = $1', [reply.message.id, reply.message.id]);
-    const plan = await dm.sendPlanCard(pool, { app, issueNumber: 5001, runId: run.id, plan: { bullets: ['A photo per plant'] }, bot });
+    const plan = await dm.sendPlanCard(pool, {
+      app, issueNumber: 5001, runId: run.id, bot,
+      plan: { bullets: ['A photo per plant'], summary: 'Each plant gets a photo.', changes: [{ n: 1, text: 'A photo per plant.' }] },
+    });
     assert.ok(plan?.messageId, 'the plan was sent');
     const planned = await conversations.getMessage(pool, viewer, conversationId, plan.messageId);
     assert.equal(planned.threadRootId, null, 'the plan is in Main, not under the card');
     assert.equal(planned.metadata.homeroomBot.kind, 'plan');
+    assert.deepEqual([planned.metadata.homeroomBot.plan.summary, planned.metadata.homeroomBot.plan.changes],
+      ['Each plant gets a photo.', [{ n: 1, text: 'A photo per plant.' }]], '#6220: its own card text is on the card');
     await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5001', [ada.id]);
 
     // Every other piece of news that quotes where a request started does the

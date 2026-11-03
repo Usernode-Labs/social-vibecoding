@@ -200,7 +200,9 @@ test('a card whose triage gave no lines reads them off the plan it drafted', () 
   assert.deepEqual(bot.complicatedPlanBullets(PLAN, spec), PLAN.bullets, 'the triage\'s lines, when it wrote them');
   assert.equal(bot.complicatedPlanBullets({ bullets: [] }, spec)[0], 'Stack each project\'s notifications under its two newest');
   assert.deepEqual(bot.complicatedPlanBullets({}, null), ['The change this request asks for, as the plan and its screens below show it']);
-  assert.match(read('src/services/homeroom-bot.js'), /bullets: complicatedPlanBullets\(plan, drafted\.specMd\), questions, complicated: true,/);
+  assert.match(read('src/services/homeroom-bot.js'), /bullets: card \? card\.changes\.map\(\(c\) => c\.text\) : complicatedPlanBullets\(plan, drafted\.specMd\),/);
+  assert.match(read('src/services/homeroom-bot.js'), /\.\.\.\(card \? \{ summary: card\.summary, changes: card\.changes \} : \{\}\),/,
+    '#6220: the plan\'s own card text, when its writer wrote it');
 });
 
 test('a complicated plan keeps what makes it one as the chat reads it: its label and the spec it asks about', () => {
@@ -384,6 +386,34 @@ test('its build slot drafts the spec only, then asks: DM card, request card and 
   assert.equal(post.untag, 'maya', 'their DM reached them: the request does not ring them twice');
   assert.equal(post.dm, undefined);
   assert.ok(!pool.queries.some(([sql]) => /SET awaiting_go_at = NULL, live_build_waiting_at = NOW\(\)/.test(sql)), 'never builds without an answer');
+});
+
+test('#6220: a plan written with its own card text carries its summary and numbered lines, and the same lines as bullets', async (t) => {
+  const seen = stubLive(t);
+  stubConfigs(t);
+  const planCard = {
+    summary: 'A request names who has voted.',
+    changes: [{ n: 1, text: 'The Votes card lists who voted.' }, { n: 2, text: 'Members still to vote are named.' }],
+  };
+  live.buildAndPropose = async (a) => {
+    seen.built.push(a);
+    return { ok: false, planned: true, sessionId: 57, specMd: '# Show who voted', specVersion: 1, specHtml: '<ol data-changes></ol>', costUsd: 0.4, planCard };
+  };
+  const pool = fakePool();
+  const cards = [];
+  const args = verdictArgs({ pool, complicated: true, plan: PLAN, parsed: { verdict: 'ready', buildNote: 'Add a leaderboard tab.' } });
+  args.deps.dm = {
+    async sendPlanCard(_pool, a) { cards.push(a); return { messageId: 33 }; },
+    async requesterOf() { return { userId: 2, username: 'maya' }; },
+  };
+  assert.equal(await bot.buildLive(args), 'awaiting_go');
+  const waited = pool.queries.find(([sql]) => /SET live_build_waiting_at = NULL, awaiting_go_at = NOW\(\), plan = \$2::jsonb/.test(sql));
+  const shown = JSON.parse(waited[1][1]);
+  assert.equal(shown.summary, planCard.summary);
+  assert.deepEqual(shown.changes, planCard.changes);
+  assert.deepEqual(shown.bullets, planCard.changes.map((c) => c.text), 'the same lines, so older readers still work');
+  assert.deepEqual(cards[0].plan.summary, planCard.summary);
+  assert.deepEqual(cards[0].plan.changes, planCard.changes);
 });
 
 test('a plan that could not be written is said on the request, and nothing waits or builds', async (t) => {

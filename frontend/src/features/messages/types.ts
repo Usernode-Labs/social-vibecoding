@@ -238,9 +238,25 @@ export interface HomeroomBotPlanQuestion {
   answers: string[];
 }
 
+/**
+ * #6220: one numbered line of a plan's own card text, with the same number
+ * as its mark on the plan's screens.
+ */
+export interface HomeroomBotPlanChange {
+  n: number;
+  text: string;
+}
+
 export interface HomeroomBotPlan {
   bullets: string[];
   questions: HomeroomBotPlanQuestion[];
+  /**
+   * #6220: the plan's own card text, written with the plan: one or two
+   * sentences, then one whole numbered line per change. A plan written
+   * before this has neither, and its card draws `bullets` as it always did.
+   */
+  summary?: string;
+  changes?: HomeroomBotPlanChange[];
   /**
    * #4488: a complicated change on a project that already exists, checked
    * with the person who asked for it before it is built. Its spec (with its

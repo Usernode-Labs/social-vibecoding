@@ -177,6 +177,17 @@ const PLAN_ROW = {
   next: 'text-pretty py-3 text-[0.9375rem] leading-[22px] text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-100',
 } as const;
 
+// #6220: a plan that wrote its own card text: one summary line, then one
+// whole numbered line per change. The row keeps PLAN_ROW's 15px over 22px
+// and its hairline, with the number in a small grey disc in front, the same
+// shape as the badges on the plan's screens (so 2 on the card is 2 in the
+// picture). The disc is neutral grey, not the screens' green and red.
+const PLAN_CHANGE_ROW = {
+  first: 'flex items-start gap-2.5 py-3 text-pretty text-[0.9375rem] leading-[22px] text-zinc-900 dark:text-zinc-100',
+  next: 'flex items-start gap-2.5 py-3 text-pretty text-[0.9375rem] leading-[22px] text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-100',
+} as const;
+const PLAN_CHANGE_N = 'mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-[0.6875rem] font-bold leading-5 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200';
+
 // One answer of a choice, picked or not: a 44px row with no side padding, so
 // its radio lines up with the card's text, and a hairline between rows.
 const ANSWER_ROW = {
@@ -288,6 +299,20 @@ export function PlanCardView({
         <p className="messages-bot-answered">{t('messages:bot.plan.replaced')}</p>
       ) : shown === 'built' ? (
         <AnsweredChoices items={answered} className="mt-2" />
+      ) : plan.changes?.length ? (
+        <>
+          {plan.summary ? (
+            <p className="mt-1.5 text-[0.9375rem] leading-[22px] text-zinc-700 dark:text-zinc-300" data-bot-plan-summary="">{plan.summary}</p>
+          ) : null}
+          <ol className="mt-1 flex flex-col" data-bot-plan-lines="">
+            {plan.changes.map((change, i) => (
+              <li key={change.n} className={i === 0 ? PLAN_CHANGE_ROW.first : PLAN_CHANGE_ROW.next} data-bot-plan-line={change.n}>
+                <span aria-hidden="true" data-bot-plan-n={change.n} className={PLAN_CHANGE_N}>{change.n}</span>
+                <span>{change.text}</span>
+              </li>
+            ))}
+          </ol>
+        </>
       ) : surface === 'messages' ? (
         <ul className="mt-1 flex flex-col" data-bot-plan-lines="">
           {plan.bullets.map((bullet, i) => (
