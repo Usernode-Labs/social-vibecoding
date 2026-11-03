@@ -39,9 +39,12 @@
       .then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (data) {
           if (!res.ok) {
-            throw new Error(data.error === 'account_required'
+            var err = new Error(data.error === 'account_required'
               ? 'Make an account to join in.'
               : data.error || 'Something went wrong (' + res.status + ').');
+            // The server's own answer: a kept copy never stands in for it.
+            err.status = res.status;
+            throw err;
           }
           return data;
         });
@@ -241,6 +244,39 @@
     show('ready');
   }
 
+  // ── Offline: the last read, kept on this device ────────────────────────
+  //
+  // The read the screen opens on goes through the platform bridge's
+  // usernode.offline.read: it keeps the last answer on this device, sealed
+  // for the person signed in and gone when they sign out, and gives it back
+  // when the read cannot be answered (no connection, or the server is down).
+  // The line under the title says so, and how old it is, until a read works
+  // again. api() marks the server's own answers (err.status), which are
+  // never covered over with the copy. Outside Homeroom nothing is kept.
+
+  function kept(name, read) {
+    if (window.usernode && window.usernode.offline) return window.usernode.offline.read(name, read);
+    return read().then(function (value) { return { value: value, fromCopy: false }; });
+  }
+
+  function savedWhen(at) {
+    var then = new Date(at);
+    var today = new Date();
+    var time = then.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (then.toDateString() === today.toDateString()) return 'at ' + time;
+    if (then.toDateString() === new Date(today.getTime() - 86400000).toDateString()) return 'yesterday at ' + time;
+    return 'on ' + then.toLocaleDateString(undefined, { day: 'numeric', month: 'long' }) + ' at ' + time;
+  }
+
+  function showSaved(got) {
+    var strip = document.getElementById('saved-strip');
+    if (!strip) return;
+    strip.hidden = !got.fromCopy;
+    strip.textContent = got.fromCopy
+      ? (navigator.onLine === false ? 'Offline.' : 'Can\'t reach the server.') + ' Showing what was saved ' + savedWhen(got.savedAt) + '.'
+      : '';
+  }
+
   var loaded = false;
   var loading = null;
   var again = false;
@@ -248,8 +284,8 @@
     // A read already on its way may have left before the change just made:
     // read once more when it is back.
     if (loading) { again = true; return loading; }
-    loading = api('GET', '/api/chores' + (demo ? '?demo=1' : ''))
-      .then(function (data) { loaded = true; render(data); })
+    loading = kept('chores' + (demo ? ':demo' : ''), function () { return api('GET', '/api/chores' + (demo ? '?demo=1' : '')); })
+      .then(function (got) { loaded = true; render(got.value); showSaved(got); })
       .catch(function (err) {
         // A refresh that fails keeps what is on screen; only a first load
         // with nothing to show turns into the error state.

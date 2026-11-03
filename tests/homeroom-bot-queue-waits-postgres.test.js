@@ -95,7 +95,7 @@ test('why queued requests wait, and the move offers, against the full PostgreSQL
   await queue(notes, 9, { person: bea });
 
   await t.test('each waiting row says why, and the counts are the listed set\'s', async () => {
-    const q = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 3 }, { botId });
+    const q = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 3, readsPerApp: 1 }, { botId });
     assert.equal(q.depth, 6);
     assert.equal(q.running, 1);
     assert.equal(q.listedWaiting, 6);
@@ -104,9 +104,9 @@ test('why queued requests wait, and the move offers, against the full PostgreSQL
     assert.deepEqual(why, {
       'type-racer-battle-1c07b0#1': null,
       'type-racer-battle-1c07b0#2': 'first_version_pending',
-      // An admin's Run now is not held by the first version: its app's one
-      // session is taken by #1's read.
-      'type-racer-battle-1c07b0#5': 'session_busy',
+      // An admin's Run now is not held by the first version: at one read
+      // per project, #1's read takes its project's only read slot.
+      'type-racer-battle-1c07b0#5': 'reads_per_app',
       'quiet-app#3': 'app_paused',
       'notes#7': 'build_pending',
       'notes#8': 'settling',
@@ -114,6 +114,9 @@ test('why queued requests wait, and the move offers, against the full PostgreSQL
     });
     assert.equal(q.items.find((i) => i.issue_number === 2).waiting.firstVersionIssue, 1);
     assert.equal(q.items[0].issue_number, 1, 'the running rows first');
+    // 3 Nov 2026: at three reads per project (the default), #5 is read beside #1.
+    const three = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 3 }, { botId });
+    assert.equal(three.items.find((i) => i.issue_number === 5).waiting, null);
   });
 
   await t.test('per person, counting what runs', async () => {

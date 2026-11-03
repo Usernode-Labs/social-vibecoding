@@ -112,6 +112,38 @@ test('triage runs in its own session on main, never a build\'s, and rests only a
   const archived = await session('dev/homeroom_bot-1', 'archived');
   await bot.pauseIdleSession(pool, archived);
   assert.equal(await status(archived), 'archived');
+
+  // 3 Nov 2026: up to readsPerApp reads at once, each on a read slot of its
+  // own. A further slot's session is made on its first read and marked with
+  // its slot by its insert: found again by its slot, and never taken as
+  // slot 0's, though it is the newest of the bot's sessions on main.
+  const slot1 = await bot.ensureBotSession(pool, config, botUser, app, { slot: 1 });
+  assert.notEqual(slot1.id, made.id);
+  assert.equal(slot1.branch_name, 'main');
+  assert.equal(slot1.status, 'paused');
+  assert.equal(slot1.source, 'homeroom_bot_read:1');
+  assert.equal(slot1.is_headless, false);
+  assert.deepEqual(slot1.linked_issues, [], 'no board derivation reads it as work on a request');
+  assert.equal((await bot.ensureBotSession(pool, config, botUser, app, { slot: 1 })).id, slot1.id, 'its slot finds it again');
+  assert.equal((await bot.ensureBotSession(pool, config, botUser, app)).id, made.id, 'slot 0 keeps its own');
+  const slot2 = await bot.ensureBotSession(pool, config, botUser, app, { slot: 2 });
+  assert.ok(![made.id, slot1.id].includes(slot2.id), 'each slot its own: no two reads share a worker, a checkout or a thread');
+  // The lane's slot 0 session (its grant's) is slot 0's here too.
+  const rules = require('../src/workflow/rules/bot-loop.ts');
+  const lateral = rules.READ_CANDIDATES_SQL.slice(rules.READ_CANDIDATES_SQL.indexOf('LEFT JOIN LATERAL (\n      SELECT cs.id FROM chat_sessions cs\n       WHERE cs.user_id = $1'));
+  const triageSql = lateral.slice(lateral.indexOf('SELECT cs.id'), lateral.indexOf(') bs ON')).replace(/q\.app_id/g, '$2');
+  assert.deepEqual((await pool.query(triageSql, [botUser.id, app.id])).rows.map((r) => r.id), [made.id]);
+  // Each rests between its reads as slot 0 does: no worker kept for it.
+  await pool.query("UPDATE chat_sessions SET status = 'active' WHERE id = $1", [slot2.id]);
+  await bot.pauseIdleSession(pool, slot2.id);
+  assert.equal(await status(slot2.id), 'paused');
+  // A slot whose session has closed gets a new one, and the closed one is
+  // still no slot 0's.
+  await pool.query("UPDATE chat_sessions SET status = 'archived' WHERE id = $1", [slot1.id]);
+  const again = await bot.ensureBotSession(pool, config, botUser, app, { slot: 1 });
+  assert.ok(![slot1.id, slot2.id, made.id].includes(again.id));
+  assert.equal(again.source, 'homeroom_bot_read:1');
+  assert.equal((await bot.ensureBotSession(pool, config, botUser, app)).id, made.id);
 });
 
 test('a failed read counts the failures that saw the same thread (#1080)', { timeout: 180000 }, async (t) => {

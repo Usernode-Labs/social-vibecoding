@@ -63,6 +63,9 @@
       <p class="text-body text-muted">25 minutes of focus, then a gentle beep.</p>
     </header>
 
+    <!-- Shown only when the screen is the copy kept on this device (app.js showSaved). -->
+    <p id="saved-strip" class="rounded-xl bg-raised px-3 py-2 text-small text-muted" role="status" hidden></p>
+
     <!-- The timer: the screen's one job. Nothing here waits on the network. -->
     <section id="timer" data-state="ready" class="card flex flex-col items-center gap-4 px-4 py-8">
       <p id="clock" role="timer" class="text-center text-[5rem] font-bold leading-none tabular-nums">25:00</p>

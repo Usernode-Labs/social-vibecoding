@@ -278,7 +278,7 @@ test('the bot builds from the plan at Make it with no triage turn, and goes ahea
   // Only a first version, after its card is started, and before any turn.
   const call = src.indexOf('const early = await planFromEarly(pool, config, {');
   assert.ok(call > src.indexOf('await retireWaitingPlans(pool, { appId: app.id, issueNumber, why: \'the request was read again\''));
-  assert.ok(call < src.indexOf('session = await ensureBotSession(pool, config, bot, app);'));
+  assert.ok(call < src.indexOf('session = await ensureBotSession(pool, config, bot, app, {'));
   assert.match(src, /if \(requester\?\.firstVersion\) \{\s+const early = await planFromEarly/);
   // A plan someone asked to change, a restart's read, or a request already planned is the triage's.
   assert.match(src, /if \(item\.reason === 'plan_change' \|\| item\.reason === RESTART_REASON \|\| item\.reason === READ_AGAIN_REASON\) return null;/);

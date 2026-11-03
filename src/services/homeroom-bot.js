@@ -203,6 +203,10 @@ const KEY_HELPER_MODEL = helperModelSetting.KEY;
 // apps' shadow triage runs at once, beside the live work, never in its way.
 const KEY_LIVE_AT_ONCE = 'homeroom_bot_live_at_once';
 const KEY_PER_PERSON = 'homeroom_bot_per_person';
+// 3 Nov 2026: how many of one project's requests are read at once, each on
+// a triage session of its own (its read slot: ensureBotSession). The lane
+// reads it (rules/bot-loop.ts KEY_READS_PER_APP, pickLive).
+const KEY_READS_PER_APP = 'homeroom_bot_reads_per_app';
 // #3624, stage 2: whether a DM to the bot is read by a model
 // (homeroom-bot-mayor.js). On by default; the switch is there to stop it
 // without switching the whole bot off.
@@ -258,7 +262,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
-  KEY_USER_WEEKLY_CENTS, KEY_ADMIN_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
+  KEY_USER_WEEKLY_CENTS, KEY_ADMIN_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_READS_PER_APP, KEY_DM_CHAT,
   KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING, KEY_APP_CAPS,
   KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL, KEY_HELPER_MODEL,
@@ -294,6 +298,9 @@ const DEFAULTS = Object.freeze({
   // read in production.
   liveAtOnce: 12,
   perPerson: 3,
+  // 3 Nov 2026: a project's reads at once (they were one, behind its one
+  // triage session). Reads count toward liveAtOnce and perPerson as before.
+  readsPerApp: 3,
   dmChat: true,
   voiceSession: true,
   voiceIssue: true,
@@ -314,6 +321,10 @@ const MAX_BUILD_CONCURRENCY = 4;
 // use (the worker namespace's quota), so the ceiling stays well under it.
 const MAX_LIVE_AT_ONCE = 24;
 const MAX_PER_PERSON = 6;
+// Each read at once on a project is a triage session and a worker of its
+// own while it runs (ensureBotSession's read slots); at rest a session holds
+// no worker (pauseIdleSession).
+const MAX_READS_PER_APP = 6;
 // How many live builds one project may have under way at once. Each build
 // is a session and a branch of its own (live.buildAndPropose), so they do
 // not share a worker; one at a time made a busy project's ready requests
@@ -687,6 +698,7 @@ function parseSettings(rows) {
   const helperModel = helperModelSetting.parseStored(map.get(KEY_HELPER_MODEL)) || '';
   const liveAtOnce = clampInt(map.get(KEY_LIVE_AT_ONCE), DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
   const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
+  const readsPerApp = clampInt(map.get(KEY_READS_PER_APP), DEFAULTS.readsPerApp, 1, MAX_READS_PER_APP);
   const dmChat = map.get(KEY_DM_CHAT) !== 'off';
   const voiceSession = map.get(KEY_VOICE_SESSION) !== 'off';
   const voiceIssue = map.get(KEY_VOICE_ISSUE) !== 'off';
@@ -704,7 +716,7 @@ function parseSettings(rows) {
   return {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
-    liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
+    liveAtOnce, perPerson, readsPerApp, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
     defaultModel, helperModel, everyoneSince, proposalCeiling, appCaps, liveBuildStream,
     imageModel, pictureWeeklyCap,
   };
@@ -905,6 +917,13 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: `perPerson must be an integer from 1 to ${MAX_PER_PERSON}` };
     }
     updates.push([KEY_PER_PERSON, String(n)]);
+  }
+  if (body.readsPerApp !== undefined) {
+    const n = Number(body.readsPerApp);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_READS_PER_APP) {
+      return { ok: false, error: `readsPerApp must be an integer from 1 to ${MAX_READS_PER_APP}` };
+    }
+    updates.push([KEY_READS_PER_APP, String(n)]);
   }
   if (body.dmChat !== undefined) {
     if (typeof body.dmChat !== 'boolean') return { ok: false, error: 'dmChat must be true or false' };
@@ -1233,7 +1252,7 @@ async function writeSettings(pool, patch, actorId, config = {}) {
   // its whole queue now (the lane: its grants and its refresh, soon). A
   // project given more room brings back what its caps held (#6156).
   const modeAfter = valid.updates.find(([key]) => key === KEY_MODE)?.[1];
-  if (valid.updates.some(([key]) => [KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_PAUSED_APPS, KEY_APP_CAPS].includes(key))
+  if (valid.updates.some(([key]) => [KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_READS_PER_APP, KEY_PAUSED_APPS, KEY_APP_CAPS].includes(key))
       || (modeAfter && modeAfter !== 'off' && modeAfter !== modeBefore)) {
     await platform().botRefresh(null).catch((err) => log.warn('homeroom-bot', 'Could not tell the bot\'s lane its settings changed', { err: err.message }));
   }
@@ -2726,32 +2745,58 @@ async function pauseIdleSession(pool, sessionId) {
  * build away: six platform builds lost on 10-02, and about 150 triage turns
  * refused. With no build running, triage ran inside the newest of those
  * paused sessions instead, on that build's stale branch.
+ *
+ * 3 Nov 2026: one per READ SLOT (`slot`). A project's reads run up to
+ * readsPerApp at once (the lane, rules/bot-loop.ts pickLive), each granted a
+ * read slot no other read holds while it runs, and each slot is a session of
+ * its own, so two reads never share a worker, a checkout or an agent thread.
+ * Slot 0 is the triage session as it always was (the newest of the bot's
+ * sessions on main that is no build's, no person's look's and no other
+ * slot's). Every further slot's session is made on its first read, marked
+ * with its slot from its insert (`source` homeroom_bot_read:<slot>), so
+ * slot 0 never takes it. A slot whose session has closed gets a new one.
+ * Each rests between its reads like slot 0 (pauseIdleSession), its worker
+ * removed, so an idle slot costs a paused row and nothing else.
  */
-async function ensureBotSession(pool, config, bot, app) {
-  const { rows: found } = await pool.query(
-    `SELECT * FROM chat_sessions cs
-      WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs.status IN ('active', 'paused')
-        AND cs.branch_name = 'main'
-        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.build_session_id = cs.id)
-        -- Nor a person's look session (homeroom-bot-thread-tools/look-into.js).
-        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_look_sessions l WHERE l.session_id = cs.id)
-      ORDER BY cs.id DESC LIMIT 1`,
-    [bot.id, app.id],
-  );
+async function ensureBotSession(pool, config, bot, app, { slot = 0 } = {}) {
+  const readSlot = loopRules.readSlotOf(slot) || 0;
+  const source = readSlot === 0 ? null : loopRules.readSessionSource(readSlot);
+  const { rows: found } = source == null
+    ? await pool.query(
+      `SELECT * FROM chat_sessions cs
+        WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs.status IN ('active', 'paused')
+          AND cs.branch_name = 'main'
+          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.build_session_id = cs.id)
+          -- Nor a person's look session (homeroom-bot-thread-tools/look-into.js).
+          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_look_sessions l WHERE l.session_id = cs.id)
+          -- Nor another read slot's.
+          AND (cs.source IS NULL OR cs.source NOT LIKE 'homeroom_bot_read:%')
+        ORDER BY cs.id DESC LIMIT 1`,
+      [bot.id, app.id],
+    )
+    : await pool.query(
+      `SELECT * FROM chat_sessions cs
+        WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs.source = $3
+          AND cs.status IN ('active', 'paused') AND cs.branch_name = 'main'
+        ORDER BY cs.id DESC LIMIT 1`,
+      [bot.id, app.id, source],
+    );
   let session = found[0] || null;
   if (!session) {
+    // A further slot's is marked from its insert: there is no moment at which
+    // slot 0 could read it as its own.
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues,
                                   session_title, agent_backend, agent_provider, agent_model,
-                                  agent_reasoning_effort)
-       VALUES ($1, $2, 'main', 'paused', FALSE, '{}', $3, 'codex_openrouter', 'openrouter', $4, $5)
+                                  agent_reasoning_effort, source)
+       VALUES ($1, $2, 'main', 'paused', FALSE, '{}', $3, 'codex_openrouter', 'openrouter', $4, $5, $6)
        RETURNING *`,
-      [app.id, bot.id, 'Homeroom bot triage',
+      [app.id, bot.id, readSlot === 0 ? 'Homeroom bot triage' : `Homeroom bot triage ${readSlot + 1}`,
         await defaultModelSetting.effective(pool, config),
-        config.openrouterDefaultCodexReasoning || 'low'],
+        config.openrouterDefaultCodexReasoning || 'low', source],
     );
     session = rows[0];
-    log.info('homeroom-bot', 'Bot session created', { app: app.slug, sessionId: session.id });
+    log.info('homeroom-bot', 'Bot session created', { app: app.slug, sessionId: session.id, readSlot });
   }
   session.app_slug = app.slug;
   session.app_name = app.name;
@@ -4059,15 +4104,19 @@ async function runTriage(pool, config, {
 
   let session;
   try {
-    session = await ensureBotSession(pool, config, bot, app);
+    // Its read slot's session (the lane's grant: item.readSlot; a grant
+    // with none, an older release's, holds every slot of its project, so it
+    // reads on slot 0's).
+    session = await ensureBotSession(pool, config, bot, app, { slot: item.readSlot ?? 0 });
   } catch (err) {
     return recordFailure(`session: ${err.message}`, {}, { infra: true });
   }
   // Before its turn: a Stop finds the look by its session.
   await look.sessionOn(session.id);
-  // The session is this read's alone: the lane grants one read at a time
-  // per project's triage session, and a turn left on it by an older release
-  // refuses this one's claim (session_busy, a wait below).
+  // The session is this read's alone: the lane grants each of a project's
+  // read slots to one read at a time (rules/bot-loop.ts pickLive), and a
+  // turn left on it by an older release refuses this one's claim
+  // (session_busy, a wait below).
   // The session was stamped with a model once, when it was created; the
   // turn runs whatever it carries (agent-turn resolveCodexRuntimeContext).
   await live.stampSessionModel(pool, session, model);
@@ -9038,9 +9087,14 @@ function personKeyOf(row) {
  *     READ_CANDIDATES_SQL reads it);
  *   - `build_pending`: a live build of the same request waits or runs
  *     (READ_CANDIDATES_SQL's NOT EXISTS), read once it ends;
- *   - `session_busy`: something else runs on its app's one session, or the
- *     app is backed off (`busyApps`: Map(app id → until ms or null)); never
- *     a follow-up, which runs on its proposal's session;
+ *   - `session_busy`: its app is backed off (`busyApps`: Map(app id →
+ *     until ms or null)); never a follow-up, which runs on its proposal's
+ *     session;
+ *   - `reads_per_app` (3 Nov 2026): its project already has as many reads
+ *     running as it may (readsPerApp, each on a triage session of its own),
+ *     or a read an older release may be running, which holds them all
+ *     (`fullApps`: Set(app id), rules/bot-loop.ts projectsFullOfReads);
+ *     never a follow-up either;
  *   - `per_person`: the person it is for already has `perPerson` pieces of
  *     live work running (`personCounts`: Map(person key → count));
  *   - `settling`: a person wrote on it under SETTLE_MS ago (`settle_from`),
@@ -9053,7 +9107,7 @@ function personKeyOf(row) {
  */
 function queueWait(row, {
   fault = null, now = Date.now(), off = false, budgetUntil = 0,
-  busyApps = new Map(), personCounts = new Map(), perPerson = DEFAULTS.perPerson,
+  busyApps = new Map(), fullApps = new Set(), personCounts = new Map(), perPerson = DEFAULTS.perPerson,
 } = {}) {
   if (!row || row.started_at) return null;
   const at = (ms) => new Date(ms).toISOString();
@@ -9076,6 +9130,7 @@ function queueWait(row, {
     const until = Number(busyApps.get(Number(row.app_id)));
     return { reason: 'session_busy', until: until > now ? at(until) : null };
   }
+  if (!followUp && fullApps instanceof Set && fullApps.has(Number(row.app_id))) return { reason: 'reads_per_app', until: null };
   if (personCounts instanceof Map && (personCounts.get(personKeyOf(row)) || 0) >= Math.max(1, Number(perPerson) || 1)) {
     return { reason: 'per_person', until: null };
   }
@@ -9164,12 +9219,21 @@ async function queueSnapshot(pool, settings = {}, { botId = null, now = Date.now
   ]);
   const mem = memory || await loopMemory(pool, now);
   const running = rows.filter((q) => q.started_at);
-  // The apps whose one session is taken: a read running there (not a
-  // follow-up, which runs on its proposal's), from the snapshot and from
-  // the loop's own record, and the apps backed off after a refusal.
+  // The reads running (never a follow-up, which runs on its proposal's
+  // session): the loop's own record (the lane's slots, each read's read
+  // slot), and any the snapshot has running that it does not, by request.
+  // A project whose read slots are all taken is full (reads_per_app).
+  const reads = new Map();
+  for (const e of mem.inFlight) {
+    if (!e.followUp && !e.build) reads.set(e.key || `slot:${reads.size}`, { kind: 'read', appId: Number(e.appId), readSlot: e.readSlot ?? null, legacy: !!e.legacy });
+  }
+  for (const q of running) {
+    const key = loopRules.requestKey(q.app_id, q.issue_number);
+    if (q.follow_up_session_id == null && !reads.has(key)) reads.set(key, { kind: 'read', appId: Number(q.app_id), readSlot: null, legacy: false });
+  }
+  const fullApps = loopRules.projectsFullOfReads([...reads.values()], settings.readsPerApp || DEFAULTS.readsPerApp);
+  // And the apps backed off after a refusal.
   const busyApps = new Map();
-  for (const q of running) if (q.follow_up_session_id == null) busyApps.set(Number(q.app_id), null);
-  for (const e of mem.inFlight) if (!e.followUp && !e.build) busyApps.set(Number(e.appId), null);
   for (const [appId, until] of mem.backoff) if (Number(until) > now) busyApps.set(Number(appId), Number(until));
   // Live work running per person: the reads running, and the builds the
   // loop runs (they run from their runs, not the queue).
@@ -9179,7 +9243,7 @@ async function queueSnapshot(pool, settings = {}, { botId = null, now = Date.now
   for (const e of mem.inFlight) if (e.build && e.lane === 'live' && e.person) bump(e.person);
   const ctx = {
     fault: mem.fault, now, off: settings.mode === 'off', budgetUntil: mem.budgetUntil,
-    busyApps, personCounts, perPerson: settings.perPerson || DEFAULTS.perPerson,
+    busyApps, fullApps, personCounts, perPerson: settings.perPerson || DEFAULTS.perPerson,
   };
   const items = rows.map(({ waiting_total: _w, running_total: _r, ...q }) => ({ ...q, waiting: queueWait(q, ctx) }));
   return {
@@ -9209,9 +9273,14 @@ async function loopMemory(pool, now = Date.now()) {
     if (d.fault && until(d.fault.until) > now) out.fault = { attempts: Number(d.fault.attempts) || 1, until: until(d.fault.until), error: null, at: null };
     if (d.budget && until(d.budget.until) > now) out.budgetUntil = until(d.budget.until);
     const { rows: slots } = await pool.query(loopRules.SLOTS_IN_USE_SQL);
-    out.inFlight = slots.map((r) => ({
-      appId: Number(r.app_id), followUp: r.slot?.kind === 'followUp', build: r.slot?.kind === 'build', lane: 'live', person: r.slot?.person || null,
-    }));
+    out.inFlight = slots.map((r) => {
+      // Its read slot, and whether an older release may be running it (rules/bot-loop.ts slotOfRow).
+      const slot = loopRules.slotOfRow(r);
+      return {
+        key: r.key || null, appId: Number(r.app_id), followUp: r.slot?.kind === 'followUp', build: r.slot?.kind === 'build', lane: 'live', person: r.slot?.person || null,
+        ...(slot.kind === 'read' ? { readSlot: slot.readSlot, legacy: slot.legacy } : {}),
+      };
+    });
   } catch (err) {
     log.warn('homeroom-bot', 'Could not read the bot\'s lane', { err: err.message });
   }
@@ -9826,6 +9895,9 @@ async function lookAt(config, pool, { input, steps, signal = null, owner = null,
     faults: Number(input.faults) || 0,
     // Who it is for (the lane's person key: `u<id>`, else its project's).
     person: input.person || null,
+    // Which of its project's triage sessions a read runs on (the lane's
+    // grant; null from an older release's, which holds every slot).
+    readSlot: input.kind === 'followUp' ? null : loopRules.readSlotOf(input.readSlot),
     // The asks a follow-up takes, by a tag of this look's (takeAsks).
     lookTag: `look-${appId}-${issueNumber}-${Number(input.n) || 0}`,
   };
@@ -10250,6 +10322,8 @@ module.exports = {
   KEY_PAUSED_APPS,
   KEY_LIVE_AT_ONCE,
   KEY_PER_PERSON,
+  KEY_READS_PER_APP,
+  MAX_READS_PER_APP,
   KEY_DM_CHAT,
   KEY_VOICE_SESSION,
   KEY_VOICE_ISSUE,

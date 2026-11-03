@@ -1039,10 +1039,20 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   const css = read('public/css/app.css');
   // A width chosen beside an app on a wide monitor must not run Main under
   // the rail; with none chosen, Main takes the room the list does not need
-  // (30 Oct 2026), 400px to 720px. The room is the page's usable box, the
-  // window less the rail and the Duo's column, declared once on body
-  // (1 Nov 2026; tests/usable-box.test.js pins how it is made).
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: 480px;\s+--ai-main-auto: clamp\(400px, calc\(var\(--ai-room\) - 720px\), 720px\);\s+--ai-main-w: max\(320px, min\(var\(--side-panel-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  // (30 Oct 2026). Since 3 Nov 2026 that is all of it: the 720px cap is gone
+  // (a 1720px window left a band between the list and Main), the 400px floor
+  // stays, and Main reads its own chosen width, not the side panel's. The
+  // room is the page's usable box, the window less the rail and the Duo's
+  // column, declared once on body (1 Nov 2026; tests/usable-box.test.js pins
+  // how it is made).
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: 480px;\s+--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - 720px\)\);\s+--ai-main-w: max\(320px, min\(var\(--ai-main-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  assert.doesNotMatch(css, /--side-panel-chosen-w/, 'one width no longer sizes both columns');
+  // A wider Main holds its words to the 720px it used to be, so plan cards
+  // and replies keep a readable line; below that the gutter is the part's own.
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\) \{\s+padding-inline: max\(0px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
+    'Main\'s transcript, status line and composer are centred inside a wide column');
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] \.chat-composer-bar \{\s+padding-inline: max\(12px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
+    'and never narrow its own 12px gutter');
   assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-inline-end: var\(--ai-main-w\); \}/);
   // 1 Nov 2026, iPhone Duo held sideways (951px, an 84px column of system
   // chrome on the right that the body pads out): the room is beside the
@@ -1086,11 +1096,13 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   assert.match(css, /html\[data-side-panel\] #ai-screen \.ai-main-pane \{ display: none; \}/);
   assert.match(css, /@media \(min-width: 768px\) \{\s+html\[data-side-panel\] #ai-screen \{ padding-inline-end: var\(--ai-main-w\); \}\s+\}/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/, 'so the list does not move');
-  // 30 Oct 2026: Main's left edge is the side panel's handle, and sets the same width.
+  // 30 Oct 2026: Main's left edge is the side panel's handle; since 3 Nov
+  // 2026 it sets Main's own width under its own key.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider panelRef=\{mainRef\} shown=\{docked\} id="ai-main-divider" controls="ai-main-pane" \/>/);
-  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',/);
+  assert.match(src, /import \{ AI_MAIN_WIDTH_KEY \} from '\.\.\/side-panel\/resize';/);
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider panelRef=\{mainRef\} shown=\{docked\} id="ai-main-divider" controls="ai-main-pane" widthKey=\{AI_MAIN_WIDTH_KEY\} \/>/);
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
 });
 
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {

@@ -49,11 +49,19 @@ test('queueWait: every reason the loop passes a row over for, in the order it me
   assert.equal(w({ first_version_pending: true, reason: 'admin' }), null, 'an admin\'s Run now is not held');
   assert.equal(w({ first_version_pending: true, follow_up_session_id: 40 }), null, 'nor a follow-up');
   assert.deepEqual(w({ build_pending: true }), { reason: 'build_pending', until: null });
-  // Its app's session taken, or the app backed off until a time.
+  // Its app backed off, until a time or not.
   const busyApps = new Map([[9, null]]);
   assert.deepEqual(w({}, { busyApps }), { reason: 'session_busy', until: null });
   assert.deepEqual(w({}, { busyApps: new Map([[9, Date.parse(LATER)]]) }), { reason: 'session_busy', until: LATER });
   assert.equal(w({ follow_up_session_id: 40 }, { busyApps }), null, 'a follow-up runs on its proposal\'s session');
+  // 3 Nov 2026: its project already reads as many requests as it may (each
+  // on a triage session of its own), or an older release's read holds them all.
+  const fullApps = new Set([9]);
+  assert.deepEqual(w({}, { fullApps }), { reason: 'reads_per_app', until: null });
+  assert.deepEqual(w({}, { busyApps: new Map([[9, Date.parse(LATER)]]), fullApps }), { reason: 'session_busy', until: LATER }, 'its own backoff says more');
+  assert.equal(w({ follow_up_session_id: 40 }, { fullApps }), null, 'a follow-up takes no read slot');
+  assert.equal(w({ app_id: 10 }, { fullApps }), null, 'another project\'s reads are its own');
+  assert.deepEqual(w({ build_pending: true }, { fullApps }), { reason: 'build_pending', until: null }, 'a build of it waiting says that first');
   // Its person already has their share running.
   const personCounts = new Map([['u7', 3]]);
   assert.deepEqual(w({ person_id: 7 }, { personCounts, perPerson: 3 }), { reason: 'per_person', until: null });
@@ -79,7 +87,7 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
     { id: 4, app_id: 11, issue_number: 6, started_at: null, person_id: 7, waiting_total: 4, running_total: 1 },
   ];
   const pool = { async query(sql, params) { calls.push({ sql, params }); return { rows }; } };
-  const q = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 1 }, { botId: 77, now: NOW, memory });
+  const q = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 1, readsPerApp: 1 }, { botId: 77, now: NOW, memory });
   assert.equal(calls.length, 1, 'one statement, so one snapshot');
   assert.match(calls[0].sql, /COUNT\(\*\) FILTER \(WHERE q\.started_at IS NULL\) OVER \(\)::int AS waiting_total/);
   assert.match(calls[0].sql, /COUNT\(\*\) FILTER \(WHERE q\.started_at IS NOT NULL\) OVER \(\)::int AS running_total/);
@@ -91,8 +99,28 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
   assert.equal(q.listedWaiting, 3);
   assert.ok(q.items.every((i) => !('waiting_total' in i) && !('running_total' in i)));
   assert.deepEqual(q.items.map((i) => i.waiting && i.waiting.reason), [
-    undefined, 'session_busy', 'first_version_pending', 'per_person',
-  ].map((r) => r || null));
+    undefined, 'reads_per_app', 'first_version_pending', 'per_person',
+  ].map((r) => r || null), 'one read per project: #4 waits for #3');
+  // Three at once: #4 is read beside #3 (its person, 8, has nothing running).
+  const three = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 1, readsPerApp: 3 }, { botId: 77, now: NOW, memory });
+  assert.equal(three.items[1].waiting, null);
+  assert.equal((await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 1 }, { now: NOW, memory })).items[1].waiting, null, 'three unless set');
+  // The lane's own record counts too, by request, once: two more reads on
+  // project 9 fill its three; a read an older release may run holds a
+  // project whole.
+  const lane = (n, more = {}) => ({ key: `request:9:${n}`, appId: 9, followUp: false, build: false, lane: 'live', person: `u${n}`, readSlot: n - 3, legacy: false, ...more });
+  const full = await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 9, readsPerApp: 3 },
+    { now: NOW, memory: { ...memory, inFlight: [lane(3), lane(5), lane(6)] } });
+  assert.equal(full.items[1].waiting.reason, 'reads_per_app');
+  const notYet = await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 9, readsPerApp: 3 },
+    { now: NOW, memory: { ...memory, inFlight: [lane(3), lane(5)] } });
+  assert.equal(notYet.items[1].waiting, null, '#3 is counted once, from either record');
+  const legacy = await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 9, readsPerApp: 3 },
+    { now: NOW, memory: { ...memory, inFlight: [lane(3, { readSlot: null, legacy: true })] } });
+  assert.equal(legacy.items[1].waiting.reason, 'reads_per_app');
+  const building = await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 9, readsPerApp: 1 },
+    { now: NOW, memory: { ...memory, inFlight: [{ key: 'request:11:8', appId: 11, followUp: false, build: true, lane: 'live', person: 'u9' }] } });
+  assert.equal(building.items[3].waiting, null, 'a build takes no read slot');
   // The bot off: everything waiting says so.
   const off = await bot.queueSnapshot(pool, { mode: 'off' }, { now: NOW, memory });
   assert.deepEqual(off.items.slice(1).map((i) => i.waiting.reason), ['bot_paused', 'bot_paused', 'bot_paused']);
@@ -220,6 +248,7 @@ test('the console says why each row waits, counts waiting and running alike, and
   assert.equal(waitLine({ reason: 'app_paused', until: null }), 'waiting: its app is paused');
   assert.equal(waitLine({ reason: 'bot_paused', until: null }), 'waiting: the bot is off or its weekly budget is spent');
   assert.equal(waitLine({ reason: 'session_busy', until: null }), 'waiting: a turn is running on its session');
+  assert.equal(waitLine({ reason: 'reads_per_app', until: null }), 'waiting: its project is already reading as many requests as it may at once');
   assert.match(waitLine({ reason: 'settling', until: LATER }), /^waiting: somebody is still writing on it, until \S/);
 
   const queue = { depth: 15, running: 2, items: [], listedWaiting: 12, listedRunning: 2 };

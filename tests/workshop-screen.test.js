@@ -1444,12 +1444,14 @@ test('#4486: a row on All items opens its page beside the board on a wide window
   // It closes whenever the tab changes, and when the window narrows.
   assert.match(workshopTsx, /useEffect\(\(\) => \{\s*setSideItem\(null\);\s*if \(tab !== 'workshop'\) setOpenWeek\(null\);\s*\}, \[tab\]\);/);
   assert.match(workshopTsx, /useEffect\(\(\) => \{\s*if \(!sideWide\) setSideItem\(null\);\s*\}, \[sideWide\]\);/);
-  // #6053: the list is centered in the room left of the panel rather than
-  // pushed to the left edge, and below 1400px it keeps the 24px inset.
-  assert.match(appCss, /#dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{\s*margin-inline-start: max\(24px, calc\(\(100% - 1352px\) \/ 2\)\); margin-inline-end: 0;\s*max-width: min\(760px, calc\(100% - 616px\)\);\s*\}/);
+  // #6208: the list keeps its reading width at the 24px inset and the panel
+  // takes the room it leaves (the width body defines, which the portalled
+  // panel reads too). The old centring margin is gone.
+  assert.match(appCss, /#dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{\s*margin-inline-start: 24px; margin-inline-end: 0;\s*max-width: var\(--dev-ws-side-list-w\);\s*\}/);
+  assert.ok(!/1352px/.test(appCss), 'the centring formula is gone');
   // The board keeps its place beside it: 316px columns, scrolling sideways,
   // the tapped column brought beside the panel and the strip following.
-  assert.match(appCss, /#dev-workshop\.dev-ws-has-board:has\(> \.dev-ws\[data-ws-side-open\]\) \{ margin-inline-start: 24px; max-width: calc\(100% - 616px\); \}/);
+  assert.match(appCss, /#dev-workshop\.dev-ws-has-board:has\(> \.dev-ws\[data-ws-side-open\]\) \{ margin-inline-start: 24px; max-width: var\(--dev-ws-side-list-w\); \}/);
   assert.match(appCss, /\.dev-ws\[data-ws-side-open\] :is\(#dev-kanban, \.dev-kanban-stages\) \{ grid-template-columns: repeat\(4, 316px\); \}/);
   assert.match(workshopTsx, /if \(c\.right > b\.right\) board\.scrollLeft \+= Math\.ceil\(c\.right - b\.right\);\s*else if \(c\.left < b\.left\) board\.scrollLeft -= Math\.ceil\(b\.left - c\.left\);\s*syncStrip\(board\);/);
 });
