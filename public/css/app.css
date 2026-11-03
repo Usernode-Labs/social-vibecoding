@@ -24587,16 +24587,20 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   }
   /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,
      so nothing said a row was a target until it was pressed. The hover is the
-     same periwinkle as the lit tab at about half the strength, so the tab you
-     are on stays the strongest thing in the rail and the one under the
-     pointer reads as "this one, if you press". Only where there IS a pointer:
-     a touch screen's sticky hover would leave a tapped tab half lit. */
+     same periwinkle as the lit tab, stronger now (#6194: at half strength the
+     inactive rows were hard to tell apart), with the same thin outline that
+     lit chips elsewhere wear. The tab you are on keeps its full fill and its
+     weight 600, so it still reads as the strongest thing in the rail and the
+     one under the pointer reads as "this one, if you press". Only where there
+     IS a pointer: a touch screen's sticky hover would leave a tapped tab half
+     lit. */
   .platform-tab {
-    transition: background-color 120ms ease, color 120ms ease;
+    transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
   }
   @media (hover: hover) {
     .platform-tab:not([aria-current="page"]):hover {
-      background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
+      background: color-mix(in srgb, var(--lit-tint) 85%, transparent);
+      box-shadow: inset 0 0 0 1px var(--lit-line);
       color: var(--lit-ink);
     }
   }
