@@ -156,6 +156,10 @@ test('a failed cache read, a hung one or a lookup that breaks is English, soon',
   const failing = await translatorFor(poolWith([], { fail: new Error('connection lost') }), 'es');
   assert.equal(failing('email:otp.subject'), english('otp.subject'), 'a failed read');
   reset();
+  // The patience timer is unref'd, as a live server needs nothing else to stay
+  // up. A test does: with only that timer, the loop empties and the test is cancelled.
+  const keepAlive = setInterval(() => {}, 50);
+  t.after(() => clearInterval(keepAlive));
   const started = Date.now();
   assert.equal(await translatorFor(poolWith([], { hang: true }), 'es'), null, 'a read that does not answer');
   assert.ok(Date.now() - started < 1500, 'it is not waited for');

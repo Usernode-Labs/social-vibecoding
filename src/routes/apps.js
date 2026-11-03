@@ -1,4 +1,5 @@
 const appAllowance = require('../services/app-allowance');
+const mailLanguage = require('../services/mail/language');
 const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
 const { NAME_BEING_PURGED, NAME_BEING_PURGED_ERROR } = require('../services/app-data-retention');
