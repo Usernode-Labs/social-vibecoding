@@ -173,6 +173,131 @@ test('D1: rendered, a change built for a request is a line with its title, and a
   assert.equal((ballot.match(/data-change-row-open=/g) || []).length, 2, 'a row\'s title opens its fold');
 });
 
+test('#6139: the line under a change says whether it is still being built or finished', () => {
+  const underway = { ...review(91, 6063), status: 'active', state: 'underway' };
+  const draw = (item) => renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club', data: thread([request, item]), number: 10, changes: [item], close: null, onChanged: () => {},
+  });
+  const built = draw({ ...underway, ready: true });
+  assert.ok(built.includes('data-thread-change-waiting="ready"'));
+  assert.ok(built.includes(message('project:topic.thread.page.ready')));
+  assert.ok(!built.includes(message('project:topic.thread.page.underway')), 'it does not say it is being built');
+  const still = draw(underway);
+  assert.ok(still.includes('data-thread-change-waiting="building"'));
+  assert.ok(still.includes(message('project:topic.thread.page.underway')));
+  assert.equal(message('project:topic.thread.page.ready'), 'Built, and its checks pass. Its votes open once it is put up for a vote.');
+});
+
+test('#6139: an open request page reads its thread again when a change underway has news, once for a burst', async () => {
+  const { rereadOnChangeNews } = loadTsx(`${TOPIC}/change-detail-refresh.ts`);
+  const target = new EventTarget();
+  let reads = 0;
+  const tell = (detail) => target.dispatchEvent(new CustomEvent('change-detail-refresh', { detail }));
+  const settle = () => new Promise((resolve) => { setTimeout(resolve, 20); });
+  const subs = new Set();
+  const sessionState = { onEvent: (cb) => { subs.add(cb); return () => subs.delete(cb); } };
+  const stateEvent = (payload) => { for (const cb of subs) cb(payload); };
+  const stop = rereadOnChangeNews(target, [{ id: 91, state: 'underway' }, { id: 92, state: 'review' }], () => { reads += 1; }, sessionState, 5);
+
+  tell(92);
+  tell(99);
+  stateEvent({ sessionId: 92, busy: true });
+  await settle();
+  assert.equal(reads, 0, 'news of a change up for a vote, or of another change, moves nothing here');
+
+  tell(91);
+  tell({ id: 91, patch: { check_state: 'passing' } });
+  tell({ id: 91, row: { id: 91 } });
+  await settle();
+  assert.equal(reads, 1, 'a bare id, a patch and a row all count, and a burst is one read');
+
+  stateEvent({ sessionId: 91, busy: true, status: 'active' });
+  await settle();
+  assert.equal(reads, 2, 'a turn starting is a session_state event with the same status: heard');
+  stateEvent({ sessionId: 91, busy: false, status: 'active' });
+  await settle();
+  assert.equal(reads, 3, 'and so is its end');
+
+  tell(91);
+  stateEvent({ sessionId: 91, busy: true });
+  stop();
+  assert.equal(subs.size, 0);
+  await settle();
+  assert.equal(reads, 3, 'a page that has gone reads nothing');
+
+  assert.match(read(`${TOPIC}/request-head.tsx`), /useEffect\(\(\) => rereadOnChangeNews\(window, layout\.changes, threadRead\.reread, \(window as any\)\.SessionState\), \[underwayKey\]\);/);
+  const payload = read(`${TOPIC}/thread-items.tsx`);
+  assert.match(payload, /const unwatch = watch\(\(\) => \{\s*freshNext\.current = true;\s*setRevision\(\(n\) => n \+ 1\);\s*\}, \{ reads: \(url\) => url\.pathname === pathname \}\);/, 'a gap reads it again, past a saved copy');
+});
+
+test('#6139: reading a thread again keeps it through a failed read and past a saved copy; another thread starts empty', async () => {
+  // A React small enough to step through: the suite has no DOM.
+  const slots = [];
+  let cursor = 0;
+  let dirty = false;
+  const slot = (init) => { const i = cursor++; if (!(i in slots)) slots[i] = init(); return slots[i]; };
+  const react = {
+    ...require('../frontend/node_modules/react'),
+    useRef: (current) => slot(() => ({ current })),
+    useState: (initial) => {
+      const s = slot(() => ({ value: initial }));
+      return [s.value, (next) => { s.value = typeof next === 'function' ? next(s.value) : next; dirty = true; }];
+    },
+    useEffect: (effect, deps) => {
+      const s = slot(() => ({ deps: null, cleanup: null }));
+      if (s.deps && deps.every((v, i) => Object.is(v, s.deps[i]))) return;
+      s.deps = deps;
+      if (s.cleanup) s.cleanup();
+      s.cleanup = effect();
+    },
+  };
+  const watchers = new Set();
+  const FRESH = { cache: 'no-cache' };
+  const { useThreadPayload } = loadTsx(`${TOPIC}/thread-items.tsx`, {
+    stubs: {
+      react,
+      '../../../lib/live-reads': { FRESH, watch: (reread) => { watchers.add(reread); return () => watchers.delete(reread); } },
+    },
+  });
+  const calls = [];
+  let answer = { ok: true, json: async () => ({ items: [{ id: 1 }] }) };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init) => { calls.push({ path, init }); return answer; };
+  try {
+    let out;
+    const draw = async (number) => {
+      do {
+        dirty = false;
+        cursor = 0;
+        out = useThreadPayload('club', number);
+        await new Promise((resolve) => { setImmediate(resolve); });
+      } while (dirty);
+    };
+    await draw(10);
+    assert.deepEqual(out.data.items, [{ id: 1 }]);
+    assert.equal(calls.at(-1).path, '/api/apps/club/threads/10');
+    assert.equal(calls.at(-1).init.cache, undefined);
+
+    answer = { ok: false, json: async () => null };
+    out.reread();
+    await draw(10);
+    assert.equal(calls.length, 2, 'read again');
+    assert.deepEqual(out.data.items, [{ id: 1 }], 'a failed read again keeps what is shown');
+
+    assert.equal(watchers.size, 1, 'one watcher, for as long as it shows');
+    [...watchers][0]();
+    await draw(10);
+    assert.equal(calls.at(-1).init.cache, 'no-cache', 'a gap reads past the saved copy');
+
+    await draw(11);
+    assert.equal(calls.at(-1).path, '/api/apps/club/threads/11');
+    assert.equal(out.data, null, 'another thread never shows the last one, even when its read fails');
+    assert.equal(watchers.size, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test('D5: a change folded under its ballot has no Vote of its own', () => {
   const head = read(`${TOPIC}/change-head.tsx`);
   assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} \/>/);

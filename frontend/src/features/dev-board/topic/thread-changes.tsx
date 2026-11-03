@@ -332,7 +332,9 @@ function ChangeBody({ item, view, plan = null, ballot = false }: {
       {plan ? <PlanLine plan={plan} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} s={view.v.shots} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
-        <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('project:topic.thread.page.underway')}</p>
+        <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'building'}>
+          {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
+        </p>
       ) : view ? (
         <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} />
       ) : null}
