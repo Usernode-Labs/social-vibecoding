@@ -354,7 +354,9 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   assert.match(html, /Not moving · 2/, 'its count is only the rows nobody is moving');
   assert.match(html, /data-ai-still-rest=""/, 'and a fold of its own');
   assert.match(html, /aria-expanded="false"/, 'closed until pressed');
-  assert.match(html, /Waiting · 3/, 'the Waiting head still counts every row');
+  // #6160 moved these rows to the card of their own, whose head counts the
+  // whole card: the rows moving and the rows folded under Not moving.
+  assert.match(html, /Waiting &amp; in progress · 3/, 'the card\'s head still counts every row');
   assert.match(html, /#2 in line/, 'the moving rows lead the list');
   const src = read('frontend/src/features/ai/lists.tsx');
   assert.match(src, /const stillShown = stillOpen \|\| !!still\?\.lines\.some\(\(l\) => l\.lit\);/, 'a row where you are opens it');
@@ -803,10 +805,12 @@ test('#6160: Waiting & in progress is a card of its own between Needs you and Li
   const garden = busySheet.slice(busySheet.indexOf('data-ai-group="garden"'), busySheet.indexOf('data-ai-group="bakery"'));
   assert.ok(garden.indexOf('data-ai-line="going_live"') < garden.indexOf('data-ai-line="vote"'), 'work under way comes first');
   assert.match(garden, />Garden club</, 'under its project\'s name');
-  // Five of the garden's rows: three, then its own Show more for the rest.
-  assert.match(garden, /Show 2 more/);
+  // Four of the garden's rows are moving: three, then its own Show more for
+  // the last. Its two not picked up rows fold under Not moving below.
+  assert.match(garden, /Show 1 more/);
   assert.match(garden, /data-ai-group-rest=""/);
-  // The bakery's three show whole.
+  assert.match(busySheet, /Not moving · 2/);
+  // The bakery's two moving rows show whole.
   assert.doesNotMatch(busySheet.slice(busySheet.indexOf('data-ai-group="bakery"')), /data-ai-group-rest=""/);
 
   // Nothing under way or waiting, no card, as Live this week has none.
