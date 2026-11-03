@@ -551,7 +551,9 @@ const line = (e: Event<any>, d: Data, content: string, extra: { msgType?: string
 // listed there only after it reads the thread again.
 const threadMoved = (f: Facts): Push =>
   threadChanged({ appId: f.row!.appId, appSlug: f.row!.appSlug, sessionId: f.row!.id,
-    numbers: [...f.row!.linkedIssues, f.row!.prNumber] });
+    // A row read outside readFacts (a driven transition) may carry no linked
+    // requests: the event names none of them, and the push drops nulls.
+    numbers: [...(f.row!.linkedIssues ?? []), f.row!.prNumber] });
 const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push[] => [
   boardMoved(sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra })),
   threadMoved(f),
