@@ -67,7 +67,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  GROUP_FIRST, NOT_MOVING, byProject, nextWords, railProjects, rankProjects, shortWords, threadWhy, whyOf,
+  GROUP_FIRST, NOT_MOVING, byProject, changeOnGithub, nextWords, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -89,6 +89,8 @@ interface Line {
   app: AiApp | null;
   glyph: ReactNode;
   number: number | null;
+  /** The number names a change on GitHub: it reads "PR 12", never "#12". */
+  pr?: boolean;
   title: string;
   right: string;
   tooltip: string;
@@ -165,7 +167,7 @@ function LineButton({ line, quiet = false }: { line: Line; quiet?: boolean }): R
           1 Nov 2026: nor under 1024px, where the column beside the list
           leaves it about as narrow. */}
       <span className="hidden lg:block w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-        {line.number ? t('messages:ai.live.number', { number: line.number }) : ''}
+        {line.number ? t(line.pr ? 'messages:ai.live.numberPr' : 'messages:ai.live.number', { number: line.number }) : ''}
       </span>
       <span className="min-w-0 flex-1">
         <span className={line.lit
@@ -496,6 +498,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     app: row.app,
     glyph: needGlyph(row),
     number: Number(row.sub.values?.number) || null,
+    pr: row.sub.id === 'messages:ai.row.privateAboutChangePr',
     title: row.title,
     // B07 (audit 2 Nov 2026): a private idea in no project sits under the
     // Only you heading already, so its row does not say it again.
@@ -513,6 +516,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     app: th.app,
     glyph: glyph(th),
     number: th.number,
+    pr: changeOnGithub(th),
     title: th.title || '',
     right: say(shortWords(th))!,
     tooltip: say(nextWords(th))!,
@@ -540,7 +544,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => ({
     ...threadLine(() => <CheckIcon className={G} />)(th),
     right: dayOf(th.at, t),
-    tooltip: t('messages:ai.live.row', { project: th.app?.name || '', number: th.number || '' }),
+    tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
   }));
   const owedShown = picked.length ? needLines.filter((line) => line.owe).length : owed;
   // One project picked: its chip names it, so its name is not said again over every section.

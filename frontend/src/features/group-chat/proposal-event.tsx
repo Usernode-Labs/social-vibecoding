@@ -50,6 +50,7 @@ import { ChatMessageRow } from '@/components/ui/chat';
 import { Avatar } from '@/components/ui/feed';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
+import { plainPrRefs } from '../../lib/change-ref';
 import { useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import { CardIcon } from '../dev-board/card/dev-card';
@@ -80,7 +81,7 @@ export function eventText(msg: TranscriptMessage): string {
     }
     return ev.reason ? t('chat:group.event.votedYesReason', { reason: ev.reason }) : t('chat:group.event.votedYes');
   }
-  if (ev.type === 'notice') return ev.text || '';
+  if (ev.type === 'notice') return plainPrRefs(ev.text || '');
   // On the change's own page the row names the act, not the change: the
   // title is the page's heading.
   if (ev.here && ev.type === 'submitted') return t('chat:group.event.here.submitted');

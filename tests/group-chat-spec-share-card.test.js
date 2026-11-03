@@ -108,7 +108,7 @@ test('a spec_share row renders a CARD, not an empty host', () => {
   assert.match(html, /gc-spec-card-title">Sticky header</);
   assert.match(html, /Shared by <strong>admin<\/strong>/);
   assert.match(html, /v2/);
-  assert.match(html, /PR #77/);
+  assert.match(html, /PR 77/);
   assert.match(html, /View full plan/);
   // The host it replaced is gone from the tree entirely.
   assert.doesNotMatch(read(TRANSCRIPT), /data-gc-spec-share=\{/);

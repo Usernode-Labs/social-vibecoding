@@ -30,6 +30,13 @@ export interface AiApp {
   name: string;
   icon_url?: string | null;
   icon_emoji?: string | null;
+  /**
+   * Where the project's code is hosted (services/ai-work.js): true on
+   * GitHub, where a change's pull request number is GitHub's own and reads
+   * "PR 12"; false on Homeroom's git host, where requests and changes share
+   * one counter and both read "#12". Absent from an older server.
+   */
+  changesOnGithub?: boolean;
 }
 
 export interface AiPrivate {
@@ -418,7 +425,9 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       who: p.app ? 'me' : 'solo',
       sub: about
         ? {
-          id: about.kind === 'change' ? 'messages:ai.row.privateAboutChange' : 'messages:ai.row.privateAbout',
+          id: about.kind === 'change'
+            ? (p.app?.changesOnGithub ? 'messages:ai.row.privateAboutChangePr' : 'messages:ai.row.privateAboutChange')
+            : 'messages:ai.row.privateAbout',
           values: { project: p.app!.name || p.app!.slug, number: about.number },
         }
         : p.app
@@ -522,8 +531,68 @@ const THREAD_WORDS: Record<string, string> = {
   awaiting_plan: 'messages:ai.up.awaitingPlan',
 };
 
+/**
+ * The twin of a row's wording on a GitHub-hosted project, where a change's
+ * number is written "PR 12" and never "#12" (lib/change-ref.ts). One literal
+ * table, so every id stays a whole literal for the language inventory. A
+ * count's twin keeps the runtime's `_one`/`_other` suffix (`quiet` ->
+ * `quietPr`). Ids not in the table are unaffected.
+ */
+const PR_TWIN: Record<string, string> = {
+  'messages:ai.next.goingLive': 'messages:ai.next.goingLivePr',
+  'messages:ai.next.merging': 'messages:ai.next.mergingPr',
+  'messages:ai.next.fixing': 'messages:ai.next.fixingPr',
+  'messages:ai.next.revising': 'messages:ai.next.revisingPr',
+  'messages:ai.next.reading': 'messages:ai.next.readingPr',
+  'messages:ai.next.readingReply': 'messages:ai.next.readingReplyPr',
+  'messages:ai.next.building': 'messages:ai.next.buildingPr',
+  'messages:ai.next.botBuilding': 'messages:ai.next.botBuildingPr',
+  'messages:ai.next.youBuilding': 'messages:ai.next.youBuildingPr',
+  'messages:ai.next.claimed': 'messages:ai.next.claimedPr',
+  'messages:ai.up.vote': 'messages:ai.up.votePr',
+  'messages:ai.up.checking': 'messages:ai.up.checkingPr',
+  'messages:ai.up.voteYes': 'messages:ai.up.voteYesPr',
+  'messages:ai.up.voteNo': 'messages:ai.up.voteNoPr',
+  'messages:ai.up.fixQueued': 'messages:ai.up.fixQueuedPr',
+  'messages:ai.up.followUpQueued': 'messages:ai.up.followUpQueuedPr',
+  'messages:ai.up.buildQueued': 'messages:ai.up.buildQueuedPr',
+  'messages:ai.up.held': 'messages:ai.up.heldPr',
+  'messages:ai.up.heldTurn': 'messages:ai.up.heldTurnPr',
+  'messages:ai.up.heldYours': 'messages:ai.up.heldYoursPr',
+  'messages:ai.up.stalled': 'messages:ai.up.stalledPr',
+  'messages:ai.up.queued': 'messages:ai.up.queuedPr',
+  'messages:ai.up.onHold': 'messages:ai.up.onHoldPr',
+  'messages:ai.up.notPickedUp': 'messages:ai.up.notPickedUpPr',
+  'messages:ai.up.quiet': 'messages:ai.up.quietPr',
+  'messages:ai.up.inLine': 'messages:ai.up.inLinePr',
+  'messages:ai.up.heldPlace': 'messages:ai.up.heldPlacePr',
+  'messages:ai.up.needsPerson': 'messages:ai.up.needsPersonPr',
+  'messages:ai.up.needsPersonWhy': 'messages:ai.up.needsPersonWhyPr',
+  'messages:ai.up.nothingToBuild': 'messages:ai.up.nothingToBuildPr',
+  'messages:ai.up.nothingToBuildWhy': 'messages:ai.up.nothingToBuildWhyPr',
+  'messages:ai.up.notRead': 'messages:ai.up.notReadPr',
+  'messages:ai.up.operator': 'messages:ai.up.operatorPr',
+  'messages:ai.up.awaitingPlan': 'messages:ai.up.awaitingPlanPr',
+  'messages:ai.live.row': 'messages:ai.live.rowPr',
+};
+
+/** Whether a row names a change on a project whose code is on GitHub. */
+export function changeOnGithub(t: AiThread): boolean {
+  return t.kind === 'change' && !!t.app?.changesOnGithub;
+}
+
+/** Pure: `id`'s twin where a change on GitHub is written "PR N", else `id`. */
+export function prWord(id: string, onGithub: boolean): string {
+  return onGithub ? (PR_TWIN[id] || id) : id;
+}
+
 /** Pure: one In progress or Waiting row's whole line (its tooltip): its project, and what it waits on. */
 export function nextWords(t: AiThread): Phrase {
+  const words = nextWordsBase(t);
+  return changeOnGithub(t) ? { ...words, id: prWord(words.id, true) } : words;
+}
+
+function nextWordsBase(t: AiThread): Phrase {
   const values = where(t.app, t.number);
   if (t.what === 'not_picked_up') {
     if (!t.number) return { id: 'messages:ai.up.notPickedUpBare', values: { project: values.project } };

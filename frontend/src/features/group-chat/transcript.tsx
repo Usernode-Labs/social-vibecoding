@@ -63,6 +63,7 @@ import {
 } from '@/components/ui/icons';
 
 import { confirmAction } from '../../lib/confirm';
+import { projectChangesOnGithub } from '../../lib/change-ref';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
@@ -1192,7 +1193,9 @@ export function RequestRows({ view }: { view: TranscriptView }) {
     const id = msg.changeOf ? Number(msg.changeOf.sessionId) : 0;
     if (!id) return null;
     const n = changes.numbers[id];
-    return n ? t('project:topic.request.stream.onChange', { number: n }) : t('project:topic.request.stream.onChangeUnnumbered');
+    return n
+      ? t(projectChangesOnGithub() ? 'project:topic.request.stream.onChangePr' : 'project:topic.request.stream.onChange', { number: n })
+      : t('project:topic.request.stream.onChangeUnnumbered');
   };
   stream.rows.forEach((msg, i) => {
     const key = msg.id != null ? `m${msg.id}` : (msg.key ? `g${msg.key}` : `i${i}`);

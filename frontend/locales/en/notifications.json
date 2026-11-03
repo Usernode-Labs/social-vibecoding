@@ -1694,5 +1694,9 @@
   "ask.sheet.codeLabel": {
     "text": "Code to scan for the Homeroom app",
     "description": "Accessible name of the code image on that sheet."
+  },
+  "row.chat.changeReplyPr": {
+    "text": "Replied on change PR {{number}}",
+    "description": "First line of a notification: somebody posted in the discussion of a change on a project whose code is on GitHub, where a change's number is written PR, not #. The viewer built it, voted on it or posted in it. {{number}} is the change's number. \"Change\" is a noun. The message is on the line below."
   }
 }

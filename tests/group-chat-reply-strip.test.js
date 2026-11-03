@@ -89,14 +89,14 @@ function lineFor(replyDraft) {
 
 test('the label names what the reply is to', () => {
   assert.equal(labelFor({ source: 'message', author: 'alice', snippet: 'hi' }).label, '@alice');
-  assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).label, 'PR #12');
+  assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).label, 'PR 12');
   assert.equal(lineFor({ source: 'message', author: 'alice', snippet: 'hi' }), '↩ Replying to @alice');
-  assert.equal(lineFor({ source: 'pr', prNumber: 12, snippet: 'x' }), '↩ Replying to PR #12');
+  assert.equal(lineFor({ source: 'pr', prNumber: 12, snippet: 'x' }), '↩ Replying to PR 12');
   // A pull request is told apart from a person: the strip has a sentence for it.
   assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).pr, '12');
   assert.equal(labelFor({ source: 'message', author: 'alice', snippet: 'hi' }).pr, null);
-  assert.equal(labelFor({ source: 'pr', snippet: 'x' }).label, 'PR #');
-  assert.equal(lineFor({ source: 'pr', snippet: 'x' }), '↩ Replying to PR #');
+  assert.equal(labelFor({ source: 'pr', snippet: 'x' }).label, 'PR');
+  assert.equal(lineFor({ source: 'pr', snippet: 'x' }), '↩ Replying to PR');
   // A row with nobody to name has a whole sentence of its own in the catalog.
   assert.equal(labelFor({ source: 'event', author: null, snippet: 'Proposed PR #12' }).unnamed, 'event');
   assert.equal(labelFor({ source: 'message', author: null, snippet: 'gone' }).unnamed, 'message');
