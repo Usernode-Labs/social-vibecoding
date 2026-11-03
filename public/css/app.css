@@ -26656,7 +26656,10 @@ html.in-side-panel body {
    are the heavy thing on the page, so it has no fill and one line of type.
    Open (⌄, the title, or the line under the bar), the title wraps in full
    and a card under the bar holds what the change does (.rf-desc). */
-.rf-bar { position: relative; z-index: 9; flex: none; display: flex; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+/* #6199: the vote-type chips sit under the bar's title row, so the folded
+   bar's measurement includes them. */
+.rf-bar .needs-vote-chips { flex-basis: 100%; }
 .rf-back { flex: none; display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: none; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .rf-bar-title { flex: 1; min-width: 0; margin: 0; padding: 11px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 650; line-height: 22px; letter-spacing: -0.015em; }
 .rf-bar-title-btn { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: inherit; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent; }

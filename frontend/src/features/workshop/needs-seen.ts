@@ -175,14 +175,21 @@ export function isNeedsSeen(slug: string | null | undefined, key: string | null 
  * `slugOf` names each row's project, which is the row's own on the
  * Communities reel and the page's inside a project. Reads the record after
  * the first paint: call it from an effect, never during render.
+ *
+ * #6199: `stopAt` also stops the scan, whether or not the row was seen. The
+ * feed passes a vote that DECIDES, so a viewer who swiped past the one
+ * deciding change and came back no longer lands on the advisory rows below
+ * it: the deciding vote is on screen again. Only advisory rows are skipped,
+ * and only when they were seen.
  */
 export function firstUnseenIndex<Row extends RowLike>(
   rows: readonly Row[],
   slugOf: (row: Row) => string | null | undefined,
+  stopAt?: (row: Row) => boolean,
 ): number {
   hydrateNeedsSeen();
   for (let idx = 0; idx < rows.length; idx++) {
-    if (!isNeedsSeen(slugOf(rows[idx]), needsRowKey(rows[idx]))) return idx;
+    if (stopAt?.(rows[idx]) || !isNeedsSeen(slugOf(rows[idx]), needsRowKey(rows[idx]))) return idx;
   }
   return 0;
 }
