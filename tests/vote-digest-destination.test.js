@@ -76,7 +76,10 @@ test('a digest of one change opens that change', () => {
   N.items = [{ id: 1, readAt: null, kind: 'vote_digest', detail: '1', appSlug: 'flat-4b-chores', sessionId: 40 }];
   N._onItemClick(1);
   // Run four (13 Oct): at its Votes card (tests/change-votes-in-view.test.js).
-  assert.deepEqual(nav(calls), [['showVotes', 40], ['openAppTab', 'flat-4b-chores', 'dev', { subTab: 'proposals', ref: 40 }]]);
+  // #6099: the row's own session id is carried as a typed topic ref, so the
+  // digest opens exactly the change it names. It normalizes to the same page
+  // the old `subTab: 'proposals'` spelling did.
+  assert.deepEqual(nav(calls), [['showVotes', 40], ['openAppTab', 'flat-4b-chores', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 40 } }]]);
   assert.equal(calls[0][0], 'dismiss', 'the sheet gets out of the way first');
 });
 

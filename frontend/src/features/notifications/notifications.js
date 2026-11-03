@@ -603,19 +603,26 @@ const Notifications = {
   // behaviour; there is no anchored dropdown any more, and a side drawer left
   // open over the screen you just navigated to is the same problem the touch
   // sheet had.
-  // #4367: a change's topic ref, carrying its pull request's number when it
-  // has one, so the page opens at `dev/changes/<N>`.
+  // #4367: a change's topic ref. #6099: the row's own session id is what its
+  // title comes from, so when we have one the ref names that session and
+  // nothing else. A pull request number is only a fallback for a row that has
+  // no usable session id: several sessions can share one (a change carried in
+  // another change's PR), and looking the number up on the server picks one of
+  // them, so a notice could open an older change than its text names.
   _changeRef(sessionId, prNumber) {
     const id = parseInt(sessionId, 10);
+    if (Number.isInteger(id) && id > 0) return { kind: 'proposal', id };
     const pr = Number(prNumber);
-    return Number.isInteger(pr) && pr > 0 ? { kind: 'proposal', id, pr } : { kind: 'proposal', id };
+    return Number.isInteger(pr) && pr > 0 ? { kind: 'proposal', pr } : { kind: 'proposal', id };
   },
 
   // The same change as an address (lib/change-href.ts; spelled out here,
-  // as this module keeps its one bundle import).
+  // as this module keeps its one bundle import). Once the page has drawn,
+  // AppView._canonicalizeChangeAddress replaces a session-id address with the
+  // change's `dev/changes/<N>` one.
   _changeHash(slug, sessionId, prNumber) {
     const ref = Notifications._changeRef(sessionId, prNumber);
-    return ref.pr ? `#app/${slug}/dev/changes/${ref.pr}` : `#app/${slug}/dev/proposals/${ref.id}`;
+    return ref.id ? `#app/${slug}/dev/proposals/${ref.id}` : `#app/${slug}/dev/changes/${ref.pr}`;
   },
 
   _dismissSheetForNav() {
@@ -1395,10 +1402,11 @@ const Notifications = {
       }
       // Every kind that is ABOUT A PROPOSAL opens that proposal — the vote
       // nudge, the going-stale warning, the blocked check and the kudos.
-      // `subTab: 'proposals'` plus the session id is the legacy spelling of a
-      // typed topic ref; _normalizeTab turns it into { kind: 'proposal', id }
-      // and the topic view opens full-screen. Without an id there is no
-      // proposal to open and it falls back to the board, which is where the
+      // #6099: the row's own session id is passed as a typed topic ref, so
+      // _normalizeTab opens exactly the change the row's title names; the
+      // legacy `subTab: 'proposals'` spelling (an id ref too) is no longer
+      // needed. Only a row with no session id falls back to its pull request
+      // number, and with neither it lands on the board, which is where the
       // card is.
       // #1374 adds three more that are ABOUT A PROPOSAL: it merged, somebody
       // voted on it, and the daily digest of what is waiting on you. The
@@ -1436,15 +1444,22 @@ const Notifications = {
         Notifications._openAppDiscussion(item.appSlug, item.chatMessageId);
         return;
       }
+      // #6099: a row that names a change always opens by its OWN session id
+      // when it has one, on every change kind and on both tabs, so two notices
+      // about two changes cannot both land on an older change that shares a
+      // pull request number. A row with only a number keeps that as its
+      // address; one with neither still falls back to the board.
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', toProposals
-          ? (item.sessionId && Number(item.prNumber) > 0
+          ? (item.sessionId || Number(item.prNumber) > 0
             ? { subTab: 'topic', ref: Notifications._changeRef(item.sessionId, item.prNumber) }
             : { subTab: 'proposals', ref: item.sessionId || null })
           : { subTab: 'issues', ref: issueNumber });
       } else {
         window.location.hash = toProposals
-          ? (item.sessionId ? Notifications._changeHash(item.appSlug, item.sessionId, item.prNumber) : `#app/${item.appSlug}/dev/proposals`)
+          ? (item.sessionId || Number(item.prNumber) > 0
+            ? Notifications._changeHash(item.appSlug, item.sessionId, item.prNumber)
+            : `#app/${item.appSlug}/dev/proposals`)
           : `#app/${item.appSlug}/dev/issues/${issueNumber}`;
       }
     }

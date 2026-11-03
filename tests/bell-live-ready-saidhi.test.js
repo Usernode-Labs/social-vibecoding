@@ -111,12 +111,14 @@ test('a live one opens the app it is live in; one still asking opens the change'
   const asking = load();
   asking.N.items = [ready({ sessionStatus: 'promoted' })];
   asking.N._onItemClick(7);
-  assert.deepEqual(nav(asking.calls), [['openAppTab', 'page-turners', 'dev', { subTab: 'proposals', ref: 6346 }]]);
+  // #6099: the row's own session id as a typed topic ref, not the legacy
+  // `subTab: 'proposals'` spelling; both normalize to the same change page.
+  assert.deepEqual(nav(asking.calls), [['openAppTab', 'page-turners', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 6346 } }]]);
 
   const closed = load();
   closed.N.items = [ready({ sessionStatus: 'archived' })];
   closed.N._onItemClick(7);
-  assert.deepEqual(nav(closed.calls), [['openAppTab', 'page-turners', 'dev', { subTab: 'proposals', ref: 6346 }]],
+  assert.deepEqual(nav(closed.calls), [['openAppTab', 'page-turners', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 6346 } }]],
     'a closed change has no app to open: its page says what happened');
 });
 
