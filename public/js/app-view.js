@@ -29921,6 +29921,79 @@ const AppView = {
     });
   },
 
+  // ── The key an app seals its kept reads with (usernode.offline) ────
+  //
+  // The bridge keeps an app's last reads in the app's own storage, sealed
+  // with a key it asks the shell for, so the app can show them offline
+  // (docs/plans/project-apps-offline-data.md). The shell holds ONE random
+  // key per signed-in person on this device and gives each app a key
+  // derived from it for that app's origin, so no app's key opens another
+  // app's copies. It is dropped with the session (App._dropCachedSession →
+  // clearAppDataKey): from then on no app can open what it kept for this
+  // person, and none has to be visited for that. A restored native session
+  // (a new token for the same person) keeps it; it is stored with the
+  // person's id and never given for anyone else.
+  //
+  // Only the person's own app as it runs for them, the mounted app frame,
+  // is given one. A staging preview (its data is a preview's) and the
+  // landing viewer are told there is none; any other frame is not answered.
+  APP_DATA_KEY: 'usernode:app-data-key',
+
+  _appDataMaster(userId) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(AppView.APP_DATA_KEY)); } catch { saved = null; }
+    if (saved && String(saved.user) === String(userId) && typeof saved.key === 'string') return saved.key;
+    const bytes = window.crypto.getRandomValues(new Uint8Array(32));
+    const key = btoa(String.fromCharCode(...bytes));
+    try {
+      localStorage.setItem(AppView.APP_DATA_KEY, JSON.stringify({ user: userId, key }));
+    } catch {
+      // A key this device cannot keep would seal copies no later load opens.
+      return null;
+    }
+    return key;
+  },
+
+  // This person's key for the app at `origin`, base64, or null.
+  async appDataKeyFor(userId, origin) {
+    const subtle = window.crypto?.subtle;
+    if (!subtle || userId == null || !origin) return null;
+    const master = AppView._appDataMaster(userId);
+    if (!master) return null;
+    const raw = Uint8Array.from(atob(master), (c) => c.charCodeAt(0));
+    const base = await subtle.importKey('raw', raw, 'HKDF', false, ['deriveBits']);
+    const bits = await subtle.deriveBits({
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new Uint8Array(0),
+      info: new TextEncoder().encode(`usernode-app-data/v1 ${origin}`),
+    }, base, 256);
+    return btoa(String.fromCharCode(...new Uint8Array(bits)));
+  },
+
+  clearAppDataKey() {
+    try { localStorage.removeItem(AppView.APP_DATA_KEY); } catch { /* nothing kept */ }
+  },
+
+  // Settles once the answer is posted (or none is due). The message listener
+  // ignores it; it is there for the tests to wait on, since the derivation
+  // runs on WebCrypto's worker threads and takes no fixed time.
+  handleAppDataKeyMessage(e) {
+    const data = e.data;
+    if (!data || data.__usernode_kept !== 'key' || typeof data.id !== 'string' || data.id.length > 100) return Promise.resolve();
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (!frameId) return Promise.resolve();
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return Promise.resolve();
+    const answer = (key) => { bridge.post({ __usernode_kept: 'key', id: data.id, key }); };
+    const userId = typeof App !== 'undefined' ? App.user?.id : null;
+    if (frameId !== 'app-iframe' || !bridge.slug || userId == null) {
+      answer(null);
+      return Promise.resolve();
+    }
+    return AppView.appDataKeyFor(userId, e.origin).then(answer, () => answer(null));
+  },
+
   // ── Safe-area inset forwarding (issue #970) ────────────────────────
   //
   // WHY THIS EXISTS. `env(safe-area-inset-*)` resolves to 0px inside a
@@ -31354,6 +31427,8 @@ if (typeof window !== 'undefined') {
     try { AppView.handleDirectoryBridgeMessage(e); } catch {}
     // #757: usernode.getUserLocale() reads from the app iframe.
     try { AppView.handleLocaleBridgeMessage(e); } catch {}
+    // usernode.offline: the key an app seals its kept reads with.
+    try { AppView.handleAppDataKeyMessage(e); } catch {}
     // #970: the bridge's startup request for this frame's safe-area insets.
     try { AppView.handleSafeAreaBridgeMessage(e); } catch {}
     // #3257: the bridge's startup request for the platform's theme.

@@ -58,9 +58,12 @@
       .then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (data) {
           if (!res.ok) {
-            throw new Error(data.error === 'account_required'
+            var err = new Error(data.error === 'account_required'
               ? 'Make an account to join in.'
               : data.error || 'Something went wrong (' + res.status + ').');
+            // The server's own answer: a kept copy never stands in for it.
+            err.status = res.status;
+            throw err;
           }
           return data;
         });
@@ -274,9 +277,43 @@
     }
   }
 
+  // ── Offline: the last read, kept on this device ────────────────────────
+  //
+  // The read the screen opens on goes through the platform bridge's
+  // usernode.offline.read: it keeps the last answer on this device, sealed
+  // for the person signed in and gone when they sign out, and gives it back
+  // when the read cannot be answered (no connection, or the server is down).
+  // The line under the title says so, and how old it is, until a read works
+  // again. api() marks the server's own answers (err.status), which are
+  // never covered over with the copy. Outside Homeroom nothing is kept.
+
+  function kept(name, read) {
+    if (window.usernode && window.usernode.offline) return window.usernode.offline.read(name, read);
+    return read().then(function (value) { return { value: value, fromCopy: false }; });
+  }
+
+  function savedWhen(at) {
+    var then = new Date(at);
+    var today = new Date();
+    var time = then.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (then.toDateString() === today.toDateString()) return 'at ' + time;
+    if (then.toDateString() === new Date(today.getTime() - 86400000).toDateString()) return 'yesterday at ' + time;
+    return 'on ' + then.toLocaleDateString(undefined, { day: 'numeric', month: 'long' }) + ' at ' + time;
+  }
+
+  function showSaved(got) {
+    var strip = document.getElementById('saved-strip');
+    if (!strip) return;
+    strip.hidden = !got.fromCopy;
+    strip.textContent = got.fromCopy
+      ? (navigator.onLine === false ? 'Offline.' : 'Can\'t reach the server.') + ' Showing what was saved ' + savedWhen(got.savedAt) + '.'
+      : '';
+  }
+
   function loadToday() {
-    return api('GET', '/api/today?tz=' + encodeURIComponent(deviceZone()))
-      .then(function (data) { renderToday(data); flush(); })
+    // Kept under the day it counts, so a copy of yesterday's never shows as today's.
+    return kept('today:' + now().toLocaleDateString(), function () { return api('GET', '/api/today?tz=' + encodeURIComponent(deviceZone())); })
+      .then(function (got) { renderToday(got.value); showSaved(got); if (!got.fromCopy) flush(); })
       .catch(function () { me = undefined; showToday('error'); });
   }
 
