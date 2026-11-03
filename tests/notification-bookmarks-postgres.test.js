@@ -21,7 +21,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 
 const DSN = process.env.TEST_DATABASE_URL
   || process.env.DATABASE_URL
@@ -46,10 +45,10 @@ test('notification bookmarks against the full schema', { timeout: 120000 }, asyn
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  // Boot-idempotent, like every real deployment restart.
-  await pool.query(schema);
-  await pool.query(schema);
+  // Fresh startup records migrations; the next boot verifies their receipts.
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const bookmarks = require('../src/services/notification-bookmarks');
   const notifications = require('../src/services/notifications');

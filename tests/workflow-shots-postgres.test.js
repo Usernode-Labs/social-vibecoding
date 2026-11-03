@@ -113,7 +113,7 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     await pool.query(
       `INSERT INTO shot_run_files (run_id, slot, story_id, viewport, side, variant, media, content_type, object_key, bytes, sha256)
        VALUES ($1, $2, 'c1', 'desktop', $3, 'context', 'png', 'image/png', $4, $5, $6)`,
-      [runId, `c1/desktop/${side}/context`, side, await fixtureKey(pool, PNG), PNG.length, crypto.createHash('sha256').update(side).digest('hex')]);
+      [runId, `c1/desktop/${side}/context`, side, await fixtureKey(pool, PNG), PNG.length, crypto.createHash('sha256').update(PNG).digest('hex')]);
   }
   const READY_VERDICT = { passed: true, mode: 'shots', runs: 1, stories: [{ id: 'c1', status: 'ready', files: 2 }] };
   const passed = (input) => ({
@@ -229,7 +229,7 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
         `INSERT INTO shot_run_files (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, object_key, bytes, sha256)
          VALUES ($1, $2, 'c1', 'desktop', 'head', 'context', 'png', 'dark', 'image/png', $3, $4, $5)`,
         [input.runId, 'c1/desktop/head/context/dark', await fixtureKey(pool, DARK), DARK.length,
-          crypto.createHash('sha256').update('dark').digest('hex')]);
+          crypto.createHash('sha256').update(DARK).digest('hex')]);
       return { ...passed(input), slots: [...passed(input).slots, 'c1/desktop/head/context/dark'] };
     });
     const s = await proposal();
@@ -261,8 +261,8 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
                                      density, dense_object_key, dense_width, dense_height, dense_bytes, dense_sha256)
          VALUES ($1, 'c1/desktop/head/context', 'c1', 'desktop', 'head', 'context', 'png', 'image/png', $2, 1280, 800, $3, $4,
                  2, $5, 2560, 1600, $6, $7)`,
-        [input.runId, await fixtureKey(pool, Buffer.from('fake-png')), 8, crypto.createHash('sha256').update('flat').digest('hex'),
-          await fixtureKey(pool, DENSE), DENSE.length, crypto.createHash('sha256').update('dense').digest('hex')]);
+        [input.runId, await fixtureKey(pool, Buffer.from('fake-png')), 8, crypto.createHash('sha256').update(Buffer.from('fake-png')).digest('hex'),
+          await fixtureKey(pool, DENSE), DENSE.length, crypto.createHash('sha256').update(DENSE).digest('hex')]);
       return passed(input);
     });
     const s = await proposal();
@@ -301,7 +301,7 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
           `INSERT INTO shot_run_files (run_id, slot, story_id, viewport, side, variant, media, content_type, object_key, width, height, bytes, sha256,
                                        part, scale, focus_rect)
            VALUES ($1, $2, 'c1', 'desktop', 'head', 'closeup', 'png', 'image/png', $3, 594, 360, $4, $5, $6, $7, $8::jsonb)`,
-          [input.runId, `c1/desktop/head/closeup/${part}`, await fixtureKey(pool, CLOSE), CLOSE.length, sha(`c${part}`), part, part === 1 ? 9 : 8.2,
+          [input.runId, `c1/desktop/head/closeup/${part}`, await fixtureKey(pool, CLOSE), CLOSE.length, sha(CLOSE), part, part === 1 ? 9 : 8.2,
             JSON.stringify({ x: 40 * part, y: 30, w: 66, h: 40 })]);
       }
       return { ...passed(input), slots: [...passed(input).slots, 'c1/desktop/head/closeup/1', 'c1/desktop/head/closeup/2'] };
@@ -325,7 +325,7 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
       await assert.rejects(pool.query(
         `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, content_type, object_key, bytes, sha256, part, scale, focus_rect)
          VALUES ($1, $2, 'c1', 'phone', 'head', $3, 'png', 'image/png', $8, 1, $4, $5, $6, $7::jsonb)`,
-        [crypto.randomBytes(16).toString('hex'), run.id, variant, sha('x'), part, scale, rect, await fixtureKey(pool, Buffer.from([0]))]), /variant_closeup_check/, `${variant} ${part}`);
+        [crypto.randomBytes(16).toString('hex'), run.id, variant, sha(Buffer.from([0])), part, scale, rect, await fixtureKey(pool, Buffer.from([0]))]), /variant_closeup_check/, `${variant} ${part}`);
     }
   });
 

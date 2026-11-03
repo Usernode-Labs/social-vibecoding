@@ -184,9 +184,9 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = read('src/db/schema.sql');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
   // Rows a machine owns (a request's queue row, a proposal's move into
   // merged) are fixtures here, written as the kernel writes them.

@@ -20,8 +20,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
 const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL
@@ -82,9 +80,9 @@ async function openDatabase(t) {
     await admin.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {});
     await admin.end().catch(() => {});
   });
-  const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent, including the new FK and index
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   // #5104: accounts start out reachable only by people they share a project
   // with, and out of searches. This file's people are strangers who write
   // to, invite and find each other, which is what it pins, so here they

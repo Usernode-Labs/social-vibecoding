@@ -54,7 +54,6 @@ test('a staging preview owes the shots member a change with three screens (Postg
     pool = new Pool({ connectionString: url.toString() });
     pool.on('error', () => {});
     await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
-    await require('./lib/media-store').dropMediaByteColumns(pool);
     // What seedStagingDemoAppCard and the capture accounts leave for it: the
     // demo owner, the demo app, and the shots member on it.
     const owner = (await pool.query(

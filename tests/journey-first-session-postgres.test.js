@@ -109,9 +109,9 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     await admin.query(`DROP DATABASE IF EXISTS ${name}`);
     await admin.end();
   });
-  const schema = read('src/db/schema.sql');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const user = async (username, cols = {}) => {
     const base = { has_platform_access: true, ...cols };

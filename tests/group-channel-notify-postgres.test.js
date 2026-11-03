@@ -27,7 +27,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL
@@ -55,9 +54,9 @@ test('small-group discussions against the full schema', { timeout: 120000 }, asy
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   // The routes resolve their pool at construction. The cross-instance bus is
   // where every frame passes (a no-op until start()), so recording it is how

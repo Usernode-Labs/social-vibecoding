@@ -51,9 +51,9 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   require('../src/db/pool').getPool = () => pool;
   const aiWork = require('../src/services/ai-work');
 

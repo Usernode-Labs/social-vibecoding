@@ -178,8 +178,9 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = read('src/db/schema.sql');
-  await pool.query(schema);
+  const baseline = fs.readFileSync(require.resolve('../src/db/migrations/0001-baseline.sql'), 'utf8');
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
   const conversations = require('../src/services/conversations');
   const dm = require('../src/services/homeroom-bot-dm');
   const activity = require('../src/services/homeroom-bot-activity');
@@ -188,7 +189,10 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     [username, synthetic, access],
   )).rows[0];
   const bot = await user('homeroom_bot', true);
-  await pool.query(schema); // boot names it
+  // This fixture was inserted after initialization. Exercise its historical
+  // naming statement explicitly; a current reboot does not replay it.
+  await pool.query(baseline.match(/UPDATE users SET display_name = 'Homeroom bot'[\s\S]*?;/)[0]);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   const maya = await user('maya');
   const ben = await user('ben');
   const old = await user('old_friend');

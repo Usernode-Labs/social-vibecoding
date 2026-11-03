@@ -19,7 +19,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -94,9 +93,10 @@ test('a first version planned at Make it: answered on the made screen, built wit
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
-  // Applied twice, as every deploy does: idempotent.
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  // A second boot verifies receipts without replaying initialization DDL.
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
 
   const user = async (username, synthetic = false) => (await pool.query(

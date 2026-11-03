@@ -85,6 +85,11 @@
       "id": "private-thread-done",
       "sha256": "1950ed9c494fe8ce9dc27e8588d269bebcd9553e987f1da92e99bd0af22183d6",
       "schemaSha256": "e18b3d9065e218ec05b6869c0f8db99ae97fa048e48fdcc83dc6aab9192de8a1"
+    },
+    {
+      "id": "media-drop-bytes",
+      "sha256": "97a57e67745033a0a8e4faeb400eebb3c8c288876581efbf79b2f8d76d0c7853",
+      "schemaSha256": "a5483f6e9846f3ac2f4848eb5bd583f966b8a2bd9077db97a4eac23f7429fd7a"
     }
   ]
 }
