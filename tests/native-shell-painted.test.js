@@ -34,6 +34,12 @@ const nativeChromeSource = read('public', 'js', 'native-chrome.js');
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Poll until cond() is true, up to deadlineMs; never throws on timeout (the assertion after it does). */
+async function until(cond, deadlineMs = 2000, stepMs = 5) {
+  const by = Date.now() + deadlineMs;
+  while (!cond() && Date.now() < by) await wait(stepMs);
+}
+
 /** An element with the given on-screen box (or none, for display:none). */
 function box(rect, extra = {}) {
   return {
@@ -204,7 +210,7 @@ test('shellPaintedDue: drawn with a top inset, or the cap; never the inset alone
 
 test('drawn, with a top inset: sent once, after the next paint', async () => {
   const h = boot();
-  await wait(60);
+  await until(() => h.calls.painted >= 1);
   assert.equal(h.calls.painted, 1);
   assert.equal(h.NativeChrome._shellPaintedReason, 'drawn');
   assert.deepEqual(h.htmlChildren, [], 'the inset probe is taken off <html> once sent');
@@ -218,7 +224,7 @@ test('the send waits for two animation frames, and a timer stands in when there 
   const h = boot({ noFrames: true });
   await wait(40);
   assert.equal(h.calls.painted, 0, 'no frame yet: not sent');
-  await wait(160);
+  await until(() => h.calls.painted >= 1);
   assert.equal(h.calls.painted, 1, 'the 120 ms timer under the frames sent it');
 });
 
@@ -227,7 +233,7 @@ test('drawn before the inset is known: it waits for the inset', async () => {
   await wait(80);
   assert.equal(h.calls.painted, 0, 'the header would be under the clock');
   h.page.inset = 47;
-  await wait(60);
+  await until(() => h.calls.painted >= 1);
   assert.equal(h.calls.painted, 1);
   assert.equal(h.NativeChrome._shellPaintedReason, 'drawn');
 });
@@ -247,8 +253,7 @@ test('still skeletons at the cap: sent anyway, and only counted from DOMContentL
   await wait(40);
   assert.equal(h.calls.painted, 0, 'inside the cap');
   h.setClock(DCL + CAP);
-  const sentBy = Date.now() + 2000;
-  while (h.calls.painted === 0 && Date.now() < sentBy) await wait(5);
+  await until(() => h.calls.painted >= 1);
   assert.equal(h.calls.painted, 1, 'the cap sent it');
   assert.equal(h.NativeChrome._shellPaintedReason, 'cap');
 });
@@ -258,7 +263,7 @@ test('a skeleton that goes: sent when the screen is drawn, not at the cap', asyn
   await wait(60);
   assert.equal(h.calls.painted, 0);
   h.page.drawn = true;
-  await wait(60);
+  await until(() => h.calls.painted >= 1);
   assert.equal(h.calls.painted, 1);
   assert.equal(h.NativeChrome._shellPaintedReason, 'drawn');
 });
@@ -289,13 +294,13 @@ test('a degraded probe is asked once more, then left to the app\'s own cap', asy
   assert.equal(twice.calls.painted, 0);
 
   const once = boot({ getBridgeInfoImpl: (n) => (n === 1 ? degraded : { version: 5, capabilities: ['shellPainted'] }) });
-  await wait(380);
+  await until(() => once.calls.painted >= 1);
   assert.equal(once.calls.painted, 1, 'the second answer stands');
 });
 
 test('a failed call is a console.warn, never a console.error, and is not retried', async () => {
   const h = boot({ shellPaintedImpl: async () => { throw new Error('shellPainted is not supported by this app build'); } });
-  await wait(80);
+  await until(() => h.calls.warnings.length >= 1);
   assert.equal(h.calls.painted, 1);
   assert.deepEqual(h.calls.errors, []);
   assert.equal(h.calls.warnings.length, 1);
