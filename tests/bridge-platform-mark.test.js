@@ -530,6 +530,9 @@ test('both servers answer platform.json from deployment settings', () => {
     { name: 'USERNODE_DOMAIN', value: 'app.onhomeroom.com' },
     { name: 'USERNODE_APPS_DOMAIN', value: 'onhomeroom.com' },
     { name: 'MARKETING_BASE_URL', value: 'https://onhomeroom.com' },
+    // How the shared files are cached (src/services/offline-cache.js): the
+    // one other fact the asset server is given, never configuration.
+    { name: 'APP_OFFLINE_CACHE', value: process.env.APP_OFFLINE_CACHE === 'on' ? 'on' : 'off' },
   ]);
 });
 
