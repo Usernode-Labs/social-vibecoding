@@ -1867,6 +1867,10 @@
     "text": "+{{count}}",
     "description": "Last circle in the row of faces at the top of a project's Hub: how many more people were active this week than the faces shown. Keep it as short as a plus sign and a number."
   },
+  "hub.topics.title": {
+    "text": "Topics",
+    "description": "On a phone, small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under the For you card. Pressing a row opens that topic's channel."
+  },
   "hub.forYou.title": {
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."

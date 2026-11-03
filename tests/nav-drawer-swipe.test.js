@@ -1,13 +1,12 @@
 'use strict';
 
-// WHERE A FINGER MAY PAN THE PHONE'S DRAWER (Evan, 18 Oct 2026).
+// WHERE A FINGER MAY PAN A PHONE'S DRAWER (Evan, 18 Oct 2026).
 //
-// On the drawer's own levels a sideways drag anywhere pans it, so its lists
-// hand sideways on with `touch-action: pan-y` (touch-action stops at a
-// scroller: without it the browser took the drag, a pointercancel, and the
-// strip never moved under a finger). On the page a swipe right pans it back
-// from anywhere that is not sideways UI, and from the left edge wherever
-// that is the page's, which Safari on an iPhone keeps for its own Back.
+// In a Messages conversation a swipe right pans it back from anywhere that
+// is not sideways UI, and from the left edge wherever that is the page's,
+// which Safari on an iPhone keeps for its own Back. A community's page had a
+// drawer of its own, panned the same way, until 3 Nov 2026: its places are
+// the Hub's rows now.
 //
 // These pin the rule (frontend/src/features/nav-drawer/sideways.ts) and the
 // CSS that lets the drag reach it.
@@ -83,47 +82,36 @@ test('sideways UI: a swipe card, a sideways scroller, a field, a selection', () 
   assert.equal(sideways.startsOnSideways(plain, page, view()), false, 'the walk stops below the page');
 });
 
-test('the lists and the page hand the sideways drag on while the drawer holds them', () => {
+test('a conversation hands the sideways drag on, and the swipe back follows uncancelable moves', () => {
+  // 3 Nov 2026: a community's page has no drawer to pan (its places are the
+  // Hub's rows), so nothing claims the page's sideways drag any more.
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-nav-drawer\] #app-view \{ touch-action: pan-y; \}/);
-  assert.match(css, /\.nav-drawer-places-scroll \{[^}]*touch-action: pan-y;/);
-  assert.match(css, /\.nav-drawer-outer-list \{[^}]*touch-action: pan-y;/);
+  assert.doesNotMatch(css, /html\[data-nav-drawer\] #app-view \{ touch-action: pan-y; \}/);
+  assert.doesNotMatch(css, /\.nav-drawer-places-scroll|\.nav-drawer-outer-list/, 'the drawer\'s lists are gone');
   const island = read('frontend/src/features/nav-drawer/nav-drawer.tsx');
+  assert.doesNotMatch(island, /addEventListener\('touchstart'/, 'the community header pans nothing');
   // The edge and the swipe direction are the inline-start one: the left in
   // English, the right in Arabic.
-  assert.match(island, /const pastEdge = rtl \? touch\.clientX < window\.innerWidth - EDGE_PX : touch\.clientX > EDGE_PX;/);
-  assert.match(island, /const sideways = pastEdge && startsOnSideways\(target, page, window\);/);
-  // In the iPhone app a swipe's moves come uncancelable (WebKit decided at
-  // touchstart, before the drawer's listener was there), so standing down on
-  // them left the swipe dead on most of a page and every plain message. The
-  // pan follows them, and holds the browser off only when it can.
   const conversation = read('frontend/src/features/messages/phone-drawer.tsx');
-  for (const [name, source] of [['the page', island], ['a conversation', conversation]]) {
-    assert.doesNotMatch(source, /if \(!e\.cancelable\)/, `${name}: an uncancelable move does not end the pan`);
-    assert.match(source, /if \(e\.cancelable\) e\.preventDefault\(\);/, `${name}: a cancelable one is still held`);
-  }
+  assert.match(conversation, /const pastEdge = rtl \? touch\.clientX < window\.innerWidth - EDGE_PX : touch\.clientX > EDGE_PX;/);
+  assert.match(conversation, /const sideways = pastEdge && startsOnSideways\(target, layout, window\);/);
+  // In the iPhone app a swipe's moves come uncancelable (WebKit decided at
+  // touchstart), so standing down on them left the swipe dead on every plain
+  // message. The pan follows them, and holds the browser off only when it can.
+  assert.doesNotMatch(conversation, /if \(!e\.cancelable\)/, 'an uncancelable move does not end the pan');
+  assert.match(conversation, /if \(e\.cancelable\) e\.preventDefault\(\);/, 'a cancelable one is still held');
 });
 
-// Evan, 18 Oct 2026: on a page and in a conversation a swipe a little off
-// level still panned, on the lists it caught the vertical unless it was very
-// precise. The lists panned from pointer events, and a pointer is cancelled
-// the moment the browser starts scrolling under it; the pages from touch
-// events, which keep coming. So a finger is the touch handlers' everywhere,
-// and the pointer handlers are a mouse's.
-test('a finger pans the sidebars from touch events, as it does a page; the pointer handlers are a mouse\'s', () => {
-  const island = read('frontend/src/features/nav-drawer/nav-drawer.tsx');
-  assert.match(island, /if \(e\.pointerType !== 'mouse' \|\| !e\.isPrimary \|\| e\.button !== 0 \|\| s\.searching \|\| s\.level === 2\) return;/);
-  assert.match(island, /if \(isPan\(dx, dy\) && \(p\.from !== 2 \|\| dx \* dirSign\(\) > 0\)\) \{/, 'either way on the drawer\'s own levels, toward the page in Arabic too');
-  assert.match(island, /if \(s\.searching \|\| !surface \|\| !surface\.contains\(target\) \|\| startsOnSideways\(target, surface, window\)\) return;/,
-    'anywhere on the communities and the places but a field');
-  assert.match(island, /p = \{ x0: touch\.clientX, y0: touch\.clientY, w: screenWidth\(\), from: s\.level, on: false, dx: 0 \};/);
-  assert.match(island, /go\(landing\(was\.from, offsetOf\(was\.from, was\.dx, was\.w\), was\.dx\)\);/);
+// Evan, 18 Oct 2026: in a conversation a swipe a little off level still
+// panned, because it pans from touch events, which keep coming while the
+// browser scrolls under the finger. 3 Nov 2026: the list has nothing beside
+// it to pan to, so only a conversation pans, and only back.
+test('a finger pans a conversation back from touch events; the list has nothing to pan to', () => {
   const conversation = read('frontend/src/features/messages/phone-drawer.tsx');
-  assert.match(conversation, /if \(e\.pointerType !== 'mouse' \|\| !on \|\| level !== 0 \|\| !peekId \|\| !e\.isPrimary \|\| e\.button !== 0\) return;/);
-  assert.match(conversation, /if \(isPan\(dx, dy\) && \(from === 0 \|\| dx > 0\)\) \{/, 'either way on the list, right in a conversation');
+  assert.match(conversation, /if \(!on \|\| level === 0\) return undefined;/);
+  assert.match(conversation, /if \(isPan\(dx, dy\) && dx > 0\) \{/, 'right, in reading direction: back');
   assert.match(conversation, /landRef\.current\(from, offsetOf\(was\.dx, was\.w\), was\.dx\);/);
-  for (const [name, source] of [['the drawer', island], ['Messages', conversation]]) {
-    assert.match(source, /document\.addEventListener\('touchmove', move, \{ passive: false \}\);/, `${name}: the moves are followed from touch events`);
-    assert.match(source, /swallow(?:Click)?\.current = true;/, `${name}: a row the pan started on is not pressed`);
-  }
+  assert.doesNotMatch(conversation, /onPointerDown|pointerType !== 'mouse'/, 'no mouse pan toward a peek');
+  assert.match(conversation, /document\.addEventListener\('touchmove', move, \{ passive: false \}\);/, 'the moves are followed from touch events');
+  assert.match(conversation, /swallow\.current = true;/, 'a row the pan started on is not pressed');
 });

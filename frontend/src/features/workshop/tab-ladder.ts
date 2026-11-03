@@ -27,10 +27,10 @@
  *   4. ON ALL COMMUNITIES: to the top, and nothing else. 'top', or 'none'
  *      when it is already there.
  *
- * ON A PHONE, A COMMUNITY'S PAGE IS THE DRAWER'S (../nav-drawer/, Evan's
- * design, 18 Oct 2026): a press goes back one level of it at a time, the
- * page to the community's places, the places to your communities, after
- * whatever is below a place (a reply thread, All items) has gone up to it.
+ * ON A PHONE TOO (3 Nov 2026): the drawer that slid a community's page to
+ * its places and on to your communities is gone, so the ladder is the same
+ * at every width: a place up to the Hub, the Hub to All communities, which
+ * a phone draws as a grid.
  *
  * A STEP THAT CHANGES PAGE PUSHES AN ENTRY, as a tab press does (#3620), so
  * Back from where it landed is where it was pressed: a card goes up by the
@@ -42,11 +42,10 @@
  * ── Switching sideways ────────────────────────────────────────────────
  *
  * On a wide window the header's name and ⌄ open "Your communities"
- * (../header/header-title.tsx). On a phone the drawer's outermost level is
- * the list of your communities, and nothing on the bar opens the old
- * switcher: holding the tab used to (#3701), which put the sheet the drawer
- * replaced back over it, so the hold was removed (18 Oct 2026). A held tab
- * is an ordinary press.
+ * (../header/header-title.tsx). On a phone a community's Hub has the grid at
+ * the header's left, which opens All communities, and nothing on the bar
+ * opens the old switcher: holding the tab used to (#3701), and the hold was
+ * removed (18 Oct 2026). A held tab is an ordinary press.
  *
  * ── The blue number is a count (#5708) ────────────────────────────────
  *
@@ -68,11 +67,7 @@
  * Nothing here renders.
  */
 
-import { drawerStore, pressTab as pressDrawerTab } from '../nav-drawer/drawer-store';
 import { goToCommunity } from './community-scope';
-
-/** The pages under a place (../dev-board/workshop/places.ts): a step above them is the place. */
-const PAGES_UNDER_A_PLACE = ['all', 'bot', 'plan'];
 
 /** What one press of the lit tab does. */
 export type Rung = 'up' | 'top' | 'root' | 'none';
@@ -231,25 +226,6 @@ export function pressLitTab(screen: string | null, { stopAtCommunity = false }: 
       .filter((level) => { try { return !!level.below?.(); } catch { return false; } })
       .sort((a, b) => (b.depth || 0) - (a.depth || 0))[0]
     : undefined;
-  // THE PHONE'S DRAWER: one level of it at a time, rather than up to All
-  // communities. What is below a place still goes to it first: a reply
-  // thread beside a channel, and a page under a place (All items, the bot's
-  // slots, the plan).
-  if (drawerStore.get().on) {
-    const isBelow = (level: Level) => { try { return !!level.below?.(); } catch { return false; } };
-    const thread = onPage ? mine.find((level) => (level.depth || 0) >= 2 && isBelow(level)) : undefined;
-    if (thread?.up) {
-      thread.up();
-      return 'up';
-    }
-    const under = PAGES_UNDER_A_PLACE.includes(drawerStore.get().shown.place);
-    const page = under && onPage ? mine.find((level) => (level.depth || 0) === 1 && level.up) : undefined;
-    if (page?.up) {
-      page.up();
-      return 'up';
-    }
-    return pressDrawerTab();
-  }
   const host = mine.map((level) => level.host?.() || null).find(Boolean) || null;
   const el = scrollerOf(host?.closest<HTMLElement>('#dev-forum-scroll') || null);
   // Off the project page's own address is a page below it: a card, a

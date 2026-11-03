@@ -1140,9 +1140,10 @@ test('the app\'s own Workshop switches communities through Your communities, the
 
   // ALL COMMUNITIES IS THE WAY BACK UP: a hash assignment, so the tab and
   // this are one route, and the page the tab reopened is forgotten. On a
-  // phone it is the drawer's list instead (#5581), and the page stays for a
-  // new account with no community to show it over.
-  assert.match(scope, /if \(!slug\) \{\s*if \(phone\(\) && openDrawerList\(\)\) return;\s*setScope\(null\);\s*try \{ app\?\._forgetWorkshopView\?\.\(\); \}[\s\S]{0,160}window\.location\.hash = '#communities';/);
+  // phone too since 3 Nov 2026 (it was the drawer's list, #5581), where the
+  // page draws the communities as a grid.
+  assert.match(scope, /if \(!slug\) \{\s*setScope\(null\);\s*try \{ app\?\._forgetWorkshopView\?\.\(\); \}[\s\S]{0,160}window\.location\.hash = '#communities';/);
+  assert.doesNotMatch(scope, /openDrawerList|requestOuter/);
   // The community you are already on goes nowhere: re-navigating to the
   // current route would throw the page's scroll away, and it stays on the
   // place it shows. Another one opens on the place you were on, when it has

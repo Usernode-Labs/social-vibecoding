@@ -447,8 +447,8 @@ function backToTopOfHome(): void {
 
 /**
  * #5528: Finish ends the tour ON the Communities page, the one its first card
- * pointed at. The same address the Communities tab opens (`tab-bar.tsx`, and
- * `outer-level.tsx` navigates the same way): a plain hash assignment, which
+ * pointed at. The same address the Communities tab opens (`tab-bar.tsx`):
+ * a plain hash assignment, which
  * pushes a history entry, so Back returns to Home. Not the community-scope
  * setter (`goToCommunity` with null), which would reset the tab's chosen
  * community scope and forget the resumable Workshop view; the tour changes
