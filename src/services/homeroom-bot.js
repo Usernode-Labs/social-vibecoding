@@ -6056,6 +6056,16 @@ async function runChecksFix(pool, config, {
     });
   }
 
+  // #6234: say that the fix has started, so the change's card and the
+  // request's thread (which reads the change's discussion) never read "its
+  // author needs to fix this" while the bot is on it. Once across the look's
+  // attempts; not on a second try after a timeout, where the retry note
+  // already says so; and not for a round that only adds what the shots need,
+  // which the shots card already explains and whose change is not failing.
+  if (!onlyShots && !await look.once('retriedAtStart', () => checksRetried(pool, session.id, head))) {
+    await note('checks_fixing', { runId: null, text: followup.checksFixingText({ failing, broken, skipped }) });
+  }
+
   let turn = null;
   const seed = sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, issueThread?.messages || []);
   const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
@@ -10414,6 +10424,7 @@ module.exports = {
   sweep,
   checksFixDue,
   oweChecksFix,
+  checksRetried,
   previousReadOf,
   rememberedRead,
   iterateRunsForExport,

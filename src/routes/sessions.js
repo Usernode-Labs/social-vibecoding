@@ -3964,6 +3964,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (req.path.endsWith('/details') || session.check_state === 'pending') {
         detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
       }
+      // #6234: whether Homeroom bot is fixing this change's failing checks,
+      // and how that is going, for its Testing card and its thread.
+      if (req.path.endsWith('/details')) {
+        detail.bot_fix = await require('../services/homeroom-bot-progress')
+          .changeBotFix(pool, session.id).catch(() => null);
+      }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
       res.set('Cache-Control', 'no-store').json({ session: listTestResults.forItem(req, detail) });

@@ -73,6 +73,11 @@ const FIRST_PERSON = Object.freeze([
     'I couldn\'t answer this time$1: something went wrong while I worked on it.'],
   [/Homeroom bot couldn't answer this time( either)?:/, 'I couldn\'t answer this time$1:'],
   [/It will try again soon\./, 'I\'ll try again soon.'],
+  // The fix round's start note (homeroom-bot-followup.js checksFixingText).
+  [/^Homeroom bot is (fixing|adding) /, 'I\'m $1 '],
+  [/It will say here when it's done\./, 'I\'ll say here when it\'s done.'],
+  // #4572: a fix that ran out of time is tried once more before a person is
+  // asked (homeroom-bot.js runChecksFix), and it says so.
   [/Homeroom bot ran out of time (fixing|adding)\b/, 'I ran out of time $1'],
   [/It is trying once more\./, 'I\'m trying once more.'],
   [/Homeroom bot can't get this change working on its own:/, 'I can\'t get this change working on my own:'],

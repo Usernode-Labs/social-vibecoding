@@ -605,6 +605,11 @@ function stagingMockProposals(viewer) {
         '[Mock] #2061: waiting on the author — checks are failing',
         5, 3, 0, 4, { required: 3 }),
       check_state: 'failing',
+      // #6234: a change Homeroom bot built, while it fixes the failing check:
+      // its Testing card reads "Fixing", and its Re-run checks waits.
+      username: 'homeroom_bot',
+      recheckable: true,
+      bot_fix: { state: 'fixing', since: new Date(Date.now() - 10 * 60 * 1000).toISOString(), reason: null },
       // The preview its failing checks ran on, so the Testing card's "Open
       // the page it checked" link is reviewable on ?demo=1 (the URL is
       // deliberately unroutable, like the other mock previews).
@@ -5078,6 +5083,14 @@ function voteRoutes(config) {
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
+        // #6234: whether Homeroom bot is fixing this change's failing checks,
+        // and how that is going, for its Testing card and its thread. A
+        // staging ?demo=1 row carries its own, so the bot-fixing card is
+        // reviewable without a live bot queue.
+        if (!proposal.bot_fix) {
+          proposal.bot_fix = await require('../services/homeroom-bot-progress')
+            .changeBotFix(pool, proposal.id).catch(() => null);
+        }
         // #4479: the plan it was built from, for the page's plan card.
         proposal.plan = await require('./sessions')
           .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);

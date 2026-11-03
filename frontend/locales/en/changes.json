@@ -3083,6 +3083,10 @@
     "text": "Rebuild the staging preview if needed and re-run the automated tests",
     "description": "Tooltip of the \"Re-run checks\" button on a proposal or an agent session."
   },
+  "recheck.botFixing": {
+    "text": "Homeroom bot is fixing this. Re-running now would restart its fix.",
+    "description": "Tooltip of the disabled \"Re-run checks\" button on a change Homeroom bot built, while the bot is fixing the check that failed."
+  },
   "progress.checks.sub.ofExpected_one": {
     "text": "{{count}} of {{expected}} run · {{passed}} passed",
     "description": "One short line under the \"Checks\" label on a proposal's page while its automated checks are still running. {{count}} is how many checks have run so far, {{passed}} how many of those passed and {{expected}} how many there are in all. \"run\" means \"have been run\"."
@@ -8759,6 +8763,10 @@
     "text": "Found a problem",
     "description": "The large figure on the Testing card of a change's page when at least one automated check failed."
   },
+  "page.testing.figure.botFixing": {
+    "text": "Fixing",
+    "description": "The large figure on the Testing card of a change Homeroom bot built, while the bot is fixing the check that failed."
+  },
   "page.testing.figure.willRetry": {
     "text": "Running again soon",
     "description": "The large figure on the Testing card of a change's page when the test run broke and the platform will start it again by itself."
@@ -8818,6 +8826,10 @@
   "page.testing.label.failing": {
     "text": "Testing: found a problem",
     "description": "Accessible description of the progress bar on the Testing card of a change's page when at least one automated check failed."
+  },
+  "page.testing.label.botFixing": {
+    "text": "Homeroom bot is fixing what failed",
+    "description": "Accessible description of the progress bar on the Testing card of a change Homeroom bot built, while the bot is fixing the check that failed."
   },
   "page.testing.label.willRetry": {
     "text": "Testing: will run again",
@@ -8894,6 +8906,34 @@
   "page.testing.note.authorFixes": {
     "text": "Its author needs to fix this before it can go live.",
     "description": "Line under the Testing card of a change's page whose checks failed, shown to everybody but the change's author: the author has to fix what failed before the change can be merged. \"It\" is the change."
+  },
+  "page.testing.note.botFixing_one": {
+    "text": "Homeroom bot is fixing this, started {{count}} min ago.",
+    "description": "Line under the Testing card of a change Homeroom bot built, while the bot is fixing the check that failed. {{count}} is how many whole minutes ago it started, here 1."
+  },
+  "page.testing.note.botFixing_other": {
+    "text": "Homeroom bot is fixing this, started {{count}} min ago.",
+    "description": "Line under the Testing card of a change Homeroom bot built, while the bot is fixing the check that failed. {{count}} is how many whole minutes ago it started."
+  },
+  "page.testing.note.botFixingNow": {
+    "text": "Homeroom bot is fixing this, started just now.",
+    "description": "Line under the Testing card of a change Homeroom bot built, while the bot has only just started fixing the check that failed."
+  },
+  "page.testing.note.botRetry": {
+    "text": "It is trying once more after running out of time.",
+    "description": "Sentence after the line under the Testing card of a change Homeroom bot built, when this fix is a second try because the first ran out of time."
+  },
+  "page.testing.note.botQueued": {
+    "text": "Homeroom bot will start fixing this shortly.",
+    "description": "Line under the Testing card of a change Homeroom bot built, while its fix waits for a free builder to start."
+  },
+  "page.testing.note.botHandedOff": {
+    "text": "Homeroom bot couldn't fix this on its own. The person who asked for it, or any member of this project, can take it from here.",
+    "description": "Line under the Testing card of a change Homeroom bot built, when the bot's attempt to fix the failing checks ended and a person has to take over."
+  },
+  "page.testing.note.botRerun": {
+    "text": "Re-running the checks now would restart its fix.",
+    "description": "Sentence after the line under the Testing card of a change Homeroom bot built, explaining that the Re-run checks button is disabled while the bot is fixing the check that failed."
   },
   "page.testing.note.checkFailed": {
     "text": "A check failed.",

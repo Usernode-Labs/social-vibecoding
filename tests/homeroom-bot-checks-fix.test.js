@@ -132,8 +132,30 @@ test('what it says has no em dashes, and the hand-off says a person takes it', (
   assert.doesNotMatch(texts[0], /approvals/);
   assert.match(texts[0], /Its checks run again on the new version\./);
   for (const t of texts) assert.ok(!/PR #|proposal/.test(t), t);
-  assert.match(texts[1], /1 check is still failing\. The check expects a step the request removed\. A person needs to look/);
-  assert.match(texts[2], /3 checks are still failing\. A person needs to look/);
+  assert.match(texts[1], /1 check is still failing\. The check expects a step the request removed\. The person who asked for it, or any member of this project, can take it from here\./);
+  assert.match(texts[2], /3 checks are still failing\. The person who asked for it, or any member of this project, can take it from here\./);
+});
+
+// #6234: the fix round says it has started before its end note says how it
+// went, naming the failing check when it can.
+test('the fix round says which check it is fixing when it starts', () => {
+  const said = (opts) => followup.checksFixingText(opts);
+  assert.equal(said({ failing: [{ name: 'discussion lists skip blocked authors' }] }),
+    'Homeroom bot is fixing the failing check "discussion lists skip blocked authors". It will say here when it\'s done.');
+  assert.equal(said({ failing: [{ name: 'A poll closes' }, { name: 'Votes are counted' }] }),
+    'Homeroom bot is fixing the 2 failing checks on this change. It will say here when it\'s done.');
+  assert.equal(said({ failing: [{ name: 'tests/polls.test.js' }] }),
+    'Homeroom bot is fixing the failing check on this change. It will say here when it\'s done.',
+    'a check named by its file is not named to the group');
+  assert.equal(said({ broken: [{ claim: 'Save works' }] }),
+    'Homeroom bot is fixing what didn\'t work when Homeroom tried it. It will say here when it\'s done.');
+  assert.equal(said({ broken: [{ claim: 'Save works' }, { claim: 'Vote opens' }] }),
+    'Homeroom bot is fixing the 2 things that didn\'t work when Homeroom tried them. It will say here when it\'s done.');
+  assert.equal(said({ skipped: [{ claim: 'The list shows ten items' }] }),
+    'Homeroom bot is adding the sample data this change\'s before and after screens need. It will say here when it\'s done.');
+  for (const t of [said({ failing: [{ name: 'A poll closes' }] }), said({ broken: [{ claim: 'Save works' }] }), said({ skipped: [{}] })]) {
+    assert.ok(!/—/.test(t), t);
+  }
 });
 
 // Run four (13 Oct 2026): the fix round's note on Club Votes said the
@@ -392,10 +414,12 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   assert.equal(insert.params[21], HEAD, 'the head it looked at, so it never looks twice');
   assert.equal(insert.params[12], SEEN, 'what it has seen of the issue stands: nobody said anything');
   assert.equal(h.calls.posts.length, 0, 'nothing on the issue');
-  assert.equal(h.calls.onProposal.length, 1, 'said on the proposal, where the checks are');
-  assert.equal(h.calls.onProposal[0].kind, 'checks_revise');
-  // Run four (13 Oct): what was fixed, by the failing check's own name.
+  assert.equal(h.calls.onProposal.length, 2, 'the start line, then what was fixed');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing', 'checks_revise']);
   assert.equal(h.calls.onProposal[0].text,
+    'Homeroom bot is fixing the failing check "Cooking mode text-size control offers all steps". It will say here when it\'s done.');
+  // Run four (13 Oct): what was fixed, by the failing check's own name.
+  assert.equal(h.calls.onProposal[1].text,
     'Homeroom bot fixed the check that was failing: "Cooking mode text-size control offers all steps". Its checks run again on the new version.');
   assert.equal(h.look.out.queue, 'consume', 'the look\'s end uses up its request\'s debt');
   assert.deepEqual(h.look.out.fix, { outcome: 'looked' }, 'and the change machine hears the round looked at the head');
@@ -412,7 +436,7 @@ test('out of revisions: no turn, and one note hands it to a person', async (t) =
   assert.equal(post.proposalSessionId, 5001, 'on the proposal too');
   assert.match(post.text, /can't get this change past its checks on its own: 1 check is still failing/);
   // Why, as a whole sentence (followup.whySentence).
-  assert.match(post.text, /Homeroom bot has already updated it 3 times, as many as it may on its own\. A person/);
+  assert.match(post.text, /Homeroom bot has already updated it 3 times, as many as it may on its own\. The person who asked for it, or any member of this project, can take it from here\./);
   assert.match(post.dm.reason, /its checks are failing/, 'the requester hears it in the DM');
   assert.equal(insertOf(h).params[21], HEAD, 'and it is not said again for the same head');
 });
@@ -437,10 +461,11 @@ test('red checks the change did not cause go to admins as an incident; the chang
   assert.equal(out.acted, 'checks_not_change');
   assert.equal(h.calls.reconciled.length, 0);
   assert.equal(h.calls.posts.length, 0, 'nothing on the request, on GitHub or in the DM');
-  assert.equal(h.calls.onProposal.length, 1);
-  assert.equal(h.calls.onProposal[0].kind, 'checks_not_change');
-  assert.equal(h.calls.onProposal[0].text, followup.checksNotChangeText({ failingCount: 1 }));
-  assert.match(h.calls.onProposal[0].text, /^The failing check on this change isn't caused by it: it fails without it too\./);
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing', 'checks_not_change'],
+    'the start line, then what the turn found');
+  const notChange = h.calls.onProposal[1];
+  assert.equal(notChange.text, followup.checksNotChangeText({ failingCount: 1 }));
+  assert.match(notChange.text, /^The failing check on this change isn't caused by it: it fails without it too\./);
   // An incident is an event admins read (platform-incidents.js record).
   const incident = h.calls.queries.find((q) => /INSERT INTO events/.test(q.s) && /checks_not_change/.test(JSON.stringify(q.params)));
   assert.ok(incident, 'recorded for admins');
@@ -463,9 +488,10 @@ test('a red check the change did not cause, on a change behind main: synced with
   assert.deepEqual(h.calls.sync, [{ sessionId: 5001, head: HEAD }], 'the failing head it looked at');
   assert.equal(h.calls.posts.length, 0, 'nothing on the request, on GitHub or in the DM');
   assert.ok(!h.calls.queries.some((q) => /INSERT INTO events/.test(q.s)), 'no incident: main may have fixed it');
-  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_synced'], 'one line where the group votes');
-  assert.equal(h.calls.onProposal[0].text, followup.checksSyncedText({ failingCount: 1 }));
-  assert.equal(h.calls.onProposal[0].text,
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing', 'checks_synced'],
+    'the start line, then one line where the group votes');
+  assert.equal(h.calls.onProposal[1].text, followup.checksSyncedText({ failingCount: 1 }));
+  assert.equal(h.calls.onProposal[1].text,
     'I\'ve brought this change up to date with main. Its failing check may already be fixed there, so its checks run again on the new version, and the votes it has keep counting.');
   const insert = insertOf(h);
   assert.equal(insert.params[4], 'person');
@@ -611,7 +637,7 @@ test('a GLM fix whose agent failed is no revision, whatever it pushed, and hands
   const out = await run(t, h);
   assert.equal(out.verdict, 'failed');
   assert.equal(h.calls.reconciled.length, 0, 'the proposal stays as it was voted on');
-  assert.equal(h.calls.onProposal.length, 0, 'no "fixed the failing checks" note');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing'], 'the start line, and no "fixed the failing checks" note');
   assert.match(insertOf(h).params[18], /^checks: its attempt to fix them failed \(the agent exited with code 1\)/);
   assert.equal(h.calls.exec[0].opts.discardFailedTurn, true);
 });
@@ -769,7 +795,7 @@ test('a change its shots show failing: one build turn fixes it, said as what did
   assert.match(commitMsg, /fix what did not work on request 50$/);
   assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again');
   assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
-  assert.equal(h.calls.onProposal[0].text,
+  assert.equal(h.calls.onProposal[1].text,
     'Homeroom bot fixed what didn\'t work when Homeroom tried it: "Tapping "mark as done" ticks a chore off". Homeroom tries it again on the new version.');
 });
 

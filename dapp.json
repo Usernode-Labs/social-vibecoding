@@ -3896,6 +3896,12 @@
       "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > [data-check-unit]:has(.dev-ledger-unit-said) > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
     },
     {
+      "name": "#6234: a change Homeroom bot built says it is fixing the failed check, and its Re-run checks waits",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000093",
+      "expectSelector": "[data-change-gate=\"testing\"][data-change-bot-fix=\"fixing\"]:has(.dev-change-gate-act > .gc-vote-btn[disabled]) .dev-change-gate-figure",
+      "expectText": "Fixing"
+    },
+    {
       "name": "A change whose checks failed tells its author what went wrong in plain words, with Fix it beside a quieter Re-run checks",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000494",
       "expectSelector": "[data-change-gate=\"testing\"][data-tone=\"bad\"]:has(.dev-change-gate-fix > .gc-vote-btn-accent[data-change-fix-checks] + .gc-vote-btn:not(.gc-vote-btn-accent)[data-act=\"castRecheck\"]) > .dev-change-gate-why[data-change-gate-why=\"explained\"]",

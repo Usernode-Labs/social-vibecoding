@@ -303,7 +303,7 @@ test('a fix on its way: no incident, no admins, one ladder step, and the head is
   assert.deepEqual(h.calls.flaky[1].onNotChange, { sessionId: 5001, head: HEAD, syncWhy: 'already_tried', failing: 1 });
   assert.ok(!h.calls.queries.some((q) => /INSERT INTO events/.test(q.s) && /checks_not_change/.test(JSON.stringify(q.params))),
     'not handed to admins');
-  assert.deepEqual(h.calls.onProposal, [], 'the ladder says its own line');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing'], 'the ladder says its own line');
   assert.equal(h.calls.posts.length, 0);
   assert.ok(h.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'the run that looked is recorded');
 });
@@ -313,14 +313,16 @@ test('the ladder ran out: handed over as before, with what was tried', async (t)
   const out = await run(t, h);
   assert.equal(out.acted, 'checks_not_change');
   assert.ok(h.calls.queries.some((q) => /INSERT INTO events/.test(q.s) && /checks_not_change/.test(JSON.stringify(q.params))), 'admins hear it');
-  assert.deepEqual(h.calls.onProposal.map((p) => [p.kind, p.text]), [['checks_not_change', 'The failing check on this change isn\'t caused by it. I tried things.']]);
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing', 'checks_not_change']);
+  assert.match(h.calls.onProposal[0].text, /^Homeroom bot is fixing the failing check "/);
+  assert.equal(h.calls.onProposal[1].text, 'The failing check on this change isn\'t caused by it. I tried things.');
 });
 
 test('not the ladder\'s (null): exactly as before', async (t) => {
   const h = harness({ ladder: null });
   const out = await run(t, h);
   assert.equal(out.acted, 'checks_not_change');
-  assert.equal(h.calls.onProposal[0].text, followup.checksNotChangeText({ failingCount: 1 }));
+  assert.equal(h.calls.onProposal.at(-1).text, followup.checksNotChangeText({ failingCount: 1 }));
 });
 
 test('the same check failing again after its sync needs no paid turn: it goes straight on', async (t) => {

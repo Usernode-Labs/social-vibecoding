@@ -7886,6 +7886,23 @@ const AppView = {
     };
   },
 
+  // #6234: the sentences the Testing card says while Homeroom bot is fixing
+  // the checks of a change it built. The re-run's own sentence is added by
+  // the caller when it offers that button. `since` is the bot queue row's
+  // start time, so the card counts the minutes the fix has been running.
+  _botFixNote(botFix, state) {
+    if (state === 'queued') return [PlatformI18n.t('changes:page.testing.note.botQueued')];
+    if (state === 'handed_off') return [PlatformI18n.t('changes:page.testing.note.botHandedOff')];
+    const since = botFix && botFix.since ? new Date(botFix.since).getTime() : NaN;
+    const minutes = Number.isFinite(since) ? Math.max(0, Math.round((Date.now() - since) / 60000)) : 0;
+    const lines = [minutes > 0
+      ? PlatformI18n.t('changes:page.testing.note.botFixing', { count: minutes })
+      : PlatformI18n.t('changes:page.testing.note.botFixingNow')];
+    // The only reason the bot has: this fix is a second try after a timeout.
+    if (botFix && botFix.reason === 'retry') lines.push(PlatformI18n.t('changes:page.testing.note.botRetry'));
+    return lines;
+  },
+
   // #4452 — the Testing card: the preview build and both kinds of checks
   // (the declared checks and the unit suite) as ONE bar, split by how long
   // each part usually takes on this project (`checks_estimate`, the median
@@ -7955,16 +7972,34 @@ const AppView = {
       // again does not fix a test that fails every time.
       const v = AppView._checksVerdictView(item);
       const fix = AppView._fixChecksView(item);
-      const rerun = recheck();
+      // #6234: on a change Homeroom bot built, its own fix says so instead of
+      // "its author needs to fix this", and the re-run waits: pressing it
+      // would restart the bot's fix.
+      const botFix = item.bot_fix && typeof item.bot_fix === 'object'
+        && ['fixing', 'queued', 'handed_off'].includes(item.bot_fix.state) ? item.bot_fix.state : null;
+      const botNote = botFix ? AppView._botFixNote(item.bot_fix, botFix) : null;
+      let rerun = recheck();
+      if (rerun && botFix === 'fixing') {
+        rerun = {
+          key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: PlatformI18n.t('changes:recheck.label'),
+          disabled: true, title: PlatformI18n.t('changes:recheck.botFixing'),
+        };
+        botNote.push(PlatformI18n.t('changes:page.testing.note.botRerun'));
+      }
       if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
       const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
+      const botFixing = botFix === 'fixing';
       return {
-        name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
-        label: PlatformI18n.t('changes:page.testing.label.failing'),
+        name: PlatformI18n.t('changes:page.testing.name.testing'),
+        figure: PlatformI18n.t(botFixing ? 'changes:page.testing.figure.botFixing' : 'changes:page.testing.figure.failing'),
+        tone: botFixing ? 'muted' : 'bad', done: false,
+        segments: botFixing ? [{ weight: 1, pct: 100, state: 'moving' }] : full('bad'),
+        label: PlatformI18n.t(botFixing ? 'changes:page.testing.label.botFixing' : 'changes:page.testing.label.failing'),
         note: [AppView._failedLead(v)], actions, details: true,
         explain: AppView._checksExplainView(item, v),
         fix,
-        authorNote: mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes'),
+        ...(botFix ? { botFix } : {}),
+        authorNote: botNote ? botNote.join(' ') : (mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes')),
       };
     }
     if (cs && cs !== 'pending') {

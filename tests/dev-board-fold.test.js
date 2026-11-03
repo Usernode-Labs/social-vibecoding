@@ -1719,7 +1719,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 751 → 752: +1 an app build that produces blocks only while open says so
   // in Settings. It is a new demo route, so nothing to fold it into. 752
   // leaves 128 slots.
-  checkCap.assertPinned(DAPP.tests.length, 752);
+  // 752 → 753: +1 (#6234) a change Homeroom bot built says on its Testing
+  // card that it is fixing the failed check, with Re-run checks disabled.
+  // A separate route state, so nothing to fold it into. 753 leaves 127
+  // slots.
+  checkCap.assertPinned(DAPP.tests.length, 753);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

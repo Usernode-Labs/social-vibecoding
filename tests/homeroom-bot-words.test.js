@@ -71,6 +71,11 @@ function notes() {
     followup.checksRetryText({ skipped: true, failing: false }),
     followup.checksRevisedText({ skipped: [{ claim: 'The list shows ten items' }] }),
     followup.checksRevisedText({ skipped: [{}, {}] }),
+    // #6234: the fix round's start note.
+    followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }] }),
+    followup.checksFixingText({ failing: [{ name: 'a' }, { name: 'b' }] }),
+    followup.checksFixingText({ broken: [{ claim: 'Save works' }] }),
+    followup.checksFixingText({ skipped: [{ claim: 'The list shows ten items' }] }),
     followup.replyFailedText({ why: 'it ran out of time' }),
     followup.replyFailedText({ why: 'something went wrong while it worked on it', retrying: true }),
     followup.checksNotChangeText({ failingCount: 1 }),
@@ -120,5 +125,18 @@ test('a follow-up\'s answer loses its header: the bubble already says who is tal
     firstPerson(followup.revisedText({ summary: 'Moved the bar into the header.' })),
     // One note per update: the cleared votes are the platform's line to say.
     'I updated this change: Moved the bar into the header.',
+  );
+});
+
+// #6234: the fix round says it is fixing the failing check in the bot's
+// own voice, in Homeroom, before its end note replaces that.
+test('the fix round\'s start note reads in the first person', () => {
+  assert.equal(
+    firstPerson(followup.checksFixingText({ failing: [{ name: 'discussion lists skip blocked authors' }] })),
+    'I\'m fixing the failing check "discussion lists skip blocked authors". I\'ll say here when it\'s done.',
+  );
+  assert.equal(
+    firstPerson(followup.checksFixingText({ skipped: [{ claim: 'The list shows ten items' }] })),
+    'I\'m adding the sample data this change\'s before and after screens need. I\'ll say here when it\'s done.',
   );
 });

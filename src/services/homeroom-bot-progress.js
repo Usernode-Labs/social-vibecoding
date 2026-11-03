@@ -581,6 +581,63 @@ function stageOf(input, { now = new Date() } = {}) {
 }
 
 /**
+ * #6234: what Homeroom bot is doing about a change it built whose checks
+ * failed, for the change's own Testing card and thread. Null unless the
+ * session was built by the bot, is up for a vote, and its checks are
+ * failing. Read from the records that drive the bot page's own "Fixing"
+ * stage (stageOf): a started `checks_failing` queue row is the fix running,
+ * one not started is the fix waiting for a free builder, and no row with a
+ * hand-off run at this head means a person was asked. A read that fails
+ * says nothing, as today's card did.
+ */
+async function changeBotFix(pool, sessionId) {
+  try {
+    const { BOT_USERNAME, checksRetried } = require('./homeroom-bot');
+    const { rows } = await pool.query(
+      `SELECT cs.app_id, cs.linked_issues, cs.reviewed_head_sha
+         FROM chat_sessions cs
+         JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1 AND cs.status = 'promoted'
+          AND cs.check_state = 'failing'
+          AND u.username = $2 AND u.is_synthetic = TRUE`,
+      [Number(sessionId), BOT_USERNAME],
+    );
+    const session = rows[0];
+    if (!session) return null;
+    const head = session.reviewed_head_sha ? String(session.reviewed_head_sha).toLowerCase() : null;
+    const { rows: queue } = await pool.query(
+      `SELECT started_at, enqueued_at FROM homeroom_bot_queue
+        WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND reason = 'checks_failing'
+        ORDER BY (started_at IS NOT NULL) DESC, enqueued_at DESC
+        LIMIT 1`,
+      [session.app_id, session.linked_issues || []],
+    );
+    const row = queue[0];
+    if (row) {
+      if (row.started_at) {
+        // A second try after running out of time says so.
+        const retried = head ? await checksRetried(pool, sessionId, head) : false;
+        return { state: 'fixing', since: row.started_at, reason: retried ? 'retry' : null };
+      }
+      return { state: 'queued', since: row.enqueued_at };
+    }
+    if (head) {
+      const { rows: handed } = await pool.query(
+        `SELECT 1 FROM homeroom_bot_runs
+          WHERE proposal_session_id = $1 AND checks_head_sha = $2
+            AND verdict IN ('person', 'failed')
+          LIMIT 1`,
+        [Number(sessionId), head],
+      );
+      if (handed.length) return { state: 'handed_off' };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Pure (14 Oct 2026, newcomer run eight): whether a first version's build
  * stopped, from its request row (requestRows) while nothing about it is in
  * progress (stageOf answered null): its newest look went ahead to build it
@@ -1462,6 +1519,7 @@ module.exports = {
   START_GRACE_MS,
   inFlight,
   stageOf,
+  changeBotFix,
   checksOnHead,
   firstVersionStage,
   firstVersionStopped,

@@ -391,3 +391,53 @@ test('#6219: a plan waiting for Build it wins over a question left open from bef
   const { BOT_STANDING } = require('../src/services/ai-work');
   assert.deepEqual(BOT_STANDING.plan, { group: 'needs', what: 'plan' });
 });
+
+// #6234: the change's Testing card reads what Homeroom bot is doing about
+// the failing checks of a change it built, from the same records the bot
+// page's "Fixing" stage does (stageOf). A started queue row is the fix
+// running, one not started is the fix waiting for a builder, and a
+// hand-off run at this head means it gave up.
+function botFixPool({ session = null, queue = [], handed = [], retried = false, fail = false } = {}) {
+  return {
+    async query(sql, params) {
+      if (fail) throw new Error('database is down');
+      const s = String(sql);
+      if (/FROM chat_sessions cs/.test(s) && /u\.username = \$2/.test(s)) return { rows: session ? [session] : [] };
+      if (/FROM homeroom_bot_queue/.test(s)) return { rows: queue };
+      if (/FROM homeroom_bot_runs/.test(s) && /error = \$2/.test(s)) return { rows: retried ? [{}] : [] };
+      if (/FROM homeroom_bot_runs/.test(s) && /checks_head_sha = \$2/.test(s)) return { rows: handed };
+      return { rows: [] };
+    },
+  };
+}
+
+const BOT_SESSION = { app_id: 9, linked_issues: [50], reviewed_head_sha: 'a'.repeat(40) };
+
+test('#6234: changeBotFix says fixing, queued or handed off, and nothing for a person\'s change', async () => {
+  const at = ago(10);
+  assert.deepEqual(
+    await progress.changeBotFix(botFixPool({ session: BOT_SESSION, queue: [{ started_at: at, enqueued_at: ago(12) }] }), 5001),
+    { state: 'fixing', since: at, reason: null });
+  assert.deepEqual(
+    await progress.changeBotFix(botFixPool({ session: BOT_SESSION, queue: [{ started_at: at, enqueued_at: ago(12) }], retried: true }), 5001),
+    { state: 'fixing', since: at, reason: 'retry' }, 'a second try after running out of time says so');
+  assert.deepEqual(
+    await progress.changeBotFix(botFixPool({ session: BOT_SESSION, queue: [{ started_at: null, enqueued_at: at }] }), 5001),
+    { state: 'queued', since: at }, 'waiting for a free builder');
+  assert.deepEqual(
+    await progress.changeBotFix(botFixPool({ session: BOT_SESSION, handed: [{}] }), 5001),
+    { state: 'handed_off' });
+  assert.equal(await progress.changeBotFix(botFixPool({ session: BOT_SESSION }), 5001), null, 'nothing under way');
+  assert.equal(await progress.changeBotFix(botFixPool({ session: null }), 5001), null,
+    'a change a person built (or one not failing, not up for a vote) says nothing');
+  assert.equal(await progress.changeBotFix(botFixPool({ fail: true }), 5001), null, 'a read that fails is today\'s card');
+});
+
+// The bot page and the request's track card already draw this work as
+// "Fixing" (#6234): no new stage or label.
+test('#6234: the bot page and its track card reuse the fixing stage', () => {
+  const { BOT_STANDING } = require('../src/services/ai-work');
+  assert.deepEqual(BOT_STANDING.fixing, { group: 'next', what: 'fixing' });
+  assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/homeroom-bot-track.js'), 'utf8'),
+    /case 'fixing': return \{ state: 'building', step: 'build', why: 'fixing'/);
+});

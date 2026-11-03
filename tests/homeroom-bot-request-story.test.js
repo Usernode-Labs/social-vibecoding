@@ -327,11 +327,11 @@ test('decide: who can say Go ahead is named in Homeroom, and nobody on GitHub', 
 test('the checks hand-off says why in whole sentences, in the first person', () => {
   const said = (why, failingCount = 2) => firstPerson(followup.checksPersonText({ why, failingCount }));
   assert.match(said('it has already updated this change 3 times, as many as it may on its own'),
-    / I've already updated it 3 times, as many as I may on my own\. A person/);
-  assert.match(said('its attempt to fix them ran out of time'), / My attempt to fix them ran out of time\. A person/);
-  assert.match(said('its attempt to fix them failed (exit 2)'), / My attempt to fix them failed \(exit 2\)\. A person/);
-  assert.match(said('its attempt to fix them changed nothing'), / My attempt to fix them changed nothing\. A person/);
-  assert.match(said('the seed data is missing'), / The seed data is missing\. A person/);
+    / I've already updated it 3 times, as many as I may on my own\. The person who asked for it, or any member of this project, can take it from here\./);
+  assert.match(said('its attempt to fix them ran out of time'), / My attempt to fix them ran out of time\. The person who asked for it, or any member of this project, can take it from here\./);
+  assert.match(said('its attempt to fix them failed (exit 2)'), / My attempt to fix them failed \(exit 2\)\. The person who asked for it, or any member of this project, can take it from here\./);
+  assert.match(said('its attempt to fix them changed nothing'), / My attempt to fix them changed nothing\. The person who asked for it, or any member of this project, can take it from here\./);
+  assert.match(said('the seed data is missing'), / The seed data is missing\. The person who asked for it, or any member of this project, can take it from here\./);
   assert.equal(firstPerson(followup.checksNotChangeText({ failingCount: 1 })),
     'The failing check on this change isn\'t caused by it: it fails without it too. I\'ve flagged it to Homeroom\'s admins, who look after the checks.');
   assert.match(followup.checksNotChangeText({ failingCount: 3 }), /^The failing checks on this change aren't caused by it: they fail without it too\./);

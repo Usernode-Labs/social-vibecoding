@@ -786,6 +786,39 @@ function checksRevisedText({ failing = [], broken = [], skipped = [] } = {}) {
   return `Homeroom bot fixed ${checks.length ? fixedChecks : 'the checks that were failing'}. Its checks run again on the new version.`;
 }
 
+/**
+ * #6234: the line the fix round posts when it starts, so a change whose
+ * checks failed says somebody is on it before its end note says how it went.
+ * One failing check with a name is named; several say how many; a round
+ * only fixing what Homeroom tried says that; one adding sample data says
+ * that. `plainName` keeps a check named by its file or an identifier out of
+ * it, as the fix round's own end note does.
+ */
+function checksFixingText({ failing = [], broken = [], skipped = [] } = {}) {
+  const list = (v) => (Array.isArray(v) ? v : (v ? [{}] : []));
+  const checks = list(failing);
+  const tried = list(broken);
+  const seeded = list(skipped);
+  const tail = 'It will say here when it\'s done.';
+  if (checks.length) {
+    const named = checks.length === 1 ? plainName(checks[0] && checks[0].name) : null;
+    const what = checks.length === 1
+      ? (named ? `the failing check "${named}"` : 'the failing check on this change')
+      : `the ${checks.length} failing checks on this change`;
+    return `Homeroom bot is fixing ${what}. ${tail}`;
+  }
+  if (tried.length) {
+    const what = tried.length === 1
+      ? 'what didn\'t work when Homeroom tried it'
+      : `the ${tried.length} things that didn't work when Homeroom tried them`;
+    return `Homeroom bot is fixing ${what}. ${tail}`;
+  }
+  if (seeded.length) {
+    return `Homeroom bot is adding the sample data this change's before and after screens need. ${tail}`;
+  }
+  return `Homeroom bot is fixing the failing checks on this change. ${tail}`;
+}
+
 // #4572: a fix that ran out of time is tried once more before a person is
 // asked (homeroom-bot.js runChecksFix), and it says so.
 function checksRetryText({ broken = false, failing = true, skipped = false } = {}) {
@@ -850,12 +883,12 @@ function checksPersonText({ why, failingCount = 0, broken = [] }) {
       ? `"${clipText(tried[0].claim, 200)}" didn't work when Homeroom tried it`
       : `${tried.length} things it says it does didn't work when Homeroom tried them`;
     return `Homeroom bot can't get this change working on its own: ${what}. `
-      + `${said ? `${said} ` : ''}A person needs to look at it from here.`;
+      + `${said ? `${said} ` : ''}The person who asked for it, or any member of this project, can take it from here.`;
   }
   const checks = failingCount === 1 ? '1 check is' : `${failingCount || 'Some'} checks are`;
   const also = tried.length ? `, and ${tried.length === 1 ? 'one thing it says it does' : `${tried.length} things it says it does`} didn't work when Homeroom tried it` : '';
   return `Homeroom bot can't get this change past its checks on its own: ${checks} still failing${also}. `
-    + `${said ? `${said} ` : ''}A person needs to look at the failing checks from here.`;
+    + `${said ? `${said} ` : ''}The person who asked for it, or any member of this project, can take it from here.`;
 }
 
 // ── The turn ─────────────────────────────────────────────────────────────
@@ -1076,6 +1109,7 @@ module.exports = {
   checksLookLikeInfra,
   checksFixPrompt,
   checksRevisedText,
+  checksFixingText,
   checksPersonText,
   whySentence,
   checksNotChangeText,
