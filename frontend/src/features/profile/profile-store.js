@@ -651,7 +651,13 @@ function voteTitle(item) {
 
 /** Whether the thing voted on is still being decided. */
 function voteOpen(item) {
-  if (item.type === 'pr_vote') return item.status === 'promoted' || item.status === 'merging';
+  if (item.type === 'pr_vote') {
+    // #6101: a merge (or close) already written is decided, whatever status
+    // the row still carries: a list read before it merged must not keep it
+    // under Still open.
+    if (item.merged_at || item.closed_at) return false;
+    return item.status === 'promoted' || item.status === 'merging';
+  }
   return item.status === 'open';
 }
 
@@ -661,6 +667,9 @@ function voteOutcome(item) {
     if (item.status === 'merged') return t('profile:votes.outcome.live');
     // Merged, its deploy still to come (api/me/history).
     if (item.status === 'going_live') return t('profile:votes.outcome.goingLive');
+    // A row whose status has not caught up with its merged_at: the merge
+    // happened, the deploy is still to come.
+    if (item.merged_at) return t('profile:votes.outcome.goingLive');
     return t('profile:votes.outcome.closed');
   }
   return t('profile:votes.outcome.decided');

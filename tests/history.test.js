@@ -84,7 +84,7 @@ function makeHistoryPool(seed = {}) {
       const uname = (id) =>
         id != null && state.users.has(id) ? state.users.get(id).username : null;
       const blank = {
-        vote: null, status: null, session_id: null, pr_number: null,
+        vote: null, status: null, merged_at: null, session_id: null, pr_number: null,
         pr_title: null, author_username: null, issue_number: null,
         issue_title: null, issue_kind: null, awarded_username: null,
         awarded_at: null,
@@ -127,7 +127,12 @@ function makeHistoryPool(seed = {}) {
           const a = app(cs.app_id);
           rows.push({
             ...blank, type: 'pr_vote', created_at: v.created_at,
-            vote: v.vote, status: cs.status, session_id: cs.id,
+            vote: v.vote, session_id: cs.id,
+            // #6101: merged_at decides, whatever status has caught up to.
+            status: cs.merged_at
+              ? (cs.live_at ? 'merged' : 'going_live')
+              : (cs.status === 'merged' && !cs.live_at ? 'going_live' : cs.status),
+            merged_at: cs.merged_at ?? null,
             pr_number: cs.pr_number ?? null, pr_title: cs.pr_title ?? null,
             author_username: uname(cs.user_id),
             app_slug: a.slug, app_name: a.name,
@@ -351,6 +356,25 @@ test('vote-flip: one row with the new vote and the updated timestamp', async () 
     assert.equal(prVotes.length, 1, 'only the current standing vote survives a flip');
     assert.equal(prVotes[0].vote, 'no');
     assert.equal(prVotes[0].created_at, t(5));
+  } finally {
+    await close();
+  }
+});
+
+test('#6101: a merged change whose status has not caught up still reads as decided', async () => {
+  const pool = seedPool();
+  // The vote was read while the change was still up for a vote; the merge
+  // landed since. `merged_at` is the authority for the client.
+  const cs = pool.state.sessions.get(11);
+  cs.status = 'promoted';
+  cs.merged_at = t(6);
+  cs.live_at = null;
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    const data = await (await fetch(`${baseUrl}/api/me/history?type=votes`)).json();
+    const prVote = data.items.find((i) => i.type === 'pr_vote');
+    assert.equal(prVote.status, 'going_live', 'merged, its deploy still to come');
+    assert.equal(prVote.merged_at, t(6), 'the merge time reaches the screen');
   } finally {
     await close();
   }

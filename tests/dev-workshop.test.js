@@ -1138,11 +1138,22 @@ test('#4818: weekDate formats in the interface language, never a fixed en-US', (
     Date.prototype.toLocaleDateString = original;
   }
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].locales, 'en', 'the interface language (getLanguage) is the locale, not the device default');
+  // #6103: the locale is the date rule — the interface language with the
+  // device's region. node's own navigator supplies one where it has it.
+  const { dateLocale } = loadTsx('frontend/src/lib/i18n/locale.ts');
+  const device = typeof navigator === 'undefined' ? []
+    : (navigator.languages?.length ? navigator.languages : [navigator.language].filter(Boolean));
+  assert.equal(seen[0].locales, dateLocale('en', device),
+    'the date locale (getDateLocale), not the bare device default');
   assert.equal(seen[0].options.timeZone, 'UTC', 'a week is still named by its UTC days');
-  assert.equal(original.call(new Date(ms), 'fr', { month: 'short', day: 'numeric', timeZone: 'UTC' }), '25 août',
-    'so a French interface reads "25 août"');
-  assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'), /toLocaleDateString\(getLanguage\(\), \{/);
+  const options = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+  assert.equal(original.call(new Date(ms), 'en-GB', options), '25 Aug',
+    'an English interface on a UK device reads the day first');
+  assert.equal(original.call(new Date(ms), 'en', options), 'Aug 25',
+    'with no device region the English default keeps the month first');
+  assert.equal(original.call(new Date(ms), 'fr', options), '25 août',
+    'and a French interface reads "25 août"');
+  assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'), /toLocaleDateString\(getDateLocale\(\), \{/);
 });
 
 // ── #4717: the page fetches its week, and says so while it does ───────

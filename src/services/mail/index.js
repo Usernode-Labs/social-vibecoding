@@ -30,6 +30,8 @@ const rateLimit = require('./rate-limit');
 const select = require('./select');
 const events = require('./events');
 const tracking = require('./tracking');
+const language = require('./language');
+const { ENGLISH_ONLY_KINDS } = require('./templates');
 
 // How long a delivery record is kept. Long enough to answer "did that
 // user ever get their code last week", short enough that the table is not
@@ -191,8 +193,12 @@ async function pruneDeliveries(pool) {
 
 // ─── the send door ──────────────────────────────────────────────────────
 
-// send(config, { kind, to, ...payload }) → always resolves undefined.
-async function send(config, { kind, to, ...payload } = {}) {
+// send(config, { kind, to, locale, ...payload }) → always resolves undefined.
+// `locale` is the language to word it in, when the caller knows one: the
+// recipient's users.locale, or what a sender with no account behind the
+// address knows (./language.js requestLanguage). No language, English, or
+// anything going wrong is English, with nothing read.
+async function send(config, { kind, to, locale, ...payload } = {}) {
   try {
     if (!to || !kind) {
       log.error('platform-mail', 'Refusing a mail with no recipient or kind', { kind });
@@ -257,7 +263,11 @@ async function send(config, { kind, to, ...payload } = {}) {
 
     // Store destinations before exposing a tracked link to any provider.
     // If persistence fails, deliver ordinary links with no pixel instead.
-    const rendered = buildMessage(kind, { ...payload, messageId, trackingEnabled: !!pool && !!tracking.secret() });
+    // Asked for last, so a mail that is not going out reads nothing. A
+    // transport renders from what it is handed, so the same words reach it.
+    const translate = ENGLISH_ONLY_KINDS.has(kind) ? null : await language.translatorFor(pool, locale);
+    const worded = translate ? { ...payload, translate } : payload;
+    const rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: !!pool && !!tracking.secret() });
     const deliveryId = rendered.trackingLinks
       ? await record(pool, { kind, to, messageId, provider, status: 'sending', trackingLinks: rendered.trackingLinks, engagementTracked: true })
       : null;
@@ -271,7 +281,7 @@ async function send(config, { kind, to, ...payload } = {}) {
       } catch (err) { log.error('platform-mail', 'Could not finalize mail delivery', { message: err.message }); }
     };
     try {
-      const detail = await transport.send({ to, kind, ...payload, messageId, trackingEnabled: !!deliveryId });
+      const detail = await transport.send({ to, kind, ...worded, messageId, trackingEnabled: !!deliveryId });
       await finish(stagingLogOnly(config) ? 'skipped_staging' : 'sent', null, detail?.providerMessageId);
     } catch (err) {
       await finish('failed', err.message);
@@ -439,8 +449,8 @@ async function sendTest(config, { to } = {}) {
 
 // ─── the named senders (the caller-facing API) ──────────────────────────
 
-async function sendOtpMail(config, email, code) {
-  await send(config, { kind: 'otp', to: email, code });
+async function sendOtpMail(config, email, code, { locale = null } = {}) {
+  await send(config, { kind: 'otp', to: email, code, ...(locale ? { locale } : {}) });
 }
 
 // `moreToken` (two-stage waitlist survey) turns into two links: the
@@ -448,10 +458,11 @@ async function sendOtpMail(config, email, code) {
 // survey, and the bare survey link, which stays the durable "Want in
 // sooner?" home for anyone who stopped at the join. An idempotent re-join
 // mints no token and so carries neither.
-async function sendWaitlistJoinMail(config, email, { moreToken = null, code = null } = {}) {
+async function sendWaitlistJoinMail(config, email, { moreToken = null, code = null, locale = null } = {}) {
   await send(config, {
     kind: 'waitlist_joined',
     to: email,
+    ...(locale ? { locale } : {}),
     code,
     url: moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null,
     confirmUrl: moreToken
@@ -479,11 +490,12 @@ async function sendWaitlistJoinMail(config, email, { moreToken = null, code = nu
 async function sendWaitlistCodeMail(
   config,
   email,
-  { code = null, moreToken = null, confirmed = false } = {}
+  { code = null, moreToken = null, confirmed = false, locale = null } = {}
 ) {
   await send(config, {
     kind: 'waitlist_code',
     to: email,
+    ...(locale ? { locale } : {}),
     code,
     confirmed,
     confirmUrl: code && moreToken && !confirmed
@@ -498,10 +510,11 @@ async function sendWaitlistCodeMail(
 // The plaintext reset token exists only here (in the link) and in the
 // requester's response path — the DB holds its sha256. The caller mints and
 // hashes; this just carries it.
-async function sendPasswordResetMail(config, email, token) {
+async function sendPasswordResetMail(config, email, token, { locale = null } = {}) {
   await send(config, {
     kind: 'password_reset',
     to: email,
+    ...(locale ? { locale } : {}),
     // Segment style (like #more/<token>): AuthScreens.routeFromHash splits
     // hash routes on '/', so a ?token= query would never parse.
     url: `${PRODUCTION_ORIGIN}/#reset-password/${token}`,
@@ -525,11 +538,12 @@ async function sendPasswordResetMail(config, email, token) {
  * link pointed. The fragment spelling still works for anything that already
  * has one.
  */
-async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, signInToken = null, mobile = null } = {}) {
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, signInToken = null, mobile = null, locale = null } = {}) {
   const { CREDENTIAL_PARAM } = require('./tracking');
   await send(config, {
     kind: 'waitlist_released',
     to: email,
+    ...(locale ? { locale } : {}),
     // #1548: carry a TOKEN so the signup screen can prefill the address and
     // send the code without a second step.
     //
@@ -576,9 +590,9 @@ async function sendWaitlistReleaseMail(config, email, { hasAccount = false, more
  * (services/email-invites.js). The link is the waitlist: the invited person
  * joins it like anyone else, and the invite waits on their account.
  */
-async function sendProjectInviteMail(config, email, { inviter = null, project = null } = {}) {
+async function sendProjectInviteMail(config, email, { inviter = null, project = null, locale = null } = {}) {
   const { waitlistUrl } = require('../marketing-links');
-  await send(config, { kind: 'project_invite', to: email, inviter, project, url: waitlistUrl(config) });
+  await send(config, { kind: 'project_invite', to: email, ...(locale ? { locale } : {}), inviter, project, url: waitlistUrl(config) });
 }
 
 module.exports = {

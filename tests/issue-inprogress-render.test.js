@@ -27,7 +27,7 @@ const {
   cardHtml, hasAction, issueCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml,
 } = require('./lib/dev-card-html');
 const { api } = require('./lib/dev-card-html');
-const { renderToHtml, createElement } = require('./lib/render-tsx');
+const { renderToHtml, createElement, loadTsx } = require('./lib/render-tsx');
 
 // ── Rendering one chip ──────────────────────────────────────────────────
 //
@@ -457,8 +457,17 @@ test('the topic head prints a plain dated work note; the feed card does not', ()
   assert.match(note[1], /maya started work on this and last worked on it 5 days ago/);
   assert.match(note[1], /clears itself on/);
   // The self-clear date is the paused window past the last activity, not today.
-  const clears = new Date(Date.now() + 2 * 86400000).toLocaleDateString();
+  // #6103: it is a short month word in the date locale, never digits only.
+  const clearAt = new Date(Date.now() + 2 * 86400000);
+  const { dateLocale } = loadTsx('frontend/src/lib/i18n/locale.ts');
+  const device = typeof navigator === 'undefined' ? []
+    : (navigator.languages?.length ? navigator.languages : [navigator.language].filter(Boolean));
+  const clears = clearAt.toLocaleDateString(dateLocale('en', device),
+    clearAt.getFullYear() === new Date().getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { year: 'numeric', month: 'short', day: 'numeric' });
   assert.ok(note[1].includes(clears), `note names ${clears}: ${note[1]}`);
+  assert.doesNotMatch(note[1], /\d{1,2}\/\d{1,2}\/\d{4}/, 'a date can never be misread as day-month or month-day');
   // Dense feed cards have no room; the chip's tooltip carries the same text.
   const feedModel = AppView._issueCardModel(issue);
   const feed = cardHtml(feedModel);

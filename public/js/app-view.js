@@ -6332,11 +6332,12 @@ const AppView = {
     } else if (ref && ref.state === 'review' && !upForVote && !(st && st.key === 'in_review')) note = PlatformI18n.t('changes:request.status.note.review');
     else if (ref && ref.state === 'underway') note = PlatformI18n.t('changes:request.status.note.underway');
 
-    // The claim's lapse, which the work-state sentence used to bury.
+    // The claim's lapse, which the work-state sentence used to bury. The
+    // date takes the shared locale (#6103): language from the interface,
+    // region from the device, month always spelled.
     let fine = null;
     if (st && st.clearAt && (st.key === 'claimed' || st.key === 'paused') && !closed) {
-      let date = '';
-      try { date = new Date(st.clearAt).toLocaleDateString([], { month: 'short', day: 'numeric' }); } catch { date = ''; }
+      const date = AppView._workDateText(st.clearAt);
       if (date) fine = PlatformI18n.t('changes:request.status.fine.lapses', { date });
     }
 
@@ -26895,9 +26896,20 @@ const AppView = {
     '||building': 'changes:chips.workNote.also.botBuilding',
   },
 
+  // One short spell of a day — "2 Nov", or "2 Nov 2025" outside this year —
+  // in the same locale as every stamp (#6103): language from the interface,
+  // order from the device's region. Never digits alone, because 04/11/2026
+  // reads as two different days on two phones.
   _workDateText(ms) {
     if (!Number.isFinite(ms) || !ms) return '';
-    try { return new Date(ms).toLocaleDateString(); } catch { return ''; }
+    try {
+      const d = new Date(ms);
+      const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+      const other = d.getFullYear() !== new Date().getFullYear();
+      return d.toLocaleDateString(locale, {
+        month: 'short', day: 'numeric', ...(other ? { year: 'numeric' } : {}),
+      });
+    } catch { return ''; }
   },
 
   // The sentence the topic head prints under the title, and the chip's
@@ -27604,6 +27616,38 @@ const AppView = {
         if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
+        // #6101: the change merged or left the vote after this page read it.
+        // The vote did not count, but there is nothing to put back: mark the
+        // rows settled and repaint, so no Yes or No is left offering a vote
+        // that can no longer be cast, then read the lists fresh.
+        if (data.code === 'not_up_for_vote') {
+          const reported = typeof data.status === 'string' ? data.status : '';
+          const status = reported && reported !== 'promoted' && reported !== 'merging'
+            ? reported : 'closed';
+          const settledRows = targets.map((t) => t.row);
+          if (pr) settledRows.push(pr);
+          if (live) settledRows.push(live);
+          settledRows.forEach((r) => { if (r) r.status = status; });
+          AppView._repaintAfterVote(sessionId);
+          const refresh = AppView.refreshDevData('vote');
+          // As on the ok path: a chat mounted outside the dev tab re-reads
+          // its snapshot too, where refreshDevData does nothing.
+          const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
+            && typeof GroupChat !== 'undefined' && GroupChat.appSlug
+            ? AppView.loadVoteState(GroupChat.appSlug) : null;
+          void Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).catch(() => {});
+          // The feed that drew this card hears it is over, so it can drop it
+          // instead of restoring the pin this press added.
+          const onSettled = opts && typeof opts.onSettled === 'function' ? opts.onSettled : null;
+          if (onSettled) {
+            try { onSettled(status); } catch { /* the caller's paint, never the vote's */ }
+          }
+          PlatformUI.toast(PlatformI18n.t(status === 'merged'
+            ? 'changes:vote.toast.alreadyMerged' : 'changes:vote.toast.noLongerUp'));
+          // Your votes moves it out of Still open (#6101).
+          window.UsernodeReact?.profileProposals?.voted?.();
+          return false;
+        }
         await AppView.refreshDevData('vote');
         // A public app's vote counts from a verified account: the sheet that
         // verifies, then the same vote again (features/auth/verify-identity.tsx).
@@ -27634,21 +27678,23 @@ const AppView = {
       // costs one refresh rather than one for the POST and one for the
       // event: the server broadcasts before it answers, so the two land
       // within the window of each other.
-      const refresh = typeof App !== 'undefined' && App._liveRefresh
-        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
-        : AppView.refreshDevData('vote');
       // #5458: refreshDevData returns before doing anything outside the dev
       // tab, so a chat mounted on Messages never re-read its snapshot and
       // the settled counts on its card stayed the optimistic ones until
-      // opening the proposal page rewrote the row. When a chat is mounted
-      // (GroupChat.appSlug) outside the board, re-read its snapshot here;
-      // the dev tab's own sub-views are covered by refreshDevData as before.
-      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
-        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
-        ? AppView.loadVoteState(GroupChat.appSlug) : null;
+      // opening the proposal page rewrote the row. #6109: the burst names
+      // the chat the vote came from (chatSlug), and its flush reads that
+      // chat's snapshot wherever it is mounted, so the vote costs one read
+      // and the settle waits for the burst alone.
+      const refresh = typeof App !== 'undefined' && App._liveRefresh
+        ? App._liveRefresh('vote', sessionId, {
+          appSlug: AppView.appData && AppView.appData.slug,
+          chatSlug: typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null,
+        })
+        : AppView.refreshDevData('vote');
       // The pending-vote overlay inside loadVoteState keeps the vote on a
-      // read that started before it landed, so the settle waits for both.
-      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
+      // read that started before it landed, so the settle waits for the
+      // burst, which holds that read.
+      Promise.resolve(refresh).then(settle, settle);
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
@@ -27846,13 +27892,15 @@ const AppView = {
       window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
+      // #6109: the burst reads the chat's snapshot for this vote wherever it
+      // is mounted (chatSlug), so the undo does not read it a second time.
       const refresh = typeof App !== 'undefined' && App._liveRefresh
-        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
+        ? App._liveRefresh('vote', sessionId, {
+          appSlug: AppView.appData && AppView.appData.slug,
+          chatSlug: typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null,
+        })
         : AppView.refreshDevData('vote');
-      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
-        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
-        ? AppView.loadVoteState(GroupChat.appSlug) : null;
-      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
+      Promise.resolve(refresh).then(settle, settle);
       window.Notifications?.refresh?.();
       window.UsernodeReact?.profileProposals?.voted?.();
       window.Leaderboard?.invalidateHistory?.();
@@ -31436,13 +31484,16 @@ function relStamp(iso, now) {
   const date = iso instanceof Date ? iso : new Date(iso ?? NaN);
   if (Number.isNaN(date.getTime())) return { text: '', title: '' };
   const ref = now || new Date();
-  const title = date.toLocaleString(undefined, {
+  // Interface language, device region (#6103), as GroupChat._stamp and
+  // lib/timestamp.ts read it; the device default where the runtime predates it.
+  const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+  const title = date.toLocaleString(locale, {
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
   const elapsed = ref.getTime() - date.getTime();
   if (elapsed >= REL_FLOOR_MS) {
     return {
-      text: date.toLocaleDateString(undefined, date.getFullYear() === ref.getFullYear()
+      text: date.toLocaleDateString(locale, date.getFullYear() === ref.getFullYear()
         ? { month: 'short', day: 'numeric' }
         : { year: 'numeric', month: 'short', day: 'numeric' }),
       title,

@@ -14,7 +14,6 @@ const packs = require('../../scripts/language-packs');
 const languageCache = require('./language-cache');
 
 const NAMESPACE = 'push';
-const PREFIX = `${NAMESPACE}:`;
 const ENGLISH_RULES = new Intl.PluralRules('en');
 const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
@@ -56,6 +55,9 @@ function fill(text, values) {
   ));
 }
 
+/** An id's key: what follows its namespace. */
+const keyOf = (id) => id.slice(id.indexOf(':') + 1);
+
 /** The text of a message in `messages`, in the form its count takes, or undefined. */
 function pick(messages, key, values, rules) {
   if (typeof values?.count === 'number') {
@@ -68,7 +70,7 @@ function pick(messages, key, values, rules) {
 /** What the code asks with: `t(id, values)` in English. '' for an id the catalog does not have. */
 function englishFrom(texts) {
   return (id, values) => {
-    const text = pick(texts, id.slice(PREFIX.length), values, ENGLISH_RULES);
+    const text = pick(texts, keyOf(id), values, ENGLISH_RULES);
     return text === undefined ? '' : fill(text, values);
   };
 }
@@ -82,9 +84,9 @@ function translatorFrom(language, messages, texts) {
   const rules = new Intl.PluralRules(language);
   const inEnglish = englishFrom(texts);
   return (id, values) => {
-    const text = pick(messages, id.slice(PREFIX.length), values, rules);
+    const text = pick(messages, keyOf(id), values, rules);
     return text === undefined ? inEnglish(id, values) : fill(text, values);
   };
 }
 
-module.exports = { NAMESPACE, english, englishTexts, translatorFrom };
+module.exports = { NAMESPACE, english, englishFrom, englishTexts, translatorFrom };

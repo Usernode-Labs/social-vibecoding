@@ -712,7 +712,7 @@ async function sendRelease(pool, body, { actorId, config = {} } = {}) {
       );
       // A real account first, so it is the one refused.
       const { rows: [account] } = await client.query(
-        `SELECT id, username, has_platform_access,
+        `SELECT id, username, has_platform_access, locale,
                 test_account_created_at IS NOT NULL AS test_account
            FROM users
           WHERE LOWER(email) = $1 AND anonymised_at IS NULL
@@ -820,6 +820,7 @@ async function sendRelease(pool, body, { actorId, config = {} } = {}) {
     hasAccount: !!release.account,
     signInToken,
     moreToken: release.moreToken || null,
+    ...(release.account?.locale ? { locale: release.account.locale } : {}),
   });
   const { rows: [delivery] } = await pool.query(
     `SELECT status, error FROM mail_deliveries

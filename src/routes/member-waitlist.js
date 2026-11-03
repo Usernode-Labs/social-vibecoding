@@ -20,6 +20,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const memberWaitlist = require('../services/member-waitlist');
 const { sendWaitlistCodeMail } = require('../services/topochain/mailer');
+const mailLanguage = require('../services/mail/language');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter } = require('../middleware/rate-limits');
@@ -63,7 +64,7 @@ function memberWaitlistRoutes(config) {
           // Fire-and-forget like every waitlist mail: a mail that fails does
           // not fail the join, and "New code" sends another.
           send: (email, code) => {
-            Promise.resolve(sendWaitlistCodeMail(config, email, { code, moreToken: null }))
+            Promise.resolve(sendWaitlistCodeMail(config, email, { code, moreToken: null, locale: req.user.locale || mailLanguage.requestLanguage(req) }))
               .catch((err) => log.warn('member-waitlist', 'Code mail failed', { message: err.message }));
           },
         });

@@ -496,7 +496,7 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore }
 
 /* ── The run ──────────────────────────────────────────────────────────── */
 
-export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, header = 'communities' }: {
+export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, onSettled, header = 'communities' }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   capped: boolean;
@@ -511,6 +511,12 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   header?: 'communities' | 'project';
   onAnswered?: (id: number, epoch: number | null) => void;
   onRetracted?: (id: number) => void;
+  /**
+   * #6101: a vote refused because the change is not up for a vote any more
+   * (it merged while this run was open). The controller drops it from every
+   * copy of the feed and reads again.
+   */
+  onSettled?: (id: number) => void;
 }) {
   const t = useMessages('communities');
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -634,7 +640,13 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const key = item.key;
     setVotes((cur) => ({ ...cur, [key]: v }));
     setSheet('voted');
-    const opts = v === 'no' ? { reason: reason || '' } : { reason: null };
+    // #6101: castVote calls this when the refusal means the change is no
+    // longer up for a vote, so the run drops it instead of asking again.
+    let settled = false;
+    const opts = {
+      ...(v === 'no' ? { reason: reason || '' } : { reason: null }),
+      onSettled: () => { settled = true; },
+    };
     let ok = false;
     try {
       ok = (await callAppView('castVote', item.id, v, item.epoch, opts)) === true;
@@ -642,6 +654,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     if (!ok) {
       setVotes((cur) => { const copy = { ...cur }; delete copy[key]; return copy; });
       setSheet('ask');
+      if (settled) onSettled?.(item.id);
       return false;
     }
     onAnswered?.(item.id, item.epoch);

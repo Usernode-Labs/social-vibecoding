@@ -33,9 +33,11 @@ const normalize = (email) => String(email || '').trim().toLowerCase();
 /**
  * Invite each address into `app` ({ id, slug, name }) for `inviter`
  * ({ id, username }). Returns `{ invited, mailed }`: accounts invited
- * directly, and addresses stored and mailed.
+ * directly, and addresses stored and mailed. `locale` words the mail: nothing
+ * is known of an address with no account, so it is the inviter's language,
+ * the likeliest one they share.
  */
-async function inviteByEmail(pool, config, { app, emails, inviter }) {
+async function inviteByEmail(pool, config, { app, emails, inviter, locale = null }) {
   let invited = 0;
   let mailed = 0;
   for (const raw of emails || []) {
@@ -64,7 +66,7 @@ async function inviteByEmail(pool, config, { app, emails, inviter }) {
         [app.id, email, inviter.id]
       );
       if (!stored.length) continue;
-      await mail.sendProjectInviteMail(config, email, { inviter: inviter.username || null, project: app.name || null });
+      await mail.sendProjectInviteMail(config, email, { inviter: inviter.username || null, project: app.name || null, ...(locale ? { locale } : {}) });
       mailed += 1;
     } catch (err) {
       log.warn('email-invites', 'Invite by email failed', { appId: app.id, err: err.message });
