@@ -1,4 +1,5 @@
 'use strict';
+const { dmStream } = require('./lib/bot-dm-stream');
 
 // Activity cards for the Homeroom bot's work already under way, against the
 // full PostgreSQL schema and through the real route (services/homeroom-bot-
@@ -475,7 +476,8 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
       assert.deepEqual(await staging.ensureDemoUnderWayCard(pool, viewer), { added: 1 });
       assert.deepEqual(await staging.ensureDemoUnderWayCard(pool, viewer), { added: 0 }, 'once');
       await staging.ensureBotDmFixture(pool, viewer);
-      const page = await conversations.listMessages(pool, viewer, conversationId, {});
+      // #6207: what the fixture wrote; Main itself leaves a request's news out.
+      const page = await dmStream(pool, viewer, conversationId);
       const messages = [...(page.messages || page)].sort((a, b) => a.id - b.id);
       // #4046: the demo's first versions' cards (its plans carry them) are another project's.
       // One story: the demo request #18, whose card is its thread's root, is sent before this one.

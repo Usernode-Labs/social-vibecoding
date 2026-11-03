@@ -5055,10 +5055,10 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The chat with Homeroom bot draws each request as one row: its project's tile, a badge saying where it stands, its number in its own colour and its title, so the request waiting on you wears the amber badge, and its question is drawn whole in the chat with its answers (31 Oct 2026); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
+      "name": "Main Chat with Homeroom bot is the conversation (#6207, 3 Nov 2026): a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), quoting the message it answers (#3707), and no request's news is drawn there: that is on the request's page",
       "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-main-pane:has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"activity\"]:has([data-request-tag]) [data-bot-news-state=needs] [data-bot-badge=needs]",
-      "expectText": "Which night should the rota start on?",
+      "expectSelector": "#ai-main-pane .messages-thread-scroll:not(:has([data-request-tag])) .messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)",
+      "expectText": "Main Chat",
       "id": "homeroom-bot-dm-question",
       "visual": true,
       "impact": [
@@ -5070,7 +5070,7 @@
     {
       "name": "The Homeroom bot tab's list starts with Main Chat, the chat with the bot itself, drawn lit while it is the chat in the column beside the list, under its own name and that only you can see it (1 Nov 2026: the chat is the tab's alone; its Messages address lands here)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#ai-screen:not(.hidden):has(#ai-main-pane[data-ai-column=main] > [data-ai-main-head] + .messages-layout[data-main-chat] [data-bot-news-state=needs]) [data-ai-sheet=main] > [data-ai-main-row][data-ai-lit][aria-current=true]",
+      "expectSelector": "#ai-screen:not(.hidden):has(#ai-main-pane[data-ai-column=main] > [data-ai-main-head] + .messages-layout[data-main-chat]) [data-ai-sheet=main] > [data-ai-main-row][data-ai-lit][aria-current=true]",
       "expectText": "Main Chat",
       "id": "homeroom-bot-main-chat-row",
       "visual": true,
@@ -5082,10 +5082,10 @@
       ]
     },
     {
-      "name": "#4097, #5392, one request, one story: in the chat with Homeroom bot each request is one row that opens its page, its earlier news folded into its newest row, which counts the updates; finished requests fold into one line of words (N finished · N couldn't build) that opens the rows saying how each ended; a question still waiting on you is drawn whole in the chat, its answers under it (31 Oct 2026)",
+      "name": "#6207 (3 Nov 2026): Main Chat holds no request's news: no row about a request (a first version's news stays, having no request page yet), since a request's news is on its page, where its row on the Homeroom bot page goes",
       "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-main-pane .messages-thread-scroll:has([data-bot-settled-count=failed]):has([data-bot-settled-count=finished]):has([data-bot-news-state=needs] [data-bot-thread-link]) article:has([data-bot-thread-label]) [data-bot-question=open] [data-bot-answer]",
-      "expectText": "Which night should the rota start on?"
+      "expectSelector": "#ai-main-pane[data-ai-column=main] .messages-thread-scroll:not(:has([data-request-tag]))",
+      "expectText": "Main Chat"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",

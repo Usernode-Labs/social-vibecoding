@@ -623,13 +623,21 @@
     "text": "Your recording could not be transcribed. Your existing text is safe. Try again.",
     "description": "Dictation error for an unsuccessful transcription request."
   },
-  "header.drawer.toCommunities": {
-    "text": "Back to your communities",
-    "description": "On a phone, the header's back arrow while a community's places are on screen: slides back to the list of all the person's communities."
+  "header.drawer.allCommunities": {
+    "text": "All communities",
+    "description": "On a phone, the grid button at the left of the header on a community's Hub: opens the page of every community the person is in, drawn as a grid. Its accessible name and tooltip."
   },
-  "header.drawer.toPlaces": {
-    "text": "Back to {{community}}'s places",
-    "description": "On a phone, the header's back arrow on a community's page: slides back to that community's places (Hub, Needs you, Workshop, its channels). {{community}} is the community's name."
+  "header.drawer.toHub": {
+    "text": "Back to {{community}}'s Hub",
+    "description": "On a phone, the header's back arrow on one of a community's places (Needs you, Workshop, a channel): goes up to the community's Hub, the page that leads to all of them. {{community}} is the community's name. Its accessible name and tooltip."
+  },
+  "header.drawer.toPlace": {
+    "text": "Back to {{place}}",
+    "description": "On a phone, the header's back arrow on a page under one of a community's places (All items, under the Workshop): goes up to that place. {{place}} is the place's name, such as Workshop. Its accessible name and tooltip."
+  },
+  "header.drawer.toBot": {
+    "text": "Back to the list",
+    "description": "On a phone, the header's back arrow in Main Chat, the person's private chat with Homeroom bot: slides back to the Homeroom bot tab's list of what needs them and what is in progress. Its accessible name and tooltip."
   },
   "header.drawer.messages": {
     "text": "Messages",

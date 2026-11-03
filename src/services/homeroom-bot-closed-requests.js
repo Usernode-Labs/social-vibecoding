@@ -295,6 +295,34 @@ function wakeFor(appId, deps) {
  */
 // `tellStrict` (default: as `strict`): whether a requester's DM that fails
 // fails the call, for a caller whose retry would gate something else on it.
+/**
+ * #6159: closed requests finish their private threads. `how` is 'merged'
+ * when a change that went in closed them (issue-close-watcher.js), else
+ * 'closed'. A request the bot's own merged change shipped is skipped: its
+ * live line finishes them (homeroom-bot-dm.js noteProposalMerged). Never
+ * throws.
+ */
+async function finishThreadsFor(pool, { appId, numbers, how = 'closed', deps = {} }) {
+  try {
+    const { rows: [app] = [] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [appId]);
+    if (!app) return;
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    for (const issueNumber of numbers) {
+      if (how === 'merged') {
+        const { rows: built } = await pool.query(
+          `SELECT 1 FROM homeroom_bot_runs r JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+            WHERE r.app_id = $1 AND r.issue_number = $2 AND cs.status = 'merged' LIMIT 1`,
+          [appId, issueNumber],
+        );
+        if (built.length) continue;
+      }
+      await dm.finishRequestThreads(pool, { app, issueNumber, how, deps });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-closed-requests', 'Could not finish the private threads of closed requests', { appId, err: err.message });
+  }
+}
+
 async function noteRequestsClosed(pool, { appId, closed, strict = false, tellStrict = strict, deps = {} } = {}) {
   const numbers = numbersOf(closed);
   if (!pool || !(Number(appId) > 0) || !numbers.length) return { withdrawn: [] };
@@ -317,6 +345,9 @@ async function noteRequestsClosed(pool, { appId, closed, strict = false, tellStr
     // 16 Oct 2026 (V4): whoever asked the bot for one of them hears it was
     // done another way, when somebody else's merged change shipped it.
     if (deps.tellDoneElsewhere !== false) await tellDoneElsewhere(pool, { appId: Number(appId), numbers, deps, strict: tellStrict });
+    // #6159: the private threads about them, or filed as them, are done.
+    // Best effort: a thread left open never fails the close.
+    await finishThreadsFor(pool, { appId: Number(appId), numbers, how: deps.closedHow || 'closed', deps });
     return { withdrawn };
   } catch (err) {
     if (strict) throw err;

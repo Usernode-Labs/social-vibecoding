@@ -164,7 +164,7 @@ function specHtmlContract(platformStyles = true) {
 
 <article data-spec>
   <h1>Short title</h1>
-  <p>Optional one or two sentence summary.</p>
+  <p>One or two sentence summary.</p>
   <section data-spec-tab="user">…</section>
   <section data-spec-tab="tech">…</section>
 </article>
@@ -175,13 +175,14 @@ BEFORE/AFTER SCREENS: when the change is visible, OPEN the "user" section with a
 
 <figure data-screens>
   <ol data-changes>
-    <li data-change="1" data-steps="Dev board → Up for vote → open a proposal">In plain words, what a person sees change</li>
+    <li data-change="1" data-steps="Dev board → Up for vote → open a proposal" data-area="840 60 440 160">In plain words, what a person sees change.</li>
   </ol>
   <template data-screen data-size="desktop" data-focus="840 60 440 300">…one markup tree of the screen…</template>
   <template data-screen data-size="phone" data-focus="0 120 390 320">…</template>
   <figcaption>Optional line shown under the screens</figcaption>
 </figure>
 
+- THE PLAN'S CARD is written from two parts of this document, word for word, so write them for it: the <p> under the <h1> is its summary, one or two plain sentences saying what changes for a person and what stays the same; and each <li> in <ol data-changes> is one of its lines, ONE whole sentence of at most 100 characters saying what a person sees change, numbered (data-change) as the screens mark that change, with data-area="x y w h": the box around that change on the first screen that marks it, in that screen's pixels, with a little room around it, so the card shows each change close up and readable. Each line stands on its own: no quotation left open, no bare heading, no line repeating another, nothing a reader has to look elsewhere to finish. The card shows them as written and never shortens them.
 - One to three changes, numbered; up to six screens. data-size "desktop" is 1280×800 and "phone" is 390×844; data-height makes a screen taller (up to 2400).
 ${platformStyles
     ? "- Draw each screen as real HTML using the app's OWN element structure and class names, copied from the components you read: it renders with the app's real stylesheet, so a faithful copy looks like the app."

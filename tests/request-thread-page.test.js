@@ -285,8 +285,9 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   const av = appView();
   const lead = (patch) => av._requestStatusView(issue(patch)).lead;
   assert.equal(lead({ botAwaits: { kind: 'question', messageId: 5 } }), 'Waiting for an answer to Homeroom bot\'s question.');
-  assert.equal(lead({ bot: { what: 'queued', since: null, plan: true, askedBy: 'sam' } }), 'Waiting for @sam to OK the plan.');
-  assert.equal(lead({ bot: { what: 'queued', since: null, plan: true } }), 'Waiting for the person who asked for it to OK the plan.');
+  // #6210 (3 Nov 2026): the plan is public, under this card, and any member may build it.
+  assert.equal(lead({ bot: { what: 'queued', since: null, plan: true, askedBy: 'sam' } }), '@sam\'s plan is ready. Any member can build it below.');
+  assert.equal(lead({ bot: { what: 'queued', since: null, plan: true } }), 'The plan is ready. Any member can build it below.');
   assert.equal(lead({ bot: { what: 'building', since: null } }), 'Homeroom bot is building this.');
   assert.equal(lead({ bot: { what: 'queued', since: null, held: true } }),
     'Homeroom bot will start when one of its changes here is voted in or closed.');
@@ -306,7 +307,9 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   assert.equal(lead({ addressed_by: { sessionId: 9, state: 'review', prNumber: 12, title: 'Topics' } }), 'Up for a vote: needs 1 more yes.');
   // Its plan waiting, and its build held, say so on the card's button too.
   const button = (bot) => av._issuePrimaryActionSpec(issue({ bot }), { noNav: true });
-  assert.equal(button({ what: 'queued', plan: true, askedBy: 'sam' }).label, 'Waiting for the plan\'s OK');
+  // #6210: a plan opens its request's page at the plan, for anyone.
+  assert.equal(button({ what: 'queued', plan: true, askedBy: 'sam' }).label, 'See the plan');
+  assert.equal(JSON.stringify(button({ what: 'queued', plan: true, askedBy: 'sam' }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number] }));
   assert.equal(button({ what: 'queued', held: true }).label, 'Homeroom bot will build this');
   assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
 });

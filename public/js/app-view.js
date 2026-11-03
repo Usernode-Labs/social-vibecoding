@@ -6377,6 +6377,10 @@ const AppView = {
         label: PlatformI18n.t('changes:request.status.action.continueWork'), title: PlatformI18n.t('changes:request.status.action.continueWorkTitle'),
         act: { fn: 'openChangeWorkspace', args: [issue.myPrSessionId] },
       };
+    } else if (issue.bot && issue.bot.plan) {
+      // #6210 (3 Nov 2026): the plan is on this page, under this card, with
+      // its Build it (request-plan.tsx): no button here sends anyone away.
+      action = null;
     } else if (!AppView.readOnly) {
       const primary = AppView._issuePrimaryActionSpec(issue, { noNav: true });
       action = primary
@@ -22621,10 +22625,12 @@ const AppView = {
     // nothing to start, and a second session would build it twice.
     if (issue.bot) {
       const reading = AppView._botWorkReading(issue.bot);
-      // B8: whoever it is being built for can follow it in their chat.
-      if (issue.bot.mine) {
-        // B06: their plan waits for their Build it, which is on the plan in the chat this opens at.
-        const plan = !!issue.bot.plan;
+      // #6210 (3 Nov 2026): a plan waiting for Build it is on its request's
+      // page, public, and any member may press it: See the plan opens the
+      // page at it, for everyone. Whoever it is being built for follows it
+      // there too (See progress).
+      const plan = !!issue.bot.plan;
+      if (issue.bot.mine || plan) {
         return {
           key: 'primary', cls: 'gc-vote-btn', label: plan ? PlatformI18n.t('changes:issue.action.seePlan') : PlatformI18n.t('changes:issue.action.seeProgress'),
           title: plan ? PlatformI18n.t('changes:issue.action.seePlanTitle') : PlatformI18n.t('changes:issue.action.seeProgressTitle'),
@@ -22634,11 +22640,11 @@ const AppView = {
       // What it is really doing: its plan waits for whoever asked for it,
       // its own limit holds the build, it is asked and waits for a free
       // builder (B8), or it is reading or building.
-      if (issue.bot.plan || issue.bot.held) {
+      if (issue.bot.held) {
         return {
           key: 'primary', cls: 'gc-vote-btn', disabled: true,
-          label: issue.bot.plan ? PlatformI18n.t('changes:issue.action.botPlanWaiting') : PlatformI18n.t('changes:issue.action.botHeld'),
-          title: issue.bot.plan ? PlatformI18n.t('changes:issue.action.botPlanWaitingTitle') : PlatformI18n.t('changes:issue.action.botHeldTitle'),
+          label: PlatformI18n.t('changes:issue.action.botHeld'),
+          title: PlatformI18n.t('changes:issue.action.botHeldTitle'),
         };
       }
       return {
@@ -22993,15 +22999,28 @@ const AppView = {
   },
 
   /**
-   * B8: "See progress": the viewer's chat with Homeroom bot. 16 Oct 2026
-   * (C4): at this request's own thread, its story, not the whole chat.
+   * "See the plan" / "See progress" (#6210, 3 Nov 2026): the request's own
+   * page, which is its thread, at the plan with its Build it
+   * (`[data-request-plan]`) or at the bot's progress card
+   * (`.dev-request-track`). It used to open the chat with Homeroom bot,
+   * where the plan's Build it was; a request's news is on its page now.
    */
   openBotChatFromRequest(issueNumber) {
-    const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const slug = AppView.appData && AppView.appData.slug;
-    if (messages && slug && issueNumber && typeof messages.openBotRequest === 'function') messages.openBotRequest(slug, Number(issueNumber));
-    else if (messages && typeof messages.openBot === 'function') messages.openBot();
-    else location.hash = '#messages';
+    const n = Number(issueNumber);
+    if (!slug || !n) return;
+    const at = () => {
+      const el = document.querySelector('[data-request-plan]') || document.querySelector('.dev-request-track');
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return !!el;
+    };
+    const page = `#app/${slug}/dev/issues/${n}`;
+    if (location.hash === page) { at(); return; }
+    location.hash = page;
+    // Once the page has drawn: a few tries, then it is where it opened.
+    let tries = 0;
+    const wait = () => { if (!at() && (tries += 1) < 20) setTimeout(wait, 150); };
+    setTimeout(wait, 150);
   },
 
   // The issue card's SECOND action: the claim toggle, promoted out of the

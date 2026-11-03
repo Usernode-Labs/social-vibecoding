@@ -586,7 +586,118 @@ async function aboutContext(pool, { user, draft, deps = {} }) {
   return lines.join('\n');
 }
 
+// ── Finishing a thread (#6159, 3 Nov 2026) ───────────────────────────────
+//
+// A private thread can be done: on its own when its request goes live or is
+// closed (finishForRequest), by Mark done in its ⋯ (markDone), or by asking
+// the bot (its close_thread tool, which calls markDone). A done thread leaves
+// the Homeroom bot page's lists (ai-work.js PRIVATE_SQL); its messages stay,
+// and a link still opens it. Reopen, or anything the person writes in it
+// (reopenOnReply), puts it back where it was (`done_from`). Every change
+// tells the bot page to read its lists again (homeroom-bot-tray).
+
+function workChanged(userId, deps = {}) {
+  try { require('./homeroom-bot-tray').noteWorkChanged(userId, deps); } catch { /* the page reads again on its own */ }
+}
+
+/**
+ * Mark the person's own private thread `rootId` done. Resolves { ok: true,
+ * state: 'done', unchanged? } or { ok: false, status: 404 } for a root that
+ * is not a private thread of theirs. A root of theirs with no row yet (a
+ * thread they started on their own message) gets one.
+ */
+async function markDone(pool, { user, rootId, bot = null, deps = {} }) {
+  const who = bot || deps.bot || await (deps.dm || require('./homeroom-bot-dm')).botAccount(pool);
+  const root = await ownRoot(pool, { user, bot: who, rootId });
+  if (!root) return { ok: false, status: 404, error: 'No such thread' };
+  const { rows: [was] = [] } = await pool.query(
+    'SELECT state FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [root.id, user.id],
+  );
+  if (was && (was.state === 'done' || was.state === 'dropped')) return { ok: true, state: 'done', unchanged: true };
+  if (!was) {
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state, done_from, done_at)
+       VALUES ($1, $2, $3, 'idea', 'done', 'open', NOW())
+       ON CONFLICT (root_message_id) DO NOTHING`,
+      [user.id, root.conversation_id, root.id],
+    );
+  } else {
+    await pool.query(
+      `UPDATE private_threads SET done_from = state, state = 'done', done_at = NOW(), updated_at = NOW()
+        WHERE root_message_id = $1 AND user_id = $2 AND state IN ('open', 'filed', 'posted')`,
+      [root.id, user.id],
+    );
+  }
+  workChanged(user.id, deps);
+  return { ok: true, state: 'done' };
+}
+
+/** Reopen the person's own done thread: back where it was. Resolves { ok, state } or a 404. */
+async function reopen(pool, { user, rootId, deps = {} }) {
+  const { rows: [row] = [] } = await pool.query(
+    `UPDATE private_threads
+        SET state = COALESCE(done_from, CASE WHEN result_ref IS NULL THEN 'open' ELSE 'filed' END),
+            done_from = NULL, done_at = NULL, updated_at = NOW()
+      WHERE root_message_id = $1 AND user_id = $2 AND state = 'done'
+      RETURNING state`,
+    [Number(rootId), user?.id || null],
+  );
+  if (!row) {
+    const { rows: [any] = [] } = await pool.query(
+      'SELECT state FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [Number(rootId), user?.id || null],
+    );
+    return any ? { ok: true, state: any.state, unchanged: true } : { ok: false, status: 404, error: 'No such thread' };
+  }
+  workChanged(user.id, deps);
+  return { ok: true, state: row.state };
+}
+
+/**
+ * Something the person wrote in a thread of their chat with the bot: a done
+ * thread of theirs comes back (never on the bot's own lines). Never throws.
+ */
+async function reopenOnReply(pool, { userId, message, deps = {} }) {
+  const root = Number(message?.thread_root_id || message?.threadRootId) || null;
+  if (!root || !userId) return false;
+  try {
+    const went = await reopen(pool, { user: { id: userId }, rootId: root, deps });
+    return !!went.ok && !went.unchanged;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The private threads a request's going live or closing finishes: a draft
+ * or design filed as it or posted on it, and a thread about it. Marks the
+ * ones not done yet, and resolves every one (those already done too, so a
+ * retried caller says its line again and the line's own key drops the copy)
+ * as [{ userId, rootId, conversationId }].
+ */
+async function finishForRequest(pool, { appId, issueNumber, deps = {} }) {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, root_message_id, conversation_id, state FROM private_threads
+      WHERE app_id = $1
+        AND ((kind IN ('draft_request', 'design') AND result_ref = $2 AND state IN ('filed', 'posted', 'done'))
+             OR (about_kind = 'request' AND about_number = $2 AND state IN ('open', 'filed', 'posted', 'done')))`,
+    [appId, issueNumber],
+  );
+  const users = new Set();
+  for (const row of rows) {
+    if (row.state === 'done') continue;
+    await pool.query(
+      `UPDATE private_threads SET done_from = state, state = 'done', done_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND state IN ('open', 'filed', 'posted')`,
+      [row.id],
+    );
+    users.add(Number(row.user_id));
+  }
+  for (const userId of users) workChanged(userId, deps);
+  return rows.map((row) => ({ userId: Number(row.user_id), rootId: Number(row.root_message_id), conversationId: Number(row.conversation_id) }));
+}
+
 module.exports = {
   ownRoot, stateOf, fileIt, postIt, startThread, startLine, CHANGE_KINDS, MAX_TEXT, MAX_TITLE,
   ABOUT_KINDS, aboutLine, aboutTarget, startAbout, liftHold, holdsFor, aboutContext, threadHref,
+  markDone, reopen, reopenOnReply, finishForRequest,
 };
