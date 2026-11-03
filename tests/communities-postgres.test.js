@@ -692,4 +692,35 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.ok(feed.includes(kept.slug) && !feed.includes(suspended.slug), 'no Needs you card for a suspended app');
     }
   });
+
+  // #6124: a change renamed before it has a pull request was saved as the
+  // name that pull request would take (proposed_pr_title) and nothing else.
+  // These lists read it now, so the row saved that way shows the chosen
+  // name — and a change the update path renames from now on writes both.
+  await t.test('#6124: the chosen title outranks the old session name in Workshop and Needs you', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const me = await user();
+    const author = await user();
+    const mine = await app({ createdBy: me.id });
+    const theirs = await app({ createdBy: author.id });
+    await communities.join(pool, theirs, me.id);
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, proposed_pr_title, branch_name)
+       VALUES ($1, $2, 'active', 'Add dark mdoe toggel', 'Add a dark mode toggle', 'feature/typo')`,
+      [mine.id, me.id]);
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, proposed_pr_title, pr_title)
+       VALUES ($1, $2, 'promoted', 'Add dark mdoe toggel', 'Add a dark mode toggle', NULL)`,
+      [theirs.id, author.id]);
+
+    const items = (await pool.query(overview.ITEMS_SQL,
+      [me.id, false, false, overview.ITEMS_PER_APP, overview.ITEMS_TOTAL])).rows;
+    assert.equal(items.find((r) => r.slug === mine.slug && r.section === 'working').title,
+      'Add a dark mode toggle', 'the Workshop row is the chosen name, not the old session one');
+
+    const feed = (await pool.query(overview.NEEDS_FEED_SQL,
+      [me.id, false, false, overview.NEEDS_FEED_MAX])).rows;
+    assert.equal(feed.find((r) => r.slug === theirs.slug).title,
+      'Add a dark mode toggle', 'and so is the vote owed on it');
+  });
 });

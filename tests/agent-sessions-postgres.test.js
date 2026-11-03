@@ -79,6 +79,10 @@ async function connect(t, { beforeMigration = null } = {}) {
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
       status VARCHAR(32) NOT NULL DEFAULT 'active', source TEXT,
       pr_number INTEGER, pr_title VARCHAR(256), session_title TEXT,
+      -- The name a change got before it had a pull request, which its cards
+      -- now read before the session's old name (#6124). The real table gets
+      -- it from an ALTER later in schema.sql.
+      proposed_pr_title TEXT,
       staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]',
       -- Why a skipped run was skipped (activeChange.checkSkipReason, #3180).
       check_error_detail TEXT,

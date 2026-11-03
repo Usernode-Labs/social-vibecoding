@@ -304,7 +304,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
             c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
-            COALESCE(c.pr_title, c.session_title) AS change_title,
+            COALESCE(NULLIF(c.pr_title, ''), NULLIF(c.proposed_pr_title, ''), NULLIF(c.session_title, '')) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             c.shots_state AS change_shots_state,
@@ -362,7 +362,7 @@ async function getAgentSession(pool, { userId, id }) {
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
             c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
-            COALESCE(c.pr_title, c.session_title) AS change_title,
+            COALESCE(NULLIF(c.pr_title, ''), NULLIF(c.proposed_pr_title, ''), NULLIF(c.session_title, '')) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             c.shots_state AS change_shots_state,
@@ -383,7 +383,7 @@ async function getAgentSession(pool, { userId, id }) {
   // the parked ones the user can switch back to, and the closed ones.
   const { rows: changes } = await pool.query(
     `SELECT c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
-            COALESCE(c.pr_title, c.session_title) AS change_title,
+            COALESCE(NULLIF(c.pr_title, ''), NULLIF(c.proposed_pr_title, ''), NULLIF(c.session_title, '')) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             a.slug AS change_app_slug, a.name AS change_app_name, a.self_hosted AS change_app_self_hosted,
@@ -819,7 +819,7 @@ async function switchActiveChange(pool, { agentSessionId, userId, changeId }) {
   const id = positiveInt(Number(changeId));
   if (!id) throw new AgentSessionError(400, 'changeId must be a positive integer');
   const { rows: change } = await pool.query(
-    `SELECT c.id, c.status, c.app_id, c.pr_number, COALESCE(c.pr_title, c.session_title) AS title
+    `SELECT c.id, c.status, c.app_id, c.pr_number, COALESCE(NULLIF(c.pr_title, ''), NULLIF(c.proposed_pr_title, ''), NULLIF(c.session_title, '')) AS title
        FROM chat_sessions c
       WHERE c.id = $1 AND c.user_id = $2 AND c.agent_session_id = $3`,
     [id, userId, agentSessionId]
