@@ -114,8 +114,10 @@ It then drops `data` from `shot_run_files`, `shot_artifacts`,
 mandatory; replacement constraints enforce key/hash and density/original
 consistency, and check visuals require hash, size and their legacy ETag.
 All object keys, foreign keys, indexes, IDs, timestamps and other metadata
-are preserved. The preview schema fingerprint approves only these six
-catalog changes; exported data permissions are unchanged.
+are preserved. After #6226, platform previews start empty and build their
+own schema at boot; no production media rows or schema fingerprint are
+copied or approved. The migration's fresh/upgrade catalog comparison uses
+the test-only catalog helper.
 
 The PostgreSQL regression tests cover refusing each byte column, broken
 metadata, lock timeout, rollback after a late DDL dependency, fresh versus

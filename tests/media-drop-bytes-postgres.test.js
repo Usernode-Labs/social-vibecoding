@@ -8,7 +8,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
 const { applySchemaWithLockRetry: apply, loadPlan } = require('../src/db/schema-migrations');
-const policy = require('../src/services/platform-preview-data-policy');
+const { CATALOG_SQL } = require('./lib/schema-catalog');
 const media = require('../src/services/media-store');
 const { memoryMediaStore } = require('./lib/media-store');
 
@@ -42,7 +42,7 @@ const receipts = async pool => (await pool.query('SELECT id,checksum,schema_sha2
 const catalog = async pool => {
   const tx = await pool.connect();
   try { await tx.query('BEGIN; SET LOCAL search_path=pg_catalog');
-    return JSON.parse((await tx.query(policy.CATALOG_SQL)).rows[0].inventory);
+    return JSON.parse((await tx.query(CATALOG_SQL)).rows[0].inventory);
   } finally { await tx.query('ROLLBACK'); tx.release(); }
 };
 const references = async pool => (await pool.query(`SELECT c.relname,k.conname,pg_get_constraintdef(k.oid) AS definition
@@ -164,7 +164,7 @@ test('media column removal refuses incomplete migrations, preserves references, 
   assert.equal((await media.sweep(pool,store)).removed,0,'referenced ordinary and dense objects stay protected');
   const afterReceipts=await receipts(pool);
   assert.equal(afterReceipts.length,plan.length);
-  const afterCatalog=await catalog(pool);policy.verifyCatalog(afterCatalog);
+  const afterCatalog=await catalog(pool);
   const expectedTables=TABLES.map(t=>'public.'+t).sort();
   assert.deepEqual(afterCatalog.relations.filter(r=>JSON.stringify(r)!==JSON.stringify(beforeCatalog.relations.find(p=>p.name===r.name))).map(r=>r.name).sort(),expectedTables);
   assert.deepEqual(afterCatalog.sequences,beforeCatalog.sequences);
@@ -186,7 +186,7 @@ test('media column removal refuses incomplete migrations, preserves references, 
   });
   await t.test('a fresh database matches the upgrade; repeat startup performs no media DDL',async()=>{
     const fresh=await database(t);await apply(fresh,options);
-    assert.equal(policy.schemaFingerprint(await catalog(fresh)),policy.schemaFingerprint(afterCatalog));
+    assert.deepEqual(await catalog(fresh),afterCatalog);
     const reader=await pool.connect();await reader.query('BEGIN; LOCK TABLE shot_artifacts IN ACCESS SHARE MODE');
     try { await apply(pool,options);assert.deepEqual(await receipts(pool),afterReceipts); }
     finally { await reader.query('ROLLBACK');reader.release(); }
