@@ -18435,11 +18435,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    <body> while the page is up, so the panel (a sibling of the page, not in
    it) takes the same width in Main's place.
    UNTIL A WIDTH IS CHOSEN (30 Oct 2026), Main takes the room the list does
-   not need: the list is 672px (max-w-2xl) and a gutter each side, so Main
-   is the rest of the window, 400px to 720px. With the panel's own default
-   (36vw, at most 560px) a wide window left the slack as margins around the
-   list, between it and Main. A width dragged on Main's edge or beside an
-   app (`--side-panel-chosen-w`, features/side-panel/resize.ts) wins.
+   not need. Since 3 Nov 2026 that is ALL of it, with no 720px upper limit:
+   the list is 672px (max-w-2xl) and a gutter each side, so Main is the rest
+   of the window, and only the list's own margins separate them. With the
+   old cap at 720px a 1720px window left a band of empty background between
+   the two and a narrow, tall column for plan cards. The 400px floor stays.
+   A width dragged on Main's edge is Main's own (`--ai-main-chosen-w` and its
+   own device key, features/side-panel/resize.ts), so a width chosen for the
+   side panel beside an app no longer sizes Main, and the reverse.
    THE ROOM IS BESIDE THE DUO'S COLUMN (1 Nov 2026). `--ai-room` is the
    window less the rail and iPhone Duo's column of system chrome
    (`--platform-strip-w`, THE SIDE STRIP; 0 everywhere else). Unfolded and
@@ -18462,8 +18465,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 body:has(#ai-screen:not(.hidden)) {
   --ai-room: var(--platform-usable-w);
   --ai-list-min: 480px;
-  --ai-main-auto: clamp(400px, calc(var(--ai-room) - 720px), 720px);
-  --ai-main-w: max(320px, min(var(--side-panel-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+  --ai-main-auto: max(400px, calc(var(--ai-room) - 720px));
+  --ai-main-w: max(320px, min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
 }
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   --ai-edge: var(--platform-strip-w, 0px);
@@ -18578,6 +18581,23 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    title ran under the clock and the Wi-Fi ring (1 Nov 2026). */
 #ai-screen .ai-main-pane .messages-thread-header[data-reply-head="main"] {
   padding-inline-end: calc(16px + var(--ai-edge, 0px));
+}
+/* A WIDER MAIN CHAT KEEPS A READABLE LINE (3 Nov 2026). With the 720px cap
+   gone Main is 800px or more on a wide window, and a plan card's sentences
+   ran the width of it. The chat's three standing parts are held to 720px,
+   the widest Main was before (`--ai-main-auto` above), centred by an inline
+   gutter: below that width the gutter is 0 and their own 12px or 16px
+   stands, so a narrower column is drawn exactly as it was. A thread in
+   Main's place uses the same parts and is held the same way. The Duo's rule
+   below still takes the end side to its column. */
+#ai-screen .ai-main-pane .messages-layout[data-main-chat] :is(.chat-transcript, .chat-status, .chat-composer-bar) {
+  padding-inline: max(0px, calc((100% - 720px) / 2));
+}
+#ai-screen .ai-main-pane .messages-layout[data-main-chat] .chat-status {
+  padding-inline: max(16px, calc((100% - 720px) / 2));
+}
+#ai-screen .ai-main-pane .messages-layout[data-main-chat] .chat-composer-bar {
+  padding-inline: max(12px, calc((100% - 720px) / 2));
 }
 /* AND THE CHAT UNDER THE HEAD STOPS AT THE DUO'S COLUMN TOO (overnight
    audit B25, 2 November 2026). Run under it (1 Nov), the chat put its Send

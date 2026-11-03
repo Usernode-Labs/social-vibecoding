@@ -1406,22 +1406,34 @@ test('the width\'s rules: 320px of panel and 480px of app at the least, whatever
 });
 
 test('the chosen width is this device\'s, and storage that fails is simply the default', () => {
-  const { readStoredWidth, writeStoredWidth, clearStoredWidth, WIDTH_KEY } = api.resize;
+  const { readStoredWidth, writeStoredWidth, clearStoredWidth, WIDTH_KEY, AI_MAIN_WIDTH_KEY } = api.resize;
   const mem = new Map();
   const store = {
     getItem: (k) => (mem.has(k) ? mem.get(k) : null),
     setItem: (k, v) => { mem.set(k, String(v)); },
     removeItem: (k) => { mem.delete(k); },
   };
+  assert.equal(WIDTH_KEY, 'usernode_side_panel_w_v1');
+  assert.equal(AI_MAIN_WIDTH_KEY, 'usernode_ai_main_w_v1', 'Main Chat has a key of its own (3 Nov 2026)');
   assert.equal(readStoredWidth(store), null, 'nothing chosen: the stylesheet\'s default');
   writeStoredWidth(612.4, store);
   assert.equal(mem.get(WIDTH_KEY), '612');
   assert.equal(readStoredWidth(store), 612);
+  assert.equal(readStoredWidth(store, AI_MAIN_WIDTH_KEY), null, 'a panel width is not Main\'s');
+  writeStoredWidth(533.2, store, AI_MAIN_WIDTH_KEY);
+  assert.equal(mem.get(AI_MAIN_WIDTH_KEY), '533');
+  assert.equal(readStoredWidth(store, AI_MAIN_WIDTH_KEY), 533);
+  assert.equal(readStoredWidth(store), 612, 'and Main\'s width is not the panel\'s');
+  clearStoredWidth(store, AI_MAIN_WIDTH_KEY);
+  assert.equal(readStoredWidth(store, AI_MAIN_WIDTH_KEY), null, 'a double-click on Main\'s edge forgets only Main\'s width');
+  assert.equal(readStoredWidth(store), 612, 'the panel beside an app keeps its own');
   clearStoredWidth(store);
   assert.equal(readStoredWidth(store), null, 'a double-click forgets it');
   for (const junk of ['', 'wide', '-4', '0', 'NaN', 'Infinity']) {
     mem.set(WIDTH_KEY, junk);
     assert.equal(readStoredWidth(store), null, `"${junk}" is not a width`);
+    mem.set(AI_MAIN_WIDTH_KEY, junk);
+    assert.equal(readStoredWidth(store, AI_MAIN_WIDTH_KEY), null, `"${junk}" is not Main's width either`);
   }
   const throwing = {
     getItem() { throw new Error('SecurityError'); },
@@ -1429,13 +1441,17 @@ test('the chosen width is this device\'s, and storage that fails is simply the d
     removeItem() { throw new Error('SecurityError'); },
   };
   assert.equal(readStoredWidth(throwing), null);
+  assert.equal(readStoredWidth(throwing, AI_MAIN_WIDTH_KEY), null);
   assert.doesNotThrow(() => writeStoredWidth(500, throwing));
+  assert.doesNotThrow(() => writeStoredWidth(500, throwing, AI_MAIN_WIDTH_KEY));
   assert.doesNotThrow(() => clearStoredWidth(throwing));
+  assert.doesNotThrow(() => clearStoredWidth(throwing, AI_MAIN_WIDTH_KEY));
   assert.equal(readStoredWidth(null), null, 'no storage at all');
+  assert.equal(readStoredWidth(null, AI_MAIN_WIDTH_KEY), null);
 });
 
 test('a width is the layout\'s own knob on <html>, and none hands it back to the stylesheet', () => {
-  const { applyWidth } = api.resize;
+  const { applyWidth, AI_MAIN_WIDTH_KEY } = api.resize;
   const props = new Map();
   const root = { style: {
     setProperty: (k, v) => props.set(k, v),
@@ -1443,10 +1459,25 @@ test('a width is the layout\'s own knob on <html>, and none hands it back to the
   } };
   applyWidth(544.2, root);
   assert.equal(props.get('--side-panel-w'), '544px');
-  assert.equal(props.get('--side-panel-chosen-w'), '544px', 'and says it was chosen, for the bot page\'s Main');
+  assert.equal(props.has('--ai-main-chosen-w'), false, 'the panel\'s edge does not size Main');
+  applyWidth(688.6, root, AI_MAIN_WIDTH_KEY);
+  assert.equal(props.get('--ai-main-chosen-w'), '689px');
+  assert.equal(props.get('--side-panel-w'), '544px', 'and Main\'s edge leaves the panel\'s width alone');
+  applyWidth(null, root, AI_MAIN_WIDTH_KEY);
+  assert.equal(props.has('--ai-main-chosen-w'), false, 'Main goes back to the room its list leaves');
+  assert.equal(props.get('--side-panel-w'), '544px');
   applyWidth(null, root);
   assert.equal(props.has('--side-panel-w'), false);
-  assert.equal(props.has('--side-panel-chosen-w'), false);
+});
+
+test('the bot page is what makes an edge Main Chat\'s, and a hidden page is not', () => {
+  const { aiPageUp } = api.resize;
+  const el = (classes = []) => ({ classList: { contains: (c) => classes.includes(c) } });
+  const doc = (node) => ({ getElementById: (id) => (id === 'ai-screen' ? node : null) });
+  assert.equal(aiPageUp(doc(el())), true);
+  assert.equal(aiPageUp(doc(el(['hidden']))), false);
+  assert.equal(aiPageUp(doc(null)), false, 'another screen up: the side panel\'s own width');
+  assert.equal(aiPageUp({ getElementById() { throw new Error('no document'); } }), false);
 });
 
 test('the divider drags, takes the keys, resets on a double-click, and lets the frames stand aside while held', () => {
@@ -1455,9 +1486,17 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   assert.match(divider, /setPointerCapture\(e\.pointerId\)/);
   assert.match(divider, /d\.width = set\(d\.startW \+ \(d\.startX - e\.clientX\) \* dirSign\(\), false\);/,
     'pinned to the right edge: moving left widens the panel, and nothing is stored mid-drag');
-  assert.match(divider, /if \(d\.width != null\) writeStoredWidth\(d\.width\);/,
+  // 3 Nov 2026: this edge sets its own column's width — Main Chat's while the
+  // bot page is up, the side panel's everywhere else — resolved at each use.
+  assert.match(divider, /const resolveKey = useCallback\(\s*\(\) => widthKey \?\? \(aiPageUp\(\) \? AI_MAIN_WIDTH_KEY : WIDTH_KEY\),/,
+    'the bot page up, the same handle is Main Chat\'s, under Main\'s key');
+  assert.match(divider, /const stored = readStoredWidth\(undefined, key\);/);
+  assert.match(divider, /applyWidth\(stored == null \? null : clampWidth\(stored, b\), undefined, key\);/);
+  assert.match(divider, /applyWidth\(next, undefined, key\);/);
+  assert.match(divider, /if \(persist\) writeStoredWidth\(next, undefined, key\);/);
+  assert.match(divider, /if \(d\.width != null\) writeStoredWidth\(d\.width, undefined, resolveKey\(\)\);/,
     'a press that never moved is half of a double-click, not a choice');
-  assert.match(divider, /const onDoubleClick = \(\) => \{\s*clearStoredWidth\(\);\s*settle\(\);/);
+  assert.match(divider, /const onDoubleClick = \(\) => \{\s*clearStoredWidth\(undefined, resolveKey\(\)\);\s*settle\(\);/);
   for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) assert.ok(divider.includes(`'${key}'`), key);
   assert.match(divider, /window\.addEventListener\('resize', settle\)/, 'a window that narrows gives the width back');
   const block = CSS.slice(CSS.indexOf('.side-panel-divider {'), CSS.indexOf('.side-panel-head {'));

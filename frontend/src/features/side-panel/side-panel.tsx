@@ -69,7 +69,10 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { SidePanel as controller } from './controller';
 import { panelPage, titleFor } from './routes';
 import {
+  AI_MAIN_WIDTH_KEY,
   KEY_STEP,
+  WIDTH_KEY,
+  aiPageUp,
   applyWidth,
   bounds,
   clampWidth,
@@ -299,38 +302,55 @@ interface WidthRange {
  *
  * The Homeroom bot page's Main is the same column (features/ai, 30 Oct
  * 2026): its left edge is this handle too, with its own `id` and the pane it
- * controls, and it sets the same width.
+ * controls. Since 3 Nov 2026 it sets Main Chat's own width, stored under its
+ * own key, not the side panel's: a panel narrowed beside an app no longer
+ * narrows Main, and dragging Main leaves the panel's width alone. A page
+ * opened in Main's place on that page is drawn as Main's column, so its edge
+ * sets Main's width too.
  */
 export function SidePanelDivider({
   panelRef,
   shown,
   id = 'side-panel-divider',
   controls = 'platform-side-panel',
+  widthKey,
 }: {
   panelRef: RefObject<HTMLElement | null>;
   shown: boolean;
   id?: string;
   controls?: string;
+  /** Which stored width this edge sets; by default Main's while the bot
+   *  page is up, the side panel's everywhere else. */
+  widthKey?: string;
 }): ReactNode {
   const t = useMessages('agent');
   const [range, setRange] = useState<WidthRange | null>(null);
   const drag = useRef<{ id: number; startX: number; startW: number; width: number | null } | null>(null);
 
+  // Resolved at each use, not at mount: the side panel is a single element
+  // mounted once, and it is the bot page's own column whenever that page is
+  // up. `widthKey` pins it for a caller that knows which column it draws.
+  const resolveKey = useCallback(
+    () => widthKey ?? (aiPageUp() ? AI_MAIN_WIDTH_KEY : WIDTH_KEY),
+    [widthKey],
+  );
+
   // What is on screen now: the stored width, held inside this window, or the
   // stylesheet's default when there is none. Never writes the store — a
   // window that narrows gives the width back, and one that grows returns it.
   const settle = useCallback(() => {
+    const key = resolveKey();
     const probe = probeLayout();
     const b = bounds(probe);
-    const stored = readStoredWidth();
-    applyWidth(stored == null ? null : clampWidth(stored, b));
+    const stored = readStoredWidth(undefined, key);
+    applyWidth(stored == null ? null : clampWidth(stored, b), undefined, key);
     const panel = panelRef.current;
     // Its width as chosen, which on the Duo held sideways leaves out the
     // column of system chrome it runs under (./resize.ts).
     const box = panel ? panel.getBoundingClientRect() : null;
     const now = box && box.width > 0 ? shownWidth(inlineStartOf(box), probe) : 0;
     setRange(now > 0 ? { now, ...b } : null);
-  }, [panelRef]);
+  }, [panelRef, resolveKey]);
 
   useEffect(() => {
     settle();
@@ -346,11 +366,12 @@ export function SidePanelDivider({
   }, []);
 
   const set = (width: number, persist: boolean): number => {
+    const key = resolveKey();
     const b = bounds(probeLayout());
     const next = clampWidth(width, b);
-    applyWidth(next);
+    applyWidth(next, undefined, key);
     setRange({ now: next, ...b });
-    if (persist) writeStoredWidth(next);
+    if (persist) writeStoredWidth(next, undefined, key);
     return next;
   };
 
@@ -386,11 +407,11 @@ export function SidePanelDivider({
     document.documentElement.classList.remove('side-panel-resizing');
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* already released */ }
     // A press that never moved is half of a double-click, not a choice.
-    if (d.width != null) writeStoredWidth(d.width);
+    if (d.width != null) writeStoredWidth(d.width, undefined, resolveKey());
   };
 
   const onDoubleClick = () => {
-    clearStoredWidth();
+    clearStoredWidth(undefined, resolveKey());
     settle();
   };
 

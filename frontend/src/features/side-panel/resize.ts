@@ -29,6 +29,15 @@
  * 1024px), read from the stylesheet so the two cannot disagree. The drag
  * stopped at the app's 480px while the stylesheet allowed 360.
  *
+ * ── Two widths, two keys (3 Nov 2026) ─────────────────────────────────
+ *
+ * Main Chat's edge and the side panel's look alike and are dragged the same
+ * way, but they are not the same width: a panel narrowed beside an app used
+ * to narrow Main too, because both read one key. Main has its own key now
+ * (`AI_MAIN_WIDTH_KEY`) and its own property (`--ai-main-chosen-w`), and the
+ * panel beside an app keeps `--side-panel-w`. A width remembered before this
+ * is still the panel's; Main starts from its default.
+ *
  * iPhone Duo held sideways has an 84px column of system chrome on the right
  * (`--platform-strip-w`, side-strip.ts), and Main runs under it (app.css,
  * THE PINNED COLUMNS RUN UNDER IT). The width chosen is what is left of the
@@ -45,8 +54,25 @@
  * so a window that grows back gets the chosen width back too.
  */
 
-/** localStorage key for the chosen width, in CSS pixels. */
+/** localStorage key for the side panel's chosen width, in CSS pixels. */
 export const WIDTH_KEY = 'usernode_side_panel_w_v1';
+
+/**
+ * Main Chat's own width on the Homeroom bot page, kept apart from the side
+ * panel's: the two are dragged in different places. The property it drives is
+ * `--ai-main-chosen-w`, which only app.css's `--ai-main-w` reads.
+ */
+export const AI_MAIN_WIDTH_KEY = 'usernode_ai_main_w_v1';
+
+/** The CSS property each key drives on <html>. */
+const WIDTH_PROPERTY: Record<string, string> = {
+  [WIDTH_KEY]: '--side-panel-w',
+  [AI_MAIN_WIDTH_KEY]: '--ai-main-chosen-w',
+};
+
+function propertyFor(key: string): string {
+  return WIDTH_PROPERTY[key] ?? WIDTH_PROPERTY[WIDTH_KEY];
+}
 
 /** The narrowest the panel may be dragged. */
 export const MIN_PANEL_W = 320;
@@ -113,10 +139,10 @@ function storage(): StorageLike | null {
   }
 }
 
-/** The width this device chose, or null for the default. */
-export function readStoredWidth(store: StorageLike | null = storage()): number | null {
+/** The width this device chose for `key`, or null for the default. */
+export function readStoredWidth(store: StorageLike | null = storage(), key: string = WIDTH_KEY): number | null {
   try {
-    const raw = store ? store.getItem(WIDTH_KEY) : null;
+    const raw = store ? store.getItem(key) : null;
     if (raw == null) return null;
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -125,17 +151,17 @@ export function readStoredWidth(store: StorageLike | null = storage()): number |
   }
 }
 
-export function writeStoredWidth(width: number, store: StorageLike | null = storage()): void {
+export function writeStoredWidth(width: number, store: StorageLike | null = storage(), key: string = WIDTH_KEY): void {
   try {
-    if (store) store.setItem(WIDTH_KEY, String(Math.round(width)));
+    if (store) store.setItem(key, String(Math.round(width)));
   } catch {
     /* a width that does not survive a reload is the default next time */
   }
 }
 
-export function clearStoredWidth(store: StorageLike | null = storage()): void {
+export function clearStoredWidth(store: StorageLike | null = storage(), key: string = WIDTH_KEY): void {
   try {
-    if (store) store.removeItem(WIDTH_KEY);
+    if (store) store.removeItem(key);
   } catch {
     /* nothing stored, or nowhere to store it: the default either way */
   }
@@ -143,18 +169,31 @@ export function clearStoredWidth(store: StorageLike | null = storage()): void {
 
 /**
  * Apply `width` to the layout, or null to hand it back to the stylesheet.
- * `--side-panel-chosen-w` is the same width, set only while one is chosen:
- * the Homeroom bot page's Main takes the room its list does not need when
- * nothing is chosen (app.css `--ai-main-auto`), and the stylesheet's
- * `--side-panel-w` cannot say whether it is a choice.
+ * Only `key`'s own property is written — `--side-panel-w` beside an app,
+ * `--ai-main-chosen-w` for the bot page's Main — so a drag on one edge never
+ * moves the other. Each is set only while a width is chosen: Main takes the
+ * room its list does not need when nothing is chosen (app.css
+ * `--ai-main-auto`), and a property that is always there could not say
+ * whether it was a choice.
  */
-export function applyWidth(width: number | null, root: HTMLElement = document.documentElement): void {
-  if (width == null) {
-    root.style.removeProperty('--side-panel-w');
-    root.style.removeProperty('--side-panel-chosen-w');
-  } else {
-    root.style.setProperty('--side-panel-w', `${Math.round(width)}px`);
-    root.style.setProperty('--side-panel-chosen-w', `${Math.round(width)}px`);
+export function applyWidth(
+  width: number | null,
+  root: HTMLElement = document.documentElement,
+  key: string = WIDTH_KEY,
+): void {
+  const property = propertyFor(key);
+  if (width == null) root.style.removeProperty(property);
+  else root.style.setProperty(property, `${Math.round(width)}px`);
+}
+
+/** Is the Homeroom bot page the one on screen? Main Chat's column is drawn
+ *  only there, and that is the width its edge sets. */
+export function aiPageUp(doc: Document = document): boolean {
+  try {
+    const ai = doc.getElementById('ai-screen');
+    return !!ai && !ai.classList.contains('hidden');
+  } catch {
+    return false;
   }
 }
 
@@ -188,8 +227,7 @@ export function probeLayout(win: Window = window): LayoutProbe {
     };
     const panelSide = doc.documentElement.dir === 'rtl' ? 'left' : 'right';
     if (doc.documentElement.getAttribute('data-side-strip') === panelSide) rightInset = px('--platform-strip-w');
-    const ai = doc.getElementById('ai-screen');
-    if (ai && !ai.classList.contains('hidden')) neighbourMin = px('--ai-list-min') || MIN_APP_W;
+    if (aiPageUp(doc)) neighbourMin = px('--ai-list-min') || MIN_APP_W;
   } catch {
     rightInset = 0;
     neighbourMin = MIN_APP_W;
