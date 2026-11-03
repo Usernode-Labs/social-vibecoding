@@ -2977,7 +2977,11 @@
   },
   "topic.thread.state.live": {
     "text": "Live",
-    "description": "Where a change in the list stands: it was voted in and is part of the project now."
+    "description": "Where a change in the list stands: it was voted in and is running in production now."
+  },
+  "topic.thread.state.goingLive": {
+    "text": "Going live",
+    "description": "Where a change in the list stands: it merged and is on its way to production, not running yet."
   },
   "topic.thread.state.settled": {
     "text": "Settled",
@@ -6146,5 +6150,9 @@
   "topic.thread.pill.live": {
     "text": "Live",
     "description": "Status pill beside a request's number in its page's header: a change built for it went live."
+  },
+  "topic.thread.pill.goingLive": {
+    "text": "Going live…",
+    "description": "Status pill beside a request's number in its page's header: a change built for it merged and is on its way to production, not running yet."
   }
 }
