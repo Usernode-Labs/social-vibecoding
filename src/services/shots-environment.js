@@ -410,6 +410,13 @@ async function preparePair(config, {
       checkoutExactRevision({ app, session, sha: baseSha, side: 'base', parentDir: rootDir }),
       checkoutExactRevision({ app, session, sha: headSha, side: 'head', parentDir: rootDir }),
     ]);
+    // Both revisions boot a platform pair from empty databases their own
+    // code fills; a revision from before that cannot (platform-preview-data-policy.js).
+    const previewPolicy = require('./platform-preview-data-policy');
+    if (previewPolicy.sourceIdentity(dbManager.appDbName(app.slug))
+        && ![baseCheckout, headCheckout].every((checkout) => previewPolicy.startsEmpty(checkout.dir))) {
+      throw new ShotsEnvironmentError('shots_preview_needs_update', previewPolicy.NEEDS_UPDATE);
+    }
     stage('resolve_staging_env');
     const [baseEnv, headEnv] = await allSettledValues([
       resolvedStagingEnv(config, pool, session, app, baseCheckout.dir),

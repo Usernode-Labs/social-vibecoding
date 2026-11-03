@@ -165,6 +165,18 @@ async function loadSession(pool, sessionId) {
   return rows[0];
 }
 
+// A platform pair boots both revisions from empty databases their own code
+// fills, and code from before that cannot (platform-preview-data-policy.js
+// startsEmpty). A change's recorded base never moves, even once the change is
+// updated with main, so a base from before then is replaced by where its head
+// meets main, as for a change with no recorded base. A head that still
+// predates it meets main before it too, and the pair is refused as it was.
+async function recordedBaseCannotBoot(session, { owner, repo, sha }, githubService) {
+  const previewPolicy = require('./platform-preview-data-policy');
+  if (!session.app_slug || !previewPolicy.sourceIdentity(require('./db-manager').appDbName(session.app_slug))) return false;
+  return !previewPolicy.bootFileStartsEmpty(await githubService.getFileContent(owner, repo, previewPolicy.BOOT_FILE, sha));
+}
+
 // `baseSha` pins the before revision instead of resolving it: a shots eval's
 // trial (the shots-eval machine) shoots the revisions its proposal's own run
 // shot.
@@ -178,6 +190,9 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
   }
   const { owner, repo } = environment.repoParts(session.repo_url);
   let baseSha = exactSha(explicitBase) || exactSha(session.handoff_base_sha);
+  if (!exactSha(explicitBase) && baseSha && await recordedBaseCannotBoot(session, { owner, repo, sha: baseSha }, githubService)) {
+    baseSha = null;
+  }
   let comparison = null;
   if (!baseSha) {
     const repository = await githubService.getRepoHead(owner, repo);
