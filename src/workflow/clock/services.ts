@@ -188,7 +188,15 @@ export const JOBS: readonly Job[] = Object.freeze([
     // inside it. The turns it fails are finished by the item that
     // dispatched them.
     name: 'local-agent-leases', everyMs: MIN,
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool).then((n: number) => ({ released: n })),
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool)
+      .then(async (n: number) => ({
+        released: n,
+        // A turn a machine was offered but never picked up is not covered by
+        // a lapsed lease: the machine can heartbeat forever without claiming
+        // it. Freed at the offer timeout, so a dispatch that died partway
+        // does not leave the change answering busy (services/local-agent.js).
+        unclaimed: await legacy('services/local-agent').sweepUnclaimedTurns(pool),
+      })),
   },
   {
     // A coding record no work item holds (the old orphan sweep's and

@@ -90,6 +90,9 @@ async function migrate(config) {
   await seedSelfApp(pool, config);
   await seedTermsVersions(pool);
   await seedStagingPrivateRequest(pool);
+  // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
+  // a slot, handed back, never read, an operator task), for its shots.
+  await seedStagingBotWaitingRows(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -273,6 +276,7 @@ async function migrate(config) {
   await seedStagingInviteChallengeStatuses(pool);
   // After it: the First challenges hang off its season-type event.
   await seedStagingFirstChallenges(pool);
+  await seedStagingCountedCredit(pool, config);
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
@@ -1603,6 +1607,65 @@ async function seedStagingPrivateRequest(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging private request seeding failed', { message: err.message });
+  }
+}
+
+// #6158: the Homeroom bot tab's Waiting rows now say what each request waits
+// on, read from the bot's own records. A fresh staging copy has no such
+// records, so the before & after shots get a small, obviously fake mix on the
+// self-hosted Homeroom project, filed by the shots' member fixture
+// (usernode-capture): one in the bot's queue, one held for a slot, one it
+// handed back to a person, one it never read, and one operator task. Rows
+// for that fixture account only; nothing here is a signal the bot reads to
+// decide anything, and a staging copy never acts on its queue. Idempotent by
+// request number; strictly a no-op outside staging.
+async function seedStagingBotWaitingRows(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const demo = [
+      { number: 9101, title: 'Staging demo: a request in the bot\'s queue', queue: true },
+      { number: 9102, title: 'Staging demo: a request held for a slot', held: 'proposals_per_app' },
+      {
+        number: 9103,
+        title: 'Staging demo: a request handed back to a person',
+        verdict: 'person',
+        reason: 'Staging demo: a person must decide which of the two columns to keep.',
+      },
+      { number: 9104, title: 'Staging demo: a request the bot has not read' },
+      { number: 9105, title: 'Operator: staging demo, rotate the demo mail key' },
+    ];
+    for (const d of demo) {
+      await pool.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+         SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+          WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+        [appId, d.number, d.title, userId],
+      );
+      if (d.queue) {
+        await pool.query(
+          `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by, enqueued_at)
+           SELECT $1, $2, 2, 'refresh', $3, NOW() - INTERVAL '1 day'
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2)`,
+          [appId, d.number, userId],
+        );
+      }
+      if (d.held || d.verdict) {
+        await pool.query(
+          `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, cap_suppressed, created_at)
+           SELECT $1, $2, 'live', $3, $4, $5, NOW() - INTERVAL '1 day'
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                               WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = $3)`,
+          [appId, d.number, d.verdict || 'ready', d.reason || null, d.held || null],
+        );
+      }
+    }
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
   }
 }
 
@@ -15310,6 +15373,79 @@ async function seedStagingFirstChallenges(pool) {
   }
 }
 
+// A credit on a challenge's page that links to its change (#3247). No fresh
+// copy has a credit with a merge behind it for the shots' member, so this seeds
+// one: a weekly challenge nothing scores, a fake merged change on the self app,
+// its merge event and one credit, 1/2 this week. The shots' member alone, so the
+// declared checks' account keeps its Home order. Ids clear of the First
+// challenges above; the credit's date moves with every boot, because a weekly
+// count drops anything older than Monday.
+async function seedStagingCountedCredit(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const EVENT_SEASON_ID = 900501;
+  try {
+    const [{ rows: people }, { rows: apps }] = await Promise.all([
+      pool.query(`SELECT id FROM users WHERE username = 'usernode-capture'`),
+      pool.query('SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]),
+    ]);
+    if (!people.length || !apps.length) return;
+    const member = people[0].id;
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, metric_type, metric_target, metric_label,
+          created_at, updated_at)
+       VALUES (900512, 'WEEKLY', 'Get 2 proposals accepted (staging demo)',
+               'Get two of your proposals accepted this week.', '500 pts each',
+               'Weekly challenge fixture with one linked credit.', 'count', 2, 'Proposals accepted',
+               NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, enabled, display_order, completed,
+          created_at, updated_at)
+       VALUES (900724, $1, 900512, TRUE, 5, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_SEASON_ID]
+    );
+    const branch = 'staging-fixture/counted-credit';
+    const { rows: found } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1', [apps[0].id, branch]
+    );
+    const session = found[0] || (await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, session_title, status,
+          merged_at, live_at, created_at)
+       VALUES ($1, $2, $3, 9043, '[Staging demo] Show the reason beside each challenge credit',
+               '[Staging demo] Show the reason beside each challenge credit', 'merged',
+               NOW(), NOW(), NOW() - INTERVAL '1 day')
+       RETURNING id`,
+      [apps[0].id, member, branch]
+    )).rows[0];
+    const { rows: merged } = await pool.query(
+      `SELECT id FROM events WHERE session_id = $1 AND event_type = 'pr_merged' LIMIT 1`, [session.id]
+    );
+    const event = merged[0] || (await pool.query(
+      `INSERT INTO events (user_id, app_id, session_id, event_type, created_at)
+       VALUES ($1, $2, $3, 'pr_merged', NOW()) RETURNING id`,
+      [member, apps[0].id, session.id]
+    )).rows[0];
+    await pool.query(
+      `INSERT INTO user_activities
+         (user_id, season_event_id, activity_type, points, description, metadata, activity_at,
+          challenge_id, created_at, updated_at)
+       VALUES ($1, $2, 'challenge_completion', 500, 'Accepted proposal on Homeroom', $3::jsonb, NOW(),
+               900724, NOW(), NOW())
+       ON CONFLICT (challenge_id, user_id, (metadata->>'source_key'))
+         WHERE metadata->>'source_key' IS NOT NULL
+       DO UPDATE SET activity_at = NOW()`,
+      [member, EVENT_SEASON_ID, JSON.stringify({ source_key: `merged:${event.id}` })]
+    );
+  } catch (err) {
+    log.warn('db', 'Staging counted credit seed skipped', { message: err.message });
+  }
+}
+
 // Profile customization fixtures (issue #982).
 //
 // TWO of the three "missing in staging" categories apply here:
@@ -15989,7 +16125,8 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
-  migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingProfileCustomization,
+  migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
+  seedStagingProfileCustomization,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
   seedStagingBotProjectNotification,

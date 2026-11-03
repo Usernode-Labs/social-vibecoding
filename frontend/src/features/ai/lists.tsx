@@ -65,7 +65,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  GROUP_FIRST, byProject, nextWords, railProjects, rankProjects, shortWords, threadWhy, whyOf,
+  GROUP_FIRST, NOT_MOVING, byProject, nextWords, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { usePhone } from './phone-drawer';
@@ -269,36 +269,20 @@ function GroupMore({ hidden, open, onClick }: { hidden: number; open: boolean; o
   );
 }
 
-function Section({ list, head, owe = false, lines, quiet = false, empty = null, note = null, keep = false, first, heads }: {
-  /** Which list, for the page's checks: work, busy, live. */
-  list: string;
-  /** Said over the rows, whatever they are: why the lists show less than they should. */
-  note?: ReactNode;
-  /** Drawn with no rows too: Needs you's band is in the prerender. */
-  keep?: boolean;
-  head: ReactNode;
-  owe?: boolean;
-  lines: Line[];
-  quiet?: boolean;
-  empty?: ReactNode;
-  /** Rows a project shows before its own Show more. */
-  first: number;
-  /** The project's name over its rows; not when one project's chip says it already. */
-  heads: boolean;
-}): ReactNode {
+/**
+ * One section's rows under their project, once, each project's first few
+ * before its own Show more. A row whose chat is in the column is never
+ * folded away: past the first rows it joins them, so where you are is
+ * always shown.
+ */
+function GroupList({ lines, quiet = false, heads, first }: { lines: Line[]; quiet?: boolean; heads: boolean; first: number }): ReactNode {
   const t = useMessages('messages');
   const [opened, setOpened] = useState<Record<string, boolean>>({});
-  if (!lines.length && !empty && !note && !keep) return null;
-  const label = owe ? 'text-violet-700 dark:text-violet-300' : '';
-  const body = (
+  return (
     <>
-      {note}
-      {!lines.length ? empty : null}
       {byProject(lines).map((g) => {
         const key = g.app?.slug || 'none';
         const open = !!opened[key];
-        // The row whose chat is in the column is never folded away: past
-        // the first rows, it joins them, so where you are is always shown.
         const litAt = g.items.findIndex((l) => l.lit);
         const items = litAt >= first
           ? [...g.items.slice(0, first), g.items[litAt], ...g.items.slice(first).filter((l) => !l.lit)]
@@ -336,6 +320,67 @@ function Section({ list, head, owe = false, lines, quiet = false, empty = null, 
           </div>
         );
       })}
+    </>
+  );
+}
+
+function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads }: {
+  /** Which list, for the page's checks: work, busy, live. */
+  list: string;
+  /** Said over the rows, whatever they are: why the lists show less than they should. */
+  note?: ReactNode;
+  /** Drawn with no rows too: Needs you's band is in the prerender. */
+  keep?: boolean;
+  head: ReactNode;
+  owe?: boolean;
+  lines: Line[];
+  /**
+   * #6158: the rows nobody is moving, in one part of their own at the
+   * bottom of the section, folded until it is opened (or one of them is
+   * where you are).
+   */
+  still?: { head: string; lines: Line[] } | null;
+  quiet?: boolean;
+  empty?: ReactNode;
+  /** Rows a project shows before its own Show more. */
+  first: number;
+  /** The project's name over its rows; not when one project's chip says it already. */
+  heads: boolean;
+}): ReactNode {
+  const [stillOpen, setStillOpen] = useState(false);
+  if (!lines.length && !still?.lines.length && !empty && !note && !keep) return null;
+  const label = owe ? 'text-violet-700 dark:text-violet-300' : '';
+  // A row in the folded part that is where you are opens it.
+  const stillShown = stillOpen || !!still?.lines.some((l) => l.lit);
+  const body = (
+    <>
+      {note}
+      {!lines.length ? empty : null}
+      <GroupList lines={lines} quiet={quiet} heads={heads} first={first} />
+      {still && still.lines.length ? (
+        <div data-ai-still-part="">
+          <button
+            type="button"
+            className="flex w-full min-h-[44px] md:min-h-0 items-center justify-start gap-1 py-2 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+            onClick={() => setStillOpen((o) => !o)}
+            aria-expanded={stillShown}
+            data-ai-still=""
+          >
+            {still.head}
+            <ChevronDownIcon className={`h-4 w-4 transition-transform motion-reduce:transition-none${stillShown ? ' rotate-180' : ''}`} aria-hidden="true" />
+          </button>
+          <div
+            className={`grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${stillShown ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
+            aria-hidden={stillShown ? undefined : true}
+            inert={!stillShown}
+            data-ai-still-rest=""
+          >
+            <div className="min-h-0 overflow-hidden">
+              <GroupList lines={still.lines} quiet={quiet} heads={heads} first={still.lines.length} />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
   return (
@@ -457,10 +502,16 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   const waitingShown = waiting.filter((x) => shows(x.app));
   // 2 Nov 2026 (#6160): under way and waiting are one card of their own, in
   // that order within a project so the rows read work first, then the wait.
+  // #6158: what is moving leads; the waiting rows nobody is moving fold away
+  // under one head.
+  const movingShown = waitingShown.filter((th) => !NOT_MOVING.has(th.what));
+  const stillShown = waitingShown.filter((th) => NOT_MOVING.has(th.what));
+  const waitingLine = threadLine(() => <ClockIcon className={G} />);
   const busyLines: Line[] = [
     ...progressShown.map(threadLine(nextGlyph)),
-    ...waitingShown.map(threadLine(() => <ClockIcon className={G} />)),
+    ...movingShown.map(waitingLine),
   ];
+  const stillLines: Line[] = stillShown.map(waitingLine);
   const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => ({
     ...threadLine(() => <CheckIcon className={G} />)(th),
     right: dayOf(th.at, t),
@@ -546,13 +597,14 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
           heads={heads}
         />
       </div>
-      {busyLines.length ? (
+      {busyLines.length || stillLines.length ? (
         <div className={`${PLANE} pb-2`} data-ai-sheet="busy">
           <Section
             list="busy"
             quiet
-            head={t('messages:ai.busy.title', { count: busyLines.length })}
+            head={t('messages:ai.busy.title', { count: busyLines.length + stillLines.length })}
             lines={busyLines}
+            still={stillLines.length ? { head: t('messages:ai.up.stillCount', { count: stillLines.length }), lines: stillLines } : null}
             first={GROUP_FIRST.busy}
             heads={heads}
           />

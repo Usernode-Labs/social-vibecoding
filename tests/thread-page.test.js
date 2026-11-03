@@ -91,7 +91,7 @@ test('its first render is nothing; the thread is read in an effect', () => {
   const html = renderComponent(ITEMS, 'ThreadItems', { slug: 'p', number: 7, here: { type: 'request', id: 7 } });
   assert.equal(html, '');
   const src = read(ITEMS);
-  assert.match(src, /useEffect\(\(\) => \{\s+if \(!revision\) setData\(null\);/, 'cleared on a new page, kept while a move re-reads it');
+  assert.match(src, /const again = !!path && readPath\.current === path;\s+readPath\.current = path;\s+if \(!again\) setData\(null\);/, 'cleared on a new page, kept while a move re-reads it');
   assert.match(src, /`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/\$\{number\}\$\{asChange \? '\?as=change' : ''\}`/,
     'a change\'s page reads its own thread (a request may share its number)');
   assert.match(src, /`\/api\/threads\/\$\{threadId\}`/, 'a decision is read by its thread');
@@ -262,6 +262,31 @@ test('the bar\'s pill says where the request\'s work stands', () => {
   assert.equal(requestPill(layoutOf([]), 'building').key, 'building', 'the bot building it');
   assert.equal(requestPill(layoutOf([{ ...review, state: 'merged' }]), null).tone, 'ok');
   assert.equal(message('project:topic.thread.pill.choosing'), 'Pick one');
+});
+
+test('#6139: a change that finished building reads as ready, with no spinner, and only when all of them have', () => {
+  const { requestPill, threadLayout, threadRows } = loadTsx(MODEL);
+  const here = { type: 'request', id: 7 };
+  const layoutOf = (items) => threadLayout(payload([request, ...items]), here);
+  const building = { type: 'change', id: 51, number: 8, title: 'A', status: 'active', state: 'underway', ready: false, replies: 0, closes: [7] };
+  const ready = { ...building, id: 52, ready: true };
+
+  const pill = requestPill(layoutOf([ready]), null, message);
+  assert.equal(pill.key, 'ready');
+  assert.equal(pill.label, 'Ready for a vote');
+  assert.equal(pill.tone, 'neutral');
+  assert.ok(!pill.spinner, 'nothing is running');
+
+  const still = requestPill(layoutOf([ready, building]), null, message);
+  assert.equal(still.key, 'building', 'another change is still being built');
+  assert.equal(still.spinner, true);
+  assert.equal(requestPill(layoutOf([ready]), 'building').key, 'building', 'the bot is really building for it');
+  assert.equal(requestPill(layoutOf([ready]), 'queued').key, 'ready', 'a build that has not started says nothing');
+  assert.equal(requestPill(layoutOf([ready, { ...building, id: 53, status: 'promoted', state: 'review' }]), null).key, 'vote', 'one up for a vote still leads');
+
+  const [row] = threadRows(payload([ready]), null);
+  assert.ok(JSON.stringify(row.facts).includes('project:topic.thread.state.ready'), 'the list says it too');
+  assert.equal(message('project:topic.thread.state.ready'), 'Ready for a vote');
 });
 
 test('the request\'s changes are drawn from their own pages\' reads, and the ballot lives with them', () => {

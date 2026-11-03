@@ -52,6 +52,7 @@ const SORT_OPTIONS: Array<{ key: string; label: string }> = [
 const SHOW_ONLY: Array<{ key: string; label: string }> = [
   { key: 'featured', label: 'discover:filter.featured' },
   { key: 'new', label: 'discover:filter.new' },
+  { key: 'recent', label: 'discover:filter.recent' },
   { key: 'notjoined', label: 'discover:filters.hideJoined' },
 ];
 

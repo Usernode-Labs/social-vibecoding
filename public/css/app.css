@@ -18297,6 +18297,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   margin: 4px 16px 0;
   display: flex; flex-direction: column;
 }
+/* #6199: the vote-type chips sit INSIDE this box, above the deck, so the feed
+   is still the pane's one child (tests/communities-followups.test.js, #3516).
+   The box already carries the page's inset, so the rail's own 16px would set
+   the chips 16px in from the card's edge; they line up with it instead. */
+.workshop-needs-feed > .needs-vote-chips { padding-inline: 0; }
 /* ON A PHONE THE FEED ENDS WHERE #workshop-screen'S CLEARANCE BEGINS (#3516).
 
    It was `height: calc(100dvh - 180px - var(--browser-banner-h, 0px))`: the
@@ -24582,16 +24587,20 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   }
   /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,
      so nothing said a row was a target until it was pressed. The hover is the
-     same periwinkle as the lit tab at about half the strength, so the tab you
-     are on stays the strongest thing in the rail and the one under the
-     pointer reads as "this one, if you press". Only where there IS a pointer:
-     a touch screen's sticky hover would leave a tapped tab half lit. */
+     same periwinkle as the lit tab, stronger now (#6194: at half strength the
+     inactive rows were hard to tell apart), with the same thin outline that
+     lit chips elsewhere wear. The tab you are on keeps its full fill and its
+     weight 600, so it still reads as the strongest thing in the rail and the
+     one under the pointer reads as "this one, if you press". Only where there
+     IS a pointer: a touch screen's sticky hover would leave a tapped tab half
+     lit. */
   .platform-tab {
-    transition: background-color 120ms ease, color 120ms ease;
+    transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
   }
   @media (hover: hover) {
     .platform-tab:not([aria-current="page"]):hover {
-      background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
+      background: color-mix(in srgb, var(--lit-tint) 85%, transparent);
+      box-shadow: inset 0 0 0 1px var(--lit-line);
       color: var(--lit-ink);
     }
   }
@@ -26656,7 +26665,10 @@ html.in-side-panel body {
    are the heavy thing on the page, so it has no fill and one line of type.
    Open (⌄, the title, or the line under the bar), the title wraps in full
    and a card under the bar holds what the change does (.rf-desc). */
-.rf-bar { position: relative; z-index: 9; flex: none; display: flex; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+/* #6199: the vote-type chips sit under the bar's title row, so the folded
+   bar's measurement includes them. */
+.rf-bar .needs-vote-chips { flex-basis: 100%; }
 .rf-back { flex: none; display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: none; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .rf-bar-title { flex: 1; min-width: 0; margin: 0; padding: 11px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 650; line-height: 22px; letter-spacing: -0.015em; }
 .rf-bar-title-btn { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: inherit; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent; }

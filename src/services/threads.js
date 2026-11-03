@@ -21,6 +21,7 @@
 const log = require('./logger');
 const issueRefs = require('./issue-proposal-ref');
 const { IN_PROGRESS_PAUSED_WINDOW_DAYS } = require('./issue-progress');
+const { workedOnSql } = require('../workflow/session-work.ts');
 
 const MARKER_KEY = 'threads_backfilled_v1';
 const MESSAGE_BATCH = 10000;
@@ -456,6 +457,30 @@ async function followMerges(db, thread) {
 const visibleChangeSql = (s, viewer) => `(${s}.status IN ('promoted', 'merging', 'merged')
        OR ${s}.shared_at IS NOT NULL OR ${s}.user_id = ${viewer})`;
 
+// #6139: a change not yet up for a vote that has finished building (an SQL
+// expression over chat_sessions as `cs`): its checks passed on its current
+// head and nothing is working on it. A verdict is about one commit, so an
+// imported pull request or a submitted local upload whose head moved, or an
+// upload not submitted yet (proposal-handoff.js hasUnsubmittedUpload), is not
+// ready. A local upload a web turn built on after reads as not ready too: its
+// stored head is the upload's, and the mistake that leaves is the old words.
+// A native change has no stored head to compare with (preview/facts.ts pinOf):
+// its turn hands a new commit to the preview machine, which makes the verdict
+// pending, before the turn ends. No staging_url: a preview that went to sleep
+// did not unbuild anything. 'skipped' is not enough either: it can mean there
+// is nothing built.
+const CHANGE_READY_SQL = `(cs.status IN ('active', 'paused')
+       AND cs.check_state = 'passing'
+       AND cs.checks_commit_sha IS NOT NULL
+       AND (cs.source IS DISTINCT FROM 'imported'
+            OR LOWER(cs.imported_pr_head_sha) = LOWER(cs.checks_commit_sha))
+       AND (cs.source IS DISTINCT FROM 'cli_handoff'
+            OR LOWER(cs.handoff_head_sha) = LOWER(cs.checks_commit_sha))
+       AND NOT (cs.handoff_uploaded_sha IS NOT NULL
+                AND cs.handoff_uploaded_sha IS DISTINCT FROM cs.handoff_head_sha
+                AND cs.checks_commit_sha IS NOT DISTINCT FROM cs.handoff_upload_checked_sha)
+       AND NOT ${workedOnSql()})`;
+
 // Everything in a thread, oldest first, with how many people's replies are
 // anchored to each. A change is listed by the rule the request page's
 // "Addressed by" already uses (issue-proposal-ref.js): proposed work is
@@ -477,7 +502,8 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        NULL::int AS epoch, NULL::text AS my_vote,
        COALESCE(ru.username, r.author_login) AS author, COALESCE(ru.is_synthetic, FALSE) AS author_bot,
        NULL::text AS reason, NULL::int AS target, NULL::int[] AS closes,
-       NULL::int AS built_from_session_id, NULL::int AS built_from_version
+       NULL::int AS built_from_session_id, NULL::int AS built_from_version,
+       FALSE AS ready
   FROM requests r LEFT JOIN users ru ON ru.id = r.created_by
  WHERE r.thread_id = $1
 UNION ALL
@@ -493,7 +519,8 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
            AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch),
        cu.username, COALESCE(cu.is_synthetic, FALSE), NULL::text, NULL::int,
        COALESCE(cs.linked_issues, '{}'::int[]),
-       cs.built_from_session_id, cs.built_from_version
+       cs.built_from_session_id, cs.built_from_version,
+       ${CHANGE_READY_SQL}
   FROM chat_sessions cs LEFT JOIN users cu ON cu.id = cs.user_id
  WHERE cs.thread_id = $1 AND cs.is_headless = FALSE
    AND (cs.status IN ('active', 'promoted', 'merging', 'merged')
@@ -514,7 +541,7 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
        NULLIF(i.payload->>'reason', ''),
        CASE WHEN i.kind = 'close_issue' AND (i.payload->>'issueNumber') ~ '^[0-9]{1,9}$'
             THEN (i.payload->>'issueNumber')::int END,
-       NULL::int[], NULL::int, NULL::int
+       NULL::int[], NULL::int, NULL::int, FALSE
   FROM issues i LEFT JOIN users iu ON iu.id = i.created_by
  WHERE i.thread_id = $1 AND i.kind <> 'general'
  ORDER BY created_at, type, id`;
@@ -574,6 +601,8 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
     };
     if (row.type === 'change') {
       item.state = issueRefs.stateOf(row.status);
+      // #6139: still underway, but built: CHANGE_READY_SQL.
+      item.ready = row.ready === true;
       item.folded = foldOf.get(`change:${row.id}`) || [];
       // Stage 6: what the ballot casts with, and the viewer's own vote.
       item.epoch = row.epoch == null ? null : Number(row.epoch);

@@ -256,7 +256,7 @@ test('a vote with no answer is kept and stays on the card; one answered another 
   assert.match(late, /if \(detail\.outcome === 'queued'\) \{\s+if \(vote === 'yes' \|\| vote === 'no'\) AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, vote\);\s+return;\s+\}\s+AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, null\);/,
     'a waiting vote shows as on its way; an answered one, sent or refused, clears it');
   assert.match(late, /PlatformI18n\.t\('changes:vote\.toast\.queuedSent'\)/);
-  assert.match(late, /data\.error \|\| PlatformI18n\.t\('changes:vote\.toast\.queuedRefused'\)/);
+  assert.match(late, /PlatformI18n\.errorText\(data\) \|\| PlatformI18n\.t\('changes:vote\.toast\.queuedRefused'\)/);
   for (const id of ['changes:vote.toast.queued', 'changes:vote.toast.queuedSent', 'changes:vote.toast.queuedRefused']) {
     assert.ok(message(id), id);
   }

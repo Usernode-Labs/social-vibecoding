@@ -262,7 +262,12 @@ export function ConnectorsSection() {
         <Label className="mb-1" htmlFor="connector-url">
           {t('settings:connectors.url.label')}
         </Label>
-        <div className="flex gap-2 mb-2">
+        {/*
+            Wraps on a phone so the address keeps its width and the Test
+            connection button takes a line of its own (the button's
+            `w-full` is what forces the break); from 640px it is one row.
+        */}
+        <div className="flex flex-wrap sm:flex-nowrap gap-2 mb-2">
           {/*
               `mono` as a PROP, not className: this field writes `font-mono`
               before the focus ring, where #settings-api-key writes it after.
@@ -291,7 +296,34 @@ export function ConnectorsSection() {
           >
             {t('core:common.copy')}
           </Button>
+          {/*
+              Read-only: it probes this site's own MCP server and the
+              account's connection, and never mints a token or contacts a
+              chat product. Secondary by design — Copy stays the section's
+              one filled accent button, so this one uses the neutral fill the
+              profile screen's Preview and Copy public link use.
+          */}
+          <Button
+            id="connector-url-test"
+            type="button"
+            variant="neutral"
+            ink="neutral"
+            layout="shrink"
+            className="w-full sm:w-auto min-h-[44px] sm:min-h-[36px]"
+          >
+            {t('settings:connectors.test.button')}
+          </Button>
         </div>
+        {/*
+            The result of the last test, under the address. settings.js owns
+            its text and its `hidden`, like every other status line here.
+        */}
+        <StatusLine
+          id="connector-test-status"
+          size="xs"
+          spacing={2}
+          aria-live="polite"
+        />
         {/*
             What the address IS, for the reader who has never met "MCP". Opens
             in place, like every other disclosure on this pane, and under the

@@ -82,8 +82,9 @@ export const browseStore = createStore({
   only: [],
   /**
    * How many filter choices differ from the defaults: the switches that are
-   * on, a picked type and a non-Recommended order. The number beside Filters;
-   * 0 hides it. Derived by Browse.activeFilterCount(), never stored as a
+   * on, a picked type and a non-Recommended order. Shown inside the Filters
+   * label ("Filters · 2"), and a value above 0 is what draws the Clear all
+   * chip beside it. Derived by Browse.activeFilterCount(), never stored as a
    * preference. 0 is the PRERENDER value.
    */
   activeCount: 0,
