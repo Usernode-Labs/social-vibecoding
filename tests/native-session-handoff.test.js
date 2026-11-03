@@ -90,6 +90,7 @@ function loadNativeChrome({
   fetchImpl,
   establishImpl,
   prepareForLoginImpl,
+  prepareProvingParametersImpl,
   restoreImpl,
   sharedAttemptStorage,
 } = {}) {
@@ -98,6 +99,7 @@ function loadNativeChrome({
     fetch: [],
     establish: [],
     prepareForLogin: 0,
+    prepareProvingParameters: 0,
     logout: 0,
     admission: [],
     events: [],
@@ -173,6 +175,10 @@ function loadNativeChrome({
       return establishResult(payload, sandbox.App.user.id.toString());
     },
     async restoreWebSession() { return restoreImpl(); },
+    async prepareProvingParameters() {
+      calls.prepareProvingParameters += 1;
+      return prepareProvingParametersImpl ? prepareProvingParametersImpl() : true;
+    },
     async prepareForLogin() {
       calls.prepareForLogin += 1;
       if (prepareForLoginImpl) return prepareForLoginImpl();
@@ -919,4 +925,73 @@ test('boot preserves a valid web session on native failure, and treats failed re
   const ok = response({ user: { id: 41 } });
   assert.equal(await recoveryReader(restore, [ok])._fetchSession(), ok);
   await assert.rejects(recoveryReader(restore, [response({}, { ok: false, status: 401 })])._fetchSession(), /unreachable/);
+});
+
+
+const preparationInfo = {
+  version: 5, sessionLifecycleProtocol: 2,
+  capabilities: ['establishNativeSession', 'prepareProvingParameters', 'logout'],
+};
+
+test('preparation finishes before any handoff or sign-in attempt is created', async () => {
+  const ready = deferred();
+  const loaded = loadNativeChrome({ info: preparationInfo,
+    prepareProvingParametersImpl: () => ready.promise });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  const pending = loaded.NativeChrome.establishCurrentSession();
+  const duplicate = loaded.NativeChrome.establishCurrentSession();
+  await settle();
+  assert.equal(loaded.calls.prepareProvingParameters, 1);
+  assert.equal(loaded.calls.fetch.length, 0);
+  assert.equal(loaded.calls.establish.length, 0);
+  assert.equal(loaded.storage.has(loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+  ready.resolve(true);
+  assert.equal((await pending).identity.participantId, '41');
+  await duplicate;
+  assert.equal(loaded.calls.fetch.length, 1);
+  assert.equal(loaded.calls.establish.length, 1);
+});
+
+test('identity changes during preparation cannot mint a stale handoff', async () => {
+  const ready = deferred();
+  const loaded = loadNativeChrome({ info: preparationInfo,
+    prepareProvingParametersImpl: () => ready.promise });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  const pending = loaded.NativeChrome.establishCurrentSession();
+  await settle();
+  loaded.NativeChrome.prepareIdentityPublication(null);
+  loaded.sandbox.App.user = null;
+  ready.resolve(true);
+  assert.equal(await pending, null);
+  assert.equal(loaded.calls.fetch.length, 0);
+  assert.equal(loaded.calls.establish.length, 0);
+});
+
+test('failed preparation retries without consuming a sign-in attempt', async () => {
+  let failed = true;
+  const loaded = loadNativeChrome({ info: preparationInfo,
+    prepareProvingParametersImpl: async () => {
+      if (failed) throw new Error('preparation failed');
+      return true;
+    } });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+  assert.equal(loaded.calls.fetch.length, 0);
+  assert.equal(loaded.storage.has(loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+  failed = false;
+  assert.equal((await loaded.NativeChrome.establishCurrentSession()).identity.participantId, '41');
+  assert.equal(loaded.calls.prepareProvingParameters, 2);
+  assert.equal(loaded.calls.fetch.length, 1);
+});
+
+test('an advertised preparation capability requires its bridge implementation', async () => {
+  const loaded = loadNativeChrome({ info: preparationInfo });
+  delete loaded.sandbox.usernode.prepareProvingParameters;
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+  assert.equal(loaded.calls.fetch.length, 0);
 });

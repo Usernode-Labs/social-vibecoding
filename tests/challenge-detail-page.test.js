@@ -166,14 +166,14 @@ test('a level of the screen, not an overlay: in flow, the rest of the screen ste
 
 // #3253, #3248: the note on what the rule counts sits under the points, muted.
 test('the count note reads under the points, and is absent without one', () => {
-  const note = 'Counts when you press Propose to group, which puts your change to a vote.';
+  const note = message('leaderboard:challenges.countNote.onPropose');
   const html = render({ ...VIEW, countNote: note });
   const points = html.indexOf('720 pts so far');
-  const at = html.indexOf(note);
+  const at = html.indexOf(note.replaceAll("'", '&#x27;')); // as React escapes it
   assert.ok(points >= 0 && at > points, 'after the points');
   assert.ok(at < html.indexOf('role="progressbar"'), 'before the rail');
   assert.match(html, /<p class="text-\[0\.8125rem\] text-zinc-500 dark:text-zinc-400">Counts when/);
-  assert.doesNotMatch(render(VIEW), /Propose to group/);
+  assert.doesNotMatch(render(VIEW), /Counts when/);
 });
 
 // ── #3650: the invite challenge's own note and per-person list ─────────

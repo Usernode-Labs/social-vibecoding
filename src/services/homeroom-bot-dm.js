@@ -427,6 +427,8 @@ const STORY_MOMENTS = Object.freeze({
   // 16 Oct 2026 (V4): a build held because the project's slots are all in
   // use rings once, as on hold: where it stands is no longer silent.
   held_proposals_per_app: 'on_hold', held_proposals_total: 'on_hold',
+  // #6156: and one held because the project's builds are all under way.
+  held_builds_per_app: 'on_hold',
   merged: 'live',
   // 16 Oct 2026: somebody else's change shipped it (homeroom-bot-closed-requests.js).
   request_closed: 'done_elsewhere',
@@ -477,6 +479,7 @@ function saidOf(kind, info = {}) {
     case 'allowance': return 'allowance';
     case 'paused': return 'paused';
     case 'held_proposals_per_app': case 'held_proposals_total': return 'slots';
+    case 'held_builds_per_app': return 'builds';
     case 'request_taken': return 'taken';
     case 'request_closed': return 'done_elsewhere';
     case 'merged': {
@@ -1652,6 +1655,10 @@ function requestNews(kind, dm, context) {
     // request it would build (homeroom-bot.js actOnVerdict). The cap's own
     // refresh brings it back when there is room, so nothing is asked of them:
     // a quiet line in the request's thread, and its card says Waiting.
+    // #6156: or the project's builds are all under way: it waits its turn.
+    case 'held_builds_per_app':
+      return `${line}\n\nI'll start when one of the ${Number(dm.limit) || ''} changes I'm building on ${context.appName} at once is done.`
+        .replace('the  changes', 'the changes');
     case 'held_proposals_per_app':
       return `${line}\n\nI'll start when one of my ${Number(dm.limit) || ''} changes on ${context.appName} is voted in or closed.`
         .replace('my  changes', 'my changes');

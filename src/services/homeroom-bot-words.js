@@ -39,6 +39,8 @@ const FIRST_PERSON = Object.freeze([
   [/Homeroom bot built this\. It's up for a vote:/, 'I built this. It\'s up for a vote:'],
   [/Homeroom bot's change for this is live:/, 'My change for this is live:'],
   [/Homeroom bot will build this when one of its (\d+|several|many) changes (on|across)/, 'I\'ll build this when one of my $1 changes $2'],
+  // #6156: held for its turn among the project's builds (live.heldText).
+  [/Homeroom bot will build this when one of the (\d+|several|many) changes it is building on/, 'I\'ll build this when one of the $1 changes I\'m building on'],
   [/Homeroom bot has (a question about|a plan for|a note on) this request, but it has already posted/, 'I have $1 this request, but I\'ve already posted'],
   [/It will come back to it once\b/g, 'I\'ll come back to it once'],
   [/Homeroom bot started on this and found it cannot be built as asked:/, 'I started on this and found it can\'t be built as asked:'],

@@ -176,6 +176,8 @@ export function cardStateLine(
   }
   if (card.outcome === 'build_failed' && card.stopCause) return translate(STOP_CAUSE_LINES[card.stopCause]);
   if (card.outcome === 'held') {
+    // #6156: the project's builds are all under way: it waits for the bot's turn, not for votes.
+    if (card.heldBy === 'builds_per_app' && project) return translate('messages:bot.state.line.heldBuilds', { project });
     if (card.heldBy === 'proposals_per_app' && project) return translate('messages:bot.state.line.heldPerApp', { project });
     if (card.heldBy === 'proposals_total') return translate('messages:bot.state.line.heldTotal');
     if (card.heldBy) return '';

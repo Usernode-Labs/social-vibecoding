@@ -5106,8 +5106,8 @@
     {
       "name": "Homeroom bot's slots, a page under a project's Workshop: what holds each slot with where it is, the requests waiting for one in order, each saying what it asks and opening beside the page, the ones a person took apart, and every other open request by where the bot is on it: up next with its older requests, and those left to people (16 Oct 2026)",
       "path": "/?demo=1&ws=bot#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-bot-slots-page]:has([data-ws-bot-waiting] [data-ws-bot-slot-excerpt]):has([data-ws-bot-taken] [data-ws-open]):has([data-ws-bot-up-next] [data-ws-bot-older-badge]):has([data-ws-bot-left]) [data-ws-bot-slots-used=\"5/5\"]",
-      "expectText": "5 of 5 in use"
+      "expectSelector": "#dev-workshop [data-ws-bot-slots-page]:has([data-ws-bot-waiting] [data-ws-bot-slot-excerpt]):has([data-ws-bot-taken] [data-ws-open]):has([data-ws-bot-up-next] [data-ws-bot-older-badge]):has([data-ws-bot-left]) [data-ws-bot-slots-building=\"5/5\"]",
+      "expectText": "Building 5 of 5"
     },
     {
       "name": "Inside the Homeroom app the landing is the whole story, with a Look around first link under it (first session)",

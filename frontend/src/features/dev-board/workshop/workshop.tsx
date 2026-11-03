@@ -94,6 +94,7 @@ import { useWorkshopGroup } from './group-mode-store';
 import { communityScopeStore, describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
+import { filterByVoteType, rowVoteType, voteTallies, VoteTypeChips, type VoteFilter } from '../../workshop/vote-filter';
 import {
   ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
@@ -2921,12 +2922,19 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
    * card, a shot target and `openOn` land where they ask. The jump does not
    * go through `landOn`, so the rows it passes are not marked seen HERE —
    * they were already seen, which is how the index was found.
+   *
+   * #6199: it stops at a vote that DECIDES even when that vote was already
+   * passed over. Votes that decide come first, so a viewer who swiped past
+   * the one deciding change (looking for its preview, say) and came back
+   * used to land on the advisory rows below it, where the deciding vote
+   * looked gone. Now only advisory rows are ever skipped, and only ones
+   * already seen.
    */
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!resumeRef.current || !el || !el.clientHeight || !items.length) return;
     resumeRef.current = false;
-    const idx = firstUnseenIndex(items, (r) => rowSlug(r, slug));
+    const idx = firstUnseenIndex(items, (r) => rowSlug(r, slug), (r) => rowVoteType(r) === 'deciding');
     if (idx <= 0) return;
     curKeyRef.current = items[idx].key;
     setAt(idx);
@@ -4405,6 +4413,12 @@ export function DevWorkshop(): ReactNode {
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
+  // #6199: which kind of vote this project's own Needs you shows. Held in the
+  // page, so it starts on All every time the page opens, and only the rows
+  // that are cards count toward the chips.
+  const [needsFilter, setNeedsFilter] = useState<VoteFilter>('all');
+  const needsCards = useMemo(() => (v.queue || []).filter((r) => r.t === 'card'), [v.queue]);
+  const needsTallies = useMemo(() => voteTallies(needsCards, rowVoteType), [needsCards]);
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head — in the element
@@ -5528,23 +5542,27 @@ export function DevWorkshop(): ReactNode {
         // leaves the run for the community's hub, never an earlier change.
         <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} />
       ) : tab === 'needs' ? (
-        <NeedsFeed
-          rows={v.queue}
-          models={v.models}
-          slug={slug}
-          canPost={canPost}
-          onDone={() => openTab('workshop')}
-          onHub={() => openTab('status')}
-          // No `onAnswered` here (#4794): a project page passes nothing. The
-          // vote's own route already drops the row — the deck casts through
-          // AppView.castVote, whose ok path publishes the saved vote into
-          // voteSavedStore, and the store listener above strips it from the
-          // kept queue before the feed's own `setAnswered` even lands.
-          // #4680: the end card's quiet way into the Suggest an improvement
-          // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
-          // so the heading reads "Suggest an improvement".
-          onSuggest={() => { (window as any).App?.openFeedbackModal?.({ fromDev: true }); }}
-        />
+        <>
+          <VoteTypeChips tallies={needsTallies} pressed={needsFilter} onPress={setNeedsFilter} />
+          <NeedsFeed
+            key={needsFilter}
+            rows={filterByVoteType(v.queue, needsFilter, rowVoteType)}
+            models={v.models}
+            slug={slug}
+            canPost={canPost}
+            onDone={() => openTab('workshop')}
+            onHub={() => openTab('status')}
+            // No `onAnswered` here (#4794): a project page passes nothing. The
+            // vote's own route already drops the row — the deck casts through
+            // AppView.castVote, whose ok path publishes the saved vote into
+            // voteSavedStore, and the store listener above strips it from the
+            // kept queue before the feed's own `setAnswered` even lands.
+            // #4680: the end card's quiet way into the Suggest an improvement
+            // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
+            // so the heading reads "Suggest an improvement".
+            onSuggest={() => { (window as any).App?.openFeedbackModal?.({ fromDev: true }); }}
+          />
+        </>
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
           was `tab === 'all' && themes.length`, and the second half was #2090:

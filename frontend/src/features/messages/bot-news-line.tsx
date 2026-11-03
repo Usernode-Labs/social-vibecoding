@@ -77,6 +77,8 @@ const KIND_WORDS: Record<string, NewsWords> = {
   paused: { key: 'messages:bot.news.onHold', need: false },
   held_proposals_per_app: { key: 'messages:bot.news.slots', need: false },
   held_proposals_total: { key: 'messages:bot.news.slots', need: false },
+  // #6156: the project's builds are all under way: it waits for the bot's turn.
+  held_builds_per_app: { key: 'messages:bot.news.builds', need: false },
   merged: { key: 'messages:bot.news.live', need: false },
   request_closed: { key: 'messages:bot.news.doneElsewhere', need: false },
   request_taken: { key: 'messages:bot.news.taken', need: false },
@@ -94,6 +96,7 @@ function momentWords(moment: string, said: string): NewsWords | null {
     case 'stopped': return KIND_WORDS.build_failed;
     case 'on_hold':
       if (said === 'taken') return KIND_WORDS.request_taken;
+      if (said === 'builds') return KIND_WORDS.held_builds_per_app;
       return said === 'slots' ? KIND_WORDS.held_proposals_per_app : KIND_WORDS.allowance;
     case 'live': return KIND_WORDS.merged;
     case 'done_elsewhere': return KIND_WORDS.request_closed;

@@ -80,7 +80,7 @@ async function workThrough(pool, ctx, args) {
     ...(out.unknown.length ? { notRequests: out.unknown } : {}),
     ...(out.closed.length ? { closedLeftOut: out.closed } : {}),
     ...(out.raise ? {
-      raised: `They manage ${name}, so Build may run up to ${out.raise.perPerson || ctx.settings?.perPerson || 3} of these at once and hold up to ${out.raise.proposalsPerApp} of your changes open on it, for this batch only.`,
+      raised: `They manage ${name}, so Build may run up to ${out.raise.perPerson || ctx.settings?.perPerson || 3} of these at once and build up to ${out.raise.proposalsPerApp} of your changes on it at once, for this batch only.`,
     } : {}),
     shown: `The table is under your reply: one row per request, with Build for the ${out.counts.ready} ready ${out.counts.ready === 1 ? 'one' : 'ones'}. Nothing is built until they tap Build. Say what it shows in a sentence or two; never list every row in your words.`,
   };

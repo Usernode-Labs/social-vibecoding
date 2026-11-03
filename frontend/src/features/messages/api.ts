@@ -331,7 +331,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   };
 }
 
-const FILED_LIMITS: ReadonlySet<string> = new Set(['slots', 'bot_wide', 'questions', 'allowance']);
+const FILED_LIMITS: ReadonlySet<string> = new Set(['builds', 'slots', 'bot_wide', 'questions', 'allowance']);
 
 /** #6151: a filed design's next step as the server sends it (design-threads.js filedNext), or null for one this client does not know. */
 export function normalizeFiledNext(input: unknown): BotFiledNext | null {
@@ -1579,7 +1579,8 @@ export function normalizeBotSlots(input: unknown): BotSlotsView | null {
     botOn: bool(pick(view, 'botOn')),
     acts: bool(pick(view, 'acts')),
     paused: bool(pick(view, 'paused')),
-    cap: strictId(pick(view, 'cap')) || 5,
+    buildCap: strictId(pick(view, 'buildCap')),
+    waitCap: strictId(pick(view, 'waitCap')),
     buildsAtOnce: strictId(pick(view, 'buildsAtOnce')),
     slots: array(pick(view, 'slots')).map(normalizeSlotEntry).slice(0, 50),
     waiting: array(pick(view, 'waiting')).map(normalizeSlotEntry).slice(0, 100),
@@ -1628,7 +1629,7 @@ export async function getHomeroomBotWork(options?: ReadOptions): Promise<Homeroo
  * stopped, never as one still going.
  */
 const STOP_CAUSES = new Set(['time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other']);
-const HELD_BY = new Set(['proposals_per_app', 'proposals_total', 'questions_per_day']);
+const HELD_BY = new Set(['builds_per_app', 'proposals_per_app', 'proposals_total', 'questions_per_day']);
 
 export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
   return array(pick(record(input), 'cards')).map((entry): HomeroomBotActivity | null => {
