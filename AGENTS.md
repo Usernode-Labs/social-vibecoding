@@ -254,11 +254,18 @@ is no replay plan to write and nothing to verify locally.
   `features/ai/door.ts`; `#messages/<the bot's chat>` is swapped for
   `#homeroom-bot/main` or `/thread/<id>`. A request, a change or a decision
   opens in the column through the side panel, or on its own page, never in
-  the drawer. Main Chat keeps no thread of a request's:
-  the bot's news about one opens the request's page
-  (`features/messages/request-page.ts`), what still asks something there is
-  drawn whole in the chat, and a thread in it is only a private one, which
-  the page lists and which says "Only you can see this thread".
+  the drawer. What the column shows is one state (`features/ai/column.ts`:
+  Main, a private thread, or a page), which the lit row, the address
+  (`#homeroom-bot/request/<slug>/<n>` and the like) and Main's attachment
+  read; every row opens its own place, a ▷ plan row its request's page.
+  Main Chat holds what you said there and the bot's replies: a request's
+  news is on the request's page, its thread (`conversations.js`
+  REQUEST_NEWS leaves it out of Main, old and new; a first version's stays),
+  where Homeroom bot's plan is drawn for everyone and any member may press
+  Build it, paid from their own week. A thread in Main is only a private
+  one, which the page lists, which says "Only you can see this thread", and
+  which can be done (Mark done, its request going live, or asking the bot)
+  and reopened.
   Discover is a tab on the rail only: on a phone it is a page Home's
   Discover section opens, with Back to Home. The markup is the rail's
   order, and app.css orders the phone's five cells.
