@@ -58,6 +58,10 @@ const LEADERBOARD_USER_FIELDS = new Set([
   // scope it (same as prs_merged). Under include_0_values=0 an empty [] is
   // KEPT (it's neither 0 nor null), consistent with the empty {} kudos_given map.
   'active_apps',
+  // The member's profile picture as `/avatars/<id>`, or null when they have
+  // none (or their profile's moderation disabled it). The Leaderboard's Top
+  // users rows draw it in place of the coloured initial; display-only.
+  'avatar_url',
 ]);
 
 // Shape a single leaderboard/users row per the optional `fields` /
@@ -838,8 +842,10 @@ function kudosRoutes(config) {
   //
   // Per-PR kudos credit = direct pr_kudos + issue bounties AWARDED to
   // the PR, the same two-arm union /api/leaderboard/prs uses, so the
-  // counts on a profile match the Top PRs tab. Keyset pagination on
-  // created_at mirrors GET /api/me/history (`nextBefore` cursor, null
+  // counts on a profile match the Top PRs tab. The `user` block also
+  // carries the person's picture (`avatar_url`, null when they have none),
+  // which the pane's header draws in place of the letter. Keyset pagination
+  // on created_at mirrors GET /api/me/history (`nextBefore` cursor, null
   // when the page came back short).
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users/:username/prs', async (req, res) => {
@@ -883,6 +889,18 @@ function kudosRoutes(config) {
       const moved = resolved.retired
         ? { from: username, to: resolved.username }
         : null;
+
+      // The person's profile picture, read by the RESOLVED id so a link on a
+      // retired handle still gets the current owner's. A moderation-disabled
+      // profile (profile_disabled_at) gets null, as src/routes/profiles.js
+      // treats it.
+      const { rows: avatarRows } = await pool.query(
+        `SELECT av.id FROM user_avatars av
+           JOIN users u ON u.id = av.user_id
+          WHERE av.user_id = $1 AND u.profile_disabled_at IS NULL`,
+        [user.id]
+      );
+      const avatarUrl = avatarRows[0] ? `/avatars/${avatarRows[0].id}` : null;
 
       // Headline stats over the FULL filtered set (pagination-agnostic).
       // kudos_merged matches the leaderboard's headline score
@@ -928,7 +946,7 @@ function kudosRoutes(config) {
         : null;
       await withReleases(pool, rows);
       res.json({
-        user: { user_id: user.id, username: user.username },
+        user: { user_id: user.id, username: user.username, avatar_url: avatarUrl },
         stats: statRows[0],
         items: rows,
         nextBefore,

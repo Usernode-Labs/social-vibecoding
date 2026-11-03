@@ -467,6 +467,12 @@ const Leaderboard = {
     } finally {
       if (Leaderboard._loadingKey === key) {
         Leaderboard._loadingKey = null;
+        // A profile load also fills the header's picture, which lives in the
+        // CHROME descriptor. The profile chrome has no sub-tab strip, so
+        // re-setting it cannot re-key one.
+        if (Leaderboard.profileUser) {
+          Leaderboard._store?.set({ chrome: Leaderboard.chromeView() });
+        }
         Leaderboard._renderBody();
       }
     }
@@ -517,10 +523,14 @@ const Leaderboard = {
     // body (stats + PR list) renders via _renderBody once data lands.
     if (Leaderboard.profileUser) {
       const who = Leaderboard.profileUser;
+      // The load's own cache entry carries the person's picture; until it
+      // lands (or when the read failed) the letter shows.
+      const data = Leaderboard._cache.get(Leaderboard._key());
       return {
         kind: 'profile',
         who,
         initial: (who[0] || '?').toUpperCase(),
+        avatarUrl: (data && data.user && data.user.avatar_url) || null,
         canMessage: Leaderboard._canMessage(who),
         // The way back is to Top users, which is gone while kudos is parked;
         // the platform bar's own back is the way out then.
@@ -918,6 +928,7 @@ const Leaderboard = {
         rank: i + 1,
         who,
         initial: (who[0] || '?').toUpperCase(),
+        avatarUrl: row.avatar_url || null,
         meta,
         // Footnote on the kudos badge: how many additional kudos sit on
         // PRs that haven't landed yet (and so don't count toward the
