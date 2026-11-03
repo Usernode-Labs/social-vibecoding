@@ -160,7 +160,26 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
       GRANT SELECT ON synthetic_count TO PUBLIC`, /table-wide privilege/],
     ['changed type', 'ALTER TABLE llm_usage ALTER COLUMN total_cost_cents TYPE BIGINT', /review column type\/constraints/],
     ['lost constraint', 'ALTER TABLE wf_events DROP CONSTRAINT wf_events_result_check', /review column type\/constraints/],
+    // Only the operator's extension is accepted, never a view named like it.
+    ['view named like the operator statistics', `CREATE VIEW pg_stat_statements AS SELECT content FROM new_private_store;
+      GRANT SELECT ON pg_stat_statements TO PUBLIC`, /unexpected SELECT|table-wide privilege/],
+    ['write grant on the operator statistics', `CREATE EXTENSION pg_stat_statements;
+      GRANT INSERT ON pg_stat_statements TO ${quote(role)}`, /write privilege|table-wide privilege/],
   ];
+  // The database operator installs pg_stat_statements in every database, and
+  // the extension grants SELECT on its views to PUBLIC (the production
+  // refusal of 23 October to 3 November). Reading them shows statistics, not
+  // other roles' query text, so the role is still made.
+  await t.test('the operator statistics extension, as installed', async () => {
+    await pool.query('BEGIN');
+    try {
+      await pool.query('CREATE EXTENSION pg_stat_statements');
+      const { rows: [grant] } = await pool.query(
+        "SELECT has_table_privilege($1, 'pg_stat_statements', 'SELECT') AS readable", [role]);
+      assert.equal(grant.readable, true, 'positive control: PUBLIC reaches the debug role');
+      await verify();
+    } finally { await pool.query('ROLLBACK'); }
+  });
   for (const [name, sql, message] of faults) {
     await t.test(name, async () => {
       await pool.query('BEGIN');
