@@ -446,6 +446,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
     const prodDbName = dbManager.appDbName(app.slug);
+    // A platform preview starts from an empty database its own code fills;
+    // code from before that cannot (platform-preview-data-policy.js).
+    const previewPolicy = require('./platform-preview-data-policy');
+    if (previewPolicy.sourceIdentity(prodDbName) && !previewPolicy.startsEmpty(cloneDir)) {
+      await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+      throw Object.assign(new Error(previewPolicy.NEEDS_UPDATE), { name: 'PreviewNeedsUpdateError' });
+    }
     const stagingDbNameStr = attempt.dbName;
     // Retries may address the database of a still-serving preview. Only
     // overlap a clone when its target is confirmed absent; otherwise keep
