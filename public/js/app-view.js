@@ -7318,7 +7318,7 @@ const AppView = {
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
         label: pending ? PlatformI18n.t('changes:page.actions.submitting') : PlatformI18n.t('changes:page.actions.submitForReview'),
-        title: submission.note, disabled: !ready || !!busy,
+        title: submission.note, disabled: !ready || !!busy, busy: pending,
         act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
   },
