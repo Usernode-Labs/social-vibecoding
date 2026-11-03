@@ -3697,7 +3697,7 @@ function rowView(n) {
               // `detail` is the change's number, empty for a decision.
               : n.kind === 'change_thread_reply'
                 ? (/^\d+$/.test(String(n.detail || ''))
-                  ? t('notifications:row.chat.changeReply', { number: n.detail })
+                  ? t(n.changeOnGithub ? 'notifications:row.chat.changeReplyPr' : 'notifications:row.chat.changeReply', { number: n.detail })
                   : t('notifications:row.chat.decisionReply'))
                 : t('notifications:row.chat.posted'),
       (n.messageContent || '').slice(0, 140),

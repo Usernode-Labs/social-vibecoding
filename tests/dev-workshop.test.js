@@ -2847,13 +2847,13 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   assert.equal(typeof change.brief.ago, 'string', 'the brief carries the card\u2019s own age');
   const b = { ...plain(change.brief), by: 'evan', ago: '' };
   assert.equal(rowWords(b), 'Change · evan · for #12', 'a change with no number yet');
-  assert.equal(rowWords({ ...b, n: 4456, linked: [4455, 4452], ago: '4m ago' }), 'PR #4456 · evan · for #4455 and #4452 · 4m ago');
+  assert.equal(rowWords({ ...b, n: 4456, linked: [4455, 4452], ago: '4m ago' }), 'PR 4456 · evan · for #4455 and #4452 · 4m ago');
   assert.equal(rowWords({ ...plain(claimed.brief), by: 'evan', category: 'Bug', replies: 3, ago: '8h ago' }), '#12 · evan · 8h ago');
-  assert.equal(rowWords({ ...b, kind: 'live', linked: [], closed: [4453], n: 4454, ago: '1h ago' }), 'PR #4454 · evan · closed #4453 · 1h ago');
+  assert.equal(rowWords({ ...b, kind: 'live', linked: [], closed: [4453], n: 4454, ago: '1h ago' }), 'PR 4454 · evan · closed #4453 · 1h ago');
   assert.equal(rowWords({ ...b, kind: 'vote', noun: 'vote', linked: [], n: 7 }), 'Vote #7 · evan');
   // `noun` is a key; the words are the row's messages.
   assert.equal(b.noun, 'change');
-  assert.equal(message('project:workRow.name.changeNumbered', { number: 4456 }), 'PR #4456');
+  assert.equal(message('project:workRow.name.changeNumbered', { number: 4456 }), 'PR 4456');
   assert.equal(message('project:workRow.name.requestNumbered', { number: 12 }), '#12');
   // #4485 took "yours" off Your work; the board's words never say it at all:
   // a row of yours names you as its maker, as every other row names its own.
@@ -2957,7 +2957,7 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   // The second: the number and its maker (somebody else's, so named), then
   // the tags, and no vote. No age (#4716).
   const second = html.slice(html.indexOf('<span class="dev-ws-wrow-status">'));
-  assert.match(second, /^<span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">PR #34 · bob<\/span><span class="dev-ws-tag" data-tone="run"/);
+  assert.match(second, /^<span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">PR 34 · bob<\/span><span class="dev-ws-tag" data-tone="run"/);
   assert.ok(!second.includes('dev-ws-wvote'), 'the tags line holds no vote');
   assert.ok(!html.includes('dev-ws-wrow-votes') && !html.includes('dev-ws-wrow-tile'), 'no votes line and no tile');
   assert.ok(html.includes('dev-ws-wrow-menu'), 'and its ☰');
@@ -3001,7 +3001,7 @@ test('#4716: Your work\'s tags line names the bot once and you never, drops the 
   const second = html.slice(html.indexOf('<span class="dev-ws-wrow-status">'));
   // The words: its number and what it is for. Who made it is its tag, and
   // its age is on its page.
-  assert.match(second, /^<span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">PR #4724 · for #4716<\/span>/);
+  assert.match(second, /^<span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">PR 4724 · for #4716<\/span>/);
   // The tags by how much they matter, by tone: what is wrong, what needs
   // attention, what is running; then who made it.
   assert.deepEqual([...second.matchAll(/<span class="dev-ws-tag" data-tone="(\w+)"/g)].map((m) => m[1]), ['bad', 'warn', 'run', 'plain']);
@@ -3014,7 +3014,7 @@ test('#4716: Your work\'s tags line names the bot once and you never, drops the 
   const mine = renderToHtml(createElement(WorkRow, {
     row: { ...row, brief: { ...base, by: 'evan', mine: true, tags: [{ label: 'Checks', tone: 'run' }] } }, slug: 'demo-app', variant: 'line',
   }));
-  assert.match(mine, /<span class="dev-ws-wrow-sub">PR #4724 · for #4716<\/span><span class="dev-ws-tag" data-tone="run">[\s\S]*?Checks<\/span><\/span>/);
+  assert.match(mine, /<span class="dev-ws-wrow-sub">PR 4724 · for #4716<\/span><span class="dev-ws-tag" data-tone="run">[\s\S]*?Checks<\/span><\/span>/);
   assert.ok(!mine.includes('evan'));
   assert.ok(!/<\/svg>You<\/span>/.test(mine), 'no You tag');
   // A request you are working on keeps whoever asked for it, often somebody
@@ -3027,7 +3027,7 @@ test('#4716: Your work\'s tags line names the bot once and you never, drops the 
   assert.ok(!/<\/svg>You<\/span>/.test(req));
   // The week pages keep the board's words in full, and the preview.
   const list = renderToHtml(createElement(WorkRow, { row: { ...row, brief: { ...base, tags } }, slug: 'demo-app' }));
-  assert.match(list, new RegExp(`<span class="dev-ws-wrow-sub">PR #4724 · ${base.by} · for #4716 · 17h ago</span>`));
+  assert.match(list, new RegExp(`<span class="dev-ws-wrow-sub">PR 4724 · ${base.by} · for #4716 · 17h ago</span>`));
   assert.ok(list.includes('Preview'));
   // One line that scrolls sideways and fades at its end, above the row's
   // stretched link so it takes the swipe; a click on it that is not on a

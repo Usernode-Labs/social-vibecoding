@@ -32,11 +32,11 @@
     "description": "Error under the message box of an agent session when more files were picked than one message may carry. {{count}} is the limit (4 today)."
   },
   "session.fixChecks.headingPr_one": {
-    "text": "{{count}} check failed on PR #{{number}}",
+    "text": "{{count}} check failed on PR {{number}}",
     "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. PR is the abbreviation of pull request."
   },
   "session.fixChecks.headingPr_other": {
-    "text": "{{count}} checks failed on PR #{{number}}",
+    "text": "{{count}} checks failed on PR {{number}}",
     "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. PR is the abbreviation of pull request."
   },
   "session.fixChecks.headingChange_one": {
@@ -48,11 +48,11 @@
     "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed. Used before the change has a pull request; \"change\" is a noun, the code change the agent is building."
   },
   "session.fixChecks.askPr_one": {
-    "text": "Please fix the failing check on PR #{{number}}.",
+    "text": "Please fix the failing check on PR {{number}}.",
     "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "session.fixChecks.askPr_other": {
-    "text": "Please fix the {{count}} failing checks on PR #{{number}}.",
+    "text": "Please fix the {{count}} failing checks on PR {{number}}.",
     "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number."
   },
   "session.fixChecks.askChange_one": {
@@ -388,7 +388,7 @@
     "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. {{title}} is the proposal title typed above. Keep the quotation marks around it."
   },
   "session.propose.line.titledPr": {
-    "text": "“{{title}}” (PR #{{number}}) goes to the vote. Its preview and checks run again on the way.",
+    "text": "“{{title}}” (PR {{number}}) goes to the vote. Its preview and checks run again on the way.",
     "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. {{title}} is the proposal title typed above; {{number}} is the pull request's number (PR is its abbreviation)."
   },
   "session.propose.line.untitled": {
@@ -396,7 +396,7 @@
     "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. Used when the title box is empty; \"change\" is a noun."
   },
   "session.propose.line.untitledPr": {
-    "text": "“This change” (PR #{{number}}) goes to the vote. Its preview and checks run again on the way.",
+    "text": "“This change” (PR {{number}}) goes to the vote. Its preview and checks run again on the way.",
     "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. Used when the title box is empty; {{number}} is the pull request's number. \"change\" is a noun."
   },
   "session.propose.titleLabel": {
@@ -912,7 +912,7 @@
     "description": "Tooltip of the \"Open app\" button in the bar at the top of an agent session (the conversation with Homeroom's coding agent). {{app}} is the app's name. \"Open\" is a verb."
   },
   "session.changeRef.pr": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "How a code change is named in an agent session when it has no title: by its pull request. {{number}} is the pull request's number; PR is the abbreviation of pull request."
   },
   "session.changeRef.change": {
@@ -1225,7 +1225,7 @@
   },
   "session.spec.subtitleWithApp": {
     "text": "{{change}} · {{app}}",
-    "description": "Small line under the heading of the plan viewer: which change the plan belongs to and its app. {{change}} is the change's title, or a reference such as PR #12; {{app}} is the app's name. Keep the middle dot."
+    "description": "Small line under the heading of the plan viewer: which change the plan belongs to and its app. {{change}} is the change's title, or a reference such as PR 12; {{app}} is the app's name. Keep the middle dot."
   },
   "session.spec.versionLabel": {
     "text": "Plan version",
@@ -1504,11 +1504,11 @@
     "description": "Small upper-case heading in the panel that lists the code changes made in an agent session, over the change the conversation is working on now."
   },
   "session.drawer.activeLinePr": {
-    "text": "{{app}} · PR #{{number}} (change {{change}})",
+    "text": "{{app}} · PR {{number}} (change {{change}})",
     "description": "Small line under the active change's title in the panel that lists the code changes made in an agent session. {{app}} is the app's name, {{number}} the pull request's number, {{change}} the change's own number. \"change\" is a noun."
   },
   "session.drawer.linePr": {
-    "text": "{{app}} · PR #{{number}}",
+    "text": "{{app}} · PR {{number}}",
     "description": "Small line under an earlier change's title in the panel that lists the code changes made in an agent session. {{app}} is the app's name, {{number}} the pull request's number."
   },
   "session.drawer.lineChange": {

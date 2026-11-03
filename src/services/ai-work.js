@@ -52,6 +52,7 @@
 // private one only to its members.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const THREADS_MAX = 80;
 const PRIVATE_MAX = 30;
@@ -104,8 +105,8 @@ const THREADS_SQL = `
 WITH mine AS (${threadsInSql('$1')})
 SELECT * FROM (
 SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
-       a.slug, a.name, a.icon_emoji, a.icon_image_id,
-       req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
+       a.slug, a.name, a.icon_emoji, a.icon_image_id, a.repo_url,
+       req.id AS request_id, req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
        ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
@@ -128,7 +129,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
   JOIN apps a ON a.id = t.app_id
   LEFT JOIN app_collaborators me ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
   LEFT JOIN LATERAL (
-    SELECT r.title, r.state, r.updated_at FROM requests r
+    SELECT r.id, r.title, r.state, r.updated_at FROM requests r
      WHERE r.thread_id = t.id
      ORDER BY (r.number = t.number) DESC, r.number
      LIMIT 1
@@ -208,7 +209,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
 // request's row rather than a second one (model.ts needsYou).
 const PRIVATE_SQL = `
 SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, a.slug, a.name,
-       a.icon_emoji, a.icon_image_id,
+       a.icon_emoji, a.icon_image_id, a.repo_url,
        -- A thread started from the bot's "+" is named by their first words in it.
        (SELECT f.content FROM conversation_messages f
          WHERE f.thread_root_id = m.id AND f.sender_id = $1 AND f.deleted_at IS NULL
@@ -255,6 +256,10 @@ function appOf(row) {
     name: row.name || row.slug,
     icon_url: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
     icon_emoji: row.icon_emoji || null,
+    // Where a change's number comes from: GitHub's own counter there, so a
+    // change reads "PR 12"; Homeroom's git host shares one counter, so "#12".
+    // The address itself does not ride along.
+    changesOnGithub: repoRef.isGithub(row.repo_url),
   };
 }
 
@@ -475,7 +480,11 @@ function shapeThread(row, viewerId, now, botId, bots, facts) {
   return {
     threadId: Number(row.id),
     number,
-    kind: row.kind,
+    // A thread with a change and no request of its own is led by the change:
+    // its number is the PR's, which on GitHub reads "PR 12", never "#12"
+    // (frontend/src/features/ai/model.ts changeOnGithub). A change built for
+    // a request joins the request's thread and keeps its number.
+    kind: row.change_id && row.request_id == null ? 'change' : row.kind,
     title,
     app: appOf(row),
     change: row.change_id ? { id: Number(row.change_id), number: row.pr_number == null ? null : Number(row.pr_number) } : null,

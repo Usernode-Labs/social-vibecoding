@@ -1056,7 +1056,7 @@
     "description": "Link on a row of the import dialog: opens that pull request on GitHub in a new tab. Keep the arrow at the end."
   },
   "importPr.progress": {
-    "text": "Importing PR #{{number}}: checking it on GitHub and adding it to In progress…",
+    "text": "Importing PR {{number}}: checking it on GitHub and adding it to In progress…",
     "description": "Shown beside a spinner in the import dialog while the chosen pull request (PR) is imported. {{number}} is its number; keep the # before it. \"In progress\" is the name of a board column."
   },
   "importPr.slow": {
@@ -1072,7 +1072,7 @@
     "description": "Text of the import dialog's button while the pull request is being imported."
   },
   "importPr.imported": {
-    "text": "PR #{{number}} was imported. Its preview is being built now. Find it in Dev under In progress.",
+    "text": "PR {{number}} was imported. Its preview is being built now. Find it in Dev under In progress.",
     "description": "Brief message at the bottom of the screen after an import succeeded but its page could not be opened. {{number}} is the pull request's number; keep the # before it. \"Dev\" is the name of a tab and \"In progress\" of a board column."
   },
   "importPr.error.pick": {
@@ -1084,11 +1084,11 @@
     "description": "Error in the import dialog when the import request could not reach the server."
   },
   "importPr.error.notFound": {
-    "text": "PR #{{number}} wasn’t found on GitHub. It may have been deleted.",
+    "text": "PR {{number}} wasn’t found on GitHub. It may have been deleted.",
     "description": "Error in the import dialog when GitHub no longer has the chosen pull request (PR). {{number}} is its number; keep the # before it."
   },
   "importPr.error.conflict": {
-    "text": "PR #{{number}} can’t be imported right now.",
+    "text": "PR {{number}} can’t be imported right now.",
     "description": "Error in the import dialog when the chosen pull request (PR) cannot be imported in its present state. {{number}} is its number; keep the # before it."
   },
   "importPr.error.restarting": {
@@ -1948,11 +1948,11 @@
     "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app when an earlier proposal about the app's approvers or admins is undecided. The Workshop is a tab of the app's page; keep it as a name."
   },
   "members.governance.opened": {
-    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply.",
+    "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply.",
     "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); keep the # before it. \"Dev\" is the name of a tab."
   },
   "members.governance.openedWithWarnings": {
-    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply. Some approver invites could not be sent: {{warnings}}.",
+    "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply. Some approver invites could not be sent: {{warnings}}.",
     "description": "The same status when some of the first approvers could not be invited. {{number}} is the pull request's number; {{warnings}} is the server's list of what went wrong, without a final full stop."
   },
   "members.governance.failed": {
@@ -2152,7 +2152,7 @@
     "description": "Confirming button of that confirmation: creates the proposal. \"Open\" is a verb."
   },
   "members.appAdmins.opened": {
-    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab before the new admins apply.",
+    "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab before the new admins apply.",
     "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); keep the # before it. \"Dev\" is the name of a tab."
   },
   "members.appAdmins.failed": {
@@ -2372,7 +2372,7 @@
     "description": "Note on a variable's row in the secrets dialog whose value is stored while the proposal that declares it is undecided. Keep the middle dot as a separator."
   },
   "secrets.row.pendingDeclarationNumbered": {
-    "text": "Value set · its declaration is waiting for approval (PR #{{number}}).",
+    "text": "Value set · its declaration is waiting for approval (PR {{number}}).",
     "description": "The same note with the proposal's pull request (PR) number. {{number}} is that number; keep the # before it."
   },
   "secrets.row.orphan": {
@@ -2536,7 +2536,7 @@
     "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY."
   },
   "secrets.declare.opened.storedNumbered": {
-    "text": "Proposal opened for {{key}} (PR #{{number}}). Your value is stored; the declaration still needs a merge vote.",
+    "text": "Proposal opened for {{key}} (PR {{number}}). Your value is stored; the declaration still needs a merge vote.",
     "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; keep the # before it."
   },
   "secrets.declare.opened.pending": {
@@ -2544,7 +2544,7 @@
     "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY."
   },
   "secrets.declare.opened.pendingNumbered": {
-    "text": "Proposal opened for {{key}} (PR #{{number}}). Vote on it in the group chat panel. The value applies when it merges.",
+    "text": "Proposal opened for {{key}} (PR {{number}}). Vote on it in the group chat panel. The value applies when it merges.",
     "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; keep the # before it."
   },
   "secrets.declare.failed": {

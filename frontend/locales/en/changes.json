@@ -424,7 +424,7 @@
     "description": "Coloured label at the start of the title of a proposal that undoes an earlier change. The title of the change being undone follows it in its own element. Keep the arrow."
   },
   "card.proposal.revertedPr": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "Stands in for the title of the change being undone, after \"↩ Revert of\" on a proposal's card, when that change has no title. {{number}} is its pull request number. \"PR\" abbreviates pull request."
   },
   "card.proposal.openTitle": {
@@ -596,11 +596,11 @@
     "description": "Tooltip of the \"merged changes waiting to go live\" status line on the Workshop board's \"Done\" column."
   },
   "board.deploy.liveThroughPrSha": {
-    "text": "Live in production through PR #{{number}} · {{sha}}",
+    "text": "Live in production through PR {{number}} · {{sha}}",
     "description": "Status line at the top of the Workshop board's \"Done\" column: every merged change up to and including this pull request is running. {{number}} is the pull request's number and {{sha}} the short code of the running version."
   },
   "board.deploy.liveThroughPr": {
-    "text": "Live in production through PR #{{number}}",
+    "text": "Live in production through PR {{number}}",
     "description": "Status line at the top of the Workshop board's \"Done\" column: every merged change up to and including this pull request is running. {{number}} is the pull request's number."
   },
   "board.deploy.liveThroughSha": {
@@ -1368,15 +1368,15 @@
     "description": "Tooltip on the Explore in a coding agent button of a proposal. \"Open\" is a verb; \"change\" is a noun."
   },
   "explore.seed.pr": {
-    "text": "Let's explore PR #{{number}} in this app: \"{{title}}\".",
+    "text": "Let's explore PR {{number}} in this app: \"{{title}}\".",
     "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. {{number}} is the pull request number and {{title}} its title."
   },
   "explore.seed.prBy": {
-    "text": "Let's explore PR #{{number}} in this app: \"{{title}}\" by {{author}}.",
+    "text": "Let's explore PR {{number}} in this app: \"{{title}}\" by {{author}}.",
     "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. {{number}} is the pull request number, {{title}} its title and {{author}} the username of its author."
   },
   "explore.seed.prUntitled": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "Stands in for the title, inside the quotes, in the message written for a coding agent about a pull request that has no title. {{number}} is the pull request number."
   },
   "explore.seed.proposal": {
@@ -1568,7 +1568,7 @@
     "description": "Title shown on an agent session's card when the session has no title, pull request title or branch name. {{id}} is the session's number. A \"session\" is one working conversation with a coding agent."
   },
   "session.prFallbackTitle": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "Stands in for an imported pull request's title, in the dialog that asks whether to archive it, when the pull request has no title. {{number}} is its number on GitHub. \"PR\" abbreviates pull request."
   },
   "session.venueTitle": {
@@ -4480,7 +4480,7 @@
     "description": "Title of the dialog confirming that the person wants to take back their own proposal (a change put up for a vote)."
   },
   "proposal.withdraw.message": {
-    "text": "This closes PR #{{number}} and removes it from the vote panel. You can propose it again later.",
+    "text": "This closes PR {{number}} and removes it from the vote panel. You can propose it again later.",
     "description": "Body of the dialog confirming the withdrawal of a proposal. \"PR\" is a GitHub pull request; {{number}} is its number."
   },
   "proposal.withdraw.confirm": {
@@ -4500,7 +4500,7 @@
     "description": "Title of the dialog confirming that the person wants to take their own proposal out of the vote and keep working on it. \"Underway\" is the name of the board column for changes still being worked on."
   },
   "proposal.moveBack.message": {
-    "text": "This takes PR #{{number}} out of review so you can keep working on it. Its votes are cleared and it cannot be merged until you propose it again. The pull request stays open.",
+    "text": "This takes PR {{number}} out of review so you can keep working on it. Its votes are cleared and it cannot be merged until you propose it again. The pull request stays open.",
     "description": "Body of the dialog confirming that a proposal goes back to Underway. \"PR\" is a GitHub pull request; {{number}} is its number."
   },
   "proposal.moveBack.confirm": {
@@ -5080,7 +5080,7 @@
     "description": "Title of the card of a merged change in the Workshop's completed list when the change has no title. \"Change\" is a noun. {{username}} is its author."
   },
   "proposal.merged.prTitle": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "Tooltip of the title on the card of a merged change in the Workshop's completed list when the change has no title: its GitHub pull request, abbreviated \"PR\". {{number}} is the pull request's number."
   },
   "proposal.merged.revertTitle": {
@@ -9008,7 +9008,7 @@
     "description": "Stands in for the title of the plan a change was built from, on the plan's card on the change's page and at the top of the reader it opens, when neither the change nor its session has a title. The plan is the written description of the change."
   },
   "board.deploy.childLiveThroughPr": {
-    "text": "Live in production through PR #{{number}}",
+    "text": "Live in production through PR {{number}}",
     "description": "Status line at the top of the Workshop board's \"Done\" column when the newest merged change is running: everything up to and including this pull request is live. {{number}} is the pull request's number."
   },
   "board.deploy.releaseTitle": {

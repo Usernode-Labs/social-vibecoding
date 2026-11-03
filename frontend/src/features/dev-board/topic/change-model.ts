@@ -11,6 +11,7 @@
  */
 
 import type { TranscriptMessage } from '../../group-chat/transcript-store';
+import { plainPrRefs } from '../../../lib/change-ref';
 import { eventText } from '../../group-chat/proposal-event';
 
 /**
@@ -117,7 +118,9 @@ export function changeLine(msg: TranscriptMessage): ChangeLine | null {
   if (ev && ev.type === 'merged') return { kind: 'merged', glyph: '🎉', actor: null, text: eventText(msg) };
   const text = ev && ev.type === 'notice' ? (ev.text || '') : (msg.systemText || '');
   if (!text.trim()) return null;
-  return { kind: 'notice', glyph: '•', actor: null, text };
+  // Stored lines keep "PR #N" because the server's regex readers match it;
+  // a person reads "PR N", so it cannot be taken for a request's number.
+  return { kind: 'notice', glyph: '•', actor: null, text: plainPrRefs(text) };
 }
 
 /** The rows a change's page draws: every person, and every line it keeps. */

@@ -68,7 +68,7 @@ test('#3032: Propose opens a panel under the button, in the vote picker\'s frame
   assert.match(html, /^<div class="dev-vote-switch-label" id="h">Put this up for the group’s vote\?<\/div>/);
   // #3251: the title is editable in the panel, with a visible label and the route's cap.
   assert.match(html, /<label class="dev-vote-reason"><span class="dev-vote-reason-label">Proposal title<\/span><input type="text" class="dev-vote-reason-box" maxLength="256" placeholder="This change" data-agent-session-propose-title="true" value="Dark mode"\/><\/label>/);
-  assert.match(html, /data-agent-session-propose-line="true">“Dark mode” \(PR #14\) goes to the vote\. Its preview and checks run again on the way\.<\/p>/);
+  assert.match(html, /data-agent-session-propose-line="true">“Dark mode” \(PR 14\) goes to the vote\. Its preview and checks run again on the way\.<\/p>/);
   assert.match(html, /<div class="dev-vote-reason-actions"><button type="button" class="dev-vote-reason-cancel">Cancel<\/button>/);
   assert.match(html, /class="dev-vote-reason-send dev-vote-reason-send-yes" data-agent-session-propose-confirm="true">Propose<\/button>/);
   assert.equal(confirm.proposeLine('', null), '“This change” goes to the vote. Its preview and checks run again on the way.');

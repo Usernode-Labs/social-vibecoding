@@ -20,11 +20,11 @@
     "description": "Line above the message box in a community chat while the person is writing a reply to an earlier message. {{name}} is whose message it is: an @username, or a label such as a proposal's name. Keep the arrow first."
   },
   "group.composer.replyingToPr": {
-    "text": "↩ Replying to PR #{{number}}",
+    "text": "↩ Replying to PR {{number}}",
     "description": "Label over the message box while the person replies to a line about a pull request. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
   },
   "group.composer.replyingToPrUnnumbered": {
-    "text": "↩ Replying to PR #",
+    "text": "↩ Replying to PR",
     "description": "Label over the message box while the person replies to a line about a pull request whose number is not known."
   },
   "group.composer.cancelReply": {
@@ -924,20 +924,20 @@
     "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{built}} is when it was built, already formatted."
   },
   "group.specCard.sharedByPr": {
-    "text": "Shared by <0>{{name}}</0> · v{{version}} · <1>PR #{{number}}</1>",
+    "text": "Shared by <0>{{name}}</0> · v{{version}} · <1>PR {{number}}</1>",
     "description": "Line on the card of a plan that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number, and 'v' abbreviates version; the <1> link opens the pull request, and {{number}} is its number. PR is the usual abbreviation of pull request."
   },
   "group.specCard.sharedBySomeonePr": {
-    "text": "Shared by <0>Someone</0> · v{{version}} · <1>PR #{{number}}</1>",
-    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{number}} is the pull request's number; keep \"PR #\"."
+    "text": "Shared by <0>Someone</0> · v{{version}} · <1>PR {{number}}</1>",
+    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{number}} is the pull request's number; keep \"PR\"."
   },
   "group.specCard.sharedByBuiltPr": {
-    "text": "Shared by <0>{{name}}</0> · v{{version}} · {{built}} · <1>PR #{{number}}</1>",
+    "text": "Shared by <0>{{name}}</0> · v{{version}} · {{built}} · <1>PR {{number}}</1>",
     "description": "Line on the card of a plan that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number; {{built}} is the date and time the change was built, already formatted; the <1> link opens the pull request, and {{number}} is its number. PR abbreviates pull request."
   },
   "group.specCard.sharedBySomeoneBuiltPr": {
-    "text": "Shared by <0>Someone</0> · v{{version}} · {{built}} · <1>PR #{{number}}</1>",
-    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{built}} is when it was built, already formatted. {{number}} is the pull request's number; keep \"PR #\"."
+    "text": "Shared by <0>Someone</0> · v{{version}} · {{built}} · <1>PR {{number}}</1>",
+    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{built}} is when it was built, already formatted. {{number}} is the pull request's number; keep \"PR\"."
   },
   "group.specCard.loading": {
     "text": "Loading…",
@@ -1180,11 +1180,11 @@
     "description": "Stands in for an attached file's name when it has none, after a paperclip, in the preview of the message being replied to above the chat message box. A noun, lower case."
   },
   "group.quote.pr": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "Stands where an author's name would be on a quoted line that came from a pull request, and in a shared plan's subtitle. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
   },
   "group.quote.prUnnumbered": {
-    "text": "PR #",
+    "text": "PR",
     "description": "Stands where an author's name would be on a quoted line that came from a pull request whose number is not known."
   },
   "group.quote.system": {

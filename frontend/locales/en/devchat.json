@@ -196,11 +196,11 @@
     "description": "Button in the dev chat's sync banner: merges the app's main branch into this session's branch. 'main' is the branch's name."
   },
   "banner.newChange.proposed": {
-    "text": "This change has been proposed to the group (PR #{{number}}). New work in this chat is added to the same PR, so start a new change to keep PRs focused.",
+    "text": "This change has been proposed to the group (PR {{number}}). New work in this chat is added to the same PR, so start a new change to keep PRs focused.",
     "description": "Banner at the top of a dev chat session whose change is already up for the group's vote. {{number}} is the pull request's number; PR is short for pull request."
   },
   "banner.newChange.merged": {
-    "text": "This change has been merged (PR #{{number}}). New work in this chat is added to the same PR, so start a new change to keep PRs focused.",
+    "text": "This change has been merged (PR {{number}}). New work in this chat is added to the same PR, so start a new change to keep PRs focused.",
     "description": "Banner at the top of a dev chat session whose change was already merged into the app. {{number}} is the pull request's number; PR is short for pull request."
   },
   "banner.newChange.openCard": {
@@ -708,7 +708,7 @@
     "description": "Tooltip on the disabled 'Preview staging' and 'Test this change' buttons of the changes card in the dev chat after the change was merged."
   },
   "card.changes.prLink": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "Link at the top of the changes card in the dev chat to the change's pull request: on GitHub, or the change's own page in Homeroom. PR is short for pull request; {{number}} is its number."
   },
   "card.changes.ready": {
@@ -1612,11 +1612,11 @@
     "description": "Error in the dev chat's hand-off steps when submitting the branch the person's coding agent pushed failed and the server gave no reason."
   },
   "flow.submit.opened": {
-    "text": "Proposal opened from PR #{{number}}",
+    "text": "Proposal opened from PR {{number}}",
     "description": "Toast after the branch from the person's own coding agent was turned into a proposal. PR is short for pull request; {{number}} is its number. 'Proposal' is the change put up for the group's vote."
   },
   "flow.submit.openedUnnumbered": {
-    "text": "Proposal opened from PR #",
+    "text": "Proposal opened from PR",
     "description": "Toast after the branch from the person's own coding agent was turned into a proposal, in the rare case the pull request's number is not known. PR is short for pull request."
   },
   "flow.update.none": {
@@ -1980,7 +1980,7 @@
     "description": "Tooltip on the venue button at the top of a dev chat session. {{venue}} is the name of where the change is being built, and {{blurb}} a whole sentence describing that venue. Claude Code and Codex are product names."
   },
   "header.openCardTitle": {
-    "text": "Open this change's proposal card (PR #{{number}}). Every change in this chat goes to PR #{{number}}. Use “Start a new change” for separate work.",
+    "text": "Open this change's proposal card (PR {{number}}). Every change in this chat goes to PR {{number}}. Use “Start a new change” for separate work.",
     "description": "Tooltip on the 'Open proposal card' link at the top of a dev chat session. {{number}} is the pull request's number, used twice. “Start a new change” is the name of a button: translate it as that button is translated."
   },
   "header.newChangeTitle": {
@@ -2088,7 +2088,7 @@
     "description": "The option for the newest version in the plan viewer's version dropdown. 'v' stands for version; {{version}} is the version number."
   },
   "spec.version.pr": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "Part of an option in the plan viewer's version dropdown: the pull request that version was built into. PR is short for pull request; {{number}} is its number."
   },
   "spec.empty.owner": {
