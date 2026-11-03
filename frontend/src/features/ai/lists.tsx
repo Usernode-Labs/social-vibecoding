@@ -70,6 +70,7 @@ import {
   GROUP_FIRST, NOT_MOVING, byProject, nextWords, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
+import { ThreadDoneMenu } from '../messages/private-thread-done';
 import { rowKey } from './column';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
@@ -98,6 +99,8 @@ interface Line {
   /** Its chat is the one in the column beside the list: where you are. */
   lit?: boolean;
   open: () => void;
+  /** #6159: a private thread's row: its ⋯ has Mark done. */
+  done?: { rootId: number; mark: () => void } | null;
 }
 
 const G = 'h-[18px] w-[18px]';
@@ -131,6 +134,20 @@ const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
 
 function LineRow({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
+  // #6159: a private thread's row has its ⋯ beside it, with Mark done.
+  if (line.done) {
+    const { rootId, mark } = line.done;
+    return (
+      <div className="flex min-w-0 items-center gap-1" data-ai-line-done="">
+        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} /></div>
+        <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} className="shrink-0" />
+      </div>
+    );
+  }
+  return <LineButton line={line} quiet={quiet} />;
+}
+
+function LineButton({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
   const t = useMessages('messages');
   return (
     <button
@@ -431,7 +448,7 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
   );
 }
 
-export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread }: {
+export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
@@ -456,6 +473,8 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   live: AiThread[];
   openRow: (row: WorkRow) => void;
   openThread: (t: AiThread) => void;
+  /** #6159: a private thread's row was marked done from its ⋯: it leaves the lists at once. */
+  onDone?: (rootId: number) => void;
 }): ReactNode {
   const t = useMessages('messages');
   const say = (p: Phrase | null) => (p ? t(p.id, p.values) : null);
@@ -486,6 +505,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     owe: !!row.pill,
     lit: !!lit && rowKey(row) === lit,
     open: () => openRow(row),
+    done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
   }));
   const threadLine = (glyph: (th: AiThread) => ReactNode) => (th: AiThread): Line => ({
     key: String(th.threadId),

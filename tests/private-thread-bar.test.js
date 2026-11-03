@@ -86,12 +86,13 @@ test('B04: New project on a drawn screen makes it with its name and drawing, nev
 
 test('it is drawn on every private thread in the bot\'s chat, by the server\'s word: the note on top, the doors under it', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
-  const gate = screen.slice(screen.indexOf('const privateRoot = '), screen.indexOf('const [privateWhere] = usePrivateThread(privateRoot);'));
+  const gate = screen.slice(screen.indexOf('const privateRoot = '), screen.indexOf('const [privateWhere, setPrivateWhere] = usePrivateThread(privateRoot);'));
   assert.match(gate, /snap\.active\?\.kind === 'direct' && threadsAllowed\(snap\.active\) && snap\.active\.homeroomBot/, 'the bot\'s chat');
   assert.match(gate, /privateRootMessage && !requestPageOf\(privateRootMessage\)/, 'any root but a request\'s story, the bot\'s line too');
   assert.doesNotMatch(gate, /!privateRootMessage\.sender\.bot/, '1 Nov 2026: not only the viewer\'s own message');
   assert.match(screen, /const privateMine = !!privateRoot && isOwnPrivateThread\(privateWhere, privateRootMessage, meId\);/);
-  const note = screen.indexOf('{privateMine && !(inMain && privateWhere?.state === \'open\') ? <PrivateThreadNote where={privateWhere} /> : null}');
+  // #6159: the note carries the thread, for Reopen on a done one.
+  const note = screen.indexOf('<PrivateThreadNote where={privateWhere} rootId={privateRoot}');
   const doors = screen.indexOf('<PrivateThreadDoors');
   assert.ok(note > 0 && doors > note, 'the note heads the thread, the doors close it');
   assert.match(screen.slice(doors - 80, doors), /\{privateRoot && privateMine && root \? \(\s*$/);
@@ -257,4 +258,21 @@ test('the routes the old doors wrote to stay same-origin writes, and the head\'s
   assert.equal(message('messages:privateThread.label'), 'Only you can see this thread.');
   assert.equal(message('messages:privateThread.newProject'), 'New project');
   assert.equal(message('messages:privateThread.filed', { number: 41, project: 'Seed swap' }), 'Filed as request #41 on Seed swap.');
+});
+
+// #6159 (3 Nov 2026): a private thread can be finished, and brought back.
+test('a done thread says so under its head, with Reopen; its ⋯ has Mark done, or Reopen', () => {
+  const DONE = 'frontend/src/features/messages/private-thread-done.tsx';
+  const done = renderComponent(BAR, 'PrivateThreadNote', { where: { state: 'done', mine: true }, rootId: 13306 });
+  assert.match(done, /data-private-thread="done"[^>]*>This thread is done\./);
+  assert.match(done, /data-private-thread-reopen=""[^>]*>Reopen</);
+  const menu = renderComponent(DONE, 'ThreadDoneMenu', { rootId: 13306, done: false, onChanged() {} });
+  assert.match(menu, /aria-label="Thread actions"[^>]*aria-haspopup="menu" aria-expanded="false"/);
+  const source = read(DONE);
+  assert.match(source, /\{done \? t\('messages:privateThread\.reopen'\) : t\('messages:privateThread\.markDone'\)\}/);
+  assert.match(source, /`\/api\/conversations\/homeroom-bot\/threads\/\$\{rootId\}\/\$\{door\}`/);
+  // Its row on the Homeroom bot page has the same ⋯, and leaves the lists at once.
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /<ThreadDoneMenu rootId=\{rootId\} done=\{false\} onChanged=\{\(state\) => \{ if \(state === 'done'\) mark\(\); \}\} className="shrink-0" \/>/);
+  assert.match(read('frontend/src/features/ai/model.ts'), /if \(p\.state === 'done'\) continue;/);
 });

@@ -4743,6 +4743,22 @@
     "text": "This needs a person, not Homeroom bot: the people on the project decide who builds it.",
     "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when Homeroom bot does not build requests on that project, or a person has to decide about it first."
   },
+  "privateThread.done": {
+    "text": "This thread is done.",
+    "description": "The line under a private thread's head with Homeroom bot once it is finished: its request went live or was closed, or the person marked it done. Reopen follows it."
+  },
+  "privateThread.reopen": {
+    "text": "Reopen",
+    "description": "A button: brings a finished private thread with Homeroom bot back, as it was before it was done. On the line under the thread's head, and in its ⋯ menu."
+  },
+  "privateThread.markDone": {
+    "text": "Mark done",
+    "description": "A menu item in a private thread's ⋯ menu (in its head, and on its row on the Homeroom bot page): finishes the thread, which then leaves the page's lists. Nothing in it is deleted."
+  },
+  "privateThread.menu": {
+    "text": "Thread actions",
+    "description": "Accessible name and tooltip of the ⋯ button on a private thread with Homeroom bot, which opens a menu with Mark done (or Reopen)."
+  },
   "privateThread.label": {
     "text": "Only you can see this thread.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab): nothing in it is public until they file it or post it."

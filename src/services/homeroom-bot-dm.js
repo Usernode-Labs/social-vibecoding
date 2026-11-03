@@ -3934,7 +3934,12 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   const settings = await settingsModule().readSettings(pool, { strict: !!deps.strict });
   // #4238: a new project's first version: the bot says so in its channel, once.
   if (requester?.firstVersion && !platform) await announceFirstVersion(pool, run, { live, deps });
-  if (!requester || !hasBot(settings, requester)) return null;
+  // #6159: the private threads it was filed from, posted on or about are
+  // done now; the live line below lands in one of them at most.
+  const finish = (saidIn) => finishRequestThreads(pool, {
+    app: { id: run.app_id, slug: run.slug, name: run.name }, issueNumber: run.issue_number, how: 'live', saidIn, deps,
+  });
+  if (!requester || !hasBot(settings, requester)) { await finish(null); return null; }
   const bot = await botAccount(pool);
   if (!bot) return null;
   await closeOpenQuestions(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number });
@@ -3953,7 +3958,7 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   // inviting people to it.
   const actions = open ? [open, ...(context.firstVersion ? firstLiveActions({ slug: run.slug }) : [])] : [];
   const liveStarted = card ? null : await requestStart(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number });
-  return sendDm(pool, {
+  const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
     replyToId: liveStarted,
@@ -3974,6 +3979,50 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
     },
     objects: cardsFor('merged', { sessionId: session.id }, { id: run.app_id }, run.issue_number),
   });
+  const { rows: [landed] = [] } = sent?.messageId
+    ? await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [sent.messageId]).catch(() => ({ rows: [] }))
+    : { rows: [] };
+  await finish(Number(landed?.thread_root_id) || null);
+  return sent;
+}
+
+/** Pure (#6159): the line a private thread is finished with, by how its request ended. */
+const DONE_SUFFIX = 'This thread is done; reply here to pick it up again.';
+function doneLine({ how, issueNumber }) {
+  const n = Number(issueNumber);
+  if (how === 'closed') return `#${n} was closed without going in. ${DONE_SUFFIX}`;
+  if (how === 'merged') return `#${n} went in. ${DONE_SUFFIX}`;
+  return `#${n} is live. ${DONE_SUFFIX}`;
+}
+
+/**
+ * #6159: a request went live, went in another way, or was closed: the
+ * private threads it was filed from, posted on or about are done
+ * (private-threads.js finishForRequest), and each says so in a line of its
+ * own, but the one the request's own live line already landed in (`saidIn`),
+ * whose head says it. Once per thread and ending (its key). Never throws.
+ */
+async function finishRequestThreads(pool, { app, issueNumber, how = 'live', saidIn = null, deps = {} }) {
+  try {
+    const roots = await require('./private-threads').finishForRequest(pool, { appId: app.id, issueNumber, deps });
+    if (!roots.length) return 0;
+    const bot = deps.bot || await botAccount(pool);
+    if (!bot) return 0;
+    let said = 0;
+    for (const { userId, rootId } of roots) {
+      if (saidIn && Number(saidIn) === Number(rootId)) continue;
+      const sent = await sendDm(pool, {
+        bot, userId, threadRootId: rootId, moment: null, content: doneLine({ how, issueNumber }),
+        idempotencyKey: `hrbot-thread-done-${rootId}-${how}-${Number(issueNumber)}`,
+        metadata: { kind: 'step', step: 'done', appSlug: app.slug, appName: app.name || app.slug, issueNumber: Number(issueNumber) },
+      }).catch(() => null);
+      if (sent?.messageId) said += 1;
+    }
+    return said;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not finish a request\'s private threads', { app: app?.slug, issueNumber, err: err.message });
+    return 0;
+  }
 }
 
 // ── A person writing to the bot ──────────────────────────────────────────
@@ -4576,6 +4625,8 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   const bot = deps.bot || await botAccount(pool);
   if (!bot || bot.id === user.id) return null;
   if (!(await isBotDirect(pool, conversationId, bot.id, user.id))) return null;
+  // #6159: anything they write in a done thread of theirs brings it back.
+  await require('./private-threads').reopenOnReply(pool, { userId: user.id, message, deps });
   const settings = await settingsModule().readSettings(pool);
   // B5: words that are one of its open prompts settle those buttons.
   await settlePrompt(pool, { botId: bot.id, userId: user.id, conversationId, content: message.content });
@@ -6464,6 +6515,8 @@ module.exports = {
   PLAN_KIND,
   planCardText,
   planCards,
+  doneLine,
+  finishRequestThreads,
   sendPlanCard,
   closePlanCards,
   decidePlanTap,

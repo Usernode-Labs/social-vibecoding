@@ -47,6 +47,7 @@ import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
 import { isRequestNews, requestKey } from './bot-request';
+import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
 import { useMessagesDrawer } from './phone-drawer';
 import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
@@ -2737,10 +2738,20 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const privateRoot = rootId && snap.active?.kind === 'direct' && threadsAllowed(snap.active) && snap.active.homeroomBot
     && privateRootMessage && !requestPageOf(privateRootMessage)
     ? rootId : null;
-  const [privateWhere] = usePrivateThread(privateRoot);
+  const [privateWhere, setPrivateWhere] = usePrivateThread(privateRoot);
   // 1 Nov 2026 (C1): whether this thread's design is open beside it.
   const preview = usePreview();
   const privateMine = !!privateRoot && isOwnPrivateThread(privateWhere, privateRootMessage, meId);
+  // #6159: what they write in a done thread brings it back (the server's
+  // reopenOnReply): its state is read again once their message is in it.
+  const ownCount = (thread?.messages || []).filter((item) => !item.sender.bot && item.sender.id === meId && item.id > 0).length;
+  useEffect(() => {
+    if (!privateRoot || privateWhere?.state !== 'done' || !ownCount) return;
+    fetch(`/api/conversations/homeroom-bot/threads/${privateRoot}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data && typeof data.state === 'string' && data.state !== 'done') setPrivateWhere(data); })
+      .catch(() => {});
+  }, [ownCount]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!conversationId || !rootId) return null;
   const active = snap.active;
   const kind = active?.kind || 'group';
@@ -2874,6 +2885,11 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             <span className="text-[13px] font-semibold">{t('messages:design.pane.showPreview')}</span>
           </button>
         ) : null}
+        {/* #6159: Mark done, or Reopen, in the thread's own ⋯. */}
+        {privateMine && privateRoot && privateWhere ? (
+          <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'}
+            onChanged={(state) => setPrivateWhere({ ...privateWhere, state })} />
+        ) : null}
         {/* On a phone the Messages screen's header bar has the way back
             (app.css hides this one there, polish N16). In Main Chat's column
             the thread is the column's: Main Chat is a row of the list. */}
@@ -2885,7 +2901,10 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
       </header>
       {/* Its head says it is theirs alone in Main Chat's column; under it,
           where it went once it was filed or posted. */}
-      {privateMine && !(inMain && privateWhere?.state === 'open') ? <PrivateThreadNote where={privateWhere} /> : null}
+      {privateMine && !(inMain && privateWhere?.state === 'open') ? (
+        <PrivateThreadNote where={privateWhere} rootId={privateRoot}
+          onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
+      ) : null}
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}

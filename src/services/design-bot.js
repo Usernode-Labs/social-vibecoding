@@ -82,6 +82,8 @@ const BUSY_TEXT = 'You\'ve sent me a lot in the last hour. Give me a little whil
 const OFF_TEXT = 'I\'m switched off right now. I\'ll pick up again when an admin turns me back on.';
 const BROKEN_TEXT = 'I couldn\'t make that change just now: my model didn\'t answer. Try again in a minute.';
 const TOO_BIG_TEXT = 'This screen is too big for me to edit in one piece. Capture a smaller part of it and I\'ll take it from there.';
+// #6159: words telling them to close the thread on their side go back with this.
+const CLOSE_NOTE = '[Homeroom check, not from them: there is no control on their side. Call close_thread to finish this thread, then reply.]';
 const CLOSED_TEXT = 'This thread was put away, so I won\'t change its design here. Start a new thread to draw it again.';
 const NO_THREAD_TEXT = 'I couldn\'t open a thread for the design just now. Try again in a minute.';
 const FULL_TEXT = 'I couldn\'t keep that change: this design has as many versions as it can hold, or it grew too big.';
@@ -429,6 +431,16 @@ const TOOLS = Object.freeze([
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'close_thread',
+      description: 'Mark this private thread done, when they ask you to close or finish it (#6159). It leaves their '
+        + 'Homeroom bot page\'s lists; nothing in it is deleted, and anything they write in it brings it back. Takes no '
+        + 'arguments. Then reply "Done. Reply here to pick it up again."',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  },
 ]);
 
 // #6144: the tools once reading is over (READ_UNTIL): all but the readers.
@@ -754,6 +766,8 @@ function designPrompt({
     '  or ask to post it, offer it with offer_plan (a design for a new project: offer_project), and their tap on the',
     '  card does it. Propose it above the preview does the same. After "Add to an existing request", ask which one.',
     // Homeroom bot parity (P2, P8).
+    '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it up',
+    '  again." Never tell them to close it on their side: there is no such control.',
     '- When they ask to compare versions, to see them side by side, or next to how the screen looks now, call',
     '  compare_versions (now: true for the screen as it is now, when the thread began from a captured one). The card',
     '  under your reply shows them small, side by side, and they pick one there.',
@@ -1037,6 +1051,8 @@ async function answer(pool, config, {
   let builds = false;
   // C2.2, C2.4: the card this turn offers (offer_plan, offer_project).
   let offered = null;
+  // #6159: close_thread called this turn.
+  let closedThread = false;
   // Homeroom bot parity (P2, P8): the card under the reply (compare_versions,
   // make_pictures), the later one if both.
   let card = null;
@@ -1107,6 +1123,13 @@ async function answer(pool, config, {
         nudges += 1;
         t.failures.push(`d${rounds}:not_built`);
         return BUILT_NOTE;
+      }
+      // #6159: "close it from your side" is no answer: there is no such
+      // control, and close_thread finishes the thread.
+      if (!closedThread && mayor.NO_CONTROL_CLAIM.test(said)) {
+        nudges += 1;
+        t.failures.push(`d${rounds}:no_control`);
+        return CLOSE_NOTE;
       }
       const changedNow = !!html && html !== (current?.html || '');
       // A card (a comparison, pictures) is an answer in itself, as an offer is.
@@ -1198,6 +1221,13 @@ async function answer(pool, config, {
         } else if (name === 'reply') {
           replyText = String(args.text || '').trim();
           result = { ok: true };
+        } else if (name === 'close_thread') {
+          // #6159: this thread, theirs, done (private-threads.js markDone).
+          const went = room?.rootId
+            ? await require('./private-threads').markDone(pool, { user, rootId: room.rootId, bot, deps })
+            : { ok: false };
+          if (went.ok) closedThread = true;
+          result = went.ok ? { ok: true, state: 'done', reply: 'Done. Reply here to pick it up again.' } : { ok: false, error: 'No such thread.' };
         } else if (name === 'offer_plan' || name === 'offer_project') {
           // The design as it will be once this turn's screen is saved: a
           // thread drawing its first one has no design row yet.

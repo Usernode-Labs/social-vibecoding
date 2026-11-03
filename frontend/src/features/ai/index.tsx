@@ -389,7 +389,11 @@ export function AiScreen(): ReactNode {
   const botRow = mounted ? snap.conversations.find((item) => item.homeroomBot && item.kind !== 'channel') : null;
   const unread = Math.max(0, Number(botRow?.unreadCount) || 0);
 
-  const rows = useMemo(() => needsYou(needs, work), [needs, work]);
+  // #6159: a thread marked done from its row's ⋯ leaves at once; the next
+  // read of the lists confirms it.
+  const [doneRoots, setDoneRoots] = useState<ReadonlySet<number>>(() => new Set());
+  const allRows = useMemo(() => needsYou(needs, work), [needs, work]);
+  const rows = useMemo(() => allRows.filter((row) => !row.rootId || !doneRoots.has(row.rootId)), [allRows, doneRoots]);
   const progress = useMemo(() => inProgress(needs, work), [needs, work]);
   const waiting = useMemo(() => upNext(needs, work), [needs, work]);
   const live: AiThread[] = useMemo(() => liveThisWeek(work), [work]);
@@ -602,6 +606,7 @@ export function AiScreen(): ReactNode {
           live={live}
           openRow={openRow}
           openThread={openThread}
+          onDone={(rootId) => { setDoneRoots((had) => new Set([...had, rootId])); setMoved((n) => n + 1); }}
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
