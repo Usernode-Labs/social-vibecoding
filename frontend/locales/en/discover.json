@@ -113,7 +113,19 @@
   },
   "filters.button": {
     "text": "Filters",
-    "description": "Button at the end of Discover's row of app types. It opens the Filters sheet, and shows how many filters are on."
+    "description": "Button at the end of Discover's row of app types, which opens the Filters sheet. With filters on, its visible label is the filters.buttonCount message and this one is read by screen readers."
+  },
+  "filters.buttonCount_one": {
+    "text": "Filters · {{count}}",
+    "description": "Visible label of Discover's Filters button while one filter is on. {{count}} is that number; keep the middle dot as a separator. Screen readers hear the filters.button and filters.activeCount messages instead."
+  },
+  "filters.buttonCount_other": {
+    "text": "Filters · {{count}}",
+    "description": "Visible label of Discover's Filters button while more than one filter is on. {{count}} is that number; keep the middle dot as a separator. Screen readers hear the filters.button and filters.activeCount messages instead."
+  },
+  "filters.clearAll": {
+    "text": "Clear all",
+    "description": "Chip after Discover's Filters button, shown while at least one filter is on: turns off the Show only switches, drops the picked app type and puts the list back in the Recommended order."
   },
   "filters.activeCount_one": {
     "text": "{{count}} filter on",

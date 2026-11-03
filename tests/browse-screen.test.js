@@ -813,6 +813,85 @@ test('activeFilterCount counts the switches, a type and a non-default order', ()
   assert.equal(Browse.activeFilterCount(), 4, 'the view tab is never counted');
 });
 
+// ── Clear all (#6195) ─────────────────────────────────────────────
+
+test('clearFilters resets the type, the switches and the order in one render', () => {
+  const { Browse, state, storage } = makeBrowse();
+  Browse._apps = [
+    typed('chess', 'games', { featured: true }),
+    typed('quiz', 'games'),
+    typed('notes', 'tools'),
+  ];
+  Browse.applyFilters({ only: ['featured', 'new'], category: 'games', sort: 'users' });
+  assert.equal(state.activeCount, 4, 'two switches, a type and a non-default order');
+  Browse.clearFilters();
+  assert.deepEqual(Array.from(state.only), [], 'every Show only switch is off');
+  assert.equal(state.category, 'all', 'the picked type is dropped');
+  assert.equal(state.sort, 'recommended', 'the order is back to Recommended');
+  assert.equal(Browse._sort, 'recommended');
+  assert.equal(state.activeCount, 0, 'so the count and Clear all disappear');
+  assert.equal(storage[Browse.SORT_STORAGE_KEY], 'recommended',
+    'Recommended is remembered, the same way the sheet remembers an order');
+});
+
+test('clearFilters leaves the view tab and the search alone', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [typed('chess', 'games'), typed('notes', 'tools')];
+  Browse.setView('joined');
+  Browse.setQuery('chess', { immediate: true });
+  Browse.applyFilters({ only: ['featured'], category: 'games', sort: 'new' });
+  Browse.clearFilters();
+  assert.equal(state.view, 'joined', 'the view is a place, not a filter');
+  assert.equal(Browse._query, 'chess', 'the search has its own × button');
+  assert.equal(state.showClear, true);
+});
+
+test('the row shows the count in the Filters label and Clear all only while a filter is on', () => {
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  assert.match(src, /id="browse-filters-clear"/);
+  assert.match(src, /\{state\.activeCount > 0 \? \(\s*<Chip\s+id="browse-filters-clear"/,
+    'Clear all is drawn only while a filter is on');
+  assert.match(src, /browse\(\)\?\.clearFilters\(\)/);
+  // The count is plain text in the label now; the round violet badge is gone.
+  assert.match(src, /discover:filters\.buttonCount/);
+  assert.doesNotMatch(src, /bg-violet-600/);
+  // Screen readers still hear both the button's name and the count.
+  assert.match(src, /className="sr-only">\{t\('discover:filters\.button'\)\}/);
+  assert.match(src, /className="sr-only">\s*\{t\('discover:filters\.activeCount'/);
+  assert.equal(message('discover:filters.buttonCount', { count: 2 }), 'Filters · 2');
+  assert.equal(message('discover:filters.clearAll'), 'Clear all');
+  // The prerender has no filter on, so neither is in the shipped markup and
+  // hydration stays silent.
+  assert.doesNotMatch(INDEX, /browse-filters-clear/);
+  const start = INDEX.indexOf('id="browse-type-row"');
+  const row = INDEX.slice(start, INDEX.indexOf('id="browse-list-level"', start));
+  assert.match(row, /<span>Filters<\/span>/, 'with nothing on it still just says Filters');
+});
+
+test('the type rail shrinks and scrolls instead of pushing Filters to the edge', () => {
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const rail = src.match(/id="browse-category-chips"[\s\S]{0,240}?className="([^"]+)"/);
+  assert.ok(rail, 'the rail is still declared');
+  assert.match(rail[1], /min-w-0/, 'it can still shrink when the chips overflow');
+  assert.doesNotMatch(rail[1], /flex-1/,
+    'and no longer grows to fill the row, which left Filters far off at the end');
+});
+
+test('the row renders the count in the Filters label and Clear all while a filter is on', () => {
+  const off = renderBrowseScreen({ activeCount: 0 });
+  assert.match(off, /<span>Filters<\/span>/, 'with nothing on it just says Filters');
+  assert.doesNotMatch(off, /browse-filters-clear/);
+  assert.match(off, /id="browse-filters-btn"/);
+
+  const on = renderBrowseScreen({ activeCount: 2 });
+  assert.match(on, /Filters · 2/, 'the count is part of the visible label');
+  assert.doesNotMatch(on, /bg-violet-600/, 'the round badge is gone');
+  assert.match(on, /id="browse-filters-clear"/);
+  assert.match(on, />Clear all<\/button>/);
+  assert.match(on, /class="sr-only">Filters<\/span>/, 'screen readers still hear the button name');
+  assert.match(on, /class="sr-only">2 filters on<\/span>/, 'and how many filters are on');
+});
+
 test('only For you with the defaults is grouped; Browse and Joined are one flat list', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [

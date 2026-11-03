@@ -599,6 +599,15 @@ const Browse = {
     Browse.render();
   },
 
+  // The Clear all chip: turns every filter off in one tap, through the same
+  // applyFilters path the sheet uses, so the order is remembered, the kept
+  // joins are dropped and the list repaints once. The view (For you, Browse
+  // or Joined) and the search are deliberately left alone — the search has
+  // its own × button, and the view is a place, not a filter.
+  clearFilters() {
+    Browse.applyFilters({ only: [], category: 'all', sort: 'recommended' });
+  },
+
   // The number on the Filters button: the choices that differ from the
   // defaults. The view tab is not counted. Pure — unit-tested.
   activeFilterCount() {
