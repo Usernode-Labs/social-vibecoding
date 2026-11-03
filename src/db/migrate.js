@@ -7513,7 +7513,7 @@ async function seedStagingBotAllowanceWarning(pool) {
          SELECT $1, $2, $3, $4, $5::jsonb, $6, NOW() - ($7::int * INTERVAL '1 minute')
           WHERE NOT EXISTS (
             SELECT 1 FROM conversation_messages
-             WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $4
+             WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $4::varchar
           )`,
         [conversationId, bot.id, line.content, line.key,
           JSON.stringify({ homeroomBot: { kind: 'step', step: line.step, ...about } }),
