@@ -27,7 +27,10 @@ const threads = require('../src/services/threads');
 const SCHEMA_SQL = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
 const MIGRATE_SRC = fs.readFileSync(path.join(__dirname, '../src/db/migrate.js'), 'utf8');
 const SERVICE_SRC = fs.readFileSync(path.join(__dirname, '../src/services/threads.js'), 'utf8');
-const BLOCK = SCHEMA_SQL.slice(SCHEMA_SQL.indexOf('-- ── Threads (stage 1 of #6019)'));
+// The threads stages, from their first section to the end of the baseline
+// they live in: the schema's later migrations add triggers of their own.
+const BASELINE_SQL = fs.readFileSync(path.join(__dirname, '../src/db/migrations/0001-baseline.sql'), 'utf8');
+const BLOCK = BASELINE_SQL.slice(BASELINE_SQL.indexOf('-- ── Threads (stage 1 of #6019)'));
 
 // A pool that answers by SQL substring, recording every call.
 function fakePool({ marker = false, maxSession = 0, maxMessage = 0, failOn = null } = {}) {
