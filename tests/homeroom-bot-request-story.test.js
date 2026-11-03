@@ -303,7 +303,7 @@ test('only what asks people something tags them', () => {
   }
 });
 
-test('held: one of my changes on the project, or the daily limit, in whole sentences', () => {
+test('held: one of my changes on the project, or my turn there, in whole sentences', () => {
   assert.equal(firstPerson(live.heldText({ cap: 'proposals_per_app', limit: 3, project: 'Plant Pal' })),
     'I\'ll build this when one of my 3 changes on Plant Pal is voted in or closed.');
   assert.equal(firstPerson(live.heldText({ cap: 'proposals_total', limit: 40 })),
@@ -311,9 +311,6 @@ test('held: one of my changes on the project, or the daily limit, in whole sente
   // #6156: held for its turn among the project's builds.
   assert.equal(firstPerson(live.heldText({ cap: 'builds_per_app', limit: 5, project: 'Plant Pal' })),
     'I\'ll build this when one of the 5 changes I\'m building on Plant Pal at once is done.');
-  assert.equal(firstPerson(live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10, project: 'Plant Pal' })),
-    'I have a question about this request, but I\'ve already posted 10 questions and notes on Plant Pal today. '
-    + 'I\'ll come back to it once some of those are a day old.');
 });
 
 test('decide: who can say Go ahead is named in Homeroom, and nobody on GitHub', () => {

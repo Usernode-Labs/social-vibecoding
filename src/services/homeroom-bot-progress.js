@@ -505,12 +505,12 @@ function stageOf(input, { now = new Date() } = {}) {
         stage: 'held',
         since: row.run_at,
         // #6156: the project's builds are a limit of their own, freed by a
-        // build finishing rather than by a vote.
+        // build finishing rather than by a vote. Its changes waiting for
+        // approval and the bot's ceiling across projects are the others
+        // (homeroom-bot.js SLOT_CAPS).
         doing: row.cap_suppressed === 'builds_per_app'
           ? 'ready to build, but waiting for its turn: the bot is already building as many changes on this project as it may at once'
-          : row.cap_suppressed === 'proposals_per_app' || row.cap_suppressed === 'proposals_total'
-          ? 'ready to build, but held back until one of the changes waiting for approval goes live or is closed (only so many may wait at once)'
-          : 'ready to build, but held back by the daily limit on questions and notes on this project',
+          : 'ready to build, but held back until one of the changes waiting for approval goes live or is closed (only so many may wait at once)',
       };
     }
     // B6: a first version's plan, sent to its creator, waits for Build it.
