@@ -348,6 +348,12 @@ const PLAIN_NOTE_NO_LATER = PLAIN_NOTE.replace(
 const PROJECT_THREAD_TEXT = 'Let\'s shape it here. What should the first screen show, and who will use it? '
   + 'Tell me in a line or two and I\'ll draw it.';
 
+// How many of one project's requests the bot reads at once (the setting,
+// else its default: homeroom-bot.js readsPerApp).
+function readsAtOnce(settings) {
+  return Number(settings?.readsPerApp) || require('./homeroom-bot').DEFAULTS.readsPerApp;
+}
+
 function clip(value, max) {
   const text = String(value ?? '').trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
@@ -1187,7 +1193,7 @@ async function myWork(pool, { userId, user = null, settings, config = null, deps
           : f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
       };
     }),
-    atOnce: `You work on up to ${settings?.perPerson || 2} of their requests at a time: one read per project, and up to ${require('./homeroom-bot').BUILDS_PER_PROJECT} builds per project.`,
+    atOnce: `You work on up to ${settings?.perPerson || 2} of their requests at a time: up to ${readsAtOnce(settings)} reads per project, and up to ${require('./homeroom-bot').BUILDS_PER_PROJECT} builds per project.`,
     // #3772: said only when they ask, or when little is left; every status
     // answer used to end with it. A share of the week, never an amount: the
     // bot says "building time", not money.

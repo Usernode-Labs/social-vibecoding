@@ -298,6 +298,9 @@ test('settings default to off and clamp their numbers', () => {
     // Live work, 12 at once and 3 per person (raised from 6 and 2 when every
     // project went live); a DM is read.
     liveAtOnce: 12, perPerson: 3, dmChat: true,
+    // 3 Nov 2026: three of a project's requests read at once, each on a
+    // triage session of its own (it was one).
+    readsPerApp: 3,
     // Its voice answers in changes', requests' and chats' discussions, each
     // until an admin turns it off there (homeroom-bot-voice.js).
     voiceSession: true, voiceIssue: true, voiceChat: true,
@@ -333,6 +336,10 @@ test('settings default to off and clamp their numbers', () => {
   assert.equal(u.perPerson, 1, 'clamped to the floor');
   assert.equal(u.dmChat, false);
   assert.equal(bot.parseSettings([{ key: bot.KEY_PER_PERSON, value: '99' }]).perPerson, 6, 'clamped to the ceiling');
+  assert.equal(bot.parseSettings([{ key: bot.KEY_READS_PER_APP, value: '99' }]).readsPerApp, 6, 'clamped to the ceiling');
+  assert.equal(bot.parseSettings([{ key: bot.KEY_READS_PER_APP, value: '0' }]).readsPerApp, 1, 'and the floor');
+  assert.equal(bot.parseSettings([{ key: bot.KEY_READS_PER_APP, value: '2' }]).readsPerApp, 2);
+  assert.equal(bot.parseSettings([{ key: bot.KEY_READS_PER_APP, value: 'many' }]).readsPerApp, 3, 'unreadable: the default');
   assert.deepEqual(bot.validateSettingsPatch({ liveAtOnce: 8, perPerson: 3, dmChat: false }).updates, [
     [bot.KEY_LIVE_AT_ONCE, '8'], [bot.KEY_PER_PERSON, '3'], [bot.KEY_DM_CHAT, 'off'],
   ]);
@@ -340,6 +347,13 @@ test('settings default to off and clamp their numbers', () => {
   assert.equal(bot.validateSettingsPatch({ liveAtOnce: 25 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ perPerson: 6 }).ok, true);
   assert.equal(bot.validateSettingsPatch({ perPerson: 7 }).ok, false);
+  // A project's reads at once: a whole number from 1 to 6, as perPerson is.
+  assert.deepEqual(bot.validateSettingsPatch({ readsPerApp: 1 }).updates, [[bot.KEY_READS_PER_APP, '1']]);
+  assert.deepEqual(bot.validateSettingsPatch({ readsPerApp: 6 }).updates, [[bot.KEY_READS_PER_APP, '6']]);
+  for (const bad of [0, 7, 2.5, 'three', null, -1]) {
+    assert.deepEqual(bot.validateSettingsPatch({ readsPerApp: bad }), { ok: false, error: 'readsPerApp must be an integer from 1 to 6' }, String(bad));
+  }
+  assert.equal(bot.KEY_READS_PER_APP, 'homeroom_bot_reads_per_app');
   assert.equal(bot.validateSettingsPatch({ dmChat: 'yes' }).ok, false);
 });
 
@@ -450,7 +464,7 @@ test('a settings save never writes the everyone moment, and more room asks the l
   assert.doesNotMatch(write, /KEY_EVERYONE_SINCE/, 'the moment is schema.sql\'s, written once');
   // The lane (bot-lane) grants and refreshes; a save tells it, and wakes no
   // loop of this process's.
-  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_PAUSED_APPS, KEY_APP_CAPS\]\.includes\(key\)\)[\s\S]{0,120}?\{\s+await platform\(\)\.botRefresh\(null\)/);
+  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_READS_PER_APP, KEY_PAUSED_APPS, KEY_APP_CAPS\]\.includes\(key\)\)[\s\S]{0,120}?\{\s+await platform\(\)\.botRefresh\(null\)/);
   assert.doesNotMatch(write, /wakeAll/);
 });
 
