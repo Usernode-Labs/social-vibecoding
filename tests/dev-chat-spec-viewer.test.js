@@ -157,7 +157,7 @@ test('the latest option carries the sentinel, older ones carry their number', ()
   const s = h.view();
   assert.deepEqual(s.versions.map((o) => o.value), ['latest', '2', '1'],
     're-selecting the highest resumes FOLLOWING new versions');
-  assert.equal(s.versions[0].label, 'v3 (latest) · PR #41');
+  assert.equal(s.versions[0].label, 'v3 (latest) · PR 41');
   assert.equal(s.versions[1].label, 'v2');
   assert.equal(s.selected, 'latest');
   assert.equal(s.version, 3, 'the share buttons act on a NUMBER, never the sentinel');

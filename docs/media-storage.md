@@ -81,51 +81,71 @@ npm run test:changed -- --base <exact-base-sha>
 
 ## Rollout and final column removal
 
-The original readers/schema shipped in #6050 (with release fix #6064), then
-both writers and workflow backfills in #6051. #6066 bounded transaction
-storage waits. Both backfills report `done: true`, and all six tables have
-zero remaining byte rows, verified read-only on 1 and 2 November 2026.
-The former check-visual PRs #6052/#6053 were superseded by #6050/#6051.
+Readers/schema shipped in #6050 (with release fix #6064), then writers and
+both workflow backfills in #6051. #6066 bounded transaction storage waits.
+Both backfills are complete. #6111 is deployed: every reader/writer uses
+object keys, staging seeds no longer write byte columns, and both backfill
+clocks are retired. The former PRs #6052/#6053 were superseded.
 
-This cleanup release removes the per-row byte fallback, all runtime SQL
-references to byte columns, and both completed backfill modules/jobs. The
-workflow's normal release reconciliation retires clocks absent from JOBS;
-no manual workflow-row deletion or production command is needed. Staging
-fixtures upload fake media and commit its key in the same transaction as
-their reference. Previews have no production bucket credentials: their
-small fake files use `staging-media-store.js` inside the preview container,
-recreated idempotently by those seeds on every boot. Production always
-uses the configured S3 store. Unit tests inject an in-memory store.
+### Final schema release
 
-**Column removal must be a subsequent release.** The migration hook runs
-at sync wave -1, before web/conductor replacement. The previous release
-still selects `data` and writes explicit NULL byte columns, even for keyed
-rows. Dropping them in this release's pre-deployment migration would break
-those old processes during the rolling update.
+`src/db/migrations/media-drop-bytes.sql` removes all eight empty byte
+columns from the six migrated tables. The history is recorded in the
+manifest with the repository's current named-migration tool. The immutable
+baseline is unchanged.
 
-After this release is fully deployed, including the last draining process:
+**Prerequisite:** every web/conductor process, including draining processes,
+must contain #6111 before this migration deploys. Migration hooks run before
+pod replacement; an older process still querying a dropped column would
+fail. Read-only production checks on 3 November verified the running
+releases contain #6111, both backfills are retired, and every byte-row count
+is zero. Recheck these prerequisites if the rollout is delayed or rolled back.
 
-1. Verify no remaining process runs code that references byte columns and
-   both removed backfill clocks are retired. Recheck that all six tables
-   still have zero byte rows and no missing normal keys.
-2. Add the next tracked SQL migration (never edit the immutable baseline).
-   Refuse the migration if any bytes remain or any required key/metadata
-   is missing; preserve every object key, FK and index. Drop `data` from
-   `shot_run_files`, `shot_artifacts`, `shots_eval_artifacts`,
-   `shot_diagnostic_artifacts`, `check_run_media`, `session_visuals`, and
-   `dense_data` from the first two. Replace constraints that depend on the
-   dropped columns with key-only invariants, including required normal
-   keys, visual metadata, and density/original consistency.
-3. Update tests and the preview schema policy as needed. Verify fresh and
-   existing database migration paths; the cleanup's PostgreSQL media and
-   staging suites already exercise real code after removing the columns
-   in a disposable database.
-4. Deploy that migration release; Bruno schedules `VACUUM FULL` afterwards
-   at a quiet time. It locks the tables and is separate operator maintenance.
+The migration takes exclusive locks on all six tables before checking their
+rows. It refuses remaining normal or dense bytes, missing keys, key/hash
+mismatches, incomplete visual validators/sizes, or inconsistent dense
+original metadata. Locks stay held from preflight through DDL, so a writer
+cannot race those checks. The normal migration runner bounds lock waits and
+rolls back the entire migration on failure; it cancels no reader or writer.
+
+It then drops `data` from `shot_run_files`, `shot_artifacts`,
+`shots_eval_artifacts`, `shot_diagnostic_artifacts`, `check_run_media` and
+`session_visuals`, plus `dense_data` from the first two. Normal keys become
+mandatory; replacement constraints enforce key/hash and density/original
+consistency, and check visuals require hash, size and their legacy ETag.
+All object keys, foreign keys, indexes, IDs, timestamps and other metadata
+are preserved. After #6226, platform previews start empty and build their
+own schema at boot; no production media rows or schema fingerprint are
+copied or approved. The migration's fresh/upgrade catalog comparison uses
+the test-only catalog helper.
+
+The PostgreSQL regression tests cover refusing each byte column, broken
+metadata, lock timeout, rollback after a late DDL dependency, fresh versus
+upgraded schemas, and repeated startup without replaying DDL. Existing
+writer/read/serving/GC and staging tests now run against the actual final
+schema rather than removing columns in a test helper. Use the tracked
+migration runner for existing databases; generated schema.sql initializes
+fresh databases and is not an idempotent upgrade script to replay.
+
+### After deployment
+
+Verify all eight columns are absent, ordinary/dense media still serves, GC
+is healthy, and the replicas are caught up. Bruno then schedules table-by-
+table `VACUUM FULL` in a quiet maintenance window, after verifying a recent
+successful backup and enough free space. It blocks access to each table
+while rewriting and is separate operator maintenance, never part of this
+migration. Measure disk/table sizes and backup sizes afterwards. A database
+restore also needs the bucket objects referenced by that database; verify
+the combined restore procedure.
 
 After the column drop, roll forward with compatible code. An older image
-is not a schema down-migration. No merge, deployment, or maintenance is
+is not a schema down-migration. No merge, deployment or maintenance is
 authorized by these notes.
+
+Previews have no production bucket credentials. Their small fake files use
+`staging-media-store.js` inside the preview container and are recreated by
+the boot seeds. Production uses the configured S3 store; ordinary unit
+tests inject an in-memory store.
 
 ## Shots
 

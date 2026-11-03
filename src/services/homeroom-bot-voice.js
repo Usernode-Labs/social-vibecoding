@@ -55,6 +55,7 @@
 // point is best-effort and never throws.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 const replyRules = require('../workflow/rules/bot-replies.ts');
 
 // A burst is one turn (the bot-voice machine settles it): its rule's.
@@ -686,7 +687,10 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     );
     const asks = await askState(pool, change.id);
     const busy = await changeBusy(pool, change.id);
-    lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR #${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${own ? 'built by you' : 'built by somebody else'}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
+    lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR ${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${own ? 'built by you' : 'built by somebody else'}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
+    // On GitHub the change's number is GitHub's own pull request counter, so
+    // it is written "PR N"; "#N" is only ever a request there.
+    if (repoRef.isGithub(app.repo_url)) lines.push('On this project a change is written as PR N, from GitHub\'s own counter; #N is only ever a request.');
     if (change.check_state) lines.push(`Its checks: ${change.check_state}.`);
     if (own) {
       lines.push(`You have updated it ${rev?.n || 0} of ${followup.MAX_REVISIONS} times you may on your own.`);
@@ -1857,7 +1861,8 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
   if (!apiKey) return null;
   const asked = asks.map((a) => `@${a.asker || 'someone'} asked: "${clip(a.instruction, 400)}"`).join('\n');
   const facts = [
-    `Change ${session.id}${session.pr_number ? ` (PR #${session.pr_number})` : ''}: "${clip(session.session_title || session.pr_title || session.title, 160)}" on "${app.name || app.slug}".`,
+    `Change ${session.id}${session.pr_number ? ` (PR ${session.pr_number})` : ''}: "${clip(session.session_title || session.pr_title || session.title, 160)}" on "${app.name || app.slug}".`,
+    repoRef.isGithub(app.repo_url) ? 'On this project a change is written as PR N, from GitHub\'s own counter; #N is only ever a request.' : null,
     asked,
     `What came of it: ${OUTCOME_FACTS[outcome.action] || OUTCOME_FACTS.failed}${outcome.action === 'revise' && !outcome.moved ? ' (but nothing changed)' : ''}.`,
     withoutInternals(outcome.summary) ? `What changed, in the coding agent's words: ${clip(withoutInternals(outcome.summary), 600)}` : null,

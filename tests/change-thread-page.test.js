@@ -392,3 +392,67 @@ test('the title button opens details the way the ⋯ row does, on the row\'s gat
   assert.match(css, /\.messages-thread-name-link:hover \{ text-decoration: underline;/);
   assert.match(css, /\.messages-thread-name-link:focus-visible \{ outline: 2px solid var\(--accent\);/);
 });
+
+// 3 Nov 2026 (#6237): a change's number comes from GitHub's own pull request
+// counter on a project whose code is on GitHub, so it reads "PR 6230" and a
+// "#6230" can only be a request. On Homeroom's git host requests and changes
+// share one counter, so both keep "#N".
+const CHANGES = 'frontend/src/features/dev-board/topic/thread-changes.tsx';
+const githubChange = {
+  type: 'change', id: 91, number: 6230, title: 'Put plans in their own column',
+  status: 'promoted', state: 'review', replies: 0, by: 'homeroom_bot', closes: [6231],
+};
+const withRepo = (repoUrl, run) => {
+  const wasWindow = globalThis.window;
+  globalThis.window = {
+    AppView: { appData: { slug: 'homeroom', repo_url: repoUrl } },
+    addEventListener() {}, removeEventListener() {},
+  };
+  try { return run(); } finally {
+    if (wasWindow === undefined) delete globalThis.window; else globalThis.window = wasWindow;
+  }
+};
+
+test('#6237: on a GitHub-hosted project a change reads "PR 6230", and "#" is a request', () => {
+  const html = withRepo('https://github.com/Usernode-Labs/social-vibecoding', () =>
+    renderComponent(CHANGES, 'ChangeLine', { item: githubChange, view: null }));
+  assert.match(html, /Change · PR 6230 · homeroom_bot/, 'the change\'s heading');
+  assert.doesNotMatch(html, /Change #6230/, 'never the request form');
+  assert.equal(message('project:topic.thread.page.changeNumberedPr', { number: 6230, by: 'homeroom_bot' }),
+    'Change · PR 6230 · homeroom_bot');
+
+  // The elsewhere line: its own change reads PR, the request it lives on
+  // keeps '#', so the two numbers can never be mistaken for one another.
+  const elsewhere = withRepo('https://github.com/Usernode-Labs/social-vibecoding', () =>
+    renderComponent(CHANGES, 'Elsewhere', { list: [{ id: 91, number: 6223, on: 6207 }] }));
+  assert.match(elsewhere, /Change PR 6223 for this request is on/);
+  assert.match(elsewhere, /#6207/);
+  assert.doesNotMatch(elsewhere, /Change #6223/);
+  assert.equal(message('project:topic.thread.page.elsewherePr', { number: 6223, on: 6207 }),
+    'Change PR 6223 for this request is on <0>#6207</0>');
+
+  // The tag on a reply written on the change.
+  assert.equal(message('project:topic.request.stream.onChangePr', { number: 6230 }), 'on change PR 6230');
+  assert.match(read(TRANSCRIPT),
+    /projectChangesOnGithub\(\) \? 'project:topic\.request\.stream\.onChangePr' : 'project:topic\.request\.stream\.onChange'/);
+});
+
+test('#6237: on Homeroom\'s git host, requests and changes share one counter and keep "#N"', () => {
+  const html = withRepo('https://git.onhomeroom.com/apps/social-vibecoding', () =>
+    renderComponent(CHANGES, 'ChangeLine', { item: githubChange, view: null }));
+  assert.match(html, /Change #6230 · homeroom_bot/);
+  assert.doesNotMatch(html, /PR 6230/);
+  const elsewhere = withRepo('https://git.onhomeroom.com/apps/social-vibecoding', () =>
+    renderComponent(CHANGES, 'Elsewhere', { list: [{ id: 91, number: 6223, on: 6207 }] }));
+  assert.match(elsewhere, /Change #6223 for this request is on/);
+});
+
+test('#6237: a stored line\'s "PR #N" is shown as "PR N"; requests keep "#N"', () => {
+  const { plainPrRefs, changesOnGithub } = loadTsx('frontend/src/lib/change-ref.ts');
+  assert.equal(plainPrRefs('The staging preview for PR #4368 is ready…'), 'The staging preview for PR 4368 is ready…');
+  assert.equal(plainPrRefs('Included in #4368'), 'Included in #4368', 'a request keeps its #');
+  assert.equal(plainPrRefs('Two: PR #1 and PR #22'), 'Two: PR 1 and PR 22');
+  assert.equal(changesOnGithub('https://github.com/a/b'), true);
+  assert.equal(changesOnGithub('https://git.onhomeroom.com/apps/b'), false);
+  assert.equal(changesOnGithub(null), false, 'no address counts as not GitHub');
+});

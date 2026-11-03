@@ -1,8 +1,8 @@
 'use strict';
 
 // #6019 follow-up: ballots, rivals and the votes to close, against the REAL
-// schema in a throwaway PostgreSQL database (schema.sql applied twice, as
-// the boot migration is idempotent).
+// schema in a throwaway PostgreSQL database (tracked startup followed by
+// receipt verification on reboot).
 //
 // What this pins:
 //   1. Changes compete only when they would close the same request (their
@@ -22,7 +22,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -44,9 +43,9 @@ test('ballots, rivals and close votes against the full PostgreSQL schema', { tim
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   require('../src/db/pool').getPool = () => pool;
   const threads = require('../src/services/threads');
   const overview = require('../src/routes/workshop-overview');

@@ -6,15 +6,17 @@
 // test:changed: when src/services/db-export.js (runtime exports)
 // test:changed: when src/services/db-roles.js (readonly capability bootstrap)
 // test:changed: when src/db/connection-census.js (cluster connection budget)
+// test:changed: when src/db/migrations/ (actual fresh and upgraded schema under split identities)
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { Writable } = require('node:stream');
 const { gunzipSync } = require('node:zlib');
-const { Client } = require('pg');
+const { Client, Pool } = require('pg');
+const { applySchemaWithLockRetry } = require('../src/db/schema-migrations');
+const { seedReferenceData } = require('../src/db/reference-data');
 const access = require('../src/services/database-role-access');
 const { bootstrap } = require('../scripts/bootstrap-database-roles');
 const { ensureRuntimeGrants, takeWebWorkflowWrites } = require('../src/services/database-role-grants');
@@ -32,6 +34,15 @@ async function use(url, fn) {
   const c = new Client({ connectionString: url, connectionTimeoutMillis: 5000, query_timeout: 120000 });
   await c.connect();
   try { return await fn(c); } finally { await c.end(); }
+}
+// Match startup for both a fresh fixture and its later owner-role boot.
+// Initialization SQL cannot be replayed after contract migrations drop columns.
+async function migrateDatabase(url) {
+  const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 5000 });
+  try {
+    await applySchemaWithLockRetry(pool);
+    await seedReferenceData(pool);
+  } finally { await pool.end(); }
 }
 async function denied(c, sql) {
   await assert.rejects(c.query(sql), e => ['42501', '25006'].includes(e.code));
@@ -93,7 +104,7 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     await c.query(`CREATE DATABASE ${source} OWNER ${sourceOwner}`);
     await c.query(`REVOKE CONNECT ON DATABASE ${source} FROM PUBLIC`);
   });
-  await use(at(PRIMARY, platform), c => c.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8')));
+  await migrateDatabase(at(PRIMARY, platform));
   await use(at(PRIMARY, source), c => c.query(`CREATE EXTENSION pg_stat_statements;
     CREATE TABLE public.notes(id serial PRIMARY KEY, body text);
     INSERT INTO public.notes(body) VALUES ('synthetic retained row');
@@ -198,8 +209,9 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
       await access.assertLogin(c, 'migrator');
       await c.query('CREATE TABLE public.role_default_grant(id serial PRIMARY KEY, body text)');
       await denied(c, 'CREATE ROLE role_probe');
-      // Every statement of the actual schema must remain runnable by its owner.
-      await c.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+      // The real migration entry point runs as the owner and verifies receipts
+      // without replaying baseline DDL over an already-contracted schema.
+      await migrateDatabase(at(PRIMARY, platform, roles.migrator, passwords.migrator));
       // The migration Job's grants: one transaction, web's writes taken last.
       await c.query('BEGIN');
       await ensureRuntimeGrants(c, env);

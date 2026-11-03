@@ -32,7 +32,6 @@ test('shots object storage, publication, and retakes without byte columns agains
   t.after(async () => { await pool.end(); await admin.query(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end(); });
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
-    await require('./lib/media-store').dropMediaByteColumns(pool);
   const store = memoryMediaStore({ now: () => 0 });
   t.mock.method(media, 'getStore', () => store);
   const { rows: [user] } = await pool.query("INSERT INTO users (username, password) VALUES ('media-owner', 'x') RETURNING id");

@@ -44,9 +44,9 @@ test('a deleted app is purged from its receipt, retried, and the report lists id
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const { rows: [owner] } = await pool.query("INSERT INTO users (username, password) VALUES ('ret-owner', 'x') RETURNING id");
   const { rows: [app] } = await pool.query(

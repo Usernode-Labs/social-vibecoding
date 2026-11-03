@@ -47,6 +47,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { projectChangesOnGithub } from '../../lib/change-ref';
 import { useMessages } from '../../lib/i18n/react';
 
 import { t as translate } from '../../lib/i18n/runtime';
@@ -131,11 +132,13 @@ function firstOwn(replies: readonly ThreadMessage[], meId: number): ThreadMessag
 }
 
 /** Pure: "#18 Dark mode", "Change #19 Night theme": what a thread opened from a request's or a change's page is about. */
-export function aboutThreadTitle(kind: 'request' | 'change', number: number, title: string | null | undefined): string {
+export function aboutThreadTitle(kind: 'request' | 'change', number: number, title: string | null | undefined,
+  onGithub = projectChangesOnGithub()): string {
   const named = firstLine(title);
   if (kind === 'change') {
-    return named ? translate('messages:ai.thread.aboutChange', { number: String(number), title: named })
-      : translate('messages:ai.thread.aboutChangeUntitled', { number: String(number) });
+    return named
+      ? translate(onGithub ? 'messages:ai.thread.aboutChangePr' : 'messages:ai.thread.aboutChange', { number: String(number), title: named })
+      : translate(onGithub ? 'messages:ai.thread.aboutChangeUntitledPr' : 'messages:ai.thread.aboutChangeUntitled', { number: String(number) });
   }
   return named ? translate('messages:ai.thread.aboutRequest', { number: String(number), title: named })
     : translate('messages:ai.thread.aboutRequestUntitled', { number: String(number) });

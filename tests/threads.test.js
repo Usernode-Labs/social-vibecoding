@@ -232,6 +232,10 @@ test('change_thread_reply is registered wherever issue_thread_reply is', () => {
   const en = JSON.parse(read('frontend/locales/en/notifications.json'));
   assert.equal(en['row.chat.changeReply'].text, 'Replied on change #{{number}}');
   assert.equal(en['row.chat.decisionReply'].text, 'Replied on a decision');
+  // #6237: on a project whose code is on GitHub the change's number is
+  // GitHub's own, written "PR N", and "#N" is only ever a request.
+  assert.equal(en['row.chat.changeReplyPr'].text, 'Replied on change PR {{number}}');
+  assert.match(bell, /n\.changeOnGithub \? 'notifications:row\.chat\.changeReplyPr' : 'notifications:row\.chat\.changeReply'/);
 });
 
 test('Notify me and Mute: a same-origin write, for a thread the viewer may see', () => {

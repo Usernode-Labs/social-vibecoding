@@ -202,9 +202,9 @@ test('WP-C: offers against the full PostgreSQL schema', { timeout: 180000 }, asy
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = read('src/db/schema.sql');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
     [username, synthetic],

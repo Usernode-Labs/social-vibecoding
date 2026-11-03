@@ -37,9 +37,9 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await admin.query(`DROP DATABASE ${dbName}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   // The machine's guard, as platform.ts syncSettings records it at every boot.
   const setFlag = (on) => pool.query(on
     ? `INSERT INTO wf_settings (key, value) VALUES ('enabled:governance-proposal', '1') ON CONFLICT DO NOTHING`

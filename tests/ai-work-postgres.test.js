@@ -51,9 +51,9 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   require('../src/db/pool').getPool = () => pool;
   const aiWork = require('../src/services/ai-work');
 
@@ -154,7 +154,18 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.ok(!all.some((r) => r.title === 'Muted one'), 'muted');
   assert.ok(!all.some((r) => r.title === 'Secret'), 'a private project she is not in');
   assert.equal(work.waiting.find((r) => r.title === 'Tags').threadId, Number(tags.thread_id));
-  assert.deepEqual(work.next[0].app, { slug: 'aw-seeds', name: 'Seed swap', icon_url: null, icon_emoji: null });
+  assert.deepEqual(work.next[0].app, { slug: 'aw-seeds', name: 'Seed swap', icon_url: null, icon_emoji: null, changesOnGithub: false },
+    'the project\'s host rides along as a word, never the address');
+  // 3 Nov 2026: on GitHub a change's number is GitHub's own (written "PR N"),
+  // so the app says so; the git host shares one counter and keeps "#N".
+  await pool.query(`UPDATE apps SET repo_url = 'https://github.com/acme/seed-swap' WHERE id = $1`, [app.id]);
+  const onGithub = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
+  assert.equal(onGithub.next[0].app.changesOnGithub, true, 'a github.com repository');
+  assert.ok(!('repo_url' in onGithub.next[0].app), 'the address itself is not sent');
+  await pool.query(`UPDATE apps SET repo_url = 'https://git.onhomeroom.com/apps/aw-seeds' WHERE id = $1`, [app.id]);
+  const onGitHost = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
+  assert.equal(onGitHost.next[0].app.changesOnGithub, false, 'Homeroom\'s git host');
+  await pool.query(`UPDATE apps SET repo_url = NULL WHERE id = $1`, [app.id]);
   assert.equal(work.next[0].href, '#app/aw-seeds/dev/issues/6', 'a request\'s thread opens on its page');
 
   // 30 Oct 2026: a decision up for the group's vote has nothing to build. Hers

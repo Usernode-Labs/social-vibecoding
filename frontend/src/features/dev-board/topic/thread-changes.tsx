@@ -59,6 +59,7 @@ import type { ReactNode, RefObject } from 'react';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { i18n } from '../../../lib/i18n/runtime';
+import { projectChangesOnGithub } from '../../../lib/change-ref';
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { Html } from '../../../lib/html';
 import { ActionButton, StatusPill } from '../card/dev-card';
@@ -187,10 +188,11 @@ const KICKER = 'text-[12px] font-semibold uppercase tracking-[0.06em] text-zinc-
 function useKicker(item: ThreadItem, letter: string | null): string {
   const t = useMessages('project');
   const by = item.by || t('project:topic.thread.page.someone');
+  const github = projectChangesOnGithub();
   return letter
     ? t('project:topic.thread.page.changeLettered', { letter, by })
     : item.number
-      ? t('project:topic.thread.page.changeNumbered', { number: item.number, by })
+      ? t(github ? 'project:topic.thread.page.changeNumberedPr' : 'project:topic.thread.page.changeNumbered', { number: item.number, by })
       : t('project:topic.thread.page.change', { by });
 }
 
@@ -204,7 +206,7 @@ function ChangeMenu({ item, view }: { item: ThreadItem; view: ChangeView | null 
   const key = view?.card.rail?.menuKey || '';
   if (!key) return null;
   const label = item.number
-    ? t('project:topic.thread.page.moreNumbered', { number: item.number })
+    ? t(projectChangesOnGithub() ? 'project:topic.thread.page.moreNumberedPr' : 'project:topic.thread.page.moreNumbered', { number: item.number })
     : t('project:topic.thread.page.more');
   return (
     <button type="button" className="dev-thread-change-menu" data-card-menu={key} aria-haspopup="true" aria-label={label} title={label}>
@@ -218,7 +220,7 @@ function ChangeMenu({ item, view }: { item: ThreadItem; view: ChangeView | null 
  * its status pill and its ⋯ on that line, then its title. The title is not
  * a door any more: this is the change's page.
  */
-function ChangeLine({ item, view, letter = null }: { item: ThreadItem; view: ChangeView | null; letter?: string | null }): ReactNode {
+export function ChangeLine({ item, view, letter = null }: { item: ThreadItem; view: ChangeView | null; letter?: string | null }): ReactNode {
   const t = useMessages('project');
   const kicker = useKicker(item, letter);
   const status = view?.v.status || null;
@@ -484,15 +486,18 @@ function FoldedChange({ item, i, view, plan, request, open, onToggle }: {
  * change for several requests is on its first one's): one line that says
  * where, whose number opens that page at the change.
  */
-function Elsewhere({ list }: { list: ThreadElsewhere[] }): ReactNode {
+export function Elsewhere({ list }: { list: ThreadElsewhere[] }): ReactNode {
   const slug = appView()?.appData?.slug || '';
+  const github = projectChangesOnGithub();
   if (!list.length) return null;
   return (
     <div className="mt-3 flex flex-col gap-1" data-thread-elsewhere={list.length}>
       {list.map((e) => (
         <p key={e.id} className="text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-change={e.id}>
           <RichMessage
-            id={e.number ? 'project:topic.thread.page.elsewhere' : 'project:topic.thread.page.elsewhereUnnumbered'}
+            id={e.number
+              ? (github ? 'project:topic.thread.page.elsewherePr' : 'project:topic.thread.page.elsewhere')
+              : 'project:topic.thread.page.elsewhereUnnumbered'}
             values={e.number ? { number: e.number, on: e.on } : { on: e.on }}
             components={[<a
               key="on"
@@ -531,7 +536,7 @@ function CompetingRow({ item, i, view, plan = null, onOpen }: {
           {item.title || t('project:topic.thread.item.changeUnnumbered')}
         </button>
         <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-zinc-500 dark:text-zinc-400">
-          <span>{item.number ? t('project:topic.thread.page.rowBy', { by: item.by || t('project:topic.thread.page.someone'), number: item.number }) : (item.by || '')}</span>
+          <span>{item.number ? t(projectChangesOnGithub() ? 'project:topic.thread.page.rowByPr' : 'project:topic.thread.page.rowBy', { by: item.by || t('project:topic.thread.page.someone'), number: item.number }) : (item.by || '')}</span>
           {testing ? (
             <span className={testing.done ? 'inline-flex items-center gap-0.5 font-semibold text-[color:var(--state-ok)]' : testing.tone === 'bad' ? 'font-semibold text-[color:var(--state-blocked)]' : ''} data-thread-change-testing={testing.tone}>
               {testing.done ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}{testing.figure}

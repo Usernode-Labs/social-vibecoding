@@ -154,7 +154,7 @@ test('a CLI handoff reload derives the missing card from authoritative session s
   const html = render(hydrated, session);
   assert.match(html, /dc-pr-card/, 'the repaired session renders its Changes ready card');
   assert.match(html, /Preview staging/, 'the authoritative preview is available');
-  assert.match(html, /PR #4/, 'the authoritative proposal link is available');
+  assert.match(html, /PR 4/, 'the authoritative proposal link is available');
 });
 
 test('authoritative hydration never duplicates a persisted Changes ready card', () => {
@@ -612,7 +612,7 @@ test('a later iteration moves the card, not its status line, to the bottom (#188
   assert.equal(count(html, 'class="dc-pr-card"'), 1, 'one card, not one per iteration');
   assert.equal(count(html, 'dc-pr-btn-promote'), 1, 'one Submit for review');
   assert.match(html, />Submit for review</);
-  assert.match(html, /PR #12/, 'the card keeps its header');
+  assert.match(html, /PR 12/, 'the card keeps its header');
   assert.match(html, /Preview staging/, 'and its other actions');
   assert.doesNotMatch(html, /Earlier build result|Current actions are/,
     'nothing is left behind as a stub');

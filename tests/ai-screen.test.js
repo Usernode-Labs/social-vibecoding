@@ -365,6 +365,43 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   assert.match(src, /onClick=\{\(\) => setStillOpen\(\(o\) => !o\)\}/, 'and a press toggles it');
 });
 
+test('#6237: a change on a GitHub-hosted project is "PR N" on the bot tab\'s rows and tooltips', () => {
+  const { nextWords, changeOnGithub, prWord, needsYou } = loadTsx(MODEL);
+  const github = { ...app, changesOnGithub: true };
+  // A change-led thread: its number is GitHub's pull request number.
+  const change = thread(1, 6230, 'vote', { kind: 'change', app: github });
+  assert.equal(changeOnGithub(change), true);
+  assert.equal(words(nextWords(change)), 'Garden club · PR 6230 · Waiting for votes');
+  // The same project on Homeroom's git host shares one counter and keeps '#'.
+  const hosted = thread(2, 6230, 'vote', { kind: 'change', app });
+  assert.equal(changeOnGithub(hosted), false);
+  assert.equal(words(nextWords(hosted)), 'Garden club · #6230 · Waiting for votes');
+  // A request on the same GitHub project keeps '#N': it is not a change.
+  const request = thread(3, 6230, 'vote', { kind: 'request', app: github });
+  assert.equal(words(nextWords(request)), 'Garden club · #6230 · Waiting for votes');
+  // The number cell and the live row's tooltip have their PR twins.
+  assert.equal(message('messages:ai.live.numberPr', { number: 6230 }), 'PR 6230');
+  assert.equal(message(prWord('messages:ai.live.row', true), { project: 'Garden club', number: 6230 }),
+    'Garden club · PR 6230 · Live');
+  // A private thread about a change says PR too, on a GitHub project.
+  const rows = needsYou(null, {
+    private: [{ rootId: 5, title: 'Plans', kind: 'idea', app: github, about: { kind: 'change', number: 6230 } }],
+    next: [], waiting: [], live: [],
+  });
+  assert.equal(rows[0].sub.id, 'messages:ai.row.privateAboutChangePr');
+  assert.equal(words(rows[0].sub), 'Only you · Garden club · About change PR 6230');
+  // Older servers send no flag: the row keeps what it said before.
+  assert.equal(changeOnGithub(thread(4, 6230, 'vote', { kind: 'change', app })), false);
+  // The rendered row's number cell says PR; "#6230" is nowhere on the page.
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    progress: [], waiting: [change], live: [], openRow() {}, openThread() {},
+  });
+  assert.match(html, />PR 6230</, 'the number cell');
+  assert.doesNotMatch(html, />#6230</);
+});
+
 test('the server: a vote you have given waits on others (Up next), and the bot\'s stage decides where its requests go', () => {
   const aiWork = require('../src/services/ai-work');
   const now = new Date('2026-10-29T12:00:00Z');

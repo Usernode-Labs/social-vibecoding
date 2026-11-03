@@ -1036,8 +1036,8 @@
     "description": "What a row is, at the start of the line under its title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"Change · evan · for #4455\". A noun: one proposed change to the project that has no number yet."
   },
   "workRow.name.changeNumbered": {
-    "text": "PR #{{number}}",
-    "description": "What a row is, at the start of the line under its title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR #4456 · evan · for #4455 · 4m ago\". PR abbreviates pull request: one proposed change to the project. {{number}} is its number."
+    "text": "PR {{number}}",
+    "description": "What a row is, at the start of the line under its title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR 4456 · evan · for #4455 · 4m ago\". PR abbreviates pull request: one proposed change to the project. {{number}} is its number."
   },
   "workRow.name.request": {
     "text": "Request",
@@ -1081,7 +1081,7 @@
   },
   "workRow.facts.pair": {
     "text": "{{first}} · {{second}}",
-    "description": "Joins the short independent facts of the line under a row's title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR #4456 · evan · for #4455 · 4m ago\". {{first}} is everything said so far and {{second}} the next fact. Only the separator between them is translated."
+    "description": "Joins the short independent facts of the line under a row's title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR 4456 · evan · for #4455 · 4m ago\". {{first}} is everything said so far and {{second}} the next fact. Only the separator between them is translated."
   },
   "workRow.replies_one": {
     "text": "{{count}} comment",
@@ -4644,19 +4644,19 @@
     "description": "Link at the end of the amber 'merged but not released' banner on the platform project's page: opens, on GitHub, the run of the release workflow the banner is about. 'Open' is a verb; 'run' is a noun."
   },
   "releaseStall.failed.prCommit": {
-    "text": "PR #{{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "text": "PR {{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
   },
   "releaseStall.failed.prCommitRunning": {
-    "text": "PR #{{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "text": "PR {{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number, {{commit}} the merged commit's short code and {{running}} the short code of the build still being served. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
   },
   "releaseStall.failed.pr": {
-    "text": "PR #{{pr}} merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "text": "PR {{pr}} merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
   },
   "releaseStall.failed.prRunning": {
-    "text": "PR #{{pr}} merged but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "text": "PR {{pr}} merged but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number and {{running}} the short code of the build still being served. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
   },
   "releaseStall.failed.commit": {
@@ -4676,19 +4676,19 @@
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live because the automated release job failed. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.slow.prCommit": {
-    "text": "PR #{{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes.",
+    "text": "PR {{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes.",
     "description": "Amber banner on the platform project's page: a merged change is not live yet because the automated release job is taking far longer than normal. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code."
   },
   "releaseStall.slow.prCommitRunning": {
-    "text": "PR #{{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
+    "text": "PR {{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change is not live yet because the automated release job is taking far longer than normal. {{pr}} is the GitHub pull request's number, {{commit}} the merged commit's short code and {{running}} the short code of the build still being served."
   },
   "releaseStall.slow.pr": {
-    "text": "PR #{{pr}} merged and its release workflow is still running, well past the usual couple of minutes.",
+    "text": "PR {{pr}} merged and its release workflow is still running, well past the usual couple of minutes.",
     "description": "Amber banner on the platform project's page: a merged change is not live yet because the automated release job is taking far longer than normal. {{pr}} is the GitHub pull request's number."
   },
   "releaseStall.slow.prRunning": {
-    "text": "PR #{{pr}} merged and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
+    "text": "PR {{pr}} merged and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change is not live yet because the automated release job is taking far longer than normal. {{pr}} is the GitHub pull request's number and {{running}} the short code of the build still being served."
   },
   "releaseStall.slow.commit": {
@@ -4708,19 +4708,19 @@
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live yet because the automated release job is taking far longer than normal. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.notRolled.prCommit": {
-    "text": "PR #{{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it.",
+    "text": "PR {{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it.",
     "description": "Amber banner on the platform project's page: a merged change was built successfully, yet the servers have not switched to the new build. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code."
   },
   "releaseStall.notRolled.prCommitRunning": {
-    "text": "PR #{{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
+    "text": "PR {{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change was built successfully, yet the servers have not switched to the new build. {{pr}} is the GitHub pull request's number, {{commit}} the merged commit's short code and {{running}} the short code of the build still being served."
   },
   "releaseStall.notRolled.pr": {
-    "text": "PR #{{pr}} merged and its release workflow succeeded, but the platform has not rolled onto it.",
+    "text": "PR {{pr}} merged and its release workflow succeeded, but the platform has not rolled onto it.",
     "description": "Amber banner on the platform project's page: a merged change was built successfully, yet the servers have not switched to the new build. {{pr}} is the GitHub pull request's number."
   },
   "releaseStall.notRolled.prRunning": {
-    "text": "PR #{{pr}} merged and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
+    "text": "PR {{pr}} merged and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change was built successfully, yet the servers have not switched to the new build. {{pr}} is the GitHub pull request's number and {{running}} the short code of the build still being served."
   },
   "releaseStall.notRolled.commit": {
@@ -4740,19 +4740,19 @@
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch was built successfully, yet the servers have not switched to the new build. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.noRun.prCommit": {
-    "text": "PR #{{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it.",
+    "text": "PR {{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it.",
     "description": "Amber banner on the platform project's page: a merged change is not live and no run of the automated release job was found for it. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code. 'run' after 'workflow' is a noun."
   },
   "releaseStall.noRun.prCommitRunning": {
-    "text": "PR #{{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
+    "text": "PR {{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change is not live and no run of the automated release job was found for it. {{pr}} is the GitHub pull request's number, {{commit}} the merged commit's short code and {{running}} the short code of the build still being served. 'run' after 'workflow' is a noun."
   },
   "releaseStall.noRun.pr": {
-    "text": "PR #{{pr}} merged but is not running yet, and no release workflow run could be found for it.",
+    "text": "PR {{pr}} merged but is not running yet, and no release workflow run could be found for it.",
     "description": "Amber banner on the platform project's page: a merged change is not live and no run of the automated release job was found for it. {{pr}} is the GitHub pull request's number. 'run' after 'workflow' is a noun."
   },
   "releaseStall.noRun.prRunning": {
-    "text": "PR #{{pr}} merged but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
+    "text": "PR {{pr}} merged but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change is not live and no run of the automated release job was found for it. {{pr}} is the GitHub pull request's number and {{running}} the short code of the build still being served. 'run' after 'workflow' is a noun."
   },
   "releaseStall.noRun.commit": {
@@ -6170,5 +6170,25 @@
   "topic.thread.pill.goingLive": {
     "text": "Going live…",
     "description": "Status pill beside a request's number in its page's header: a change built for it merged and is on its way to production, not running yet."
+  },
+  "topic.thread.page.changeNumberedPr": {
+    "text": "Change · PR {{number}} · {{by}}",
+    "description": "Small-caps line over one change on a request's page, under the request, on a project whose code is on GitHub (where a change's number is GitHub's pull request number, written PR, never #): its changes and its vote to close. {{number}} is the change's number, {{by}} who built it (a username, or Homeroom bot). The change's title follows on the next line."
+  },
+  "topic.thread.page.moreNumberedPr": {
+    "text": "More for change PR {{number}}",
+    "description": "Accessible name and tooltip of the ⋯ button on a change's line on its request's page, on a project whose code is on GitHub (a change's number is written PR, never #): opens the menu with everything else that can be done with the change, such as Details or Edit description. {{number}} is the change's number."
+  },
+  "topic.thread.page.rowByPr": {
+    "text": "{{by}} · PR {{number}}",
+    "description": "Second line of one competing change's row on a request's page, on a project whose code is on GitHub (a change's number is written PR, never #): who built it and the change's number."
+  },
+  "topic.thread.page.elsewherePr": {
+    "text": "Change PR {{number}} for this request is on <0>#{{on}}</0>",
+    "description": "Line on a request's page when a change that would close it lives on another request's page, on a project whose code is on GitHub (a change's number is written PR, never #). {{number}} is the change's number; {{on}} is the other request's number, and <0></0> links to that request's page, at the change."
+  },
+  "topic.request.stream.onChangePr": {
+    "text": "on change PR {{number}}",
+    "description": "Small words after the time of a reply or a line in a request's discussion that was written on one of the request's changes, on a project whose code is on GitHub (a change's number is written PR, never #): the request's page holds the discussion of the whole piece of work. {{number}} is the change's number."
   }
 }

@@ -7,7 +7,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime, defineMachine, inspect, NONE, ok, reject } = require('../src/workflow/kernel/index.ts');
 const { CLAIM_LOCKS, PURGE_LOCK } = require('../src/workflow/kernel/services.ts');
@@ -157,9 +156,9 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 180000 }, 
     await admin.query(`DROP DATABASE ${dbName}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   await pool.query(`
     CREATE TABLE kt_log (id BIGSERIAL PRIMARY KEY, key TEXT NOT NULL, n INT NOT NULL);
     CREATE TABLE kt_flags (name TEXT PRIMARY KEY, on_off BOOLEAN NOT NULL);

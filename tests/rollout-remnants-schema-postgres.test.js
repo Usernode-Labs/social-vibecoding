@@ -18,6 +18,10 @@ const { Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SCHEMA = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
+const history = require('../src/db/schema-migrations').loadPlan();
+// Start before the media contract: this fixture recreates obsolete names
+// and deliberately replays their historical cleanup, then the final contract.
+const PRE_CONTRACT_SCHEMA = history.slice(0, history.findIndex(m => m.id === 'media-drop-bytes')).map(m => m.sql).join('\n');
 
 test('the schema drops the rollout-only remnants of a deployment that has them', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -35,7 +39,7 @@ test('the schema drops the rollout-only remnants of a deployment that has them',
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();
   });
-  await pool.query(SCHEMA);
+  await pool.query(PRE_CONTRACT_SCHEMA);
   // A deployment as the release before this one left it.
   await pool.query(`
     CREATE TABLE leader_sweeps (name TEXT PRIMARY KEY, last_run_at TIMESTAMPTZ NOT NULL);

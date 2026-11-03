@@ -1321,6 +1321,7 @@ const HYDRATE_SELECT_SQL = `SELECT n.id, n.kind, n.user_id,
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
             a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
+            a.repo_url,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -1808,6 +1809,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
             a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
+            a.repo_url,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -1870,6 +1872,7 @@ async function getForUser(pool, userId, id) {
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
             a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
+            a.repo_url,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -2360,6 +2363,11 @@ function serialize(row) {
     // it drew before.
     appIconUrl: botProject && row.app_icon_image_id ? `/app-icons/${row.app_icon_image_id}` : null,
     appIconEmoji: botProject ? (row.app_icon_emoji || null) : null,
+    // Where the project's code is hosted, for a change's number: on GitHub it
+    // is written "PR 12", never "#12", because GitHub numbers pull requests
+    // with its own counter (src/services/pr-metadata.js). The address itself
+    // does not ride along.
+    changeOnGithub: repoRef.isGithub(row.repo_url),
     // #5580: the request and proposal this row is about (STORY_COLUMNS_SQL),
     // which the sheet folds one story's news by. The bot's own rows name
     // their request in `detail`, or, for a reply in a request's thread, by

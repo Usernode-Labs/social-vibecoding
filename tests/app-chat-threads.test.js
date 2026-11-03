@@ -72,6 +72,13 @@ test('an app-chat notification names the Messages address it opens', () => {
   assert.equal(notifications.serialize({
     ...row({ kind: 'conversation_reply' }), conversation_id: 3,
   }).href, null, 'a conversation row never carries an app address');
+  // #6237: the bell says where a change's number comes from as a word, not
+  // by sending the repository address along.
+  assert.equal(notifications.serialize(row({ repo_url: 'https://github.com/acme/recipe-box' })).changeOnGithub, true);
+  assert.equal(notifications.serialize(row({ repo_url: 'https://git.onhomeroom.com/apps/recipe-box' })).changeOnGithub, false);
+  assert.equal(notifications.serialize(row()).changeOnGithub, false, 'no address counts as not GitHub');
+  assert.ok(!('repo_url' in notifications.serialize(row({ repo_url: 'https://github.com/acme/recipe-box' }))),
+    'the address itself is not sent');
 });
 
 test('the read route accepts a reply thread and a topic\'s channel beside the topic threads', () => {
