@@ -120,6 +120,9 @@ test('the sweep is a clock of the workflow, on an interval shorter than the leas
   const job = clock.slice(clock.indexOf("name: 'local-agent-leases'"), clock.indexOf('},', clock.indexOf("name: 'local-agent-leases'")));
   assert.match(job, /everyMs: MIN,/);
   assert.match(job, /legacy\('services\/local-agent'\)\.sweepExpiredLeases\(pool\)/);
+  // The same minute releases turns a heartbeat-but-never-claims machine left
+  // queued or offered, which no lapsed lease would ever touch.
+  assert.match(job, /sweepUnclaimedTurns\(pool\)/);
   assert.ok(60 * 1000 <= localAgent.LEASE_TTL_MS, 'a lease must not outlive its reaper by more than one sweep');
   assert.doesNotMatch(serverSource, /startLocalAgentLeaseSweeper|sweepExpiredLeases/, 'no process sweeps on its own');
 });

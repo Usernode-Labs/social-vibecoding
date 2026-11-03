@@ -9930,42 +9930,64 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         };
       }
       const turnId = queued.turn.id;
-      const telemetryStartedAt = new Date();
-      localScoutAttemptNumber += 1;
-      if (stopHandle) stopHandle.localTurnId = String(turnId);
-      let announcedAccepted = false;
-      const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
-        // This process is the turn's waiter (see dispatchLocalBuild).
-        waiterId: queued.waiterId,
-        onProgress: (row) => {
-          if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
-            announcedAccepted = true;
-            onScoutProgress(`[${lease.label} accepted the scout turn]`);
-          }
-          const lines = Array.isArray(row.progress) ? row.progress : [];
-          for (const line of lines.slice(seenScoutLines)) onScoutProgress(line);
-          seenScoutLines = Math.max(seenScoutLines, lines.length);
-        },
-      });
-      if (outcome === 'adopted') {
-        // Restart recovery took the turn over and publishes its spec itself.
-        const adopted = new Error(`${lease.label}'s scout turn is being finished by restart recovery`);
-        adopted.code = 'local_turn_adopted';
-        throw adopted;
+      try {
+        const telemetryStartedAt = new Date();
+        localScoutAttemptNumber += 1;
+        if (stopHandle) stopHandle.localTurnId = String(turnId);
+        let announcedAccepted = false;
+        let { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+          // This process is the turn's waiter (see dispatchLocalBuild).
+          waiterId: queued.waiterId,
+          onProgress: (row) => {
+            if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
+              announcedAccepted = true;
+              onScoutProgress(`[${lease.label} accepted the scout turn]`);
+            }
+            const lines = Array.isArray(row.progress) ? row.progress : [];
+            for (const line of lines.slice(seenScoutLines)) onScoutProgress(line);
+            seenScoutLines = Math.max(seenScoutLines, lines.length);
+          },
+        });
+        if (outcome === 'adopted') {
+          // Restart recovery took the turn over and publishes its spec itself.
+          const adopted = new Error(`${lease.label}'s scout turn is being finished by restart recovery`);
+          adopted.code = 'local_turn_adopted';
+          throw adopted;
+        }
+        if (outcome === 'aborted') {
+          // The dispatch was interrupted (this process is stopping, or the
+          // request went away) before the machine answered. Nothing is
+          // running, so the row must not stay live and keep the change busy.
+          finished = await localAgent
+            .abandonTurn(pool, turnId, 'The turn was interrupted before it finished.')
+            .catch(() => null) || finished;
+        }
+        recordLocalCodingInvocation(pool, {
+          session,
+          turnId,
+          turn: finished,
+          outcome,
+          component: headless ? 'coding_agent_headless' : 'coding_agent_scout',
+          attemptNumber: localScoutAttemptNumber,
+          correlationId: localScoutCorrelationId,
+          startedAt: telemetryStartedAt,
+        });
+        // Shaped and worded as restart recovery shapes a recovered one
+        // (localAgent.buildTurnResult): the spec is the result text.
+        return localAgent.buildTurnResult({ turn: finished, outcome, label: lease.label, mode: 'scout' });
+      } catch (err) {
+        // A dispatch that stopped part way must leave no live row behind:
+        // the machine still heartbeats its lease, so nothing else would ever
+        // free it and every later dispatch would answer session_busy.
+        // `local_turn_adopted` is the one throw that must leave the row
+        // alone: restart recovery owns that turn and its tail.
+        if (err?.code !== 'local_turn_adopted') {
+          await localAgent
+            .abandonTurn(pool, turnId, `Sending the turn failed: ${agentTurn.sanitizeError(err) || 'unknown error'}`)
+            .catch(() => {});
+        }
+        throw err;
       }
-      recordLocalCodingInvocation(pool, {
-        session,
-        turnId,
-        turn: finished,
-        outcome,
-        component: headless ? 'coding_agent_headless' : 'coding_agent_scout',
-        attemptNumber: localScoutAttemptNumber,
-        correlationId: localScoutCorrelationId,
-        startedAt: telemetryStartedAt,
-      });
-      // Shaped and worded as restart recovery shapes a recovered one
-      // (localAgent.buildTurnResult): the spec is the result text.
-      return localAgent.buildTurnResult({ turn: finished, outcome, label: lease.label, mode: 'scout' });
     };
 
     let result;
@@ -12418,51 +12440,73 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         };
       }
       const turnId = queued.turn.id;
-      const telemetryStartedAt = new Date();
-      localBuildAttemptNumber += 1;
-      if (stopHandle) stopHandle.localTurnId = String(turnId);
-      let announcedAccepted = false;
-      const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
-        // This process is the turn's waiter: it keeps the turn from being
-        // taken over by restart recovery while it waits, and claims the
-        // tail below under this id (services/local-agent-recovery.js).
-        waiterId: queued.waiterId,
-        onProgress: (row) => {
-          if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
-            announcedAccepted = true;
-            onAgentProgress(`[${lease.label} accepted the turn]`);
-          }
-          const lines = Array.isArray(row.progress) ? row.progress : [];
-          for (const line of lines.slice(seenLocalLines)) onAgentProgress(line);
-          seenLocalLines = Math.max(seenLocalLines, lines.length);
-        },
-      });
-      if (outcome === 'adopted') {
-        // The turn's item was claimed again while this process lost it, and
-        // that claim took the turn over and runs its tail itself. Running it here too would post every
-        // card twice.
-        const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
-        adopted.code = 'local_turn_adopted';
-        throw adopted;
+      try {
+        const telemetryStartedAt = new Date();
+        localBuildAttemptNumber += 1;
+        if (stopHandle) stopHandle.localTurnId = String(turnId);
+        let announcedAccepted = false;
+        let { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+          // This process is the turn's waiter: it keeps the turn from being
+          // taken over by restart recovery while it waits, and claims the
+          // tail below under this id (services/local-agent-recovery.js).
+          waiterId: queued.waiterId,
+          onProgress: (row) => {
+            if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
+              announcedAccepted = true;
+              onAgentProgress(`[${lease.label} accepted the turn]`);
+            }
+            const lines = Array.isArray(row.progress) ? row.progress : [];
+            for (const line of lines.slice(seenLocalLines)) onAgentProgress(line);
+            seenLocalLines = Math.max(seenLocalLines, lines.length);
+          },
+        });
+        if (outcome === 'adopted') {
+          // The turn's item was claimed again while this process lost it, and
+          // that claim took the turn over and runs its tail itself. Running it here too would post every
+          // card twice.
+          const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
+          adopted.code = 'local_turn_adopted';
+          throw adopted;
+        }
+        if (outcome === 'aborted') {
+          // The dispatch was interrupted (this process is stopping, or the
+          // request went away) before the machine answered. Nothing is
+          // running, so the row must not stay live and keep the change busy.
+          finished = await localAgent
+            .abandonTurn(pool, turnId, 'The turn was interrupted before it finished.')
+            .catch(() => null) || finished;
+        }
+        recordLocalCodingInvocation(pool, {
+          session,
+          turnId,
+          turn: finished,
+          outcome,
+          component: headless ? 'coding_agent_headless' : 'coding_agent_build',
+          attemptNumber: localBuildAttemptNumber,
+          correlationId: localBuildCorrelationId,
+          startedAt: telemetryStartedAt,
+        });
+        // The full set awaitTurnResult can return is completed / failed /
+        // declined / stopped / abandoned / missing / aborted; the shape and the
+        // words for each are shared with restart recovery
+        // (localAgent.buildTurnResult), so a recovered local turn reaches the
+        // tail exactly as this one does.
+        return localAgent.buildTurnResult({
+          turn: finished, outcome, label: lease.label, behind: session.behind_main || 0, mode: 'build',
+        });
+      } catch (err) {
+        // A dispatch that stopped part way must leave no live row behind:
+        // the machine still heartbeats its lease, so nothing else would ever
+        // free it and every later dispatch would answer session_busy.
+        // `local_turn_adopted` is the one throw that must leave the row
+        // alone: restart recovery owns that turn and its tail.
+        if (err?.code !== 'local_turn_adopted') {
+          await localAgent
+            .abandonTurn(pool, turnId, `Sending the turn failed: ${agentTurn.sanitizeError(err) || 'unknown error'}`)
+            .catch(() => {});
+        }
+        throw err;
       }
-      recordLocalCodingInvocation(pool, {
-        session,
-        turnId,
-        turn: finished,
-        outcome,
-        component: headless ? 'coding_agent_headless' : 'coding_agent_build',
-        attemptNumber: localBuildAttemptNumber,
-        correlationId: localBuildCorrelationId,
-        startedAt: telemetryStartedAt,
-      });
-      // The full set awaitTurnResult can return is completed / failed /
-      // declined / stopped / abandoned / missing / aborted; the shape and the
-      // words for each are shared with restart recovery
-      // (localAgent.buildTurnResult), so a recovered local turn reaches the
-      // tail exactly as this one does.
-      return localAgent.buildTurnResult({
-        turn: finished, outcome, label: lease.label, behind: session.behind_main || 0, mode: 'build',
-      });
     };
 
     let result;
