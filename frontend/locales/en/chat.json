@@ -21,7 +21,7 @@
   },
   "group.composer.replyingToPr": {
     "text": "↩ Replying to PR {{number}}",
-    "description": "Label over the message box while the person replies to a line about a pull request. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
+    "description": "Label over the message box while the person replies to a line about a pull request. PR is the abbreviation of pull request; {{number}} is its number. Do not put a # before the number: a change's number is written PR, never #."
   },
   "group.composer.replyingToPrUnnumbered": {
     "text": "↩ Replying to PR",
@@ -1181,7 +1181,7 @@
   },
   "group.quote.pr": {
     "text": "PR {{number}}",
-    "description": "Stands where an author's name would be on a quoted line that came from a pull request, and in a shared plan's subtitle. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
+    "description": "Stands where an author's name would be on a quoted line that came from a pull request, and in a shared plan's subtitle. PR is the abbreviation of pull request; {{number}} is its number. Do not put a # before the number: a change's number is written PR, never #."
   },
   "group.quote.prUnnumbered": {
     "text": "PR",

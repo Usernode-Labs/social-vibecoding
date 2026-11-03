@@ -77,7 +77,7 @@ test('a failing run is offered once the conversation is idle, and never while ch
 });
 
 test('one offer per run: anything the person says after the verdict answers it, and the next run asks again', () => {
-  const after = [message(3, 'user', '2026-10-03T11:00:05.000Z', 'Please fix the failing check on PR #88.')];
+  const after = [message(3, 'user', '2026-10-03T11:00:05.000Z', 'Please fix the failing check on PR 88.')];
   assert.equal(offerFor({ messages: after }), null, 'Fix it was tapped (or the person typed): it does not come back');
   assert.equal(offerFor({ messages: [message(4, 'user', AT, 'same instant')] }), null);
   assert.ok(offerFor({ messages: [message(5, 'assistant', '2026-10-03T11:05:00.000Z')] }),
@@ -90,9 +90,9 @@ test('one offer per run: anything the person says after the verdict answers it, 
 
 test('Fix it asks for the fix with each check and what it reported; the heading counts them', () => {
   const one = offerFor();
-  assert.equal(fix.fixChecksHeading(one), '1 check failed on PR #88');
+  assert.equal(fix.fixChecksHeading(one), '1 check failed on PR 88');
   assert.equal(fix.fixChecksMessage(one), [
-    'Please fix the failing check on PR #88.',
+    'Please fix the failing check on PR 88.',
     '',
     '- "A checked item renders in its own completed section", which reported: Expected .done-items li, found none',
   ].join('\n'));
@@ -128,7 +128,7 @@ test('the card names the checks, says why it matters, and offers Fix it and See 
   const api = loadTsx('tests/fixtures/agent-session-api.ts');
   const html = renderToHtml(createElement(api.FixChecksCardView, { offer: offerFor() }));
   assert.match(html, /<section[^>]*aria-label="Failing checks"[^>]*data-agent-session-fix-checks="88"/);
-  assert.match(html, /data-agent-session-fix-checks-heading[^>]*>1 check failed on PR #88</);
+  assert.match(html, /data-agent-session-fix-checks-heading[^>]*>1 check failed on PR 88</);
   assert.match(html, /data-agent-session-fix-check[^>]*><p[^>]*>A checked item renders in its own completed section<\/p><p[^>]*>Expected \.done-items li, found none<\/p>/);
   assert.match(html, />Checks have to pass before the change can merge\. The agent can read what failed and fix it\.</);
   assert.match(html, /<button[^>]*data-agent-session-fix-checks-go[^>]*>Fix it<\/button><button[^>]*data-agent-session-fix-checks-see[^>]*>See checks<\/button>/);
@@ -142,7 +142,7 @@ test('the card names the checks, says why it matters, and offers Fix it and See 
   assert.match(asking, /disabled=""[^>]*data-agent-session-fix-checks-go|data-agent-session-fix-checks-go[^>]*disabled=""/, 'one tap, one ask');
   assert.match(asking, /animate-spin/);
   assert.match(asking, />And 2 more\.</);
-  assert.match(asking, />3 checks failed on PR #88</);
+  assert.match(asking, />3 checks failed on PR 88</);
 });
 
 // A static render reads the store's initial state (useSyncExternalStore's
@@ -190,7 +190,7 @@ test('the conversation\'s own read carries the offer, and Fix it sends the ask a
     assert.equal(panelOffer(api.getAgentSessionState()), null, 'asked once: the offer is gone the moment the ask leaves');
     await sending;
     assert.equal(sent.length, 1, 'the tap is one send, through the route the box uses');
-    assert.match(sent[0], /^Please fix the failing check on PR #88\.\n\n- "A checked item renders in its own completed section", which reported: /);
+    assert.match(sent[0], /^Please fix the failing check on PR 88\.\n\n- "A checked item renders in its own completed section", which reported: /);
     assert.equal(panelOffer(api.getAgentSessionState()), null, 'a refused ask stays in the conversation, Not sent, with Retry: still no second offer');
   } finally {
     delete globalThis.window;

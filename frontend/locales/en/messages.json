@@ -3537,7 +3537,7 @@
   },
   "agent.row.prNumber": {
     "text": "PR {{number}}",
-    "description": "Stands in for the title of a change on a coding-agent session's row in the conversation list. \"PR\" is the abbreviation of pull request; {{number}} is its number, keep the #."
+    "description": "Stands in for the title of a change on a coding-agent session's row in the conversation list. \"PR\" is the abbreviation of pull request; {{number}} is its number; do not put a # before it."
   },
   "agent.row.changeId": {
     "text": "Change {{id}}",

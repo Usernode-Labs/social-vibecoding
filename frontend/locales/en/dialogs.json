@@ -1057,7 +1057,7 @@
   },
   "importPr.progress": {
     "text": "Importing PR {{number}}: checking it on GitHub and adding it to In progress…",
-    "description": "Shown beside a spinner in the import dialog while the chosen pull request (PR) is imported. {{number}} is its number; keep the # before it. \"In progress\" is the name of a board column."
+    "description": "Shown beside a spinner in the import dialog while the chosen pull request (PR) is imported. {{number}} is its number; do not put a # before it. \"In progress\" is the name of a board column."
   },
   "importPr.slow": {
     "text": "Still working. GitHub is being slow, so don’t close this window.",
@@ -1073,7 +1073,7 @@
   },
   "importPr.imported": {
     "text": "PR {{number}} was imported. Its preview is being built now. Find it in Dev under In progress.",
-    "description": "Brief message at the bottom of the screen after an import succeeded but its page could not be opened. {{number}} is the pull request's number; keep the # before it. \"Dev\" is the name of a tab and \"In progress\" of a board column."
+    "description": "Brief message at the bottom of the screen after an import succeeded but its page could not be opened. {{number}} is the pull request's number; do not put a # before it. \"Dev\" is the name of a tab and \"In progress\" of a board column."
   },
   "importPr.error.pick": {
     "text": "Pick a pull request to import.",
@@ -1085,11 +1085,11 @@
   },
   "importPr.error.notFound": {
     "text": "PR {{number}} wasn’t found on GitHub. It may have been deleted.",
-    "description": "Error in the import dialog when GitHub no longer has the chosen pull request (PR). {{number}} is its number; keep the # before it."
+    "description": "Error in the import dialog when GitHub no longer has the chosen pull request (PR). {{number}} is its number; do not put a # before it."
   },
   "importPr.error.conflict": {
     "text": "PR {{number}} can’t be imported right now.",
-    "description": "Error in the import dialog when the chosen pull request (PR) cannot be imported in its present state. {{number}} is its number; keep the # before it."
+    "description": "Error in the import dialog when the chosen pull request (PR) cannot be imported in its present state. {{number}} is its number; do not put a # before it."
   },
   "importPr.error.restarting": {
     "text": "The platform is restarting. Try the import again in a few seconds.",
@@ -1949,7 +1949,7 @@
   },
   "members.governance.opened": {
     "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply.",
-    "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); keep the # before it. \"Dev\" is the name of a tab."
+    "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); do not put a # before it. \"Dev\" is the name of a tab."
   },
   "members.governance.openedWithWarnings": {
     "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply. Some approver invites could not be sent: {{warnings}}.",
@@ -2153,7 +2153,7 @@
   },
   "members.appAdmins.opened": {
     "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab before the new admins apply.",
-    "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); keep the # before it. \"Dev\" is the name of a tab."
+    "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); do not put a # before it. \"Dev\" is the name of a tab."
   },
   "members.appAdmins.failed": {
     "text": "Could not open the admins proposal: {{reason}}",
@@ -2373,7 +2373,7 @@
   },
   "secrets.row.pendingDeclarationNumbered": {
     "text": "Value set · its declaration is waiting for approval (PR {{number}}).",
-    "description": "The same note with the proposal's pull request (PR) number. {{number}} is that number; keep the # before it."
+    "description": "The same note with the proposal's pull request (PR) number. {{number}} is that number; do not put a # before it."
   },
   "secrets.row.orphan": {
     "text": "No longer declared in <0>dapp.json</0>. Its value is kept so a rollback still works, so clear it once you're sure.",
@@ -2537,7 +2537,7 @@
   },
   "secrets.declare.opened.storedNumbered": {
     "text": "Proposal opened for {{key}} (PR {{number}}). Your value is stored; the declaration still needs a merge vote.",
-    "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; keep the # before it."
+    "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; do not put a # before it."
   },
   "secrets.declare.opened.pending": {
     "text": "Proposal opened for {{key}}. Vote on it in the group chat panel. The value applies when it merges.",
@@ -2545,7 +2545,7 @@
   },
   "secrets.declare.opened.pendingNumbered": {
     "text": "Proposal opened for {{key}} (PR {{number}}). Vote on it in the group chat panel. The value applies when it merges.",
-    "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; keep the # before it."
+    "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; do not put a # before it."
   },
   "secrets.declare.failed": {
     "text": "Failed: {{reason}}",

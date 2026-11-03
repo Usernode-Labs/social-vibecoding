@@ -341,7 +341,7 @@ test('Propose POSTs initialApprovers without a confirm and collapses the draft',
   assert.equal(body.approvalsRequired, null);
   assert.deepEqual(body.initialApprovers, ['alice', 'bob']);
   assert.equal(h.live().draftBlock.classList.contains('hidden'), true, 'draft collapsed on success');
-  assert.match(h.live().govError.textContent, /Proposal opened \(PR #42\)/);
+  assert.match(h.live().govError.textContent, /Proposal opened \(PR 42\)/);
   assert.ok(
     h.fetches.some((f) => f.url === '/api/apps/demo-app/approvers'),
     'roster refetched so the fresh invites appear'

@@ -369,7 +369,7 @@ test('Propose confirms, POSTs the draft, and repaints from the CURRENT declared 
   // current declared names, and the status names the new proposal.
   assert.doesNotMatch(l.list.innerHTML, /will be added/);
   assert.match(l.list.innerHTML, /@alice/);
-  assert.match(l.status.textContent, /Proposal opened \(PR #42\)/);
+  assert.match(l.status.textContent, /Proposal opened \(PR 42\)/);
   assert.equal(l.edit.classList.contains('hidden'), true, 'editor locked while the proposal is open');
 });
 
