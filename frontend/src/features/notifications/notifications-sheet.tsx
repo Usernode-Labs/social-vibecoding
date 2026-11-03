@@ -341,9 +341,13 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
         <button
           type="button"
           data-notif-app-read={appId}
-          className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-semibold '
-            + 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 '
-            + 'disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target'}
+          // #5929: quieter than Mark all read, whose pill it would otherwise
+          // repeat down the sheet: words in the secondary ink until hovered.
+          className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-medium '
+            + 'bg-transparent text-zinc-500 enabled:hover:bg-zinc-100 enabled:hover:text-zinc-900 '
+            + 'dark:text-zinc-400 enabled:dark:hover:bg-zinc-800 enabled:dark:hover:text-zinc-100 '
+            + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 '
+            + 'disabled:opacity-40 un-touch-target'}
           disabled={busy}
           aria-busy={busy ? 'true' : undefined}
           aria-label={t('notifications:sheet.markAppReadLabel', { app: label })}
