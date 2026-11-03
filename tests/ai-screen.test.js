@@ -130,7 +130,7 @@ test('each section groups its rows by project, and a project shows its first few
     ['games', ['need:proposal:2']],
     [null, ['private:91']],
   ], 'under each project once, in the order the projects first come; a private idea in no project apart');
-  assert.deepEqual({ ...GROUP_FIRST }, { needs: 5, next: 3, waiting: 3, live: 3 }, 'Needs you shows the most: it is what you came for');
+  assert.deepEqual({ ...GROUP_FIRST }, { needs: 5, busy: 3, live: 3 }, 'Needs you shows the most: it is what you came for');
   const lists = read('frontend/src/features/ai/lists.tsx');
   // 1 Nov 2026: the row whose chat is in the column is never folded away:
   // past the first rows, it joins them.
@@ -273,8 +273,7 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
     'Garden club · Waiting for votes', 'Garden club · Waiting for votes · you voted Yes',
     'Garden club · Waiting for votes · you voted No',
   ]);
-  assert.equal(message('messages:ai.next.titleCount', { count: 2 }), 'In progress · 2');
-  assert.equal(message('messages:ai.up.titleCount', { count: 2 }), 'Waiting · 2');
+  assert.equal(message('messages:ai.busy.title', { count: 2 }), 'Waiting & in progress · 2');
   assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
   assert.equal(words(heroWords(0, 3)), 'In progress: 3');
   // Y03: a zero says nothing, and with neither there is no line.
@@ -355,7 +354,9 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   assert.match(html, /Not moving · 2/, 'its count is only the rows nobody is moving');
   assert.match(html, /data-ai-still-rest=""/, 'and a fold of its own');
   assert.match(html, /aria-expanded="false"/, 'closed until pressed');
-  assert.match(html, /Waiting · 3/, 'the Waiting head still counts every row');
+  // #6160 moved these rows to the card of their own, whose head counts the
+  // whole card: the rows moving and the rows folded under Not moving.
+  assert.match(html, /Waiting &amp; in progress · 3/, 'the card\'s head still counts every row');
   assert.match(html, /#2 in line/, 'the moving rows lead the list');
   const src = read('frontend/src/features/ai/lists.tsx');
   assert.match(src, /const stillShown = stillOpen \|\| !!still\?\.lines\.some\(\(l\) => l\.lit\);/, 'a row where you are opens it');
@@ -749,6 +750,73 @@ test('Main Chat is the list\'s first row: the bot\'s mark, its name, what is new
   assert.match(src, /const LIT_ROW = '[^']*bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\]';/, 'the lit tint and ink, as the rail\'s rows are');
   // The page lights Main, a thread, or nothing while a page or a blank thread holds the column.
   assert.match(read('frontend/src/features/ai/index.tsx'), /const lit = !columnShows \|\| blank \? null : openRoot \? `private:\$\{openRoot\}` : 'main';/);
+});
+
+// #6160 (2 Nov 2026): In progress and Waiting were two sections inside the
+// Needs you card, under a line each, so on a busy account that card of
+// to-dos ran on long past what needed you. They are one quieter card of
+// their own now, between Needs you and Live this week, drawn as that is.
+test('#6160: Waiting & in progress is a card of its own between Needs you and Live this week, quieter rows, work under way first', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const bakery = { slug: 'bakery', name: 'Bakery orders', icon_url: null, icon_emoji: null };
+  const row = (threadId, a, what, extra = {}) => ({
+    threadId, number: 100 + threadId, kind: 'work', title: `${a.name} ${what} ${threadId}`, app: a, change: null,
+    href: `#app/${a.slug}/dev/issues/${100 + threadId}`, group: 'next', what, at: null, ...extra,
+  });
+  // Under way first, then what waits: two projects, one with more rows than
+  // it shows before its own Show more.
+  const progress = [row(1, app, 'going_live'), row(2, bakery, 'building', { by: 'bot' })];
+  const waiting = [
+    row(3, app, 'vote'), row(4, bakery, 'not_picked_up'),
+    row(5, app, 'checking'), row(6, bakery, 'held', { heldBy: 'approvals' }),
+    row(7, app, 'queued'), row(8, app, 'not_picked_up'),
+  ];
+  const live = [{ ...row(9, app, 'live'), group: 'live' }];
+  const props = (extra = {}) => ({
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    progress: [], waiting: [], live: [], openRow() {}, openThread() {}, ...extra,
+  });
+  const html = renderComponent(LISTS, 'AiLists', props({ progress, waiting, live }));
+
+  const open = html.indexOf('data-ai-sheet="open"');
+  const busy = html.indexOf('data-ai-sheet="busy"');
+  const liveAt = html.indexOf('data-ai-sheet="live"');
+  assert.ok(open >= 0 && busy > open && liveAt > busy, 'a sheet between Needs you and Live this week');
+
+  // Needs you's card ends where your to-dos end: no In progress or Waiting
+  // section, no lines, and none of their rows.
+  const openSheet = html.slice(open, busy);
+  assert.doesNotMatch(openSheet, /data-ai-list="(?:next|up)"/, 'the two sections are gone from Needs you');
+  assert.doesNotMatch(openSheet, /data-ai-line="going_live"/);
+  assert.match(openSheet, /data-ai-list="work"[^>]*><div class="[^"]*" data-ai-band="">/, 'Needs you keeps its own band');
+
+  // A card like Live this week: its own band, the quieter rows, and a count
+  // of everything in it, work under way and waiting together.
+  const busySheet = html.slice(busy, liveAt);
+  assert.match(busySheet, /data-ai-list="busy"><div class="[^"]*" data-ai-band="">/);
+  assert.match(busySheet, /Waiting &amp; in progress · 8/);
+  assert.match(busySheet, /class="flex w-full min-h-\[40px\] md:min-h-\[32px\][^"]*"[^>]*data-ai-line="going_live"/, 'the quiet row');
+  assert.match(busySheet, /text-\[13px\] leading-5 text-zinc-600 dark:text-zinc-400/, 'the quiet title');
+  assert.equal((busySheet.match(/data-ai-band=""/g) || []).length, 1, 'one band, as Live this week has');
+
+  // One list, grouped by project: under way before waiting, and each
+  // project's rows under its own name.
+  const garden = busySheet.slice(busySheet.indexOf('data-ai-group="garden"'), busySheet.indexOf('data-ai-group="bakery"'));
+  assert.ok(garden.indexOf('data-ai-line="going_live"') < garden.indexOf('data-ai-line="vote"'), 'work under way comes first');
+  assert.match(garden, />Garden club</, 'under its project\'s name');
+  // Four of the garden's rows are moving: three, then its own Show more for
+  // the last. Its two not picked up rows fold under Not moving below.
+  assert.match(garden, /Show 1 more/);
+  assert.match(garden, /data-ai-group-rest=""/);
+  assert.match(busySheet, /Not moving · 2/);
+  // The bakery's two moving rows show whole.
+  assert.doesNotMatch(busySheet.slice(busySheet.indexOf('data-ai-group="bakery"')), /data-ai-group-rest=""/);
+
+  // Nothing under way or waiting, no card, as Live this week has none.
+  const empty = renderComponent(LISTS, 'AiLists', props());
+  assert.doesNotMatch(empty, /data-ai-sheet="busy"/);
+  assert.doesNotMatch(empty, /data-ai-list="busy"/);
 });
 
 // #6153 (2 Nov 2026): a design thread filed as request #14 was listed twice,

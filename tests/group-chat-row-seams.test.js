@@ -181,8 +181,84 @@ test('the tint goes through the model, and the fill does not', () => {
   assert.match(html, /class="gc-msg-system gc-msg-vote gc-vote-voted"/);
 });
 
-test('a patch that says nothing new is not a state change', () => {
-  // The loop guard. `refreshVoteControls` runs from an effect after the
+// #6109: the tally on a vote row follows other people's votes. The burst's
+// read (public/js/app.js _flushLiveRefresh) calls AppView.loadVoteState,
+// which rewrites AppView.voteState and calls refreshVoteControls — so the
+// count on a row already on screen changes in place, on the same element.
+function loadVoteModules(host) {
+  const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
+    console,
+    relTime: () => 'just now',
+    escapeHtml: (s) => String(s == null ? '' : s),
+    escapeAttr: (s) => String(s == null ? '' : s),
+    App: { user: { id: 42, username: 'alice' }, currentApp: 'demo', currentTab: 'messages' },
+    Kudos: { renderButton: () => '', attach: () => {} },
+    document: {
+      getElementById: () => null,
+      querySelector: () => null,
+      // refreshVoteControls' own selector, answered with the row on screen.
+      querySelectorAll: (sel) => (String(sel).includes('data-vote-controls') ? [host] : []),
+      addEventListener() {},
+      createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
+      body: { appendChild() {} },
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    alert() {},
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    addEventListener() {},
+    localStorage: { getItem: () => null, setItem() {} },
+    location: { search: '', hash: '', href: 'http://localhost/' },
+    URLSearchParams,
+    PlatformUI: { toast() {} },
+    navigator: {},
+  };
+  sandbox.window = sandbox;
+  sandbox.window.matchMedia = () => ({ matches: false });
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${read('public/js/app-view.js')}\n${gcJs}\n;globalThis.__M = { AppView, GroupChat };`,
+    sandbox,
+  );
+  return sandbox.__M;
+}
+
+test('a new vote snapshot repaints the tally on the same row, without remounting', () => {
+  const host = {
+    _html: '1 of 3 yes votes',
+    get innerHTML() { return this._html; },
+    set innerHTML(v) { this._html = v; },
+    getAttribute: (n) => (n === 'data-session-id' ? '9000401' : (n === 'data-pr-number' ? '12' : null)),
+    closest: () => null,
+  };
+  const { AppView, GroupChat } = loadVoteModules(host);
+  let mounts = 0;
+  GroupChat.mountThread = () => { mounts += 1; };
+  const snapshot = (yes) => ({
+    bySession: {
+      9000401: {
+        id: 9000401, pr_number: 12, status: 'promoted', yes_count: yes, no_count: 0, my_vote: null,
+      },
+    },
+    byPrNumber: {},
+    majority: 3,
+    activeUsers: 3,
+  });
+  AppView._merged = [];
+  AppView.voteState = snapshot(1);
+  GroupChat.refreshVoteControls();
+  assert.match(host.innerHTML, /1 of 3 yes votes/, 'the row opens on the count it was given');
+
+  const same = host;
+  AppView.voteState = snapshot(2);
+  GroupChat.refreshVoteControls();
+  assert.equal(host, same, 'the row is the same element, patched in place');
+  assert.match(host.innerHTML, /2 of 3 yes votes/, 'and it now carries the other member\'s vote');
+  assert.equal(mounts, 0, 'the thread was never remounted');
+});
+
+test('a patch that says nothing new is not a state change', () => {  // The loop guard. `refreshVoteControls` runs from an effect after the
   // transcript renders, and it patches every vote row's tint — so a patch
   // that always produced a new object would render, patch, render, forever.
   const api = loadTsx('tests/fixtures/group-chat-transcript-api.ts');

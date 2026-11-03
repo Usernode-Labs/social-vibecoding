@@ -14,10 +14,9 @@
  *     ☑ #6038  Spell out the approval rules…      Vote
  *     ▶ #6000  Add reopen proposal…               Build it
  *              Show 5 more ⌄
- *   ─────────────────────────
- *   IN PROGRESS · 3                  ← a line over each after the first
- *   ─────────────────────────
- *   WAITING · 5
+ *
+ *   WAITING & IN PROGRESS · 8        ← a sheet of its own, quieter rows:
+ *                                      what is under way, then what waits
  *
  *   LIVE THIS WEEK · 41              ← a sheet of its own, quieter rows
  *
@@ -40,8 +39,7 @@
  *                    more", opens every project with a search
  *                    (./project-picker.tsx, 30 Oct 2026: a chip a project
  *                    was unusable with dozens).
- *   no row lines     space and the project's name group the rows; the only
- *                    lines are over In progress and Waiting.
+ *   no row lines     space and the project's name group the rows.
  *
  * Rows here are 14px over one line, not the shell's 15 over 13 (AGENTS.md,
  * "Type and colour"): this page's exception, recorded there.
@@ -326,8 +324,8 @@ function GroupList({ lines, quiet = false, heads, first }: { lines: Line[]; quie
   );
 }
 
-function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads, top }: {
-  /** Which list, for the page's checks: work, next, up, live. */
+function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads }: {
+  /** Which list, for the page's checks: work, busy, live. */
   list: string;
   /** Said over the rows, whatever they are: why the lists show less than they should. */
   note?: ReactNode;
@@ -348,8 +346,6 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   first: number;
   /** The project's name over its rows; not when one project's chip says it already. */
   heads: boolean;
-  /** How the section opens: on a band (a sheet's first), on a line, or plain. */
-  top: 'band' | 'line';
 }): ReactNode {
   const [stillOpen, setStillOpen] = useState(false);
   if (!lines.length && !still?.lines.length && !empty && !note && !keep) return null;
@@ -387,21 +383,12 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
       ) : null}
     </>
   );
-  if (top === 'band') {
-    return (
-      <section className="pb-1" data-ai-list={list}>
-        <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
-          <SectionHeader className={`px-0 pt-0 pb-0 ${label}`}>{head}</SectionHeader>
-        </div>
-        <div className="px-4">{body}</div>
-      </section>
-    );
-  }
   return (
-    <section className="px-4 pt-3" data-ai-list={list}>
-      <div className="mb-4 h-px bg-[color:var(--app-sheet-line)]" aria-hidden="true" />
-      <SectionHeader className={`px-0 pt-0 pb-1 ${label}`}>{head}</SectionHeader>
-      {body}
+    <section className="pb-1" data-ai-list={list}>
+      <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
+        <SectionHeader className={`px-0 pt-0 pb-0 ${label}`}>{head}</SectionHeader>
+      </div>
+      <div className="px-4">{body}</div>
     </section>
   );
 }
@@ -513,11 +500,18 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   });
   const progressShown = progress.filter((x) => shows(x.app));
   const waitingShown = waiting.filter((x) => shows(x.app));
-  // #6158: what is moving leads; the rows nobody is moving fold away under
-  // one head. The Waiting count still counts every row.
+  // 2 Nov 2026 (#6160): under way and waiting are one card of their own, in
+  // that order within a project so the rows read work first, then the wait.
+  // #6158: what is moving leads; the waiting rows nobody is moving fold away
+  // under one head.
   const movingShown = waitingShown.filter((th) => !NOT_MOVING.has(th.what));
   const stillShown = waitingShown.filter((th) => NOT_MOVING.has(th.what));
   const waitingLine = threadLine(() => <ClockIcon className={G} />);
+  const busyLines: Line[] = [
+    ...progressShown.map(threadLine(nextGlyph)),
+    ...movingShown.map(waitingLine),
+  ];
+  const stillLines: Line[] = stillShown.map(waitingLine);
   const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => ({
     ...threadLine(() => <CheckIcon className={G} />)(th),
     right: dayOf(th.at, t),
@@ -580,7 +574,6 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
         <Section
           list="work"
           keep
-          top="band"
           head={owedShown ? t('messages:ai.work.titleCount', { count: owedShown }) : t('messages:ai.work.title')}
           owe={owedShown > 0}
           lines={needLines}
@@ -603,20 +596,23 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
           first={GROUP_FIRST.needs}
           heads={heads}
         />
-        <Section list="next" top="line" head={t('messages:ai.next.titleCount', { count: progressShown.length })} lines={progressShown.map(threadLine(nextGlyph))} first={GROUP_FIRST.next} heads={heads} />
-        <Section
-          list="up"
-          top="line"
-          head={t('messages:ai.up.titleCount', { count: waitingShown.length })}
-          lines={movingShown.map(waitingLine)}
-          still={stillShown.length ? { head: t('messages:ai.up.stillCount', { count: stillShown.length }), lines: stillShown.map(waitingLine) } : null}
-          first={GROUP_FIRST.waiting}
-          heads={heads}
-        />
       </div>
+      {busyLines.length || stillLines.length ? (
+        <div className={`${PLANE} pb-2`} data-ai-sheet="busy">
+          <Section
+            list="busy"
+            quiet
+            head={t('messages:ai.busy.title', { count: busyLines.length + stillLines.length })}
+            lines={busyLines}
+            still={stillLines.length ? { head: t('messages:ai.up.stillCount', { count: stillLines.length }), lines: stillLines } : null}
+            first={GROUP_FIRST.busy}
+            heads={heads}
+          />
+        </div>
+      ) : null}
       {liveLines.length ? (
         <div className={`${PLANE} pb-2`} data-ai-sheet="live">
-          <Section list="live" top="band" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={GROUP_FIRST.live} heads={heads} />
+          <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={GROUP_FIRST.live} heads={heads} />
         </div>
       ) : null}
     </div>

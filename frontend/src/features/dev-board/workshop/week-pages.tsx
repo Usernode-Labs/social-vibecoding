@@ -29,7 +29,7 @@ import { useState, type MouseEvent, type ReactNode } from 'react';
 import { ChevronDownIcon, ChevronRightIcon, LockIcon, PencilSquareIcon, SparklesIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
-import { getLanguage, t as translate } from '../../../lib/i18n/runtime';
+import { getDateLocale, t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { trackLine, trackShort } from '../../messages/bot-track';
 import { openHref } from '../card/fold';
@@ -44,12 +44,14 @@ import type { SinceWeek } from './workshop';
  * 25, and a range is an absolute fact only while it names one week.
  * In the interface's own language, the one the sentence around it is in
  * (#4818): "25 août" in a French interface, never "Aug 25" inside a French
- * sentence, whatever language the device itself is set to.
+ * sentence, whatever language the device itself is set to. The day and month
+ * order comes from the device's region (#6103), so an English interface on a
+ * UK phone reads "25 Aug" where a US one reads "Aug 25".
  */
 export function weekDate(ms: number): string {
   const d = new Date(ms);
   const other = d.getUTCFullYear() !== new Date().getUTCFullYear();
-  return d.toLocaleDateString(getLanguage(), {
+  return d.toLocaleDateString(getDateLocale(), {
     month: 'short', day: 'numeric', timeZone: 'UTC', ...(other ? { year: 'numeric' } : {}),
   });
 }

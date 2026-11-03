@@ -25,6 +25,13 @@ const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
 
+// #6103: the stamps read the date locale — the interface language with the
+// device's region — so the expected strings are built the same way.
+const { dateLocale } = loadTsx('frontend/src/lib/i18n/locale.ts');
+const DEVICE_LANGUAGES = typeof navigator === 'undefined' ? []
+  : (navigator.languages?.length ? navigator.languages : [navigator.language].filter(Boolean));
+const DATE_LOCALE = dateLocale('en', DEVICE_LANGUAGES);
+
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 test('saving a draft does not publish the Messages store', () => {
@@ -84,15 +91,15 @@ test('timestamps reuse one Intl.DateTimeFormat per format, and print what toLoca
 
     for (const at of instants) {
       const sameDay = at.toDateString() === now.toDateString();
-      const time = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-      const day = at.toLocaleDateString(undefined, at.getFullYear() === now.getFullYear()
+      const time = at.toLocaleTimeString(DATE_LOCALE, { hour: 'numeric', minute: '2-digit' });
+      const day = at.toLocaleDateString(DATE_LOCALE, at.getFullYear() === now.getFullYear()
         ? { month: 'short', day: 'numeric' }
         : { year: 'numeric', month: 'short', day: 'numeric' });
-      const full = at.toLocaleString(undefined, {
+      const full = at.toLocaleString(DATE_LOCALE, {
         year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
       });
       assert.deepEqual(messageStamp(at, { now }), { text: sameDay ? time : `${day}, ${time}`, title: full });
-      assert.equal(timeOfDay(at), at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
+      assert.equal(timeOfDay(at), at.toLocaleTimeString(DATE_LOCALE, { hour: 'numeric', minute: '2-digit' }));
     }
   } finally {
     Intl.DateTimeFormat = RealFormat;
