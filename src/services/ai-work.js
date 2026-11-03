@@ -533,7 +533,9 @@ async function botStages(pool, user, deps = {}) {
       if (!stage) continue;
       stages.set(botKey(row.slug, row.issue_number), {
         stage, since: (state ? state.since : row.run_at) || null, capSuppressed: row.cap_suppressed || null,
-        reply: state ? state.reply === true : false,
+        // #6228: only a read of a reply says so; every other stage keeps the
+        // shape it had.
+        ...(state && state.reply === true ? { reply: true } : {}),
       });
     }
   } catch (err) {
