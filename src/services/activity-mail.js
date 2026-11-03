@@ -29,6 +29,7 @@
 
 const crypto = require('crypto');
 const { PRODUCTION_ORIGIN } = require('./cli-auth-constants');
+const { englishFrom, englishTexts } = require('./push-text');
 
 const KINDS = Object.freeze(['build_ready', 'invite_activity', 'project_opened']);
 
@@ -120,13 +121,13 @@ async function readyRow(pool, { userId, conversationId, messageId = null }) {
  */
 async function emailIfNoPush(pool, {
   userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
-  detail = null, threadRootId = null, messageId: rangFor = null, count = null,
+  detail = null, threadRootId = null, messageId: rangFor = null, count = null, notice = null,
 }) {
   if (!config || !KINDS.includes(kind) || !userId) return 'off';
   const unsubscribe = unsubscribeUrl(userId);
   if (!unsubscribe) return 'off';
   const { rows } = await pool.query(
-    `SELECT email, email_confirmed, activity_email, is_synthetic FROM users WHERE id = $1`,
+    `SELECT email, email_confirmed, activity_email, is_synthetic, locale FROM users WHERE id = $1`,
     [userId],
   );
   const user = rows[0];
@@ -150,8 +151,10 @@ async function emailIfNoPush(pool, {
   await mail.send(config, {
     kind,
     to: user.email,
+    ...(user.locale ? { locale: user.locale } : {}),
     appName: appName || 'Your project',
     line,
+    ...(notice ? { notice } : {}),
     ...(count != null ? { count } : {}),
     ...(notWorking ? { notWorking: true } : {}),
     ...(words ? { subject: words.subject, lead: words.lead } : {}),
@@ -190,9 +193,16 @@ async function noticeMailTargets(pool, { limit = 200 } = {}) {
 // The email a notice stands for, from the notice: its kind, words and link.
 function noticeEmail(row) {
   const app = { appName: row.app_name || null, appSlug: row.app_slug || null };
-  if (row.kind === 'first_message') return { kind: 'invite_activity', ...app, line: `@${row.username} said hi in ${row.app_name}.` };
+  // `line` is the English; `notice` lets the mail word it in the recipient's language.
+  const english = englishFrom(englishTexts(undefined, 'email'));
+  const values = { actor: row.username, app: row.app_name };
+  if (row.kind === 'first_message') {
+    return { kind: 'invite_activity', ...app, line: english('email:inviteActivity.firstMessage', values), notice: { id: 'first_message', values } };
+  }
   if (row.kind === 'member_joined') {
-    return { kind: 'invite_activity', ...app, line: `${row.username ? `@${row.username}` : 'Someone'} joined ${row.app_name} through your invite.` };
+    return row.username
+      ? { kind: 'invite_activity', ...app, line: english('email:inviteActivity.joined', values), notice: { id: 'member_joined', values } }
+      : { kind: 'invite_activity', ...app, line: english('email:inviteActivity.joinedSomeone', values), notice: { id: 'member_joined_someone', values } };
   }
   return { kind: 'project_opened', ...app };
 }

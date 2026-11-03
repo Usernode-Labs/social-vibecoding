@@ -1,4 +1,5 @@
 const appAllowance = require('../services/app-allowance');
+const mailLanguage = require('../services/mail/language');
 const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
 const { NAME_BEING_PURGED, NAME_BEING_PURGED_ERROR } = require('../services/app-data-retention');
@@ -1540,6 +1541,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (inviteEmails.length) {
         const byEmail = await emailInvites.inviteByEmail(pool, config, {
           app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+          locale: req.user.locale || mailLanguage.requestLanguage(req),
         });
         invited += byEmail.invited + byEmail.mailed;
       }

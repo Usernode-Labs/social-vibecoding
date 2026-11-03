@@ -16,6 +16,7 @@ const DDL = `
     username VARCHAR(255) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
     email VARCHAR(255),
+    locale VARCHAR(32),
     email_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
     email_confirmed_at TIMESTAMPTZ,
     password_set BOOLEAN NOT NULL DEFAULT FALSE,

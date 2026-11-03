@@ -91,16 +91,16 @@ function messagesInHand(pool, language, source, now, namespace) {
  * default English is right: no language, English, one Homeroom does not have,
  * or anything going wrong. Never rejects.
  */
-async function pushTranslator(pool, locale, { source, now = Date.now() } = {}) {
+async function translator(pool, locale, { namespace = NAMESPACE, source, now = Date.now() } = {}) {
   if (!locale) return null;
   try {
     const running = source === undefined ? languageCache.readSource() : source;
     const language = languageFor(locale, undefined, { source: running });
     if (!language) return null;
-    const messages = await messagesFor(pool, language, running, now);
-    return translatorFrom(language, messages, englishTexts(running));
+    const messages = await messagesFor(pool, language, running, now, namespace);
+    return translatorFrom(language, messages, englishTexts(running, namespace));
   } catch (err) {
-    log.warn('mobile-push', 'push language lookup failed', { message: err.message });
+    log.warn('mobile-push', `${namespace} language lookup failed`, { message: err.message });
     return null;
   }
 }
@@ -110,4 +110,6 @@ function reset() {
   memo.clear();
 }
 
-module.exports = { messagesFor, messagesInHand, pushTranslator, reset, usableMessages };
+module.exports = {
+  messagesFor, messagesInHand, pushTranslator: translator, translator, reset, usableMessages,
+};
