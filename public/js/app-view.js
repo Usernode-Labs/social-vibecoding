@@ -7607,13 +7607,21 @@ const AppView = {
   // The failure's own words, which the Testing card shows until the
   // plain-words sentence is read (and when there is none): the first failing
   // test and the message it failed with, or the first failing check and
-  // what it reported.
+  // what it reported. A unit suite that stopped before any test reported
+  // (a broken install, a setup failure) has no per-test excerpt, so its own
+  // first line stands in for one, rather than leaving the sentence empty.
   _failureInWords(v) {
     const r = AppView._failureRow(v);
     if (!r) return null;
     if (r.unit) {
       const d = r.details && r.details[0];
-      if (!d) return null;
+      if (!d) {
+        const reason = String(r.reason || '').split(' | ')[0].replace(/\s+/g, ' ').trim();
+        const said = reason.length > 160 ? `${reason.slice(0, 159).trimEnd()}…` : reason;
+        return said
+          ? PlatformI18n.t('changes:page.testing.why.checkSaid', { check: r.name, said })
+          : PlatformI18n.t('changes:page.testing.why.check', { check: r.name });
+      }
       return d.said
         ? PlatformI18n.t('changes:page.testing.why.testSaid', { test: d.test, said: d.said })
         : PlatformI18n.t('changes:page.testing.why.test', { test: d.test });
