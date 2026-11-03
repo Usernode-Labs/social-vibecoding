@@ -427,6 +427,26 @@ async function getHostVisibility(pool, slug) {
   return entry;
 }
 
+// Did this app say `"offline": false` in dapp.json (services/offline-cache.js)?
+// The app gate's access answer asks, only while offline apps are on. The one
+// field, not the snapshot (the platform's own is ~280 KB), by the same rule
+// as offlineCache.optedOut: only a literal false.
+const offlineOptOutById = new Map(); // appId -> { at, off }
+async function offlineOptedOut(pool, appId) {
+  const now = Date.now();
+  const hit = offlineOptOutById.get(appId);
+  if (hit && now - hit.at < VIS_CACHE_TTL_MS) return hit.off;
+  const { rows } = await pool.query(
+    `SELECT (manifest_snapshot -> 'offline') = 'false'::jsonb AS off FROM apps WHERE id = $1`,
+    [appId]
+  );
+  const off = rows[0]?.off === true;
+  if (offlineOptOutById.size >= 5000) offlineOptOutById.clear();
+  offlineOptOutById.set(appId, { at: now, off });
+  return off;
+}
+function resetOfflineOptOutsForTest() { offlineOptOutById.clear(); }
+
 // "May this user view this (view-private) app?" — admins or members.
 // Rides the same member-id cache the WS filter uses, so membership
 // revocation propagates within the TTL (or instantly via
@@ -442,6 +462,8 @@ async function isViewMember(pool, appId, userId) {
 }
 
 module.exports = {
+  offlineOptedOut,
+  resetOfflineOptOutsForTest,
   ACCESS_COLUMNS,
   SECRET_APP_COLUMNS,
   NON_SECRET_APP_COLUMNS,

@@ -172,6 +172,14 @@ app.use(inflightRequests.inflightRequests());
 // src/services/server-error-counts.js). It only listens for `finish`.
 app.use(require('./src/middleware/request-counts').requestCounts());
 
+// A server error people commonly see also says itself in their language, as
+// `error_message` beside the unchanged `error`. It wraps res.json here, ahead
+// of every router, so the ones mounted before auth and the error handler all
+// pass through it; it reads req.user when res.json runs, by which time auth has
+// set it. It never waits and never changes what a handler wrote
+// (src/middleware/error-language.js).
+app.use(require('./src/middleware/error-language').errorLanguage(() => getPool(config)));
+
 // Express never trusts forwarding headers globally. Docker mode resolves one
 // configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
 // address without a proxy hostname. Direct child/worker calls carry no
@@ -310,6 +318,9 @@ app.use((req, res, next) => {
   // routes/ui-telemetry.js. Leave its stream untouched here so that lower
   // bound is enforced before JSON decoding.
   if (req.method === 'POST' && req.path === '/api/ui-telemetry/batch') return next();
+  // Its signed-out sibling too: there the limiter runs before any body is
+  // read, and then the same 32 KiB parser (#6002).
+  if (req.method === 'POST' && req.path === '/api/ui-telemetry/anonymous') return next();
   // Private conversation uploads carry raw bytes and own a bounded 21 MB
   // parser in routes/conversations.js. In particular, a .json file may have
   // application/json content-type; letting this global parser consume it

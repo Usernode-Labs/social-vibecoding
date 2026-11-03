@@ -113,7 +113,19 @@
   },
   "filters.button": {
     "text": "Filters",
-    "description": "Button at the end of Discover's row of app types. It opens the Filters sheet, and shows how many filters are on."
+    "description": "Button at the end of Discover's row of app types, which opens the Filters sheet. With filters on, its visible label is the filters.buttonCount message and this one is read by screen readers."
+  },
+  "filters.buttonCount_one": {
+    "text": "Filters · {{count}}",
+    "description": "Visible label of Discover's Filters button while one filter is on. {{count}} is that number; keep the middle dot as a separator. Screen readers hear the filters.button and filters.activeCount messages instead."
+  },
+  "filters.buttonCount_other": {
+    "text": "Filters · {{count}}",
+    "description": "Visible label of Discover's Filters button while more than one filter is on. {{count}} is that number; keep the middle dot as a separator. Screen readers hear the filters.button and filters.activeCount messages instead."
+  },
+  "filters.clearAll": {
+    "text": "Clear all",
+    "description": "Chip after Discover's Filters button, shown while at least one filter is on: turns off the Show only switches, drops the picked app type and puts the list back in the Recommended order."
   },
   "filters.activeCount_one": {
     "text": "{{count}} filter on",
@@ -141,7 +153,7 @@
   },
   "filters.showOnly": {
     "text": "Show only",
-    "description": "Heading in Discover's Filters sheet over the switches that narrow the list: Featured, New and Hide apps I've joined."
+    "description": "Heading in Discover's Filters sheet over the switches that narrow the list: Featured, New, Opened recently on this device and Hide apps I've joined."
   },
   "filters.sortBy": {
     "text": "Sort by",
@@ -174,6 +186,10 @@
   "filter.new": {
     "text": "New",
     "description": "Switch in Discover's Filters sheet: show only recently created apps."
+  },
+  "filter.recent": {
+    "text": "Opened recently on this device",
+    "description": "Switch in Discover's Filters sheet: show only the apps the viewer opened and left in this browser in the last 30 days. It is what this device remembers for this account, not account-wide: apps opened on another phone or computer are not counted, so keep \"on this device\" in your language."
   },
   "category.groupLabel": {
     "text": "Filter by type",
@@ -247,6 +263,10 @@
     "text": "No new apps match “{{query}}”.",
     "description": "Shown in place of Discover's list when the New filter is on and the search finds nothing. {{query}} is what the person typed."
   },
+  "empty.search.recent": {
+    "text": "Nothing you opened recently on this device matches “{{query}}”.",
+    "description": "Shown in place of Discover's list when the Opened recently on this device filter (the last 30 days, in this browser only) is on and the search finds nothing. {{query}} is what the person typed; keep the quotation marks around it in your language's style."
+  },
   "empty.search.all": {
     "text": "No apps match “{{query}}”.",
     "description": "Shown in place of Discover's list when the search finds nothing and no filter narrows it. {{query}} is what the person typed."
@@ -262,6 +282,10 @@
   "empty.notJoined": {
     "text": "You’ve joined every app here.",
     "description": "Shown in place of Discover's list when the Not joined filter is on and there is no app the viewer has not joined."
+  },
+  "empty.recent": {
+    "text": "You haven’t opened any apps on this device recently.",
+    "description": "Shown in place of Discover's list when the Opened recently on this device filter is on and the viewer has left no app in this browser in the last 30 days. Apps opened on other devices are not counted."
   },
   "empty.joined": {
     "text": "You haven’t joined anything yet. Join apps from Browse.",

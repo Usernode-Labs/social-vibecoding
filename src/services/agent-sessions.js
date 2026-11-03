@@ -176,6 +176,9 @@ function shapeFailingChecks(row) {
 // the queries above as 'merging': the drawer and pills say "Going live".
 function shapeChangeRow(row) {
   if (!row || row.change_id == null) return null;
+  const checkedAt = row.change_checks_checked_at ? new Date(row.change_checks_checked_at) : null;
+  const queue = row.change_checks_queue && typeof row.change_checks_queue === 'object'
+    ? row.change_checks_queue : null;
   return {
     id: row.change_id,
     appSlug: row.change_app_slug || null,
@@ -186,6 +189,11 @@ function shapeChangeRow(row) {
     // For the changes drawer: the owner's own preview and checks verdict.
     stagingUrl: row.change_staging_url || null,
     checkState: row.change_check_state || null,
+    // #6122: where a pending run stands, so the staging card can say how much
+    // longer it expects (the active change only; the list rows carry none).
+    checkPhase: row.change_check_phase || null,
+    checksCheckedAt: checkedAt && !Number.isNaN(checkedAt.valueOf()) ? checkedAt.toISOString() : null,
+    checksQueueAhead: queue && Number.isInteger(queue.ahead) && queue.ahead >= 0 ? queue.ahead : null,
     // The staging card (#2779 follow-up): how many checks failed on the last
     // run, and whether the preview is the platform's own (its preview is
     // signed into as the self-hosted app, with its review fixtures on).
@@ -304,7 +312,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
             c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
-            COALESCE(c.pr_title, c.session_title) AS change_title,
+            COALESCE(NULLIF(c.pr_title, ''), NULLIF(c.proposed_pr_title, ''), NULLIF(c.session_title, '')) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             c.shots_state AS change_shots_state,
@@ -362,8 +370,11 @@ async function getAgentSession(pool, { userId, id }) {
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
             c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
-            COALESCE(c.pr_title, c.session_title) AS change_title,
+            COALESCE(NULLIF(c.pr_title, ''), NULLIF(c.proposed_pr_title, ''), NULLIF(c.session_title, '')) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
+            c.check_phase AS change_check_phase, c.checks_checked_at AS change_checks_checked_at,
+            c.checks_progress->'queue' AS change_checks_queue,
+            c.app_id AS change_app_id,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             c.shots_state AS change_shots_state,
             (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
@@ -379,11 +390,20 @@ async function getAgentSession(pool, { userId, id }) {
   );
   if (!rows.length) return null;
   const session = shapeSession(rows[0]);
+  // #6122: a pending run's staging card says how much longer it expects. The
+  // estimate is best-effort (a failed read is no estimate, never no session).
+  if (session.activeChange && session.activeChange.checkState === 'pending') {
+    try {
+      session.activeChange.checksEstimate = await require('./checks-estimate').forApp(pool, rows[0].change_app_id);
+    } catch (_) {
+      session.activeChange.checksEstimate = null;
+    }
+  }
   // Every change this conversation has started, newest first: the active one,
   // the parked ones the user can switch back to, and the closed ones.
   const { rows: changes } = await pool.query(
     `SELECT c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
-            COALESCE(c.pr_title, c.session_title) AS change_title,
+            COALESCE(NULLIF(c.pr_title, ''), NULLIF(c.proposed_pr_title, ''), NULLIF(c.session_title, '')) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             a.slug AS change_app_slug, a.name AS change_app_name, a.self_hosted AS change_app_self_hosted,
@@ -819,7 +839,7 @@ async function switchActiveChange(pool, { agentSessionId, userId, changeId }) {
   const id = positiveInt(Number(changeId));
   if (!id) throw new AgentSessionError(400, 'changeId must be a positive integer');
   const { rows: change } = await pool.query(
-    `SELECT c.id, c.status, c.app_id, c.pr_number, COALESCE(c.pr_title, c.session_title) AS title
+    `SELECT c.id, c.status, c.app_id, c.pr_number, COALESCE(NULLIF(c.pr_title, ''), NULLIF(c.proposed_pr_title, ''), NULLIF(c.session_title, '')) AS title
        FROM chat_sessions c
       WHERE c.id = $1 AND c.user_id = $2 AND c.agent_session_id = $3`,
     [id, userId, agentSessionId]

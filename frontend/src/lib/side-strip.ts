@@ -30,7 +30,9 @@
  * — 80px on the simulator — which the #2305 rule spends as the header's
  * padding-top, so the bar read as an 80px strip of empty ground with its
  * row under it. A top inset of STRIP_MIN_PX or more, with NO side column,
- * is that band, and this module publishes it as a second fact:
+ * on a screen at least BAND_MIN_WIDTH_PX wide (an ordinary phone's inset
+ * reaches the floor too, and its clock is not in a corner; #6161), is that
+ * band, and this module publishes it as a second fact:
  *
  *   data-top-band          the band is there
  *   --platform-band-h      its height, in px
@@ -88,6 +90,12 @@ export const BAND_ATTR = 'data-top-band';
 export const BAND_H_PROP = '--platform-band-h';
 /** Narrower than this is a cutout's inset, not a column of chrome. */
 export const STRIP_MIN_PX = 64;
+/**
+ * A top band needs a screen at least this wide: the unfolded Duo is 669px,
+ * and the widest ordinary phone held upright is 440 (#6161). Between them,
+ * so neither a Duo in Split View nor a plain phone's tall inset is misread.
+ */
+export const BAND_MIN_WIDTH_PX = 600;
 /** What `?side-strip=` paints: the Duo's column (or band), measured. */
 export const STRIP_SHOT_PX = 84;
 /** The folded Duo's corner, as the report's screenshot measures it. */
@@ -120,11 +128,22 @@ export function stripShotSide(search: string): StripSide | null {
 
 /**
  * The band's height now, in px, or 0 with no band: the unfolded Duo held
- * upright, where a tall top inset arrives with no side column. A side
- * column wins if both are ever reported, so the two layouts never stack.
+ * upright, where a tall top inset arrives with no side column, on a screen
+ * at least BAND_MIN_WIDTH_PX wide. A side column wins if both are ever
+ * reported, so the two layouts never stack.
+ *
+ * THE WIDTH IS LOAD-BEARING (#6161). The band's layout puts the header's row
+ * on the clock's line, which is right only where the clock sits in a corner
+ * pill and the rest of the band is free: the unfolded Duo, 669px wide. An
+ * ordinary iPhone reports a top inset of 59 to 66px too (the app's web view
+ * on an iPhone 17 Pro reads a little over STRIP_MIN_PX), and there the clock
+ * runs across the top-left, so the same layout drew the back disc and the
+ * page's title under it on every screen. A phone under the width keeps the
+ * ordinary reservation: the inset as the header's padding-top.
  */
-export function topBand(insets: SideInsets | null | undefined): number {
+export function topBand(insets: SideInsets | null | undefined, { width }: { width: number }): number {
   if (!insets) return 0;
+  if (!(Number(width) >= BAND_MIN_WIDTH_PX)) return 0;
   const top = Number(insets.top) || 0;
   if (top < STRIP_MIN_PX) return 0;
   if (stripSide(insets)) return 0;
@@ -144,10 +163,10 @@ export function topBandShot(search: string): boolean {
  */
 export function sideCorner(
   insets: SideInsets | null | undefined,
-  { portrait }: { portrait: boolean },
+  { portrait, width = Number.POSITIVE_INFINITY }: { portrait: boolean; width?: number },
 ): StripSide | null {
   if (!insets || !portrait) return null;
-  if (stripSide(insets) || topBand(insets)) return null;
+  if (stripSide(insets) || topBand(insets, { width })) return null;
   const left = Number(insets.left) || 0;
   const right = Number(insets.right) || 0;
   if (right > 0 && right < STRIP_MIN_PX && left < 1) return 'right';
@@ -296,9 +315,13 @@ export function watchSideStrip(doc: Document = document, win: Window = window): 
     // engine reports there: the browser's own chrome is above it. The shot
     // flag is the exception — it PAINTS a device the reviewer asked for, as
     // `?side-strip=right` does, so the layout stays reviewable in a tab.
-    const band = root.classList?.contains('web-browser-chrome') && !topBandShot(search)
+    // The width is the band's other half (#6161): an ordinary phone's tall
+    // inset is not the Duo's band, and the shot flag paints the Duo at
+    // whatever width the review runs, so it alone sets the width aside.
+    const shotBand = topBandShot(search);
+    const band = root.classList?.contains('web-browser-chrome') && !shotBand
       ? 0
-      : topBand(insets);
+      : topBand(insets, { width: shotBand ? Number.POSITIVE_INFINITY : Number(win.innerWidth) || 0 });
     applyTopBand(root, band);
     // The corner belongs to the app's own window, held upright: a browser
     // tab's chrome is its own (#2509), and a sideways phone's one-sided
@@ -306,7 +329,7 @@ export function watchSideStrip(doc: Document = document, win: Window = window): 
     // the device it names, as `?side-strip=right` does.
     const portrait = win.innerHeight > win.innerWidth;
     const cornerAllowed = !!root.classList?.contains('in-native-webview') || shotCorner;
-    const corner = cornerAllowed ? sideCorner(insets, { portrait }) : null;
+    const corner = cornerAllowed ? sideCorner(insets, { portrait, width: Number(win.innerWidth) || 0 }) : null;
     applyCorner(root, corner, corner ? insets[corner] : 0);
     // A probe made anew (its old one was taken out of the document) is
     // observed in its place.

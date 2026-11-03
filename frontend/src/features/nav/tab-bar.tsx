@@ -352,11 +352,17 @@ function VotesBadge({ count }: { count: number }) {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count, id = 'platform-tabs-badge', label }: {
+function TabBadge({ count, id = 'platform-tabs-badge', label, title }: {
   count: number;
   id?: string;
   /** The accessible name, already in the language on screen. */
   label: string;
+  /**
+   * What the number counts, shown as a tooltip on the number itself (#6194).
+   * Only above zero, as the badge is: at zero it is hidden and the prerender
+   * (count 0) ships no title, so the first client render still agrees.
+   */
+  title?: string;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useHiddenClass(ref, count <= 0);
@@ -366,6 +372,7 @@ function TabBadge({ count, id = 'platform-tabs-badge', label }: {
       id={id}
       className="platform-tab-badge hidden"
       aria-label={label}
+      title={count > 0 ? title : undefined}
     >
       {count > 0 ? (count > 99 ? '99+' : String(count)) : ''}
     </span>
@@ -1235,7 +1242,14 @@ export function PlatformTabs() {
             */}
             {key === 'messages' ? <TabBadge count={messages} label={t('core:tabs.unreadConversations')} /> : null}
             {/* #6019: the bot's chat has something unread. */}
-            {key === 'ai' ? <TabBadge count={ai} id="platform-tabs-ai-badge" label={t('core:tabs.unreadAi')} /> : null}
+            {key === 'ai' ? (
+              <TabBadge
+                count={ai}
+                id="platform-tabs-ai-badge"
+                label={t('core:tabs.unreadAi')}
+                title={t('core:tabs.unreadAiTitle', { count: ai })}
+              />
+            ) : null}
             {/*
                 THE CHANNELS' COUNT, on Communities. A project's channel lives
                 on its hub now, not in Messages, so "something was said in a

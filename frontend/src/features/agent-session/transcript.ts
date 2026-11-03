@@ -488,15 +488,53 @@ export function skippedChecksReason(detail: string | null | undefined): string {
 }
 
 /**
+ * What a pending run's card can say about its time (#6122): the same rules
+ * as AppView._checksEta on the change page, from the same estimate. Null
+ * when there is nothing to say (no estimate, no start, a deferred run).
+ */
+export interface ChecksEtaInput {
+  phase?: string | null;
+  checkedAt?: string | null;
+  queueAhead?: number | null;
+  estimate?: { buildMs: number; checksMs: number; runs?: number; rough?: boolean; slots?: number } | null;
+  now?: number;
+}
+
+type ChecksEta = { kind: 'left' | 'longer' | 'wait' | 'waitLonger'; minutes: number; usual: number };
+
+function checksEta({ phase, checkedAt, queueAhead, estimate, now = Date.now() }: ChecksEtaInput): ChecksEta | null {
+  if (phase === 'deferred') return null;
+  const buildMs = Number(estimate?.buildMs);
+  const checksMs = Number(estimate?.checksMs);
+  if (!(buildMs > 0) || !(checksMs > 0)) return null;
+  const usual = buildMs + checksMs;
+  const slots = estimate && Number.isInteger(estimate.slots) && Number(estimate.slots) > 0 ? Number(estimate.slots) : 1;
+  const started = checkedAt ? new Date(checkedAt).getTime() : NaN;
+  if (!Number.isFinite(started)) return null;
+  const elapsed = Math.max(0, now - started);
+  if (phase === 'queued') {
+    if (!Number.isInteger(queueAhead) || Number(queueAhead) < 0) return null;
+    const waitMs = Math.ceil((Number(queueAhead) + 1) / slots) * checksMs - elapsed;
+    return waitMs > 0
+      ? { kind: 'wait', minutes: Math.round(waitMs / 60000), usual }
+      : { kind: 'waitLonger', minutes: 0, usual };
+  }
+  if (elapsed < usual) return { kind: 'left', minutes: Math.round((usual - elapsed) / 60000), usual };
+  return { kind: 'longer', minutes: 0, usual };
+}
+
+/**
  * A change's checks, as its staging card says them (#2779 follow-up). They
  * gate merge, so the card says where they stand before you propose. A skipped
  * run passes the gate but tested nothing, so it says that, and why (#3180):
- * it used to read "Checks passing".
+ * it used to read "Checks passing". While a run is pending, its usual time
+ * (#6122) words how much longer, or says it is taking longer than usual.
  */
 export function checksSummary(
   checkState: string | null | undefined,
   checkFailing: number | null | undefined,
   skipReason?: string | null,
+  etaInput: ChecksEtaInput = {},
 ): { key: 'passing' | 'failing' | 'running' | 'error' | 'skipped'; text: string; reason?: string } | null {
   if (!checkState) return null;
   if (checkState === 'passing') return { key: 'passing', text: t('agent:session.checks.passing') };
@@ -505,7 +543,25 @@ export function checksSummary(
     const n = Number(checkFailing) || 0;
     return { key: 'failing', text: n > 0 ? t('agent:session.checks.countFailing', { count: n }) : t('agent:session.checks.failing') };
   }
-  if (checkState === 'pending' || checkState === 'running') return { key: 'running', text: t('agent:session.checks.running') };
+  if (checkState === 'pending' || checkState === 'running') {
+    const eta = checksEta(etaInput);
+    if (eta) {
+      if (eta.kind === 'left') {
+        return {
+          key: 'running',
+          text: eta.minutes < 1
+            ? t('agent:session.checks.runningUnder')
+            : t('agent:session.checks.runningLeft', { count: eta.minutes }),
+        };
+      }
+      if (eta.kind === 'longer') return { key: 'running', text: t('agent:session.checks.runningLonger') };
+      if (eta.kind === 'wait') {
+        return { key: 'running', text: t('agent:session.checks.queuedWait', { count: Math.max(1, eta.minutes) }) };
+      }
+      return { key: 'running', text: t('agent:session.checks.queuedLonger') };
+    }
+    return { key: 'running', text: t('agent:session.checks.running') };
+  }
   return { key: 'error', text: t('agent:session.checks.couldNotRun') };
 }
 

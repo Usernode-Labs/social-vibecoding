@@ -17,9 +17,9 @@
 //
 // On every attempt, before any write it still has to make, the conductor
 // reads again what the route checked: the change is the requester's and
-// still open, a hand-off's collab access and that nothing else works on it,
-// a turn's live lease and its own build turn, the branch and repository the
-// route saw, and the head the route expected to build on. A head this very
+// still open, the requester's collab access, that nothing else works on a
+// hand-off, a turn's live lease and its own build turn, the branch and
+// repository the route saw, and the head the route expected to build on. A head this very
 // request moved (its `commit` step) is its own, not a competing one.
 //
 // The commit (services/github.js createProposalCommit: the tested tree
@@ -128,13 +128,17 @@ async function turnState(pool, request, user, steps) {
   if (!['accepted', 'running'].includes(turn.status)) return { refusal: { status: 409, error: 'turn_not_running' } };
   if (turn.mode !== 'build') return { refusal: { status: 409, error: 'read_only_turn' } };
   const { rows: [session] } = await pool.query(
-    `SELECT cs.id, cs.app_id, cs.branch_name, a.repo_url
+    `SELECT cs.id, cs.app_id, cs.branch_name, a.repo_url,
+            a.collab_visibility, a.view_visibility, a.moderation_suspended_at
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
       WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'`,
     [turn.session_id, user.id]
   );
   if (!session || Number(session.id) !== Number(input.sessionId)
       || Number(session.app_id) !== Number(request.appId)) return { refusal: STATE_CHANGED };
+  if (!(await appAccess.checkAppAccess(pool, { ...session, id: session.app_id }, user, 'collab'))) {
+    return { refusal: { status: 404, error: 'not_found' } };
+  }
   const repo = repoRef.ownerRepo(session.repo_url);
   if (!github.isEnabled() || !repo || !session.branch_name) return { refusal: { status: 400, error: 'repo_unavailable' } };
   if (!sameTarget(session, input)) return { refusal: STATE_CHANGED };

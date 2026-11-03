@@ -60,16 +60,24 @@ export interface AiThread {
     | 'plan' | 'decide' | 'build_stopped'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading'
     | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
-    | 'not_picked_up' | 'awaiting_plan'
+    | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
     | 'live';
   at: string | null;
   quietDays?: number;
+  /** #6158: its place in Homeroom bot's line, or among the project's builds held for a slot (1-based). */
+  place?: number;
+  /** #6158: Homeroom bot's reason, first line only, on a request it left for a person or found nothing to build in. */
+  reason?: string | null;
   /** Up for a vote (a change's, or a decision's): how you voted, if you have. */
   myVote?: 'yes' | 'no' | null;
   /** Being made: by Homeroom bot, by you, or by someone else. */
   by?: 'bot' | 'you' | 'someone';
-  /** Held back: until a change up for a vote is decided, or by the day's limit. */
-  heldBy?: 'approvals' | 'daily';
+  /**
+   * Held back: until a change up for a vote is decided, for Homeroom bot's
+   * turn among the project's builds (#6156: votes do not free it), or by
+   * the day's limit.
+   */
+  heldBy?: 'approvals' | 'turn' | 'daily';
   /** A request someone has claimed and has no change for yet: who. */
   claimedBy?: string | null;
   /** Held for a slot: how many of Homeroom bot's changes holding one wait on your vote (upNext). */
@@ -124,7 +132,7 @@ function holdsSlot(item: NeedItem): boolean {
 function heldProjects(work: AiWork | null): Set<string> {
   const held = new Set<string>();
   for (const t of work?.waiting || []) {
-    if (t.what === 'held' && t.heldBy !== 'daily' && t.app) held.add(t.app.slug);
+    if (t.what === 'held' && t.heldBy !== 'daily' && t.heldBy !== 'turn' && t.app) held.add(t.app.slug);
   }
   return held;
 }
@@ -467,7 +475,7 @@ export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[
   const filed = filedThreads(work);
   return (work?.waiting || []).filter((t) => !isOwed(owed, t)).map((t) => {
     const row = withThread(filed, t);
-    if (row.what !== 'held' || row.heldBy === 'daily' || !row.app) return row;
+    if (row.what !== 'held' || row.heldBy === 'daily' || row.heldBy === 'turn' || !row.app) return row;
     const yourVotes = (needs || []).filter((item) => item.app?.slug === row.app!.slug && holdsSlot(item)).length;
     return yourVotes ? { ...row, yourVotes } : row;
   });
@@ -497,6 +505,11 @@ const THREAD_WORDS: Record<string, string> = {
   queued: 'messages:ai.up.queued',
   on_hold: 'messages:ai.up.onHold',
   not_picked_up: 'messages:ai.up.notPickedUp',
+  // #6158: what a request nobody is moving waits on.
+  needs_person: 'messages:ai.up.needsPerson',
+  nothing_to_build: 'messages:ai.up.nothingToBuild',
+  not_read: 'messages:ai.up.notRead',
+  operator: 'messages:ai.up.operator',
   // 1 Nov 2026: their own request, which the bot waits to plan with them.
   awaiting_plan: 'messages:ai.up.awaitingPlan',
 };
@@ -519,6 +532,17 @@ export function nextWords(t: AiThread): Phrase {
   }
   if (t.what === 'held' && t.heldBy === 'daily') return { id: 'messages:ai.up.heldDaily', values };
   if (t.what === 'held' && t.yourVotes) return { id: 'messages:ai.up.heldYours', values: { ...values, count: t.yourVotes } };
+  // #6158: its place in line, where the bot's records know it.
+  if (t.what === 'queued' && t.place) return { id: 'messages:ai.up.inLine', values: { ...values, place: t.place } };
+  if (t.what === 'held' && t.place) {
+    return t.heldBy === 'turn'
+      ? { id: 'messages:ai.up.inLine', values: { ...values, place: t.place } }
+      : { id: 'messages:ai.up.heldPlace', values: { ...values, place: t.place } };
+  }
+  if (t.what === 'held' && t.heldBy === 'turn') return { id: 'messages:ai.up.heldTurn', values };
+  // #6158: Homeroom bot's own reason, where it gave one.
+  if (t.what === 'needs_person' && t.reason) return { id: 'messages:ai.up.needsPersonWhy', values: { ...values, reason: t.reason } };
+  if (t.what === 'nothing_to_build' && t.reason) return { id: 'messages:ai.up.nothingToBuildWhy', values: { ...values, reason: t.reason } };
   if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.next.botBuilding', values };
   if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.next.youBuilding', values };
   // Claimed, with no change yet: who has it, not "Nobody is building it yet".
@@ -545,8 +569,20 @@ const SHORT_WORDS: Record<string, string> = {
   stalled: 'messages:ai.short.stalled',
   on_hold: 'messages:ai.short.monday',
   not_picked_up: 'messages:ai.short.nobody',
+  // #6158: what a request nobody is moving waits on.
+  needs_person: 'messages:ai.short.needsPerson',
+  nothing_to_build: 'messages:ai.short.nothingToBuild',
+  not_read: 'messages:ai.short.notRead',
+  operator: 'messages:ai.short.operator',
   awaiting_plan: 'messages:ai.short.yourPlan',
 };
+
+/**
+ * #6158: the Waiting rows nobody is moving, which the tab folds under one
+ * "Not moving" head: open with no claim, or a person's to decide, or
+ * nothing to build, not read yet, or an operator task.
+ */
+export const NOT_MOVING = new Set<string>(['not_picked_up', 'needs_person', 'nothing_to_build', 'not_read', 'operator']);
 
 /**
  * Pure: the one word on the right of an In progress or Waiting row
@@ -558,6 +594,15 @@ export function shortWords(t: AiThread): Phrase {
   if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.short.you' };
   if (t.what === 'building' && t.claimedBy) return { id: 'messages:ai.short.claimed', values: { username: t.claimedBy } };
   if (t.what === 'held' && t.heldBy === 'daily') return { id: 'messages:ai.short.tomorrow' };
+  // #6158: its place in line, where the bot's records know it.
+  if (t.what === 'queued' && t.place) return { id: 'messages:ai.short.inLine', values: { place: t.place } };
+  if (t.what === 'held' && t.place) {
+    return t.heldBy === 'turn'
+      ? { id: 'messages:ai.short.inLine', values: { place: t.place } }
+      : { id: 'messages:ai.short.heldPlace', values: { place: t.place } };
+  }
+  if (t.what === 'not_picked_up' && t.quietDays) return { id: 'messages:ai.short.quiet', values: { count: t.quietDays } };
+  if (t.what === 'held' && t.heldBy === 'turn') return { id: 'messages:ai.short.turn' };
   return { id: SHORT_WORDS[t.what] || 'messages:ai.short.waiting' };
 }
 

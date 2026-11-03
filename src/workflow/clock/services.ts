@@ -188,7 +188,15 @@ export const JOBS: readonly Job[] = Object.freeze([
     // inside it. The turns it fails are finished by the item that
     // dispatched them.
     name: 'local-agent-leases', everyMs: MIN,
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool).then((n: number) => ({ released: n })),
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool)
+      .then(async (n: number) => ({
+        released: n,
+        // A turn a machine was offered but never picked up is not covered by
+        // a lapsed lease: the machine can heartbeat forever without claiming
+        // it. Freed at the offer timeout, so a dispatch that died partway
+        // does not leave the change answering busy (services/local-agent.js).
+        unclaimed: await legacy('services/local-agent').sweepUnclaimedTurns(pool),
+      })),
   },
   {
     // A coding record no work item holds (the old orphan sweep's and
@@ -222,6 +230,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     // (services/rate-limit-store.js).
     name: 'rate-limit-retention', everyMs: HOUR,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/rate-limit-store').prune(pool),
+  },
+  {
+    // #6002: the reports signed-out pages send with no account (the reads
+    // the session guard cut off, where an invite page landed), 30 days on
+    // (services/ui-telemetry.js pruneAnonymous).
+    name: 'ui-telemetry-anonymous-retention', everyMs: 24 * HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ui-telemetry').pruneAnonymous(pool),
   },
   {
     // An agent session's delegated connector grants, a week after their turn.
@@ -624,6 +639,14 @@ export const JOBS: readonly Job[] = Object.freeze([
         return r;
       },
     },
+  },
+  {
+    // Previews nobody has used for PREVIEW_SLEEP_AFTER_MS (two hours by
+    // default) put to sleep: scaled to no replicas, everything else kept,
+    // woken by whatever opens them (#6157, services/preview-sleep.js). A few
+    // a run. PREVIEW_SLEEP_AFTER_MS=0 switches it off.
+    name: 'preview-sleep', everyMs: 5 * MIN, leaseMs: 10 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').sweepSleep(config),
   },
   {
     // Previews built with another platform environment than the newest

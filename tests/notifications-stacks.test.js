@@ -94,6 +94,20 @@ test('one request\'s notifications fold into one card where the newest stood', (
   assert.equal(card.label, 'Live', 'drawn as its newest notification');
 });
 
+test('one request\'s two change notices fold into one card, each line its own change', () => {
+  // #6099: two proposals for one request (two sessions, distinct change
+  // pages) are one story. The card opens the newest; the history lines open
+  // their own notification, which carries its own session id.
+  const story = { storyKey: 'r:5:5580', storyRef: { number: 5580, title: 'Plant shelf' } };
+  const out = stacks.foldStories([
+    entry(view(12, { ...story, kind: 'pr_proposed', label: 'New change', sessionId: 7300 })),
+    entry(view(11, { ...story, kind: 'pr_proposed', label: 'New change', sessionId: 7296 })),
+  ]);
+  assert.deepEqual(out.map((e) => e.view.id), [12], 'one card, where its newest stood');
+  assert.deepEqual(out[0].view.groupIds, [12, 11]);
+  assert.deepEqual(out[0].view.story.members.map((m) => [m.id, m.sessionId]), [[12, 7300], [11, 7296]]);
+});
+
 test('a person speaking, a row with buttons and a story of one stay as they were', () => {
   const key = { storyKey: 's:5:77' };
   const out = stacks.foldStories([

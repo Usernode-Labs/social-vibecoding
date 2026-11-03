@@ -58,6 +58,7 @@ test('the default statement carries every column the endpoint publishes', async 
     'user_id', 'username', 'kudos_received', 'prs_kudosed',
     'kudos_received_prs_merged', 'kudos_received_prs_unmerged', 'prs_merged',
     'last_kudos_at', 'kudos_given', 'issues_created', 'address', 'active_apps',
+    'avatar_url',
   ]) {
     assert.ok(sql.includes(alias), `${alias} is selected`);
   }
@@ -81,7 +82,7 @@ test('the privacy and activity guards live in the SQL, not in a caller', async (
   assert.match(sql, /q\.seconds_spent >= 60/);
 });
 
-test('slim drops the three display-only LATERALs and NOTHING else', async () => {
+test('slim drops the display-only columns and joins, and NOTHING else', async () => {
   const full = makeMockPool();
   await rankedUsers(full, {});
   const slim = makeMockPool();
@@ -90,7 +91,9 @@ test('slim drops the three display-only LATERALs and NOTHING else', async () => 
   const fullSql = full.calls[0].sql;
   const slimSql = slim.calls[0].sql;
 
-  for (const gone of ['kudos_given', 'issues_created', 'active_apps']) {
+  // The profile picture rides on a LEFT JOIN of user_avatars (display-only,
+  // like the LATERALs below it), so slim must not pay for it either.
+  for (const gone of ['kudos_given', 'issues_created', 'active_apps', 'user_avatars', 'avatar_url']) {
     assert.ok(fullSql.includes(gone), `${gone} present in the full query`);
     assert.ok(!slimSql.includes(gone), `${gone} dropped in slim`);
   }

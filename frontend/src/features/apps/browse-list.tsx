@@ -244,7 +244,7 @@ function Row({ view, eager = false }: {
       )}
       title={(
         <span className="flex items-center gap-1.5 min-w-0">
-          <span className="browse-row-name truncate">{view.name}</span>
+          <span className="browse-row-name truncate" title={view.name}>{view.name}</span>
           {/* A DOT ONLY WHEN SOMETHING IS WRONG. Green on every running app
               is a light that is always on, which says nothing; the meta line
               already names a status that is not "running". */}
@@ -270,10 +270,13 @@ function Row({ view, eager = false }: {
           ) : null}
           <span className="block truncate">{view.meta}</span>
           {hasAppPills(view.app) ? (
-            <span className="mt-1 flex flex-wrap items-center gap-1">
+            <span className="mt-1 flex flex-wrap items-center gap-1 whitespace-normal">
               {/* ONE pill: the first thing that asks for attention, else
                   the visibility. A row of three chips under a meta line
-                  was more to read than the app's own name. */}
+                  was more to read than the app's own name. `whitespace-normal`
+                  undoes the subtitle's `truncate` for the chip: a chip wider
+                  than a narrow phone's column breaks onto a second line
+                  instead of being cut off mid-word (#5928). */}
               <AppPills app={view.app} limit={1} />
             </span>
           ) : null}
@@ -321,7 +324,7 @@ function SiteRow({ site }: { site: { href: string; label: string } }): ReactNode
           <GlobeIcon className="w-5 h-5" aria-hidden="true" />
         </IconTile>
       )}
-      title={<span className="browse-row-name truncate">{site.label}</span>}
+      title={<span className="browse-row-name truncate" title={site.label}>{site.label}</span>}
       subtitle={<span className="block truncate">{t('discover:site.subtitle')}</span>}
     />
   );

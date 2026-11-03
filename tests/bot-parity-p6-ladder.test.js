@@ -171,9 +171,11 @@ test('runChecksFix asks the ladder where a not_change hand-off was, and the slot
   assert.ok(fix.indexOf('if (followup.checksLookLikeInfra(checks)) {') < fix.indexOf('flakyChecks('));
   const caps = src.slice(src.indexOf('async function simulateCaps('), src.indexOf('async function simulateCaps(') + 1600);
   assert.match(caps, /flakyChecks\(\)\.exemptFromAppCap\(pool, appId, issueNumber\)/);
-  // (Merged with P4: a batch may raise the number its own requests are held at, perApp.)
-  assert.match(caps, /if \(!exempt && await openBotProposalCount\(pool, bot, appId\) >= perApp\) return 'proposals_per_app';/);
-  assert.match(caps, /if \(await openBotProposalTotal\(pool, bot\) >= botProposalCeiling\(settings\)\) return 'proposals_total';/,
+  // (Merged with P4: a batch may raise the number of builds its own requests
+  // are held at; #6156: the project's two caps are both skipped for the fix.)
+  assert.match(caps, /if \(!exempt\) \{\n\s+const caps = appCapsOf\(settings, appId\);/);
+  assert.match(caps, /if \(proposals >= caps\.waiting\) return 'proposals_per_app';\n\s+if \(builds >= building\) return 'builds_per_app';\n\s+\}/);
+  assert.match(caps, /\}\n\s+if \(await openBotProposalTotal\(pool, bot\) >= botProposalCeiling\(settings\)\) return 'proposals_total';/,
     'the bot-wide ceiling still holds');
   assert.equal((src.match(/simulateCaps\(pool, bot, app\.id, [^)]*, settings, \{ issueNumber \}\)/g) || []).length, 3,
     'a read, a reused verdict and a plan from an early look pass the request');
@@ -186,8 +188,8 @@ test('runChecksFix asks the ladder where a not_change hand-off was, and the slot
   assert.equal(require('../src/services/platform-incidents').KINDS.CHECKS_FIXING_FLAKE, flaky.INCIDENT_KIND);
 });
 
-test('a flaky check\'s fix is not held by its project\'s five slots; anything else still is', async () => {
-  const slots = Array.from({ length: bot.PROPOSALS_PER_APP_CAP }, (_, i) => ({ kind: 'proposal', session_id: 100 + i }));
+test('a flaky check\'s fix is not held by its project\'s slots of either kind; anything else still is', async () => {
+  let slots = [];
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -198,9 +200,13 @@ test('a flaky check\'s fix is not held by its project\'s five slots; anything el
     },
   };
   const BOT = { id: 77, username: 'homeroom_bot' };
-  assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}, { issueNumber: 60 }), 'proposals_per_app');
-  assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}, { issueNumber: 61 }), null, 'the fix is built');
-  assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}), 'proposals_per_app', 'no request named, no exemption');
+  // #6156: the project's builds all under way, then its changes waiting for votes.
+  for (const [kind, length, cap] of [['build', bot.BUILDS_PER_APP, 'builds_per_app'], ['proposal', bot.WAITING_PER_APP, 'proposals_per_app']]) {
+    slots = Array.from({ length }, (_, i) => ({ kind, session_id: 100 + i }));
+    assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}, { issueNumber: 60 }), cap, kind);
+    assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}, { issueNumber: 61 }), null, `the fix is built (${kind})`);
+    assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}), cap, `no request named, no exemption (${kind})`);
+  }
 });
 
 // ── runChecksFix down the not_change path, on Homeroom's own change ──────

@@ -2498,43 +2498,62 @@ Rules:
 
 ## Offline — apps that open with no connection
 
-The shell opens an app while the device is offline **only when that app's
-own service worker was serving its document on a previous online visit.**
-Everything else gets a placeholder — "This app needs a connection —
-reconnect to open it." — because the app lives on its own subdomain, which
-the platform's service worker cannot cache. That placeholder is the
-correct, expected outcome for an app with no worker of its own; it is not
-a platform bug.
+There are two ways an app opens while the device is offline.
 
-Nothing here is self-declared. The bridge reads
-`navigator.serviceWorker.controller` inside the app frame — the browser's
-own statement that a worker served this document — and announces it to the
-shell, which remembers it per app and reads it back on the next offline
-load. An app cannot claim the capability, and one that loses its worker
-stops being opened offline on its next load.
+**1. The browser's own cache (most apps, no code needed).** Where the
+platform has it switched on, the app gate keeps an app's pages and files
+fresh in the browser's cache for 30 days, and the shell frames the app at
+one address whatever the token. An app opened online once then opens again
+offline, on any number of apps, with no service worker. It needs only that:
 
-To earn it:
+- **Load the bridge, first.** The shell puts the token after `#` and the
+  bridge moves it into the query before your code runs, so
+  `new URLSearchParams(location.search).get('token')` works as it always
+  has, as long as the bridge tag comes before your scripts. The bridge is
+  also how the frame tells the shell it opened; without that, the shell
+  frames the app the old way on that device.
+- **Your page loads without a token.** The page itself must answer 200 with
+  no token and no signed-in person (the starters and the Empty template
+  already do: data comes from `/api/*`). A page that answers 401 without a
+  token keeps the old address and does not open offline.
+- **A page that differs per person says so.** Send
+  `Cache-Control: no-store` (or `private`) on any page or file built for one
+  person; the gate never keeps those, nor any `/api/*` answer, nor a
+  response that sets a cookie.
+- **A merged change shows on the next open.** When your app's build
+  changes, the bridge fetches the page and the files it has seen again
+  before the app runs. A file fetched only on some screens is refreshed
+  once that screen has been opened.
+- **Keep your own copy of the data.** The cache brings back your code, not
+  your data: offline, `/api/*` fails. Keep the last reads in your own
+  storage and show them, as below, or the app opens to its own "couldn't
+  load" state.
+- **Opting out.** `"offline": false` in `dapp.json` keeps the app's pages
+  out of the cache (a game, or a page that must never be a day old).
 
-- **Load the bridge.** Without the tag the app has no channel to announce
-  on, and the shell will never open it offline no matter what else it
-  does. See the section above.
-- **Register a service worker that precaches your shell**, and let it take
-  control (`skipWaiting()` + `clients.claim()`), so the first visit
-  announces rather than waiting for a second one. Registration can fail
-  outright in a third-party iframe — some WebViews refuse storage to a
-  cross-origin frame — and that is a normal degradation, not something to
-  work around: no worker means no announcement means the placeholder.
-- **Never serve `/api/*` from the worker.** Writes and event streams must
-  always reach the network; keep the app's own read cache separate.
+**2. Your own service worker.** The shell also opens an app offline when
+that app's own service worker was serving its document on a previous online
+visit. Nothing here is self-declared: the bridge reads
+`navigator.serviceWorker.controller` inside the app frame and announces it
+to the shell, which remembers it per app. To use it, register a worker that
+precaches your shell and let it take control (`skipWaiting()` +
+`clients.claim()`), and never serve `/api/*` from it. **On iPhone at most
+two apps can have one:** the iOS app's web view allows three service workers
+in all, Homeroom's own among them, and a third app's registration is
+refused. Prefer the cache above unless the app truly needs a worker.
 
-Two consequences worth designing for:
+An app that has neither, or was never opened online on that device, gets the
+placeholder "This app needs a connection — reconnect to open it." That is
+the expected outcome, not a platform bug.
 
-- **An offline load carries NO `?token=`.** The shell cannot mint one with
-  no network, so the iframe src has no token at all. Recover identity from
-  the app's own storage, remembered from a load that did have one — and
-  never destroy per-user data when the token is absent. An app that keys
-  its cache on "the current user" and falls back to an anonymous namespace
-  will delete the real user's saved data on the first offline boot.
+Two consequences worth designing for, either way:
+
+- **An offline load carries NO token.** The shell cannot mint one with
+  no network. Recover identity from the app's own storage, remembered from
+  a load that did have one — and never destroy per-user data when the token
+  is absent. An app that keys its cache on "the current user" and falls back
+  to an anonymous namespace will delete the real user's saved data on the
+  first offline boot.
 - **The frame reloads when the connection returns.** The shell mints a
   token and re-points the frame, so anything unsent must be persisted, not
   held in memory. Queue mutations durably and replay them on reconnect.

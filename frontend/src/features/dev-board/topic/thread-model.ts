@@ -30,6 +30,8 @@ export interface ThreadItem {
   status: string;
   /** A change's place in its life (issue-proposal-ref.js `stateOf`). */
   state?: 'underway' | 'review' | 'merged';
+  /** #6139, a change underway: built, with its checks passing on its current head and nothing working on it. */
+  ready?: boolean;
   at?: string | null;
   replies: number;
   folded?: FoldedReply[];
@@ -159,7 +161,7 @@ function standing(item: ThreadItem): Phrase | null {
   if (item.type === 'change') {
     return item.state === 'merged' ? { id: 'project:topic.thread.state.live' }
       : item.state === 'review' ? { id: 'project:topic.thread.state.voting' }
-        : { id: 'project:topic.thread.state.underway' };
+        : { id: item.ready ? 'project:topic.thread.state.ready' : 'project:topic.thread.state.underway' };
   }
   return { id: item.status === 'open' ? 'project:topic.thread.state.voting' : 'project:topic.thread.state.settled' };
 }
@@ -375,9 +377,12 @@ export function requestPill(
   if (review >= 2 || (review >= 1 && layout.close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
   if (review === 1) return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
   if (layout.close) return { ...base, key: 'close', label: say('project:topic.thread.pill.close'), tone: 'neutral' };
-  if (layout.changes.some((c) => c.state === 'underway') || stand === 'building') {
+  const underway = layout.changes.filter((c) => c.state === 'underway');
+  if (underway.some((c) => !c.ready) || stand === 'building') {
     return { ...base, key: 'building', label: say('project:topic.thread.pill.building'), tone: 'progress', spinner: true };
   }
+  // #6139: every change underway has finished; only putting one up is left.
+  if (underway.length) return { ...base, key: 'ready', label: say('project:topic.thread.pill.ready'), tone: 'neutral' };
   if (layout.changes.some((c) => c.state === 'merged')) return { ...base, key: 'live', label: say('project:topic.thread.pill.live'), tone: 'ok' };
   return null;
 }

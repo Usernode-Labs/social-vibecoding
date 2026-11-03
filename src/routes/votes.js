@@ -5067,6 +5067,28 @@ function voteRoutes(config) {
         // what it brings, what it does here, and where it stands, for the
         // change page's From <original> card. Null for any other change.
         proposal.upstream = await require('../services/upstream-offers').changeView(pool, proposal.id);
+        // #6140: what its Preview reads (AppView._cardPreviewSpec), on a change
+        // still up for a vote. A request's page draws a change from this read
+        // alone, with no board row under it, so without these its Testing card
+        // had no Try it. The fields /promoted carries, with its own derivation
+        // of building and failed; can_preview is the one the session lists
+        // use, so a preview gone to sleep can be woken. Never while it builds:
+        // _cardPreviewSpec offers a rebuild before it says "building". A
+        // merged row keeps its shape: its page offers the live app instead.
+        if (proposal.status === 'promoted' || proposal.status === 'merging') {
+          const { rows: [preview] } = await pool.query(
+            `SELECT staging_url, testing_md, testing_path,
+                    (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL
+                       OR shared_at IS NOT NULL) AS can_preview
+               FROM chat_sessions WHERE id = $1`,
+            [proposal.id]
+          );
+          proposal.staging_url = preview?.staging_url || null;
+          proposal.testing_md = preview?.testing_md || null;
+          proposal.testing_path = preview?.testing_path || null;
+          Object.assign(proposal, require('../services/staging').previewDisplayState(proposal));
+          proposal.can_preview = !!preview?.can_preview && !proposal.staging_building;
+        }
       }
 
       // #3669: the proposal page's own read must carry the same per-row

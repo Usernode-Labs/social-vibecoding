@@ -1143,6 +1143,18 @@ export function init() {
       feedbackText.removeAttribute('aria-describedby');
     };
 
+    // #6127: the pictures can be dragged into the order the request should
+    // show them in, and the first one is the one the request shows first.
+    // The line that says so lives inside the thumbnail row (basis-full wraps
+    // it under them), is created here rather than in feedback.tsx so no new
+    // prerendered shell id is needed, and carries no [data-feedback-screenshot]
+    // so the reorder kit ignores it.
+    const screenshotOrderHint = document.createElement('p');
+    screenshotOrderHint.id = 'feedback-screenshot-order-hint';
+    screenshotOrderHint.className = 'basis-full text-xs text-zinc-500 dark:text-zinc-400';
+    screenshotOrderHint.textContent = t('dialogs:feedback.screenshot.reorderHint');
+    screenshotOrderHint.classList.add('hidden');
+
     const paintScreenshotActions = () => {
       const count = screenshots.length;
       const full = count >= MAX_SCREENSHOTS;
@@ -1164,12 +1176,22 @@ export function init() {
       }
       screenshotPreview.classList.toggle('hidden', count === 0);
       screenshotPreview.classList.toggle('flex', count > 0);
+      // #6127: the hint appears once there is something to reorder, and once
+      // it is in the row it stays its last child, so it wraps under the
+      // pictures rather than sitting between them.
+      const canReorder = count >= 2;
+      screenshotOrderHint.classList.toggle('hidden', !canReorder);
+      if (canReorder || screenshotOrderHint.parentNode === screenshotPreview) {
+        screenshotPreview.appendChild(screenshotOrderHint);
+      }
       // Numbered from what is on screen now, so removing the middle image
       // renumbers the rest rather than leaving a gap in the labels.
       screenshots.forEach((shot, i) => {
         shot.img.alt = t('dialogs:feedback.screenshot.previewAlt', { number: i + 1 });
         shot.removeBtn.setAttribute('aria-label', t('dialogs:feedback.screenshot.remove', { number: i + 1 }));
         shot.openBtn.setAttribute('aria-label', t('dialogs:feedback.screenshot.view', { number: i + 1 }));
+        if (canReorder) shot.openBtn.setAttribute('aria-describedby', 'feedback-screenshot-order-hint');
+        else shot.openBtn.removeAttribute('aria-describedby');
       });
     };
 
@@ -1191,6 +1213,40 @@ export function init() {
     const removeScreenshot = (shot) => {
       discardScreenshot(shot);
       paintScreenshotActions();
+    };
+
+    // #6127: put the picture at `from` at `to`, thumbnail and all. The kit's
+    // onReorder arrives AFTER it has moved the node, so the node is only
+    // moved here when the DOM order does not already match — the keyboard
+    // path. The shot object travels whole, so an upload still in flight
+    // (which finds its shot by identity) lands at its new position.
+    const thumbnailNodes = () => {
+      const nodes = [];
+      const children = screenshotPreview.children;
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children[i];
+        if (child.getAttribute && child.getAttribute('data-feedback-screenshot') !== null) nodes.push(child);
+      }
+      return nodes;
+    };
+    const moveScreenshot = (from, to) => {
+      const count = screenshots.length;
+      if (from === to || from < 0 || to < 0 || from >= count || to >= count) return false;
+      const shot = screenshots[from];
+      screenshots.splice(from, 1);
+      screenshots.splice(to, 0, shot);
+      const dom = thumbnailNodes();
+      const inOrder = dom.length === screenshots.length
+        && screenshots.every((entry, i) => dom[i] === entry.node);
+      if (!inOrder && shot.node) {
+        const next = screenshots[to + 1];
+        if (next && next.node) screenshotPreview.insertBefore(shot.node, next.node);
+        else if (screenshotOrderHint.parentNode === screenshotPreview) {
+          screenshotPreview.insertBefore(shot.node, screenshotOrderHint);
+        } else screenshotPreview.appendChild(shot.node);
+      }
+      paintScreenshotActions();
+      return true;
     };
 
     const resetScreenshotState = () => {
@@ -1221,6 +1277,21 @@ export function init() {
       openBtn.setAttribute('data-feedback-screenshot-open', '');
       openBtn.addEventListener('click', () => {
         Feedback._preview({ kind: 'image', src: shot.objectUrl, alt: shot.img.alt, pins: shot.pins || null });
+      });
+      // #6127: with a keyboard, a focused picture moves with the arrow keys.
+      // Left/up moves it earlier, right/down later, and at either end it
+      // stays put (so the page keeps its own scrolling there).
+      openBtn.addEventListener('keydown', (e) => {
+        const from = screenshots.indexOf(shot);
+        const key = e && e.key;
+        const to = key === 'ArrowLeft' || key === 'ArrowUp' ? from - 1
+          : key === 'ArrowRight' || key === 'ArrowDown' ? from + 1
+            : -1;
+        if (from < 0 || to < 0 || to >= screenshots.length) return;
+        if (e.preventDefault) e.preventDefault();
+        if (moveScreenshot(from, to)) {
+          try { openBtn.focus({ preventScroll: true }); } catch { /* detached in tests */ }
+        }
       });
       const stateEl = document.createElement('span');
       stateEl.className = 'text-xs text-zinc-500 dark:text-zinc-400';
@@ -1253,6 +1324,20 @@ export function init() {
       screenshotPreview.appendChild(item);
       Object.assign(shot, { node: item, img, stateEl, removeBtn, openBtn });
     };
+
+    // #6127: dragging a picture reorders the row. No handle: on touch the
+    // kit lifts on a long press (its default 400 ms), on a computer once the
+    // pointer passes the slop, and it suppresses the click after a drag, so
+    // a tap still opens the picture and the ✕ still removes it. onReorder
+    // arrives after the kit has moved the node; moveScreenshot splices the
+    // array (and repaints the labels) to match.
+    if (window.unNative && typeof window.unNative.attachReorder === 'function') {
+      window.unNative.attachReorder(screenshotPreview, {
+        grid: true,
+        itemSelector: '[data-feedback-screenshot]',
+        onReorder: (from, to) => { moveScreenshot(from, to); },
+      });
+    }
 
     const uploadScreenshot = (blob) => fetch('/api/feedback/screenshot', {
       method: 'POST',

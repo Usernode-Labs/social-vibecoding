@@ -94,6 +94,7 @@ import { useWorkshopGroup } from './group-mode-store';
 import { communityScopeStore, describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
+import { filterByVoteType, rowVoteType, voteTallies, VoteTypeChips, type VoteFilter } from '../../workshop/vote-filter';
 import {
   ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
@@ -576,13 +577,22 @@ const EMPTY_PRESS: Record<'hub' | 'away', Record<'collab' | 'plain', string>> = 
   },
 };
 
-function EmptyNote({ filtered, loadFailed, onHub = false }: {
+function EmptyNote({ filtered, loadFailed, onHub = false, start = null }: {
   filtered: boolean;
   loadFailed: boolean;
   /** Drawn on the hub, under the hero whose ⋯ it names. */
   onHub?: boolean;
+  /**
+   * #6111: the one action that starts the first change, for a board that
+   * really holds nothing. `bot` says Homeroom bot builds changes for this
+   * viewer here, so the action is its chat rather than a session. It is a
+   * sibling of the note, never inside it, so the sentence every check and
+   * pin selects on is unchanged.
+   */
+  start?: { slug: string; name: string; bot: boolean } | null;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
+  const improveReadOnly = useStoreState(improveStore).readOnly;
   const t = useMessages('project');
   // One whole sentence per case: where the ⋯ is, and what it holds for
   // this viewer.
@@ -591,15 +601,44 @@ function EmptyNote({ filtered, loadFailed, onHub = false }: {
     <RichMessage id={press} components={[<span className="font-medium text-violet-700 dark:text-violet-400" />]} />
   );
   return (
-    <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
-      {filtered ? (
-        t('project:boardEmpty.filtered')
-      ) : loadFailed ? (
-        // The sentence about the board follows the one about the load, where
-        // the message puts it.
-        <RichMessage id="project:boardEmpty.loadFailed" components={[<>{board}</>]} />
-      ) : board}
-    </div>
+    <>
+      <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
+        {filtered ? (
+          t('project:boardEmpty.filtered')
+        ) : loadFailed ? (
+          // The sentence about the board follows the one about the load, where
+          // the message puts it.
+          <RichMessage id="project:boardEmpty.loadFailed" components={[<>{board}</>]} />
+        ) : board}
+      </div>
+      {/* A search or a failed load means the board may not be empty, and a
+          read-only viewer has nowhere to go: neither gets the button. The
+          same goes for the hub's second gate, improveStore.readOnly, which
+          is what the start-here card's own action reads. */}
+      {start && !filtered && !loadFailed && !readOnly && !improveReadOnly ? (
+        start.bot && start.slug ? (
+          <Button
+            type="button"
+            data-ws-empty-start-bot=""
+            size="sm"
+            className="self-start mb-2"
+            onClick={() => { void openBot(startHereBotReference(start.slug, start.name)); }}
+          >
+            {t('project:boardEmpty.startBot')}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            data-ws-empty-start=""
+            size="sm"
+            className="self-start mb-2"
+            onClick={() => Improve.startSession()}
+          >
+            {t('project:boardEmpty.start')}
+          </Button>
+        )
+      ) : null}
+    </>
   );
 }
 
@@ -2921,12 +2960,19 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
    * card, a shot target and `openOn` land where they ask. The jump does not
    * go through `landOn`, so the rows it passes are not marked seen HERE —
    * they were already seen, which is how the index was found.
+   *
+   * #6199: it stops at a vote that DECIDES even when that vote was already
+   * passed over. Votes that decide come first, so a viewer who swiped past
+   * the one deciding change (looking for its preview, say) and came back
+   * used to land on the advisory rows below it, where the deciding vote
+   * looked gone. Now only advisory rows are ever skipped, and only ones
+   * already seen.
    */
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!resumeRef.current || !el || !el.clientHeight || !items.length) return;
     resumeRef.current = false;
-    const idx = firstUnseenIndex(items, (r) => rowSlug(r, slug));
+    const idx = firstUnseenIndex(items, (r) => rowSlug(r, slug), (r) => rowVoteType(r) === 'deciding');
     if (idx <= 0) return;
     curKeyRef.current = items[idx].key;
     setAt(idx);
@@ -4405,6 +4451,12 @@ export function DevWorkshop(): ReactNode {
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
+  // #6199: which kind of vote this project's own Needs you shows. Held in the
+  // page, so it starts on All every time the page opens, and only the rows
+  // that are cards count toward the chips.
+  const [needsFilter, setNeedsFilter] = useState<VoteFilter>('all');
+  const needsCards = useMemo(() => (v.queue || []).filter((r) => r.t === 'card'), [v.queue]);
+  const needsTallies = useMemo(() => voteTallies(needsCards, rowVoteType), [needsCards]);
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head — in the element
@@ -4872,6 +4924,13 @@ export function DevWorkshop(): ReactNode {
      what the pinned pane head and its band are measured against (`setBar`).
      The back bar scrolls away under it. */
   const projectName = app.name || community?.name || slug;
+  // #6111: the empty board's one start action. `v.emptyNote` is set only
+  // when the board itself holds nothing (never for a search or a filter),
+  // so a failed load is the one case that has to be taken out again; a
+  // project Homeroom bot is still building gets no second start.
+  const emptyStart = v.emptyNote && !v.emptyNote.loadFailed && !building
+    ? { slug, name: projectName, bot: !!(v.mine && v.mine.bot) }
+    : null;
   const choosePlace = (key: TabKey) => {
     trayNav.current = true;
     setTrayOpen(false);
@@ -5132,6 +5191,7 @@ export function DevWorkshop(): ReactNode {
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
           loadFailed={v.emptyNote.loadFailed}
+          start={emptyStart}
           onHub
         />
       ) : null}
@@ -5528,23 +5588,27 @@ export function DevWorkshop(): ReactNode {
         // leaves the run for the community's hub, never an earlier change.
         <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} />
       ) : tab === 'needs' ? (
-        <NeedsFeed
-          rows={v.queue}
-          models={v.models}
-          slug={slug}
-          canPost={canPost}
-          onDone={() => openTab('workshop')}
-          onHub={() => openTab('status')}
-          // No `onAnswered` here (#4794): a project page passes nothing. The
-          // vote's own route already drops the row — the deck casts through
-          // AppView.castVote, whose ok path publishes the saved vote into
-          // voteSavedStore, and the store listener above strips it from the
-          // kept queue before the feed's own `setAnswered` even lands.
-          // #4680: the end card's quiet way into the Suggest an improvement
-          // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
-          // so the heading reads "Suggest an improvement".
-          onSuggest={() => { (window as any).App?.openFeedbackModal?.({ fromDev: true }); }}
-        />
+        <>
+          <VoteTypeChips tallies={needsTallies} pressed={needsFilter} onPress={setNeedsFilter} />
+          <NeedsFeed
+            key={needsFilter}
+            rows={filterByVoteType(v.queue, needsFilter, rowVoteType)}
+            models={v.models}
+            slug={slug}
+            canPost={canPost}
+            onDone={() => openTab('workshop')}
+            onHub={() => openTab('status')}
+            // No `onAnswered` here (#4794): a project page passes nothing. The
+            // vote's own route already drops the row — the deck casts through
+            // AppView.castVote, whose ok path publishes the saved vote into
+            // voteSavedStore, and the store listener above strips it from the
+            // kept queue before the feed's own `setAnswered` even lands.
+            // #4680: the end card's quiet way into the Suggest an improvement
+            // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
+            // so the heading reads "Suggest an improvement".
+            onSuggest={() => { (window as any).App?.openFeedbackModal?.({ fromDev: true }); }}
+          />
+        </>
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
           was `tab === 'all' && themes.length`, and the second half was #2090:
@@ -5639,17 +5703,26 @@ export function DevWorkshop(): ReactNode {
               backdrop makes them the same colour by construction. */}
           <div className="dev-ws-pane-body">
           {group === 'stage' ? (
-            <div className="dev-ws-board" data-ws-stage="">
-              <DevKanban openKey={sideKey} onOpen={openItem} />
-            </div>
+            <>
+              {v.emptyNote ? (
+                /* #6111: an empty board's columns each say "Nothing here
+                   yet"; the note above them says what to do about it. */
+                <EmptyNote filtered={false} loadFailed={v.emptyNote.loadFailed} start={emptyStart} />
+              ) : null}
+              <div className="dev-ws-board" data-ws-stage="">
+                <DevKanban openKey={sideKey} onOpen={openItem} />
+              </div>
+            </>
           ) : !themes.length ? (
             /* The rows' place, under the controls that emptied it. `filtered`
                is the live filter state rather than `emptyNote`'s: that note
                is about the BOARD having no entries, and a board whose every
                open item a search has hidden still has them, so it stays null
                while the theme list is bare. The stage pane needs none of
-               this — the columns say "No matching cards" for themselves. */
-            <EmptyNote filtered={v.meta.filtered} loadFailed={!!(v.emptyNote && v.emptyNote.loadFailed)} />
+               this — a board with no entries cannot be narrowed, so it passes
+               `false` — and its columns say "No matching cards" for
+               themselves. */
+            <EmptyNote filtered={v.meta.filtered} loadFailed={!!(v.emptyNote && v.emptyNote.loadFailed)} start={emptyStart} />
           ) : (
           <>
           <div className="dev-ws-sort">

@@ -31,16 +31,17 @@ const SELF_HOSTED = 'The Homeroom platform deploys via GitHub Actions; this acti
 // The authority each flavor's route requires, read the same way:
 //   access     'collab' (can build here) or 'manage' (the creator or an admin)
 //   selfHosted whether the platform's own row may be the target
-//   member     whether the community's membership gate applies
+//   member     whether the community's membership gate applies (asking
+//              whoever holds `access`)
 //   public     whether this change makes the project public (needs a verified owner)
 //   existing   the open proposal of this kind a second one would duplicate
 const FLAVORS = new Map([
   ['rename', {
-    access: 'collab', selfHosted: true,
+    access: 'collab', selfHosted: true, member: true,
     build: (d, app, a, actor, steps) => renamePr.createRenamePR(d.config, d.pool, app, a.newName, actor, { steps }),
   }],
   ['secret-declaration', {
-    access: 'collab', selfHosted: 'voting',
+    access: 'collab', selfHosted: 'voting', member: true,
     existing: (pool, app, a) => pendingSecrets.findLiveByKey(pool, app.id, a.key)
       .then((r) => r && { id: r.sessionId, pr_number: r.prNumber, pr_url: r.prUrl }),
     existingError: (a) => `${a.key} is already waiting for approval`,
@@ -48,25 +49,25 @@ const FLAVORS = new Map([
       { scope: a.scope, key: a.key, declaration: a.declaration, hasValue: !!a.hasValue }, actor, { steps }),
   }],
   ['visibility', {
-    access: 'manage', selfHosted: false,
+    access: 'manage', selfHosted: false, member: true,
     public: (app, a) => a.view === 'public' && app.view_visibility !== 'public',
     existing: (pool, app) => renamePr.findVisibilityPr(pool, app.id),
     existingError: () => 'A visibility change is already waiting for a vote',
     build: (d, app, a, actor, steps) => renamePr.createVisibilityPR(d.config, d.pool, app, { collab: a.collab, view: a.view }, actor, { steps }),
   }],
   ['who-decides', {
-    access: 'manage', selfHosted: (a) => !a.visibility,
+    access: 'manage', selfHosted: (a) => !a.visibility, member: true,
     public: (app, a) => a.visibility === 'public' && app.view_visibility !== 'public',
     build: (d, app, a, actor, steps) => whoDecidesPr.createWhoDecidesPR(d.config, d.pool, app, a, actor, { steps }),
   }],
   ['admins', {
-    access: 'manage', selfHosted: false,
+    access: 'manage', selfHosted: false, member: true,
     existing: (pool, app) => renamePr.findAdminsPr(pool, app.id),
     existingError: () => 'An admins change is already waiting for a vote',
     build: (d, app, a, actor, steps) => renamePr.createAdminsPR(d.config, d.pool, app, { usernames: a.usernames }, actor, { steps }),
   }],
   ['governance', {
-    access: 'manage', selfHosted: true,
+    access: 'manage', selfHosted: true, member: true,
     existing: (pool, app) => renamePr.findGovernancePr(pool, app.id),
     existingError: () => 'A governance change is already waiting for a vote',
     build: (d, app, a, actor, steps) => renamePr.createGovernancePR(d.config, d.pool, app,
@@ -107,7 +108,7 @@ async function authorize({ config, pool }, request, user, { steps = null } = {})
   const app = await loadApp(pool, request.appId);
   if (!app || !(await appAccess.checkAppAccess(pool, app, user, 'view'))) return { status: 404, error: 'App not found' };
   if (flavor.member) {
-    const join = await communities.appNeedsJoin(pool, app.slug, user);
+    const join = await communities.appNeedsJoin(pool, app.slug, user, { manage: flavor.access === 'manage' });
     if (join) return { status: 403, ...join };
   }
   if (flavor.access === 'collab' && !(await appAccess.checkAppAccess(pool, app, user, 'collab'))) {

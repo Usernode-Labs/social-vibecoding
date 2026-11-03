@@ -166,14 +166,14 @@ test('a level of the screen, not an overlay: in flow, the rest of the screen ste
 
 // #3253, #3248: the note on what the rule counts sits under the points, muted.
 test('the count note reads under the points, and is absent without one', () => {
-  const note = 'Counts when you press Propose to group, which puts your change to a vote.';
+  const note = message('leaderboard:challenges.countNote.onPropose');
   const html = render({ ...VIEW, countNote: note });
   const points = html.indexOf('720 pts so far');
-  const at = html.indexOf(note);
+  const at = html.indexOf(note.replaceAll("'", '&#x27;')); // as React escapes it
   assert.ok(points >= 0 && at > points, 'after the points');
   assert.ok(at < html.indexOf('role="progressbar"'), 'before the rail');
   assert.match(html, /<p class="text-\[0\.8125rem\] text-zinc-500 dark:text-zinc-400">Counts when/);
-  assert.doesNotMatch(render(VIEW), /Propose to group/);
+  assert.doesNotMatch(render(VIEW), /Counts when/);
 });
 
 // ── #3650: the invite challenge's own note and per-person list ─────────
@@ -258,4 +258,34 @@ test('the points note reads under the points, and only when points show', () => 
   assert.ok(at < html.indexOf('src="/illustrations/'), 'before the artwork');
   assert.doesNotMatch(render({ ...VIEW, amount: null }), /set your place in the standings/,
     'no points shown: no note either');
+});
+
+// ── #3247: which credits made the count ─────────────────────────────────
+
+const CREDITS = [
+  { text: 'Add a dark mode', points: 500, at: '2026-10-02T16:32:00.000Z', precision: 'instant',
+    change: { slug: 'my app', sessionId: 41, prNumber: 7 } },
+  { text: 'Drafted a plan', points: 100, at: null, precision: null,
+    change: { slug: 'one', sessionId: 42, prNumber: null } },
+  { text: 'Accepted proposal', points: 300, at: null, precision: null, change: null },
+];
+
+test('#3247: What counted sits between the action and What counts, and links each change it can show', () => {
+  const html = render({ ...VIEW, credits: CREDITS });
+  assert.ok(html.includes(`>${message('leaderboard:challenges.detail.counted')}<`));
+  assert.ok(html.indexOf('Set up your node') < html.indexOf('tc-se-detail-credits'));
+  assert.ok(html.indexOf('tc-se-detail-credits')
+    < html.indexOf(`>${message('leaderboard:challenges.detail.requirements')}<`));
+  assert.match(html, /<a href="#app\/my%20app\/dev\/changes\/7"[^>]*>Add a dark mode<\/a>/);
+  assert.match(html, /<a href="#app\/one\/dev\/proposals\/42"[^>]*>Drafted a plan<\/a>/);
+  assert.match(html, /<span class="block[^"]*">Accepted proposal<\/span>/, 'no address: plain words, no link');
+  assert.match(html, /\+500/);
+});
+
+test('#3247: a weekly challenge says the list is this week; no credits, no section', () => {
+  const weekly = render({ ...VIEW, credits: CREDITS, creditsWeekly: true });
+  assert.ok(weekly.includes(`>${message('leaderboard:challenges.detail.countedWeek')}<`));
+  for (const credits of [[], undefined]) {
+    assert.doesNotMatch(render({ ...VIEW, credits }), /tc-se-detail-credits/);
+  }
 });
