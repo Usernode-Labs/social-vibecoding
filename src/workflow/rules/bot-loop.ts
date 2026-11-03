@@ -84,8 +84,6 @@ export const BUDGET_PAUSE_MS = 60 * 1000;
 export const REFRESH_EVERY_MS = 5 * 60 * 1000;
 export const REFRESH_SOON_MS = 20 * 1000;
 
-// Live builds of one project under way at once.
-export const BUILDS_PER_PROJECT = 3;
 // A ready verdict's build waits this long for its turn before it is
 // forgotten by the read lane (classifyIssue's window).
 export const ABANDONED_LIVE_WINDOW_DAYS = 7;
@@ -101,14 +99,27 @@ export const KEY_PER_PERSON = 'homeroom_bot_per_person';
 // session: on Homeroom's own board a request once waited behind 35 others,
 // though a read only reads the code and costs a few cents.
 export const KEY_READS_PER_APP = 'homeroom_bot_reads_per_app';
-export const LANE_SETTING_KEYS: readonly string[] = Object.freeze([KEY_MODE, KEY_PAUSED_APPS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_READS_PER_APP]);
+// 3 Nov 2026: a project's builds under way at once is the same setting as
+// its builds waiting or under way (homeroom-bot.js BUILDS_PER_APP, or the
+// project's own number in KEY_APP_CAPS). It used to be a fixed 3 here, so
+// the console said 5 while only 3 ran and the other 2 waited.
+export const BUILDS_PER_APP = 5;
+export const MAX_BUILDS_PER_APP = 10;
+export const KEY_APP_CAPS = 'homeroom_bot_app_caps';
+export const LANE_SETTING_KEYS: readonly string[] = Object.freeze([KEY_MODE, KEY_PAUSED_APPS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_READS_PER_APP, KEY_APP_CAPS]);
 export const MODES: readonly string[] = Object.freeze(['off', 'shadow', 'live']);
 export const MAX_LIVE_AT_ONCE = 24;
 export const MAX_PER_PERSON = 6;
 export const MAX_READS_PER_APP = 6;
-export const LANE_DEFAULTS = Object.freeze({ mode: 'off', pausedApps: [] as string[], liveAtOnce: 12, perPerson: 3, readsPerApp: 3 });
+export const LANE_DEFAULTS = Object.freeze({
+  mode: 'off', pausedApps: [] as string[], liveAtOnce: 12, perPerson: 3, readsPerApp: 3,
+  buildsByApp: {} as Record<string, number>,
+});
 
-export interface LaneSettings { mode: string; pausedApps: string[]; liveAtOnce: number; perPerson: number; readsPerApp: number }
+export interface LaneSettings {
+  mode: string; pausedApps: string[]; liveAtOnce: number; perPerson: number; readsPerApp: number;
+  buildsByApp: Record<string, number>;
+}
 
 // The `source` of a further read slot's triage session (slot 1 and up:
 // homeroom-bot.js ensureBotSession), with its slot after the colon. Slot 0
@@ -132,6 +143,32 @@ function clampInt(raw: unknown, fallback: number, min: number, max: number): num
   return Math.min(max, Math.max(min, n));
 }
 
+// A project's key in KEY_APP_CAPS: its id, as JSON keeps it, and the most
+// projects with a number of their own the setting keeps.
+const APP_ID_KEY_RE = /^[1-9][0-9]{0,9}$/;
+const MAX_APP_CAPS = 1000;
+
+// #6156: the stored per-project build numbers (KEY_APP_CAPS), as the lane
+// reads them: an app id maps to its `building`, clamped to 1..MAX_BUILDS_PER_APP.
+// A project with no building left out. Never throws: what does not parse is
+// no project's.
+function parseBuildsByApp(raw: unknown): Record<string, number> {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(String(raw || '{}'));
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(parsed).slice(0, MAX_APP_CAPS)) {
+    if (!APP_ID_KEY_RE.test(key) || !value || typeof value !== 'object') continue;
+    const n = parseInt(String((value as any).building ?? ''), 10);
+    if (Number.isFinite(n)) out[key] = Math.min(MAX_BUILDS_PER_APP, Math.max(1, n));
+  }
+  return out;
+}
+
 // The lane's settings from platform_settings rows ({ key, value }). The mode
 // `shadow` acts as `live` (it always did outside a staging copy: the
 // shadow lanes are gone, design-bot-loop.md D2).
@@ -148,6 +185,7 @@ export function laneSettings(rows: { key: string; value: string | null }[]): Lan
     liveAtOnce: clampInt(map.get(KEY_LIVE_AT_ONCE), LANE_DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE),
     perPerson: clampInt(map.get(KEY_PER_PERSON), LANE_DEFAULTS.perPerson, 1, MAX_PER_PERSON),
     readsPerApp: clampInt(map.get(KEY_READS_PER_APP), LANE_DEFAULTS.readsPerApp, 1, MAX_READS_PER_APP),
+    buildsByApp: parseBuildsByApp(map.get(KEY_APP_CAPS)),
   };
 }
 
@@ -517,13 +555,14 @@ export function pickLive<R extends { app_id: unknown; issue_number?: unknown; fo
   return picks;
 }
 
-// Which waiting builds to start now: at most `perProject` under way on one
-// project counting those building, at most `perPerson` live pieces of work
+// Which waiting builds to start now: at most `perApp` for the row's project
+// (its own number in the setting), else `perProject`, under way on one
+// project counting those building; at most `perPerson` live pieces of work
 // for any one person counting what runs, at most `slots` in all. A running
 // batch's request (`raised`) may go to its batch's number for both.
 export function pickLiveBuilds<R extends { app_id: unknown; issue_number?: unknown; person_id?: unknown }>(
-  candidates: R[], { inUse = [], slots = 0, perPerson = 1, perProject = BUILDS_PER_PROJECT, raised = {} }:
-    { inUse?: Slot[]; slots?: number; perPerson?: number; perProject?: number; raised?: Raised } = {},
+  candidates: R[], { inUse = [], slots = 0, perPerson = 1, perProject = BUILDS_PER_APP, perApp = {}, raised = {} }:
+    { inUse?: Slot[]; slots?: number; perPerson?: number; perProject?: number; perApp?: Record<string, number>; raised?: Raised } = {},
 ): (R & { person: string })[] {
   const building = new Map<number, number>();
   for (const s of inUse) if (s.kind === 'build') building.set(Number(s.appId), (building.get(Number(s.appId)) || 0) + 1);
@@ -533,7 +572,8 @@ export function pickLiveBuilds<R extends { app_id: unknown; issue_number?: unkno
   for (const row of candidates || []) {
     if (picks.length >= slots) break;
     const appId = Number(row.app_id);
-    if ((building.get(appId) || 0) >= limitFor(raised, row, perProject)) continue;
+    const perProjectHere = perApp[String(appId)] ?? perProject;
+    if ((building.get(appId) || 0) >= limitFor(raised, row, perProjectHere)) continue;
     const person = personKeyOf(row);
     if ((count.get(person) || 0) >= limitFor(raised, row, perPerson)) continue;
     building.set(appId, (building.get(appId) || 0) + 1);
