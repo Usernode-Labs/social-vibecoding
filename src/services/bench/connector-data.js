@@ -207,6 +207,14 @@ function settingsOf(p = {}) {
     turnInputTokens: num(s.turnInputTokens),
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     liveBuildStream: s.liveBuildStream !== false,
+    // Pictures (bot-pictures.js): the default picture model, a person's
+    // pictures a week, and (#6205) the picture models in force, offered or
+    // not, as imageModels takes them; imageModelsBuiltIn when no admin has
+    // set a list of their own.
+    imageModel: s.imageModel || null,
+    pictureWeeklyCap: num(s.pictureWeeklyCap),
+    imageModels: require('../bot-picture-models').allModels(s).map((m) => ({ ...m, aspects: [...m.aspects] })),
+    imageModelsBuiltIn: !(Array.isArray(s.imageModels) && s.imageModels.length),
   };
 }
 
@@ -562,8 +570,9 @@ const SETTINGS_FIELDS = Object.freeze([
   'appCaps',
   'shadowBuilds', 'shadowBuildPlatform', 'dmChat', 'voiceSession', 'voiceIssue', 'voiceChat',
   'continueReads', 'liveBuildStream',
-  // Homeroom bot parity, P8: pictures' model and weekly cap.
-  'imageModel', 'pictureWeeklyCap',
+  // Homeroom bot parity, P8: pictures' model and weekly cap; #6205: the
+  // picture models a person may choose from.
+  'imageModel', 'pictureWeeklyCap', 'imageModels',
 ]);
 
 /**

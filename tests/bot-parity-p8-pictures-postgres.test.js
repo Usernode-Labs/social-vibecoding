@@ -32,6 +32,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 
 const { memoryMediaStore } = require('./lib/media-store');
+const models = require('../src/services/bot-picture-models');
 
 const DSN = process.env.TEST_DATABASE_URL
   || process.env.DATABASE_URL
@@ -222,6 +223,34 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
     assert.match(rules.error, /content rules/);
     assert.equal(asked.length, before, 'nothing was asked of the model');
     assert.equal(await pictures.picturesThisWeek(pool, ada.id), 4, 'nothing was counted');
+  });
+
+  await t.test('#6205: a model chosen by its key draws them, counts by its weight, and the card names it', async () => {
+    const before = asked.length;
+    const ctx = { user: ada, settings, config, conversationId, deps: { pictures: pictureDeps } };
+    // Two of the week's six are left; one Best quality picture counts as four.
+    const best = await tool.run(pool, ctx, 'make_pictures', { prompt: 'A pear', model: 'best' });
+    assert.match(best.error, /^You have 2 pictures left this week, and each picture from Gemini 3 Pro Image counts as 4 of them/);
+    const unknown = await tool.run(pool, ctx, 'make_pictures', { prompt: 'A pear', model: 'midjourney' });
+    assert.match(unknown.error, /^model is one of: standard \(Gemini 2\.5 Flash Image\), best/);
+    assert.equal(asked.length, before, 'nothing was asked of the model');
+    const ctx2 = { ...ctx };
+    const out = await tool.run(pool, ctx2, 'make_pictures', { prompt: 'A pear as a simple diagram', model: 'inexpensive' });
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(asked.length, before + 1);
+    const body = asked[asked.length - 1];
+    assert.equal(body.model, 'openai/gpt-5-image-mini', 'the chosen model\'s OpenRouter id');
+    assert.equal(body.provider.data_collection, 'deny', 'data collection denied, as for every model');
+    assert.ok(body.messages[0].content.startsWith(pictures.CONTENT_RULES), 'the content rules come first, as for every model');
+    assert.deepEqual([out.model, out.countedAs, out.picturesLeftThisWeek, out.weeklyPictures], ['GPT-5 Image Mini', 1, 1, 6]);
+    assert.deepEqual(ctx2.card.model, { key: 'inexpensive', label: 'GPT-5 Image Mini' });
+    const { rows: [row] } = await pool.query('SELECT model, images FROM homeroom_bot_pictures ORDER BY id DESC LIMIT 1');
+    assert.deepEqual([row.model, row.images], ['openai/gpt-5-image-mini', 1]);
+    assert.equal(await pictures.picturesThisWeek(pool, ada.id, settings), 5);
+    // An admin who weighs that model at 3 counts this week's picture by it too.
+    const weighed = models.parseImageModels(JSON.stringify(models.DEFAULT_IMAGE_MODELS.map((m) => (
+      m.key === 'inexpensive' ? { ...m, weight: 3 } : m))));
+    assert.equal(await pictures.picturesThisWeek(pool, ada.id, { ...settings, imageModels: weighed }), 4 + 3);
   });
 
   let messageId;

@@ -8,6 +8,7 @@
 //   A · light     B · light
 //   [A] [B]                          which picture the buttons are for
 //   [Propose A as the featured picture] [Use A in the app] [More like A]
+//   Drawn with Gemini 3 Pro Image.        the picture model that drew them (#6205)
 //   Paid from your weekly building time.
 //
 // The card holds ids and addresses only; each picture is read from its
@@ -47,6 +48,8 @@ export interface GalleryState {
   featured: { letter: string; href: string } | null;
   used: string[];
   designed: string[];
+  // #6205: the name of the picture model that drew them, when the card says.
+  model: string | null;
 }
 
 function size(value: unknown): number | null {
@@ -84,6 +87,8 @@ export function galleryOf(card: Record<string, unknown>): GalleryState {
   const featuredRow = card.featured && typeof card.featured === 'object' ? card.featured as Record<string, unknown> : null;
   const href = featuredRow && typeof featuredRow.href === 'string' && featuredRow.href.startsWith('#') ? featuredRow.href : '';
   const rootId = Number(card.designRootId);
+  const modelRow = card.model && typeof card.model === 'object' ? card.model as Record<string, unknown> : null;
+  const model = modelRow && typeof modelRow.label === 'string' ? modelRow.label.replace(/\s+/g, ' ').trim().slice(0, 40) : '';
   return {
     images,
     letters,
@@ -94,6 +99,7 @@ export function galleryOf(card: Record<string, unknown>): GalleryState {
     used: Array.isArray(card.used)
       ? card.used.map((u) => String((u as { id?: unknown })?.id || '')).filter((id) => ID_RE.test(id)) : [],
     designed: Array.isArray(card.designed) ? card.designed.map(String).filter((id) => ID_RE.test(id)) : [],
+    model: model || null,
   };
 }
 
@@ -245,6 +251,9 @@ export function GalleryCard({ message, card }: BotCardProps): ReactNode {
         </a>
       ) : null}
       {error ? <p className="messages-bot-note" role="alert">{error}</p> : null}
+      {g.model ? (
+        <p className="messages-bot-note" data-bot-gallery-model="">{t('messages:botCards.gallery.drawnWith', { model: g.model })}</p>
+      ) : null}
       <p className="messages-bot-note" data-bot-gallery-paid="">{t('messages:botCards.gallery.paid')}</p>
     </div>
   );

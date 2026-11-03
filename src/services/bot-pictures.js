@@ -17,9 +17,13 @@
 //            plain words. The call itself runs on the bot's own key, as every
 //            model call of the bot's does, and its spend is recorded on the
 //            bot's account as theirs are;
-//   draw     the bot setting `imageModel` (an image-output model on
-//            OpenRouter) is asked once per picture, through Chat Completions
-//            with `modalities: ["image", "text"]`. OpenRouter answers with
+//   draw     one of the image models an admin lists (bot-picture-models.js,
+//            #6205: the bot setting `imageModels`, the default first, which
+//            is the setting `imageModel`), each an image-output model on
+//            OpenRouter, is asked once per picture, through Chat Completions
+//            with `modalities: ["image", "text"]`. A person may name one by
+//            its key ("best"); a costlier one counts as more of their weekly
+//            pictures (its weight). OpenRouter answers with
 //            the pictures as data URLs in `choices[0].message.images[]`
 //            (`image_url.url`); a model that sends none is a failure the
 //            person hears, not an empty gallery. A dark variant is drawn from
@@ -42,8 +46,9 @@ const { platformHeaders } = require('./openrouter-client');
 // #5123: every OpenRouter request denies data collection.
 const { noTrainingProvider, withNoTraining } = require('../../worker/openrouter-privacy');
 const { sniffImageType } = require('./attachments');
+const pictureModels = require('./bot-picture-models');
 
-const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+const DEFAULT_IMAGE_MODEL = pictureModels.DEFAULT_MODEL_ID;
 const DEFAULT_WEEKLY_CAP = 24;
 const MAX_COUNT = 4;
 const LETTERS = Object.freeze(['A', 'B', 'C', 'D']);
@@ -154,9 +159,11 @@ function refusalText(found) {
 
 /**
  * Pure: make_pictures' arguments, checked: { prompt, count, variants, aspect,
- * purpose, like } or { error } in words the model can act on.
+ * purpose, like, model } or { error } in words the model can act on. `model`
+ * is a picture model's key, or null for the default; with `models` (the
+ * offered list, bot-picture-models.js modelsOf) it must be one of them.
  */
-function normalizeAsk(args = {}) {
+function normalizeAsk(args = {}, { models = null } = {}) {
   const prompt = clip(args.prompt, MAX_PROMPT_CHARS);
   if (prompt.length < 3) return { error: 'Say what the picture should show (prompt), in a sentence or two.' };
   const count = args.count == null ? 1 : Number(args.count);
@@ -175,7 +182,12 @@ function normalizeAsk(args = {}) {
   if (!PURPOSES.includes(purpose)) return { error: 'for is featured, app, design or other.' };
   const like = args.like == null || args.like === '' ? null : String(args.like).trim().toUpperCase().slice(0, 1);
   if (like && !LETTERS.includes(like)) return { error: 'like is the letter of a picture in the last gallery, A to D.' };
-  return { prompt, count, variants, aspect, purpose, like };
+  const model = args.model == null || args.model === '' ? null : String(args.model).trim().toLowerCase();
+  if (model && !pictureModels.KEY_RE.test(model)) return { error: 'model is the key of one of the picture models, such as standard.' };
+  if (model && Array.isArray(models) && !models.some((m) => m.key === model)) {
+    return { error: `model is one of: ${pictureModels.choicesText(models)}.` };
+  }
+  return { prompt, count, variants, aspect, purpose, like, model };
 }
 
 /** Pure: how many pictures an ask makes. */
@@ -198,11 +210,19 @@ function pictureAllowance({ cap, used, asked }) {
   return { ok: true, left: left - want };
 }
 
-/** Pure: the words for a refused allowance. */
-function allowanceText(allowance) {
+/**
+ * Pure: the words for a refused allowance. `model` is the picture model
+ * asked for: one that counts as more than one picture says so.
+ */
+function allowanceText(allowance, model = null) {
   if (allowance.why === 'off') return 'Pictures are switched off on Homeroom right now. Nothing was made.';
   if (allowance.why === 'used_up') return 'You have made all the pictures you can this week. It resets on Monday. Nothing was made.';
-  return `You have ${allowance.left} picture${allowance.left === 1 ? '' : 's'} left this week: ask for that many or fewer. Nothing was made.`;
+  const left = `You have ${allowance.left} picture${allowance.left === 1 ? '' : 's'} left this week`;
+  const weight = Number(model?.weight) || 1;
+  if (weight > 1) {
+    return `${left}, and each picture from ${model.label} counts as ${weight} of them: ask for fewer, or use another model. Nothing was made.`;
+  }
+  return `${left}: ask for that many or fewer. Nothing was made.`;
 }
 
 /** Pure: a picture's label on the card: "A", or "A · light" when it comes in both. */
@@ -450,14 +470,21 @@ async function drawAll(ask, { model, apiKey, baseUrl, origin, fetchImpl, like = 
 
 // ── Keeping them ─────────────────────────────────────────────────────────
 
-/** How many pictures this person has had made this week (Monday 00:00 UTC on). */
-async function picturesThisWeek(pool, userId) {
+/**
+ * How many of this week's pictures this person has used (Monday 00:00 UTC
+ * on): each picture made counts as its model's weight in the list in force
+ * (`settings`: the bot's, bot-picture-models.js weightOfId), so a model's
+ * weight an admin changes counts for this week's pictures too.
+ */
+async function picturesThisWeek(pool, userId, settings = null) {
   if (!userId) return 0;
-  const { rows: [row] } = await pool.query(
-    'SELECT COALESCE(SUM(images), 0)::int AS n FROM homeroom_bot_pictures WHERE payer_user_id = $1 AND created_at >= $2',
+  const { rows } = await pool.query(
+    `SELECT model, COALESCE(SUM(images), 0)::int AS n FROM homeroom_bot_pictures
+      WHERE payer_user_id = $1 AND created_at >= $2
+      GROUP BY model`,
     [Number(userId), require('./limits').weekStartUtc()],
   );
-  return Number(row?.n) || 0;
+  return rows.reduce((sum, r) => sum + (Number(r.n) || 0) * pictureModels.weightOfId(settings, r.model), 0);
 }
 
 /**
@@ -535,11 +562,18 @@ async function generate(pool, config, {
   const found = guard(ask.prompt);
   if (found) return { ok: false, status: 422, error: refusalText(found), rule: found.rule };
   const s = settings || await (deps.homeroomBot || require('./homeroom-bot')).readSettings(pool);
+  // #6205: the model asked for, which must be one offered, and what it can draw.
+  const picked = pictureModels.pickModel(s, ask.model);
+  if (picked.error) return { ok: false, status: 400, error: `${picked.error} Nothing was made.` };
+  const chosen = picked.model;
+  const cannot = pictureModels.cannotDraw(chosen, ask);
+  if (cannot) return { ok: false, status: 400, error: `${cannot} Nothing was made.` };
   const dm = deps.dm || require('./homeroom-bot-dm');
+  const cap = s.pictureWeeklyCap ?? DEFAULT_WEEKLY_CAP;
   const allowance = pictureAllowance({
-    cap: s.pictureWeeklyCap ?? DEFAULT_WEEKLY_CAP, used: await picturesThisWeek(pool, payerId), asked: imagesAsked(ask),
+    cap, used: await picturesThisWeek(pool, payerId, s), asked: imagesAsked(ask) * chosen.weight,
   });
-  if (!allowance.ok) return { ok: false, status: 429, error: allowanceText(allowance), allowance };
+  if (!allowance.ok) return { ok: false, status: 429, error: allowanceText(allowance, chosen), allowance };
   if (await dm.overWeeklyAllowance(pool, s, payerId)) {
     return { ok: false, status: 402, error: 'Your building time for this week is used up, so I can\'t make pictures until it resets on Monday. Nothing was made.' };
   }
@@ -552,7 +586,7 @@ async function generate(pool, config, {
   const apiKey = deps.apiKey !== undefined ? deps.apiKey
     : await (deps.mayor || require('./homeroom-bot-mayor')).botKey(pool, config, bot.id).catch(() => null);
   if (!apiKey) return { ok: false, status: 503, error: 'I can\'t reach the picture model just now. Nothing was made.' };
-  const model = String(s.imageModel || DEFAULT_IMAGE_MODEL);
+  const model = chosen.id;
   const startedMs = Date.now();
   const drawn = await drawAll(ask, {
     model, apiKey, baseUrl: config?.openrouterApiBase, origin: config?.openrouterOrigin,
@@ -585,8 +619,11 @@ async function generate(pool, config, {
     userId: payerId, model, images: kept.images.length, failed: drawn.failures.length, ms: Date.now() - startedMs,
   });
   return {
-    ok: true, pictureId: kept.pictureId, images: kept.images, model, costUsd: drawn.costUsd,
-    left: Math.max(0, allowance.left + (imagesAsked(ask) - kept.images.length)), failed: drawn.failures.length,
+    ok: true, pictureId: kept.pictureId, images: kept.images, model,
+    picked: { key: chosen.key, label: chosen.label, weight: chosen.weight }, costUsd: drawn.costUsd,
+    // What was asked for and not made is not counted.
+    left: Math.max(0, allowance.left + (imagesAsked(ask) - kept.images.length) * chosen.weight),
+    cap: Math.max(0, Math.floor(Number(cap) || 0)), failed: drawn.failures.length,
     ms: Date.now() - startedMs,
   };
 }
@@ -601,9 +638,15 @@ function pictureUrl(id) {
 /**
  * Pure: the gallery card under a reply: { type: 'gallery', v: 1, prompt,
  * images: [{ id, url, label, letter, variant, width, height }], project,
- * canFeature, designRootId, paid, state }. Ids and addresses, never bytes.
+ * canFeature, designRootId, model, paid, state }. Ids and addresses, never
+ * bytes. `model` ({ key, label }, #6205) is the picture model that drew them
+ * all, which the card names.
  */
-function galleryCard({ prompt, images, variants = [null], project = null, canFeature = false, designRootId = null, purpose = 'other' }) {
+function galleryCard({
+  prompt, images, variants = [null], project = null, canFeature = false, designRootId = null, purpose = 'other', model = null,
+}) {
+  const modelLabel = clip(model?.label, 40);
+  const modelKey = pictureModels.KEY_RE.test(String(model?.key || '')) ? String(model.key) : null;
   return {
     type: 'gallery',
     v: 1,
@@ -621,6 +664,7 @@ function galleryCard({ prompt, images, variants = [null], project = null, canFea
     canFeature: !!(canFeature && project?.slug),
     ...(designRootId ? { designRootId: Number(designRootId) } : {}),
     purpose: PURPOSES.includes(purpose) ? purpose : 'other',
+    ...(modelLabel ? { model: { ...(modelKey ? { key: modelKey } : {}), label: modelLabel } } : {}),
     paid: 'week',
     state: 'ready',
   };

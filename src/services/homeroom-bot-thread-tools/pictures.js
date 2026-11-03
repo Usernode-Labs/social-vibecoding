@@ -9,8 +9,13 @@
 // puts them under the reply as a gallery card (homeroom-bot-cards/gallery.js,
 // frontend features/messages/bot-cards/gallery.tsx). The card carries ids
 // and addresses only; the pictures are in the media store.
+//
+// #6205: they are drawn on one of the picture models an admin offers
+// (bot-picture-models.js), the default unless they ask for another by its
+// key; the card names the one that drew them.
 
 const log = require('../logger');
+const pictureModels = require('../bot-picture-models');
 
 function pictures(deps = {}) { return deps.botPictures || require('../bot-pictures'); }
 function mayor(deps = {}) { return deps.mayor || require('../homeroom-bot-mayor'); }
@@ -33,6 +38,7 @@ const TOOL = Object.freeze({
         for: { type: 'string', enum: ['featured', 'app', 'design', 'other'], description: 'featured: the project\'s card picture in Discover; app: a picture inside the app; design: for a screen design; other: anything else.' },
         project: { type: 'string', description: 'The project it is for, by name, when it is for one. Needed for a card picture.' },
         like: { type: 'string', description: 'The letter (A to D) of a picture in the last gallery here, to make more like it.' },
+        model: { type: 'string', description: 'Which picture model draws them, by its key. Leave it out for the default.' },
       },
       required: ['prompt'],
       additionalProperties: false,
@@ -45,8 +51,45 @@ function offered(ctx) {
     && Number(ctx.settings?.pictureWeeklyCap ?? 1) !== 0;
 }
 
+/** Pure: the picture models offered now, the default first. */
+function modelsHere(ctx) {
+  return pictureModels.modelsOf(ctx?.settings);
+}
+
+/** Pure: how one model reads in the tool and the prompt. */
+function modelLine(m) {
+  const counts = m.weight > 1 ? `each picture counts as ${m.weight} of their weekly pictures` : 'each picture counts as 1';
+  return `${m.key}: ${m.label}${m.isDefault ? ', the default' : ''}${m.note ? `. ${m.note}` : ''} (${counts})`;
+}
+
+/**
+ * The tool as offered here: its `model` names the offered keys, and says
+ * what each is good at and what it counts as.
+ */
+function toolFor(ctx) {
+  const models = modelsHere(ctx);
+  const base = TOOL.function.parameters.properties.model;
+  return {
+    ...TOOL,
+    function: {
+      ...TOOL.function,
+      parameters: {
+        ...TOOL.function.parameters,
+        properties: {
+          ...TOOL.function.parameters.properties,
+          model: {
+            ...base,
+            enum: models.map((m) => m.key),
+            description: `${base.description} One of: ${models.map(modelLine).join('; ')}.`,
+          },
+        },
+      },
+    },
+  };
+}
+
 function tools(ctx) {
-  return offered(ctx) ? [TOOL] : [];
+  return offered(ctx) ? [toolFor(ctx)] : [];
 }
 
 function promptLines(ctx) {
@@ -62,6 +105,20 @@ function promptLines(ctx) {
     '  When they ask to use a picture in the app, offer a request (offer_request) whose details carry the picture\'s link',
     '  exactly as they gave it, on a line of its own, so the build can download it. When they ask for more like one, call',
     '  make_pictures again with like set to its letter and a prompt from their words and the last one.',
+    ...modelPromptLines(ctx),
+  ];
+}
+
+/** The lines on the picture models, when there is a choice of them. */
+function modelPromptLines(ctx) {
+  const models = modelsHere(ctx);
+  if (models.length < 2) return [];
+  return [
+    '  The picture models they can choose (make_pictures model), the default first:',
+    ...models.map((m) => `  - ${modelLine(m)}.`),
+    '  Use the default unless they ask for another model, for the best quality or for the cheapest one. When they ask',
+    '  which models there are, name these and what each is good at. Never name a model that is not listed here.',
+    '  After making pictures, say how many of their weekly pictures are left (picturesLeftThisWeek of weeklyPictures).',
   ];
 }
 
@@ -80,7 +137,7 @@ async function likePicture(pool, ctx, letter, deps) {
 async function makePictures(pool, ctx, args) {
   const deps = ctx.deps?.pictures || {};
   const p = pictures(deps);
-  const ask = p.normalizeAsk(args);
+  const ask = p.normalizeAsk(args, { models: modelsHere(ctx) });
   if (ask.error) return { ok: false, error: `${ask.error} Nothing was made.` };
   // A refusal on the content rules costs nothing, and comes first.
   const found = p.guard(ask.prompt);
@@ -112,7 +169,7 @@ async function makePictures(pool, ctx, args) {
   }
   ctx.card = p.galleryCard({
     prompt: ask.prompt, images: made.images, variants: ask.variants, purpose: ask.purpose, canFeature,
-    project: app ? { slug: app.slug, name: app.name || app.slug } : null,
+    project: app ? { slug: app.slug, name: app.name || app.slug } : null, model: made.picked || null,
   });
   const n = made.images.length;
   // "What I looked at" (P1): what this turn did, in plain words.
@@ -125,7 +182,9 @@ async function makePictures(pool, ctx, args) {
     made: n,
     labels: ctx.card.images.map((im) => im.label),
     shown: 'As a gallery under your reply. Say how many you made and what they are for, in a sentence; you cannot see them.',
+    ...(made.picked ? { model: made.picked.label, countedAs: made.picked.weight } : {}),
     picturesLeftThisWeek: made.left,
+    ...(made.cap != null ? { weeklyPictures: made.cap } : {}),
     ...(made.failed ? { notMade: `${made.failed} of them could not be made this time.` } : {}),
     ...(canFeature ? { canFeature: 'They may propose one as the project\'s card picture from the gallery.' } : {}),
   };
@@ -141,4 +200,4 @@ async function run(pool, ctx, name, args) {
   }
 }
 
-module.exports = { TOOL, tools, run, promptLines, makePictures };
+module.exports = { TOOL, tools, toolFor, run, promptLines, makePictures };

@@ -92,9 +92,9 @@ test('every prompt the model gets starts with the content rules, then their word
 
 test('what was asked is checked: count, variants, shape, purpose and a letter to draw more like', () => {
   assert.deepEqual(pictures.normalizeAsk({ prompt: '  A pear  ' }),
-    { prompt: 'A pear', count: 1, variants: [null], aspect: 'square', purpose: 'other', like: null });
+    { prompt: 'A pear', count: 1, variants: [null], aspect: 'square', purpose: 'other', like: null, model: null });
   const both = pictures.normalizeAsk({ prompt: 'A pear', count: 4, variants: ['dark', 'light', 'dark'], aspect: 'tall', for: 'featured', like: 'b' });
-  assert.deepEqual(both, { prompt: 'A pear', count: 4, variants: ['light', 'dark'], aspect: 'tall', purpose: 'featured', like: 'B' });
+  assert.deepEqual(both, { prompt: 'A pear', count: 4, variants: ['light', 'dark'], aspect: 'tall', purpose: 'featured', like: 'B', model: null });
   assert.equal(pictures.imagesAsked(both), 8);
   assert.match(pictures.normalizeAsk({ prompt: 'x' }).error, /Say what the picture should show/);
   assert.match(pictures.normalizeAsk({ prompt: 'A pear', count: 5 }).error, /count is 1 to 4/);

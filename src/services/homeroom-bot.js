@@ -66,6 +66,7 @@ const { agentApiFailure } = require('./agent-result-text');
 // Newcomer run five: a first version's stages, as they happen.
 const timeline = require('./first-version-timeline');
 const defaultModelSetting = require('./default-model');
+const pictureModels = require('./bot-picture-models');
 const helperModelSetting = require('./helper-model');
 
 // The bot-build machine's legacy side (src/workflow/bot-build/): live and
@@ -252,6 +253,9 @@ const KEY_LIVE_BUILD_STREAM = 'live_build_stream';
 // is the default model; a cap of 0 makes none.
 const KEY_IMAGE_MODEL = 'homeroom_bot_model_image';
 const KEY_PICTURE_WEEKLY_CAP = 'homeroom_bot_picture_weekly_cap';
+// #6205: the picture models a person may choose from (bot-picture-models.js),
+// as JSON; blank is the built-in list. `imageModel` stays the default.
+const KEY_IMAGE_MODELS = 'homeroom_bot_image_models';
 const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
 const MAX_PICTURE_WEEKLY_CAP = 1000;
 const SETTING_KEYS = Object.freeze([
@@ -262,7 +266,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING, KEY_APP_CAPS,
   KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL, KEY_HELPER_MODEL,
-  KEY_IMAGE_MODEL, KEY_PICTURE_WEEKLY_CAP,
+  KEY_IMAGE_MODEL, KEY_PICTURE_WEEKLY_CAP, KEY_IMAGE_MODELS,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_USER_WEEKLY_CENTS = 10_000_000;
@@ -307,6 +311,8 @@ const DEFAULTS = Object.freeze({
   // P8: pictures (services/bot-pictures.js).
   imageModel: DEFAULT_IMAGE_MODEL,
   pictureWeeklyCap: 24,
+  // #6205: null is the built-in list of picture models.
+  imageModels: null,
 });
 const MAX_CONCURRENCY = 4;
 const MAX_BUILD_CONCURRENCY = 4;
@@ -699,12 +705,13 @@ function parseSettings(rows) {
   const storedImageModel = String(map.get(KEY_IMAGE_MODEL) || '').trim();
   const imageModel = MODEL_ID_RE.test(storedImageModel) ? storedImageModel : DEFAULTS.imageModel;
   const pictureWeeklyCap = clampInt(map.get(KEY_PICTURE_WEEKLY_CAP), DEFAULTS.pictureWeeklyCap, 0, MAX_PICTURE_WEEKLY_CAP);
+  const imageModels = pictureModels.parseImageModels(map.get(KEY_IMAGE_MODELS)) || DEFAULTS.imageModels;
   return {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
     liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
     defaultModel, helperModel, everyoneSince, proposalCeiling, appCaps, liveBuildStream,
-    imageModel, pictureWeeklyCap,
+    imageModel, pictureWeeklyCap, imageModels,
   };
 }
 
@@ -1030,6 +1037,12 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: `pictureWeeklyCap must be an integer from 0 (no pictures) to ${MAX_PICTURE_WEEKLY_CAP}` };
     }
     updates.push([KEY_PICTURE_WEEKLY_CAP, String(n)]);
+  }
+  // #6205: the picture models offered (null: the built-in list).
+  if (body.imageModels !== undefined) {
+    const checked = pictureModels.validateImageModels(body.imageModels);
+    if (!checked.ok) return checked;
+    updates.push([KEY_IMAGE_MODELS, checked.stored]);
   }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
@@ -10116,6 +10129,7 @@ module.exports = {
   KEY_HELPER_MODEL,
   KEY_IMAGE_MODEL,
   KEY_PICTURE_WEEKLY_CAP,
+  KEY_IMAGE_MODELS,
   DEFAULT_IMAGE_MODEL,
   MODEL_ID_RE,
   triagePromptFor,

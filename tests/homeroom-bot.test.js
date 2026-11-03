@@ -312,6 +312,8 @@ test('settings default to off and clamp their numbers', () => {
     // Homeroom bot parity, P8: pictures on the default image model, 24 a
     // person a week (services/bot-pictures.js).
     imageModel: 'google/gemini-2.5-flash-image', pictureWeeklyCap: 24,
+    // #6205: the built-in list of picture models (bot-picture-models.js).
+    imageModels: null,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
