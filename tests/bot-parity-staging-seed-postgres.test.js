@@ -1,4 +1,5 @@
 'use strict';
+const { dmStream } = require('./lib/bot-dm-stream');
 
 // Homeroom bot parity (P1-P9): the staging preview's three private threads
 // with Homeroom bot (services/staging-messages.js ensureBotParityThreads),
@@ -162,7 +163,8 @@ test('the staging preview\'s private threads with Homeroom bot, with their new c
     assert.doesNotMatch(html, /—|gray-|indigo-/);
   }
 
-  const page = await conversations.listMessages(pool, viewer, conversationId, {});
+  // #6207: what the fixture wrote; Main itself leaves a request's news out.
+      const page = await dmStream(pool, viewer, conversationId);
   const main = [...(page.messages || page)].sort((a, b) => a.id - b.id);
   assert.equal(main.at(-1).metadata?.homeroomBot?.issueNumber, 18, 'the DM still ends with the demo\'s story card');
 });

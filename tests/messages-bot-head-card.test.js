@@ -365,33 +365,24 @@ test('the two-questions card leads with the request’s card too', () => {
   assert.match(plan, /\{head \? <BotHeadWords head=\{head\} objects=\{message\.objects\} \/>\s*: meta\.lead \? <MessageMarkdown content=\{meta\.lead\} appSlug=\{meta\.appSlug\} \/> : null\}/);
 });
 
-test('the staging preview’s declared check finds the demo DM’s news as one row per request', () => {
-  // One request, one story: the request's card no longer leads a big card
-  // in the main chat; each request is one row (./bot-news-line.tsx), its
-  // earlier news folded into its newest, which counts the updates. The card
-  // still leads the message inside the request's thread. A finished request
-  // (the first version that went live) folds with the others beside it into
-  // one line of words (N finished · N couldn't build).
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
+test('#6207: the staging preview’s declared check finds Main Chat without any request’s news', () => {
+  // 3 Nov 2026: Main Chat is the conversation. A request's news (its rows,
+  // the finished group, its question) is on the request's page, which its
+  // row on the Homeroom bot page opens; the demo DM still holds it, and Main
+  // draws none of it.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#6207 \(3 Nov 2026\): Main Chat holds no request's news/.test(t.name));
   assert.ok(check, 'declared');
-  // 1 Nov 2026: the chat with the bot is the Homeroom bot tab's alone, in its column.
   assert.equal(check.path, '/?demo=1#homeroom-bot/main');
-  assert.match(check.expectSelector, /^#ai-main-pane \.messages-thread-scroll:has/);
-  assert.match(check.expectSelector, /:has\(\[data-bot-settled-count=finished\]\)/, 'a first version that went live is folded with the finished');
-  // 31 Oct 2026: the request still waiting is a row that counts its updates,
-  // and its question is drawn whole in the chat, its answers under it: the
-  // thread that drew it whole is gone (./bot-request-page.test.js).
-  assert.match(check.expectSelector, /:has\(\[data-bot-news-state=needs\] \[data-bot-thread-link\]\)/, 'the request still waiting counts its updates');
-  assert.match(check.expectSelector, /article:has\(\[data-bot-thread-label\]\) \[data-bot-question=open\] \[data-bot-answer\]$/, 'its question, whole, with its answers');
+  // A request's row wears its number tag; a first version's news, which stays, wears none.
+  assert.equal(check.expectSelector, '#ai-main-pane[data-ai-column=main] .messages-thread-scroll:not(:has([data-request-tag]))');
+  assert.match(read('frontend/src/features/messages/bot-news-line.tsx'), /\{meta\.firstVersion \? null : <RequestTag number=\{meta\.issueNumber\} size="line" \/>\}/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, 'Which night should the rota start on?', 'the question still waiting, in its own words');
-  // The fixture it reads (services/staging-messages.js ensureBotDmStory):
-  // request #18's question, open, in the story the bot told before Main
-  // Chat was one conversation.
+  assert.equal(check.expectText, 'Main Chat');
+  // The fixture still writes the story (services/staging-messages.js ensureBotDmStory).
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /const question = 'Which night should the rota start on\?';/);
-  assert.match(fixture, /kind: 'question', \.\.\.about, mirrors: true, status: 'open',/);
 });
+
 
 // ── Chat replies (homeroom-bot-mayor.js) ────────────────────────────────
 

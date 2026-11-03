@@ -80,6 +80,11 @@
       "id": "privilege-changes",
       "sha256": "be7905d5c1d31e7ca1d4d1d493b89674a890ecd38e47601eea9ec357f31ed014",
       "schemaSha256": "90b4c0935766c30dc24345c00055051cb8622832dd8787ced732b7f251b5af7f"
+    },
+    {
+      "id": "private-thread-done",
+      "sha256": "1950ed9c494fe8ce9dc27e8588d269bebcd9553e987f1da92e99bd0af22183d6",
+      "schemaSha256": "e18b3d9065e218ec05b6869c0f8db99ae97fa048e48fdcc83dc6aab9192de8a1"
     }
   ]
 }

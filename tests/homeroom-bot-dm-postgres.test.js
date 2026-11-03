@@ -1,4 +1,5 @@
 'use strict';
+const { dmStream } = require('./lib/bot-dm-stream');
 
 // #3624: the Homeroom bot's DM against the full PostgreSQL schema.
 //
@@ -677,7 +678,8 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       const again = await staging.resolveLegacyLink(pool, viewer, staging.BOT_DM_LEGACY_ID);
       assert.equal(first, again);
       assert.notEqual(first, staging.BOT_DM_LEGACY_ID);
-      const page = await conversations.listMessages(pool, viewer, first, {});
+      // #6207: what the fixture wrote; Main itself leaves a request's news out.
+      const page = await dmStream(pool, viewer, first);
       const messages = page.messages || page;
       // #3624 stage 2: a question, and a request it offers to file. #3707:
       // the offer answers the viewer's ask, between them, and quotes it.
@@ -1190,15 +1192,19 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     );
     assert.deepEqual(rang.map((r) => r.kind), ['build_needs_you'], 'the question rings; the quiet line does not');
 
-    // Main: the card, the moment and the quiet line, one after another.
+    // #6207 (3 Nov 2026): Main is the conversation. The card, the moment and
+    // the quiet line are written as before (and the moment rings, above), but
+    // Main's stream and its unread count leave a request's news out: it is on
+    // the request's page.
     const main = await conversations.listMessages(pool, viewer, conversationId, {});
     const ids = main.messages.map((m) => m.id);
-    assert.ok(ids.includes(card.messageId) && ids.includes(asked.messageId) && ids.includes(building.messageId));
-    const root = main.messages.find((m) => m.id === card.messageId);
+    assert.ok(!ids.includes(card.messageId) && !ids.includes(asked.messageId) && !ids.includes(building.messageId));
+    const written = (await dmStream(pool, viewer, conversationId)).messages;
+    const root = written.find((m) => m.id === card.messageId);
     assert.ok(!root.thread || !root.thread.replyCount, 'the card opens no thread of its own');
     const after = await conversations.getConversation(pool, viewer, conversationId);
-    assert.equal(after.unreadCount, read0 + 1, 'the moment counts once; the quiet line not at all');
-    assert.equal(after.latestMessage.id, building.messageId, 'the newest thing said in Main');
+    assert.equal(after.unreadCount, read0, 'a request\'s news counts nothing in Main');
+    assert.ok(![card.messageId, asked.messageId, building.messageId].includes(after.latestMessage?.id), 'nor is it Main\'s preview');
     // Read where it is shown: a main-chat position, and its bell row goes.
     await conversations.markRead(pool, viewer, conversationId, asked.messageId);
     assert.equal((await conversations.getConversation(pool, viewer, conversationId)).unreadCount, 0);
@@ -1344,11 +1350,10 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const talk = await say({ kind: 'chat' });
     const listed = await conversations.listMessages(pool, viewer, conversationId, { limit: 50 });
     const cardsOf = (id) => listed.messages.find((m) => m.id === id)?.objects?.length;
-    assert.equal(cardsOf(storyCard), 0, 'a request\'s row comes without its card');
-    assert.equal(cardsOf(ringing), 0);
+    // #6207: a request's news is not in Main at all now, card or no card.
+    assert.equal(cardsOf(storyCard), undefined, 'a request\'s row is on its page, not in Main');
+    assert.equal(cardsOf(ringing), undefined);
     assert.equal(cardsOf(talk), 1, 'the bot\'s conversation keeps its cards');
-    const around = await conversations.listMessages(pool, viewer, conversationId, { around: storyCard, limit: 10 });
-    assert.equal(around.messages.find((m) => m.id === storyCard).objects.length, 0, 'a permalink window too');
     const story = await conversations.listThread(pool, viewer, conversationId, storyCard, {});
     assert.equal(story.root.objects.length, 1, 'the story keeps the request\'s card');
     assert.equal(story.messages.find((m) => m.id === ringing).objects.length, 1);

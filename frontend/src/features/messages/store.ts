@@ -1615,6 +1615,18 @@ export function takePendingAttach(conversationId: number): { object: StagedObjec
   return { object, placeholder };
 }
 
+/**
+ * Attach `object` to `conversationId`'s composer when it next reads its
+ * one-shot, for a page that names what Main Chat is about before that composer
+ * has mounted (a request reopened from its bot-page address, features/ai/,
+ * 3 Nov 2026). A composer already mounted takes it when the caller also sends
+ * `usernode:messages-attach`, as openBot does.
+ */
+export function stashObject(conversationId: number, object: StagedObject): void {
+  if (!validId(conversationId)) return;
+  pendingAttach = { conversationId, object, placeholder: '' };
+}
+
 // B6: a message of the bot's to quote in the composer once its chat has
 // loaded: the App tab's Change something, under a first version's plan.
 let pendingQuote: { conversationId: number; messageId: number } | null = null;

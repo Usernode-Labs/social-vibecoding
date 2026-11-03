@@ -375,3 +375,19 @@ test('WP1: another build of a request, and the build before, in plain words', ()
   assert.equal(said({ build_error: 'superseded: a later verdict on the same issue' }), 'never built: a later verdict on the same issue');
   assert.equal(said({}), 'nothing recorded about how it ended');
 });
+
+// #6219 (3 Nov 2026): #6210's plan waited for Build it, but a question left
+// open from its first, held pass made the request read as a question, and
+// the Homeroom bot page (which leaves the question stage to the Needs you
+// feed) listed it nowhere. A plan waiting for Build it is what the person
+// acts on now: a question asked before the look that made it does not hide
+// it. A question the plan's own look asked still wins.
+test('#6219: a plan waiting for Build it wins over a question left open from before its look', () => {
+  const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(40) };
+  assert.equal(stage({ ...waiting, question_at: ago(90) }).stage, 'plan', 'a question older than the run');
+  assert.equal(stage({ ...waiting, question_at: ago(45) }).stage, 'question', 'the plan\'s own look asked it');
+  assert.equal(stage({ ...waiting }).stage, 'plan');
+  // The bot page lists a plan under Needs you; a question it leaves to the feed.
+  const { BOT_STANDING } = require('../src/services/ai-work');
+  assert.deepEqual(BOT_STANDING.plan, { group: 'needs', what: 'plan' });
+});
