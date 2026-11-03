@@ -181,6 +181,61 @@ test('a shell upgrade preserves certified API partitions and discards unowned id
   assert.deepEqual(lifecycle, ['skipWaiting', 'claim']);
 });
 
+// A worker the browser stopped while idle starts again with no active scope.
+// If someone else signed in meanwhile, the previous identity's entries are
+// still on disk: never served (keyed and replayed by scope), and dropped at
+// the restarted worker's first scoped read rather than at the next page load.
+test('a restarted worker drops other identities\' API entries at its first scoped read', async () => {
+  const stores = new Map();
+  const keyOf = request => new URL(typeof request === 'string' ? request : request.url, ORIGIN).href;
+  const caches = {
+    open: async name => {
+      if (!stores.has(name)) stores.set(name, new Map());
+      const entries = stores.get(name);
+      return {
+        match: async request => entries.get(keyOf(request))?.clone(),
+        put: async (request, response) => { entries.set(keyOf(request), response.clone()); },
+        keys: async () => [...entries.keys()].map(url => new Request(url)),
+        delete: async request => entries.delete(keyOf(request)),
+      };
+    },
+    keys: async () => [...stores.keys()],
+    delete: async name => stores.delete(name),
+  };
+  const [a, b] = ['a'.repeat(64), 'b'.repeat(64)];
+  const api = await caches.open(API_CACHE);
+  const stamped = (scope, body) => new Response(body, { headers: {
+    'X-Usernode-Cache-Scope': scope, 'sw-cached-at': String(Date.now()), 'Cache-Control': 'private',
+  } });
+  await api.put(`/api/home-layout?__usernode_cache_scope=${a}`, stamped(a, '{"fake":"a"}'));
+  await api.put(`/api/me/ai-budget?__usernode_cache_scope=${a}`, stamped(a, '{"fake":"a"}'));
+  await api.put(`/api/apps?__usernode_cache_scope=${b}`, stamped(b, '{"fake":"b"}'));
+
+  const handlers = {};
+  vm.runInNewContext(SW_SRC, {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, handler) => { handlers[name] = handler; } },
+    URL, Headers, Request, Response, caches, setTimeout, clearTimeout,
+    fetch: async () => new Response('{"fresh":"b"}', { headers: {
+      'Content-Type': 'application/json', 'Cache-Control': 'private', 'X-Usernode-Cache-Scope': b,
+      'X-Usernode-Cache-Expires': new Date(Date.now() + 3600e3).toISOString(),
+    } }),
+  });
+  let answered;
+  handlers.fetch({
+    // Another URL than B's saved one, so only the scope purge can touch the rest.
+    request: new Request(`${ORIGIN}/api/notifications/count`, { headers: { Accept: 'application/json', 'X-Usernode-Cache-Scope': b } }),
+    respondWith: (promise) => { answered = promise; },
+    waitUntil: () => {},
+  });
+  assert.equal(JSON.parse(await (await answered).text()).fresh, 'b');
+  for (let i = 0; i < 50 && [...(stores.get(API_CACHE) || new Map()).keys()].some(k => k.includes(a)); i++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  const left = [...stores.get(API_CACHE).keys()];
+  assert.deepEqual(left.filter(k => k.includes(a)), [], 'the previous identity\'s entries are gone');
+  assert.ok(left.includes(`${ORIGIN}/api/apps?__usernode_cache_scope=${b}`), 'the current identity\'s entries stay');
+});
+
 test('legacy version-named API caches are recognised for migration', () => {
   assert.ok(LEGACY_API_CACHE_RE.test('usernode-api-v6'));
   assert.ok(LEGACY_API_CACHE_RE.test('usernode-api-v7'));

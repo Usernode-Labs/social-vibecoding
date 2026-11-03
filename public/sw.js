@@ -1474,9 +1474,24 @@ if (typeof module !== 'undefined' && module.exports) {
     if (activeApiScope && activeApiScope !== scope) {
       retiredApiScopes.add(activeApiScope);
       void clearApiCaches().catch(() => {});
+    } else if (!activeApiScope) {
+      // A worker the browser stopped while idle starts again with no active
+      // scope, and a sign-in as someone else in between left the previous
+      // identity's entries on disk. Never served (entries are keyed and
+      // replayed by scope), but dropped now rather than at the next load.
+      void dropOtherApiScopes(scope).catch(() => {});
     }
     activeApiScope = scope;
     return { scope, epoch: apiEpoch };
+  }
+
+  function dropOtherApiScopes(scope) {
+    return queueApiCacheWork(async () => {
+      const cache = await caches.open(API_CACHE);
+      for (const key of await cache.keys()) {
+        if (new URL(key.url).searchParams.get(API_SCOPE_PARAM) !== scope) await cache.delete(key);
+      }
+    });
   }
 
   function currentApiContext(context) {
