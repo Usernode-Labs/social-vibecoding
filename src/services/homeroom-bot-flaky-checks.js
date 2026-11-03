@@ -91,8 +91,12 @@ const ERROR_LINE_RE = /(Error\b|error:|AssertionError|expected|Expected|assert|t
 function errorLine(text) {
   const lines = String(text || '').replace(ANSI_RE, '').split('\n').map((l) => l.trim()).filter(Boolean)
     .filter((l) => !SKIP_LINE_RE.test(l));
-  const hit = lines.find((l) => ERROR_LINE_RE.test(l)) || lines[0] || '';
-  const said = hit.replace(/^error:\s*/i, '').replace(/^['"]|['"]$/g, '');
+  const index = lines.findIndex((l) => ERROR_LINE_RE.test(l));
+  let said = (index >= 0 ? lines[index] : lines[0] || '').replace(/^error:\s*/i, '');
+  // A test runner writes a multi-line error as `error: |-` (or `>-`) with the
+  // message on the lines after it; the marker says nothing about the failure.
+  if (/^[|>][+-]?\d*$/.test(said) && index >= 0 && index + 1 < lines.length) said = lines[index + 1];
+  said = said.replace(/^['"]|['"]$/g, '');
   return clip(withoutEmDashes(said).split(DASH).join(','), 300);
 }
 
