@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom';
 
 import { CheckIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
+import { inlineStep } from '../../lib/i18n/direction';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import type { AiBudgetFigures } from '../header/ai-budget';
@@ -465,10 +466,10 @@ export function BuildSheetBody({ tab, onTab, onClose, heading = true, homeroom, 
   const strip = useRef<HTMLDivElement | null>(null);
   const move = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const at = BUILD_TABS.findIndex((item) => item.id === tab);
-    const next = event.key === 'ArrowRight' ? (at + 1) % BUILD_TABS.length
-      : event.key === 'ArrowLeft' ? (at + BUILD_TABS.length - 1) % BUILD_TABS.length
-        : event.key === 'Home' ? 0
-          : event.key === 'End' ? BUILD_TABS.length - 1 : -1;
+    const step = inlineStep(event.key);
+    const next = step ? (at + step + BUILD_TABS.length) % BUILD_TABS.length
+      : event.key === 'Home' ? 0
+        : event.key === 'End' ? BUILD_TABS.length - 1 : -1;
     if (next < 0) return;
     event.preventDefault();
     onTab(BUILD_TABS[next].id);
