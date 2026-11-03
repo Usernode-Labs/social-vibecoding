@@ -95,13 +95,36 @@ export const KEY_MODE = 'homeroom_bot_mode';
 export const KEY_PAUSED_APPS = 'homeroom_bot_paused_apps';
 export const KEY_LIVE_AT_ONCE = 'homeroom_bot_live_at_once';
 export const KEY_PER_PERSON = 'homeroom_bot_per_person';
-export const LANE_SETTING_KEYS: readonly string[] = Object.freeze([KEY_MODE, KEY_PAUSED_APPS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON]);
+// 3 Nov 2026: how many of one project's requests are read at once, each on
+// a triage session of its own (its read slot: homeroom-bot.js
+// ensureBotSession). Reads were one per project, behind the project's one
+// session: on Homeroom's own board a request once waited behind 35 others,
+// though a read only reads the code and costs a few cents.
+export const KEY_READS_PER_APP = 'homeroom_bot_reads_per_app';
+export const LANE_SETTING_KEYS: readonly string[] = Object.freeze([KEY_MODE, KEY_PAUSED_APPS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_READS_PER_APP]);
 export const MODES: readonly string[] = Object.freeze(['off', 'shadow', 'live']);
 export const MAX_LIVE_AT_ONCE = 24;
 export const MAX_PER_PERSON = 6;
-export const LANE_DEFAULTS = Object.freeze({ mode: 'off', pausedApps: [] as string[], liveAtOnce: 12, perPerson: 3 });
+export const MAX_READS_PER_APP = 6;
+export const LANE_DEFAULTS = Object.freeze({ mode: 'off', pausedApps: [] as string[], liveAtOnce: 12, perPerson: 3, readsPerApp: 3 });
 
-export interface LaneSettings { mode: string; pausedApps: string[]; liveAtOnce: number; perPerson: number }
+export interface LaneSettings { mode: string; pausedApps: string[]; liveAtOnce: number; perPerson: number; readsPerApp: number }
+
+// The `source` of a further read slot's triage session (slot 1 and up:
+// homeroom-bot.js ensureBotSession), with its slot after the colon. Slot 0
+// is the triage session as it always was, with no source; what has this one
+// is never slot 0's.
+export const READ_SESSION_SOURCE = 'homeroom_bot_read';
+export const readSessionSource = (slot: number) => `${READ_SESSION_SOURCE}:${Number(slot)}`;
+
+// The bot-request machine version from which a read runs on the triage
+// session of the read slot its grant names (`readSlot`). An older release
+// runs every read of a project on its newest triage session, whatever the
+// grant says, so a read that an older release may run (its request last
+// written by an older version, or granted with no slot) takes the whole
+// project's reads while it runs, as every read did before (pickLive). The
+// machine's own version is never below this (tests pin it).
+export const READ_SLOTS_SINCE = 2;
 
 function clampInt(raw: unknown, fallback: number, min: number, max: number): number {
   const n = parseInt(String(raw ?? ''), 10);
@@ -124,6 +147,7 @@ export function laneSettings(rows: { key: string; value: string | null }[]): Lan
     mode, pausedApps,
     liveAtOnce: clampInt(map.get(KEY_LIVE_AT_ONCE), LANE_DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE),
     perPerson: clampInt(map.get(KEY_PER_PERSON), LANE_DEFAULTS.perPerson, 1, MAX_PER_PERSON),
+    readsPerApp: clampInt(map.get(KEY_READS_PER_APP), LANE_DEFAULTS.readsPerApp, 1, MAX_READS_PER_APP),
   };
 }
 
@@ -223,13 +247,16 @@ const GRANT_PENDING = (k: string) => `EXISTS (SELECT 1 FROM wf_events g
 // only a look or a build under way holds one), and the grants not applied
 // yet. An instance an admin must look at (flagged) holds none: its grant
 // is never applied, and counting it would cost a slot until it is cleared.
-// One row each: { key, app_id, slot }.
+// One row each: { key, app_id, slot, machine_version }, the version that
+// last wrote the request (for a grant on its way, the request it goes to):
+// below READ_SLOTS_SINCE, an older release may be running its read.
 export const SLOTS_IN_USE_SQL = `
-  SELECT w.key, w.app_id, w.data->'slot' AS slot FROM wf_instances w
+  SELECT w.key, w.app_id, w.data->'slot' AS slot, w.machine_version FROM wf_instances w
    WHERE w.machine = '${BOT_REQUEST}' AND w.state IN ('reading', 'following_up', 'building')
      AND jsonb_typeof(w.data->'slot') = 'object' AND w.flag IS NULL
   UNION ALL
-  SELECT g.key, g.app_id, g.payload AS slot FROM wf_events g
+  SELECT g.key, g.app_id, g.payload AS slot, t.machine_version FROM wf_events g
+    LEFT JOIN wf_instances t ON t.machine = g.machine AND t.key = g.key
    WHERE g.machine = '${BOT_REQUEST}' AND g.type = 'Granted' AND g.status = 'pending'
      AND NOT EXISTS (SELECT 1 FROM wf_instances f WHERE f.machine = g.machine AND f.key = g.key AND f.flag IS NOT NULL)`;
 
@@ -240,11 +267,13 @@ export const SLOTS_IN_USE_SQL = `
 // the bot acts on ($2: every app but these paused slugs), only what is not
 // held for its payer's week or backed off, not a request whose live build
 // waits or runs, not one its project's first version holds, not one its
-// requester is working on with the bot (planHoldSql), and settled.
+// requester is working on with the bot (planHoldSql), and settled. With
+// each, the version that last wrote its request (READ_SLOTS_SINCE).
 export const READ_CANDIDATES_SQL = `
   SELECT q.app_id, q.issue_number, q.priority, q.reason,
          COALESCE(r.user_id, i.created_by) AS person_id,
-         fu.id AS follow_up_session_id, bs.id AS triage_session_id
+         fu.id AS follow_up_session_id, bs.id AS triage_session_id,
+         w.machine_version
     FROM homeroom_bot_queue q
     JOIN apps a ON a.id = q.app_id
     JOIN wf_instances w ON w.machine = '${BOT_REQUEST}' AND w.key = 'request:' || q.app_id || ':' || q.issue_number
@@ -263,13 +292,15 @@ export const READ_CANDIDATES_SQL = `
        ORDER BY cs.id DESC LIMIT 1
     ) fu ON TRUE
     -- The app's triage session, when it has one yet (homeroom-bot.js
-    -- ensureBotSession's own rule): where a read runs.
+    -- ensureBotSession's own rule for read slot 0): where its first read
+    -- slot's read runs. A further slot's session is the look's to find.
     LEFT JOIN LATERAL (
       SELECT cs.id FROM chat_sessions cs
        WHERE cs.user_id = $1 AND cs.app_id = q.app_id AND cs.status IN ('active', 'paused')
          AND cs.branch_name = 'main'
          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs br WHERE br.build_session_id = cs.id)
          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_look_sessions ls WHERE ls.session_id = cs.id)
+         AND (cs.source IS NULL OR cs.source NOT LIKE '${READ_SESSION_SOURCE}:%')
        ORDER BY cs.id DESC LIMIT 1
     ) bs ON fu.id IS NULL
    WHERE q.started_at IS NULL
@@ -360,7 +391,50 @@ export function personKeyOf(row: { person_id?: unknown; app_id?: unknown } | nul
   return row?.person_id ? `u${Number(row.person_id)}` : `a${Number(row?.app_id)}`;
 }
 
-export interface Slot { kind: string; appId: number; person: string }
+// A slot in use. A read's `readSlot` is which of its project's triage
+// sessions it runs on (0 to readsPerApp - 1); `legacy` a read an older
+// release may be running (READ_SLOTS_SINCE), on whichever session it finds.
+export interface Slot { kind: string; appId: number; person: string; readSlot?: number | null; legacy?: boolean }
+
+// A read slot as a grant or a request carries it: a whole number from 0,
+// below MAX_READS_PER_APP, else none.
+export function readSlotOf(v: unknown): number | null {
+  return Number.isInteger(v) && (v as number) >= 0 && (v as number) < MAX_READS_PER_APP ? v as number : null;
+}
+
+// A slot as the lane reads it (SLOTS_IN_USE_SQL's row): a read with no read
+// slot, or one whose request an older version last wrote, is legacy.
+export function slotOfRow(r: { app_id?: unknown; slot?: any; machine_version?: unknown }): Slot {
+  const kind = String(r.slot?.kind || '');
+  const readSlot = readSlotOf(r.slot?.readSlot);
+  const version = r.machine_version == null ? 0 : Number(r.machine_version);
+  return {
+    kind, appId: Number(r.slot?.appId ?? r.app_id), person: String(r.slot?.person || `a${r.app_id}`),
+    ...(kind === 'read' ? { readSlot, legacy: readSlot == null || !(version >= READ_SLOTS_SINCE) } : {}),
+  };
+}
+
+// A candidate an older release may read, if granted (its request last
+// written by an older version): only when nothing else reads its project.
+const legacyCandidate = (row: { machine_version?: unknown }) =>
+  row.machine_version != null && Number(row.machine_version) < READ_SLOTS_SINCE;
+
+// The projects whose reads are all taken, from what runs: `readsPerApp`
+// read slots held, or a legacy read holding all of them. What the queue's
+// `reads_per_app` wait reads (homeroom-bot.js queueSnapshot). Pure.
+export function projectsFullOfReads(inUse: Slot[], readsPerApp: number): Set<number> {
+  const limit = Math.max(1, Math.floor(Number(readsPerApp) || 1));
+  const count = new Map<number, number>();
+  const full = new Set<number>();
+  for (const s of inUse || []) {
+    if (s.kind !== 'read') continue;
+    const appId = Number(s.appId);
+    if (s.legacy) { full.add(appId); continue; }
+    count.set(appId, (count.get(appId) || 0) + 1);
+    if ((count.get(appId) || 0) >= limit) full.add(appId);
+  }
+  return full;
+}
 
 // Homeroom bot parity (P4): a running batch's raise, for each request its
 // Build started (`${appId}:${issueNumber}` → the batch's per-person number,
@@ -386,28 +460,59 @@ const limitFor = (raised: Raised | undefined, row: { app_id: unknown; issue_numb
   Math.max(base, (raised && row.issue_number != null && raised[raisedKey(row.app_id, row.issue_number)]) || 0);
 
 // Which waiting reads and follow-ups to start now. `candidates` in order;
-// `inUse` what runs. A read runs on its app's own session, so one per app;
-// a follow-up runs on its proposal's session, so neither holds the app.
-// At most `perPerson` per person counting what runs (a running batch's
+// `inUse` what runs. A read runs on one of its project's triage sessions,
+// its read slot, so at most `readsPerApp` per project, each on a slot no
+// other read holds (the lowest free one); a follow-up runs on its
+// proposal's session, so it neither waits for its project's reads nor
+// holds one. A read an older release may run takes its project's every
+// slot, as reads did before (READ_SLOTS_SINCE): one is granted only while
+// nothing else reads its project, and nothing else is while it runs. At
+// most `perPerson` per person counting what runs (a running batch's
 // request: its `raised` number), at most `slots` new.
-export function pickLive<R extends { app_id: unknown; issue_number?: unknown; follow_up_session_id?: unknown; person_id?: unknown }>(
-  candidates: R[], { inUse = [], slots = 0, perPerson = 1, raised = {} }:
-    { inUse?: Slot[]; slots?: number; perPerson?: number; raised?: Raised } = {},
-): (R & { person: string; followUp: boolean })[] {
-  const busy = new Set(inUse.filter((s) => s.kind === 'read').map((s) => Number(s.appId)));
+export function pickLive<R extends { app_id: unknown; issue_number?: unknown; follow_up_session_id?: unknown; person_id?: unknown; machine_version?: unknown }>(
+  candidates: R[], { inUse = [], slots = 0, perPerson = 1, raised = {}, readsPerApp = 1 }:
+    { inUse?: Slot[]; slots?: number; perPerson?: number; raised?: Raised; readsPerApp?: number } = {},
+): (R & { person: string; followUp: boolean; readSlot: number | null })[] {
+  const limit = Math.min(MAX_READS_PER_APP, Math.max(1, Math.floor(Number(readsPerApp) || 1)));
+  // Per project: the read slots its reads hold, and the projects a legacy
+  // read holds whole.
+  const held = new Map<number, Set<number>>();
+  const whole = new Set<number>();
+  const slotsOf = (appId: number) => {
+    if (!held.has(appId)) held.set(appId, new Set());
+    return held.get(appId)!;
+  };
+  for (const s of inUse) {
+    if (s.kind !== 'read') continue;
+    const appId = Number(s.appId);
+    const k = readSlotOf(s.readSlot);
+    if (s.legacy || k == null) whole.add(appId);
+    else slotsOf(appId).add(k);
+  }
   const count = new Map<string, number>();
   for (const a of inUse) count.set(a.person, (count.get(a.person) || 0) + 1);
-  const picks: (R & { person: string; followUp: boolean })[] = [];
+  const picks: (R & { person: string; followUp: boolean; readSlot: number | null })[] = [];
   for (const row of candidates || []) {
     if (picks.length >= slots) break;
     const appId = Number(row.app_id);
     const followUp = row.follow_up_session_id != null;
-    if (!followUp && busy.has(appId)) continue;
+    let readSlot: number | null = null;
+    const legacy = !followUp && legacyCandidate(row);
+    if (!followUp) {
+      if (whole.has(appId)) continue;
+      const taken = slotsOf(appId);
+      // As many as it may already (a setting lowered under what runs
+      // counts what runs), or an older release's candidate beside any.
+      if (taken.size >= limit || (legacy && taken.size)) continue;
+      for (let k = 0; k < limit; k++) if (!taken.has(k)) { readSlot = k; break; }
+      if (readSlot == null) continue;
+    }
     const person = personKeyOf(row);
     if ((count.get(person) || 0) >= limitFor(raised, row, perPerson)) continue;
-    if (!followUp) busy.add(appId);
+    if (legacy) whole.add(appId);
+    else if (readSlot != null) slotsOf(appId).add(readSlot);
     count.set(person, (count.get(person) || 0) + 1);
-    picks.push({ ...row, person, followUp });
+    picks.push({ ...row, person, followUp, readSlot });
   }
   return picks;
 }

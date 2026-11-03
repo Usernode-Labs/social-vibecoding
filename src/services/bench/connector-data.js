@@ -185,6 +185,8 @@ function settingsOf(p = {}) {
     buildConcurrency: num(s.buildConcurrency),
     liveAtOnce: num(s.liveAtOnce),
     perPerson: num(s.perPerson),
+    // 3 Nov 2026: a project's reads at once, each on a triage session of its own.
+    readsPerApp: num(s.readsPerApp),
     shadowBuilds: !!s.shadowBuilds,
     dmChat: !!s.dmChat,
     // Its voice outside the DM, one switch per place (homeroom-bot-voice.js).
@@ -557,7 +559,7 @@ const SETTINGS_FIELDS = Object.freeze([
   'mode', 'pausedApps', 'models', 'defaultModel', 'helperModel',
   'weeklyLimitCents', 'userWeeklyCents', 'adminWeeklyCents',
   'turnSeconds', 'turnInputTokens', 'concurrency', 'batchSize', 'buildConcurrency',
-  'liveAtOnce', 'perPerson', 'proposalCeiling',
+  'liveAtOnce', 'perPerson', 'readsPerApp', 'proposalCeiling',
   // #6156: some projects' own numbers of builds and changes waiting for votes.
   'appCaps',
   'shadowBuilds', 'shadowBuildPlatform', 'dmChat', 'voiceSession', 'voiceIssue', 'voiceChat',

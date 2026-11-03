@@ -239,6 +239,24 @@ test('#3771: a request in the queue says what it waits for', () => {
     'waiting its turn: 2 things of theirs are in progress, the most at once for one person');
   assert.equal(progress.queuedWait(row, { queuePosition: 4 }).doing, 'waiting for a free builder');
   assert.deepEqual(progress.queuedWait(row, {}), {}, 'with nothing known, the stage\'s own words stand');
+  // 3 Nov 2026: a project reads up to readsPerApp requests at once, each on
+  // a session of its own: one read ahead holds nothing up then.
+  assert.equal(progress.queuedWait(row, { busy, now, readsPerApp: 3, queuePosition: 1 }).doing, 'next in line for a free builder');
+  const three = new Map([[7, [
+    { issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'reading' },
+    { issueNumber: 13, since: '2026-10-03T12:30:00Z', what: 'reading' },
+    { issueNumber: 9, since: '2026-10-03T12:20:00Z', what: 'building' },
+    { issueNumber: 11, since: '2026-10-03T12:35:00Z', what: 'reading' },
+  ]]]);
+  assert.equal(progress.queuedWait(row, { busy: three, now, readsPerApp: 4, queuePosition: 1 }).doing, 'next in line for a free builder',
+    'three reads of four: a build is not one of them');
+  assert.deepEqual(progress.queuedWait(row, { busy: three, now, readsPerApp: 3 }), {
+    doing: 'waiting its turn: Ear Trainer is reading requests #12, #13 and #11 first (3 reads per project at a time)',
+    waitingFor: { reason: 'project_busy', number: 12, doing: 'reading', minutesSoFar: 14, reading: 3, most: 3 },
+  });
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-progress.js'), 'utf8');
+  assert.match(src, /queuedWait\(s\.row, \{ busy, working: busyCount, perPerson, queuePosition: s\.queuePosition, now, holds, readsPerApp \}\)/,
+    'the bot\'s own setting, as the lane reads it');
 });
 
 test('a ready request waiting for its build slot says so, and what it waits for', () => {

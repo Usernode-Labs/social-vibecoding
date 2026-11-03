@@ -85,6 +85,9 @@ interface Settings {
   // and whether a DM to the bot is read by its model.
   liveAtOnce: number;
   perPerson: number;
+  // 3 Nov 2026: how many of one project's requests are read at once, each
+  // on a triage session of its own.
+  readsPerApp?: number;
   dmChat: boolean;
   // Its voice outside the DM (homeroom-bot-voice.js), one switch per place.
   voiceSession?: boolean;
@@ -988,6 +991,7 @@ export function waitingFor(depth: number, buildsWaiting: number): string {
 // waited days behind a first version still up for a vote, saying nothing.
 const WAIT_WORDS: Record<string, string> = {
   session_busy: 'a turn is running on its session',
+  reads_per_app: 'its project is already reading as many requests as it may at once',
   allowance: 'its payer\'s week is used up',
   platform_fault: 'the bot is backing off a platform fault',
   bot_paused: 'the bot is off or its weekly budget is spent',
@@ -1404,6 +1408,7 @@ interface Form {
   buildConcurrency: string;
   liveAtOnce: string;
   perPerson: string;
+  readsPerApp: string;
   proposalCeiling: string;
   // #6156: the projects with numbers of their own, by app id, each number
   // as the text in its field ('' for the default).
@@ -1434,6 +1439,7 @@ const FIELD_LABEL: Record<FormKey, string> = {
   buildConcurrency: 'shadow builds at once',
   liveAtOnce: 'live requests at once',
   perPerson: 'per person at once',
+  readsPerApp: 'reads per project at once',
   proposalCeiling: 'proposals at once',
   appCaps: 'room per project',
   turnMinutes: 'minutes per issue',
@@ -1465,6 +1471,7 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     buildConcurrency: String(s.buildConcurrency ?? 2),
     liveAtOnce: String(s.liveAtOnce ?? 12),
     perPerson: String(s.perPerson ?? 3),
+    readsPerApp: String(s.readsPerApp ?? 3),
     proposalCeiling: String(s.proposalCeiling ?? 0),
     appCaps: Object.fromEntries(Object.entries(s.appCaps || {}).map(([id, own]) => [id, {
       building: own?.building == null ? '' : String(own.building),
@@ -1575,6 +1582,7 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
     else if (key === 'buildConcurrency') patch.buildConcurrency = whole(key, 1, 4, 'Shadow builds at once');
     else if (key === 'liveAtOnce') patch.liveAtOnce = whole(key, 1, 24, 'Live requests at once');
     else if (key === 'perPerson') patch.perPerson = whole(key, 1, 6, 'Per person at once');
+    else if (key === 'readsPerApp') patch.readsPerApp = whole(key, 1, 6, 'Reads per project at once');
     else if (key === 'proposalCeiling') patch.proposalCeiling = whole(key, 0, 1000, 'Proposals up for a vote at once');
     else if (key === 'appCaps') {
       const out = appCapsPatch(form.appCaps, saved.appCaps);
@@ -2456,6 +2464,8 @@ function HomeroomBotSection() {
                   value={form.liveAtOnce} min={1} max={24} canWrite={canWrite} onChange={(v) => setField('liveAtOnce', v)} />
                 <NumberField id="admin-homeroom-bot-per-person" label="Per person at once"
                   value={form.perPerson} min={1} max={6} canWrite={canWrite} onChange={(v) => setField('perPerson', v)} />
+                <NumberField id="admin-homeroom-bot-reads-per-app" label="Reads per project at once"
+                  value={form.readsPerApp} min={1} max={6} canWrite={canWrite} onChange={(v) => setField('readsPerApp', v)} />
                 <NumberField id="admin-homeroom-bot-proposal-ceiling" label="Proposals up for a vote at once (0: automatic)"
                   value={form.proposalCeiling} min={0} max={1000} canWrite={canWrite} onChange={(v) => setField('proposalCeiling', v)} />
                 <NumberField id="admin-homeroom-bot-turn-minutes" label="Minutes one issue may take"
@@ -2472,9 +2482,9 @@ function HomeroomBotSection() {
                   value={form.batchSize} min={1} max={500} canWrite={canWrite} onChange={(v) => setField('batchSize', v)} />
               </div>
               <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-at-once-note">
-                Live requests are counted across the whole platform. It takes one request per app at a time and shares the
-                slots between people in turns. Each slot uses a worker from the same pool as people&apos;s own coding
-                sessions.
+                Live requests are counted across the whole platform. On one project it reads as many requests at a time as
+                Reads per project at once allows, each in a session of its own, and shares the slots between people in
+                turns. Each slot uses a worker from the same pool as people&apos;s own coding sessions, only while it runs.
               </p>
               <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-continue-reads">
                 <input

@@ -215,6 +215,9 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     [key, value],
   );
   await set('homeroom_bot_mode', 'live');
+  // One read per project, as this story was written for (the default is
+  // three): #3 waits behind #2's read.
+  await set('homeroom_bot_reads_per_app', '1');
 
   // Maya's first version, request #1: the bot read it and is building it.
   await pool.query(
