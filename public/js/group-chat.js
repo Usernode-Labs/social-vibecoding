@@ -1154,7 +1154,13 @@ const GroupChat = {
     const threadType = scopeType;
     return {
       id: msg.id == null ? null : Number(msg.id),
-      ...(changeRow ? { changeOf: { sessionId: Number(msg.thread_type ? msg.thread_ref : msg.thread.ref) || null } } : {}),
+      // #6229: a bot note written once on its request's page still says which
+      // change it is about, through the post's own record.
+      ...(changeRow
+        ? { changeOf: { sessionId: Number(msg.thread_type ? msg.thread_ref : msg.thread.ref) || null } }
+        : (opts && opts.language === 'request' && meta.aboutChange && Number(meta.aboutChange.sessionId))
+          ? { changeOf: { sessionId: Number(meta.aboutChange.sessionId) } }
+          : {}),
       senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,

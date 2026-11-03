@@ -212,13 +212,15 @@ test('In progress and Waiting each leave out a thread the feed lists, by its req
 
 // 30 Oct 2026: the tab said "#6032" for the change Homeroom bot called
 // request #6038 in Main. A change for a request goes by the request's number,
-// opens on the change's own page, and still leaves out the request's thread.
-test('a vote on a change for a request names the request\'s number, and opens on the change', () => {
+// and opens on the request's page, where it is decided (#6227: its own change
+// address lands there anyway, and lit no row beside the list), and still
+// leaves out the request's thread.
+test('a vote on a change for a request names the request\'s number, and opens on its page', () => {
   const { needsYou, upNext, owedKeys } = loadTsx(MODEL);
   const needs = [{ kind: 'proposal', id: 1, number: 6032, title: 'Spell out the approval rules', app, request: { number: 6038, title: 'Rule changes' } }];
   const [row] = needsYou(needs, null);
   assert.equal(words(row.sub), 'Garden club · #6038');
-  assert.equal(row.href, '#app/garden/dev/changes/6032');
+  assert.equal(row.href, '#app/garden/dev/issues/6038');
   assert.deepEqual([...owedKeys(needs)].sort(), ['garden#6032', 'garden#6038']);
   const work = { private: [], next: [], waiting: [thread(3, 6038, 'vote', { change: { id: 9, number: 6032 } })], live: [] };
   assert.deepEqual(upNext(needs, work), [], 'once, in Needs you');
@@ -1327,6 +1329,37 @@ test('#6218: the row whose page is open beside the list is lit, and Main Chat is
   assert.equal((busy.match(/data-ai-lit=""/g) || []).length, 1);
   const none = renderComponent(LISTS, 'AiLists', props({ rows: [need], lit: 'page:app/garden/dev/issues/9999' }));
   assert.ok(!none.includes('data-ai-lit'), 'no row names the open page');
+});
+
+// #6227 (3 Nov 2026): a Vote row lights while its change's request page is
+// open beside the list. A change built for a request has no page of its own
+// (one page per thread): its own address lands on the request's page, so a
+// row lit by the change's route never matched the column. The row opens the
+// request's page instead, and the two numbers can differ (#6215's change was
+// PR #6216), so matching numbers would not do either.
+test('#6227: a Vote row opens and lights its change\'s request page, whatever its own number', () => {
+  const { needHref, needsYou } = loadTsx(MODEL);
+  const column = loadTsx('frontend/src/features/ai/column.ts');
+  const need = { kind: 'proposal', id: 1, number: 6216, request: { number: 6215, title: 'Show the reason' }, title: 'Show the reason', app };
+  const [row] = needsYou([need], null);
+  assert.equal(needHref({ ...need, request: { number: 6215 } }), '#app/garden/dev/issues/6215',
+    'the request\'s page, where the change is decided, never its own change address');
+  assert.equal(row.href, '#app/garden/dev/issues/6215');
+  const open = { at: 'page', route: 'app/garden/dev/issues/6215' };
+  assert.equal(column.rowKey(row), column.columnKey(open), 'so the row is lit while that page is open beside the list');
+  assert.equal(column.columnAddress(open), '#homeroom-bot/request/garden/6215', 'and a reload reopens the page and lights it again');
+  // A change with no request keeps its own page, as today.
+  const [own] = needsYou([{ kind: 'proposal', id: 2, number: 403, title: 'Dark mode', app }], null);
+  assert.equal(own.href, '#app/garden/dev/changes/403');
+  assert.equal(column.rowKey(own), column.columnKey({ at: 'page', route: 'app/garden/dev/changes/403' }));
+  // An older server that names no request keeps today's change address too.
+  assert.equal(needHref({ kind: 'proposal', id: 3, number: 6216, app }), '#app/garden/dev/changes/6216');
+  // A ballot is still decided on its request's page, unchanged.
+  assert.equal(needHref({ kind: 'ballot', id: 4, number: 408, ballot: { number: 401 }, app }), '#app/garden/dev/issues/401');
+  // Main's composer attaches the request the row opened, not the change.
+  const { aboutRow } = loadTsx('frontend/src/features/ai/index.tsx');
+  assert.deepEqual(JSON.parse(JSON.stringify(aboutRow(row))),
+    { type: 'issue', appSlug: 'garden', issueNumber: 6215, title: 'Show the reason' });
 });
 
 test('an item in the bot page\'s column has an address of its own, and its own page as the fallback (#6215)', () => {
