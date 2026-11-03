@@ -1486,6 +1486,28 @@ async function shareSpecVersion(pool, sessionId, version) {
 async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec, revised = false }) {
   if (!spec || !version || !sessionId) return null;
   await shareSpecVersion(pool, sessionId, version);
+  // #6229: the plan the build asked approval for is already on the request's
+  // page, and the change's page is that page now (1 Nov 2026). Posting the
+  // proposed card there would draw "📋 Plan v1" a second time. An updated
+  // plan is new information, so `revised` still posts; a change with no
+  // request still has a page of its own. A failed lookup posts as before.
+  if (!revised && await changeOnRequestPage(pool, app?.id, sessionId)) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND msg_type = 'spec_share'
+            AND metadata->'specShare'->>'sessionId' = $2
+            AND metadata->'specShare'->>'version' = $3
+          LIMIT 1`,
+        [app.id, String(Number(sessionId)), String(Number(version))],
+      );
+      if (rows.length) return null;
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not check the request for its plan card (posting it)', {
+        app: app?.slug, sessionId, version, err: err.message,
+      });
+    }
+  }
   const card = specCard({ sessionId, version, spec, bot, proposed: true, revised });
   return ws.sendBotMessage(pool, app.id, {
     user: bot, content: card.content, metadata: card.metadata,
@@ -1844,6 +1866,33 @@ async function threadMessageOf(pool, app, issueNumber, postId) {
   return rows[0] ? { id: rows[0].id } : null;
 }
 
+// 1 Nov 2026 (one page per thread): whether a change lives on its request's
+// page. The rule threads.requestHome uses, without the viewer check: a
+// request leads the thread (its number is a request in that thread), so the
+// change has no page of its own and its replies are read on the request's.
+// A change with no request keeps a page of its own. A failed lookup answers
+// false, so the note is written where it was always written.
+async function changeOnRequestPage(pool, appId, sessionId) {
+  const id = Number(sessionId);
+  if (!appId || !Number.isSafeInteger(id) || id <= 0) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM chat_sessions s
+         JOIN threads t ON t.id = s.thread_id AND t.number IS NOT NULL
+         JOIN requests r ON r.thread_id = t.id AND r.number = t.number
+        WHERE s.id = $1 AND s.app_id = $2 AND s.is_headless = FALSE
+        LIMIT 1`,
+      [id, appId],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not tell whether a change has its own page (writing both copies)', {
+      appId, sessionId: id, err: err.message,
+    });
+    return false;
+  }
+}
+
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
@@ -1865,6 +1914,13 @@ async function post({
   // and relayed to the requester's DM when it carries `dm`, as before.
   const noComment = proposalOnly || !!skipGithub;
   const noIssueThread = proposalOnly || !!skipIssueThread;
+  // #6229: a change built for a request has no page of its own (1 Nov 2026),
+  // so the request's page is where its note is read. It is said once there,
+  // tagged with the change, rather than twice (the request's copy and the
+  // change's own). A change with no request still gets its own copy.
+  const onRequestPage = proposalSessionId && !proposalOnly && !noIssueThread
+    ? await changeOnRequestPage(pool, app?.id, proposalSessionId)
+    : false;
   // Everybody this post tags (mentionTargets); `mention` is the one-person
   // form the older callers pass. #4488: `untag` is somebody already told in
   // their DM with the bot, as untaggedRequester leaves them out below.
@@ -1983,7 +2039,11 @@ async function post({
   }
   if (!noIssueThread && !message) {
     // The post's mark on its message, so a retry finds it (threadMessageOf).
-    const marked = (meta) => ({ ...(meta || {}), hrbotPost: String(postId) });
+    const marked = (meta) => ({
+      ...(meta || {}),
+      ...(onRequestPage ? { aboutChange: { sessionId: Number(proposalSessionId) } } : {}),
+      hrbotPost: String(postId),
+    });
     try {
       // A spec is a card in the thread (its full text is on GitHub, and one
       // click away from the card), not a wall of markdown in a chat bubble.
@@ -2024,7 +2084,9 @@ async function post({
   // the proposal's own discussion, the reply goes there too, as a message
   // from the bot (#3288).
   let proposalMessage = null;
-  if (proposalSessionId) {
+  // #6229: the change's page is the request's, so the request's copy above
+  // is the whole post. Only a change with no request gets the second one.
+  if (proposalSessionId && !onRequestPage) {
     try {
       proposalMessage = await inThread(own, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
     } catch (err) {
