@@ -278,3 +278,78 @@ test('preview Service endpoints require the copied-data policy and rollback cann
   assert.equal(service.spec.selector[policy.LABEL],policy.DIGEST);
   assert.equal(c.store.has(`deployment/${NAME}`),false,'unsafe previous template is never restored');
 });
+
+// ── A preview asleep (#6157) ───────────────────────────────────────────
+// Sleep scales the Deployment to none and leaves everything else (its
+// Service, its Ingress, its Secret, its database) as it is; waking scales it
+// back to one. Nothing is rebuilt either way.
+
+test('#6157 the sleeping manifest sets spec.replicas to 0, waking sets it to 1, and nothing else changes (pure)', () => {
+  const read = {
+    apiVersion: 'apps/v1', kind: 'Deployment',
+    metadata: { name: NAME, resourceVersion: '7', annotations: { [ANNOTATION]: '3' } },
+    spec: { replicas: 1, selector: { matchLabels: { a: 'b' } }, template: { spec: { containers: [{ name: 'app', image: 'app@sha256:3' }] } } },
+    status: { readyReplicas: 1 },
+  };
+  const asleep = kubernetes.scaledPreviewDeployment(read, 0);
+  assert.equal(asleep.spec.replicas, 0);
+  assert.deepEqual(asleep.spec.template, read.spec.template, 'same image, same env: nothing to rebuild');
+  assert.equal(asleep.metadata.resourceVersion, '7', 'replaced on the version read');
+  assert.equal(asleep.metadata.annotations[ANNOTATION], '3', 'the attempt fence stays');
+  assert.equal(asleep.status, undefined);
+  assert.equal(read.spec.replicas, 1, 'the object read is not changed');
+  assert.equal(kubernetes.scaledPreviewDeployment(asleep, 1).spec.replicas, 1);
+  assert.throws(() => kubernetes.scaledPreviewDeployment(read, 2));
+});
+
+test('#6157 sleeping and waking write the Deployment only: the Service and the Ingress are left as they are', async () => {
+  const c = cluster();
+  await deploy(1);
+  const ingress = { apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', metadata: { name: NAME, resourceVersion: '1' },
+    spec: { rules: [{ host: 'demo--s2.example.test', http: { paths: [{ path: '/', pathType: 'Prefix', backend: { service: { name: NAME, port: { number: 3000 } } } }] } }] } };
+  c.store.set(`ingress/${NAME}`, structuredClone(ingress));
+  const service = structuredClone(c.store.get(`service/${NAME}`));
+  const before = c.calls.length;
+
+  assert.equal(await kubernetes.scalePreview(CONFIG, NAME, 0, { attempt: 1 }), 'scaled');
+  assert.equal(c.store.get(`deployment/${NAME}`).spec.replicas, 0);
+  assert.equal(c.image(), 'app@sha256:1');
+  assert.deepEqual(c.calls.slice(before), [`replace deployment ${NAME}`], 'one write, to the Deployment');
+  assert.deepEqual(c.store.get(`service/${NAME}`), service);
+  assert.deepEqual(c.store.get(`ingress/${NAME}`), ingress);
+  assert.equal(await kubernetes.scalePreview(CONFIG, NAME, 0, { attempt: 1 }), 'unchanged');
+
+  assert.equal(await kubernetes.scalePreview(CONFIG, NAME, 1), 'scaled');
+  assert.equal(c.store.get(`deployment/${NAME}`).spec.replicas, 1);
+  assert.equal(c.secretOf(), `${NAME}-env-a1`, 'the same attempt serves, woken');
+  assert.deepEqual(c.store.get(`service/${NAME}`), service);
+  assert.deepEqual(c.store.get(`ingress/${NAME}`), ingress);
+});
+
+test('#6157 a sleep never scales down a Deployment another attempt has written since it was read', async () => {
+  const c = cluster();
+  await deploy(1);
+  await deploy(2);
+  assert.equal(await kubernetes.scalePreview(CONFIG, NAME, 0, { attempt: 1 }), 'superseded');
+  assert.equal(c.store.get(`deployment/${NAME}`).spec.replicas, 1);
+  assert.equal(await kubernetes.scalePreview(CONFIG, 'sv-preview-1-s99', 0), 'missing');
+});
+
+test('#6157 with the gate off a sleeping preview\'s link goes to the waking page and comes back on waking (pure)', () => {
+  const ASSETS = kubernetes.PLATFORM_ASSET_NAME;
+  const path = (p, name) => ({ path: p, pathType: 'Prefix', backend: { service: { name, port: { number: 3000 } } } });
+  const ingress = { metadata: { name: NAME }, spec: { rules: [{ host: 'demo--s2.example.test', http: { paths: [
+    path('/usernode-bridge/', ASSETS), path('/', NAME),
+  ] } }] } };
+  const asleep = kubernetes.ingressForSleep(ingress, { name: NAME, asleep: true });
+  assert.deepEqual(asleep.spec.rules[0].http.paths, [path('/usernode-bridge/', ASSETS), path('/', ASSETS)],
+    'only the catch-all moves, to the asset backend that serves the waking page');
+  assert.equal(kubernetes.ingressForSleep(asleep, { name: NAME, asleep: true }), null, 'already so');
+  assert.deepEqual(kubernetes.ingressForSleep(asleep, { name: NAME, asleep: false }).spec.rules[0].http.paths,
+    ingress.spec.rules[0].http.paths, 'back to its own Service on waking');
+  assert.equal(kubernetes.ingressForSleep(asleep, { name: NAME, asleep: false, gateBackend: kubernetes.APP_GATE_NAME })
+    .spec.rules[0].http.paths[1].backend.service.name, kubernetes.APP_GATE_NAME, 'or to the gate when it serves');
+  const gated = { ...ingress, spec: { rules: [{ ...ingress.spec.rules[0], http: { paths: [path('/', kubernetes.APP_GATE_NAME)] } }] } };
+  assert.equal(kubernetes.ingressForSleep(gated, { name: NAME, asleep: true }), null,
+    'behind the gate the route stays: the platform answers with the waking page');
+});

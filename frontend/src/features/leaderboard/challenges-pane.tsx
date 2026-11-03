@@ -47,6 +47,7 @@ import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { CreditList, type CreditView } from './challenge-credits';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -167,6 +168,10 @@ type DetailView = {
   fill: number | null;
   counted: boolean;
   cta: CtaView | null;
+  // #3247: the viewer's credits behind the count, and whether it is this
+  // week's count (the heading says so).
+  credits?: CreditView[];
+  creditsWeekly?: boolean;
   // #3186: the Me screen's "Your feedback", on the feedback challenge only.
   feedbackLink?: boolean;
   // #4036: on the feedback challenge, what makes a report count, under the
@@ -638,6 +643,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           count yet — before "What counts", the same way the feedback link is
           the viewer's own records beside the count. */}
       {view.invites ? <InviteList view={view.invites} /> : null}
+      <CreditList credits={view.credits} weekly={view.creditsWeekly} />
       {view.requirements ? <PageSection heading={t('leaderboard:challenges.detail.requirements')}>{view.requirements}</PageSection> : null}
     </>
   );

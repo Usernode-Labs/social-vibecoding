@@ -134,6 +134,9 @@ export function BrowseScreen() {
   const t = useMessages('discover');
   const screenRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Clear all removes itself from the row, so focus moves to the Filters chip
+  // beside it rather than being lost to the document.
+  const typeRowRef = useRef<HTMLDivElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'browse-screen', false);
 
   const state = useStoreState(browseStore) as {
@@ -226,7 +229,7 @@ export function BrowseScreen() {
             autoComplete="off"
             placeholder={t('discover:search.placeholder')}
             aria-label={t('discover:search.label')}
-            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-300 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
               // Enter opens the site when the field holds a web address —
@@ -299,16 +302,21 @@ export function BrowseScreen() {
             type, which the prerender never does.
 
             The Filters button counts the choices that differ from the
-            defaults (Browse.activeFilterCount) and opens the sheet. `px-4`
-            over the primitive's `px-6`, through cn's twMerge.
+            defaults (Browse.activeFilterCount) and opens the sheet. The
+            count sits in its label ("Filters · 2") rather than in a separate
+            badge, and while it is above zero a Clear all chip follows it.
+            Both are `shrink-0`, and the rail only shrinks and scrolls when
+            the type chips overflow, so the three read as one row instead of
+            Filters sitting at the far edge. `px-4` over the primitive's
+            `px-6`, through cn's twMerge.
         */}
-        <div id="browse-type-row" className={`mt-2 flex items-center gap-2 ${CONTROL_COLUMN}`}>
+        <div id="browse-type-row" ref={typeRowRef} className={`mt-2 flex items-center gap-2 ${CONTROL_COLUMN}`}>
           {typeChips.length ? (
             <ChipRail
               id="browse-category-chips"
               role="group"
               aria-label={t('discover:category.groupLabel')}
-              className="min-w-0 flex-1 gap-2 px-0 py-0"
+              className="min-w-0 gap-2 px-0 py-0"
             >
               {typeChips.map((c) => (
                 <Chip
@@ -334,21 +342,40 @@ export function BrowseScreen() {
             onClick={() => openBrowseFilterSheet()}
           >
             <FilterIcon className="h-4 w-4" aria-hidden="true" />
-            <span>{t('discover:filters.button')}</span>
             {state.activeCount > 0 ? (
               <>
-                <span
-                  aria-hidden="true"
-                  className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-violet-600 px-1 text-xs font-bold text-white"
-                >
-                  {state.activeCount}
+                {/* The visible count is part of the label; the sr-only pair
+                    still says the button is Filters and how many are on. */}
+                <span aria-hidden="true">
+                  {t('discover:filters.buttonCount', { count: state.activeCount })}
                 </span>
+                <span className="sr-only">{t('discover:filters.button')}</span>
                 <span className="sr-only">
                   {t('discover:filters.activeCount', { count: state.activeCount })}
                 </span>
               </>
-            ) : null}
+            ) : (
+              <span>{t('discover:filters.button')}</span>
+            )}
           </Chip>
+          {state.activeCount > 0 ? (
+            <Chip
+              id="browse-filters-clear"
+              size="bar"
+              className="browse-filters-clear shrink-0 px-4"
+              aria-pressed={undefined}
+              onClick={() => {
+                browse()?.clearFilters();
+                // The pressed chip is about to unmount; keep the keyboard in
+                // the row on the Filters chip that stays.
+                typeRowRef.current
+                  ?.querySelector<HTMLButtonElement>('#browse-filters-btn')
+                  ?.focus();
+              }}
+            >
+              {t('discover:filters.clearAll')}
+            </Chip>
+          ) : null}
         </div>
       </div>
       {/*

@@ -306,6 +306,9 @@ test('settings default to off and clamp their numbers', () => {
     // The moment it went on for everyone is schema.sql's to write (readSettings
     // fills in a database without it); the proposal ceiling is automatic.
     everyoneSince: null, proposalCeiling: 0, liveBuildStream: true,
+    // #6156: no project has numbers of its own for its builds and its
+    // changes waiting for votes.
+    appCaps: {},
     // Homeroom bot parity, P8: pictures on the default image model, 24 a
     // person a week (services/bot-pictures.js).
     imageModel: 'google/gemini-2.5-flash-image', pictureWeeklyCap: 24,
@@ -359,14 +362,72 @@ test('the everyone moment and the proposal ceiling parse, clamp and validate', (
   assert.equal(bot.validateSettingsPatch({ audienceSince: '2020-01-01' }).ok, false);
 });
 
+test('#6156: a project\'s own numbers of builds and of changes waiting for votes parse, clamp, validate and merge', () => {
+  assert.deepEqual([bot.BUILDS_PER_APP, bot.WAITING_PER_APP, bot.MAX_BUILDS_PER_APP, bot.MAX_WAITING_PER_APP], [5, 50, 10, 100]);
+  const s = bot.parseSettings([{
+    key: bot.KEY_APP_CAPS,
+    value: JSON.stringify({ 9: { waiting: 30 }, 12: { building: 99, waiting: 0 }, 13: {}, x: { waiting: 4 }, 14: 'six' }),
+  }]);
+  assert.deepEqual(s.appCaps, { 9: { waiting: 30 }, 12: { building: 10, waiting: 1 } }, 'clamped; nothing set, or not a project, is left out');
+  assert.deepEqual(bot.appCapsOf(s, 9), { building: bot.BUILDS_PER_APP, waiting: 30 }, 'a number not set is the default');
+  assert.deepEqual(bot.appCapsOf(s, 12), { building: 10, waiting: 1 });
+  assert.deepEqual(bot.appCapsOf(s, 7), { building: bot.BUILDS_PER_APP, waiting: bot.WAITING_PER_APP });
+  assert.deepEqual(bot.appCapsOf(null, 9), { building: bot.BUILDS_PER_APP, waiting: bot.WAITING_PER_APP });
+  assert.deepEqual(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: 'not json' }]).appCaps, {});
+
+  // A patch names projects by id or slug; a number is whole and in range,
+  // or null for the default; a project given null goes back to the defaults.
+  const ok = bot.validateSettingsPatch({ appCaps: { 'usernode-2d5619': { waiting: 30 }, 12: null, 13: { building: null } } });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.appCaps, { 'usernode-2d5619': { waiting: 30 }, 12: null, 13: { building: null } });
+  assert.deepEqual(ok.updates, [], 'written once merged (writeSettings)');
+  for (const bad of [
+    { appCaps: { 9: { waiting: 101 } } }, { appCaps: { 9: { waiting: 0 } } }, { appCaps: { 9: { building: 11 } } },
+    { appCaps: { 9: { building: 2.5 } } }, { appCaps: { 9: { later: 3 } } }, { appCaps: { 'Not A Slug': { waiting: 3 } } },
+    { appCaps: [] }, { appCaps: {} }, { appCaps: { 9: 7 } },
+  ]) assert.equal(bot.validateSettingsPatch(bad).ok, false, JSON.stringify(bad));
+  assert.equal(bot.validateSettingsPatch({ appCaps: { 9: { building: 10, waiting: 100 } } }).ok, true, 'the ceilings themselves');
+
+  assert.deepEqual(
+    bot.mergeAppCaps({ 9: { waiting: 30 }, 12: { building: 2 }, 13: { building: 3, waiting: 4 } },
+      { 9: { building: 6 }, 12: null, 13: { building: null, waiting: null }, 14: { waiting: 20 } }),
+    { 9: { waiting: 30, building: 6 }, 14: { waiting: 20 } },
+    'the others are kept; a project with neither goes back to the defaults',
+  );
+});
+
+test('#6156: a save of a project\'s own numbers merges them into the others\', by its id, and asks the lane to look again', async () => {
+  const writes = [];
+  let stored = JSON.stringify({ 12: { building: 2 } });
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/SELECT id, slug FROM apps WHERE slug = ANY/.test(s)) {
+        return { rows: [{ id: 9, slug: 'usernode-2d5619' }, { id: 12, slug: 'gym-tracker' }]
+          .filter((a) => params[0].includes(a.slug) || params[1].includes(a.id)) };
+      }
+      if (/SELECT value FROM platform_settings WHERE key = \$1/.test(s)) return { rows: params[0] === bot.KEY_APP_CAPS ? [{ value: stored }] : [] };
+      if (/INSERT INTO platform_settings/.test(s)) { writes.push([params[0], params[1]]); if (params[0] === bot.KEY_APP_CAPS) stored = params[1]; return { rows: [] }; }
+      return { rows: [] };
+    },
+  };
+  assert.deepEqual(await bot.writeSettings(pool, { appCaps: { 'usernode-2d5619': { waiting: 30 } } }, 1), { ok: true });
+  assert.deepEqual(writes, [[bot.KEY_APP_CAPS, JSON.stringify({ 9: { waiting: 30 }, 12: { building: 2 } })]]);
+  assert.deepEqual(await bot.writeSettings(pool, { appCaps: { 12: null } }, 1), { ok: true });
+  assert.equal(stored, JSON.stringify({ 9: { waiting: 30 } }));
+  assert.deepEqual(await bot.writeSettings(pool, { appCaps: { 'no-such-app': { waiting: 3 } } }, 1), { ok: false, error: 'appCaps: no project no-such-app' });
+  assert.equal(stored, JSON.stringify({ 9: { waiting: 30 } }), 'nothing written for a project there is not');
+});
+
 test('the proposal ceiling: an admin\'s number, else a fixed one, since every app is live', () => {
   assert.equal(bot.botProposalCeiling({}), bot.EVERYONE_PROPOSAL_CEILING);
-  assert.equal(bot.EVERYONE_PROPOSAL_CEILING, 100);
-  assert.equal(bot.botProposalCeiling(null), 100);
-  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 100,
+  // #6157: 500 since a proposal waiting for votes keeps a sleeping preview.
+  assert.equal(bot.EVERYONE_PROPOSAL_CEILING, 500);
+  assert.equal(bot.botProposalCeiling(null), 500);
+  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 500,
     'the retired lists do not count: "per live app" would be no ceiling at all');
   assert.equal(bot.botProposalCeiling({ proposalCeiling: 30 }), 30);
-  assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 100, 'unset is automatic');
+  assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 500, 'unset is automatic');
 });
 
 test('a settings save never writes the everyone moment, and more room asks the lane to grant again', async () => {
@@ -389,7 +450,7 @@ test('a settings save never writes the everyone moment, and more room asks the l
   assert.doesNotMatch(write, /KEY_EVERYONE_SINCE/, 'the moment is schema.sql\'s, written once');
   // The lane (bot-lane) grants and refreshes; a save tells it, and wakes no
   // loop of this process's.
-  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_PAUSED_APPS\]\.includes\(key\)\)[\s\S]{0,120}?\{\s+await platform\(\)\.botRefresh\(null\)/);
+  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_PAUSED_APPS, KEY_APP_CAPS\]\.includes\(key\)\)[\s\S]{0,120}?\{\s+await platform\(\)\.botRefresh\(null\)/);
   assert.doesNotMatch(write, /wakeAll/);
 });
 
@@ -1128,9 +1189,10 @@ test('a new request on a live app gets its card when it is queued, under the key
   assert.equal(started.length, 0);
 });
 
-function heldPool({ events }) {
+function heldPool({ events, builds = false }) {
   // #10 and #11 were held by the proposals cap (#10 first), #12 by the
-  // question tripwire, #13 is unchanged and was never held.
+  // question tripwire, #13 is unchanged and was never held. With `builds`
+  // (#6156), #14 and #15 were held by the project's builds (#14 first).
   return {
     async query(sql, params) {
       const s = String(sql);
@@ -1144,6 +1206,10 @@ function heldPool({ events }) {
           { issue_number: 11, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'proposals_per_app', created_at: '2026-09-04T00:00:00Z' },
           { issue_number: 12, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'question_tripwire', created_at: '2026-09-04T00:00:00Z' },
           { issue_number: 13, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: null, created_at: '2026-09-03T00:00:00Z' },
+          ...(builds ? [
+            { issue_number: 14, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'builds_per_app', created_at: '2026-09-03T00:00:00Z' },
+            { issue_number: 15, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'builds_per_app', created_at: '2026-09-05T00:00:00Z' },
+          ] : []),
         ] };
       }
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
@@ -1172,6 +1238,26 @@ test('refreshApp brings back held issues once their cap has room, oldest first, 
     github: HELD_GITHUB, capRoom: { proposals_per_app: 2, question_tripwire: 3 },
   });
   assert.deepEqual(owedOf(events).map((e) => e.payload.issueNumber).sort(), [10, 11, 12], 'an unchanged issue nothing held stays out');
+});
+
+test('#6156: the cap_freed refresh brings a held request back when the cap that held it frees, either of the project\'s two', async () => {
+  const events = [];
+  const github = {
+    async fetchPublicIssues() {
+      return { issues: [15, 14, 13, 12, 11, 10].map((number) => ({ number, state: 'open', updatedAt: '2026-09-01T00:00:00Z' })) };
+    },
+  };
+  const owed = async (capRoom) => {
+    events.length = 0;
+    await bot.refreshApp(heldPool({ events, builds: true }), HELD_APP, { github, capRoom });
+    return owedOf(events).map((e) => [e.payload.issueNumber, e.payload.reason]).sort((a, b) => a[0] - b[0]);
+  };
+  assert.deepEqual(await owed({ builds_per_app: 1, proposals_per_app: 0, proposals_total: 5, question_tripwire: 0 }), [[14, 'cap_freed']],
+    'a build done frees a build\'s slot: the oldest held for the bot\'s turn comes back, not one held for votes');
+  assert.deepEqual(await owed({ builds_per_app: 0, proposals_per_app: 1, proposals_total: 5, question_tripwire: 0 }), [[10, 'cap_freed']],
+    'a change voted in frees a waiting slot: the oldest held for votes comes back, not one held for a build');
+  assert.deepEqual(await owed({ builds_per_app: 2, proposals_per_app: 2, proposals_total: 5, question_tripwire: 0 }),
+    [[10, 'cap_freed'], [11, 'cap_freed'], [14, 'cap_freed'], [15, 'cap_freed']]);
 });
 
 test('refreshApp leaves held issues alone on a shadow app', async () => {
@@ -1284,22 +1370,33 @@ test('papote #3: under a plan waiting for Build it, what people said to the bot 
   assert.deepEqual((await refresh({ settings: { mode: 'live' }, unaddressed: 'fails' })).owed, [[3, 'changed'], [4, 'changed']]);
 });
 
-test('capRoomFor counts the same two things the live check does', async () => {
+test('capRoomFor counts the same things the live check does', async () => {
   const pool = {
     async query(sql) {
       const s = String(sql);
-      if (s === bot.SLOT_HOLDERS_SQL) return { rows: [{ kind: 'build', issue_number: 3 }] };
+      if (s === bot.SLOT_HOLDERS_SQL) {
+        return { rows: [{ kind: 'build', issue_number: 3 }, { kind: 'proposal', issue_number: 4 }, { kind: 'proposal', issue_number: 5 }] };
+      }
       if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: 7 }] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ cnt: 12 }] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
+  // #6156: both of the project's rooms, its builds and its changes waiting for votes, each against its own cap.
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
-    { proposals_per_app: 4, proposals_total: 93, question_tripwire: 0 }, '#3576: the automatic ceiling across every app');
+    { builds_per_app: bot.BUILDS_PER_APP - 1, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: bot.EVERYONE_PROPOSAL_CEILING - 7, question_tripwire: 0 },
+    '#3576: the automatic ceiling across every app');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 10 }),
-    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
+    { builds_per_app: 4, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 5 }),
-    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'never below nothing');
+    { builds_per_app: 4, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: 0, question_tripwire: 0 }, 'never below nothing');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { appCaps: { 9: { building: 1, waiting: 30 } } }),
+    { builds_per_app: 0, proposals_per_app: 28, proposals_total: bot.EVERYONE_PROPOSAL_CEILING - 7, question_tripwire: 0 }, 'a project\'s own numbers');
+  // The cap_freed refresh brings back a held request by the name of the cap that held it.
+  const refreshSrc = SRC.slice(SRC.indexOf('async function refreshApp('), SRC.indexOf('function cardKeyOf('));
+  assert.match(refreshSrc, /if \(!\(room\[h\.cap\] > 0\)\) continue;/);
+  assert.match(refreshSrc, /capRoom\.builds_per_app > 0 && capRoom\.proposals_per_app > 0 && capRoom\.proposals_total > 0/,
+    'an older request is read only while both of the project\'s caps have room');
   const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
   assert.match(tripwire, /AND cap_suppressed IS NULL/,
     'a held question is not a posted one; counting it would let every retry keep the window full');

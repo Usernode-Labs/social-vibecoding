@@ -181,7 +181,8 @@ TabsTrigger.displayName = 'TabsTrigger';
  * way, so a track can never half-change.
  */
 export const SECTION_TABS_LIST_BASE =
-  'inline-flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5';
+  'inline-flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5 '
+  + 'dark:ring-1 dark:ring-inset dark:ring-zinc-700';
 
 export const SECTION_TABS_LIST = SECTION_TABS_LIST_BASE + ' mb-4';
 
@@ -191,7 +192,7 @@ export const SECTION_TAB_BASE =
 export const SECTION_TAB_ACTIVE = 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900';
 
 export const SECTION_TAB_INACTIVE =
-  'text-zinc-500 dark:text-zinc-400 '
+  'text-zinc-500 dark:text-zinc-300 '
   + 'hover:text-zinc-900 dark:hover:text-zinc-100';
 
 export { Tabs, TabsList, TabsTrigger };

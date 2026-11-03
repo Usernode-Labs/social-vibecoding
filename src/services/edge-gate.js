@@ -460,6 +460,13 @@ async function handleAccess(pool, req, res) {
   // Every 2xx goes out through here, so what an edge copies onto the
   // request is decided in one place.
   const allow = async ({ identityFor = null, guest = false } = {}) => {
+    // A request that reaches a preview is a use of it: a preview in use
+    // does not go to sleep (#6157). At most once a minute per preview, and
+    // never awaited.
+    if (!isProduction) {
+      const named = require('./preview-sleep').previewSessionOfHost(host);
+      if (named) require('./preview-sleep').touchActivity(pool, named.sessionId, { slug: named.slug }).catch(() => {});
+    }
     if (identityFor != null) {
       const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG });
       if (token) res.set('X-Usernode-Identity', token);

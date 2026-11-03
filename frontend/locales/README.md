@@ -13,8 +13,8 @@ namespace per surface (`core` and `shell` for what every screen has, then
 language loads only what the screen on show needs.
 
 Outside all of this: user content, an embedded app's own interface, the admin
-console, sentences the server composes (API errors), and
-the few standalone pages that load no shell bundle (the CLI and connector
+console, sentences the server composes (API errors, but for "A server's error"
+below), and the few standalone pages that load no shell bundle (the CLI and connector
 consent pages among them). Dates and numbers are still formatted as they
 were; only the words around them are catalog entries. Apps still receive the
 person's locale through the bridge (`usernode.getUserLocale()`), unchanged.
@@ -279,6 +279,35 @@ namespace by `src/services/mail/language.js`), and a server namespace like
   (`ENGLISH_ONLY_KINDS`: the test email and report notices), and a
   `build_ready`'s words when they are handed over from the bot's notification
   copy, which has no catalog of its own and is English on the push as well.
+
+## A server's error
+
+An API error's `error` field is a contract, not text: the web client compares
+it against fixed values, and the phone app, the connector and the CLI read it.
+It is English, always, and never translated in place.
+
+`en/errors.json` is a short list of the exact sentences people most often see,
+another namespace only the server reads, translated and kept as the push's is.
+Those are the only ones translated: a sentence is added whole, exactly as a
+route writes it, with no dynamic data, and a code, a developer's sentence or an
+admin's stays out. When a response with a status of 400 or more has an `error`
+exactly on the list, `src/middleware/error-language.js` adds `error_message`
+beside it, in the reader's language: Settings when the request's `req.user`
+carries one, otherwise Accept-Language. With no translation, the response is
+what the route wrote, with no extra key. Mounted once, at the top of
+`server.js`.
+
+It never waits. It uses the words the shared lookup in
+`src/services/push-language.js` has in hand, past their minute included, and
+starts a read when one is due, so `res.json` stays synchronous and a database in
+trouble cannot hold back the 500 about it. The first such error in a language
+after a process starts is in English.
+
+On the client, `errorText(body)` (`lib/i18n/server-error.ts`, also
+`PlatformI18n.errorText` in a classic script) is what to show. It is the only
+code that reads `error_message`, and a screen that compares, stores or passes an
+answer on keeps reading `error`. A screen not using it shows the English `error`,
+which is always safe. `tests/error-language.test.js` holds all this.
 
 ## How a language reaches the screen
 

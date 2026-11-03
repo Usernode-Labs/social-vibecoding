@@ -236,6 +236,11 @@ const KEY_EVERYONE_SINCE = 'homeroom_bot_audience_since';
 // app (botProposalCeiling). Unset (0) is automatic: EVERYONE_PROPOSAL_CEILING,
 // since "5 per live app" would be every app there is.
 const KEY_PROPOSAL_CEILING = 'homeroom_bot_proposal_ceiling';
+// #6156: a project's own numbers of builds and of changes waiting for votes
+// (BUILDS_PER_APP, WAITING_PER_APP), where an admin set them: JSON keyed by
+// app id, {"9": {"building": 5, "waiting": 30}}. A number not set is the
+// default (appCapsOf).
+const KEY_APP_CAPS = 'homeroom_bot_app_caps';
 // #4449: Live, a first version shown taking shape while it is built
 // (services/first-version-live.js, which reads it through its own short
 // cache). On unless switched off: off, no watcher starts and no App tab
@@ -255,7 +260,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
   KEY_USER_WEEKLY_CENTS, KEY_ADMIN_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
   KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
-  KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING,
+  KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING, KEY_APP_CAPS,
   KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL, KEY_HELPER_MODEL,
   KEY_IMAGE_MODEL, KEY_PICTURE_WEEKLY_CAP,
   ...Object.values(KEY_MODELS),
@@ -296,6 +301,8 @@ const DEFAULTS = Object.freeze({
   continueReads: true,
   everyoneSince: null,
   proposalCeiling: 0,
+  // #6156: no project has numbers of its own.
+  appCaps: Object.freeze({}),
   liveBuildStream: true,
   // P8: pictures (services/bot-pictures.js).
   imageModel: DEFAULT_IMAGE_MODEL,
@@ -315,10 +322,13 @@ const MAX_PER_PERSON = 6;
 // project's one session.
 const BUILDS_PER_PROJECT = 3;
 const MAX_PROPOSAL_CEILING = 1000;
-// The automatic ceiling: what twenty live apps
-// had under "5 per live app", and well past what 16 builds at once can fill
-// in the days a vote takes.
-const EVERYONE_PROPOSAL_CEILING = 100;
+// The automatic ceiling. It was 100 (what twenty live apps had under "5 per
+// live app") while every proposal waiting for votes kept a running preview.
+// Since #6157 an unused preview sleeps (services/preview-sleep.js: no pod,
+// only its database copy kept), so a waiting proposal costs little but
+// storage, and the ceiling is 500. An admin's number still replaces it
+// (KEY_PROPOSAL_CEILING, up to MAX_PROPOSAL_CEILING).
+const EVERYONE_PROPOSAL_CEILING = 500;
 const MAX_BATCH_SIZE = 500;
 // The budget a single triage turn may spend (#2737). Measured over the
 // first 213 shadow runs: 7 of the 74 that produced a verdict took $30.04 of
@@ -383,9 +393,26 @@ const PAUSED_SESSION_WINDOW_DAYS = 7;
 // The live caps the dashboard SIMULATES in shadow mode: a run reports
 // whether these would have suppressed it, so the dashboard shows the live
 // bot's behaviour and not only the raw model's.
-// 5 since #3576: 2 left most of a backlog held, a slot freeing only when
-// the group voted.
-const PROPOSALS_PER_APP_CAP = 5;
+//
+// #6156: a project's slots are two numbers, not one (slotHolders' two
+// kinds). BUILDS_PER_APP is its builds waiting or under way, the bot's own
+// work, and what paces it; a full one holds a ready verdict as
+// 'builds_per_app'. WAITING_PER_APP is its changes up for a vote or being
+// merged, which wait on people; a full one holds it as 'proposals_per_app'.
+// One cap of 5 for both (#3576) let proposals waiting for votes stop every
+// build: on 2 Nov 2026 eight ready requests in a row were held at "5
+// proposals open". Waiting changes are not free, so they keep a cap: each
+// keeps a preview and a database clone up (staging-reap.js
+// VOTE_BACKED_STATUSES), and on a small project it paces the votes the bot
+// asks of people. An admin may set either for one project (KEY_APP_CAPS,
+// appCapsOf), between 1 and MAX_*. 50 waiting since #6157: a preview nobody
+// opens for two hours sleeps (services/preview-sleep.js), so a change
+// waiting for votes holds little more than its database clone. Building
+// stays at 5: that is the bot's own work, and sleep does nothing for it.
+const BUILDS_PER_APP = 5;
+const WAITING_PER_APP = 50;
+const MAX_BUILDS_PER_APP = 10;
+const MAX_WAITING_PER_APP = 100;
 // Questions and `empty` verdicts share this one allowance, so the bot
 // cannot answer a quiet board with ten questions AND ten close proposals in
 // the same day. Both are a demand on somebody's attention.
@@ -667,6 +694,7 @@ function parseSettings(rows) {
   const sinceMs = Date.parse(map.get(KEY_EVERYONE_SINCE) || '');
   const everyoneSince = Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : null;
   const proposalCeiling = clampInt(map.get(KEY_PROPOSAL_CEILING), DEFAULTS.proposalCeiling, 0, MAX_PROPOSAL_CEILING);
+  const appCaps = parseAppCaps(map.get(KEY_APP_CAPS));
   const liveBuildStream = map.get(KEY_LIVE_BUILD_STREAM) !== 'off';
   const storedImageModel = String(map.get(KEY_IMAGE_MODEL) || '').trim();
   const imageModel = MODEL_ID_RE.test(storedImageModel) ? storedImageModel : DEFAULTS.imageModel;
@@ -675,8 +703,51 @@ function parseSettings(rows) {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
     liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
-    defaultModel, helperModel, everyoneSince, proposalCeiling, liveBuildStream,
+    defaultModel, helperModel, everyoneSince, proposalCeiling, appCaps, liveBuildStream,
     imageModel, pictureWeeklyCap,
+  };
+}
+
+// The most projects with numbers of their own the setting keeps.
+const MAX_APP_CAPS = 1000;
+// A project's key in KEY_APP_CAPS: its id, as JSON keeps it.
+const APP_ID_KEY_RE = /^[1-9][0-9]{0,9}$/;
+
+/**
+ * #6156: the stored per-project numbers (KEY_APP_CAPS), each clamped to its
+ * range, and a project with neither left out. Pure. Never throws: what does
+ * not parse is no project's.
+ */
+function parseAppCaps(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw || '{}');
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(parsed).slice(0, MAX_APP_CAPS)) {
+    if (!APP_ID_KEY_RE.test(key) || !value || typeof value !== 'object') continue;
+    const entry = {};
+    const building = clampInt(value.building, null, 1, MAX_BUILDS_PER_APP);
+    const waiting = clampInt(value.waiting, null, 1, MAX_WAITING_PER_APP);
+    if (building != null) entry.building = building;
+    if (waiting != null) entry.waiting = waiting;
+    if (Object.keys(entry).length) out[key] = entry;
+  }
+  return out;
+}
+
+/**
+ * #6156: a project's two caps (BUILDS_PER_APP, WAITING_PER_APP), as an admin
+ * set them for it (settings.appCaps), else the defaults. Pure.
+ */
+function appCapsOf(settings, appId) {
+  const own = settings?.appCaps?.[String(Number(appId))] || {};
+  return {
+    building: clampInt(own.building, BUILDS_PER_APP, 1, MAX_BUILDS_PER_APP),
+    waiting: clampInt(own.waiting, WAITING_PER_APP, 1, MAX_WAITING_PER_APP),
   };
 }
 
@@ -968,10 +1039,79 @@ function validateSettingsPatch(patch) {
     }
     weeklyLimitCents = n;
   }
-  if (!updates.length && weeklyLimitCents === undefined) {
+  let appCaps;
+  if (body.appCaps !== undefined) {
+    const checked = validateAppCapsPatch(body.appCaps);
+    if (!checked.ok) return checked;
+    appCaps = checked.appCaps;
+  }
+  if (!updates.length && weeklyLimitCents === undefined && appCaps === undefined) {
     return { ok: false, error: 'Nothing to update' };
   }
-  return { ok: true, updates, weeklyLimitCents };
+  return { ok: true, updates, weeklyLimitCents, ...(appCaps !== undefined ? { appCaps } : {}) };
+}
+
+// A project named in an appCaps patch: its id, or its slug.
+const APP_SLUG_KEY_RE = /^[a-z0-9-]{1,120}$/;
+
+/**
+ * #6156: an admin's change to some projects' own numbers (KEY_APP_CAPS):
+ * { <app id or slug>: { building, waiting } }, where a number is a whole
+ * one in its range or null for the default, and a project given null goes
+ * back to the defaults for both. Only the projects named change
+ * (writeSettings merges). Pure: a slug is turned into its id on the write.
+ */
+function validateAppCapsPatch(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'appCaps must be an object of project (its id or slug) to { building, waiting }' };
+  }
+  const entries = Object.entries(raw);
+  if (!entries.length) return { ok: false, error: 'appCaps names no project' };
+  if (entries.length > MAX_APP_CAPS) return { ok: false, error: `appCaps may name at most ${MAX_APP_CAPS} projects at once` };
+  const out = {};
+  const RANGES = { building: MAX_BUILDS_PER_APP, waiting: MAX_WAITING_PER_APP };
+  for (const [key, value] of entries) {
+    if (!APP_ID_KEY_RE.test(key) && !APP_SLUG_KEY_RE.test(key)) {
+      return { ok: false, error: `appCaps: "${String(key).slice(0, 40)}" is not a project id or slug` };
+    }
+    if (value === null) { out[key] = null; continue; }
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      return { ok: false, error: `appCaps.${key} must be { building, waiting }, or null for the defaults` };
+    }
+    const entry = {};
+    for (const [field, n] of Object.entries(value)) {
+      if (!(field in RANGES)) return { ok: false, error: `appCaps.${key}: unknown field "${String(field).slice(0, 40)}" (building or waiting)` };
+      if (n === null) { entry[field] = null; continue; }
+      const num = Number(n);
+      if (!Number.isInteger(num) || num < 1 || num > RANGES[field]) {
+        return { ok: false, error: `appCaps.${key}.${field} must be a whole number from 1 to ${RANGES[field]}, or null for the default` };
+      }
+      entry[field] = num;
+    }
+    out[key] = entry;
+  }
+  return { ok: true, appCaps: out };
+}
+
+/**
+ * #6156: the stored per-project numbers with an admin's change applied
+ * (validateAppCapsPatch, its slugs turned into ids): a project named with
+ * null, or with both numbers null, goes back to the defaults; the projects
+ * not named keep theirs. Pure.
+ */
+function mergeAppCaps(stored, patch) {
+  const out = { ...(stored || {}) };
+  for (const [id, change] of Object.entries(patch || {})) {
+    if (change === null) { delete out[id]; continue; }
+    const next = { ...(out[id] || {}) };
+    for (const [field, n] of Object.entries(change)) {
+      if (n === null) delete next[field];
+      else next[field] = n;
+    }
+    if (Object.keys(next).length) out[id] = next;
+    else delete out[id];
+  }
+  return out;
 }
 
 /**
@@ -1007,6 +1147,31 @@ async function checkDefaultModel(pool, id, what = 'default') {
   return null;
 }
 
+/**
+ * #6156: the per-project numbers as they will be stored once `patch`
+ * (validateAppCapsPatch) is applied: each project it names by slug turned
+ * into its id, and merged into what is stored now. { ok, appCaps }, or
+ * { ok: false, error } naming a project there is none of.
+ */
+async function appCapsAfter(pool, patch) {
+  const slugs = Object.keys(patch).filter((key) => !APP_ID_KEY_RE.test(key));
+  const ids = Object.keys(patch).filter((key) => APP_ID_KEY_RE.test(key)).map(Number);
+  const { rows: apps } = await pool.query(
+    'SELECT id, slug FROM apps WHERE slug = ANY($1::text[]) OR id = ANY($2::int[])', [slugs, ids],
+  );
+  const idOf = new Map(apps.map((a) => [a.slug, Number(a.id)]));
+  const known = new Set(apps.map((a) => Number(a.id)));
+  const byId = {};
+  for (const [key, change] of Object.entries(patch)) {
+    const id = APP_ID_KEY_RE.test(key) ? Number(key) : idOf.get(key);
+    // A project removed since may still be cleared; nothing else is set for one there is not.
+    if (!id || (!known.has(id) && change !== null)) return { ok: false, error: `appCaps: no project ${key}` };
+    byId[String(id)] = change;
+  }
+  const { rows: [row] = [] } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [KEY_APP_CAPS]);
+  return { ok: true, appCaps: mergeAppCaps(parseAppCaps(row?.value), byId) };
+}
+
 async function writeSettings(pool, patch, actorId, config = {}) {
   const valid = validateSettingsPatch(patch);
   if (!valid.ok) return valid;
@@ -1025,6 +1190,12 @@ async function writeSettings(pool, patch, actorId, config = {}) {
     try {
       modeBefore = (await readSettings(pool)).mode;
     } catch {}
+  }
+  // #6156: a change to some projects' own numbers, merged into the others'.
+  if (valid.appCaps) {
+    const merged = await appCapsAfter(pool, valid.appCaps);
+    if (!merged.ok) return merged;
+    valid.updates.push([KEY_APP_CAPS, JSON.stringify(merged.appCaps)]);
   }
   for (const [key, value] of valid.updates) {
     await pool.query(
@@ -1057,9 +1228,10 @@ async function writeSettings(pool, patch, actorId, config = {}) {
     } catch {}
   }
   // More room for live work is used now, and a bot switched on rebuilds
-  // its whole queue now (the lane: its grants and its refresh, soon).
+  // its whole queue now (the lane: its grants and its refresh, soon). A
+  // project given more room brings back what its caps held (#6156).
   const modeAfter = valid.updates.find(([key]) => key === KEY_MODE)?.[1];
-  if (valid.updates.some(([key]) => [KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_PAUSED_APPS].includes(key))
+  if (valid.updates.some(([key]) => [KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_PAUSED_APPS, KEY_APP_CAPS].includes(key))
       || (modeAfter && modeAfter !== 'off' && modeAfter !== modeBefore)) {
     await platform().botRefresh(null).catch((err) => log.warn('homeroom-bot', 'Could not tell the bot\'s lane its settings changed', { err: err.message }));
   }
@@ -2027,7 +2199,7 @@ async function refreshApp(pool, app, {
   // never crowds out what people ask for now, and a ready one is built
   // before the next is read. The order: backlogOrder.
   if (capRoom && bot && !eligible.length && parked.length
-      && capRoom.proposals_per_app > 0 && capRoom.proposals_total > 0) {
+      && capRoom.builds_per_app > 0 && capRoom.proposals_per_app > 0 && capRoom.proposals_total > 0) {
     const { rows: [line] = [] } = await pool.query(BACKLOG_GATE_SQL, [app.id]);
     if (line && !Number(line.n)) {
       const [next] = backlogOrder(parked);
@@ -2708,21 +2880,30 @@ function botProposalCeiling(settings) {
  * Which live cap would have stopped this verdict from being posted. The
  * counts are over the bot's own rows, so in shadow mode they read zero
  * until the tripwire on questions trips — which is exactly the number the
- * dashboard exists to show. A ready verdict is checked against both
- * proposal caps before anything is built: a hold costs nothing, and the
- * cap_freed refresh brings the issue back when there is room.
+ * dashboard exists to show. A ready verdict is checked against the
+ * project's two caps (#6156: its changes waiting for votes, then its
+ * builds) and the bot's ceiling across projects before anything is built:
+ * a hold costs nothing, and the cap_freed refresh brings the issue back
+ * when there is room.
  */
 async function simulateCaps(pool, bot, appId, verdict, settings = null, { issueNumber = null } = {}) {
   if (verdict === 'ready') {
-    // Homeroom bot parity (P4): a request a running batch of its project's
-    // owner started may have up to that batch's number open (homeroom-bot-batches.js).
     // P6: the fix for a flaky check other changes wait on is not held by its
     // project's slots at all (homeroom-bot-flaky-checks.js exemptFromAppCap).
     const exempt = issueNumber != null
       && await flakyChecks().exemptFromAppCap(pool, appId, issueNumber).catch(() => false);
-    const perApp = issueNumber == null ? PROPOSALS_PER_APP_CAP
-      : await require('./homeroom-bot-batches').proposalsPerAppFor(pool, appId, issueNumber, PROPOSALS_PER_APP_CAP);
-    if (!exempt && await openBotProposalCount(pool, bot, appId) >= perApp) return 'proposals_per_app';
+    if (!exempt) {
+      const caps = appCapsOf(settings, appId);
+      // Homeroom bot parity (P4): a request a running batch of its project's
+      // owner started may have up to that batch's number being built
+      // (homeroom-bot-batches.js); the changes waiting for votes are held at
+      // the project's number all the same.
+      const building = issueNumber == null ? caps.building
+        : await require('./homeroom-bot-batches').proposalsPerAppFor(pool, appId, issueNumber, caps.building);
+      const { builds, proposals } = await slotCounts(pool, bot, appId);
+      if (proposals >= caps.waiting) return 'proposals_per_app';
+      if (builds >= building) return 'builds_per_app';
+    }
     if (await openBotProposalTotal(pool, bot) >= botProposalCeiling(settings)) return 'proposals_total';
   }
   if (TRIPWIRE_VERDICTS.includes(verdict)) {
@@ -2732,8 +2913,9 @@ async function simulateCaps(pool, bot, appId, verdict, settings = null, { issueN
 }
 
 /**
- * The bot's slots on an app: what PROPOSALS_PER_APP_CAP counts. A change of
- * its up for a vote or being merged, and (16 Oct 2026) a build under way
+ * The bot's slots on an app: what its two caps count (#6156: its 'proposal'
+ * rows WAITING_PER_APP, its 'build' rows BUILDS_PER_APP; slotCounts). A
+ * change of its up for a vote or being merged, and (16 Oct 2026) a build under way
  * that will become one: the newest live run of a request that was found
  * ready, not held, not finished and not proposed yet, waiting its turn to be
  * built or being built, in the window a build is still believed in
@@ -2778,9 +2960,15 @@ async function slotHolders(pool, bot, appId) {
   return rows;
 }
 
-/** How many of the app's PROPOSALS_PER_APP_CAP slots are taken (slotHolders). */
-async function openBotProposalCount(pool, bot, appId) {
-  return (await slotHolders(pool, bot, appId)).length;
+/**
+ * #6156: how many of the app's slots of each kind are taken (slotHolders):
+ * `builds` waiting or under way, against its building cap, and `proposals`
+ * up for a vote or being merged, against its waiting cap.
+ */
+async function slotCounts(pool, bot, appId) {
+  const holders = await slotHolders(pool, bot, appId);
+  const builds = holders.filter((h) => h.kind === 'build').length;
+  return { builds, proposals: holders.length - builds };
 }
 
 // The bot's proposals up for a vote on every app, counted as the Propose
@@ -2827,13 +3015,16 @@ async function tripwireCount(pool, appId) {
  * one triage and no post.
  */
 async function capRoomFor(pool, bot, appId, settings = null) {
-  const [proposals, total, questions] = await Promise.all([
-    openBotProposalCount(pool, bot, appId),
+  const [{ builds, proposals }, total, questions] = await Promise.all([
+    slotCounts(pool, bot, appId),
     openBotProposalTotal(pool, bot),
     tripwireCount(pool, appId),
   ]);
+  const caps = appCapsOf(settings, appId);
   return {
-    proposals_per_app: Math.max(0, PROPOSALS_PER_APP_CAP - proposals),
+    // #6156: the project's two caps, each its own room.
+    builds_per_app: Math.max(0, caps.building - builds),
+    proposals_per_app: Math.max(0, caps.waiting - proposals),
     proposals_total: Math.max(0, botProposalCeiling(settings) - total),
     question_tripwire: Math.max(0, QUESTION_TRIPWIRE_PER_DAY - questions),
   };
@@ -6488,10 +6679,30 @@ async function proposeFinished(pool, config, { run, app, user, bot, deps, onProp
   return { ok: true, sessionId, prNumber, app };
 }
 
+// The caps that hold a ready verdict for want of room for one more change:
+// the project's builds and its changes waiting for votes (#6156), and the
+// bot's ceiling across projects. A hold by one of them is said in the
+// request's thread too (actOnVerdict).
+const SLOT_CAPS = Object.freeze(['builds_per_app', 'proposals_per_app', 'proposals_total']);
+
+/**
+ * The number a held verdict's line names (live.heldText): the project's
+ * building cap (a running batch's, for one of its requests) or its waiting
+ * cap, the ceiling across projects, or the daily questions. Never throws:
+ * a settings read that fails names the defaults.
+ */
+async function heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeiling }) {
+  if (capSuppressed === 'proposals_total') return proposalCeiling;
+  if (capSuppressed !== 'builds_per_app' && capSuppressed !== 'proposals_per_app') return QUESTION_TRIPWIRE_PER_DAY;
+  const caps = appCapsOf(await readSettings(pool).catch(() => null), app.id);
+  if (capSuppressed === 'proposals_per_app') return caps.waiting;
+  return require('./homeroom-bot-batches').proposalsPerAppFor(pool, app.id, issueNumber, caps.building);
+}
+
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, askedLook = false, comments = [],
+  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false, comments = [],
   decider = null, backlog = false, deps,
 }) {
   const { github, ws } = deps;
@@ -6550,12 +6761,11 @@ async function actOnVerdict({
       app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed, noted: !already && !quietHold,
     });
     if (!already && !quietHold) {
-      const limit = capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP
-        : capSuppressed === 'proposals_total' ? proposalCeiling : QUESTION_TRIPWIRE_PER_DAY;
+      const limit = await heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeiling });
       // A build a proposal cap holds is a quiet line in the request's thread
       // (homeroom-bot-dm.js dmText) and its card says Waiting. A question
       // the daily tripwire holds is not: there is nothing to tell them yet.
-      const toDm = capSuppressed === 'proposals_per_app' || capSuppressed === 'proposals_total';
+      const toDm = SLOT_CAPS.includes(capSuppressed);
       await say(kind, live.heldText({
         cap: capSuppressed, verdict: parsed.verdict === 'ready' && parsed.complicated ? 'plan' : parsed.verdict, limit,
         project: app.name || app.slug,
@@ -7520,7 +7730,7 @@ async function noteBuiltFrom(pool, { sessionId, from }) {
 async function buildLive({
   pool, config, bot, app, repo, issueNumber, issue, parsed, runId,
   seed, seedReadAt, postedAt = [], turnBudgetMs, model: stageBuildModel, specModel: stageSpecModel = null, botLogin = null,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, presetSpec = null, carriedCostUsd = 0, settings = null, deps,
+  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, presetSpec = null, carriedCostUsd = 0, settings = null, deps,
   // #4488: a complicated change on an existing project: its plan first
   // (planBeforeBuilding), and once its requester said Build it, built from
   // that spec (presetSpec, its screens `presetSpecHtml`) and reviewed.
@@ -9066,6 +9276,26 @@ async function currentConfigurations(pool) {
   };
 }
 
+/**
+ * #6156: the projects an admin set numbers of their own for, by slug, as
+ * the dashboard's caps carry them: { appId, buildsPerApp, proposalsPerApp }
+ * with the defaults filled in. Never throws: a read that fails is none.
+ */
+async function appCapsBySlug(pool, settings) {
+  const ids = Object.keys(settings?.appCaps || {}).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  if (!ids.length) return {};
+  try {
+    const { rows } = await pool.query('SELECT id, slug FROM apps WHERE id = ANY($1::int[])', [ids]);
+    return Object.fromEntries(rows.map((r) => {
+      const caps = appCapsOf(settings, r.id);
+      return [r.slug, { appId: Number(r.id), buildsPerApp: caps.building, proposalsPerApp: caps.waiting }];
+    }));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the projects with numbers of their own', { err: err.message });
+    return {};
+  }
+}
+
 async function adminPayload(pool, config, {
   app = null, verdict = null, before = null, limit = RUNS_PAGE, budgetOnly = false,
 } = {}) {
@@ -9160,7 +9390,7 @@ async function adminPayload(pool, config, {
   );
 
   const { rows: appRows } = await pool.query(
-    `SELECT slug, name FROM apps WHERE status = 'running' AND repo_url IS NOT NULL ORDER BY name`,
+    `SELECT id, slug, name FROM apps WHERE status = 'running' AND repo_url IS NOT NULL ORDER BY name`,
   );
 
   // #3654: which stages each run on this page can be replayed at (a run
@@ -9191,9 +9421,13 @@ async function adminPayload(pool, config, {
     })),
     apps: appRows,
     caps: {
-      proposalsPerApp: PROPOSALS_PER_APP_CAP,
+      // #6156: a project's builds and its changes waiting for votes, and
+      // (byApp, by slug) the projects an admin set numbers of their own for.
+      buildsPerApp: BUILDS_PER_APP,
+      proposalsPerApp: WAITING_PER_APP,
       proposalsTotal: botProposalCeiling(settings),
       questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY,
+      byApp: await appCapsBySlug(pool, settings),
     },
     // The shadow lane's own counts (buildLaneSummary, which never counts a
     // live build, #3509), and beside them the live builds under way and
@@ -9844,6 +10078,7 @@ module.exports = {
   readSettings,
   writeSettings,
   validateSettingsPatch,
+  validateAppCapsPatch,
   parseSettings,
   adminPayload,
   loopMemory,
@@ -10016,6 +10251,7 @@ module.exports = {
   BLOCKERS,
   capRoomFor,
   slotHolders,
+  slotCounts,
   SLOT_HOLDERS_SQL,
   simulateCaps,
   planTripwire,
@@ -10074,7 +10310,15 @@ module.exports = {
   REFRESH_INTERVAL_MS,
   IDLE_PASS_DELAY_MS,
   BUSY_PASS_DELAY_MS,
-  PROPOSALS_PER_APP_CAP,
+  BUILDS_PER_APP,
+  WAITING_PER_APP,
+  MAX_BUILDS_PER_APP,
+  MAX_WAITING_PER_APP,
+  KEY_APP_CAPS,
+  appCapsOf,
+  parseAppCaps,
+  mergeAppCaps,
+  SLOT_CAPS,
   botProposalCeiling,
   QUESTION_TRIPWIRE_PER_DAY,
   // The loop's work, which the bot-request and bot-lane machines run

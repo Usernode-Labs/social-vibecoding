@@ -949,6 +949,51 @@ function mcpBrowserRoutes(config) {
     }
   });
 
+  // ── Settings: Test connection ────────────────────────────────────────
+  //
+  // The panel's Test connection button. READ-ONLY by construction: it probes
+  // this deployment's own public origin and counts the account's grants. It
+  // mints no token, writes no row and contacts no chat product — a server
+  // that answers while a chat product still fails is the product's problem,
+  // and the panel points back at that product's setup steps for it.
+  //
+  // Declared before DELETE /api/me/connectors/:id so the two can never be
+  // read as one route, though their methods already differ.
+  router.get('/api/me/connectors/test', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+
+    // Staging mock data: mcp_tokens is staging:private and the surface that
+    // mints a grant is 404 there, so a staging clone can only ever report
+    // "not connected". ?demo= resolves the reviewable results without
+    // touching the DB or probing anything.
+    if (process.env.USERNODE_ENV === 'staging') {
+      return res.json(demoConnectionTest(req.query.demo));
+    }
+
+    const origin = config.cliAuthOrigin;
+    const [discovery, mcp] = await Promise.all([
+      probeConnectorDiscovery(origin),
+      probeConnectorMcp(origin),
+    ]);
+
+    let connection;
+    try {
+      connection = await readConnectorTestGrants(pool, req.user.id);
+    } catch (err) {
+      log.error('mcp-remote', 'connector test grant read failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+
+    return res.json({
+      code: connectorTestCode({ discovery, mcp, connection }),
+      enabled: true,
+      discovery,
+      mcp,
+      connection,
+      checked_at: new Date().toISOString(),
+    });
+  });
+
   // Disconnect: revokes every token minted from that one consent, in one
   // transaction, and audits it. Takes effect immediately.
   router.delete('/api/me/connectors/:id', userRate, async (req, res) => {
@@ -1103,6 +1148,147 @@ function demoConnectorState(flag) {
   }
 }
 
+// ── Test connection: probes and fixtures ───────────────────────────────
+
+const PROBE_TIMEOUT_MS = 3000;
+
+// A probe answers in one of three states, and the middle one is the whole
+// reason this is not a boolean: `unknown` means the deployment could not
+// reach its own public origin (no hairpin NAT, a split-horizon DNS name),
+// which is a fact about the network, not about whether the server works.
+// The browser settles those legs itself against the origin it is served from.
+async function probeFetch(url, init) {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+  } catch {
+    return null;
+  }
+}
+
+async function probeConnectorDiscovery(origin) {
+  if (!origin) return 'unknown';
+  const headers = { accept: 'application/json' };
+  const [protectedResource, authorization] = await Promise.all([
+    probeFetch(`${origin}/.well-known/oauth-protected-resource/mcp`, { headers }),
+    probeFetch(`${origin}/.well-known/oauth-authorization-server`, { headers }),
+  ]);
+  if (!protectedResource || !authorization) return 'unknown';
+  if (protectedResource.status !== 200 || authorization.status !== 200) return 'failed';
+  const [resource, issuer] = await Promise.all([
+    protectedResource.json().catch(() => null),
+    authorization.json().catch(() => null),
+  ]);
+  return resource && issuer
+    && resource.resource === `${origin}/mcp`
+    && issuer.issuer === origin
+    ? 'ok'
+    : 'failed';
+}
+
+// No Authorization header on purpose: a 401 carrying the standard Bearer
+// challenge is what "reachable and answering" looks like here. Anything that
+// answers differently is a failure, not an unknown.
+async function probeConnectorMcp(origin) {
+  if (!origin) return 'unknown';
+  const response = await probeFetch(`${origin}/mcp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  if (!response) return 'unknown';
+  const challenge = response.headers.get('www-authenticate') || '';
+  return response.status === 401
+    && challenge.startsWith('Bearer')
+    && challenge.includes('resource_metadata=')
+    ? 'ok'
+    : 'failed';
+}
+
+// One query, grouped the way the list groups: a row per GRANT (a consent),
+// not per token, with delegated grants left out for the same reason the list
+// leaves them out (#2779). The most recently used active grant is the one the
+// passing line names.
+async function readConnectorTestGrants(pool, userId) {
+  const { rows } = await pool.query(
+    `WITH grants AS (
+       SELECT t.grant_id,
+              MAX(c.client_name)  AS client_name,
+              MAX(t.last_used_at) AS last_used_at,
+              BOOL_OR(t.revoked_at IS NULL AND t.expires_at > clock_timestamp()) AS active
+         FROM mcp_tokens t
+         LEFT JOIN mcp_clients c ON c.client_id = t.client_id
+        WHERE t.user_id = $1
+          AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)
+        GROUP BY t.grant_id
+     )
+     SELECT COUNT(*) FILTER (WHERE active)    AS active,
+            COUNT(*) FILTER (WHERE NOT active) AS inactive,
+            (ARRAY_AGG(client_name ORDER BY last_used_at DESC NULLS LAST)
+              FILTER (WHERE active))[1]        AS client_name,
+            (ARRAY_AGG(last_used_at ORDER BY last_used_at DESC NULLS LAST)
+              FILTER (WHERE active))[1]        AS last_used_at
+       FROM grants`,
+    [userId]
+  );
+  const row = rows[0] || {};
+  return {
+    active: Number(row.active || 0),
+    inactive: Number(row.inactive || 0),
+    client_name: row.client_name || null,
+    last_used_at: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
+  };
+}
+
+// First match wins. An `unknown` leg takes no part: the code is computed from
+// what the server could actually see, and the client settles the rest before
+// it shows anything.
+function connectorTestCode({ discovery, mcp, connection }) {
+  if (discovery === 'failed') return 'discovery_failed';
+  if (mcp === 'failed') return 'server_unreachable';
+  if (!connection.active && !connection.inactive) return 'not_connected';
+  if (!connection.active) return 'connection_expired';
+  return 'ok';
+}
+
+// The reviewable results, one ?demo= value each. `1` is the everyday passing
+// state. Staging never reads the DB and never probes: the same fixture is
+// returned every time, marked `demo`.
+function demoConnectionTest(flag) {
+  const base = (overrides) => ({
+    enabled: true,
+    discovery: 'ok',
+    mcp: 'ok',
+    connection: { active: 0, inactive: 0, client_name: null, last_used_at: null },
+    checked_at: new Date().toISOString(),
+    demo: true,
+    ...overrides,
+  });
+  switch (flag) {
+    case '1': {
+      const connector = demoConnector('claude');
+      return base({
+        code: 'ok',
+        connection: {
+          active: 1,
+          inactive: 0,
+          client_name: connector.client_name,
+          last_used_at: connector.last_used_at,
+        },
+      });
+    }
+    // The server did not answer, so the line can be reviewed.
+    case 'connectors-test-unreachable':
+      return base({ code: 'server_unreachable', mcp: 'failed' });
+    // The server works, nothing is connected yet.
+    case 'connectors-test-none':
+      return base({ code: 'not_connected' });
+    default:
+      // No credential can exist on staging, and the surface that mints one is
+      // 404 there. Without the flag, that is the honest answer.
+      return { code: 'unavailable_here', enabled: false };
+  }
+}
+
 module.exports = {
   mcpConnectGate,
   mcpPreAuthRoutes,
@@ -1112,5 +1298,9 @@ module.exports = {
   authenticateConnector,
   demoConnectors,
   demoConnectorState,
+  demoConnectionTest,
+  // Exported for the route suite's real-database case: the aggregate is the
+  // thing that can be wrong in a way a stubbed pool cannot show.
+  readConnectorTestGrants,
   isInitializeRequest,
 };

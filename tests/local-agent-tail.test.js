@@ -110,7 +110,9 @@ test('outcomes the platform owns are explained in the user\'s own words', () => 
   const turn = { id: 11, error_detail: 'checkout is dirty', summary: '', head_sha: null };
   for (const [outcome, words] of [
     ['declined', "Evan's laptop declined this turn: checkout is dirty"],
-    ['abandoned', "Evan's laptop disconnected before finishing this turn: checkout is dirty"],
+    // Nothing accepted this turn, so it never started: the old wording
+    // claimed a run that did not exist.
+    ['abandoned', "Evan's laptop did not start this turn: checkout is dirty"],
     ['stopped', 'Stopped: checkout is dirty'],
     ['missing', 'The local turn record disappeared: checkout is dirty'],
     ['aborted', "Evan's laptop was interrupted: checkout is dirty"],
@@ -119,6 +121,13 @@ test('outcomes the platform owns are explained in the user\'s own words', () => 
     assert.equal(result.fatalError, words, `explains ${outcome}`);
     assert.equal(result.ccIsError, true);
   }
+  // A turn the machine accepted and then lost really did start, so it keeps
+  // the disconnect wording.
+  const accepted = buildTurnResult({
+    turn: { ...turn, accepted_at: new Date() }, outcome: 'abandoned', label: "Evan's laptop",
+  });
+  assert.equal(accepted.fatalError,
+    "Evan's laptop disconnected before finishing this turn: checkout is dirty");
   // 'completed' and 'failed' deliberately fall through to the shared tail:
   // one needs no explanation and the other already carries the runtime's own
   // error text.

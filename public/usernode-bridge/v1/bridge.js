@@ -104,6 +104,7 @@
     requestAlarmPermissions: true,
     openNotificationSettings: true,
     prepareForLogin: true,
+    prepareProvingParameters: true,
     restoreWebSession: true,
     logout: true,
     establishNativeSession: true,
@@ -139,6 +140,7 @@
   var _realmSession = null;
   var _realmSessionGeneration = 0;
   var _realmEstablishLease = null;
+  var _realmPreparations = new Set();
   var _REALM_CLOSE_EVENT = "sv:native-realm-close";
 
   // ── Privileged-handshake outcome record ───────────────────────────────
@@ -260,6 +262,8 @@
     _realmSession = null;
     _realmEstablishLease = null;
     _realmSessionGeneration++;
+    _realmPreparations.forEach(function (cancel) { cancel(reason); });
+    _realmPreparations.clear();
     _socialReceiptObservers = {};
 
     var pending = window.__usernodeBridge && window.__usernodeBridge.pending;
@@ -267,7 +271,7 @@
     Object.keys(pending).forEach(function (id) {
       var entry = pending[id];
       if (!entry || (entry.sessionBound !== true &&
-          entry.establishment !== true)) return;
+          entry.establishment !== true && entry.preparation !== true)) return;
       delete pending[id];
       entry.reject(taggedNativeError(
         reason || "Native session request stopped because the session changed",
@@ -427,6 +431,7 @@
           !!privilegedCapability,
         sessionBound: !!realmSessionClaim,
         establishment: method === "establishNativeSession",
+        preparation: method === "prepareProvingParameters",
         realmSessionGeneration: realmSessionGeneration,
       };
       var payload = { method: method, id: id, args: args || {} };
@@ -459,6 +464,7 @@
           privileged: origEntry.privileged,
           sessionBound: origEntry.sessionBound,
           establishment: origEntry.establishment,
+          preparation: origEntry.preparation,
           realmSessionGeneration: origEntry.realmSessionGeneration,
         };
         try {
@@ -556,6 +562,7 @@
   }
 
   function callNative(method, args) {
+    var generation = _realmSessionGeneration;
     var needsRealmSession = isRealmSessionMethod(method);
     var needsRootCapability = isPrivilegedNativeMethod(method) ||
       (!_inIframe && needsRealmSession);
@@ -575,6 +582,12 @@
       );
     }
     return ensurePrivilegedCapability().then(function (capability) {
+      if (method === "prepareProvingParameters" &&
+          generation !== _realmSessionGeneration) {
+        throw taggedNativeError(
+          "Native session changed during preparation", "session-changed"
+        );
+      }
       return postNative(
         method, args, capability,
         realmSession && realmSession.claim,
@@ -5334,6 +5347,37 @@
     return callNativeChromeAction(
       "prepareForLogin", {}, _PERMISSION_REQUEST_TIMEOUT_MS
     );
+  };
+
+  // Public-data preparation precedes the short-lived authentication handoff.
+  // Native owns download progress/retry. Do not impose an action timeout on
+  // this wait; realm closure/pagehide rejects its pending request instead.
+  window.usernode.prepareProvingParameters = function () {
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error("Proof tools require the native app"));
+    }
+    var generation = _realmSessionGeneration;
+    var cancel;
+    var cancelled = new Promise(function (_, reject) {
+      cancel = function (reason) {
+        reject(taggedNativeError(reason ||
+          "Native session changed during preparation", "session-changed"));
+      };
+    });
+    // Register before capability bootstrap: it may still be awaiting native
+    // permission when identity publication or navigation closes this realm.
+    _realmPreparations.add(cancel);
+    var preparing = callNative("prepareProvingParameters", {}).then(function (ready) {
+      if (_realmSessionGeneration !== generation) {
+        throw taggedNativeError("Native session changed during preparation",
+          "session-changed");
+      }
+      if (ready !== true) throw new Error("Native proof tools are not ready");
+      return true;
+    });
+    return Promise.race([preparing, cancelled]).finally(function () {
+      _realmPreparations.delete(cancel);
+    });
   };
 
   // Root-owned, trusted top frame only. Native installs the HttpOnly cookie;

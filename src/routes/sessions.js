@@ -6562,6 +6562,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     if (await stagingRecovery.stagingNeedsRebuild(session, { config, headSha })) {
       return { status: 'missing' };
     }
+    // Asleep (#6157, services/preview-sleep.js): not missing, since its
+    // image, database and address are all there, and not ready, since it has
+    // no pod. The route wakes it. One out of date was answered missing above,
+    // and is rebuilt rather than woken.
+    if (require('../services/preview-sleep').isAsleep(session)) return { status: 'asleep' };
 
     const stagingName = `usernode-staging-${session.app_slug}--${session.id}`;
     const runtimeKind = session.staging_runtime_kind || applicationRuntime.mode(config);
@@ -6617,9 +6622,49 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     };
   }
 
+  // A sleeping preview opened from Homeroom (#6157): woken in the background,
+  // behind the same "spinning back up" loader a rebuild shows. Once it serves,
+  // `staging_awake` tells the loader to open it (it asks ensure-staging again,
+  // which verifies it as ever). One that does not wake is handed to the
+  // preview machine as lost, which rebuilds it, and the loader waits for that
+  // build's staging_ready or staging_failed instead; for a read-only reviewer
+  // (`rebuild: false`) it is reported as failed, since their route never
+  // rebuilds.
+  function wakeAndTell(session, requesterId, { rebuild = true } = {}) {
+    const sessionId = Number(session.id);
+    const previewSleep = require('../services/preview-sleep');
+    const { broadcastGlobal } = require('../services/ws');
+    previewSleep.wake(config, pool, sessionId, { reason: 'preview-click' })
+      .then((out) => {
+        if (out.status === 'woke' || out.status === 'awake') {
+          broadcastGlobal({ type: 'session_event', sessionId, event: 'staging_awake', url: out.url || session.staging_url });
+          return null;
+        }
+        log.warn('sessions', 'A sleeping preview did not wake', { sessionId, status: out.status, detail: out.detail, rebuild });
+        if (!rebuild) {
+          broadcastGlobal({
+            type: 'session_event', sessionId, event: 'staging_failed',
+            error: 'This preview was asleep and did not wake up. A collaborator can rebuild it.',
+            errorName: 'PreviewAsleep', missingKeys: [],
+          });
+          return null;
+        }
+        return stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'preview-click', requesterId });
+      })
+      .catch((err) => {
+        const { errMsg, errName, missingKeys } = describeStagingFailure(err);
+        log.error('sessions', 'A sleeping preview could not be woken or rebuilt', { sessionId, errName, err: errMsg });
+        broadcastGlobal({
+          type: 'session_event', sessionId, event: 'staging_failed', error: errMsg, errorName: errName, missingKeys,
+        });
+      });
+  }
+
   // Read-only twin of ensure-staging. A reviewer who cannot trigger a build
   // still gets the same health/revision/edge gate instead of opening the
-  // last stored URL directly. It never repairs, rebuilds, or changes state.
+  // last stored URL directly. It never repairs or rebuilds. It does wake a
+  // sleeping preview (#6157): that is what its direct link does for anyone
+  // who opens it, and nothing is rebuilt.
   router.get('/api/sessions/:id/preview-status', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
@@ -6631,6 +6676,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
       const result = await inspectPreview(session);
+      if (result.status === 'asleep') {
+        require('../services/preview-sleep').touchActivity(pool, session.id);
+        wakeAndTell(session, req.user.id, { rebuild: false });
+        return res.json({ status: 'rebuilding', waking: true });
+      }
       // The admin Journey's creation path: a preview answered as ready is
       // a preview opened, once per viewer per change. Never awaited.
       if (result.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
@@ -6676,6 +6726,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
+      // Somebody opened it: a preview in use does not go to sleep (#6157).
+      require('../services/preview-sleep').touchActivity(pool, session.id);
       // A missing/stale runtime rebuilds. A present but unhealthy one is
       // reported honestly and left alone: one failed bounded probe is not a
       // reason to churn the app or its database, but it is a reason not to
@@ -6684,6 +6736,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // As in preview-status: a ready answer is a preview opened. A rebuild
       // is not, until the client asks again once it is up.
       if (inspected.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
+      // Asleep: scaled back up, no rebuild and no checks run again (#6157).
+      if (inspected.status === 'asleep') {
+        wakeAndTell(session, req.user.id);
+        return res.json({ status: 'rebuilding', waking: true });
+      }
       if (inspected.status !== 'missing') return res.json(inspected);
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.
@@ -9873,42 +9930,64 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         };
       }
       const turnId = queued.turn.id;
-      const telemetryStartedAt = new Date();
-      localScoutAttemptNumber += 1;
-      if (stopHandle) stopHandle.localTurnId = String(turnId);
-      let announcedAccepted = false;
-      const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
-        // This process is the turn's waiter (see dispatchLocalBuild).
-        waiterId: queued.waiterId,
-        onProgress: (row) => {
-          if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
-            announcedAccepted = true;
-            onScoutProgress(`[${lease.label} accepted the scout turn]`);
-          }
-          const lines = Array.isArray(row.progress) ? row.progress : [];
-          for (const line of lines.slice(seenScoutLines)) onScoutProgress(line);
-          seenScoutLines = Math.max(seenScoutLines, lines.length);
-        },
-      });
-      if (outcome === 'adopted') {
-        // Restart recovery took the turn over and publishes its spec itself.
-        const adopted = new Error(`${lease.label}'s scout turn is being finished by restart recovery`);
-        adopted.code = 'local_turn_adopted';
-        throw adopted;
+      try {
+        const telemetryStartedAt = new Date();
+        localScoutAttemptNumber += 1;
+        if (stopHandle) stopHandle.localTurnId = String(turnId);
+        let announcedAccepted = false;
+        let { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+          // This process is the turn's waiter (see dispatchLocalBuild).
+          waiterId: queued.waiterId,
+          onProgress: (row) => {
+            if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
+              announcedAccepted = true;
+              onScoutProgress(`[${lease.label} accepted the scout turn]`);
+            }
+            const lines = Array.isArray(row.progress) ? row.progress : [];
+            for (const line of lines.slice(seenScoutLines)) onScoutProgress(line);
+            seenScoutLines = Math.max(seenScoutLines, lines.length);
+          },
+        });
+        if (outcome === 'adopted') {
+          // Restart recovery took the turn over and publishes its spec itself.
+          const adopted = new Error(`${lease.label}'s scout turn is being finished by restart recovery`);
+          adopted.code = 'local_turn_adopted';
+          throw adopted;
+        }
+        if (outcome === 'aborted') {
+          // The dispatch was interrupted (this process is stopping, or the
+          // request went away) before the machine answered. Nothing is
+          // running, so the row must not stay live and keep the change busy.
+          finished = await localAgent
+            .abandonTurn(pool, turnId, 'The turn was interrupted before it finished.')
+            .catch(() => null) || finished;
+        }
+        recordLocalCodingInvocation(pool, {
+          session,
+          turnId,
+          turn: finished,
+          outcome,
+          component: headless ? 'coding_agent_headless' : 'coding_agent_scout',
+          attemptNumber: localScoutAttemptNumber,
+          correlationId: localScoutCorrelationId,
+          startedAt: telemetryStartedAt,
+        });
+        // Shaped and worded as restart recovery shapes a recovered one
+        // (localAgent.buildTurnResult): the spec is the result text.
+        return localAgent.buildTurnResult({ turn: finished, outcome, label: lease.label, mode: 'scout' });
+      } catch (err) {
+        // A dispatch that stopped part way must leave no live row behind:
+        // the machine still heartbeats its lease, so nothing else would ever
+        // free it and every later dispatch would answer session_busy.
+        // `local_turn_adopted` is the one throw that must leave the row
+        // alone: restart recovery owns that turn and its tail.
+        if (err?.code !== 'local_turn_adopted') {
+          await localAgent
+            .abandonTurn(pool, turnId, `Sending the turn failed: ${agentTurn.sanitizeError(err) || 'unknown error'}`)
+            .catch(() => {});
+        }
+        throw err;
       }
-      recordLocalCodingInvocation(pool, {
-        session,
-        turnId,
-        turn: finished,
-        outcome,
-        component: headless ? 'coding_agent_headless' : 'coding_agent_scout',
-        attemptNumber: localScoutAttemptNumber,
-        correlationId: localScoutCorrelationId,
-        startedAt: telemetryStartedAt,
-      });
-      // Shaped and worded as restart recovery shapes a recovered one
-      // (localAgent.buildTurnResult): the spec is the result text.
-      return localAgent.buildTurnResult({ turn: finished, outcome, label: lease.label, mode: 'scout' });
     };
 
     let result;
@@ -12361,51 +12440,73 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         };
       }
       const turnId = queued.turn.id;
-      const telemetryStartedAt = new Date();
-      localBuildAttemptNumber += 1;
-      if (stopHandle) stopHandle.localTurnId = String(turnId);
-      let announcedAccepted = false;
-      const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
-        // This process is the turn's waiter: it keeps the turn from being
-        // taken over by restart recovery while it waits, and claims the
-        // tail below under this id (services/local-agent-recovery.js).
-        waiterId: queued.waiterId,
-        onProgress: (row) => {
-          if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
-            announcedAccepted = true;
-            onAgentProgress(`[${lease.label} accepted the turn]`);
-          }
-          const lines = Array.isArray(row.progress) ? row.progress : [];
-          for (const line of lines.slice(seenLocalLines)) onAgentProgress(line);
-          seenLocalLines = Math.max(seenLocalLines, lines.length);
-        },
-      });
-      if (outcome === 'adopted') {
-        // The turn's item was claimed again while this process lost it, and
-        // that claim took the turn over and runs its tail itself. Running it here too would post every
-        // card twice.
-        const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
-        adopted.code = 'local_turn_adopted';
-        throw adopted;
+      try {
+        const telemetryStartedAt = new Date();
+        localBuildAttemptNumber += 1;
+        if (stopHandle) stopHandle.localTurnId = String(turnId);
+        let announcedAccepted = false;
+        let { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+          // This process is the turn's waiter: it keeps the turn from being
+          // taken over by restart recovery while it waits, and claims the
+          // tail below under this id (services/local-agent-recovery.js).
+          waiterId: queued.waiterId,
+          onProgress: (row) => {
+            if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
+              announcedAccepted = true;
+              onAgentProgress(`[${lease.label} accepted the turn]`);
+            }
+            const lines = Array.isArray(row.progress) ? row.progress : [];
+            for (const line of lines.slice(seenLocalLines)) onAgentProgress(line);
+            seenLocalLines = Math.max(seenLocalLines, lines.length);
+          },
+        });
+        if (outcome === 'adopted') {
+          // The turn's item was claimed again while this process lost it, and
+          // that claim took the turn over and runs its tail itself. Running it here too would post every
+          // card twice.
+          const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
+          adopted.code = 'local_turn_adopted';
+          throw adopted;
+        }
+        if (outcome === 'aborted') {
+          // The dispatch was interrupted (this process is stopping, or the
+          // request went away) before the machine answered. Nothing is
+          // running, so the row must not stay live and keep the change busy.
+          finished = await localAgent
+            .abandonTurn(pool, turnId, 'The turn was interrupted before it finished.')
+            .catch(() => null) || finished;
+        }
+        recordLocalCodingInvocation(pool, {
+          session,
+          turnId,
+          turn: finished,
+          outcome,
+          component: headless ? 'coding_agent_headless' : 'coding_agent_build',
+          attemptNumber: localBuildAttemptNumber,
+          correlationId: localBuildCorrelationId,
+          startedAt: telemetryStartedAt,
+        });
+        // The full set awaitTurnResult can return is completed / failed /
+        // declined / stopped / abandoned / missing / aborted; the shape and the
+        // words for each are shared with restart recovery
+        // (localAgent.buildTurnResult), so a recovered local turn reaches the
+        // tail exactly as this one does.
+        return localAgent.buildTurnResult({
+          turn: finished, outcome, label: lease.label, behind: session.behind_main || 0, mode: 'build',
+        });
+      } catch (err) {
+        // A dispatch that stopped part way must leave no live row behind:
+        // the machine still heartbeats its lease, so nothing else would ever
+        // free it and every later dispatch would answer session_busy.
+        // `local_turn_adopted` is the one throw that must leave the row
+        // alone: restart recovery owns that turn and its tail.
+        if (err?.code !== 'local_turn_adopted') {
+          await localAgent
+            .abandonTurn(pool, turnId, `Sending the turn failed: ${agentTurn.sanitizeError(err) || 'unknown error'}`)
+            .catch(() => {});
+        }
+        throw err;
       }
-      recordLocalCodingInvocation(pool, {
-        session,
-        turnId,
-        turn: finished,
-        outcome,
-        component: headless ? 'coding_agent_headless' : 'coding_agent_build',
-        attemptNumber: localBuildAttemptNumber,
-        correlationId: localBuildCorrelationId,
-        startedAt: telemetryStartedAt,
-      });
-      // The full set awaitTurnResult can return is completed / failed /
-      // declined / stopped / abandoned / missing / aborted; the shape and the
-      // words for each are shared with restart recovery
-      // (localAgent.buildTurnResult), so a recovered local turn reaches the
-      // tail exactly as this one does.
-      return localAgent.buildTurnResult({
-        turn: finished, outcome, label: lease.label, behind: session.behind_main || 0, mode: 'build',
-      });
     };
 
     let result;

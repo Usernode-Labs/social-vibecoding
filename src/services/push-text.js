@@ -33,9 +33,10 @@ function readCheckout(namespace) {
 }
 
 /**
- * The English of this namespace, by key: a given build's when `source` is
- * passed and has it, otherwise this checkout's, otherwise the running build's.
- * Empty when none can be read, and a push then says its generic words.
+ * The English of a server namespace (the push's unless named), by key: a given
+ * build's when `source` is passed and has it, otherwise this checkout's,
+ * otherwise the running build's. Empty when none can be read, and a push then
+ * says its generic words.
  */
 function englishTexts(source, namespace = NAMESPACE) {
   const file = `en/${namespace}.json`;

@@ -45,12 +45,12 @@ function usableMessages(language, source, cached, namespace = NAMESPACE) {
   return messages;
 }
 
-// namespace:language -> { source, at, cached, messages } and, during a read, `reading`.
+// namespace|language -> { source, at, cached, messages } and, during a read, `reading`.
 const memo = new Map();
-const logTag = (namespace) => (namespace === NAMESPACE ? 'mobile-push' : `${namespace}-language`);
 
-function messagesFor(pool, language, source, now, namespace) {
-  const held = memo.get(`${namespace}:${language}`);
+function messagesFor(pool, language, source, now, namespace = NAMESPACE) {
+  const memoKey = `${namespace}|${language}`;
+  const held = memo.get(memoKey);
   if (held?.reading) return held.reading;
   if (held?.messages && held.source === source && now - held.at < languageCache.VERSION_TTL_MS) return held.messages;
   const reading = (async () => {
@@ -61,19 +61,29 @@ function messagesFor(pool, language, source, now, namespace) {
     try {
       cached = await languageCache.cachedNamespace(pool, language, namespace);
     } catch (err) {
-      log.warn(logTag(namespace), `${namespace} translations could not be read`, { language, code: typeof err?.code === 'string' ? err.code : 'unknown' });
+      log.warn('mobile-push', 'push translations could not be read', { language, namespace, code: typeof err?.code === 'string' ? err.code : 'unknown' });
     }
     let messages = {};
     try {
       messages = usableMessages(language, source, cached, namespace);
     } catch (err) {
-      log.warn(logTag(namespace), `${namespace} translations could not be used`, { language, message: err.message });
+      log.warn('mobile-push', 'push translations could not be used', { language, namespace, message: err.message });
     }
-    memo.set(`${namespace}:${language}`, { source, at: now, cached, messages });
+    memo.set(memoKey, { source, at: now, cached, messages });
     return messages;
   })();
-  memo.set(`${namespace}:${language}`, { ...held, reading });
+  memo.set(memoKey, { ...held, reading });
   return reading;
+}
+
+/**
+ * What is in hand for a namespace right now, even past its minute, with a read
+ * started behind it when it is due. Never waits: {} until the first read is in.
+ */
+function messagesInHand(pool, language, source, now, namespace) {
+  const found = messagesFor(pool, language, source, now, namespace);
+  if (!(found instanceof Promise)) return found;
+  return memo.get(`${namespace}|${language}`)?.messages || {};
 }
 
 /**
@@ -90,7 +100,7 @@ async function translator(pool, locale, { namespace = NAMESPACE, source, now = D
     const messages = await messagesFor(pool, language, running, now, namespace);
     return translatorFrom(language, messages, englishTexts(running, namespace));
   } catch (err) {
-    log.warn(logTag(namespace), `${namespace} language lookup failed`, { message: err.message });
+    log.warn('mobile-push', `${namespace} language lookup failed`, { message: err.message });
     return null;
   }
 }
@@ -100,4 +110,6 @@ function reset() {
   memo.clear();
 }
 
-module.exports = { pushTranslator: translator, translator, reset, usableMessages };
+module.exports = {
+  messagesFor, messagesInHand, pushTranslator: translator, translator, reset, usableMessages,
+};

@@ -813,6 +813,11 @@ function load() {
     // pause timer so reopening a recently-paused session keeps a warm
     // preview. Default 6h; set to 0 to disable staging GC.
     stagingIdleTeardownMs: parseInt(process.env.STAGING_IDLE_TEARDOWN_MS || String(6 * 60 * 60 * 1000), 10),
+    // #6157: a Kubernetes preview nobody has used for this long sleeps
+    // (scaled to no replicas, everything else kept, woken by whatever opens
+    // it: services/preview-sleep.js), vote-backed ones included. Default 2h;
+    // set to 0 to switch sleep off.
+    previewSleepAfterMs: parseInt(process.env.PREVIEW_SLEEP_AFTER_MS || String(2 * 60 * 60 * 1000), 10),
     // How often the session sweeper scans for idle sessions.
     sessionSweepIntervalMs: parseInt(process.env.SESSION_SWEEP_INTERVAL_MS || '60000', 10),
     // Production app-container watchdog (services/app-heal.js, #426):
@@ -1125,6 +1130,7 @@ function load() {
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  STAGING_IDLE_TEARDOWN_MS=${config.stagingIdleTeardownMs}${config.stagingIdleTeardownMs === 0 ? ' (disabled)' : ''}`);
+  console.log(`  PREVIEW_SLEEP_AFTER_MS=${config.previewSleepAfterMs}${config.previewSleepAfterMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  SESSION_SWEEP_INTERVAL_MS=${config.sessionSweepIntervalMs}`);
   console.log(`  APP_HEAL_INTERVAL_MS=${config.appHealIntervalMs}${config.appHealIntervalMs === 0 ? ' (disabled)' : ''} APP_HEAL_COOLDOWN_MS=${config.appHealCooldownMs}`);
   console.log(`  SESSION_LRU_ON_RESUME=${config.sessionLruOnResume}`);

@@ -12,6 +12,7 @@ const path = require('node:path');
 
 const track = require('../src/services/homeroom-bot-track');
 const tray = require('../src/services/homeroom-bot-tray');
+const bot = require('../src/services/homeroom-bot');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const NOW = Date.parse('2026-10-16T10:35:00Z');
@@ -112,6 +113,15 @@ test('held says which limit, its place in line, and for an allowance when it lif
   assert.deepEqual(slots.held, { limit: 'slots', position: 2, until: null });
   const wide = track.trackOf({ job: job({ outcome: 'held', id: 8 }), runs: [{ id: 8, verdict: 'ready', cap_suppressed: 'proposals_total' }] });
   assert.equal(wide.held.limit, 'bot_wide');
+  // #6156: held because the project's builds are all under way: it waits for
+  // the bot's turn, whether the hold is read off its outcome or its stage.
+  assert.equal(track.CAP_LIMITS.builds_per_app, 'builds');
+  const turn = track.trackOf({ job: job({ outcome: 'held', id: 10 }), runs: [{ id: 10, verdict: 'ready', cap_suppressed: 'builds_per_app' }], held: { position: 1 } });
+  assert.deepEqual([turn.why, turn.held], ['builds', { limit: 'builds', position: 1, until: null }]);
+  const staged = track.trackOf({ job: job({ stage: 'held', id: 11 }), runs: [{ id: 11, verdict: 'ready', cap_suppressed: 'builds_per_app' }] });
+  assert.deepEqual([staged.state, staged.why], ['held', 'builds']);
+  const stagedVotes = track.trackOf({ job: job({ stage: 'held', id: 12 }), runs: [{ id: 12, verdict: 'ready', cap_suppressed: 'proposals_per_app' }] });
+  assert.equal(stagedVotes.why, 'slots');
   const week = track.trackOf({ job: job({ stage: 'on_hold', since: ago(60) }), until: '2026-10-19T00:00:00.000Z' });
   assert.deepEqual(week.held, { limit: 'allowance', position: null, until: '2026-10-19T00:00:00.000Z' });
   // 16 Oct 2026: held, but a person has it now: theirs, with no place in line.
@@ -162,10 +172,15 @@ test('the demo tray, the demo slots and the demo request carry tracks', async ()
   const held = work.tracks.find((t) => t.state === 'held');
   assert.deepEqual([held.issueNumber, held.why, held.held.position], [16, 'slots', 1], 'the drawer\'s On hold group can be seen');
   const slots = track.demoSlots({ slug: 'staging-demo', name: 'Staging demo' }, NOW);
-  assert.equal(slots.slots.length, 5);
-  assert.deepEqual(slots.slots.map((s) => s.track.state), ['building', 'building', 'vote', 'checks', 'waiting']);
+  // #6156: its builds all in use, three changes waiting for votes, and the
+  // requests waiting for the bot's turn; the caps are the bot's own.
+  assert.deepEqual([slots.buildCap, slots.waitCap], [bot.BUILDS_PER_APP, bot.WAITING_PER_APP]);
+  assert.deepEqual(slots.slots.map((s) => s.kind), ['build', 'build', 'build', 'build', 'build', 'proposal', 'proposal', 'proposal']);
+  assert.equal(slots.slots.filter((s) => s.kind === 'build').length, slots.buildCap, 'the builds are full');
+  assert.deepEqual(slots.slots.map((s) => s.track.state), ['building', 'building', 'building', 'queued', 'queued', 'vote', 'checks', 'waiting']);
   assert.equal(slots.slots[1].track.try, 2, 'its fix is the second try');
   assert.equal(slots.waiting[0].track.held.position, 1);
+  assert.deepEqual(slots.waiting.map((w) => [w.limit, w.track.why]), [['builds', 'builds'], ['builds', 'builds']]);
   // Its rows are staging's mock requests when it has them, so a tap opens
   // one; each says who asked, and one a person took is listed apart.
   const mocked = track.demoSlots({ slug: 'staging-demo', name: 'Staging demo' }, NOW, [

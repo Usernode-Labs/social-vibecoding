@@ -87,9 +87,13 @@ export function activityWhen(
  * line of the same small muted text, between the label and the date, saying
  * why it earned the points it did. When there is no reason (ungraded point
  * sources) the line is absent and the markup is what it always was.
+ *
+ * `href` makes the reason a link (#3247): an in-app address the caller built,
+ * never a URL from a payload.
  */
-export function ActivityRow({ text, points, at, precision, reason }: {
+export function ActivityRow({ text, points, at, precision, reason, href }: {
   text: string; points: string; at?: string | null; precision?: ActivityTimePrecision | null; reason?: string | null;
+  href?: string | null;
 }): ReactNode {
   // Subscribed: the date line's separator is read by activityWhen.
   useMessages('leaderboard');
@@ -98,7 +102,11 @@ export function ActivityRow({ text, points, at, precision, reason }: {
   return (
     <li className="flex items-start justify-between gap-3 text-xs">
       <span className="min-w-0">
-        <span className="block text-zinc-600 dark:text-zinc-300">{text}</span>
+        {href ? (
+          <a href={href} className="block text-violet-700 hover:underline dark:text-violet-400">{text}</a>
+        ) : (
+          <span className="block text-zinc-600 dark:text-zinc-300">{text}</span>
+        )}
         {why ? (
           <span
             className="block text-[0.6875rem] text-zinc-500 dark:text-zinc-400"

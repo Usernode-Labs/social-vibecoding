@@ -1357,8 +1357,25 @@ test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover 
   const rule = peek.slice(0, peek.indexOf('}'));
   assert.match(rule, /background-color: var\(--dc-sheet-solid\);/);
   assert.match(rule, /transition: opacity 200ms ease-in;/);
+  // #6194: strong enough to tell an inactive row from its neighbours, and
+  // outlined with the same thin line lit chips wear.
   assert.match(css,
-    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 55%, transparent\);/);
+    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 85%, transparent\);\s*box-shadow: inset 0 0 0 1px var\(--lit-line\);/);
+  assert.match(css, /\.platform-tab \{\s*transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;/,
+    'the outline fades in with the fill');
+});
+
+test('#6194: the bot\'s count says what it counts when pointed at', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  // The AI badge's tooltip is built from the count the badge shows.
+  assert.match(src, /title=\{t\('core:tabs\.unreadAiTitle', \{ count: ai \}\)\}/);
+  // Only above zero: at zero the badge is hidden, and the prerender (count 0)
+  // ships no title, so the first client render still agrees.
+  assert.match(src, /title=\{count > 0 \? title : undefined\}/);
+  // The tooltip gives the real number even when the badge reads "99+".
+  assert.equal(message('core:tabs.unreadAiTitle', { count: 1 }), '1 unread message from the Homeroom bot');
+  assert.equal(message('core:tabs.unreadAiTitle', { count: 24 }), '24 unread messages from the Homeroom bot');
+  assert.equal(message('core:tabs.unreadAiTitle', { count: 120 }), '120 unread messages from the Homeroom bot');
 });
 
 test('the folded Duo\'s corner shifts the bar\'s cells, never its shape (6072)', () => {

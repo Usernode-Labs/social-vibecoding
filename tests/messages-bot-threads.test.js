@@ -282,6 +282,12 @@ test('a request held back by the bot\'s limits says what it waits for', () => {
   assert.match(perApp, /data-bot-activity-eyebrow="">Waiting</);
   assert.match(perApp, /<span role="status">I’ll start when one of my changes on Plant Pal is voted in or closed<\/span>/);
   assert.match(drawCard(doneCard('held', { heldBy: 'proposals_total' })), /I’ll start when one of my changes across Homeroom is voted in or closed/);
+  // #6156: held because the project's builds are all under way, it waits for
+  // the bot's turn, never for a vote.
+  const turn = drawCard(doneCard('held', { heldBy: 'builds_per_app' }));
+  assert.match(turn, /data-bot-activity-eyebrow="">Waiting</);
+  assert.match(turn, /<span role="status">I’ll start when one of the changes I’m building on Plant Pal is done<\/span>/);
+  assert.doesNotMatch(turn, /vote/);
   const daily = drawCard(doneCard('held', { heldBy: 'questions_per_day' }));
   assert.match(daily, /data-bot-activity-eyebrow="">Waiting</);
   assert.doesNotMatch(daily, /role="status"|held back/, 'a limit it does not name: "Waiting" says it');
@@ -305,6 +311,9 @@ test('the client keeps a stop cause, a hold and an on-hold stage, and only known
     { messageId: 3, state: 'working', stage: 'on_hold', waitingOn: 'time', links: {} },
     { messageId: 4, state: 'done', outcome: 'build_failed', stopCause: 'gremlins', heldBy: 'proposals_total', links: {} },
   ] });
+  // #6156: a hold for the bot's turn is one the client knows.
+  assert.equal(normalizeBotActivity({ cards: [{ messageId: 5, state: 'done', outcome: 'held', heldBy: 'builds_per_app', links: {} }] })[0].heldBy, 'builds_per_app');
+  assert.equal('heldBy' in normalizeBotActivity({ cards: [{ messageId: 6, state: 'done', outcome: 'held', heldBy: 'nonsense', links: {} }] })[0], false);
   assert.equal(stopped.stopCause, 'time');
   assert.equal(held.heldBy, 'proposals_per_app');
   assert.deepEqual([onHold.stage, onHold.waitingOn], ['on_hold', 'time']);

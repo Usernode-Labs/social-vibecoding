@@ -197,6 +197,39 @@ test('one app group says Mark all read once; two groups each keep their Mark rea
   assert.match(two, /data-notif-app-read="4"/);
 });
 
+// #5929 item 8: Mark read repeats down the sheet, so it must not wear the same
+// pill as the one Mark all read at the top. Only its look moved.
+test('a group\'s Mark read is words until hovered, lighter than Mark all read, and keeps its touch target and a focus ring', () => {
+  const html = renderSheet({ list: [view(10, { appId: 3, appLine: 'Notes' }), view(11, { appId: 4, appLine: 'Polls' })] });
+  const attrs = (marker) => {
+    const at = html.indexOf(marker);
+    assert.notEqual(at, -1, `${marker} renders`);
+    return html.slice(html.lastIndexOf('<button', at), html.indexOf('>', at));
+  };
+  const classes = (tag) => tag.match(/class="([^"]*)"/)[1].split(/\s+/);
+
+  const read = attrs('data-notif-app-read="3"');
+  const readClasses = classes(read);
+  assert.match(read, /^<button type="button"/, 'it stays a real button');
+  assert.match(read, /aria-label="[^"]*Notes[^"]*"/, 'it still names its project to a screen reader');
+  for (const kept of ['h-8', 'un-touch-target', 'disabled:opacity-40',
+    'focus-visible:ring-2', 'focus-visible:ring-violet-500']) {
+    assert.ok(readClasses.includes(kept), `Mark read keeps ${kept}`);
+  }
+  // At rest it has no fill of its own and the secondary ink; the fill waits for a hover.
+  assert.ok(readClasses.includes('bg-transparent'));
+  assert.ok(readClasses.includes('text-zinc-500'));
+  assert.ok(readClasses.includes('enabled:hover:bg-zinc-100'), 'a busy Mark read does not light up');
+  assert.equal(readClasses.filter((c) => /^(dark:)?bg-zinc-/.test(c)).length, 0, 'no resting fill, light or dark');
+  assert.ok(!readClasses.includes('font-semibold'));
+
+  // Mark all read is the one that stays a filled pill, which is the difference.
+  const all = classes(attrs('id="notifications-screen-mark-all"'));
+  assert.ok(all.includes('bg-zinc-100'));
+  assert.ok(all.includes('text-zinc-900'));
+  assert.ok(all.includes('font-semibold'));
+});
+
 // #5929: the group of notifications that belong to no project was headed
 // "Other", which said nothing about what was in it.
 test('the app-less group is headed "Across Homeroom"; a project group keeps its name', () => {

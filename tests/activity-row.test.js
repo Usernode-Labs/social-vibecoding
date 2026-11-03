@@ -124,7 +124,20 @@ test('the standings drill-down draws the shared row and passes activity_at throu
   assert.match(read('frontend/src/features/leaderboard/topochain-leaderboard.js'), /at: a\.activity_at \|\| null,/,
     'its view module passes activity_at through');
   // The Challenges tab's profile overlay, the other list, retired with the
-  // participants it was opened from.
+  // participants it was opened from. A challenge's page draws the row for its
+  // own credits, from its own module (#3247).
   assert.doesNotMatch(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /ActivityRow/);
-  assert.doesNotMatch(read('frontend/src/features/leaderboard/topochain-challenges.js'), /profileView|activity_at/);
+  assert.match(read('frontend/src/features/leaderboard/challenge-credits.tsx'), /<ActivityRow\s[^>]*at=\{credit\.at\}/);
+  assert.doesNotMatch(read('frontend/src/features/leaderboard/topochain-challenges.js'), /profileView/);
+});
+
+test('#3247: with an href the words are a link in the accent; without one the row is unchanged', () => {
+  const props = { text: 'Add a dark mode', points: '+500', at: '2026-10-02T16:32:00.000Z', precision: 'instant' };
+  const plain = renderToHtml(createElement(mod.ActivityRow, props));
+  assert.doesNotMatch(plain, /<a /);
+  assert.match(plain, /<span class="block text-zinc-600 dark:text-zinc-300">Add a dark mode<\/span>/);
+  const linked = renderToHtml(createElement(mod.ActivityRow, { ...props, href: '#app/one/dev/changes/7' }));
+  assert.match(linked, /<a href="#app\/one\/dev\/changes\/7" class="[^"]*text-violet-700[^"]*">Add a dark mode<\/a>/);
+  assert.match(linked, /\+500/);
+  assert.match(linked, /data-activity-when/);
 });
