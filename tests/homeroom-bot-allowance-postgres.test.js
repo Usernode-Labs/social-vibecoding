@@ -20,6 +20,7 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
 const homeroomBot = require('../src/services/homeroom-bot');
+const activity = require('../src/services/homeroom-bot-activity');
 const limits = require('../src/services/limits');
 const rules = require('../src/workflow/rules/bot-loop.ts');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
@@ -146,5 +147,60 @@ test('weekly building time against the full PostgreSQL schema', { timeout: 18000
       'SELECT held_until, payer_user_id, priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 7', [app.id],
     );
     assert.deepEqual(q, { held_until: null, payer_user_id: ben.id, priority: 0, reason: 'dm_start' });
+  });
+
+  await t.test('#6133: a look at an existing card says the week is nearly spent, before it spends it', async () => {
+    const { rows: [bot] } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access, is_synthetic)
+       VALUES ('homeroom_bot', 'x', TRUE, TRUE) RETURNING id`,
+    );
+    const requester = {
+      userId: ada.id, username: 'ada', issueTitle: 'Quota warning', firstVersion: false, hasPlatformAccess: true,
+    };
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, 12, $2, 'Quota warning')`,
+      [app.id, ada.id],
+    );
+    const settings = await homeroomBot.readSettings(pool);
+    // Its card first, made before any of the week is spent: the new-card path.
+    const card = await activity.startCard(pool, {
+      app, issueNumber: 12, requester, bot, jobKey: 'week-card', settings,
+    });
+    assert.ok(card?.messageId);
+    const lowLines = async () => (await pool.query(
+      `SELECT content, metadata FROM conversation_messages m
+        WHERE m.metadata->'homeroomBot'->>'appSlug' = $1
+          AND (m.metadata->'homeroomBot'->>'issueNumber')::int = 12
+          AND m.metadata->'homeroomBot'->>'step' = 'allowance_low'`,
+      [app.slug],
+    )).rows;
+    assert.deepEqual(await lowLines(), [], 'nothing said yet');
+
+    // 85% of the default 5000-cent week spent: under a fifth is left.
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id, cost_usd)
+       VALUES ($1, 12, 'live', 'ready', TRUE, $2, 42.50)`,
+      [app.id, ada.id],
+    );
+    await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'week-look-1', settings });
+    const first = await lowLines();
+    assert.equal(first.length, 1);
+    assert.equal(first[0].content, 'You\'re close to this week\'s building time.');
+    assert.equal(first[0].metadata.homeroomBot.step, 'allowance_low');
+
+    // The same week, another look: still one line (its key).
+    await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'week-look-2', settings });
+    assert.equal((await lowLines()).length, 1);
+
+    // The week is spent: no "close to" line (the hold says it is used up).
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id, cost_usd)
+       VALUES ($1, 12, 'live', 'ready', TRUE, $2, 7.50)`,
+      [app.id, ada.id],
+    );
+    assert.equal(await require('../src/services/homeroom-bot-dm').overWeeklyAllowance(pool, settings, ada.id), true);
+    await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'week-look-3', settings });
+    assert.equal((await lowLines()).length, 1);
   });
 });
