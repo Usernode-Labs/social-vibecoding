@@ -75,11 +75,10 @@ export interface AiThread {
   /** Being made: by Homeroom bot, by you, or by someone else. */
   by?: 'bot' | 'you' | 'someone';
   /**
-   * Held back: until a change up for a vote is decided, for Homeroom bot's
-   * turn among the project's builds (#6156: votes do not free it), or by
-   * the day's limit.
+   * Held back: until a change up for a vote is decided, or for Homeroom
+   * bot's turn among the project's builds (#6156: votes do not free it).
    */
-  heldBy?: 'approvals' | 'turn' | 'daily';
+  heldBy?: 'approvals' | 'turn';
   /** A request someone has claimed and has no change for yet: who. */
   claimedBy?: string | null;
   /** Held for a slot: how many of Homeroom bot's changes holding one wait on your vote (upNext). */
@@ -134,7 +133,7 @@ function holdsSlot(item: NeedItem): boolean {
 function heldProjects(work: AiWork | null): Set<string> {
   const held = new Set<string>();
   for (const t of work?.waiting || []) {
-    if (t.what === 'held' && t.heldBy !== 'daily' && t.heldBy !== 'turn' && t.app) held.add(t.app.slug);
+    if (t.what === 'held' && t.heldBy !== 'turn' && t.app) held.add(t.app.slug);
   }
   return held;
 }
@@ -478,7 +477,7 @@ export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[
   const filed = filedThreads(work);
   return (work?.waiting || []).filter((t) => !isOwed(owed, t)).map((t) => {
     const row = withThread(filed, t);
-    if (row.what !== 'held' || row.heldBy === 'daily' || row.heldBy === 'turn' || !row.app) return row;
+    if (row.what !== 'held' || row.heldBy === 'turn' || !row.app) return row;
     const yourVotes = (needs || []).filter((item) => item.app?.slug === row.app!.slug && holdsSlot(item)).length;
     return yourVotes ? { ...row, yourVotes } : row;
   });
@@ -533,7 +532,6 @@ export function nextWords(t: AiThread): Phrase {
     if (t.myVote === 'no') return { id: 'messages:ai.up.decisionNo', values: project };
     return { id: 'messages:ai.up.decision', values: project };
   }
-  if (t.what === 'held' && t.heldBy === 'daily') return { id: 'messages:ai.up.heldDaily', values };
   if (t.what === 'held' && t.yourVotes) return { id: 'messages:ai.up.heldYours', values: { ...values, count: t.yourVotes } };
   // #6158: its place in line, where the bot's records know it.
   if (t.what === 'queued' && t.place) return { id: 'messages:ai.up.inLine', values: { ...values, place: t.place } };
@@ -596,7 +594,6 @@ export function shortWords(t: AiThread): Phrase {
   if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.short.bot' };
   if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.short.you' };
   if (t.what === 'building' && t.claimedBy) return { id: 'messages:ai.short.claimed', values: { username: t.claimedBy } };
-  if (t.what === 'held' && t.heldBy === 'daily') return { id: 'messages:ai.short.tomorrow' };
   // #6158: its place in line, where the bot's records know it.
   if (t.what === 'queued' && t.place) return { id: 'messages:ai.short.inLine', values: { place: t.place } };
   if (t.what === 'held' && t.place) {

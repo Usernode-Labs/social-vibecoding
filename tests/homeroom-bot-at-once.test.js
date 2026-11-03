@@ -3,9 +3,11 @@
 // #3624 stage 2: how much the Homeroom bot works on at once.
 //
 // Live work (every app but a paused one) is started one request at a time:
-// never two reads on one app (the bot has one session per app) unless one
-// is a follow-up on its own proposal (#3703, below), at most `perPerson`
-// for one person, at most `liveAtOnce` in all. The lane (bot-lane) grants
+// at most `readsPerApp` reads on one app, each on a read slot of its own
+// (a triage session no other read uses while it runs; it was one read per
+// app, behind one session, until 3 Nov 2026), a follow-up on the bot's own
+// proposal beside them (#3703, below), at most `perPerson` for one person,
+// at most `liveAtOnce` in all. The lane (bot-lane) grants
 // those slots from its candidates and the slots its requests hold, with the
 // picks in src/workflow/rules/bot-loop.ts; each look is a work item of its
 // request's machine (bot-request), so a long build on one app never holds
@@ -80,6 +82,170 @@ test('pickLive: a follow-up on the bot\'s own proposal neither waits for its app
   // there leaves it free for the app's next request.
   assert.deepEqual(rules.pickLive([row(2, 10, 8)], { inUse: [slot('followUp', 10, 'u9')], slots: 6, perPerson: 2 }).map((p) => p.id), [2]);
   assert.deepEqual(rules.pickLive([row(2, 10, 8)], { inUse: [slot('build', 10, 'u9')], slots: 6, perPerson: 2 }).map((p) => p.id), [2]);
+});
+
+// ── 3 Nov 2026: several reads on one project at once ─────────────────────
+//
+// On Homeroom's own board every new request waited behind the one being
+// read ("Homeroom is reading request #6070 first, one read per project at a
+// time"); one once had 35 requests ahead of it. A read only reads the code
+// and costs a few cents. Each read now runs on a READ SLOT of its project,
+// one of its triage sessions (homeroom-bot.js ensureBotSession), up to
+// `readsPerApp` at once, and the lane never grants a slot another read holds.
+
+const readSlot = (appId, person, k) => ({ kind: 'read', appId, person, readSlot: k, legacy: false });
+
+test('pickLive: up to readsPerApp reads on one project at once, each on a read slot of its own, the oldest first', () => {
+  const four = [row(1, 10, 7), row(2, 10, 8), row(3, 10, 9), row(4, 10, 6)];
+  let picks = rules.pickLive(four, { slots: 9, perPerson: 3, readsPerApp: 3 });
+  assert.deepEqual(picks.map((p) => [p.id, p.readSlot]), [[1, 0], [2, 1], [3, 2]], 'three at once; the fourth waits');
+  // One at a time when the setting is 1, as it always was.
+  picks = rules.pickLive(four, { slots: 9, perPerson: 3, readsPerApp: 1 });
+  assert.deepEqual(picks.map((p) => [p.id, p.readSlot]), [[1, 0]]);
+  assert.deepEqual(rules.pickLive(four, { slots: 9, perPerson: 3 }).map((p) => p.id), [1], 'and one when it is not passed');
+  // The slots already taken are never granted again: the free ones are, lowest first.
+  picks = rules.pickLive(four, { inUse: [readSlot(10, 'u90', 1)], slots: 9, perPerson: 3, readsPerApp: 3 });
+  assert.deepEqual(picks.map((p) => [p.id, p.readSlot]), [[1, 0], [2, 2]]);
+  assert.deepEqual(rules.pickLive(four, { inUse: [0, 1, 2].map((k) => readSlot(10, `u9${k}`, k)), slots: 9, perPerson: 3, readsPerApp: 3 }), [],
+    'a project reading three starts no fourth');
+  // Lowered below what runs: nothing more starts until enough end, then on
+  // the lowest slot free.
+  assert.deepEqual(rules.pickLive(four, { inUse: [readSlot(10, 'u90', 0), readSlot(10, 'u91', 2)], slots: 9, perPerson: 3, readsPerApp: 2 }), []);
+  assert.deepEqual(rules.pickLive(four, { inUse: [readSlot(10, 'u90', 2)], slots: 9, perPerson: 3, readsPerApp: 1 }), []);
+  assert.deepEqual(rules.pickLive(four, { inUse: [readSlot(10, 'u90', 2)], slots: 9, perPerson: 3, readsPerApp: 2 })
+    .map((p) => [p.id, p.readSlot]), [[1, 0]]);
+  // Each project counts its own; liveAtOnce (`slots`) and perPerson still hold across them.
+  const two = [row(1, 10, 7), row(2, 10, 7), row(3, 11, 7), row(4, 10, 8)];
+  assert.deepEqual(rules.pickLive(two, { slots: 9, perPerson: 2, readsPerApp: 3 }).map((p) => [p.id, p.readSlot]), [[1, 0], [2, 1], [4, 2]],
+    'person 7 at two: #3 on project 11 waits, and #4 takes project 10\'s third slot');
+  assert.deepEqual(rules.pickLive(four, { slots: 2, perPerson: 3, readsPerApp: 3 }).map((p) => p.id), [1, 2]);
+  // A follow-up runs on its proposal's session: no read slot, and it takes none.
+  picks = rules.pickLive([followUp(5, 10, 7), ...four], { inUse: [0, 1, 2].map((k) => readSlot(10, `u9${k}`, k)), slots: 9, perPerson: 3, readsPerApp: 3 });
+  assert.deepEqual(picks.map((p) => [p.id, p.followUp, p.readSlot]), [[5, true, null]]);
+  assert.equal(rules.MAX_READS_PER_APP, 6);
+  assert.equal(rules.LANE_DEFAULTS.readsPerApp, 3);
+});
+
+test('pickLive: a read an older release may be running holds its whole project, and one it may run is granted only on an idle one', () => {
+  // An older release runs every read on its project's newest triage
+  // session, whatever its grant names, so such a read takes all the slots.
+  const four = [row(1, 10, 7), row(2, 10, 8), row(3, 11, 9)];
+  const legacy = { kind: 'read', appId: 10, person: 'u90', readSlot: null, legacy: true };
+  assert.deepEqual(rules.pickLive(four, { inUse: [legacy], slots: 9, perPerson: 3, readsPerApp: 3 }).map((p) => p.id), [3]);
+  // How the lane reads a slot: a read with no slot, or one whose request an
+  // older version last wrote, is legacy; one this version wrote is not.
+  assert.deepEqual(rules.slotOfRow({ app_id: 10, machine_version: 2, slot: { kind: 'read', appId: 10, person: 'u7', readSlot: 1 } }),
+    { kind: 'read', appId: 10, person: 'u7', readSlot: 1, legacy: false });
+  assert.equal(rules.slotOfRow({ app_id: 10, machine_version: 2, slot: { kind: 'read', appId: 10, person: 'u7' } }).legacy, true, 'no slot: an older grant');
+  assert.equal(rules.slotOfRow({ app_id: 10, machine_version: 1, slot: { kind: 'read', appId: 10, person: 'u7', readSlot: 1 } }).legacy, true,
+    'written by an older version: its grant may have been applied there');
+  assert.equal(rules.slotOfRow({ app_id: 10, machine_version: null, slot: { kind: 'read', appId: 10, person: 'u7', readSlot: 0 } }).legacy, true);
+  assert.deepEqual(rules.slotOfRow({ app_id: 10, machine_version: 1, slot: { kind: 'build', appId: 10, person: 'u7' } }),
+    { kind: 'build', appId: 10, person: 'u7' }, 'a build holds no read slot');
+  // A candidate an older version last wrote may be run by an older release:
+  // granted only while nothing reads its project, and then it holds it.
+  const old = (id, appId, personId) => row(id, appId, personId, { machine_version: 1 });
+  assert.deepEqual(rules.pickLive([old(1, 10, 7), row(2, 10, 8)], { slots: 9, perPerson: 3, readsPerApp: 3 }).map((p) => [p.id, p.readSlot]), [[1, 0]]);
+  assert.deepEqual(rules.pickLive([row(2, 10, 8), old(1, 10, 7)], { slots: 9, perPerson: 3, readsPerApp: 3 }).map((p) => p.id), [2],
+    'with a read on its project, it waits');
+  assert.deepEqual(rules.pickLive([old(1, 10, 7)], { inUse: [readSlot(10, 'u90', 2)], slots: 9, perPerson: 3, readsPerApp: 3 }), []);
+  // What the queue says of a project with no read slot free.
+  assert.deepEqual([...rules.projectsFullOfReads([readSlot(10, 'u1', 0), readSlot(10, 'u2', 1), readSlot(11, 'u3', 0), legacy], 2)].sort(), [10]);
+  assert.deepEqual([...rules.projectsFullOfReads([readSlot(12, 'u1', 0), { ...legacy, appId: 13 }, { kind: 'build', appId: 14, person: 'u1' }], 3)].sort(), [13]);
+  assert.equal(rules.READ_SLOTS_SINCE, 2);
+});
+
+test('the lane grants each read its read slot, and the triage session only with slot 0', () => {
+  const lane = require('../src/workflow/bot-lane/machine.ts');
+  const m = lane.botLane({ staging: false });
+  const now = new Date('2026-11-03T12:00:00Z');
+  const data = { grants: 0, fault: null, budget: null, refresh: { due: '2026-11-03T13:00:00.000Z', asked: [], soon: null, n: 1, running: null } };
+  const read = (n, personId) => ({ app_id: 10, issue_number: n, priority: 1, reason: 'new', person_id: personId, follow_up_session_id: null, triage_session_id: 500, machine_version: 2 });
+  const facts = (readsPerApp) => ({
+    settings: { mode: 'live', pausedApps: [], liveAtOnce: 12, perPerson: 3, readsPerApp }, acting: true, inUse: [],
+    reads: [read(1, 7), read(2, 8), read(3, 9), read(4, 6)], builds: [], nextEligible: null, raised: {},
+  });
+  const look = (f) => m.entryFor('open', 'Look').to({ name: 'open', data }, { id: 1, type: 'Look', payload: {}, source: { kind: 'system' } }, f,
+    { machine: lane.MACHINE, key: lane.KEY, appId: null, version: 1, now });
+  const grants = (out) => out.messages.map((g) => [g.event.payload.issueNumber, g.event.payload.readSlot, g.event.payload.sessionId]);
+  assert.deepEqual(grants(look(facts(3))), [[1, 0, 500], [2, 1, null], [3, 2, null]],
+    'three at once; slot 0 on the project\'s triage session, the others on sessions their looks find or make');
+  assert.deepEqual(grants(look(facts(1))), [[1, 0, 500]], 'one at a time at 1');
+  const src = require('node:fs').readFileSync(require.resolve('../src/workflow/bot-lane/machine.ts'), 'utf8');
+  assert.match(src, /readsPerApp: f\.settings\.readsPerApp,/, 'the setting the lane reads');
+  assert.ok(rules.LANE_SETTING_KEYS.includes(rules.KEY_READS_PER_APP));
+  assert.equal(rules.laneSettings([{ key: rules.KEY_READS_PER_APP, value: '9' }]).readsPerApp, 6, 'clamped to its ceiling');
+  assert.equal(rules.laneSettings([{ key: rules.KEY_READS_PER_APP, value: '0' }]).readsPerApp, 1, 'and its floor');
+  assert.equal(rules.laneSettings([]).readsPerApp, 3);
+  assert.equal(rules.KEY_READS_PER_APP, bot.KEY_READS_PER_APP, 'the module that does the reads names the same');
+  assert.equal(bot.MAX_READS_PER_APP, rules.MAX_READS_PER_APP);
+});
+
+test('a read\'s request keeps the read slot its grant names and hands it to its look; an older release leaves its requests alone', () => {
+  const machine = request.botRequest({ staging: false });
+  assert.ok(machine.version >= rules.READ_SLOTS_SINCE, 'a request this version writes runs its reads on their slots');
+  const now = new Date('2026-11-03T12:00:00Z');
+  const owed = { reason: 'new', priority: 1, payer: null, requestedBy: null, changedBy: null, threadSeenAt: null, enqueuedAt: now.toISOString(), heldUntil: null };
+  const data = { appId: 10, issueNumber: 3, owed, look: null, build: null, slot: null, n: 0, backoff: null, fix: null, spentRetry: null, lastRead: null, carried: null };
+  const ctx = { machine: request.MACHINE, key: rules.requestKey(10, 3), appId: 10, version: 2, now };
+  const fromLane = { kind: 'message', from: { machine: rules.BOT_LANE, key: rules.LANE_KEY, eventId: 1 } };
+  const grant = (p) => machine.entryFor('queued', 'Granted').to({ name: 'queued', data },
+    { id: 1, type: 'Granted', payload: machine.events.get('Granted')({ appId: 10, issueNumber: 3, grant: 4, kind: 'read', sessionId: null, person: 'u7', ...p }),
+      source: fromLane, actor: null, requestKey: 'g', appId: 10, causedBy: null }, {}, ctx);
+  let out = grant({ readSlot: 2 });
+  assert.equal(out.next.name, 'reading');
+  assert.equal(out.next.data.slot.readSlot, 2);
+  assert.equal(out.work[0].input.readSlot, 2, 'its look reads on slot 2\'s session');
+  out = grant({});
+  assert.equal(out.next.data.slot.readSlot, undefined, 'an older lane\'s grant names none');
+  assert.equal(out.work[0].input.readSlot, null);
+  assert.equal(grant({ readSlot: 6 }).work[0].input.readSlot, null, 'past the ceiling is none');
+  assert.equal(grant({ readSlot: -1 }).work[0].input.readSlot, null);
+});
+
+test('each read slot is a session of its own: slot 0 the triage session as it was, a further one marked with its slot from its insert', async () => {
+  const asked = [];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      asked.push({ s, params });
+      if (/INSERT INTO chat_sessions/.test(s)) return { rows: [{ id: 9100 + asked.length, branch_name: 'main', status: 'paused', source: params[5] }] };
+      return { rows: [] };
+    },
+  };
+  const app = { id: 10, slug: 'homeroom', name: 'Homeroom', repo_url: 'https://github.com/o/homeroom', self_hosted: true };
+  const s2 = await bot.ensureBotSession(pool, { openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash' }, { id: 77 }, app, { slot: 2 });
+  const find = asked.find((q) => /FROM chat_sessions cs/.test(q.s));
+  assert.deepEqual(find.params, [77, 10, 'homeroom_bot_read:2'], 'slot 2\'s own session, found by its mark');
+  assert.match(find.s, /cs\.source = \$3\s+AND cs\.status IN \('active', 'paused'\) AND cs\.branch_name = 'main'/);
+  const made = asked.find((q) => /INSERT INTO chat_sessions/.test(q.s));
+  assert.equal(made.params[5], 'homeroom_bot_read:2', 'marked in the statement that makes it, so slot 0 never reads it as its own');
+  assert.equal(made.params[2], 'Homeroom bot triage 3');
+  assert.equal(s2.app_slug, 'homeroom');
+  assert.equal(rules.readSessionSource(2), 'homeroom_bot_read:2');
+
+  asked.length = 0;
+  await bot.ensureBotSession(pool, {}, { id: 77 }, app);
+  const zero = asked.find((q) => /FROM chat_sessions cs/.test(q.s));
+  assert.deepEqual(zero.params, [77, 10]);
+  assert.ok(zero.s.includes(`AND (cs.source IS NULL OR cs.source NOT LIKE '${rules.READ_SESSION_SOURCE}:%')`), 'slot 0 leaves every other slot\'s out');
+  assert.match(zero.s, /AND NOT EXISTS \(SELECT 1 FROM homeroom_bot_look_sessions l WHERE l\.session_id = cs\.id\)/);
+  const plain = asked.find((q) => /INSERT INTO chat_sessions/.test(q.s));
+  assert.equal(plain.params[5], null, 'slot 0\'s is made as it always was, with no mark');
+  assert.equal(plain.params[2], 'Homeroom bot triage');
+  // The lane's slot 0 session is the same rule's.
+  assert.ok(rules.READ_CANDIDATES_SQL.includes(`AND (cs.source IS NULL OR cs.source NOT LIKE '${rules.READ_SESSION_SOURCE}:%')`));
+  // A slot nobody could hold is slot 0.
+  asked.length = 0;
+  await bot.ensureBotSession(pool, {}, { id: 77 }, app, { slot: 9 });
+  assert.deepEqual(asked.find((q) => /FROM chat_sessions cs/.test(q.s)).params, [77, 10]);
+});
+
+test('a look reads on its read slot\'s session (lookAt: the grant\'s readSlot, a follow-up none)', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot.js'), 'utf8');
+  const look = src.slice(src.indexOf('async function lookAt('), src.indexOf('// What the machine decides from, out of what the look returned and did.'));
+  assert.match(look, /readSlot: input\.kind === 'followUp' \? null : loopRules\.readSlotOf\(input\.readSlot\),/);
+  assert.match(src, /session = await ensureBotSession\(pool, config, bot, app, \{ slot: item\.readSlot \?\? 0 \}\);/);
 });
 
 test('a look refused for now backs off its own request, doubling to a ceiling; a platform fault pauses the lane the same way', () => {

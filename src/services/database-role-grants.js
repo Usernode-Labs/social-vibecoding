@@ -5,6 +5,12 @@ const access = require('./database-role-access');
 const { connectionName } = require('../db/connection-options');
 
 const PLATFORM_SCHEMAS = Object.freeze(['public', 'credentials']);
+// Evidence the migrator owns, never runtime application data: migration
+// receipts, and the log of who was made an administrator
+// (src/db/migrations/privilege-changes.sql), which only its triggers write.
+// The runtime logins read it; any inherited or default write grant is taken.
+// Read access is also what the existing unredacted pg_dump export needs.
+const EVIDENCE = new Set(['public.schema_migrations', 'public.privilege_changes']);
 const { WEB_EVENT_COLUMNS, isKernelRelation } = access;
 // How long the migration Job waits for web processes of an earlier build to
 // go (their rollout): its two tries, each waiting this long, end inside its
@@ -156,13 +162,10 @@ async function ensureRuntimeGrants(pool, env = process.env) {
      WHERE n.nspname = ANY($2::text[]) AND c.relowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1)
        AND c.relkind IN ('r','p','v','m','f','S')`, [roles.migrator, PLATFORM_SCHEMAS]);
   for (const item of rows) {
-    if (item.qualified_name === 'public.schema_migrations') {
-      // Migration receipts are evidence owned by the migrator, never runtime
-      // application data. Undo any inherited/default runtime grants too.
-      // Read access is required by the existing unredacted pg_dump export.
-      await pool.query(`GRANT SELECT ON TABLE public.schema_migrations TO ${runtime}, ${reader};
+    if (EVIDENCE.has(item.qualified_name)) {
+      await pool.query(`GRANT SELECT ON TABLE ${item.name} TO ${runtime}, ${reader};
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
-        ON TABLE public.schema_migrations FROM ${runtime}, ${reader}`);
+        ON TABLE ${item.name} FROM ${runtime}, ${reader}`);
       continue;
     }
     // regclass's rendering is quoted by PostgreSQL and schema qualified

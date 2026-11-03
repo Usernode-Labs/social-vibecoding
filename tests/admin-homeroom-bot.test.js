@@ -164,7 +164,7 @@ test('GET /api/admin/homeroom-bot: a view-only admin reads the whole dashboard; 
   assert.equal(data.runs[0].issueUrl, 'https://github.com/usernode-bot/todo/issues/12');
   // #6156: a project's builds and its changes waiting for votes, by default,
   // and the projects with numbers of their own (none yet).
-  assert.deepEqual(data.caps, { buildsPerApp: 5, proposalsPerApp: 50, proposalsTotal: 500, questionsPerAppPerDay: 10, byApp: {} });
+  assert.deepEqual(data.caps, { buildsPerApp: 5, proposalsPerApp: 50, proposalsTotal: 500, byApp: {} });
   assert.deepEqual(data.apps, [{ id: 9, slug: 'todo', name: 'Todo' }], 'with its id, which a project\'s own numbers are kept by');
   assert.deepEqual(data.pairsWaiting, { first_version: 0, later: 0 }, 'the configurations\' pairs waiting, per scope');
 
@@ -584,12 +584,13 @@ test('every app is Live or Paused, paused first, and the rest behind a toggle (#
 
 test('how much the bot works on at once is set here, and what runs now is listed (#3624 stage 2)', async () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person']) {
+  for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person', 'admin-homeroom-bot-reads-per-app']) {
     assert.ok(tsx.includes(`id="${id}"`), id);
   }
   assert.ok(!tsx.includes('id="admin-homeroom-bot-concurrency"'), 'no Shadow apps at once: no app is a shadow app');
   assert.match(tsx, /onChange=\{\(v\) => setField\('liveAtOnce', v\)\}/);
   assert.match(tsx, /onChange=\{\(v\) => setField\('perPerson', v\)\}/);
+  assert.match(tsx, /label="Reads per project at once"\s+value=\{form\.readsPerApp\} min=\{1\} max=\{6\} canWrite=\{canWrite\} onChange=\{\(v\) => setField\('readsPerApp', v\)\}/);
   assert.match(tsx, /onChange=\{\(e\) => setField\('dmChat', e\.target\.checked\)\}/);
   assert.match(tsx, /id="admin-homeroom-bot-dm-chat"/);
   assert.match(tsx, /<WorkingNow items=\{payload\?\.workingNow \|\| \[\]\} \/>/);
@@ -606,6 +607,13 @@ test('how much the bot works on at once is set here, and what runs now is listed
   assert.match(buildPatch({ ...form, perPerson: '7' }, saved, ['perPerson']).error, /Per person at once must be a whole number from 1 to 6\./);
   assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).liveAtOnce, '12', 'the server\'s defaults when unset');
   assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).perPerson, '3');
+  // 3 Nov 2026: a project's reads at once, 1 to 6, three unless set.
+  assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).readsPerApp, '3');
+  assert.equal(savedForm({ settings: { mode: 'shadow', readsPerApp: 1 }, bot: null }).readsPerApp, '1');
+  assert.deepEqual(dirtyFields({ readsPerApp: '3' }, saved), [], 'the default is no change');
+  assert.deepEqual(buildPatch({ ...saved, readsPerApp: '5' }, saved, ['readsPerApp']), { patch: { readsPerApp: 5 }, error: null });
+  assert.match(buildPatch({ ...saved, readsPerApp: '7' }, saved, ['readsPerApp']).error, /Reads per project at once must be a whole number from 1 to 6\./);
+  assert.match(buildPatch({ ...saved, readsPerApp: '0' }, saved, ['readsPerApp']).error, /from 1 to 6/);
   const html = renderToHtml(createElement(WorkingNow, { items: [
     { appSlug: 'todo', appName: 'Todo', issueNumber: 12, since: '2026-10-02T10:00:00Z', lane: 'live', kind: 'read', person: 'ada' },
     { appSlug: 'notes', appName: 'Notes', issueNumber: 3, since: '2026-10-02T10:05:00Z', lane: 'background', kind: 'read', person: null },
@@ -639,6 +647,10 @@ test('how much the bot works on at once is set here, and what runs now is listed
   assert.equal(settings.get('homeroom_bot_dm_chat'), 'off');
   const bad = await call('PUT', '/api/admin/homeroom-bot/settings', { liveAtOnce: 99 });
   assert.equal(bad.status, 400);
+  assert.equal((await call('PUT', '/api/admin/homeroom-bot/settings', { readsPerApp: 2 })).status, 200);
+  assert.equal(settings.get('homeroom_bot_reads_per_app'), '2');
+  assert.equal((await call('PUT', '/api/admin/homeroom-bot/settings', { readsPerApp: 7 })).status, 400);
+  assert.equal(settings.get('homeroom_bot_reads_per_app'), '2', 'refused: nothing written');
   who = VIEW_ADMIN;
   const refused = await call('PUT', '/api/admin/homeroom-bot/settings', { perPerson: 1 });
   assert.equal(refused.status, 403);

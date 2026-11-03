@@ -25,7 +25,7 @@ import type { Check, Event, Json, MessageRequest, Outcome, Push, TransitionConte
 import { toUser } from '../pushes.ts';
 import {
   BOT_LANE, BOT_REQUEST, CHECKS_REASON, KEPT_WHILE_QUIET_REASONS, LANE_KEY, READ_AGAIN_REASON,
-  THROWN_HOLD_MS, THROWN_TRIES, backoffMs, lookCardKey, parseRequestKey, requestKey,
+  THROWN_HOLD_MS, THROWN_TRIES, backoffMs, lookCardKey, parseRequestKey, readSlotOf, requestKey,
 } from '../rules/bot-loop.ts';
 import { BOT_CHANGE, botChangeKey } from '../rules/bot-notes.ts';
 import { turnStop } from '../rules/turn-stop.ts';
@@ -56,7 +56,8 @@ export interface Owed {
   heldUntil: string | null;
 }
 // A look under way: its work `look:<n>`, the slot the lane granted it, the
-// session it runs on (its project's triage session, or its change's).
+// session it runs on (one of its project's triage sessions, its read
+// slot's, or its change's).
 export interface Look {
   n: number;
   kind: 'read' | 'followUp';
@@ -69,7 +70,9 @@ export interface Look {
 }
 // `heldUntil`: its payer's week is spent; it waits for its slot from then.
 export interface Build { runId: number; phase: 'waiting' | 'starting' | 'running'; since: string; key: string | null; heldUntil?: string | null }
-export interface Slot { grant: number; kind: string; person: string; appId: number }
+// A read's `readSlot`: which of its project's triage sessions it runs on
+// (the lane's pick, never another read's while it runs).
+export interface Slot { grant: number; kind: string; person: string; appId: number; readSlot?: number }
 export interface Data {
   appId: number;
   issueNumber: number;
@@ -130,11 +133,16 @@ const EVENTS = {
   NotOwed: (p: any) => ({ ...request(p), quiet: !!p?.quiet }),
   // A person wrote on the request's thread (stored in the same statement).
   Activity: (p: any) => ({ ...request(p), at: optTime(p?.at) }),
-  // The lane's slot: a read or follow-up (its session), or a build.
+  // The lane's slot: a read (its read slot, and its session when the lane
+  // knows it) or a follow-up (its session), or a build.
   Granted: (p: any) => {
     const kind = ['read', 'followUp', 'build'].includes(p?.kind) ? p.kind as string : null;
     if (!kind) throw new Error('kind must be read, followUp or build');
-    return { ...request(p), grant: int(p?.grant, 'grant'), kind, sessionId: optInt(p?.sessionId), person: optText(p?.person, 40) || 'a0' };
+    const readSlot = kind === 'read' ? readSlotOf(p?.readSlot) : null;
+    return {
+      ...request(p), grant: int(p?.grant, 'grant'), kind, sessionId: optInt(p?.sessionId), person: optText(p?.person, 40) || 'a0',
+      ...(readSlot != null ? { readSlot } : {}),
+    };
   },
   // A ready verdict's build is owed (the look's own act, or Build it).
   BuildOwed: (p: any) => ({ ...request(p), runId: int(p?.runId, 'runId') }),
@@ -298,7 +306,7 @@ function activity(s: RState, e: Event<any>): Outcome<RState> {
 function granted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
   const d = s.data;
   const p = e.payload;
-  const slot: Slot = { grant: p.grant, kind: p.kind, person: p.person, appId: d.appId };
+  const slot: Slot = { grant: p.grant, kind: p.kind, person: p.person, appId: d.appId, ...(p.readSlot != null ? { readSlot: p.readSlot } : {}) };
   if (p.kind === 'build') {
     if (s.name !== 'building' || !d.build || d.build.phase !== 'waiting') return step(s.name, d, { messages: [look(d)] });
     const b = (d.b || 0) + 1;
@@ -341,6 +349,9 @@ function lookWork(d: Data, lk: Look): WorkRequest {
       appId: d.appId, issueNumber: d.issueNumber, n: lk.n, kind: lk.kind, sessionId: lk.sessionId,
       owed: lk.owed as unknown as Json, carried: d.carried, lastRead: d.lastRead, spentRetry: d.spentRetry,
       fix: d.fix as unknown as Json, faults: d.faults || 0, person: d.slot?.person ?? null,
+      // Which of its project's triage sessions a read runs on (null: an
+      // older release's grant, which holds the project's every read slot).
+      readSlot: lk.kind === 'read' ? d.slot?.readSlot ?? null : null,
     },
   };
 }
@@ -620,7 +631,12 @@ export function botRequest(deps: Deps = { staging: false }) {
   };
   return defineMachine<RState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2 (3 Nov 2026): a read runs on the read slot its grant names, one of
+    // its project's triage sessions (rules/bot-loop.ts READ_SLOTS_SINCE).
+    // An older release runs every read on its project's newest triage
+    // session, so it leaves the requests this version wrote, and their
+    // looks, alone.
+    version: 2,
     events: EVENTS,
     create: CREATE,
     // What web appends: a request owed (an admin's run or retriage, a person asking

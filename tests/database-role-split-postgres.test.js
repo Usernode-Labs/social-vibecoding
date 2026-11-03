@@ -244,6 +244,37 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
       assert.equal((await probe(c)).rows[0].producer, 'platform');
       await c.query("BEGIN; SET LOCAL app.wf_writer = 'transition'; DELETE FROM public.wf_events WHERE machine = 'role-probe'; COMMIT");
     });
+    // Who is an administrator: each runtime login's change is recorded under
+    // that login, and neither can write, rewrite or switch off the record.
+    const { rows: [probeUser] } = await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
+      c.query("INSERT INTO public.users (username, password) VALUES ('privilege-probe', 'x') RETURNING id"));
+    const { rows: [probeApp] } = await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
+      c.query("INSERT INTO public.apps (name, slug, created_by, status) VALUES ('Privilege probe', 'privilege-probe', $1, 'running') RETURNING id", [probeUser.id]));
+    await use(at(PRIMARY, platform, roles.web, passwords.web), c =>
+      c.query('UPDATE public.users SET is_admin = TRUE WHERE id = $1', [probeUser.id]));
+    await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
+      c.query('INSERT INTO public.app_admins (app_id, user_id) VALUES ($1, $2)', [probeApp.id, probeUser.id]));
+    for (const kind of ['web', 'conductor']) await use(at(PRIMARY, platform, roles[kind], passwords[kind]), async c => {
+      const { rows } = await c.query(
+        'SELECT login, change, app_id, before, after FROM public.privilege_changes WHERE user_id = $1 ORDER BY changed_at', [probeUser.id]);
+      assert.deepEqual(rows, [
+        { login: roles.web, change: 'platform_admin', app_id: null,
+          before: { is_admin: false, admin_readonly: false }, after: { is_admin: true, admin_readonly: false } },
+        { login: roles.conductor, change: 'app_admin', app_id: probeApp.id,
+          before: null, after: { app_id: probeApp.id, user_id: probeUser.id } },
+      ], kind);
+      for (const sql of [
+        `INSERT INTO public.privilege_changes (login, change, user_id) VALUES ('forged', 'platform_admin', ${probeUser.id})`,
+        "UPDATE public.privilege_changes SET login = 'forged'", 'DELETE FROM public.privilege_changes',
+        'TRUNCATE public.privilege_changes', 'ALTER TABLE public.users DISABLE TRIGGER users_record_admin_change',
+        'ALTER TABLE public.app_admins DISABLE TRIGGER app_admins_record_change', 'SET session_replication_role = replica',
+      ]) await denied(c, sql);
+    });
+    await use(at(PRIMARY, platform, roles.migrator, passwords.migrator), async c => {
+      await c.query('DELETE FROM public.apps WHERE id = $1', [probeApp.id]);
+      await c.query('DELETE FROM public.users WHERE id = $1', [probeUser.id]);
+      await c.query('DELETE FROM public.privilege_changes WHERE user_id = $1', [probeUser.id]);
+    });
     await use(env.DB_ADMIN_URL, c => access.assertLogin(c, 'provisioner'));
     await use(at(PRIMARY, platform), async c => {
       await c.query(`SET ROLE ${roles.web}`);

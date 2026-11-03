@@ -306,13 +306,13 @@ const BOT_STANDING = Object.freeze({
 });
 
 /**
- * Pure: a held build's reason, in the three the bot words apart (stageOf):
- * changes waiting for approval, its turn among the project's builds
- * (#6156: votes do not free that one), or the day's limit.
+ * Pure: a held build's reason, in the two the bot words apart (stageOf):
+ * its turn among the project's builds (#6156: votes do not free that one),
+ * or changes waiting for approval. 3 Nov 2026: there is no day's limit any
+ * more, so every other hold waits for approvals.
  */
 function heldBy(capSuppressed) {
-  if (capSuppressed === 'builds_per_app') return 'turn';
-  return capSuppressed === 'proposals_per_app' || capSuppressed === 'proposals_total' ? 'approvals' : 'daily';
+  return capSuppressed === 'builds_per_app' ? 'turn' : 'approvals';
 }
 
 /**
@@ -777,7 +777,6 @@ function threadSays(t, slotVotes = 0) {
     if (t.what === 'building' && t.by === 'you') return 'they are building it';
     if (t.what === 'building' && t.claimedBy) return `${t.claimedBy} is building it`;
     if ((t.what === 'vote' || t.what === 'decision') && t.myVote) return `waiting for votes; they voted ${t.myVote === 'yes' ? 'Yes' : 'No'}`;
-    if (t.what === 'held' && t.heldBy === 'daily') return 'ready to build; held by today\'s limit on this project';
     if (t.what === 'held' && t.heldBy === 'turn') return 'ready to build; waiting for Homeroom bot\'s turn on this project';
     if (t.what === 'held' && slotVotes) {
       return `ready to build; ${slotVotes === 1 ? 'a vote they owe' : `${slotVotes} votes they owe`} on Homeroom bot's changes can free its slot`;
@@ -815,7 +814,7 @@ function listsOf(needs, work, { botUsername = null } = {}) {
     says,
   });
   const bot = String(botUsername || '').toLowerCase();
-  const slotVotes = (t) => (t.what === 'held' && t.heldBy !== 'daily' && t.heldBy !== 'turn' && t.app && bot
+  const slotVotes = (t) => (t.what === 'held' && t.heldBy !== 'turn' && t.app && bot
     ? items.filter((item) => item.kind === 'proposal' && item.app?.slug === t.app.slug
       && String(item.author || '').toLowerCase() === bot).length
     : 0);

@@ -75,6 +75,11 @@
       "id": "0015-preview-sleep",
       "sha256": "ef09370bb7fe439247015043afd138c1dbdcc1d3b895cde83f7fc9606d12e8df",
       "schemaSha256": "80ee80ba3462f0c367b7e9b37dd36ba0ee8847f93c82fc64e25306bf2a768c59"
+    },
+    {
+      "id": "privilege-changes",
+      "sha256": "be7905d5c1d31e7ca1d4d1d493b89674a890ecd38e47601eea9ec357f31ed014",
+      "schemaSha256": "90b4c0935766c30dc24345c00055051cb8622832dd8787ced732b7f251b5af7f"
     }
   ]
 }
