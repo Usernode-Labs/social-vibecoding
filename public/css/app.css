@@ -18645,6 +18645,39 @@ html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) {
 html.in-side-panel.side-panel-beside-ai .dc-lift { border-radius: 0; border-top: 0; box-shadow: none; }
 html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title) { display: none; }
 html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu-btn, [data-request-status], [data-request-category])) { display: none; }
+/* AND THE PAGE ITSELF REACHES THE COLUMN'S EDGES (3 Nov 2026). The 30 Oct
+   rule above took the sheet's radius, top edge and shadow, but three things
+   still drew a second box inside the column: #dev-topic-thread's 12px
+   shoulder at the top, .dev-request's 780px cap with its centred 12px side
+   margins, and .dc-lift-session's own fill and frost painted over the
+   column's strip. The page now lies on the column's one surface, as Main
+   Chat does; the 12px the wrapper gave its content moves onto the bar and
+   the transcript, whose rows keep their own 16px. The composer's bar (12px)
+   and the status line (16px) already carry theirs, so they need nothing.
+   The Workshop's panel draws the same page and had the whole rounded,
+   shaded box (#dev-topic-thread.dev-ws-side-page inside .dev-ws-side), so
+   one rule set serves both. The page's cards, and the full page outside
+   these two panels, are untouched. */
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) #dev-topic-thread {
+  padding-top: 0;
+}
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request {
+  max-width: none;
+  margin-inline: 0;
+  padding-inline: 0;
+}
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request-sheet {
+  background: transparent;
+  border: 0;
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll) {
+  padding-inline: 12px;
+}
 /* A DESIGN'S PREVIEW, A COLUMN OF ITS OWN (1 Nov 2026, threads, one loop
    C1; features/ai/preview.ts). Opened from a version in a thread, the design
    pane stands beside the thread: list | thread | preview where the three fit
