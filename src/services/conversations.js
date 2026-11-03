@@ -603,15 +603,12 @@ const ALSO_IN_CHAT = `(m.metadata->'homeroomBot'->>'alsoInChat') = 'true'`;
 // news is only left out of the stream, its unread count and its preview. A
 // first version's news stays, as it has no request page yet. The client's
 // copy of this test is frontend/src/features/messages/bot-request.ts
-// isRequestNews, for a message that arrives live.
-const BOT_CONVERSATION_KINDS = [
-  'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
-  'hello_welcome', 'hello_tour', 'hello_joiner', 'hello_maker', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
-];
+// isRequestNews, for a message that arrives live; isBotNewsRow above is its
+// row form, less the first version's news.
 const REQUEST_NEWS = `COALESCE(m.metadata->'homeroomBot' IS NOT NULL
           AND COALESCE(m.metadata->'homeroomBot'->>'moment', '') <> 'reply'
           AND COALESCE(m.metadata->'homeroomBot'->>'firstVersion', '') <> 'true'
-          AND COALESCE(m.metadata->'homeroomBot'->>'kind', '') NOT IN (${BOT_CONVERSATION_KINDS.map((k) => `'${k}'`).join(', ')})
+          AND COALESCE(m.metadata->'homeroomBot'->>'kind', '') NOT IN (${[...BOT_CONVERSATION_KINDS].map((k) => `'${k}'`).join(', ')})
           AND (COALESCE(m.metadata->'homeroomBot'->>'issueNumber', '') ~ '^[1-9][0-9]{0,9}$'
                OR m.metadata->'homeroomBot'->>'kind' = 'activity'), FALSE)`;
 const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
@@ -2545,6 +2542,7 @@ module.exports = {
   isBotNewsRow,
   BOT_CONVERSATION_KINDS,
   ALSO_IN_CHAT,
+  REQUEST_NEWS,
   BOT_METADATA_KEY,
   updateTitle,
   respond,
