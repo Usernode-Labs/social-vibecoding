@@ -328,8 +328,8 @@
     "description": "On a challenge's page, under the points it pays or the viewer has earned in it: what points are for."
   },
   "challenges.countNote.onPropose": {
-    "text": "Counts when you press Propose to group, which puts your change to a vote.",
-    "description": "Note on the page of a challenge that is completed by proposing a change. \"Propose to group\" is a button's label; \"change\" is a noun."
+    "text": "Counts when a change of yours goes to a vote. A change Homeroom bot builds is the bot's own, even if you asked for it, so it doesn't count here.",
+    "description": "Note on the page of a challenge that is completed by proposing a change. \"Homeroom bot\" is the name of the platform's assistant; \"change\" is a noun."
   },
   "challenges.countNote.weekAccepted_one": {
     "text": "This challenge counts up to {{cap}} each week, and you have {{cap}} this week. More accepted changes this week don't add to it. It starts again on Monday.",

@@ -7831,6 +7831,10 @@
     "text": "The preview was paused after a while of inactivity. Rebuilding it from the session’s latest changes. This usually takes 20–60 seconds.",
     "description": "Text under \"Spinning the preview back up…\" on the preview's loading screen. A session is a chat with the coding agent."
   },
+  "frame.loader.wakingSub": {
+    "text": "Nobody had opened this preview for a while, so it was asleep. Waking it up now, with nothing rebuilt. This usually takes 10 to 30 seconds.",
+    "description": "Text under \"Spinning the preview back up…\" on the preview's loading screen when the preview was asleep (stopped to save resources, everything else kept) and is being started again rather than rebuilt."
+  },
   "frame.loader.slow": {
     "text": "This is taking longer than expected",
     "description": "Title of the preview's loading screen when building or loading the preview has run well past the usual time."
@@ -8230,6 +8234,10 @@
   "request.status.lead.botHeld": {
     "text": "Homeroom bot will start when one of its changes here is voted in or closed.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it already has as many changes waiting for a vote on this project as it may, so it starts on this request when one of them is approved or closed. \"Here\" is the project."
+  },
+  "request.status.lead.botHeldTurn": {
+    "text": "Homeroom bot will start when one of the changes it is building here is done.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it is already building as many changes on this project at once as it may, so it starts on this request when one of those builds is done. \"Here\" is the project."
   },
   "request.status.lead.upForVote": {
     "text": "Up for a vote.",

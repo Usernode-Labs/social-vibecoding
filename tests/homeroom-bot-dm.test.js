@@ -1042,6 +1042,10 @@ test('news the card and the tray show is never a DM message of its own; what nee
     assert.equal(dm.storyMomentOf({ kind }), 'on_hold', kind);
     assert.equal(dm.saidOf(kind), 'slots', kind);
   }
+  // #6156: and one waiting for the bot's turn among the project's builds, said apart.
+  assert.equal(dm.cardOnly('held_builds_per_app', {}), false);
+  assert.equal(dm.storyMomentOf({ kind: 'held_builds_per_app' }), 'on_hold');
+  assert.equal(dm.saidOf('held_builds_per_app'), 'builds');
   assert.equal(dm.storyMomentOf({ kind: 'request_closed' }), 'done_elsewhere');
   assert.equal(dm.saidOf('request_closed'), 'done_elsewhere');
   // 16 Oct 2026: a person took on what the bot had promised: on hold, as theirs.

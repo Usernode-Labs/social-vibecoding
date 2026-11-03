@@ -767,3 +767,49 @@ test('the app gate is chosen the same way: one that answers takes the app while 
   await deploying;
   assert.equal(pathsOf(fresh.state.ingresses[0]).find((p) => p.path === '/').backend.service.name, k8s.APP_GATE_NAME);
 });
+
+// #6157: with the app-host gate off, a sleeping preview's Ingress sends its
+// link here instead of to its Service, which has no pod (Cilium's Envoy takes
+// no custom error backend for a 503). A preview's host gets the waking page,
+// which asks the platform to wake it, polls, and reloads; the asset prefixes
+// keep serving, and any other host keeps the plain 404.
+test('#6157 the asset backend answers a sleeping preview\'s link with the waking page', async () => {
+  const http = require('node:http');
+  const saved = { ...process.env };
+  process.env.USERNODE_DOMAIN = 'app.onhomeroom.com';
+  process.env.USERNODE_APPS_DOMAIN = 'onhomeroom.com';
+  const { server } = assetServer;
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const ask = (p, headers, method = 'GET') => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers }, (res) => {
+      let body = '';
+      res.on('data', (d) => { body += d; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  try {
+    const preview = 'puzzle-chain--s77.onhomeroom.com';
+    const page = await ask('/rota?week=2', { host: preview, 'sec-fetch-dest': 'document' });
+    assert.equal(page.status, 503);
+    assert.match(page.headers['cache-control'], /no-store/);
+    assert.match(page.body, /<title>Waking this preview…<\/title>/);
+    assert.ok(page.body.includes(`"//app.onhomeroom.com/__preview_wake?host=${encodeURIComponent(preview)}"`),
+      'it asks the platform, from the visitor\'s browser');
+    const poll = await ask('/rota?week=2', { host: preview, 'sec-fetch-dest': 'empty' });
+    assert.equal(poll.status, 503, 'the page\'s poll reads 503 until the app answers');
+    assert.equal(JSON.parse(poll.body).error, 'preview_waking');
+    assert.equal((await ask('/api/items', { host: preview }, 'POST')).status, 503, 'an app\'s write waits too');
+    assert.equal((await ask('/health', { host: preview })).status, 503, 'a sleeping preview is not healthy');
+    assert.equal((await ask('/usernode-bridge/v1/platform.json', { host: preview })).status, 200, 'its asset paths still serve');
+    assert.equal((await ask('/rota', { host: 'puzzle-chain.onhomeroom.com', 'sec-fetch-dest': 'document' })).status, 404,
+      'a production app\'s host is not a preview');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    for (const k of ['USERNODE_DOMAIN', 'USERNODE_APPS_DOMAIN']) {
+      if (k in saved) process.env[k] = saved[k]; else delete process.env[k];
+    }
+  }
+});

@@ -371,6 +371,14 @@
         }
         if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
 
+        if (capabilities.includes('prepareProvingParameters')) {
+          if (typeof bridge.prepareProvingParameters !== 'function') {
+            throw new Error('The native proof preparation bridge must be updated');
+          }
+          await bridge.prepareProvingParameters();
+          if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
+        }
+
         const attempt = NativeChrome._attemptFor(userId);
         lease.attemptId = attempt.attemptId;
         await NativeChrome._prepareNativeHandoff(

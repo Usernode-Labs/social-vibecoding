@@ -1004,12 +1004,13 @@ test('the header back chevron asks the Challenges page first', () => {
 // that scores the challenge, and the page says under the task what it counts:
 // a proposal only once it is put to the vote, and nothing past a counted
 // measure's target while the challenge is still open.
-test('the page says a proposal counts at Propose to group, and when more stops counting', () => {
+test('the page says a proposal counts once it goes to a vote, that the bot\'s own does not, and when more stops counting', () => {
   const { pane } = loadPane({ challenges: CH, eventId: 900500 });
   const row = (counted_by, extra = {}) => ({
     id: 900500, completed: false, card_preview: { goal: 'Ship it' }, counted_by, ...extra,
   });
-  const SENT = 'Counts when you press Propose to group, which puts your change to a vote.';
+  const SENT = message('leaderboard:challenges.countNote.onPropose');
+  assert.equal(SENT, "Counts when a change of yours goes to a vote. A change Homeroom bot builds is the bot's own, even if you asked for it, so it doesn't count here.");
   assert.equal(pane._countNoteOf(row({ measure: 'PROPOSAL_SENT', target: null })), SENT);
   assert.equal(pane._countNoteOf(row({ measure: 'PROPOSAL_SENT', target: null }, { progress: { done: true, current: null, target: null } })),
     SENT, 'the same line once it is done: the task still does not say it');

@@ -6121,7 +6121,8 @@ const AppView = {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
         : who ? PlatformI18n.t('changes:request.status.lead.reviewNamed', { username: who }) : PlatformI18n.t('changes:request.status.lead.review');
     } else if (st.key === 'bot') {
-      lead = bot && bot.held ? PlatformI18n.t('changes:request.status.lead.botHeld')
+      // #6156: held for its turn among the project's builds (`turn`), not for a vote.
+      lead = bot && bot.held ? (bot.turn ? PlatformI18n.t('changes:request.status.lead.botHeldTurn') : PlatformI18n.t('changes:request.status.lead.botHeld'))
         : bot && bot.plan
           // B06 (audit 2 Nov 2026): the person it waits for reads "you", not their own @name.
           ? (bot.mine ? PlatformI18n.t('changes:request.status.lead.botPlanYours')
@@ -28481,9 +28482,11 @@ const AppView = {
     // the loader up. A client-side give-up keeps the loader honest if the
     // event never lands (the server rebuild is still allowed to finish on
     // its own).
+    // #6157: `waking` is a preview that slept, scaled back up rather than
+    // rebuilt: the same loader, saying so.
     AppView._setStagingLoader(true, {
       title: PlatformI18n.t('changes:frame.loader.rebuilding'),
-      sub: PlatformI18n.t('changes:frame.loader.rebuildingSub'),
+      sub: PlatformI18n.t(data.waking ? 'changes:frame.loader.wakingSub' : 'changes:frame.loader.rebuildingSub'),
     });
     AppView._pendingStagingPreview = {
       sessionId, slug, jump, testing, dock, loadId, retry,

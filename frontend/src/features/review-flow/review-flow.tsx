@@ -58,6 +58,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
 import { callAppView } from '../dev-board/card/fold';
 import type { NeedsFeedItem } from '../workshop/needs-reel';
+import { filterByVoteType, voteTallies, VoteTypeChips, type VoteFilter, type VoteType } from '../workshop/vote-filter';
 import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
@@ -116,6 +117,13 @@ const cam = (p: Placement) => `translate(${p.tx}px, ${p.ty}px) scale(${p.scale})
 const clipOf = (p: SheetPlate, w: number, h: number) =>
   `inset(${p.y}px ${w - p.x - p.w}px ${h - p.y - p.h}px ${p.x}px round ${p.r}px)`;
 const OPEN_CLIP = 'inset(0px 0px 0px 0px round 32px)';
+
+/**
+ * #6199: a review item's kind, for the vote-type chip. Advisory when the
+ * feed marks it so; a plain change, a group decision, a ballot and the bot's
+ * question all decide.
+ */
+const reviewVoteType = (it: ReviewItem): VoteType => (it.advisory || it.uncounted ? 'advisory' : 'deciding');
 
 /* ── Drawn pictures ──────────────────────────────────────────────────── */
 
@@ -519,6 +527,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // The run is fixed once it starts: a vote takes its change out of the
   // controller's feed, and the run must not move under you.
   const [list, setList] = useState<ReviewItem[] | null>(null);
+  // #6199: which kind of vote the run shows. Starts on All every time the
+  // run opens; the choice is not remembered.
+  const [filter, setFilter] = useState<VoteFilter>('all');
   const [index, setIndex] = useState(0);
   const [from, setFrom] = useState<{ index: number; view: View } | null>(null);
   const [done, setDone] = useState(false);
@@ -545,7 +556,10 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     setIndex(Math.max(0, shaped.findIndex((it) => it.kind !== 'governance')));
   }, [shaped, list]);
 
-  const run = list || [];
+  const run = list ? filterByVoteType(list, filter, reviewVoteType) : [];
+  // The chips count the whole run, whatever kind is picked: they say how
+  // much of each kind the feed holds.
+  const tallies = useMemo(() => voteTallies(list || [], reviewVoteType), [list]);
   const passed = useMemo(() => ({ ...skipped, ...votes }), [skipped, votes]);
   const item = run[index] && run[index].kind !== 'governance' ? run[index] : null;
   const leaving = from ? run[from.index] : null;
@@ -665,6 +679,18 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     setIndex(first);
     setDone(false);
   };
+  // #6199: a new kind of vote. The run restarts at the first change of that
+  // kind with no vote or skip yet, else at its first change, so a press lands
+  // where there is still something to decide.
+  const pickFilter = (key: VoteFilter) => {
+    if (key === filter) return;
+    stop();
+    setFilter(key);
+    setDone(false);
+    const nextRun = list ? filterByVoteType(list, key, reviewVoteType) : [];
+    const first = nextRun.findIndex((it) => it.kind !== 'governance' && !passed[it.key]);
+    setIndex(first >= 0 ? first : Math.max(0, nextRun.findIndex((it) => it.kind !== 'governance')));
+  };
   // A help sheet over the page, from the card: the card folds first.
   const help = (to: SheetState) => { setDesc(false); setSheet(to); };
 
@@ -740,6 +766,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     // a small stack, with one way to look at them again.
     return (
       <div ref={anchorRef} className="rf-run rf-feed-done" data-review-flow="">
+        {filter !== 'all' ? <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} /> : null}
         {waiting.length ? (
           <div className="rf-end rf-end-alone" data-rf-end="" data-rf-end-waiting={waiting.length}>
             <span className="rf-end-stack" aria-hidden="true">
@@ -793,6 +820,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           >
             <ChevronDownIcon aria-hidden="true" width={18} height={18} strokeWidth="2.4" />
           </button>
+          <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} />
         </div>
         <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={{ top: barTop }} aria-hidden={!desc} inert={!desc || undefined}>
           <div className="rf-desc-dim" onClick={() => setDesc(false)} />
