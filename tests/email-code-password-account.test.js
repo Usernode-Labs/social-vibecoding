@@ -62,7 +62,7 @@ test('a refused-but-correct code lands on the password form, address carried ove
     'the code step is left for the form that can actually succeed');
   assert.match(body, /username\.current\.value = st\.otpEmail \|\| ''/,
     'the address just typed is prefilled, not asked for twice');
-  assert.match(body, /setLoginError\(data\.error \|\| translate\(PASSWORD_ACCOUNT_MSG\)\)/,
+  assert.match(body, /setLoginError\(errorText\(data\) \|\| translate\(PASSWORD_ACCOUNT_MSG\)\)/,
     'the explanation is shown on the form it applies to');
   // The branch must be taken BEFORE the generic "invalid or expired" message.
   assert.equal(message('auth:login.otp.codeRejected'), 'Invalid or expired code.');

@@ -41,7 +41,8 @@ function englishRuntime() {
 /** What `window.PlatformI18n` holds in the shell, in English. */
 function englishPlatformI18n(overrides = {}) {
   const { t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference } = englishRuntime();
-  return { t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, ...overrides };
+  const { errorText } = loadTsx('frontend/src/lib/i18n/server-error.ts');
+  return { t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, errorText, ...overrides };
 }
 
 /** The English text of `namespace:key`, with its parameters filled in. */
