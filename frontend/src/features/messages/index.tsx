@@ -46,9 +46,10 @@ import { requestPageOf } from './request-page';
 import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
-import { requestKey } from './bot-request';
+import { isRequestNews, requestKey } from './bot-request';
+import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
-import { useMessagesDrawer, type Peek } from './phone-drawer';
+import { useMessagesDrawer } from './phone-drawer';
 import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -705,11 +706,9 @@ function ConversationRowSkeleton() {
   );
 }
 
-function ConversationList({ drawer = false, litId = null }: {
+function ConversationList({ drawer = false }: {
   /** The phone's drawer holds the screen (./phone-drawer.tsx): the list stays drawn beside a conversation. */
   drawer?: boolean;
-  /** The conversation peeking beside the list, lit as the one you were in. */
-  litId?: number | null;
 } = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -1126,7 +1125,7 @@ function ConversationList({ drawer = false, litId = null }: {
           <ConversationRow
             key={entry.key}
             conversation={conversation}
-            active={snap.route.conversationId === conversation.id || (!!litId && litId === conversation.id)}
+            active={snap.route.conversationId === conversation.id}
             preview={conversation.homeroomBot ? botLine : null}
           />
         )
@@ -1854,65 +1853,6 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
  * Exactly one copy draws the thread at a time — the store's route says
  * which — so the ids its rows carry are never on the page twice.
  */
-/**
- * THE LAST CONVERSATION, PEEKING BESIDE THE LIST on a phone (Evan's design,
- * ./phone-drawer.tsx): what it showed when you left it, its newest at the
- * foot, and nothing in it can be pressed but the whole of it, which opens
- * it. Only a picture: it marks nothing read, sends nothing and follows no
- * live news, so leaving a conversation never keeps it open behind the list.
- */
-function ConversationPeek({ peek }: { peek: Peek }) {
-  const t = useMessages('messages');
-  const channels = useChannelHandles();
-  const scroller = useRef<HTMLDivElement>(null);
-  useIsomorphicLayoutEffect(() => {
-    const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [peek]);
-  const { conversation, messages } = peek;
-  const kind = conversation.kind || 'direct';
-  const person = directPerson(conversation);
-  const rows: ReactNode[] = [];
-  let previous: ConversationMessage | null = null;
-  let previousDay: string | null = null;
-  for (const message of messages) {
-    if (message.deleted || message.threadRootId) continue;
-    const day = dayKey(message);
-    if (day && day !== previousDay) {
-      rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
-      previousDay = day;
-      previous = null;
-    }
-    const grouped = !!previous && !previous.system && !message.system
-      && groupsWithPrevious(
-        { author: previous.sender.id, at: previous.createdAt },
-        { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
-      );
-    rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversation.id} grouped={grouped} channels={channels} kind={kind} />);
-    previous = message;
-  }
-  return (
-    <section className={`flex messages-thread-pane messages-thread-peek dc-lift dc-lift-session messages-thread-${kind}`} data-messages-peek={conversation.id}>
-      <div className="messages-peek-body" inert aria-hidden="true">
-        {/* Polish N8: what shows of it is its left edge, so it leads with
-            its own face, where a conversation's header has it, and its rows
-            draw no faces (app.css): a sender's face only starts a run of
-            their lines, so one sat alone mid-screen like a stray badge. */}
-        <div className="messages-peek-head">
-          <UserAvatar user={person} title={person?.username || conversation.title} shape="square" />
-        </div>
-        <div ref={scroller} className="messages-thread-scroll">{rows}</div>
-      </div>
-      <button
-        type="button"
-        className="messages-peek-open"
-        aria-label={t('messages:drawer.peek.open', { name: threadWords(conversation).title })}
-        onClick={() => openConversation(conversation.id)}
-      />
-    </section>
-  );
-}
-
 function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -2262,6 +2202,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // One request, one row: news drawn inside a newer row about its request.
     if (newsFold?.hidden.has(message.id)) continue;
     const day = dayKey(message);
+    // #6207: Main Chat is the conversation; a request's news is on its page.
+    if (botDm && isRequestNews(message)) continue;
     const asks = asking(message);
     const settled = botDm && isBotNews(message) && !asks && !!newsStatusOf(message, botWork)?.settled;
     if (!settled || (day && day !== previousDay) || (lineAt !== null && message.id >= lineAt && !lineDrawn)) flushRun();
@@ -2796,10 +2738,20 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const privateRoot = rootId && snap.active?.kind === 'direct' && threadsAllowed(snap.active) && snap.active.homeroomBot
     && privateRootMessage && !requestPageOf(privateRootMessage)
     ? rootId : null;
-  const [privateWhere] = usePrivateThread(privateRoot);
+  const [privateWhere, setPrivateWhere] = usePrivateThread(privateRoot);
   // 1 Nov 2026 (C1): whether this thread's design is open beside it.
   const preview = usePreview();
   const privateMine = !!privateRoot && isOwnPrivateThread(privateWhere, privateRootMessage, meId);
+  // #6159: what they write in a done thread brings it back (the server's
+  // reopenOnReply): its state is read again once their message is in it.
+  const ownCount = (thread?.messages || []).filter((item) => !item.sender.bot && item.sender.id === meId && item.id > 0).length;
+  useEffect(() => {
+    if (!privateRoot || privateWhere?.state !== 'done' || !ownCount) return;
+    fetch(`/api/conversations/homeroom-bot/threads/${privateRoot}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data && typeof data.state === 'string' && data.state !== 'done') setPrivateWhere(data); })
+      .catch(() => {});
+  }, [ownCount]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!conversationId || !rootId) return null;
   const active = snap.active;
   const kind = active?.kind || 'group';
@@ -2933,6 +2885,11 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             <span className="text-[13px] font-semibold">{t('messages:design.pane.showPreview')}</span>
           </button>
         ) : null}
+        {/* #6159: Mark done, or Reopen, in the thread's own ⋯. */}
+        {privateMine && privateRoot && privateWhere ? (
+          <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'}
+            onChanged={(state) => setPrivateWhere({ ...privateWhere, state })} />
+        ) : null}
         {/* On a phone the Messages screen's header bar has the way back
             (app.css hides this one there, polish N16). In Main Chat's column
             the thread is the column's: Main Chat is a row of the list. */}
@@ -2944,7 +2901,10 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
       </header>
       {/* Its head says it is theirs alone in Main Chat's column; under it,
           where it went once it was filed or posted. */}
-      {privateMine && !(inMain && privateWhere?.state === 'open') ? <PrivateThreadNote where={privateWhere} /> : null}
+      {privateMine && !(inMain && privateWhere?.state === 'open') ? (
+        <PrivateThreadNote where={privateWhere} rootId={privateRoot}
+          onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
+      ) : null}
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
@@ -3240,12 +3200,12 @@ export function MessagesScreen() {
   // for it to sit beside, whatever the full-width preference says.
   const channelOpen = !!snap.route.appSlug
     || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
-  // THE PHONE'S DRAWER (./phone-drawer.tsx): the list and a conversation
-  // with people side by side, panned between, the last conversation peeking;
-  // an agent chat or an agent session takes the conversation's place.
+  // THE PHONE'S DRAWER (./phone-drawer.tsx): the list, the whole screen, and
+  // a conversation with people sliding in over it; an agent chat or an agent
+  // session takes the conversation's place.
   const agentWords = useAgentThreadWords(snap.route.agent);
-  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords, agentWords);
-  const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 && !drawer.peek ? ' messages-drawer-alone' : ''}` : '';
+  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, threadWords, agentWords);
+  const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 ? ' messages-drawer-alone' : ''}` : '';
   // v3 (18 Oct 2026): ON A DESKTOP THE LIST IS IN THE SIDEBAR, nested under
   // Messages (./rail-inbox.ts), so one pane is drawn at a time: the open
   // conversation alone, or with nothing open the whole list as the page
@@ -3271,8 +3231,8 @@ export function MessagesScreen() {
     <>
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
         <div ref={layoutRef} className={layout} data-messages-drawer={drawer.on ? drawer.level : undefined} {...(drawer.handlers || {})}>
-          <ConversationList drawer={drawer.on} litId={drawer.peek ? drawer.peek.conversation.id : null} />
-          {drawer.peek ? <ConversationPeek peek={drawer.peek} /> : <ConversationThread />}
+          <ConversationList drawer={drawer.on} />
+          <ConversationThread />
           {designOpen && snap.route.conversationId && designRootId ? (
             <DesignPane conversationId={snap.route.conversationId} rootId={designRootId} view={designView} onView={setDesignView} />
           ) : null}

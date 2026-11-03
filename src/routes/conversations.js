@@ -322,6 +322,8 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   //   GET  /api/conversations/homeroom-bot/threads/:rootId       → { state, kind?, number?, app?, target?, href?, mine }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/file  { project, title?, text? }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/post  { project, number, text? }
+  //   POST /api/conversations/homeroom-bot/threads/:rootId/done   (#6159: Mark done)
+  //   POST /api/conversations/homeroom-bot/threads/:rootId/reopen (#6159: Reopen)
   const privateThreads = () => require('../services/private-threads');
   const threadRoot = (req) => {
     const id = Number(req.params.rootId);
@@ -360,6 +362,21 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+  // #6159 (3 Nov 2026): a private thread can be finished, and brought back.
+  // Only the person's own: anybody else's root is "No such thread".
+  for (const [door, act] of [['done', 'markDone'], ['reopen', 'reopen']]) {
+    router.post(`/api/conversations/homeroom-bot/threads/:rootId/${door}`, conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+      try {
+        const rootId = threadRoot(req);
+        if (!rootId) return res.status(404).json({ error: 'No such thread' });
+        if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+        return answerDoor(res, await privateThreads()[act](pool, { user: req.user, rootId }));
+      } catch (err) {
+        log.error('conversations', `private thread ${door} failed`, { err: err.message, userId: req.user?.id });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+  }
   router.post('/api/conversations/homeroom-bot/threads/:rootId/post', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
     try {
       const rootId = threadRoot(req);

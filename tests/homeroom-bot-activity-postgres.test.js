@@ -1,4 +1,5 @@
 'use strict';
+const { dmStream } = require('./lib/bot-dm-stream');
 
 // #3736: activity cards in the Homeroom bot's DM, against the full
 // PostgreSQL schema and through the real route.
@@ -503,7 +504,8 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       const other = await user('other');
       const conversationId = await staging.ensureBotDmFixture(pool, viewer);
       await staging.ensureBotDmFixture(pool, viewer);
-      const page = await conversations.listMessages(pool, viewer, conversationId, {});
+      // #6207: what the fixture wrote; Main itself leaves a request's news out.
+      const page = await dmStream(pool, viewer, conversationId);
       // One story: the demo request #18's card (its thread's root) is told apart below.
       const all = (page.messages || page).filter((m) => m.metadata?.homeroomBot?.kind === 'activity' && m.metadata.homeroomBot.issueNumber !== 18)
         .sort((a, b) => a.id - b.id);

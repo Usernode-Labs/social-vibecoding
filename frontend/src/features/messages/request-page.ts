@@ -92,7 +92,7 @@ export function openRequestPage(page: RequestPage, conversationId: number | null
     if (w.UsernodeReact?.sidePanel?.take?.(page.route, { place: page.place, label: page.label })) {
       if (conversationId && page.issueNumber) {
         window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', {
-          detail: { type: 'issue', appSlug: page.place.slug, issueNumber: page.issueNumber, title: page.label, conversationId },
+          detail: { type: 'issue', appSlug: page.place.slug, issueNumber: page.issueNumber, title: page.label, conversationId, source: 'list' },
         }));
       }
       return;
