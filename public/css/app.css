@@ -18627,11 +18627,11 @@ body:has(#ai-screen:not(.hidden)) .side-panel {
   border-start-end-radius: 0;
   border-start-start-radius: 1.75rem;
 }
-.side-panel-head > :is(.side-panel-main, .side-panel-place) { display: none; }
+.side-panel-head > :is(.side-panel-main, .side-panel-place, .side-panel-more) { display: none; }
 body:has(#ai-screen:not(.hidden)) .side-panel :is(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close) {
   display: none;
 }
-body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-main, .side-panel-place) { display: inline-flex; }
+body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-main, .side-panel-place, .side-panel-more) { display: inline-flex; }
 /* And the page in it leaves out its own way back, "‹ Workshop": the column's
    ‹ Main Chat is the way back, and its project is beside it. The class is on the
    panel document's <html> while it stands beside this page (side-panel
@@ -25939,6 +25939,10 @@ body:has(#ai-screen:not(.hidden)) .side-panel-head {
 html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-inset, 0px); }
 /* The topic's back chip, centred in the row rather than at its top. */
 .side-panel-head > .side-panel-main { margin: 0; align-self: center; }
+/* The ⋯ beside the column's heading (3 Nov 2026), at the row's end: Copy
+   link, the item's own page address. It is a sibling of the heading, so it
+   stays put when the heading's words are long. */
+.side-panel-more { margin-inline-start: auto; align-self: center; }
 /* The column's heading, as Main's header reads (30 Oct 2026): the project's
    tile, then what is open over where it is, the rows' 15 over 13. The
    project's name is the door to it, underlined under the pointer. */

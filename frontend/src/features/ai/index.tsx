@@ -80,11 +80,14 @@ import { DesignPane } from '../messages/design-pane';
 import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
-import { closeThread, openBotRequest, useMessagesSnapshot } from '../messages/store';
+import { closeThread, openBotRequest, stashObject, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
 import { AI_MAIN_WIDTH_KEY } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
-import { BOT_TAB, botTabAddress, knownBotConversation, noteBotConversation, useBotTabAsk, type BotAt } from './door';
+import {
+  BOT_TAB, botItemAddress, botItemAt, botItemFromRoute, botItemRoute, botTabAddress,
+  knownBotConversation, noteBotConversation, useBotTabAsk, type BotAt, type BotItem,
+} from './door';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
@@ -399,14 +402,15 @@ export function AiScreen(): ReactNode {
     if (phone) setLevel(1);
   };
   // The router's ask (./door.ts): `#homeroom-bot/main`, `/thread/<id>`, a
-  // message in either, from any door into the chat. Each once, once the page
-  // knows whether it is a phone's.
+  // message in either, or a request/change/decision address, from any door
+  // into the chat. Each once, once the page knows whether it is a phone's.
   const ask = useBotTabAsk();
   const askTaken = useRef(0);
   useEffect(() => {
     if (!ask || ask.seq === askTaken.current || !visible || !(wide || phone)) return;
     askTaken.current = ask.seq;
-    showAt(ask.at);
+    if (ask.item) openItem(ask.item);
+    else if (ask.at) showAt(ask.at);
   }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMain = () => {
@@ -416,12 +420,45 @@ export function AiScreen(): ReactNode {
   };
   // A page the panel took is in the column, in Main's place, and its
   // ‹ Main Chat gives the column back to Main: a thread that was open there
-  // gives way (1 Nov 2026), and the address is the page's.
+  // gives way (1 Nov 2026). The address effect below writes the page's own.
   const underPanel = () => {
     closeNewThread();
     if (openRoot) closeThread();
-    showAddress(BOT_TAB);
   };
+  // A project as the lists name it, for the column's heading when an item is
+  // reopened from its address after a reload (the row that named it is gone).
+  function appFromLists(slug: string): AiApp | null {
+    for (const list of [rows, progress, waiting, live]) {
+      const row = list.find((item) => item.app?.slug === slug);
+      if (row?.app) return row.app;
+    }
+    const need = (needs || []).find((item) => item.app?.slug === slug);
+    return need?.app ?? null;
+  }
+  // An item the router asked for (./door.ts): in the column beside the list,
+  // in Main's place, on a wide window; its own page anywhere else, or when
+  // the column does not take it. Main's composer takes a request as the item
+  // a question is about, as a row's press does.
+  function openItem(item: BotItem) {
+    const route = botItemRoute(item);
+    if (!route) { go(BOT_TAB); return; }
+    if (wide) {
+      try {
+        if (sidePanel()?.take?.(route, { place: appFromLists(item.slug), label: null })) {
+          if (item.kind === 'request' && botId) {
+            const about = aboutRow({ href: `#${route}`, app: { slug: item.slug } as AiApp });
+            if (about) {
+              window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', { detail: { ...about, conversationId: botId } }));
+            }
+          }
+          underPanel();
+          return;
+        }
+      } catch { /* the page instead */ }
+    }
+    improve()?.enterTopicFrom?.(BOT_PAGE);
+    window.location.replace(`#${route}`);
+  }
   // A private thread is the column's, alone, in Main's place.
   const openPrivate = (rootId: number) => {
     const next = { threadRootId: rootId, focusMessageId: null };
@@ -454,6 +491,40 @@ export function AiScreen(): ReactNode {
   };
   // A page the side panel takes is the column's: no preview beside it.
   useEffect(() => { if (panel.open) closePreview(); }, [panel.open]);
+  // The address says what the column shows (3 Nov 2026): an item opened in it
+  // has the tab's own address that names it, so a reload reopens it, and a
+  // link inside the panel is followed. Clearing it on the way back to Main is
+  // only for an item's address: Main's and a thread's are their callers'.
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (!mounted || !visible) return;
+    if (panel.open) {
+      wasOpen.current = true;
+      const item = botItemFromRoute(panel.route);
+      showAddress(item ? botItemAddress(item) : BOT_TAB);
+      return;
+    }
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    if (botItemAt(window.location.hash)) showAddress(BOT_TAB);
+  }, [mounted, visible, panel.open, panel.route]);
+  // An item reopened from its address can be in the column before Main's chat
+  // has loaded, and openItem had no conversation to attach it to then. A
+  // request attaches once it does, as a row's press does (3 Nov 2026). The
+  // route is remembered so a later render does not attach it twice.
+  const attached = useRef<string | null>(null);
+  useEffect(() => {
+    if (!panel.open || !botId) return;
+    const item = botItemFromRoute(panel.route);
+    if (!item || item.kind !== 'request') return;
+    const route = botItemRoute(item);
+    if (!route || attached.current === route) return;
+    attached.current = route;
+    const about = aboutRow({ href: `#${route}`, app: { slug: item.slug } as AiApp });
+    if (!about) return;
+    stashObject(botId, about);
+    window.dispatchEvent(new CustomEvent('usernode:messages-attach'));
+  }, [panel.open, panel.route, botId]);
   // On a phone the column slides back to the list; the address is the page's.
   const toList = () => {
     setLevel(0);

@@ -636,7 +636,7 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
 test('#homeroom-bot is the page; /main and /thread/<id> are Main and a thread in its column; #ai lands there', () => {
   const app = read('public/js/app.js');
   // 1 Nov 2026: every address is the page's, and says where in its chat.
-  assert.match(app, /if \(parts\[0\] === 'homeroom-bot'\) \{[\s\S]*?App\.setChromeless\(false\);\s+App\.navigateToAi\(\);\s+if \(parts\[1\] === 'main' \|\| parts\[1\] === 'thread' \|\| parts\[1\] === 'm'\) \{\s+const at = App\._messagesExtras\(parts\[1\] === 'main' \? parts\.slice\(2\) : parts\.slice\(1\)\);\s+window\.UsernodeReact\?\.ai\?\.openAt\?\.\(\{/);
+  assert.match(app, /if \(parts\[0\] === 'homeroom-bot'\) \{[\s\S]*?App\.setChromeless\(false\);\s+App\.navigateToAi\(\);\s+if \(parts\[1\] === 'request' \|\| parts\[1\] === 'change' \|\| parts\[1\] === 'decision'\) \{\s+window\.UsernodeReact\?\.ai\?\.openItem\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}\s+if \(parts\[1\] === 'main' \|\| parts\[1\] === 'thread' \|\| parts\[1\] === 'm'\) \{\s+const at = App\._messagesExtras\(parts\[1\] === 'main' \? parts\.slice\(2\) : parts\.slice\(1\)\);\s+window\.UsernodeReact\?\.ai\?\.openAt\?\.\(\{/);
   assert.doesNotMatch(app, /messages\.openBotThread\(root\)/, 'never the Messages screen');
   assert.match(app, /case 'homeroom-bot':[^\n]*\n\s+case 'ai': return 'ai-screen';/);
   // The old address is an alias: rewritten in place, then routed as the new one.
@@ -678,8 +678,61 @@ test('the way into the bot\'s chat: each address and each door names a place in 
   }
   // The page takes the router's ask once, in its column.
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /if \(!ask \|\| ask\.seq === askTaken\.current \|\| !visible \|\| !\(wide \|\| phone\)\) return;\s+askTaken\.current = ask\.seq;\s+showAt\(ask\.at\);/);
+  assert.match(src, /if \(!ask \|\| ask\.seq === askTaken\.current \|\| !visible \|\| !\(wide \|\| phone\)\) return;\s+askTaken\.current = ask\.seq;\s+if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);/);
   assert.match(read('frontend/src/features/ai/door.ts'), /host\.ai = \{ \.\.\.\(host\.ai \|\| \{\}\), openAt: askBotTab,/);
+});
+
+test('an item in the bot page\'s column has an address of its own, and its own page as the fallback', () => {
+  const door = loadTsx('frontend/src/features/ai/door.ts');
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  // The address for each kind (3 Nov 2026). A change is its pull request's number.
+  assert.equal(door.botItemAddress({ kind: 'request', slug: 'usernode-2d5619', number: 6214 }),
+    '#homeroom-bot/request/usernode-2d5619/6214');
+  assert.equal(door.botItemAddress({ kind: 'change', slug: 'usernode-2d5619', number: 2151 }),
+    '#homeroom-bot/change/usernode-2d5619/2151');
+  assert.equal(door.botItemAddress({ kind: 'decision', slug: 'usernode-2d5619', number: 7 }),
+    '#homeroom-bot/decision/usernode-2d5619/7');
+  assert.equal(door.botItemAddress({ kind: 'request', slug: 'Bad Slug', number: 1 }), '#homeroom-bot', 'nothing that is not an address');
+  assert.equal(door.botItemAddress({ kind: 'request', slug: 'garden', number: 0 }), '#homeroom-bot');
+  // Read back, including the tab's old `#ai/…` spelling.
+  assert.deepEqual(plain(door.botItemAt('#homeroom-bot/request/usernode-2d5619/6214')),
+    { kind: 'request', slug: 'usernode-2d5619', number: 6214 });
+  assert.deepEqual(plain(door.botItemAt('#ai/change/usernode-2d5619/2151')),
+    { kind: 'change', slug: 'usernode-2d5619', number: 2151 });
+  assert.equal(door.botItemAt('#homeroom-bot/request/usernode-2d5619'), null);
+  assert.equal(door.botItemAt('#homeroom-bot/request/bad_slug/4'), null);
+  assert.equal(door.botItemAt('#homeroom-bot/main'), null, 'a chat place is not an item');
+  // The panel route, both ways.
+  assert.equal(door.botItemRoute({ kind: 'request', slug: 'garden', number: 12 }), 'app/garden/dev/issues/12');
+  assert.equal(door.botItemRoute({ kind: 'change', slug: 'garden', number: 2151 }), 'app/garden/dev/changes/2151');
+  assert.equal(door.botItemRoute({ kind: 'decision', slug: 'garden', number: 7 }), 'app/garden/dev/governance/7');
+  assert.deepEqual(plain(door.botItemFromRoute('app/garden/dev/issues/12')), { kind: 'request', slug: 'garden', number: 12 });
+  assert.deepEqual(plain(door.botItemFromRoute('app/garden/dev/changes/2151')), { kind: 'change', slug: 'garden', number: 2151 });
+  assert.deepEqual(plain(door.botItemFromRoute('app/garden/dev/governance/7')), { kind: 'decision', slug: 'garden', number: 7 });
+  assert.equal(door.botItemFromRoute('app/garden/dev/sessions/88'), null, 'a change under another address keeps the plain tab');
+  assert.equal(door.botItemFromRoute('app/garden/dev/proposals/88'), null);
+  assert.equal(door.botItemFromRoute('app/garden/workshop'), null);
+  // The item's own page, the one Expand opens, for every route the heading reads as one.
+  assert.equal(door.pageLinkFor('app/usernode-2d5619/dev/issues/6214'), '/app/usernode-2d5619/dev/issues/6214');
+  assert.equal(door.pageLinkFor('app/garden/dev/changes/2151'), '/app/garden/dev/changes/2151');
+  assert.equal(door.pageLinkFor('app/garden/dev/governance/7'), '/app/garden/dev/governance/7');
+  assert.equal(door.pageLinkFor('app/garden/dev/sessions/88'), '/app/garden/dev/sessions/88');
+  assert.equal(door.pageLinkFor('app/garden/workshop'), null);
+  // An item is never a chat place, so it never reaches openAt.
+  assert.equal(door.botTabAt('#homeroom-bot/request/usernode-2d5619/6214'), null);
+  // The page follows the address, and falls back to the item's own page.
+  const src = read('frontend/src/features/ai/index.tsx');
+  const underPanel = src.slice(src.indexOf('const underPanel'), src.indexOf('function appFromLists'));
+  assert.doesNotMatch(underPanel, /showAddress\(BOT_TAB\)/, 'a page in the column is named by the address effect');
+  assert.match(src, /const item = botItemFromRoute\(panel\.route\);\s+showAddress\(item \? botItemAddress\(item\) : BOT_TAB\);/);
+  assert.match(src, /improve\(\)\?\.enterTopicFrom\?\.\(BOT_PAGE\);\s+window\.location\.replace\(`#\$\{route\}`\);/,
+    'a replace, not a push, so Back does not bounce to it again');
+  assert.match(src, /if \(sidePanel\(\)\?\.take\?\.\(route, \{ place: appFromLists\(item\.slug\), label: null \}\)\)/);
+  assert.match(src, /const item = botItemFromRoute\(panel\.route\);\s+if \(!item \|\| item\.kind !== 'request'\) return;[\s\S]{0,400}stashObject\(botId, about\);\s+window\.dispatchEvent\(new CustomEvent\('usernode:messages-attach'\)\);/,
+    'a request reopened from its address attaches to Main once the chat has loaded');
+  assert.match(read('public/js/app.js'),
+    /if \(parts\[1\] === 'request' \|\| parts\[1\] === 'change' \|\| parts\[1\] === 'decision'\) \{\s+window\.UsernodeReact\?\.ai\?\.openItem\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}/);
+  assert.match(read('frontend/src/features/ai/door.ts'), /openItem: \(hash: string\) => \{ const item = botItemAt\(hash\); if \(item\) askBotItem\(item\); \}/);
 });
 
 test('every door into the bot\'s chat lands on its tab, never the Messages screen', () => {
@@ -909,7 +962,9 @@ test('the column from 768px: Main, or one thread alone under its own head; a pag
   // 1 Nov 2026 (C1): and a design's preview goes, unless it is that thread's.
   assert.match(src, /const showAt = \(next: BotAt\) => \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!next\.threadRootId \|\| next\.threadRootId !== preview\?\.rootId\) closePreview\(\);\s+if \(!next\.threadRootId && openRoot\) closeThread\(\);\s+setAt\(\{ \.\.\.next \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
   assert.match(src, /if \(openPublic\(row\.href, row\.app, row\.title, aboutRow\(row\), botId\)\) underPanel\(\);/);
-  assert.match(src, /const underPanel = \(\) => \{\s+closeNewThread\(\);\s+if \(openRoot\) closeThread\(\);\s+showAddress\(BOT_TAB\);\s+\};/);
+  // 3 Nov 2026: the address is the item's, written by the address effect.
+  assert.match(src, /const underPanel = \(\) => \{\s+closeNewThread\(\);\s+if \(openRoot\) closeThread\(\);\s+\};/);
+  assert.match(src, /const item = botItemFromRoute\(panel\.route\);\s+showAddress\(item \? botItemAddress\(item\) : BOT_TAB\);/);
   // The panel takes a page beside this page from 768px too.
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /export const BESIDE_AI_QUERY = '\(min-width: 768px\)';/);
@@ -1029,8 +1084,8 @@ test('beside this page the panel is the page\'s own column: ‹ Main and the pro
   const css = read('public/css/app.css');
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close\) \{\s+display: none;\s+\}/,
     'the panel\'s controls go, but not its left edge, the handle Main\'s edge is too');
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place\) \{ display: inline-flex; \}/);
-  assert.match(css, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place\) \{ display: none; \}/, 'and beside an app, as it was');
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
+  assert.match(css, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/, 'and beside an app, as it was');
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai :is\(\.dev-topic-backs, \.dev-topic-back\) \{ display: none; \}/,
     'and the page in it leaves out its own "‹ Workshop"');
 });
