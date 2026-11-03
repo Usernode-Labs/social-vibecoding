@@ -26,6 +26,7 @@ type Message = {
   key: string;
   group: string;
   label: string;
+  description?: string;
   english: string;
   review_required: boolean;
   languages: LanguageRow[];
@@ -184,6 +185,7 @@ function TextTranslationsScreen() {
               : undefined}
           >
             <p className="text-sm whitespace-pre-wrap break-words">{message.english}</p>
+            {message.description ? <p className="mt-1 text-xs text-zinc-500">{message.description}</p> : null}
             <ul className="mt-3">
               {message.languages.filter((row) => row.language === chosen).map((row) => (
                 <LanguageLine
