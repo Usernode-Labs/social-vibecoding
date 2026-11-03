@@ -6332,11 +6332,12 @@ const AppView = {
     } else if (ref && ref.state === 'review' && !upForVote && !(st && st.key === 'in_review')) note = PlatformI18n.t('changes:request.status.note.review');
     else if (ref && ref.state === 'underway') note = PlatformI18n.t('changes:request.status.note.underway');
 
-    // The claim's lapse, which the work-state sentence used to bury.
+    // The claim's lapse, which the work-state sentence used to bury. The
+    // date takes the shared locale (#6103): language from the interface,
+    // region from the device, month always spelled.
     let fine = null;
     if (st && st.clearAt && (st.key === 'claimed' || st.key === 'paused') && !closed) {
-      let date = '';
-      try { date = new Date(st.clearAt).toLocaleDateString([], { month: 'short', day: 'numeric' }); } catch { date = ''; }
+      const date = AppView._workDateText(st.clearAt);
       if (date) fine = PlatformI18n.t('changes:request.status.fine.lapses', { date });
     }
 
@@ -26895,9 +26896,20 @@ const AppView = {
     '||building': 'changes:chips.workNote.also.botBuilding',
   },
 
+  // One short spell of a day — "2 Nov", or "2 Nov 2025" outside this year —
+  // in the same locale as every stamp (#6103): language from the interface,
+  // order from the device's region. Never digits alone, because 04/11/2026
+  // reads as two different days on two phones.
   _workDateText(ms) {
     if (!Number.isFinite(ms) || !ms) return '';
-    try { return new Date(ms).toLocaleDateString(); } catch { return ''; }
+    try {
+      const d = new Date(ms);
+      const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+      const other = d.getFullYear() !== new Date().getFullYear();
+      return d.toLocaleDateString(locale, {
+        month: 'short', day: 'numeric', ...(other ? { year: 'numeric' } : {}),
+      });
+    } catch { return ''; }
   },
 
   // The sentence the topic head prints under the title, and the chip's
@@ -31364,13 +31376,16 @@ function relStamp(iso, now) {
   const date = iso instanceof Date ? iso : new Date(iso ?? NaN);
   if (Number.isNaN(date.getTime())) return { text: '', title: '' };
   const ref = now || new Date();
-  const title = date.toLocaleString(undefined, {
+  // Interface language, device region (#6103), as GroupChat._stamp and
+  // lib/timestamp.ts read it; the device default where the runtime predates it.
+  const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+  const title = date.toLocaleString(locale, {
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
   const elapsed = ref.getTime() - date.getTime();
   if (elapsed >= REL_FLOOR_MS) {
     return {
-      text: date.toLocaleDateString(undefined, date.getFullYear() === ref.getFullYear()
+      text: date.toLocaleDateString(locale, date.getFullYear() === ref.getFullYear()
         ? { month: 'short', day: 'numeric' }
         : { year: 'numeric', month: 'short', day: 'numeric' }),
       title,

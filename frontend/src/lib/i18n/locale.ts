@@ -9,6 +9,44 @@ export type Catalogs = {
   manifest: Record<string, Record<string, { url: string; hash: string }>>;
 };
 
+/** The language subtag of a BCP-47 tag: `pt-BR` is Portuguese whatever its region. */
+function baseLanguage(language: string): string {
+  return language.split('-')[0];
+}
+
+/**
+ * The locale a date is written in (#6103). Its LANGUAGE is Homeroom's
+ * interface language and its ORDER — day first or month first — comes from
+ * the device's region, so one date is never read two ways on the same phone.
+ * The first device tag naming a region supplies it; a tag with none is
+ * passed over. With no region at all the interface language's own default
+ * stands, which is what every date used before this rule.
+ *
+ * A malformed tag is skipped, never thrown: `navigator.languages` is outside
+ * this code's control.
+ *
+ *   ('en', ['en-GB'])        → 'en-GB'  ("2 Nov")
+ *   ('fr', ['en-US'])        → 'fr-US'  (still "2 nov.")
+ *   ('en', ['fr-FR','en-US'])→ 'en-FR'  (day first)
+ *   ('en', [])               → 'en'
+ */
+export function dateLocale(language: string, deviceLanguages: readonly string[]): string {
+  let region: string | null = null;
+  for (const value of deviceLanguages) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    try {
+      const tag = new Intl.Locale(value.trim().replace(/_/g, '-'));
+      if (tag.region) { region = tag.region; break; }
+    } catch { /* not a tag: the next one may be */ }
+  }
+  if (!region) return language;
+  const candidate = `${baseLanguage(language)}-${region}`;
+  try {
+    Intl.getCanonicalLocales(candidate);
+    return candidate;
+  } catch { return language; }
+}
+
 /** Match before fetching: es-MX needs es, never a failed es-MX request. */
 export function matchLanguage(value: unknown, shipped: readonly string[]): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
