@@ -920,7 +920,7 @@ test('on a live app, a person\'s message in the bot proposal\'s thread is activi
     },
   };
   const github = { async fetchPublicIssues() { return { issues: [{ number: 24, state: 'open', updatedAt: SEEN }] }; } };
-  await bot.refreshApp(pool, APP, { github, bot: BOT, capRoom: { proposals_per_app: 1, question_tripwire: 5 } });
+  await bot.refreshApp(pool, APP, { github, bot: BOT, capRoom: { proposals_per_app: 1 } });
   assert.deepEqual(inserts.map((e) => [e.key, e.payload.issueNumber, e.payload.reason]), [['request:9:24', 24, 'changed']]);
 
   inserts.length = 0;
@@ -1012,7 +1012,7 @@ test('a failed run\'s retry that finds nothing new on its proposal is spent: the
     },
   };
   const github = { async fetchPublicIssues() { return { issues: [{ number: 24, state: 'open', updatedAt: SEEN }] }; } };
-  const refresh = () => bot.refreshApp(pool, APP, { github, bot: BOT, capRoom: { proposals_per_app: 1, question_tripwire: 5 } });
+  const refresh = () => bot.refreshApp(pool, APP, { github, bot: BOT, capRoom: { proposals_per_app: 1 } });
 
   await refresh();
   assert.deepEqual(inserts.map((e) => [e.payload.issueNumber, e.payload.reason]), [[24, bot.RETRY_FAILED_REASON]], 'the failed run is offered its retry');

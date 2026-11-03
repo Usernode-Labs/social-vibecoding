@@ -48,13 +48,11 @@ const ENDED = new Set(['live', 'stopped', 'done_elsewhere', 'closed']);
 // for the bot's turn; `slots`: the project's changes waiting for votes
 // (WAITING_PER_APP), so it waits for votes on the bot's other changes;
 // `bot_wide`: the bot's ceiling across projects;
-// `questions`: the daily allowance of questions on the project;
 // `allowance`: whoever pays for it is out of building time this week.
 const CAP_LIMITS = Object.freeze({
   builds_per_app: 'builds',
   proposals_per_app: 'slots',
   proposals_total: 'bot_wide',
-  question_tripwire: 'questions',
 });
 
 /**

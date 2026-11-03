@@ -409,15 +409,17 @@ const PAUSED_SESSION_WINDOW_DAYS = 7;
 // opens for two hours sleeps (services/preview-sleep.js), so a change
 // waiting for votes holds little more than its database clone. Building
 // stays at 5: that is the bot's own work, and sleep does nothing for it.
+//
+// 3 Nov 2026: there is no daily limit on the questions and notes the bot
+// posts on a project any more. It was 10 a day ('question_tripwire'), and it
+// held a plan, a question or a note as "I've already posted 10 questions and
+// notes on Homeroom today": a request that needed its requester's answer
+// waited a day for no reason of theirs. A hold it recorded before holds
+// nothing: refreshApp brings such a request back at once (SLOT_CAPS).
 const BUILDS_PER_APP = 5;
 const WAITING_PER_APP = 50;
 const MAX_BUILDS_PER_APP = 10;
 const MAX_WAITING_PER_APP = 100;
-// Questions and `empty` verdicts share this one allowance, so the bot
-// cannot answer a quiet board with ten questions AND ten close proposals in
-// the same day. Both are a demand on somebody's attention.
-const QUESTION_TRIPWIRE_PER_DAY = 10;
-const TRIPWIRE_VERDICTS = Object.freeze(['question', 'empty']);
 
 // A session that refuses a turn is backed off per app rather than retried
 // on the next wake (#2737). One wedged session produced 121 of 124 refusals
@@ -2039,7 +2041,8 @@ async function backlogFor(pool, app, { issues = [], settings = null, holders = n
  * An unchanged issue whose last verdict a cap held comes back once that
  * cap has room: oldest hold first, and no more of them than there is room
  * for, so a merged proposal brings back one held build rather than all of
- * them at once.
+ * them at once. One a cap that no longer exists held (SLOT_CAPS lists the
+ * ones that do) comes back on the next refresh, whatever the room.
  */
 async function refreshApp(pool, app, {
   github = require('./github'), capRoom = null, bot = null, ws = null, notifications = null, everyoneSince = null,
@@ -2185,8 +2188,13 @@ async function refreshApp(pool, app, {
     const room = { ...capRoom };
     held.sort((a, b) => a.heldAt - b.heldAt);
     for (const h of held) {
-      if (!(room[h.cap] > 0)) continue;
-      room[h.cap] -= 1;
+      // A hold by a cap that is gone (3 Nov 2026: 'question_tripwire', the
+      // daily limit on questions and notes) waits for nothing: it comes back
+      // now, and takes none of the room the caps that remain have.
+      if (SLOT_CAPS.includes(h.cap)) {
+        if (!(room[h.cap] > 0)) continue;
+        room[h.cap] -= 1;
+      }
       eligible.push({ n: h.n, eligible: true, reason: CAP_FREED_REASON, priority: 2, threadSeenAt: h.threadSeenAt });
     }
   }
@@ -2877,14 +2885,13 @@ function botProposalCeiling(settings) {
 }
 
 /**
- * Which live cap would have stopped this verdict from being posted. The
- * counts are over the bot's own rows, so in shadow mode they read zero
- * until the tripwire on questions trips — which is exactly the number the
- * dashboard exists to show. A ready verdict is checked against the
- * project's two caps (#6156: its changes waiting for votes, then its
- * builds) and the bot's ceiling across projects before anything is built:
- * a hold costs nothing, and the cap_freed refresh brings the issue back
- * when there is room.
+ * Which live cap would have stopped this verdict from being acted on. Only
+ * a ready verdict is ever held: it is checked against the project's two
+ * caps (#6156: its changes waiting for votes, then its builds) and the
+ * bot's ceiling across projects before anything is built. A hold costs
+ * nothing, and the cap_freed refresh brings the issue back when there is
+ * room. A question, a plan or a note is never held (3 Nov 2026: the daily
+ * limit on them is gone).
  */
 async function simulateCaps(pool, bot, appId, verdict, settings = null, { issueNumber = null } = {}) {
   if (verdict === 'ready') {
@@ -2905,9 +2912,6 @@ async function simulateCaps(pool, bot, appId, verdict, settings = null, { issueN
       if (builds >= building) return 'builds_per_app';
     }
     if (await openBotProposalTotal(pool, bot) >= botProposalCeiling(settings)) return 'proposals_total';
-  }
-  if (TRIPWIRE_VERDICTS.includes(verdict)) {
-    if (await tripwireCount(pool, appId) >= QUESTION_TRIPWIRE_PER_DAY) return 'question_tripwire';
   }
   return null;
 }
@@ -2983,30 +2987,6 @@ async function openBotProposalTotal(pool, bot) {
 }
 
 /**
- * #4488: the daily cap on questions and notes, for a complicated change's
- * plan (which asks its requester before anything is built): 'question_tripwire'
- * when the project has had its fill today, else null.
- */
-async function planTripwire(pool, appId) {
-  return await tripwireCount(pool, appId) >= QUESTION_TRIPWIRE_PER_DAY ? 'question_tripwire' : null;
-}
-
-// Only the verdicts that went out (or, in shadow, would have). A held one
-// said nothing but the one-line held note, and counting it would let each
-// retry of a held question push the window out again (#3152). #4488: a
-// complicated change's plan asked its requester, so it counts as well.
-async function tripwireCount(pool, appId) {
-  const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS cnt FROM homeroom_bot_runs
-      WHERE app_id = $1 AND (verdict = ANY($2::text[]) OR complicated IS TRUE)
-        AND cap_suppressed IS NULL
-        AND created_at > NOW() - INTERVAL '24 hours'`,
-    [appId, TRIPWIRE_VERDICTS],
-  );
-  return rows[0]?.cnt || 0;
-}
-
-/**
  * How many more verdicts each cap would let through on this app now, keyed
  * by the name simulateCaps records (#3152). The same counts, so a held
  * issue is only brought back when the check it failed would now pass. The
@@ -3015,10 +2995,9 @@ async function tripwireCount(pool, appId) {
  * one triage and no post.
  */
 async function capRoomFor(pool, bot, appId, settings = null) {
-  const [{ builds, proposals }, total, questions] = await Promise.all([
+  const [{ builds, proposals }, total] = await Promise.all([
     slotCounts(pool, bot, appId),
     openBotProposalTotal(pool, bot),
-    tripwireCount(pool, appId),
   ]);
   const caps = appCapsOf(settings, appId);
   return {
@@ -3026,7 +3005,6 @@ async function capRoomFor(pool, bot, appId, settings = null) {
     builds_per_app: Math.max(0, caps.building - builds),
     proposals_per_app: Math.max(0, caps.waiting - proposals),
     proposals_total: Math.max(0, botProposalCeiling(settings) - total),
-    question_tripwire: Math.max(0, QUESTION_TRIPWIRE_PER_DAY - questions),
   };
 }
 
@@ -3469,8 +3447,7 @@ async function reuseHeldVerdict(pool, config, {
     if (!v.complicated && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
       v = { ...v, complicated: true };
     }
-    const caps = await simulateCaps(pool, bot, app.id, 'ready', settings, { issueNumber })
-      || (v.complicated ? await planTripwire(pool, app.id) : null);
+    const caps = await simulateCaps(pool, bot, app.id, 'ready', settings, { issueNumber });
     return JSON.parse(JSON.stringify({
       held: { id: Number(held.id), model: held.model || null }, personAt, seedReadAt: new Date().toISOString(),
       fingerprint, parsed: v, capSuppressed: caps ?? null,
@@ -4472,10 +4449,7 @@ async function runTriage(pool, config, {
       && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
       v = { ...v, complicated: true };
     }
-    // #4488: a complicated change's plan asks its requester before it is
-    // built, so it counts against the daily questions and notes as well.
-    const caps = await simulateCaps(pool, bot, app.id, v.verdict, settings, { issueNumber })
-      || (v.complicated ? await planTripwire(pool, app.id) : null);
+    const caps = await simulateCaps(pool, bot, app.id, v.verdict, settings, { issueNumber });
     // #4239: about Homeroom itself means nothing on Homeroom's own board.
     if (v.platform && (await platformAppSlugs(pool)).includes(app.slug)) v = { ...v, platform: false };
     return JSON.parse(JSON.stringify({ parsed: v, capSuppressed: caps ?? null }));
@@ -6689,19 +6663,19 @@ async function proposeFinished(pool, config, { run, app, user, bot, deps, onProp
 
 // The caps that hold a ready verdict for want of room for one more change:
 // the project's builds and its changes waiting for votes (#6156), and the
-// bot's ceiling across projects. A hold by one of them is said in the
-// request's thread too (actOnVerdict).
+// bot's ceiling across projects. They are the only caps there are (3 Nov
+// 2026: the daily limit on questions and notes is gone), and a hold by one
+// of them is said in the request's thread too (actOnVerdict).
 const SLOT_CAPS = Object.freeze(['builds_per_app', 'proposals_per_app', 'proposals_total']);
 
 /**
  * The number a held verdict's line names (live.heldText): the project's
  * building cap (a running batch's, for one of its requests) or its waiting
- * cap, the ceiling across projects, or the daily questions. Never throws:
- * a settings read that fails names the defaults.
+ * cap, or the ceiling across projects. Never throws: a settings read that
+ * fails names the defaults.
  */
 async function heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeiling }) {
   if (capSuppressed === 'proposals_total') return proposalCeiling;
-  if (capSuppressed !== 'builds_per_app' && capSuppressed !== 'proposals_per_app') return QUESTION_TRIPWIRE_PER_DAY;
   const caps = appCapsOf(await readSettings(pool).catch(() => null), app.id);
   if (capSuppressed === 'proposals_per_app') return caps.waiting;
   return require('./homeroom-bot-batches').proposalsPerAppFor(pool, app.id, issueNumber, caps.building);
@@ -6770,14 +6744,9 @@ async function actOnVerdict({
     });
     if (!already && !quietHold) {
       const limit = await heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeiling });
-      // A build a proposal cap holds is a quiet line in the request's thread
-      // (homeroom-bot-dm.js dmText) and its card says Waiting. A question
-      // the daily tripwire holds is not: there is nothing to tell them yet.
-      const toDm = SLOT_CAPS.includes(capSuppressed);
-      await say(kind, live.heldText({
-        cap: capSuppressed, verdict: parsed.verdict === 'ready' && parsed.complicated ? 'plan' : parsed.verdict, limit,
-        project: app.name || app.slug,
-      }), toDm ? { dm: { limit } } : undefined);
+      // A held build is a quiet line in the request's thread too
+      // (homeroom-bot-dm.js dmText), and its card says Waiting.
+      await say(kind, live.heldText({ cap: capSuppressed, limit, project: app.name || app.slug }), { dm: { limit } });
     }
   } else if (parsed.verdict === 'question') {
     // #3624: `dm` carries the question to the requester's DM too, with the
@@ -9434,7 +9403,6 @@ async function adminPayload(pool, config, {
       buildsPerApp: BUILDS_PER_APP,
       proposalsPerApp: WAITING_PER_APP,
       proposalsTotal: botProposalCeiling(settings),
-      questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY,
       byApp: await appCapsBySlug(pool, settings),
     },
     // The shadow lane's own counts (buildLaneSummary, which never counts a
@@ -10196,7 +10164,6 @@ module.exports = {
   LOST_LIVE_REASON,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,
-  TRIPWIRE_VERDICTS,
   REFUSAL_ERRORS,
   MIN_TURN_SECONDS,
   MAX_TURN_SECONDS,
@@ -10269,7 +10236,6 @@ module.exports = {
   slotCounts,
   SLOT_HOLDERS_SQL,
   simulateCaps,
-  planTripwire,
   parseVerdict,
   keptReply,
   unreadableReplyOf,
@@ -10335,7 +10301,6 @@ module.exports = {
   mergeAppCaps,
   SLOT_CAPS,
   botProposalCeiling,
-  QUESTION_TRIPWIRE_PER_DAY,
   // The loop's work, which the bot-request and bot-lane machines run
   // (src/workflow/bot-request/services.ts, bot-lane/services.ts).
   lookAt,

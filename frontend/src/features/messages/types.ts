@@ -190,7 +190,7 @@ export interface HomeroomBotMeta {
  * (services/design-threads.js filedNext): Homeroom bot builds it from
  * `version`, builds it once `limit` frees, or a person decides.
  */
-export type BotFiledLimit = 'builds' | 'slots' | 'bot_wide' | 'questions' | 'allowance';
+export type BotFiledLimit = 'builds' | 'slots' | 'bot_wide' | 'allowance';
 export type BotFiledNext =
   | { say: 'builds'; version: number }
   | { say: 'held'; limit: BotFiledLimit }
@@ -569,7 +569,7 @@ export interface HomeroomBotActivity {
    * project's builds (`builds_per_app`: it waits for the bot's turn) and its
    * changes waiting for votes (`proposals_per_app`) are told apart.
    */
-  heldBy?: 'builds_per_app' | 'proposals_per_app' | 'proposals_total' | 'questions_per_day';
+  heldBy?: 'builds_per_app' | 'proposals_per_app' | 'proposals_total';
   /**
    * `going_live`, on a merge of the platform's own app: when the platform's
    * next release carries it (services/release-watch.js), which the card

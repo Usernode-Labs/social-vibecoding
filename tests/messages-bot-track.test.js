@@ -288,7 +288,7 @@ test('#6151: a filed design\'s line says what happens next: its codes read field
   assert.equal(filedNextLine({ say: 'builds', version: 4 }), t('bot.track.filed.builds', { version: '4' }));
   assert.equal(filedNextLine({ say: 'builds', version: 4 }),
     'Homeroom bot reads it next and builds it from version 4. Its progress shows here and on the request.');
-  for (const limit of ['builds', 'slots', 'bot_wide', 'questions', 'allowance']) {
+  for (const limit of ['builds', 'slots', 'bot_wide', 'allowance']) {
     assert.equal(filedNextLine({ say: 'held', limit }), t(`bot.track.filed.held.${limit}`), limit);
   }
   assert.deepEqual(normalizeFiledNext({ say: 'held', limit: 'builds' }), { say: 'held', limit: 'builds' }, '#6156: the bot\'s turn');
@@ -299,7 +299,9 @@ test('#6151: a filed design\'s line says what happens next: its codes read field
   assert.equal(filedNextLine({ say: 'person' }), t('bot.track.filed.person'));
   assert.equal(filedNextLine(null), null);
   assert.equal(filedNextLine({ say: 'held', limit: 'taken' }), null, 'a limit this client does not know says nothing');
-  for (const key of ['builds', 'held.builds', 'held.slots', 'held.bot_wide', 'held.questions', 'held.allowance', 'person']) {
+  // 3 Nov 2026: the daily limit on questions is gone, and so is its line.
+  assert.equal(filedNextLine({ say: 'held', limit: 'questions' }), null);
+  for (const key of ['builds', 'held.builds', 'held.slots', 'held.bot_wide', 'held.allowance', 'person']) {
     assert.doesNotMatch(t(`bot.track.filed.${key}`, { version: '4' }), /—/, key);
   }
 

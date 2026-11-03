@@ -476,8 +476,9 @@ function moveOffersOf(m) {
   };
 }
 
-// The caps that hold a verdict (homeroom-bot.js simulateCaps).
-const HELD_CAPS = Object.freeze(['builds_per_app', 'proposals_per_app', 'proposals_total', 'question_tripwire']);
+// The caps that hold a verdict (homeroom-bot.js simulateCaps). A run an
+// older cap held (3 Nov 2026: 'question_tripwire', gone) is "held by a cap".
+const HELD_CAPS = Object.freeze(['builds_per_app', 'proposals_per_app', 'proposals_total']);
 
 /**
  * A run a cap held: { cap, limit, why } with the cap's limit from the
@@ -492,7 +493,7 @@ function heldOf(cap, caps = {}, app = null) {
   const own = (app && caps?.byApp?.[app]) || {};
   const limit = num(code === 'builds_per_app' ? own.buildsPerApp ?? caps?.buildsPerApp
     : code === 'proposals_per_app' ? own.proposalsPerApp ?? caps?.proposalsPerApp
-    : code === 'proposals_total' ? caps?.proposalsTotal : caps?.questionsPerAppPerDay);
+    : caps?.proposalsTotal);
   return { cap: code, limit, why: heldWords(code, limit) };
 }
 
@@ -506,7 +507,6 @@ function heldWords(cap, limit) {
   if (cap === 'builds_per_app') return `held: ${n}builds under way on this app`;
   if (cap === 'proposals_per_app') return `held: ${n}proposals waiting for votes on this app`;
   if (cap === 'proposals_total') return `held: the bot's ceiling of ${n}proposals open across Homeroom`;
-  if (cap === 'question_tripwire') return `held: ${n}questions asked on this app today`;
   return 'held by a cap';
 }
 

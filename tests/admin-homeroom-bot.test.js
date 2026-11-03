@@ -164,7 +164,7 @@ test('GET /api/admin/homeroom-bot: a view-only admin reads the whole dashboard; 
   assert.equal(data.runs[0].issueUrl, 'https://github.com/usernode-bot/todo/issues/12');
   // #6156: a project's builds and its changes waiting for votes, by default,
   // and the projects with numbers of their own (none yet).
-  assert.deepEqual(data.caps, { buildsPerApp: 5, proposalsPerApp: 50, proposalsTotal: 500, questionsPerAppPerDay: 10, byApp: {} });
+  assert.deepEqual(data.caps, { buildsPerApp: 5, proposalsPerApp: 50, proposalsTotal: 500, byApp: {} });
   assert.deepEqual(data.apps, [{ id: 9, slug: 'todo', name: 'Todo' }], 'with its id, which a project\'s own numbers are kept by');
   assert.deepEqual(data.pairsWaiting, { first_version: 0, later: 0 }, 'the configurations\' pairs waiting, per scope');
 

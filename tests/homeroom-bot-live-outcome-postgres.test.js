@@ -182,7 +182,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
       `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = 'the build produced no change to propose' WHERE id = $1`, [runId],
     );
     await liveRun(recipebot, 49, null, { ago: 600 });
-    const capRoom = { proposals_per_app: 5, proposals_total: 5, question_tripwire: 10 };
+    const capRoom = { proposals_per_app: 5, proposals_total: 5 };
     // The refresh reads #48 as unchanged since its run. Run 613's deleted
     // the bot's own row here, and the issue was never looked at. A
     // refresh's own row for an unchanged issue (#49) still goes.
@@ -261,7 +261,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
         return { issues: numbers.map((n) => ({ number: n, state: 'open', createdAt: SEEN, updatedAt: '2026-10-03T16:46:40Z' })) };
       },
     });
-    const capRoom = { proposals_per_app: 5, proposals_total: 5, question_tripwire: 10 };
+    const capRoom = { proposals_per_app: 5, proposals_total: 5 };
 
     // Waiting its turn.
     const run = (await pool.query(

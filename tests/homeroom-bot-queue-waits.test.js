@@ -116,7 +116,7 @@ test('get_homeroom_bot: the queue, a held run, the mode, the week and the move o
       settings: { mode: 'shadow', appCaps: { 9: { waiting: 30 }, 12: { building: 2 } } }, bot: null, totals: { days: 7 },
       apps: [{ id: 9, slug: 'notes', name: 'Notes' }],
       caps: {
-        buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40, questionsPerAppPerDay: 10,
+        buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40,
         byApp: { notes: { appId: 9, buildsPerApp: 5, proposalsPerApp: 30 }, 'gym-tracker': { appId: 12, buildsPerApp: 2, proposalsPerApp: 15 } },
       },
       queue: {
@@ -161,7 +161,9 @@ test('get_homeroom_bot: the queue, a held run, the mode, the week and the move o
   // with its project's own number where it has one.
   assert.deepEqual(out.runs[0].held, { cap: 'proposals_per_app', limit: 30, why: 'held: 30 proposals waiting for votes on this app' });
   assert.deepEqual(out.runs[1].held, { cap: 'builds_per_app', limit: 2, why: 'held: 2 builds under way on this app' });
-  assert.deepEqual(out.runs[2].held, { cap: 'question_tripwire', limit: 10, why: 'held: 10 questions asked on this app today' });
+  // 3 Nov 2026: a run the daily limit on questions held, from before that
+  // limit went, is held by a cap that is gone: no limit to name.
+  assert.deepEqual(out.runs[2].held, { cap: null, limit: null, why: 'held by a cap' });
   assert.equal(out.runs[2].build, null, 'a held question has no build');
   assert.equal(out.runs[3].held, null);
   assert.equal(out.runs[3].build.state, 'queued', 'a build under way is not read as held');
@@ -227,7 +229,7 @@ test('the console says why each row waits, counts waiting and running alike, and
   assert.equal(queueCountLine(null), '');
 
   const caps = {
-    buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40, questionsPerAppPerDay: 10,
+    buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40,
     byApp: { homeroom: { appId: 1, buildsPerApp: 5, proposalsPerApp: 30 } },
   };
   // #6156: a run held for the bot's turn and one held for votes read apart.
@@ -236,10 +238,11 @@ test('the console says why each row waits, counts waiting and running alike, and
   assert.equal(heldLine('proposals_per_app', caps, 'homeroom'), 'held: 30 proposals waiting for votes on this app', 'a project\'s own number');
   assert.notEqual(heldLine('builds_per_app', caps), heldLine('proposals_per_app', caps));
   assert.equal(heldLine('proposals_total', caps), 'held: the bot\'s ceiling of 40 proposals open across Homeroom');
-  assert.equal(heldLine('question_tripwire', caps), 'held: 10 questions asked on this app today');
+  // 3 Nov 2026: a run the gone daily limit on questions held, in the ledger from before.
+  assert.equal(heldLine('question_tripwire', caps), 'held: question tripwire');
   assert.equal(heldLine(null, caps), '');
   // The console and the connector say a hold alike.
-  for (const cap of ['builds_per_app', 'proposals_per_app', 'proposals_total', 'question_tripwire']) {
+  for (const cap of ['builds_per_app', 'proposals_per_app', 'proposals_total']) {
     for (const app of [null, 'homeroom']) assert.equal(heldLine(cap, caps, app), data.heldOf(cap, caps, app).why, `${cap} ${app}`);
   }
 
