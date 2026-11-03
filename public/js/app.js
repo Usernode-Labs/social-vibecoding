@@ -3369,6 +3369,14 @@ const App = {
           case 'session_update':
             App.handleSessionUpdate(data);
             break;
+          // #6231: a change joined or moved in a thread (pushes.ts
+          // threadChanged). The pages that read that thread re-read it
+          // through the one live-reads seam; the session_update /
+          // issue_update beside it already refresh the board and the
+          // request's own row.
+          case 'thread_changed':
+            App.handleThreadChanged(data);
+            break;
           case 'session_state':
             // #1038: live working state for one session. The store repaints
             // every surface that shows it (cog, board cards, session list)
@@ -3743,6 +3751,25 @@ const App = {
     // One refresh per burst, shared with the vote and session events that
     // travel with a lifecycle change (see _liveRefresh).
     App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug || null, home: true });
+  },
+
+  // #6231: a change joined a thread or moved in it (pushes.ts
+  // threadChanged). Every page reading that thread re-reads it through the
+  // one live-reads seam: the request's page by its number, and a page that
+  // lists the change by its id. The session_update beside it already
+  // refreshes the board and the request's own row.
+  handleThreadChanged(data) {
+    const live = window.UsernodeReact && window.UsernodeReact.liveReads;
+    const slug = data && data.appSlug;
+    if (!live || typeof live.resync !== 'function' || !slug) return;
+    const enc = encodeURIComponent(slug);
+    const numbers = Array.isArray(data.numbers) ? data.numbers : [];
+    for (const number of numbers) {
+      if (Number.isInteger(number) && number > 0) live.resync('thread', `/api/apps/${enc}/threads/${number}`);
+    }
+    if (Number.isInteger(data.sessionId) && data.sessionId > 0) {
+      live.resync('thread', `/api/apps/${enc}/threads/change/${data.sessionId}`);
+    }
   },
 
   handleSessionUpdate(data) {

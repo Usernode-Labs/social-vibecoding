@@ -53,7 +53,7 @@ import type {
   Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, Push, TimerRequest, TransitionContext, Tx,
   WorkRequest, WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { boardMoved, chatLine, issueUpdate, sessionUpdate, toUser, voteUpdate } from '../pushes.ts';
+import { boardMoved, chatLine, issueUpdate, sessionUpdate, threadChanged, toUser, voteUpdate } from '../pushes.ts';
 import { changeClosed } from '../rules/agent-notes.ts';
 import { settleDecidedChange } from '../rules/change-notifications.ts';
 import { createConnectorSubmittedNotification, createPrProposedNotifications, createStalePrNotification } from '../rules/proposal-notifications.ts';
@@ -546,9 +546,16 @@ const line = (e: Event<any>, d: Data, content: string, extra: { msgType?: string
   ({ type: 'line', eventId: e.id, appId: d.appId, sessionId: d.sessionId, content, msgType: extra.msgType || 'system',
     metadata: extra.metadata ?? null });
 // A card moved on the boards: browsers hear it, and so does the Workshop's
-// placement stage in every web process (pushes.ts boardMoved).
-const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push =>
-  boardMoved(sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra }));
+// placement stage in every web process (pushes.ts boardMoved). The page that
+// reads its thread hears it too (#6231): a build that becomes a proposal is
+// listed there only after it reads the thread again.
+const threadMoved = (f: Facts): Push =>
+  threadChanged({ appId: f.row!.appId, appSlug: f.row!.appSlug, sessionId: f.row!.id,
+    numbers: [...f.row!.linkedIssues, f.row!.prNumber] });
+const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push[] => [
+  boardMoved(sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra })),
+  threadMoved(f),
+];
 const votes = (f: Facts, extra: Record<string, Json> = {}): Push =>
   voteUpdate({ sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, merged: false, ...extra });
 
@@ -643,7 +650,7 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
       answer: { n: promoting.n, ok: false, code, message: p.error?.message?.slice(0, 500) ?? null } } };
     // A page that stopped waiting (the route answered 202) reads it again;
     // a campaign that asked hears it.
-    return step(back, { work: done.work, timer: timerFor(back, f, ctx, deps), push: [board(f, 'promote_failed', { error: code })],
+    return step(back, { work: done.work, timer: timerFor(back, f, ctx, deps), push: [...board(f, 'promote_failed', { error: code })],
       messages: promoting.campaign ? [toCampaign(back.data, promoting.campaign, 'ProposalRefused',
         { code, message: p.error?.message?.slice(0, 500) ?? null })] : undefined });
   }
@@ -672,7 +679,7 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
       { type: 'proposed', sessionId: d.sessionId, appId: d.appId, proposerId: promoting.by, viaAgent: promoting.viaAgent },
     ],
     work,
-    push: [board(f, 'promoted')],
+    push: [...board(f, 'promoted')],
     // The preview machine builds and checks the reviewed head (it joins a
     // build or a verdict it already has for it).
     // The app's merge queue hears it is in line (it sweeps its line from
@@ -695,7 +702,7 @@ const unpromote: Handler = (s, e, f, ctx, deps) => {
       line(e, s.data, `${who} moved ${prLabel(f.row!)} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`),
     ],
     work: noSlot(s.data) ? [] : [destroy],
-    push: [board(f, 'unpromoted'), votes(f)],
+    push: [...board(f, 'unpromoted'), votes(f)],
     timer: timerFor(next, f, ctx, deps),
   });
 };
@@ -704,7 +711,7 @@ const pause: Handler = (s, e, f) => {
   const n = s.data.n + 1;
   const destroy = destroyWorker(s.data, n);
   return step({ name: 'underway', data: { ...doom(s.data, destroy), n, slot: 'released' } }, {
-    work: [destroy], push: [board(f, 'paused')], timer: null,
+    work: [destroy], push: [...board(f, 'paused')], timer: null,
   });
 };
 
@@ -719,7 +726,7 @@ const resume: Handler = (s, e, f, ctx, deps) => {
   const next: Live = { name: 'underway', data: { ...spared.data, slot: noSlot(s.data) ? 'none' : 'held' } };
   // last_activity_at moves with it: the idle timer runs from now.
   const timer = deps.idleMs > 0 && !noSlot(s.data) ? { at: later(ctx, deps.idleMs), event: { type: 'IdleCheck' } } : null;
-  return step(next, { writes: [{ type: 'resumed', sessionId: s.data.sessionId }], push: [board(f, 'resumed')], timer,
+  return step(next, { writes: [{ type: 'resumed', sessionId: s.data.sessionId }], push: [...board(f, 'resumed')], timer,
     cancel: spared.cancel });
 };
 
@@ -768,7 +775,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   }
   // A change of the Homeroom bot's: its change machine ends with it.
   writes.push(toBotChange(d.sessionId, 'Closed', { reason }));
-  const push = [board(f, 'archived'), votes(f)];
+  const push = [...board(f, 'archived'), votes(f)];
   if (row.linkedIssues.length) push.push(issueUpdate({ action: 'updated', source: 'session_archived', appSlug: row.appSlug, appId: row.appId }));
   // Merged into main on GitHub before its vote: the changes stacked on it
   // move onto main.
@@ -803,7 +810,7 @@ const reopen: Handler = (s, e, f, ctx, deps) => {
   if (pr) ({ data: d, work } = prMove(d, { kind: WORK.reopen, key: `reopen:${n}`, input: { sessionId: d.sessionId, ...pr } }));
   const next: Live = { name: 'underway', data: d };
   const row = f.row!;
-  const push = [board(f, 'unarchived')];
+  const push = [...board(f, 'unarchived')];
   if (row.linkedIssues.length) push.push(issueUpdate({ action: 'updated', source: 'session_unarchived', appSlug: row.appSlug, appId: row.appId }));
   return step(next, { work, push, timer: timerFor(next, f, ctx, deps), cancel: spared.cancel });
 };
@@ -822,7 +829,7 @@ const abandoned: Handler = (s, e, f, ctx, deps) => {
       { type: 'abandoned', sessionId: s.data.sessionId },
       line(e, s.data, `${prLabel(f.row!)} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`),
     ],
-    push: [votes(f, { merging: false, mergeFailed: true, resolving: false, selfHosted: f.row!.selfHosted }), board(f, 'paused')],
+    push: [votes(f, { merging: false, mergeFailed: true, resolving: false, selfHosted: f.row!.selfHosted }), ...board(f, 'paused')],
     timer: timerFor(next, f, ctx, deps),
   });
 };

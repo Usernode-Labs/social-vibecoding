@@ -25,7 +25,7 @@ import type {
   Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, Push, TimerRequest, TransitionContext, Tx, WorkRef,
   WorkRequest, WorkResultPayload,
 } from '../kernel/index.ts';
-import { chatLine, sessionEvent, sessionUpdate, toUser } from '../pushes.ts';
+import { chatLine, sessionEvent, sessionUpdate, threadChanged, toUser } from '../pushes.ts';
 import type { SessionRoute } from '../pushes.ts';
 import * as store from '../rules/check-store.ts';
 import * as rowStore from './check-store.ts';
@@ -340,20 +340,26 @@ const retireAttemptKey = (n: number, version: number) => `retire-attempt:${n}:v$
 const route = (d: Data): SessionRoute => ({ sessionId: d.sessionId, userId: d.userId, appId: d.appId, appSlug: d.appSlug || null });
 const seq = (ctx: TransitionContext, i = 0) => `wf-${ctx.key}-${ctx.version + 1}-${i}`;
 
-// What browsers hear, as services/visuals.js and ws.js shape it.
-function checksPending(d: Data, ctx: TransitionContext, head: string, phase: string, trigger: string | null): Push {
-  return sessionEvent(route(d), 'checks_ready', seq(ctx, 1), {
+// What browsers hear, as services/visuals.js and ws.js shape it. A run
+// starting or settling also tells every page reading the change's thread to
+// read it again (#6231): the preview names no request, so the change's id is
+// what those pages match (pushes.ts threadChanged). Never a progress tick.
+function threadMoved(d: Data): Push {
+  return threadChanged({ appId: d.appId, appSlug: d.appSlug, sessionId: d.sessionId, numbers: [] });
+}
+function checksPending(d: Data, ctx: TransitionContext, head: string, phase: string, trigger: string | null): Push[] {
+  return [sessionEvent(route(d), 'checks_ready', seq(ctx, 1), {
     checkState: 'pending', failingCount: 0, commitSha: head,
     checkPhase: store.normalizeCheckPhase(phase), checkTrigger: store.normalizeCheckTrigger(trigger),
-  });
+  }), threadMoved(d)];
 }
-function checksReady(d: Data, ctx: TransitionContext, head: string, state: string, results: unknown[] = []): Push {
+function checksReady(d: Data, ctx: TransitionContext, head: string, state: string, results: unknown[] = []): Push[] {
   const rows = (Array.isArray(results) ? results : []) as { status?: string; advisory?: boolean }[];
   const blocking = rows.filter((r) => r && r.status !== 'pass' && !r.advisory).length;
   const advisory = rows.filter((r) => r && r.status !== 'pass' && r.advisory).length;
-  return sessionEvent(route(d), 'checks_ready', seq(ctx, 2), {
+  return [sessionEvent(route(d), 'checks_ready', seq(ctx, 2), {
     checkState: state, failingCount: blocking, blockingCount: blocking, advisoryCount: advisory, commitSha: head,
-  });
+  }), threadMoved(d)];
 }
 
 // The backoff of the error lane: 2 min doubling to 30 (storeChecks' own).
@@ -437,7 +443,7 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
       sessionId: d.sessionId, appId: d.appId, n, head, db: attempt.db, dbs, trigger,
       serving: d.serving ? { n: d.serving.n, head: d.serving.head, runtimeName: d.serving.runtimeName } : null,
     } }, ...early],
-    push: previewOnly ? [] : [checksPending(d, ctx, head, 'building', trigger)],
+    push: previewOnly ? [] : [...checksPending(d, ctx, head, 'building', trigger)],
     timer: null,
   });
 }
@@ -456,7 +462,7 @@ function startRun(s: Live, trigger: string | null, ctx: TransitionContext,
       sessionId: d.sessionId, appId: d.appId, n: served.n, head: served.head, runId: key, trigger,
       runtimeName: served.runtimeName, runtimeKind: served.runtimeKind, url: served.url,
     } }],
-    push: [...(extra.push || []), checksPending(d, ctx, served.head, 'testing', trigger)],
+    push: [...(extra.push || []), ...checksPending(d, ctx, served.head, 'testing', trigger)],
     timer: null,
   });
 }
@@ -776,7 +782,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
         name: 'settled', data: d,
         writes: [{ type: 'skipped', ...base, reason: e.payload.reason, expected: f.session!.checks.commitSha },
           ...toBot(d, e.payload.head, 'skipped')],
-        push: [checksReady(d, ctx, e.payload.head, 'skipped')],
+        push: [...checksReady(d, ctx, e.payload.head, 'skipped')],
         messages: [toShots(d, 'HeadReady', { head: e.payload.head }), ...mergeWanted(d, f, 'skipped')],
         timer: null,
       });
@@ -885,7 +891,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       name: s.name, data: s.data,
       ...(stampable(e, f) ? {
         writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
-        push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
+        push: [...checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
       } : {}),
       ...(resting(s) ? { timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'ChecksDue' } } } : {}),
     }),
@@ -1420,7 +1426,7 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
     cancel: [...(ended ? [{ kind: WORK.prepare, key: prepareKey(attempt.n) }] : []), earlyOf(attempt)],
     writes, work, messages,
     push: [
-      checksReady(d, ctx, attempt.head, 'error'),
+      ...checksReady(d, ctx, attempt.head, 'error'),
       sessionEvent(route(d), 'staging_failed', seq(ctx, 3),
         { error: detail, errorName: 'PreviewFailed', missingKeys: [] }),
     ],
@@ -1462,7 +1468,7 @@ function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: Transi
     }],
     work: old.work,
     push: [
-      checksReady(d, ctx, head, 'error'),
+      ...checksReady(d, ctx, head, 'error'),
       sessionEvent(route(d), 'staging_failed', seq(ctx, 3), { error: detail, errorName: 'PreviewFailed', missingKeys: [] }),
     ],
     timer,
@@ -1483,7 +1489,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       name: 'deferred', data: d,
       writes: [{ type: 'deferred', ...base, capture: (r.capture ?? null) as Json, media: !!visuals }],
       work: [{ kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, visuals: !!visuals } }],
-      push: [checksPending(d, ctx, run.head, 'deferred', d0.trigger), ...visualsReady],
+      push: [...checksPending(d, ctx, run.head, 'deferred', d0.trigger), ...visualsReady],
       messages: [toShots(d, 'HeadReady', { head: run.head }), ...undeclared(d, r)],
       timer: null,
     });
@@ -1558,7 +1564,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       ...(ended ? [{ kind: WORK.cancel, key: `cancel:${run.key}`, input: { sessionId: d.sessionId, runId: run.key } }] : []),
       ...(stores ? [{ kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, state, visuals: !!visuals } }] : []),
     ],
-    push: stores ? [checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
+    push: stores ? [...checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
     messages: [...(stores ? [toShots(d, 'HeadReady', { head: run.head }), ...mergeWanted(d, f, state)] : []), ...undeclared(d, r)],
     timer: state === 'error' ? errorTimer(d, f, deps, ctx, streakBefore) : null,
   });

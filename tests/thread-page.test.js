@@ -91,7 +91,7 @@ test('its first render is nothing; the thread is read in an effect', () => {
   const html = renderComponent(ITEMS, 'ThreadItems', { slug: 'p', number: 7, here: { type: 'request', id: 7 } });
   assert.equal(html, '');
   const src = read(ITEMS);
-  assert.match(src, /const again = !!path && readPath\.current === path;\s+readPath\.current = path;\s+if \(!again\) setData\(null\);/, 'cleared on a new page, kept while a move re-reads it');
+  assert.match(src, /const again = !!path && readPath\.current === path;\s+readPath\.current = path;\s+const ids = changeIds\.current;\s+if \(!again\) \{ setData\(null\); ids\.clear\(\); \}/, 'cleared on a new page, kept while a move re-reads it');
   assert.match(src, /`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/\$\{number\}\$\{asChange \? '\?as=change' : ''\}`/,
     'a change\'s page reads its own thread (a request may share its number)');
   assert.match(src, /`\/api\/threads\/\$\{threadId\}`/, 'a decision is read by its thread');
