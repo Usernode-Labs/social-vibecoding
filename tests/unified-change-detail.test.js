@@ -41,6 +41,24 @@ const failing = { id: 4073, user_id: 42, username: 'Builder', status: 'active',
   created_at: '2026-09-11T12:00:00Z' };
 const row = (v, key) => v.body.details.ledger.find((r) => r.key === key);
 
+test('a change page offers no other app\'s requests (#6123)', () => {
+  // The board lists hold whichever app's board was loaded last. A change page
+  // painted before this app's own board load (a fast open from a link, or the
+  // first paint after a project switch) must not offer the previous project's
+  // open requests in "Search by number or title".
+  const av = context();
+  av._devDataSlug = 'other';
+  const foreign = av._topicViewFor('proposal', failing);
+  assert.equal(foreign.body.issueOptions.length, 0);
+  assert.equal(foreign.body.issues[0].title, 'Issue #1993',
+    'the linked request falls back rather than naming another app\'s row');
+
+  // Once this app's board load lands, the same page offers its requests.
+  av._devDataSlug = 'example';
+  const own = av._topicViewFor('proposal', failing);
+  assert.equal(own.body.issueOptions[0].title, av._ghIssues[0].title);
+});
+
 test('underway and review share context, sections and check explanations', () => {
   const av = context();
   for (const status of ['active', 'promoted']) {

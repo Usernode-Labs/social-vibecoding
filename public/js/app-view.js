@@ -5488,6 +5488,26 @@ const AppView = {
   },
 
   /**
+   * True when the dev-data LIST caches (`_ghIssues`, `_proposals`, `_merged`,
+   * …) belong to the app on screen.
+   *
+   * The lists hold whichever app's board was last loaded, and a topic page
+   * opened from a link can now paint before that load lands (#4524). Issue
+   * numbers repeat across every app's repo, so the lists answer only for the
+   * app their load named — `_devDataSlug`, set beside `_devDataReady` and not
+   * cleared on an app switch, because the lists keep the previous app's rows
+   * until the new load overwrites them. An UNSET slug means no board load has
+   * ever succeeded this visit, so there is no previous app the lists could
+   * belong to (they are empty, or a load that never finished for the app now
+   * open) and the lookup reads them as today's code always did —
+   * `openTopic`'s PR lookup at card tap time runs on exactly that state.
+   */
+  _boardListsCurrent() {
+    return !AppView._devDataSlug
+      || AppView._devDataSlug === (AppView.appData && AppView.appData.slug);
+  },
+
+  /**
    * One item, by kind and id — the lookup `_findTopicItem` has always done,
    * with the current topic no longer baked into it.
    *
@@ -5497,22 +5517,11 @@ const AppView = {
    */
   _findItem(kind, id) {
     const t = { kind, id };
-    // The LIST caches hold whichever app's board was last loaded, and a
-    // topic page opened from a link can now paint before that load lands
-    // (#4524). Issue numbers repeat across every app's repo, so the lists
-    // answer only for the app their load named — `_devDataSlug`, set beside
-    // `_devDataReady` and not cleared on an app switch, because the lists
-    // keep the previous app's rows until the new load overwrites them. An
-    // UNSET slug means no board load has ever succeeded this visit, so there
-    // is no previous app the lists could belong to (they are empty, or a
-    // load that never finished for the app now open) and the lookup reads
-    // them as today's code always did — `openTopic`'s PR lookup at card tap
-    // time runs on exactly that state.
     // The one-shot caches are keyed differently (`_topicIssue` carries its
     // own slug; proposal and governance ids are global and the caches are
-    // cleared per topic), so they need no guard here.
-    const listsCurrent = !AppView._devDataSlug
-      || AppView._devDataSlug === (AppView.appData && AppView.appData.slug);
+    // cleared per topic), so they need no guard here — only the LIST caches
+    // do, through `_boardListsCurrent()`.
+    const listsCurrent = AppView._boardListsCurrent();
     if (t.kind === 'issue') {
       // _ghIssues holds OPEN issues only; _topicIssue is the fetch-on-demand
       // fallback (#2365) for a closed one — checked last, and keyed by number
@@ -7018,7 +7027,13 @@ const AppView = {
     }
     AppView._changeItems.set(Number(item.id), item);
     body.canEditIssues = !AppView.readOnly && (mine || !!App.user?.canAdminWrite);
-    body.issueOptions = (AppView._ghIssues || []).map((issue) => ({
+    // #6123: the picker says it searches open requests in THIS project, so it
+    // reads the board list only while that list belongs to the app on screen —
+    // the same guard `_findItem` applies. A change page painted before this
+    // app's board load (a fast open from a link, or the first paint after a
+    // switch) would otherwise offer the previous app's requests. The repaint
+    // when the board lands (`openTopic`'s `_loadDevData().then`) fills them in.
+    body.issueOptions = (AppView._boardListsCurrent() ? (AppView._ghIssues || []) : []).map((issue) => ({
       n: Number(issue.number),
       title: issue.title || PlatformI18n.t('changes:request.fallbackTitle', { number: issue.number }),
       href: `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${issue.number}`,
