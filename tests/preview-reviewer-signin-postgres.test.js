@@ -1,11 +1,11 @@
 'use strict';
 
 // SEC-06: a platform preview signs a reviewer in from the platform's signed
-// identity (src/middleware/auth.js tryMintSessionFromIframeJwt). A reviewer
-// it has no row for (an account made after its database was copied, or any
-// reviewer once previews start empty) gets one, made to the copy policy's
-// rule for a copied account; a handle the platform never issues to previews
-// gets nothing. Against the real schema, its triggers and its sequence.
+// identity (src/middleware/auth.js tryMintSessionFromIframeJwt). Its
+// database starts empty, so a reviewer gets a row on first sign-in, as a
+// member with their synthetic handle; any other handle gets nothing, the
+// screenshot personas included (they are seeded at their fixed ids). Against
+// the real schema, its triggers and its sequence.
 //
 // Run with: TEST_DATABASE_URL=... node --test tests/preview-reviewer-signin-postgres.test.js
 
@@ -92,15 +92,13 @@ test('a platform preview signs in a reviewer it has no row for, and nobody else'
     "INSERT INTO users (username, password) VALUES ('preview-local', 'x') RETURNING id");
   assert.ok(local.id > 7001, `the sequence moved past the reviewer (got ${local.id})`);
 
-  // The screenshot persona that checks admin screens is a view-only admin.
-  const capture = await signIn(mw, identity({ id: 7100, username: 'usernode-capture-admin' }));
-  assert.equal(capture.user?.isAdmin, true);
-  assert.equal(capture.user.adminReadonly, true);
-  assert.equal(capture.user.canAdminWrite, false);
-
-  // A handle the platform never gives a preview, or one that is not this
-  // id's, makes nothing and signs nobody in.
-  for (const user of [{ id: 7003, username: 'maya' }, { id: 7004, username: 'preview-user-7001' }]) {
+  // A handle the platform never gives a preview, one that is not this id's,
+  // or a persona's (seeded at its fixed id, never made here) makes nothing
+  // and signs nobody in.
+  for (const user of [
+    { id: 7003, username: 'maya' }, { id: 7004, username: 'preview-user-7001' },
+    { id: 7100, username: 'usernode-capture-admin' }, { id: 7101, username: 'usernode-capture' },
+  ]) {
     const refused = await signIn(mw, identity(user));
     assert.equal(refused.user?.id, undefined, user.username);
     assert.equal(await row(user.id), undefined, user.username);

@@ -7,6 +7,8 @@
 //        -> { languages: { tag: own name }, manifest: { tag: { namespace: { url, hash } } } }
 //   GET /locales/live/<language>.<namespace>.<sha256>.json
 //        -> the pack itself: { key: text }
+//   GET /api/languages/cache
+//        -> { version, entries: { tag: { namespace: { key: { sha256 of English: text } } } } }
 //
 // Public and unauthenticated: the sign-in screens are translated too, and
 // both are the shell's own text. The shell asks for the list once it boots
@@ -18,6 +20,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const cache = require('../services/language-cache');
+const { languageCacheLimiter } = require('../middleware/rate-limits');
 
 function languageRoutes(config) {
   const router = Router();
@@ -31,6 +34,25 @@ function languageRoutes(config) {
       return res.json({ languages: value.languages, manifest: value.manifest });
     } catch (err) {
       log.warn('language-cache', 'Could not work out the languages offered', { err: err.message });
+      return res.status(503).json({ error: 'languages_unavailable' });
+    }
+  });
+
+  // The whole cache, with the English each translation was made from: what a
+  // platform preview, whose database can start empty, fills its own from
+  // (db/migrate.js seedStagingTranslations). The same public text as the
+  // packs.
+  router.get('/api/languages/cache', languageCacheLimiter, async (req, res) => {
+    try {
+      const exported = await cache.exportEntries(pool);
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.type('application/json');
+      if (req.acceptsEncodings('gzip') !== 'gzip') return res.send(exported.body);
+      res.setHeader('Content-Encoding', 'gzip');
+      return res.send(exported.gzip);
+    } catch (err) {
+      log.warn('language-cache', 'Could not export the translation cache', { err: err.message });
       return res.status(503).json({ error: 'languages_unavailable' });
     }
   });

@@ -78,6 +78,7 @@ async function migrate(config) {
   await reindexAfterHostMove(pool);
   finishPhase('reindexMs');
 
+  await reservePreviewReviewerIds(pool);
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
   await seedCaptureAdminUser(pool);
@@ -103,6 +104,9 @@ async function migrate(config) {
   // follow-ups, which its recipe decides from now on (what they ran on).
   await require('../services/bot-configs').fillLaterStages(pool, config);
   finishPhase('coreSeedMs');
+  // In the background: a slow or unreachable production never holds up the
+  // preview's boot (it logs either way).
+  void seedStagingTranslations(pool);
   await seedStagingNotifications(pool, config);
   // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
   // off a notification id that seeder owns.
@@ -1394,6 +1398,60 @@ async function seedTermsVersions(pool) {
   }
 }
 
+// A platform preview's database can start empty (SEC-06), and a reviewer's row
+// there takes their production id on first sign-in (middleware/auth.js
+// createPreviewReviewer). So before any seed takes the next id, the users
+// sequence moves far above any production id, and a fixture never sits on a
+// reviewer's id (production's earliest accounts would otherwise be refused).
+// Fixed-id fixtures keep their own ids. A no-op once it has moved.
+const PREVIEW_USER_ID_FLOOR = 1_000_000_000;
+async function reservePreviewReviewerIds(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  await pool.query(
+    `SELECT setval(q.seq, GREATEST($1::bigint, COALESCE(s.last_value, 0)))
+       FROM (SELECT pg_get_serial_sequence('users', 'id') AS seq) q
+       JOIN pg_sequences s ON format('%I.%I', s.schemaname, s.sequencename) = q.seq`,
+    [PREVIEW_USER_ID_FLOOR]
+  );
+}
+
+// A platform preview's database can start empty (SEC-06), so its translation
+// cache is filled once from production's public export (GET
+// /api/languages/cache, services/language-cache.js exportEntries): the same
+// public text the packs serve, with the English each translation was made
+// from, so a message this proposal rewords is not shown in its old
+// translation. Production is reached at its public origin, which every
+// preview is given (app-identity-env.js USERNODE_PLATFORM_ORIGIN). Best
+// effort and bounded: English stands in for anything not imported.
+const STAGING_TRANSLATIONS_TIMEOUT_MS = 10_000;
+async function seedStagingTranslations(pool, { fetchImpl = fetch } = {}) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const origin = String(process.env.USERNODE_PLATFORM_ORIGIN || '').replace(/\/+$/, '');
+  if (!/^https:\/\/[^/]+$/.test(origin)) return;
+  try {
+    const { rows: [cached] } = await pool.query('SELECT EXISTS (SELECT 1 FROM language_translations) AS any');
+    if (cached.any) return;
+    const res = await fetchImpl(`${origin}/api/languages/cache`, {
+      signal: AbortSignal.timeout(STAGING_TRANSLATIONS_TIMEOUT_MS), redirect: 'error',
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    const added = await require('../services/language-cache').importEntries(pool, body?.entries, { model: 'production' });
+    log.info('db', 'Staging translations imported', { added });
+  } catch (err) {
+    log.warn('db', 'Staging translations not imported; English stands in', { err: err.message });
+  }
+}
+
+// A screenshot persona's id in a platform preview (SEC-06): the fixed one the
+// platform signs its tokens with (services/preview-personas.js), since a
+// preview's database can start empty. Undefined anywhere else, where the row
+// takes the next id.
+function previewPersonaId(username) {
+  if (process.env.USERNODE_ENV !== 'staging') return undefined;
+  return require('../services/preview-personas').PREVIEW_PERSONA_IDS.get(username);
+}
+
 // Dedicated identity for the before/after screenshot pipeline (#195 fix).
 // services/visuals.js signs capture requests as this user so screenshots
 // show the real, logged-in app instead of the login screen. An ordinary
@@ -1428,13 +1486,13 @@ async function seedCaptureUser(pool) {
     }
     const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
     await pool.query(
-      `INSERT INTO users (username, password, is_admin, can_create_apps,
+      `INSERT INTO users (id, username, password, is_admin, can_create_apps,
          has_platform_access, platform_access_granted_at)
-       VALUES ($1, $2, FALSE, FALSE, TRUE, NOW())
+       VALUES (COALESCE($3::int, nextval(pg_get_serial_sequence('users', 'id'))), $1, $2, FALSE, FALSE, TRUE, NOW())
        ON CONFLICT (username) DO UPDATE SET
          has_platform_access = TRUE,
          platform_access_granted_at = COALESCE(users.platform_access_granted_at, NOW())`,
-      ['usernode-capture', hash]
+      ['usernode-capture', hash, previewPersonaId('usernode-capture') ?? null]
     );
     log.info('db', 'Capture user created', { username: 'usernode-capture' });
   } catch (err) {
@@ -1462,8 +1520,8 @@ async function seedCaptureUser(pool) {
 // can_create_apps stays FALSE; the discarded-random-bytes bcrypt password
 // blocks interactive login (visuals.js mints a JWT directly). Idempotent:
 // keyed on the unique username, DO NOTHING on conflict. Runs unconditionally
-// on boot so the platform (prod) DB has it for token minting; the staging
-// clone inherits the row from prod, same as usernode-capture.
+// on boot so the platform (prod) DB has it for token minting; a platform
+// preview makes it at its fixed id (previewPersonaId), as usernode-capture.
 async function seedCaptureAdminUser(pool) {
   try {
     const { rows } = await pool.query(
@@ -1475,11 +1533,16 @@ async function seedCaptureAdminUser(pool) {
       return;
     }
     const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+    // In a platform preview it also has platform access, as every account
+    // there does, so it joins the Homeroom community like the member.
+    const previewId = previewPersonaId('usernode-capture-admin') ?? null;
     await pool.query(
-      `INSERT INTO users (username, password, is_admin, admin_readonly, can_create_apps)
-       VALUES ($1, $2, TRUE, TRUE, FALSE)
+      `INSERT INTO users (id, username, password, is_admin, admin_readonly, can_create_apps,
+         has_platform_access, platform_access_granted_at)
+       VALUES (COALESCE($3::int, nextval(pg_get_serial_sequence('users', 'id'))), $1, $2, TRUE, TRUE, FALSE,
+         $3::int IS NOT NULL, CASE WHEN $3::int IS NOT NULL THEN NOW() END)
        ON CONFLICT (username) DO NOTHING`,
-      ['usernode-capture-admin', hash]
+      ['usernode-capture-admin', hash, previewId]
     );
     log.info('db', 'Capture admin user created', { username: 'usernode-capture-admin' });
   } catch (err) {
@@ -2214,6 +2277,11 @@ async function seedSelfApp(pool, config) {
 
   const sha = process.env.GIT_SHA || null;
   const manifestJson = JSON.stringify(manifest);
+  // A platform preview's database can start empty (SEC-06), and the sign-in
+  // tokens it accepts are bound to production's app id (USERNODE_APP_ID), so
+  // the row is made with that id there and the sequence moved past it.
+  const previewAppId = process.env.USERNODE_ENV === 'staging' && /^[1-9][0-9]{0,9}$/.test(process.env.USERNODE_APP_ID || '')
+    ? Number(process.env.USERNODE_APP_ID) : null;
 
   // Single UPSERT keyed on slug. Insert covers fresh-DB; the DO UPDATE
   // covers every subsequent boot so main_sha and manifest_snapshot
@@ -2224,10 +2292,10 @@ async function seedSelfApp(pool, config) {
   // post-deploy reboot, same as child apps do in deployProduction).
   const { rows: selfRows } = await pool.query(
     `INSERT INTO apps
-       (name, slug, repo_url, container_id, status, self_hosted,
+       (id, name, slug, repo_url, container_id, status, self_hosted,
         main_sha, last_deploy_at, manifest_snapshot)
      VALUES
-       ('Homeroom', $1, $2, 'usernode', 'running', TRUE,
+       (COALESCE($5::int, nextval(pg_get_serial_sequence('apps', 'id'))), 'Homeroom', $1, $2, 'usernode', 'running', TRUE,
         $3, NOW(), $4::jsonb)
      ON CONFLICT (slug) DO UPDATE SET
        repo_url          = EXCLUDED.repo_url,
@@ -2243,8 +2311,17 @@ async function seedSelfApp(pool, config) {
       config.platformRepoUrl,
       sha,
       manifestJson,
+      previewAppId,
     ]
   );
+  if (previewAppId) {
+    await pool.query(
+      `SELECT setval(q.seq, GREATEST($1::bigint, COALESCE(s.last_value, 0)))
+         FROM (SELECT pg_get_serial_sequence('apps', 'id') AS seq) q
+         JOIN pg_sequences s ON format('%I.%I', s.schemaname, s.sequencename) = q.seq`,
+      [previewAppId]
+    );
+  }
 
   // dapp.json's top-level `name` takes precedence over the platform name.
   // Best-effort — a rename hiccup must not fail boot/migration.
@@ -16324,6 +16401,7 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
+  seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,
   seedTermsVersions, TERMS_VERSIONS,

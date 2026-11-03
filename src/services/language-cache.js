@@ -76,6 +76,61 @@ async function cachedEntries(pool) {
   return out;
 }
 
+// The whole cache as public JSON, worked out again only when it moves: what
+// GET /api/languages/cache serves, and what a platform preview, whose
+// database can start empty (SEC-06), fills its own cache from (importEntries).
+// The same public text the packs serve, with the English each translation
+// was made from, so a message a proposal rewords is not shown translated
+// from its old wording.
+// Kept gzipped in memory and its version read at most every VERSION_TTL_MS,
+// as the packs are, so a request costs neither the database nor a compression.
+let exportMemo = null;
+async function exportEntries(pool, { now = Date.now() } = {}) {
+  if (exportMemo && now - exportMemo.checkedAt < VERSION_TTL_MS) return exportMemo;
+  const version = await cacheVersion(pool);
+  if (exportMemo?.version !== version) {
+    const body = Buffer.from(JSON.stringify({ version, entries: await cachedEntries(pool) }));
+    exportMemo = { version, body, gzip: require('node:zlib').gzipSync(body) };
+  }
+  exportMemo.checkedAt = now;
+  return exportMemo;
+}
+
+const SOURCE_HASH = /^[a-f0-9]{64}$/;
+const LANGUAGE_TAG = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8}){0,3}$/;
+
+/**
+ * Fills this database's cache from an export (exportEntries' `entries`:
+ * language -> namespace -> key -> source -> text), keeping anything already
+ * cached here. Resolves how many rows it added.
+ */
+async function importEntries(pool, entries, { model = 'imported' } = {}) {
+  const rows = [];
+  for (const [language, byNamespace] of Object.entries(isObject(entries) ? entries : {})) {
+    if (language.length > 35 || !LANGUAGE_TAG.test(language)) continue;
+    for (const [namespace, byKey] of Object.entries(isObject(byNamespace) ? byNamespace : {})) {
+      for (const [key, bySource] of Object.entries(isObject(byKey) ? byKey : {})) {
+        for (const [source, text] of Object.entries(isObject(bySource) ? bySource : {})) {
+          if (SOURCE_HASH.test(source) && typeof text === 'string') rows.push([language, namespace, key, source, text]);
+        }
+      }
+    }
+  }
+  let added = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { rowCount } = await pool.query(
+      `INSERT INTO language_translations (language, namespace, key, source, text, model)
+       SELECT l, n, k, s, t, $6 FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[]) AS u(l, n, k, s, t)
+       ON CONFLICT (language, namespace, key, source) DO NOTHING`,
+      [chunk.map((r) => r[0]), chunk.map((r) => r[1]), chunk.map((r) => r[2]), chunk.map((r) => r[3]), chunk.map((r) => r[4]), model],
+    );
+    added += rowCount || 0;
+  }
+  if (added) memo = null;
+  return added;
+}
+
 /** One language's cached translations in one namespace: key -> source -> text. */
 async function cachedNamespace(pool, language, namespace) {
   const { rows } = await pool.query(
@@ -292,6 +347,8 @@ module.exports = {
   cacheVersion,
   cachedEntries,
   cachedNamespace,
+  exportEntries,
+  importEntries,
   live,
   liveRoot,
   overlay,
