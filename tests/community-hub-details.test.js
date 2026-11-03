@@ -324,7 +324,7 @@ test('#3489: Your work stays on the hub with nothing in progress, and says so', 
   assert.match(busy, /<span data-ws-mine-first="mine:proposal:7">Add multi-language support across platform and apps<\/span>/);
   assert.match(busy, /<span class="dev-ws-foryou-count">2 in progress<\/span>/);
   assert.doesNotMatch(busy, />Tags</, 'the rest are the Workshop\'s');
-  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>/);
+  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+places=\{drawerOn\}\s+\/>/);
 });
 
 test('the hub\'s channel record names each room\'s own write route, which the Discussion reads', () => {

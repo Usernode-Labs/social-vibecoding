@@ -1,35 +1,27 @@
 /**
- * THE PHONE'S NAVIGATION DRAWER: WHERE IT IS, AND THE ONE WAY TO MOVE IT.
+ * THE PHONE'S COMMUNITY HEADER: WHETHER IT APPLIES, AND WHAT IT SHOWS.
  *
- * Under the Communities tab a phone shows your communities, a community's
- * places and the place's page as three levels of one strip (./drawer-math.ts,
- * ./nav-drawer.tsx). Three things move it and three draw from it:
+ * Under 768px a community's page draws its header from here: the arrow (or,
+ * on the Hub, the grid that opens all your communities), the community over
+ * its place, and the community's colour (./header-drawer.tsx).
  *
- *   moves:  the header's back arrow (`back`), the lit Communities tab
- *           (`pressTab`, ../workshop/tab-ladder.ts) and the drawer's own
- *           presses and pans (`go`);
- *   draws:  the drawer itself (the strip and the page under it, through the
- *           surface it registers), and the header's arrow, titles and colour
- *           (./header-drawer.tsx), which follow the LIVE DEPTH frame by frame.
+ * THE DRAWER IS GONE (Evan, 3 Nov 2026: "lose one layer of sidebar"). Until
+ * then a community's page was the deepest of three levels on one strip, your
+ * communities at 85% and its places at 80%, which the arrow, the lit tab
+ * and a pan slid between, and which held a Back record while off the page.
+ * The page is the only level now: a community opens on its Hub, the Hub's
+ * rows are the way to its places, the arrow goes up to the Hub, and the
+ * Hub's grid to All communities, each an ordinary navigation. The live
+ * depth stays (./header-drawer.tsx draws Messages' and the bot tab's header
+ * from theirs); Communities' rests on the page.
  *
- * The live depth is not React state: a pan sets it on every pointer move and
- * a tap animates it over the slide, and the header writes its own nodes'
- * transforms from it (`onDepth`). React state is the level it rests on.
- *
- * THE DEVICE'S BACK. While the drawer is off the page (levels 0 and 1) it
- * holds a record in lib/back-stack.ts, as a sheet does, so Back on Android
- * returns to the page rather than leaving it. A press that navigates (a
- * place, another community) lets it go as a navigating release. The drawer
- * hands the push over (`setBackRecords`): back-stack listens on the window
- * the moment it loads, and the tab bar's tests load this store without one.
- *
- * Nothing here touches the DOM: the drawer registers the surface that does.
+ * Nothing here touches the DOM.
  */
 
 import { createStore } from '../../lib/plain-store.js';
-import { easeOut, REDUCED_MS, SLIDE_MS, type Level } from './drawer-math';
+import { easeOut, REDUCED_MS, SLIDE_MS } from './drawer-math';
 
-/** The community the drawer shows: its places are level 1, its page level 2. */
+/** The community the header shows. */
 export interface Shown {
   slug: string | null;
   name: string;
@@ -39,40 +31,24 @@ export interface Shown {
   place: string;
 }
 
-/** A community picked on level 0, from the press until its page is up. */
-export interface Pending {
-  slug: string;
-  name: string;
-  selfHosted: boolean;
-  place: string;
-}
-
 export interface DrawerState {
-  /** The drawer applies: a phone's width, with a community's page on show (or on its way). */
+  /** It applies: a phone's width, with a community's page on show. */
   on: boolean;
-  /** The level it rests on. */
-  level: Level;
-  /** Level 0 is widened to the whole screen for its search. */
-  searching: boolean;
-  /** Out of its rest: a finger on it, or a slide back to the page still running. */
-  moving: boolean;
-  pending: Pending | null;
   shown: Shown;
 }
 
 const NOTHING_SHOWN: Shown = { slug: null, name: '', selfHosted: false, place: 'status' };
 
-export const drawerStore = createStore<DrawerState>({
-  on: false, level: 2, searching: false, moving: false, pending: null, shown: NOTHING_SHOWN,
-});
+export const drawerStore = createStore<DrawerState>({ on: false, shown: NOTHING_SHOWN });
 
 /* ── The live depth ─────────────────────────────────────────────────── */
 
 /**
  * One drawer's live depth: where its strip is now, which its header draws
- * from. Communities' runs 0 to 2; Messages' (./messages-drawer.ts) 0 to 1,
- * on a channel of its own, so the two can never draw over each other while
- * one turns off and the other on.
+ * from. Messages' (./messages-drawer.ts) and the bot tab's (./bot-drawer.ts)
+ * run 0 to 1, each on a channel of its own, so two can never draw over each
+ * other while one turns off and the other on. Communities' rests at 2, the
+ * page's depth in ./drawer-math.ts headerFrame.
  */
 export interface DepthChannel {
   live(): number;
@@ -141,165 +117,8 @@ export function createDepthChannel(rest: number, deepest: number): DepthChannel 
   };
 }
 
-/** Communities' depth. */
+/** Communities' depth: the page's, where it rests. */
 export const communitiesDepth = createDepthChannel(2, 2);
-
-/** Where the strip is now, between 0 and 2. */
-export function liveDepth(): number {
-  return communitiesDepth.live();
-}
-
-/** Follow the live depth. Returns the undo. */
-export function onDepth(listener: (f: number) => void): () => void {
-  return communitiesDepth.on(listener);
-}
-
-/** A finger sets it. */
-export function setDepth(f: number): void {
-  communitiesDepth.set(f);
-}
-
-/* ── The surface that moves ─────────────────────────────────────────── */
-
-export interface Surface {
-  /** Put the strip, and the page under it, at `level`: sliding, or at once (`cut`). */
-  place(level: Level, cut: boolean): void;
-  /** Level 0's list, which the lit tab scrolls to its top. */
-  outerList(): HTMLElement | null;
-}
-
-let surface: Surface | null = null;
-
-/** The drawer says how it moves, while it is mounted. Returns the undo. */
-export function registerSurface(next: Surface): () => void {
-  surface = next;
-  return () => { if (surface === next) surface = null; };
-}
-
-/* ── The device's Back ──────────────────────────────────────────────── */
-
-/** lib/back-stack.ts's Release: give the record back, as a navigating press or not. */
-export type Release = (options?: { navigating?: boolean }) => void;
-type PushRecord = (close: () => boolean) => Release;
-
-let pushRecord: PushRecord | null = null;
-let release: Release | null = null;
-
-/** The drawer's island hands over lib/back-stack.ts's `pushDismissible`. */
-export function setBackRecords(push: PushRecord): void {
-  pushRecord = push;
-}
-
-/** While the drawer is off the page, Back returns to it. */
-export function holdBack(): void {
-  if (release || !pushRecord) return;
-  release = pushRecord(() => {
-    release = null;
-    go(2, { viaBack: true });
-    return true;
-  });
-}
-
-/**
- * Give the record back. `navigating`: a press that is about to push an entry
- * of its own (a place, another community, a tab), so the record is left
- * under it rather than spent (lib/back-stack.ts, "Closing because something
- * is navigating").
- */
-export function letGoBack(navigating = false): void {
-  const r = release;
-  release = null;
-  r?.(navigating ? { navigating: true } : undefined);
-}
-
-/* ── Moving it ──────────────────────────────────────────────────────── */
-
-export interface GoOptions {
-  /** No slide: the strip and the header are put there at once. */
-  cut?: boolean;
-  /** The device's Back did it, and spent the record already. */
-  viaBack?: boolean;
-  /** A press that navigates did it (see letGoBack). */
-  navigating?: boolean;
-}
-
-/** To `level`, sliding unless told otherwise. */
-export function go(to: number, opts: GoOptions = {}): void {
-  const s = drawerStore.get();
-  if (!s.on) return;
-  const level = Math.max(0, Math.min(2, Math.round(Number(to) || 0))) as Level;
-  if (level < 2) holdBack();
-  else if (!opts.viaBack) letGoBack(!!opts.navigating);
-  const cut = !!opts.cut;
-  drawerStore.set({
-    level,
-    searching: level === 0 ? s.searching : false,
-    // Off the page the drawer is drawn anyway; back onto it, it is drawn
-    // until the slide has run (the surface says when).
-    moving: level === 2 && !cut,
-  });
-  surface?.place(level, cut || reducedMotion());
-  if (cut) communitiesDepth.cut(level);
-  else communitiesDepth.slide(level);
-}
-
-/** The header's arrow: up one level. A widened search narrows first. */
-export function back(): void {
-  const s = drawerStore.get();
-  if (!s.on) return;
-  if (s.searching) {
-    setSearching(false);
-    return;
-  }
-  if (s.level > 0) go(s.level - 1);
-}
-
-/**
- * The lit Communities tab (../workshop/tab-ladder.ts): one level at a time,
- * the page to its places, the places to your communities. On your
- * communities it narrows a widened search, else takes the list to its top.
- */
-export function pressTab(): 'up' | 'top' | 'none' {
-  const s = drawerStore.get();
-  if (!s.on) return 'none';
-  if (s.searching) {
-    setSearching(false);
-    return 'up';
-  }
-  if (s.level > 0) {
-    go(s.level - 1);
-    return 'up';
-  }
-  const list = surface?.outerList() || null;
-  if (!list || list.scrollTop <= 2) return 'none';
-  try {
-    list.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
-  } catch {
-    list.scrollTop = 0;
-  }
-  return 'top';
-}
-
-/** Level 0 widens while you search, and narrows again on Cancel or a pick. */
-export function setSearching(searching: boolean): void {
-  const s = drawerStore.get();
-  const next = searching && s.on && s.level === 0;
-  if (next === s.searching) return;
-  drawerStore.set({ searching: next });
-  surface?.place(s.level, reducedMotion());
-}
-
-/** The strip is out of its rest (a pan), or back in it (a slide ended). */
-export function setMoving(moving: boolean): void {
-  const s = drawerStore.get();
-  if (s.moving !== moving) drawerStore.set({ moving });
-  // Settled: whatever a slide did, the header lands on the resting frame.
-  if (!moving && communitiesDepth.live() !== s.level) communitiesDepth.cut(s.level);
-}
-
-export function setPending(pending: Pending | null): void {
-  drawerStore.set({ pending });
-}
 
 export function setShown(shown: Shown): void {
   const was = drawerStore.get().shown;
@@ -307,45 +126,7 @@ export function setShown(shown: Shown): void {
   drawerStore.set({ shown });
 }
 
-/**
- * THE LIST IS THE DOOR, SOMETIMES (#5581). The Communities tab pressed from
- * another tab, and "All communities" in the switcher, mean your communities
- * on a phone: the drawer's level 0, not the page. Both ask for it before the
- * community's page is on screen, so the request waits here until the drawer
- * turns on (`setOn`) and is spent then. It expires so a request whose page
- * never came cannot open the drawer's list under something else later.
- */
-const OUTER_REQUEST_MS = 10_000;
-let outerAskedAt = 0;
-
-/** The next time the drawer turns on, it opens on your communities. */
-export function requestOuter(): void {
-  outerAskedAt = Date.now();
-}
-
-function outerRequested(): boolean {
-  const asked = outerAskedAt;
-  outerAskedAt = 0;
-  return asked > 0 && Date.now() - asked <= OUTER_REQUEST_MS;
-}
-
-/**
- * The drawer applies, or stops applying (another tab, a wide window, a card
- * opened from the page). Either way it starts again at once: on the page, or
- * on your communities when something asked for the list (`requestOuter`). A
- * record still held is let go as a navigating release, because whatever
- * turned the drawer off has usually pushed an entry of its own.
- */
 export function setOn(on: boolean): void {
-  const s = drawerStore.get();
-  if (on === s.on) return;
-  letGoBack(true);
-  // Spent either way: a request answered by the drawer's going off is not
-  // left to open the list the next time it comes on.
-  const asked = outerRequested();
-  const level: Level = on && asked ? 0 : 2;
-  communitiesDepth.cut(level);
-  drawerStore.set({ on, level, searching: false, moving: false, ...(on ? {} : { pending: null }) });
-  // Off the page, Back returns to it (holdBack's own rule).
-  if (on && level === 0) holdBack();
+  if (on === drawerStore.get().on) return;
+  drawerStore.set({ on });
 }

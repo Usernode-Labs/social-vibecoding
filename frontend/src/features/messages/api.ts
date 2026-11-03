@@ -192,7 +192,16 @@ function normalizePlan(input: unknown): HomeroomBotPlan | null {
   const spec = record(pick(row, 'spec'));
   const sessionId = strictId(pick(spec, 'sessionId'));
   const version = strictId(pick(spec, 'version'));
-  return { ...plan, complicated: true, ...(sessionId && version ? { spec: { sessionId, version } } : {}) };
+  // #6220: the card's own text, when the plan writer wrote it.
+  const cardRow = record(pick(row, 'card'));
+  const lines = array(pick(cardRow, 'lines')).map(record)
+    .map((line) => ({ n: strictId(pick(line, 'n')), text: typeof pick(line, 'text') === 'string' ? String(pick(line, 'text')).trim() : '' }))
+    .filter((line) => !!line.text).slice(0, 6);
+  const summary = typeof pick(cardRow, 'summary') === 'string' ? String(pick(cardRow, 'summary')).trim() : '';
+  return {
+    ...plan, complicated: true, ...(sessionId && version ? { spec: { sessionId, version } } : {}),
+    ...(lines.length ? { card: { summary, lines } } : {}),
+  };
 }
 
 /**

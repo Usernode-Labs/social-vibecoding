@@ -1615,6 +1615,38 @@
     "text": "Replaced by a newer plan",
     "description": "Line on an older plan card from Homeroom bot once the bot has sent a newer plan for the same project."
   },
+  "bot.plan.crops.summary_one": {
+    "text": "Before and after · {{count}} change",
+    "description": "On Homeroom bot's plan card, the row that opens the plan's pictures: one close-up, before and after, for each numbered change. {{count}} is how many changes have one."
+  },
+  "bot.plan.crops.summary_other": {
+    "text": "Before and after · {{count}} changes",
+    "description": "On Homeroom bot's plan card, the row that opens the plan's pictures: one close-up, before and after, for each numbered change. {{count}} is how many changes have one."
+  },
+  "bot.plan.crops.before": {
+    "text": "Before",
+    "description": "On Homeroom bot's plan card, the small label over the close-up of a change as the screen is today."
+  },
+  "bot.plan.crops.after": {
+    "text": "After",
+    "description": "On Homeroom bot's plan card, the small label over the close-up of a change as the plan would make it."
+  },
+  "bot.plan.crops.beforeLabel": {
+    "text": "Change {{number}}, before",
+    "description": "Accessible name of the close-up of one numbered change of Homeroom bot's plan, as the screen is today. {{number}} is the change's number, as its badge shows it."
+  },
+  "bot.plan.crops.afterLabel": {
+    "text": "Change {{number}}, after",
+    "description": "Accessible name of the close-up of one numbered change of Homeroom bot's plan, as the plan would make it. {{number}} is the change's number, as its badge shows it."
+  },
+  "bot.plan.crops.notBefore": {
+    "text": "Not there before",
+    "description": "On Homeroom bot's plan card, in place of the before close-up of a change that adds something new: there was nothing there before."
+  },
+  "bot.plan.crops.goneAfter": {
+    "text": "Gone after",
+    "description": "On Homeroom bot's plan card, in place of the after close-up of a change that removes something: it is gone after the change."
+  },
   "bot.plan.build": {
     "text": "Build it",
     "description": "Main button on Homeroom bot's plan card: tells the bot to build what the plan describes. \"Build\" is a verb."
@@ -4743,9 +4775,21 @@
     "text": "This needs a person, not Homeroom bot: the people on the project decide who builds it.",
     "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when Homeroom bot does not build requests on that project, or a person has to decide about it first."
   },
-  "drawer.peek.open": {
-    "text": "Open {{name}}",
-    "description": "On a phone, what a screen reader says for the last conversation, peeking in beside the list of conversations; pressing it opens that conversation. {{name}} is the conversation's name: a person's name or a group's title."
+  "privateThread.done": {
+    "text": "This thread is done.",
+    "description": "The line under a private thread's head with Homeroom bot once it is finished: its request went live or was closed, or the person marked it done. Reopen follows it."
+  },
+  "privateThread.reopen": {
+    "text": "Reopen",
+    "description": "A button: brings a finished private thread with Homeroom bot back, as it was before it was done. On the line under the thread's head, and in its ⋯ menu."
+  },
+  "privateThread.markDone": {
+    "text": "Mark done",
+    "description": "A menu item in a private thread's ⋯ menu (in its head, and on its row on the Homeroom bot page): finishes the thread, which then leaves the page's lists. Nothing in it is deleted."
+  },
+  "privateThread.menu": {
+    "text": "Thread actions",
+    "description": "Accessible name and tooltip of the ⋯ button on a private thread with Homeroom bot, which opens a menu with Mark done (or Reopen)."
   },
   "privateThread.label": {
     "text": "Only you can see this thread.",
@@ -5098,10 +5142,6 @@
   "ai.drawer.back": {
     "text": "Back to the list",
     "description": "The AI tab on a phone: the back arrow over what is open beside the list (Main Chat, the chat with Homeroom bot, or one of its threads), which slides the list back in. Its accessible name and tooltip."
-  },
-  "ai.drawer.peek": {
-    "text": "Open {{title}}",
-    "description": "The AI tab on a phone: accessible name of the open thread peeking in beside the list, which opens it. {{title}} is the thread's name."
   },
   "ai.filter.label": {
     "text": "Show the work of",

@@ -100,7 +100,7 @@ import {
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
 import {
-  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, UpdateCard, hubAlone, owesVote,
+  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
 } from './hub-cards';
 import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
@@ -4852,8 +4852,8 @@ export function DevWorkshop(): ReactNode {
   const placesInColumn = useMediaFlag(PLACES_COLUMN_QUERY);
   useEffect(() => { setTrayOpen(false); }, [tab, v.slug, placesInColumn]);
   useEffect(() => { if (trayOpen) setTrayShown(true); }, [trayOpen]);
-  // On a phone the drawer takes the edge (../../nav-drawer/nav-drawer.tsx):
-  // the places are its level 1, and the tray is the wide window's.
+  // On a phone the Hub's rows lead to the places (../../nav-drawer/nav-drawer.tsx,
+  // ./hub-cards.tsx TopicsCard), and the tray is the wide window's.
   const { on: drawerOn } = useStoreState(drawerStore);
   useEdgeSwipe(!placesInColumn && !drawerOn && !trayOpen && !!v.slug && !v.loading, () => {
     trayNav.current = false;
@@ -5257,8 +5257,14 @@ export function DevWorkshop(): ReactNode {
           onNeeds={() => openTab('needs')}
           onWork={() => openTab('workshop')}
           onDiscussion={() => openTab('discussion')}
+          places={drawerOn}
         />
       ) : null}
+      {/* TOPICS, on a phone (3 Nov 2026): the Hub is the way to every place
+          now that no drawer lists them beside the page, so each live topic's
+          channel has a row here. A wide window lists them in its sidebar.
+          See ./hub-cards.tsx TopicsCard. */}
+      {slug && drawerOn ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
       {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
           its versions sent it, what went live in them lately, and how its
           last update went down. Nothing on a project nobody has made a

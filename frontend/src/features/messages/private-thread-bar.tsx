@@ -48,15 +48,18 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
+
 import { t as translate } from '../../lib/i18n/runtime';
 import { Button } from '@/components/ui/button';
 
 import { MakeSheet } from './bot-make';
+import { reopenThread } from './private-thread-done';
 import { TrackBar, trackShort, trackStateWord, useTrackOf } from './bot-track';
 import type { BotTrack } from './types';
 
 export interface PrivateThreadState {
-  state: 'open' | 'filed' | 'posted' | 'dropped';
+  /** #6159: `done` once it was finished (its request went live or closed, Mark done, or asked). */
+  state: 'open' | 'filed' | 'posted' | 'dropped' | 'done';
   /** What it is (open only): absent from an older server, which reads as an idea. */
   kind?: 'draft_request' | 'draft_reply' | 'idea' | 'ask' | 'design';
   /**
@@ -239,11 +242,25 @@ export function RequestTrackStrip({ track, number, href }: { track: BotTrack; nu
 }
 
 /** The thread's head: that only they can see it, or where it went (#6153: where its request stands). */
-export function PrivateThreadNote({ where }: { where: PrivateThreadState | null }): ReactNode {
+export function PrivateThreadNote({ where, rootId = null, onChanged }: {
+  where: PrivateThreadState | null;
+  /** #6159: the thread, for Reopen on a done one. */
+  rootId?: number | null;
+  onChanged?: (state: PrivateThreadState['state']) => void;
+}): ReactNode {
   const t = useMessages('messages');
   const filed = filedRequestOf(where);
   const track = useTrackOf(filed ? { appSlug: filed.slug, appName: filed.name, issueNumber: filed.number } : null);
   if (!where) return null;
+  if (where.state === 'done') {
+    return (
+      <div className="messages-bot-note px-4 py-2" data-private-thread="done">
+        {t('messages:privateThread.done')}
+        {rootId ? <>{' · '}<button type="button" className="font-semibold text-violet-700 hover:underline dark:text-violet-300" data-private-thread-reopen=""
+          onClick={() => { void reopenThread(rootId).then((next) => { if (next) onChanged?.(next); }); }}>{t('messages:privateThread.reopen')}</button></> : null}
+      </div>
+    );
+  }
   if (filed && track) return <RequestTrackStrip track={track} number={filed.number} href={filed.href} />;
   if (where.state === 'filed' || where.state === 'posted') {
     const id = where.state === 'filed' ? 'messages:privateThread.filed' : 'messages:privateThread.posted';

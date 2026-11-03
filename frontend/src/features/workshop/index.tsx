@@ -47,9 +47,9 @@
  * communities two presses away. Recency rather than "needs you first" stays
  * the order: an ordering by urgency is how a quiet project you care about
  * falls off the bottom and is lost, and each row's vote pill already says
- * which ones are asking for you. The drawer (../nav-drawer/outer-level.tsx)
- * draws the same chips and the same one list, through `AudienceChips` and
- * `AppRow` below.
+ * which ones are asking for you. On a phone the one list is a grid of tiles
+ * (`CommunityTile`, 3 Nov 2026), where a phone switches community now that
+ * the drawer that listed them beside a community's page is gone.
  *
  * ── Where the numbers come from ────────────────────────────────────────
  *
@@ -203,11 +203,10 @@ const CHIP_LABELS: Record<AudienceFilter, string> = {
  * Each carries its count, and a chip with nothing in it is hidden but kept,
  * so the order check finds all four.
  *
- * Drawn by the screen and by the phone drawer's level 0
- * (../nav-drawer/outer-level.tsx), which takes the page's list wholesale;
- * `scope` names the surface in its data attributes (`data-workshop-chip`
- * there, `data-nav-drawer-chip` in the drawer), so each place's selectors
- * keep pointing only at it.
+ * `scope` names the surface in its data attributes (`data-workshop-chip` on
+ * the screen), so each place's selectors keep pointing only at it. The phone
+ * drawer's level 0 drew them as well (`data-nav-drawer-chip`) until it went,
+ * 3 Nov 2026.
  */
 export function AudienceChips({ tallies, pressed, onPress, scope }: {
   tallies: Record<AudienceFilter, number>;
@@ -481,17 +480,7 @@ export function VotePill({ count }: { count: number }) {
  * (2.75rem, `rounded-xl`), exactly as features/apps/browse-list.tsx draws it —
  * app.css owns that face, and a call site must not repaint it.
  */
-export function AppRow({ row, onOpen, current = false }: {
-  row: WorkshopRow;
-  /**
-   * What a plain press does instead of opening the project's hub: the
-   * phone's drawer (../nav-drawer/outer-level.tsx) switches community in
-   * place, keeping the place you were on.
-   */
-  onOpen?: (row: WorkshopRow) => void;
-  /** The community the drawer is on, marked on its tile. */
-  current?: boolean;
-}) {
+export function AppRow({ row }: { row: WorkshopRow }) {
   // Subscribed: the row's fact (rowSubtitle) is read in the language on screen.
   const t = useMessages('communities');
   const fact = rowSubtitle(row);
@@ -515,15 +504,10 @@ export function AppRow({ row, onOpen, current = false }: {
       } : undefined}
       data-workshop-app={row.slug}
       data-workshop-audience={row.audience || 'open'}
-      aria-current={current ? 'true' : undefined}
       onClick={(event) => {
         const win = window as any;
         if (win.NavLink?.isNativeClick?.(event)) return;
         event.preventDefault();
-        if (onOpen) {
-          onOpen(row);
-          return;
-        }
         // A row opens the project on the place you were on, when it has it,
         // else its hub: a switch keeps your page (landKeepingPlace).
         landKeepingPlace(row.slug);
@@ -565,6 +549,75 @@ export function AppRow({ row, onOpen, current = false }: {
         </>
       )}
     />
+  );
+}
+
+/** A phone's width, settled in an effect so the first render is the prerender's. */
+function usePhoneWidth(): boolean {
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia('(max-width: 767.98px)');
+    const apply = () => setPhone(mq.matches);
+    apply();
+    mq.addEventListener?.('change', apply);
+    return () => mq.removeEventListener?.('change', apply);
+  }, []);
+  return phone;
+}
+
+/**
+ * ONE COMMUNITY AS A TILE, for the phone's grid (Evan, 3 Nov 2026: "you go
+ * back to seeing all the communities in a grid"). A phone has no sidebar
+ * and, since the drawer went, no list beside a community's page, so All
+ * communities is where you switch: its tile and its name under it, as an
+ * app launcher draws them, with the votes it waits on you for as a badge in
+ * the accent (a number that asks for you). A press opens its Hub, which is
+ * the way into all of its places now (`AppView._landOnHub`, the door rule).
+ * An anchor with the hub's own address, as the row is, so a new tab opens
+ * it too.
+ */
+export function CommunityTile({ row }: { row: WorkshopRow }) {
+  const t = useMessages('communities');
+  const href = `/app/${encodeURIComponent(row.slug)}/workshop`;
+  const votes = Math.max(0, Number(row.needs) || 0);
+  return (
+    <a
+      href={href}
+      className="flex min-w-0 flex-col items-center gap-1.5 rounded-2xl py-1 text-center no-underline un-touch-target"
+      data-workshop-app={row.slug}
+      data-workshop-audience={row.audience || 'open'}
+      onClick={(event) => {
+        const win = window as any;
+        if (win.NavLink?.isNativeClick?.(event)) return;
+        event.preventDefault();
+        try { win.AppView?._landOnHub?.(row.slug); } catch { /* the page opens on what it remembers */ }
+        win.App?.navigateToApp?.(row.slug, 'dev');
+      }}
+    >
+      <span className="relative inline-flex">
+        <span
+          className="app-icon-tile w-[62px] h-[62px] shrink-0 rounded-[18px] overflow-hidden flex items-center justify-center font-bold text-2xl"
+          data-icon={appIconKind(row as any)}
+          aria-hidden="true"
+        >
+          <AppIconContent app={row as any} />
+        </span>
+        {votes > 0 ? (
+          <span
+            className="absolute -top-1.5 -end-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-violet-600 text-white text-xs font-extrabold tabular-nums flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]"
+            data-workshop-vote-badge={String(votes)}
+            aria-hidden="true"
+          >
+            {votes > 99 ? '99+' : votes}
+          </span>
+        ) : null}
+      </span>
+      <span className="max-w-full line-clamp-2 break-words text-[12.5px] font-semibold leading-[15px] text-zinc-800 dark:text-zinc-200">
+        {row.name || row.slug}
+      </span>
+      {votes > 0 ? <span className="sr-only">{t('communities:row.toVote', { count: votes })}</span> : null}
+    </a>
   );
 }
 
@@ -639,6 +692,8 @@ export function WorkshopScreen() {
   // which the sidebar's Communities heading opens (../nav/sidebar-rows.ts).
   // `wide` is only that door: the sidebar is not there below 768px.
   const wide = useSidebarRows();
+  // A phone draws the list as a grid (CommunityTile).
+  const phone = usePhoneWidth();
   const [query, setQuery] = useState('');
   const [lit, setLit] = useState(false);
   // #5296: the chip pressed above the list. All on every entry.
@@ -874,9 +929,18 @@ export function WorkshopScreen() {
               : rows === null
                 ? <><SectionHeader aria-hidden="true">{'\u00a0'}</SectionHeader><GroupedList tone="plane"><RowSkeletons /></GroupedList></>
                 : shown && shown.length ? (
-                  <GroupedList tone="plane" data-workshop-rows={pressed}>
-                    {shown.map((row) => <AppRow key={row.slug} row={row} />)}
-                  </GroupedList>
+                  phone ? (
+                    /* ON A PHONE, A GRID (3 Nov 2026): the tiles of every
+                       community you are in, four to a row, where a phone
+                       switches community now. CommunityTile, above. */
+                    <div className="grid grid-cols-4 gap-x-1 gap-y-4 px-3 pt-1" data-workshop-rows={pressed} data-workshop-grid="">
+                      {shown.map((row) => <CommunityTile key={row.slug} row={row} />)}
+                    </div>
+                  ) : (
+                    <GroupedList tone="plane" data-workshop-rows={pressed}>
+                      {shown.map((row) => <AppRow key={row.slug} row={row} />)}
+                    </GroupedList>
+                  )
                 ) : q && all && all.length ? (
                   <p className="workshop-search-none" data-workshop-none="">{t('communities:drawer.search.none', { query: q })}</p>
                 ) : null}

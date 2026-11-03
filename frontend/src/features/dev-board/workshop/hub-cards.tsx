@@ -66,7 +66,7 @@ import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 're
 import { Button } from '@/components/ui/button';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon, SparklesIcon } from '@/components/ui/icons';
+import { ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon, HashIcon, SparklesIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
@@ -84,6 +84,7 @@ import { openBotTab } from '../../ai/door';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
+import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
 import {
   askToFit, goTo, upstreamAction, useUpstream, useVersionsSummary,
@@ -592,9 +593,11 @@ function NeedsRow({ queue, slug, canPost, onOpen }: {
  * from its first day (15 Oct 2026). No row for a visitor, who has no work
  * to have none of.
  */
-function WorkRow({ mine, onOpen }: {
+function WorkRow({ mine, onOpen, place = false }: {
   mine: DevWorkshopView['mine'] | null | undefined;
   onOpen: () => void;
+  /** On a phone the row is the way to the Workshop, and is named for it. */
+  place?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const cards = (mine?.rows || []).filter((row): row is Extract<BoardRow, { t: 'card' }> => row.t === 'card');
@@ -620,7 +623,7 @@ function WorkRow({ mine, onOpen }: {
       data-ws-mine-open="workshop"
       onClick={onOpen}
       leading={<IconTile size="xs"><BoardIcon aria-hidden="true" /></IconTile>}
-      title={t('project:hub.work.title')}
+      title={place ? placeName('workshop') : t('project:hub.work.title')}
       subtitle={sub}
       trailing={cards.length ? (
         <span className="dev-ws-foryou-count">{t('project:hub.forYou.work.inProgress', { count: cards.length })}</span>
@@ -716,7 +719,7 @@ function DiscussionRow({ data, onOpen }: {
  * Nothing at all when no row has anything to say.
  */
 export function ForYouCard({
-  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion,
+  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion, places = false,
 }: {
   slug: string;
   queue: DevWorkshopView['queue'];
@@ -732,6 +735,9 @@ export function ForYouCard({
   onNeeds: () => void;
   onWork: () => void;
   onDiscussion: () => void;
+  /** A phone (3 Nov 2026): the Hub is the way to the community's places, so
+      the Workshop's row is always drawn, and named for the place it opens. */
+  places?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const headId = useId();
@@ -739,7 +745,7 @@ export function ForYouCard({
   const claims = Math.max(0, Number(unclaimed) || 0);
   const needs = owes || !alone || claims > 0;
   const cards = (mine?.rows || []).some((row) => row.t === 'card');
-  const work = cards || !!mine?.viewer;
+  const work = cards || !!mine?.viewer || places;
   const talk = !!(data && data.channel);
   if (!needs && !work && !talk) return null;
   return (
@@ -749,8 +755,82 @@ export function ForYouCard({
         {owes
           ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} />
           : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
-        <WorkRow mine={mine} onOpen={onWork} />
+        <WorkRow mine={mine} onOpen={onWork} place={places} />
         <DiscussionRow data={data} onOpen={onDiscussion} />
+      </div>
+    </section>
+  );
+}
+
+/** How many topics the Hub lists before "Show N more". */
+export const HUB_TOPICS_SHOWN = 6;
+
+/**
+ * TOPICS, ON A PHONE (Evan, 3 Nov 2026: "you land on hub and you click
+ * links"). The drawer that listed a community's places beside its page is
+ * gone, so the Hub is how you reach them: For you leads to Needs you, the
+ * Workshop and #general, and this card to each live topic's channel, a row
+ * a topic, drawn as the Discussion's row is: its icon, its name and #handle,
+ * what it is about, and how much is new in it. The first few are listed and
+ * the rest wait behind "Show N more", as the sidebar folds them. A wide
+ * window lists the topics in its sidebar and draws no card.
+ */
+export function TopicsCard({ data, onOpen }: {
+  data: CommunityPayload | null;
+  onOpen: (key: PlaceKey) => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const headId = useId();
+  const [all, setAll] = useState(false);
+  const topics = liveTopics(data?.places);
+  if (!topics.length) return null;
+  const shown = all ? topics : topics.slice(0, HUB_TOPICS_SHOWN);
+  const more = topics.length - shown.length;
+  return (
+    <section className="dev-ws-hub-section" data-ws-hub-topics="" aria-labelledby={headId}>
+      <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.topics.title')}</SectionHeader>
+      <div className="dev-ws-strip dev-ws-foryou">
+        {shown.map((topic) => {
+          const unread = Math.max(0, Number(topic.unread) || 0);
+          return (
+            <ListRow
+              key={topic.handle}
+              as="button"
+              inset="none"
+              className="dev-ws-foryou-row"
+              data-ws-hub-topic={topic.handle}
+              onClick={() => onOpen(channelPlace(topic.handle))}
+              leading={(
+                <IconTile size="xs">
+                  {topic.icon
+                    ? <span className="text-base leading-none" aria-hidden="true">{topic.icon}</span>
+                    : <HashIcon aria-hidden="true" />}
+                </IconTile>
+              )}
+              title={(
+                <>
+                  {topic.name || topic.handle} <span className="dev-ws-foryou-handle">#{topic.handle}</span>
+                </>
+              )}
+              subtitle={topic.about || undefined}
+              trailing={unread ? (
+                <span className="dev-ws-foryou-pill" data-ws-hub-topic-unread={String(unread)}>
+                  {t('project:hub.channel.unread', { count: unread, shown: unread > 99 ? '99+' : String(unread) })}
+                </span>
+              ) : undefined}
+            />
+          );
+        })}
+        {more > 0 ? (
+          <ListRow
+            as="button"
+            inset="none"
+            className="dev-ws-foryou-row"
+            data-ws-hub-topics-more={String(more)}
+            onClick={() => setAll(true)}
+            title={t('project:places.list.showMore', { count: more })}
+          />
+        ) : null}
       </div>
     </section>
   );

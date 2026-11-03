@@ -240,6 +240,8 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
    AND (COALESCE(p.state, 'open') = 'open'
         OR (p.state IN ('posted', 'filed')
             AND EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id)))
+   -- #6159: a done thread is finished; it leaves the lists until it is reopened.
+   AND COALESCE(p.state, 'open') <> 'done'
  ORDER BY COALESCE((SELECT MAX(r.created_at) FROM conversation_messages r
                      WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL), m.created_at) DESC
  LIMIT $3`;

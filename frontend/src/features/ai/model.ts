@@ -44,7 +44,8 @@ export interface AiPrivate {
    * #6153: where it went: a design thread stays listed once it is filed as
    * a request, or posted on one as its plan (absent from an older server).
    */
-  state?: 'open' | 'filed' | 'posted' | 'dropped';
+  /** #6159: `done` once finished; a done thread is not listed. */
+  state?: 'open' | 'filed' | 'posted' | 'dropped' | 'done';
   /** #6153: the number of the request it was filed as, or posted on. */
   resultRef?: number | null;
 }
@@ -173,12 +174,6 @@ export interface WorkRow {
   /** Where the row goes: a page, or a private thread of Main. */
   href: string | null;
   rootId: number | null;
-  /**
-   * B06 (audit 2 Nov 2026): a plan of Homeroom bot's waiting for your Build
-   * it. Its Build it is on the plan in Main Chat, so the row opens there, at
-   * the plan; the request's page has no Build it.
-   */
-  plan?: { slug: string; number: number } | null;
 }
 
 /**
@@ -323,6 +318,7 @@ export function filedKey(p: AiPrivate): string | null {
 function filedThreads(work: AiWork | null): Map<string, number> {
   const filed = new Map<string, number>();
   for (const p of work?.private || []) {
+    if (p.state === 'done') continue;
     const key = filedKey(p);
     if (key && !filed.has(key)) filed.set(key, p.rootId);
   }
@@ -397,10 +393,11 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
       href: t.href,
       rootId: null,
-      ...(t.what === 'plan' && t.app && t.number ? { plan: { slug: t.app.slug, number: t.number } } : {}),
     });
   }
   for (const p of work?.private || []) {
+    // #6159: a done thread is finished (the server leaves it out too).
+    if (p.state === 'done') continue;
     const key = filedKey(p);
     if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
     // 1 Nov 2026: a thread about a request or a change is drawn by it, its
