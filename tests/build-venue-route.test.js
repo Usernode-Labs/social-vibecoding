@@ -201,7 +201,7 @@ test('a venue pick that works is silent — in all four states (#1348 follow-up)
 
   // A FAILURE still speaks, in both directions, because a switch that did
   // not happen changes nothing on screen — there is no other signal.
-  assert.match(fn[0], /toast\(data\.error \|\| PlatformI18n\.t\('devchat:agentSwitch\.platformFailed'\)\)/);
+  assert.match(fn[0], /toast\(PlatformI18n\.errorText\(data\) \|\| PlatformI18n\.t\('devchat:agentSwitch\.platformFailed'\)\)/);
   assert.match(fn[0], /toast\(PlatformI18n\.t\('devchat:agentSwitch\.networkError'\)\)/);
   assert.equal(message('devchat:agentSwitch.networkError'), 'Network error while switching coding agents.');
   // As does a row the sheet is refusing.

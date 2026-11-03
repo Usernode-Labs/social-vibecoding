@@ -1912,7 +1912,7 @@ const DevChat = {
       if (!response.ok) {
         const busy = response.status === 409 && /busy/i.test(String(data.error || ''));
         if (!(busy && quietBusy)) {
-          PlatformUI.toast(data.error || PlatformI18n.t('devchat:agentSwitch.failed'));
+          PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:agentSwitch.failed'));
         }
         return busy ? 'busy' : 'failed';
       }
@@ -1961,7 +1961,7 @@ const DevChat = {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:agentSwitch.platformFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:agentSwitch.platformFailed'));
         return;
       }
       if (!DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
@@ -4391,7 +4391,7 @@ const DevChat = {
       }
       if (!silent) {
         const data = await rr.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:session.resumeFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:session.resumeFailed'));
       }
       return false;
     } catch {
@@ -4548,7 +4548,7 @@ const DevChat = {
             session.status = 'active';
           } else {
             const data = await rr.json().catch(() => ({}));
-            PlatformUI.toast(data.error || PlatformI18n.t('devchat:session.resumeFailed'));
+            PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:session.resumeFailed'));
           }
         } catch { /* network blip — fall through; session stays paused */ }
       }
@@ -7377,7 +7377,7 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok && res.status !== 409) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:issueDraft.failed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:issueDraft.failed'));
         if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
         return;
       }
@@ -9597,7 +9597,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || (action === 'resume'
+        PlatformUI.toast(PlatformI18n.errorText(body) || (action === 'resume'
           ? PlatformI18n.t('devchat:sessions.toast.resumeFailed')
           : PlatformI18n.t('devchat:sessions.toast.pauseFailed')));
         return null;
@@ -9637,7 +9637,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:sessions.toast.archiveFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:sessions.toast.archiveFailed'));
         return null;
       }
     } catch {
@@ -9656,7 +9656,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:sessions.toast.unarchiveFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:sessions.toast.unarchiveFailed'));
         return null;
       }
       if (data.ccPurged) {
@@ -11031,7 +11031,7 @@ const DevChat = {
           body: file,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || PlatformI18n.t('devchat:attach.uploadFailedHttp', { status: res.status }));
+        if (!res.ok) throw new Error(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:attach.uploadFailedHttp', { status: res.status }));
         entry.id = data.id;
         entry.kind = data.kind;
         entry.meta = data.meta || null;
@@ -11472,7 +11472,7 @@ const DevChat = {
         // the user's mirror and the server have genuinely diverged.
         if (res.status === 409) {
           const data = await res.json().catch(() => ({}));
-          if (data && data.error) DevChat._toast(data.error);
+          if (data && data.error) DevChat._toast(PlatformI18n.errorText(data));
         }
         return false;
       }
