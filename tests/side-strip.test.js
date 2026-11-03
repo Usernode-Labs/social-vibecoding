@@ -17,7 +17,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const APP_CSS = read('public/css/app.css');
 const {
   STRIP_ATTR, STRIP_W_PROP, STRIP_MIN_PX, STRIP_SHOT_PX,
-  BAND_ATTR, BAND_H_PROP,
+  BAND_ATTR, BAND_H_PROP, BAND_MIN_WIDTH_PX,
   CORNER_ATTR, CORNER_W_PROP, CORNER_SHOT_PX,
   stripSide, stripShotSide, applyStrip, watchSideStrip,
   topBand, topBandShot, applyTopBand,
@@ -85,16 +85,32 @@ test('the probe reads the kit override before env(), as app.css does', () => {
 
 // ── The top band: the unfolded Duo, held upright (6070) ────────────────
 
-test('topBand: a tall top inset with no side column is the Duo\'s band', () => {
-  assert.equal(topBand({ top: 80, left: 0, right: 0 }), 80, 'the unfolded Duo held upright');
-  assert.equal(topBand({ top: 59, left: 0, right: 0 }), 0, 'an ordinary iPhone status bar');
-  assert.equal(topBand({ top: STRIP_MIN_PX - 1, left: 0, right: 0 }), 0, 'below the floor');
-  assert.equal(topBand({ top: STRIP_MIN_PX, left: 0, right: 0 }), STRIP_MIN_PX, 'the floor itself');
-  assert.equal(topBand({ top: 80, left: 0, right: 84 }), 0, 'a column reported too: the strip wins');
-  assert.equal(topBand({ top: 80, left: 84, right: 0 }), 0);
-  assert.equal(topBand({ top: Number.NaN, left: 0, right: 0 }), 0);
-  assert.equal(topBand({ top: undefined, left: 0, right: 0 }), 0);
-  assert.equal(topBand(null), 0);
+// The unfolded Duo held upright is 669px wide; the band's width (6161).
+const DUO_UP = { width: 669 };
+
+test('topBand: a tall top inset with no side column, on the unfolded Duo\'s width, is its band', () => {
+  assert.equal(topBand({ top: 80, left: 0, right: 0 }, DUO_UP), 80, 'the unfolded Duo held upright');
+  assert.equal(topBand({ top: 59, left: 0, right: 0 }, DUO_UP), 0, 'an ordinary iPhone status bar');
+  assert.equal(topBand({ top: STRIP_MIN_PX - 1, left: 0, right: 0 }, DUO_UP), 0, 'below the floor');
+  assert.equal(topBand({ top: STRIP_MIN_PX, left: 0, right: 0 }, DUO_UP), STRIP_MIN_PX, 'the floor itself');
+  assert.equal(topBand({ top: 80, left: 0, right: 84 }, DUO_UP), 0, 'a column reported too: the strip wins');
+  assert.equal(topBand({ top: 80, left: 84, right: 0 }, DUO_UP), 0);
+  assert.equal(topBand({ top: Number.NaN, left: 0, right: 0 }, DUO_UP), 0);
+  assert.equal(topBand({ top: undefined, left: 0, right: 0 }, DUO_UP), 0);
+  assert.equal(topBand(null, DUO_UP), 0);
+});
+
+// 6161: in the app an iPhone 17 Pro reports a top inset just over the floor,
+// and its clock runs across the top-left, not a corner pill: the band's
+// layout put the back disc and the page's title under the clock on every
+// screen. The width tells the two apart.
+test('topBand: an ordinary phone\'s tall inset is not a band, whatever its height (6161)', () => {
+  assert.equal(topBand({ top: 66, left: 0, right: 0 }, { width: 402 }), 0, 'an iPhone 17 Pro in the app');
+  assert.equal(topBand({ top: 80, left: 0, right: 0 }, { width: 440 }), 0, 'the widest phone upright');
+  assert.equal(topBand({ top: 80, left: 0, right: 0 }, { width: BAND_MIN_WIDTH_PX - 1 }), 0, 'under the width');
+  assert.equal(topBand({ top: 80, left: 0, right: 0 }, { width: BAND_MIN_WIDTH_PX }), 80, 'the width itself');
+  assert.equal(topBand({ top: 80, left: 0, right: 0 }, { width: Number.NaN }), 0, 'no width is no band');
+  assert.ok(BAND_MIN_WIDTH_PX > 440 && BAND_MIN_WIDTH_PX < 669, 'between the widest phone and the unfolded Duo');
 });
 
 test('?side-strip=up paints the Duo\'s top band, not a column', () => {
@@ -255,6 +271,7 @@ test('the strip follows the inset itself, not only a resize (the tabs left at th
 test('the side panel\'s own document takes no strip, band or corner, whatever the frame is handed', () => {
   const page = fakePage();
   page.root.classList = { contains: (c) => c === 'in-side-panel' };
+  page.win.innerWidth = 669;
   page.insets.right = 84;
   page.insets.top = 84;
   watchSideStrip(page.doc, page.win);
@@ -272,8 +289,9 @@ test('with no ResizeObserver, the window\'s resize still reads the inset', () =>
   assert.equal(page.attrs.get(STRIP_ATTR), 'right');
 });
 
-test('the top band follows the top inset, on a phone that reports no column', () => {
+test('the top band follows the top inset, on the unfolded Duo that reports no column', () => {
   const page = fakePage();
+  page.win.innerWidth = 669;
   const stop = watchSideStrip(page.doc, page.win);
   assert.equal(page.attrs.has(BAND_ATTR), false, 'a phone: no band');
   const [observer] = page.observers;
@@ -293,8 +311,30 @@ test('the top band follows the top inset, on a phone that reports no column', ()
   stop();
 });
 
+// 6161: the app on an iPhone 17 Pro reports a top inset just over the floor
+// (66px here), and the band's layout drew the back disc and the title under
+// the clock. A phone's width says it is the status bar, not the Duo's band:
+// the header keeps the inset as its padding.
+test('a phone\'s tall top inset is not the band: the status bar keeps its reservation (6161)', () => {
+  const page = fakePage();
+  page.root.classList = { contains: (name) => name === 'in-native-webview' };
+  const stop = watchSideStrip(page.doc, page.win);
+  const [observer] = page.observers;
+  page.insets.top = 66;
+  observer.callback([]);
+  assert.equal(page.attrs.has(BAND_ATTR), false, 'an ordinary phone, upright: no band');
+  assert.equal(page.props.has(BAND_H_PROP), false);
+  assert.equal(page.attrs.has(CORNER_ATTR), false, 'and a two-sided nothing is no corner');
+  // Unfolded: the same inset on the Duo's width is the band again.
+  page.win.innerWidth = 669;
+  observer.callback([]);
+  assert.equal(page.attrs.has(BAND_ATTR), true, 'the width is what tells them apart');
+  stop();
+});
+
 test('a browser tab never has a band, whatever the engine reports (#2509)', () => {
   const page = fakePage();
+  page.win.innerWidth = 669;
   page.root.classList = { contains: (name) => name === 'web-browser-chrome' };
   watchSideStrip(page.doc, page.win);
   const [observer] = page.observers;
@@ -303,7 +343,7 @@ test('a browser tab never has a band, whatever the engine reports (#2509)', () =
   assert.equal(page.attrs.has(BAND_ATTR), false, 'the browser owns the top of the screen');
 });
 
-test('?side-strip=up still paints the band in a browser tab: it is a review state', () => {
+test('?side-strip=up still paints the band in a browser tab, at a phone\'s width: it is a review state', () => {
   const page = fakePage();
   page.root.classList = { contains: (name) => name === 'web-browser-chrome' };
   page.win.location.search = '?side-strip=up';
