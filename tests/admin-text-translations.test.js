@@ -33,6 +33,13 @@ function fakePool({ configs = [], rows = [], failReads = false } = {}) {
       if (/^\s*SELECT/.test(sql) && sql.includes('FROM admin_text_translations')) return { rows: [...table.values()] };
       if (/^\s*INSERT INTO admin_text_translations/.test(sql)) {
         const [key, language, digest, text, reviewed, problem, model, by] = params;
+        const held = table.get(`${key}|${language}`);
+        // The pass's ON CONFLICT: a refusal keeps what the same English already has.
+        if (held && held.source_digest === digest && text == null && held.text != null) {
+          held.model = model;
+          held.problem = problem;
+          return { rows: [], rowCount: 1 };
+        }
         table.set(`${key}|${language}`, {
           source_key: key, language, source_digest: digest, text, reviewed, problem, model, updated_by: by, attempted_at: new Date(),
         });
@@ -490,4 +497,102 @@ test('the leaderboard, ranking and points reads are wrapped with `only`, so rows
   for (const route of ['/api/v4/leaderboard', '/api/v4/leaderboard/epoch-breakdown']) {
     assert.ok(pub.includes(`router.get('${route}', translatedNames,`), route);
   }
+});
+
+// ── Translating with the screen in mind ──────────────────────────────────
+
+const contextPool = () => {
+  const pool = programmePool();
+  const query = pool.query;
+  pool.query = async (sql, params) => {
+    if (/FROM challenges/.test(sql)) {
+      return { rows: [
+        { goal: 'Try an app', task: 'Spend 10 minutes in any app', cta_label: 'Open', metric_label: 'tried', event_name: 'Week one' },
+        { goal: 'Vote on a change', task: 'Vote once this week', cta_label: 'Open', event_name: 'Week two' },
+      ] };
+    }
+    return query(sql, params);
+  };
+  return pool;
+};
+const find = (messages, english) => messages.find((m) => m.english === english);
+
+test('a text is translated knowing the challenge and event it belongs to', async () => {
+  const messages = await service.sources(contextPool());
+  const button = find(messages, 'Open');
+  assert.match(button.description, /button/i);
+  assert.match(button.description, /Try an app/);
+  assert.match(button.description, /Week one/);
+});
+
+test('a text used in several places says so, so one translation can serve them all', async () => {
+  const button = find(await service.sources(contextPool()), 'Open');
+  assert.match(button.description, /Try an app/);
+  assert.match(button.description, /Vote on a change/);
+  assert.ok(button.description.length <= 700, 'the description stays a description');
+});
+
+test('a unit is translated in the phrase it sits in', async () => {
+  const unit = find(await service.sources(contextPool()), 'tried');
+  assert.match(unit.description, /1\/3 tried/);
+  assert.match(unit.description, /Try an app/);
+});
+
+test('what the model is asked carries that context', async () => {
+  const pool = contextPool();
+  const model = fakeModel();
+  await service.runOnce({ pool, deps: { source, llm: model, limits: budget() } });
+  const prompt = model.calls[0].map((request) => request.params.messages[0].content).join('');
+  assert.match(prompt, /Week one/);
+  assert.match(prompt, /1\/3 tried/);
+});
+
+test('text translated without context is asked for once more, what shows stays until then, and a person\'s stands', async () => {
+  const old = (english, text, extra = {}) => row(textKey(english), 'fr', english, text, { model: 'claude-sonnet-5-5', ...extra });
+  const pool = contextPool();
+  pool.table.set(`${textKey('Open')}|fr`, old('Open', 'Ouvert'));
+  pool.table.set(`${textKey('Try an app')}|fr`, old('Try an app', 'Mes mots', { reviewed: true }));
+  // Still shown before the pass.
+  assert.deepEqual(await service.translatePayload(pool, { a: 'Open' }, 'fr'), { a: 'Ouvert' });
+  const model = fakeModel();
+  await service.runOnce({ pool, deps: { source, llm: model, limits: budget() } });
+  const asked = model.calls[0].filter((r) => r.language === 'fr').flatMap((r) => r.items.map((i) => i.english));
+  assert.ok(asked.includes('Open'));
+  assert.equal(asked.includes('Try an app'), false, 'a person\'s words are not asked for');
+  assert.equal(pool.table.get(`${textKey('Open')}|fr`).text, 'fr: Open');
+  assert.equal(pool.table.get(`${textKey('Try an app')}|fr`).text, 'Mes mots');
+  // Once is enough.
+  assert.equal((await service.overview(pool, { source })).messages.length > 0, true);
+  const again = fakeModel();
+  await service.runOnce({ pool, deps: { source, llm: again, limits: budget() } });
+  assert.equal(again.calls.flat().flatMap((r) => r.items).some((i) => i.english === 'Open' ), false);
+});
+
+test('a second translation that is refused keeps the first on show, and is not asked for again', async () => {
+  const pool = contextPool();
+  pool.table.set(`${textKey('Open')}|fr`, row(textKey('Open'), 'fr', 'Open', 'Ouvert', { model: 'claude-sonnet-5-5' }));
+  const refused = fakeModel({ answer: (item, language) => (language === 'fr' && item.english === 'Open' ? '   ' : item.english) });
+  await service.runOnce({ pool, deps: { source, llm: refused, limits: budget() } });
+  assert.equal(pool.table.get(`${textKey('Open')}|fr`).text, 'Ouvert');
+  const again = fakeModel();
+  await service.runOnce({ pool, deps: { source, llm: again, limits: budget() } });
+  assert.equal(again.calls.flat().filter((r) => r.language === 'fr').flatMap((r) => r.items).some((i) => i.english === 'Open'), false);
+});
+
+test('an em dash a language prefers for a spaced hyphen is not a reason to lose the translation', async () => {
+  const pool = programmePool();
+  const query = pool.query;
+  pool.query = async (sql, params) => (/FROM challenges/.test(sql) ? { rows: [{ goal: 'Help Others - May' }] } : query(sql, params));
+  const model = fakeModel({ answer: (item) => (item.english === 'Help Others - May' ? 'Помогайте — май' : item.english) });
+  await service.runOnce({ pool, deps: { source, llm: model, limits: budget() } });
+  assert.equal(pool.table.get(`${textKey('Help Others - May')}|fr`).text, 'Помогайте - май');
+});
+
+test('the admin screen shows the context beside the text', async () => {
+  const { messages } = await service.overview(contextPool(), { source });
+  assert.match(find(messages, 'Open').description, /Try an app/);
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const screen = fs.readFileSync(path.join(__dirname, '../frontend/src/features/admin/topochain/text-translations.tsx'), 'utf8');
+  assert.match(screen, /message\.description/);
 });

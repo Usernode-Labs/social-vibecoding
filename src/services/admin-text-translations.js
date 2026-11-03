@@ -117,27 +117,37 @@ function updateMessage(os, upgrade, config) {
   return null;
 }
 
+// What each kind of text is, for the model. `{text}` is the words themselves.
 const CHALLENGE_FIELDS = Object.freeze({
-  goal: 'The title of a challenge, on its card.',
-  task: 'What a person does to complete a challenge, on its card.',
+  goal: 'The title of a challenge, on its card. A short heading inviting the person to do it.',
+  task: 'What a person does to complete a challenge, a line on its card.',
   description: 'The longer explanation of a challenge, in its details.',
   requirements: 'What a challenge asks for, in its details.',
   reward_logic: 'How the reward of a challenge is worked out, in its details.',
-  cta_button: 'A short button on a challenge, in its details.',
-  cta_label: 'A short button on a challenge, in its details.',
-  mobile_cta_label: 'A short button on a challenge, on a phone.',
-  metric_label: 'The unit a challenge counts, beside a number such as 3 of 10.',
+  cta_button: 'A short button on a challenge that takes the person to do it. Word it as an action on a button.',
+  cta_label: 'A short button on a challenge that takes the person to do it. Word it as an action on a button.',
+  mobile_cta_label: 'A short button on a challenge on a phone that takes the person to do it. Word it as an action on a button.',
+  metric_label: 'The unit in a challenge\'s progress bar, right after the count, as in "1/3 {text}". It must read naturally after those numbers.',
 });
+const MAX_USES = 3;
+// Bumped when what the model is told changes enough to ask again: a translation
+// made under an older version is replaced once, and shows until it is.
+const CONTEXT_VERSION = 'c2';
 const hasWords = (text) => typeof text === 'string' && text.length <= MAX_TEXT && /\p{L}/u.test(text);
 const textKey = (english) => `text:${packs.hash(english)}`;
+const shorten = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-/** What readers see of the programme: a challenge's own words over its template's. */
+/**
+ * What readers see of the programme: a challenge's own words over its template's.
+ * One sentence is one translation, so each says every place it is used (up to
+ * MAX_USES): which challenge and event it belongs to, and what kind of text it is.
+ */
 async function programmeSources(pool) {
   const fields = Object.keys(CHALLENGE_FIELDS);
   const [challenges, events, seasons] = await Promise.all([
     pool.query(
-      `SELECT c.goal, c.task, c.description, c.requirements, c.reward_logic, c.cta_button,
-              c.cta_label, c.mobile_cta_label, c.metric_label,
+      `SELECT e.name AS event_name, c.goal, c.task, c.description, c.requirements, c.reward_logic,
+              c.cta_button, c.cta_label, c.mobile_cta_label, c.metric_label,
               t.goal AS t_goal, t.task AS t_task, t.description AS t_description,
               t.requirements AS t_requirements, t.reward_logic AS t_reward_logic,
               t.cta_button AS t_cta_button, t.cta_label AS t_cta_label,
@@ -151,28 +161,45 @@ async function programmeSources(pool) {
     pool.query('SELECT name, description FROM seasons WHERE internal = FALSE'),
   ]);
   const found = new Map();
-  const add = (english, label, description) => {
+  const add = (english, label, use) => {
     const words = typeof english === 'string' ? english.trim() : '';
-    if (english !== words || !hasWords(words) || found.has(words)) return;
-    found.set(words, {
-      key: textKey(words), english: words, reviewRequired: false, group: 'programme', label, description,
-    });
+    if (english !== words || !hasWords(words)) return;
+    const entry = found.get(words) || { label, uses: new Set() };
+    if (entry.uses.size < MAX_USES) entry.uses.add(use.replace(/\{text\}/g, words));
+    found.set(words, entry);
   };
   for (const row of challenges.rows) {
+    const title = row.goal ?? row.t_goal;
+    const task = row.task ?? row.t_task;
+    const where = [
+      title ? `Challenge: "${shorten(String(title), 80)}"` : '',
+      task && task !== title ? `which asks: "${shorten(String(task), 100)}"` : '',
+      row.event_name ? `in the event "${shorten(String(row.event_name), 60)}"` : '',
+    ].filter(Boolean).join(', ');
     for (const field of fields) {
-      add(row[field] ?? row[`t_${field}`], 'Challenge', CHALLENGE_FIELDS[field]);
+      add(row[field] ?? row[`t_${field}`], 'Challenge', `${CHALLENGE_FIELDS[field]}${where ? ` ${where}.` : ''}`);
     }
   }
   for (const row of events.rows) {
-    add(row.name, 'Season event', 'The name of a season event, a period of challenges.');
-    add(row.description, 'Season event', 'What a season event is about.');
-    add(row.disclaimer, 'Season event', 'The small print of a season event.');
+    const about = row.name ? ` The event is "${shorten(String(row.name), 60)}".` : '';
+    add(row.name, 'Season event', 'The name of a season event, a period of challenges, in the drop-down above the challenges and the leaderboard.');
+    add(row.description, 'Season event', `What a season event is about.${about}`);
+    add(row.disclaimer, 'Season event', `The small print of a season event.${about}`);
   }
   for (const row of seasons.rows) {
+    const about = row.name ? ` The season is "${shorten(String(row.name), 60)}".` : '';
     add(row.name, 'Season', 'The name of a season of challenges.');
-    add(row.description, 'Season', 'What a season of challenges is about.');
+    add(row.description, 'Season', `What a season of challenges is about.${about}`);
   }
-  return [...found.values()];
+  return [...found.entries()].map(([english, entry]) => ({
+    key: textKey(english),
+    english,
+    reviewRequired: false,
+    group: 'programme',
+    label: entry.label,
+    contextVersion: CONTEXT_VERSION,
+    description: shorten([...entry.uses].join(' Also: '), 700),
+  }));
 }
 
 /** Everything there is to translate, as it stands now. */
@@ -316,13 +343,19 @@ function translatedReads(pool, { source, only } = {}) {
 
 async function currentRows(pool) {
   const { rows } = await pool.query(
-    `SELECT source_key, language, source_digest, text, reviewed, problem, attempted_at
+    `SELECT source_key, language, source_digest, text, reviewed, problem, model, attempted_at
        FROM admin_text_translations`,
   );
   return new Map(rows.map((row) => [`${row.source_key}|${row.language}`, row]));
 }
 
-/** Language -> the messages it owes: none yet, older English, or a refusal a day old. */
+const modelMark = (model, contextVersion) => (contextVersion ? `${model}#${contextVersion}` : model);
+const isUpToDate = (row, message) => typeof row?.model === 'string' && row.model.endsWith(`#${message.contextVersion}`);
+
+/**
+ * Language -> the messages it owes: none yet, older English, a refusal a day
+ * old, or a translation made with less context than the text now has.
+ */
 function owed(messages, rows, languages, { now = Date.now(), limit = Infinity } = {}) {
   const plan = new Map();
   let count = 0;
@@ -332,8 +365,8 @@ function owed(messages, rows, languages, { now = Date.now(), limit = Infinity } 
       if (count >= limit) break;
       const row = rows.get(`${message.key}|${language}`);
       if (isCurrent(row, message.english)) {
-        if (hasText(row)) continue;
-        if (now - new Date(row.attempted_at).getTime() < RETRY_MS) continue;
+        if (hasText(row) && (!message.contextVersion || row.reviewed === true || isUpToDate(row, message))) continue;
+        if (!hasText(row) && now - new Date(row.attempted_at).getTime() < RETRY_MS) continue;
       }
       count += 1;
       items.push({
@@ -342,6 +375,7 @@ function owed(messages, rows, languages, { now = Date.now(), limit = Infinity } 
         key: message.key,
         english: message.english,
         description: message.description,
+        contextVersion: message.contextVersion,
       });
     }
     if (items.length) plan.set(language, items);
@@ -356,11 +390,15 @@ async function saveAttempt(pool, { key, language, english, text, problem, model 
        (source_key, language, source_digest, text, reviewed, problem, model, updated_by, attempted_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
      ON CONFLICT (source_key, language) DO UPDATE
-       SET source_digest = EXCLUDED.source_digest, text = EXCLUDED.text, reviewed = EXCLUDED.reviewed,
+       SET text = CASE WHEN admin_text_translations.source_digest = EXCLUDED.source_digest
+                       THEN COALESCE(EXCLUDED.text, admin_text_translations.text)
+                       ELSE EXCLUDED.text END,
+           source_digest = EXCLUDED.source_digest, reviewed = EXCLUDED.reviewed,
            problem = EXCLUDED.problem, model = EXCLUDED.model, updated_by = EXCLUDED.updated_by,
            attempted_at = NOW()
      WHERE admin_text_translations.source_digest <> EXCLUDED.source_digest
-        OR admin_text_translations.text IS NULL`,
+        OR admin_text_translations.text IS NULL
+        OR admin_text_translations.reviewed = FALSE`,
     [key, language, packs.hash(english), text, false, problem, model, null],
   );
 }
@@ -414,7 +452,13 @@ async function runOnce({ pool, deps = {} }) {
     if (!answer || (answer.error && !MODEL_ERRORS_PAID_FOR.has(answer.error))) continue;
     const parsed = sync.parseAnswer(answer.text);
     for (const item of request.items) {
-      const accepted = sync.acceptItem(item, parsed.get(item.id), glossary);
+      const answered = parsed.get(item.id);
+      // Some languages write a spaced hyphen as a dash. The check refuses a dash
+      // the English lacks, and that alone should not cost a translation.
+      if (typeof answered?.text === 'string' && !item.english.includes('—')) {
+        answered.text = answered.text.replace(/\s*—\s*/g, ' - ');
+      }
+      const accepted = sync.acceptItem(item, answered, glossary);
       const text = accepted.entries ? accepted.entries[item.key] : null;
       await saveAttempt(pool, {
         key: item.key,
@@ -422,7 +466,7 @@ async function runOnce({ pool, deps = {} }) {
         english: item.english,
         text,
         problem: accepted.problem || null,
-        model: sync.MODEL,
+        model: modelMark(sync.MODEL, item.contextVersion),
       });
       if (text) saved += 1;
       else refused += 1;
@@ -449,6 +493,7 @@ async function overview(pool, { source = languageCache.readSource() } = {}) {
       key: message.key,
       group: message.group,
       label: message.label,
+      description: message.description,
       english: message.english,
       review_required: message.reviewRequired,
       languages: translatedLanguages(source).map((language) => {
