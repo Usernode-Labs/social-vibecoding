@@ -142,6 +142,8 @@ async function migrate(config) {
   // #5007: independent of the fixtures above — its two sessions are keyed
   // on their own branch_name.
   await seedStagingChangeBuiltForRequest(pool, config);
+  // #6224: one change that closes several requests, for the line that says so.
+  await seedStagingChangeAlsoCloses(pool, config);
   // #945: must run AFTER seedStagingSharedSession — the proposal-thread
   // half hangs off that fixture's session id.
   await seedStagingDiscussionContext(pool, config);
@@ -13774,6 +13776,59 @@ async function seedStagingChangeBuiltForRequest(pool, config) {
   log.info('db', 'Staging change-built-for-request fixtures seeded', {
     appId, unsharedId, sharedId,
   });
+}
+
+// #6224: a change for several requests is drawn on its first request's page,
+// and says there which others it closes. Every session fixture has at most
+// one linked issue, so a fresh staging copy has no state that shows that
+// line. One promoted change owned by usernode-capture, built for mock issue
+// #900001 (the one the mock-issues fallback always serves in staging) and
+// linked to nine more mock issues, so the line, its links and its fold have
+// something real to draw. Idempotent on branch_name.
+async function seedStagingChangeAlsoCloses(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging change-also-closes fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: captureRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1',
+    ['usernode-capture']
+  );
+  const ownerId = captureRows[0]?.id;
+  if (!ownerId) {
+    log.warn('db', 'Staging change-also-closes fixture skipped: capture user missing');
+    return;
+  }
+
+  const branch = 'staging-fixture/change-also-closes';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) return;
+
+  const { rows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, pr_number, status, linked_issues,
+        shared_at, approval_epoch, created_at)
+     VALUES
+       ($1, $2, $3, $4, 96231, 'promoted', $5::int[], NOW(), 1,
+        NOW() - INTERVAL '5 minutes')
+     RETURNING id`,
+    [appId, ownerId, branch, '[staging fixture] Ten small fixes for the request pages',
+      [900001, 900002, 900003, 900004, 900005, 900006, 900007, 900008, 900009, 900010]]
+  );
+  log.info('db', 'Staging change-also-closes fixture seeded', { appId, id: rows[0]?.id });
 }
 
 // #313/#321/#827: a PROMOTED proposal owned by a user OTHER than the

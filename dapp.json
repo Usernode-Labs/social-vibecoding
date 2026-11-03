@@ -5178,7 +5178,8 @@
     {
       "name": "#6019: a request's changes follow it under a rule, each with its own line; a change built for a request has no page of its own now, so its title names it and is no door (one page per thread, 1 Nov 2026; staging fixture: the changes built for #900001)",
       "path": "/#app/usernode-2d5619/dev/issues/900001",
-      "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > h3[data-thread-change-title]"
+      "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > h3[data-thread-change-title]",
+      "expectText": "Also closes"
     },
     {
       "name": "#6019: the AI tab opens on its own page: Needs you, grouped by project, with a plan waiting for your Build it and a request Homeroom bot handed back for a person to decide, another project's build that stopped (Try again), and a private idea under Only you; over it, the project chips end in a More for the projects past the first three",

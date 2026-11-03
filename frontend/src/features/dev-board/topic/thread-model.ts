@@ -99,6 +99,19 @@ export function elsewhereFor(payload: ThreadPayload | null, number: number): Thr
   return list.filter((e) => Number(e.request) === Number(number) && Number(e.on) !== Number(number));
 }
 
+/**
+ * #6224: the other requests a change closes besides `request`, ascending and
+ * without duplicates, read from its `closes` (its linked_issues, the set its
+ * merge closes). Empty when it does not close this request at all, so a
+ * change living on another request's page says nothing here. Pure.
+ */
+export function alsoCloses(item: ThreadItem, request: number): number[] {
+  const closes = Array.isArray(item.closes) ? item.closes.map(Number) : [];
+  const here = Number(request);
+  if (!closes.includes(here)) return [];
+  return [...new Set(closes)].filter((n) => Number.isInteger(n) && n > 0 && n !== here).sort((a, b) => a - b);
+}
+
 export interface ThreadMove {
   id: number;
   kind: 'merge' | 'split' | 'breakup';
