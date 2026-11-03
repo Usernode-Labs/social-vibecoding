@@ -25,6 +25,8 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { promisify } = require('node:util');
+const zlib = require('node:zlib');
 
 const log = require('./logger');
 const packs = require('../../scripts/language-packs');
@@ -76,24 +78,64 @@ async function cachedEntries(pool) {
   return out;
 }
 
-// The whole cache as public JSON, worked out again only when it moves: what
+/**
+ * The cached translations of the English this build runs, by the build's
+ * own rules (overlay's): language -> namespace -> key -> source -> text, one
+ * source per key. Translations of older wordings stay cached but are left
+ * out: the cache is never pruned, and they would multiply the export.
+ */
+function currentEntries(cached, source) {
+  const files = isObject(source?.files) ? source.files : {};
+  const languages = Object.keys(isObject(files['config.json']?.languages) ? files['config.json'].languages : {});
+  const out = {};
+  for (const language of languages) {
+    if (language === 'en' || !cached?.[language]) continue;
+    for (const [name, entries] of Object.entries(files)) {
+      const namespace = /^en\/([a-z][a-z-]*)\.json$/.exec(name)?.[1];
+      const fromCache = namespace && cached[language][namespace];
+      if (!fromCache || !isObject(entries)) continue;
+      const texts = Object.fromEntries(Object.entries(entries)
+        .filter(([, entry]) => isObject(entry) && typeof entry.text === 'string')
+        .map(([key, entry]) => [key, entry.text]));
+      for (const [key, text] of Object.entries(packs.requiredMessages(texts, language).required)) {
+        const hash = packs.hash(text);
+        const hit = fromCache[key]?.[hash];
+        if (typeof hit === 'string') ((out[language] ||= {})[namespace] ||= {})[key] = { [hash]: hit };
+      }
+    }
+  }
+  return out;
+}
+
+// The cache as public JSON, worked out again only when it moves: what
 // GET /api/languages/cache serves, and what a platform preview, whose
 // database can start empty (SEC-06), fills its own cache from (importEntries).
 // The same public text the packs serve, with the English each translation
 // was made from, so a message a proposal rewords is not shown translated
 // from its old wording.
 // Kept gzipped in memory and its version read at most every VERSION_TTL_MS,
-// as the packs are, so a request costs neither the database nor a compression.
+// as the packs are, so a request costs neither the database nor a
+// compression; one build at a time, compressed off the event loop.
 let exportMemo = null;
-async function exportEntries(pool, { now = Date.now() } = {}) {
-  if (exportMemo && now - exportMemo.checkedAt < VERSION_TTL_MS) return exportMemo;
-  const version = await cacheVersion(pool);
-  if (exportMemo?.version !== version) {
-    const body = Buffer.from(JSON.stringify({ version, entries: await cachedEntries(pool) }));
-    exportMemo = { version, body, gzip: require('node:zlib').gzipSync(body) };
+let exporting = null;
+async function exportEntries(pool, { now = Date.now(), source = module.exports.readSource() } = {}) {
+  if (exportMemo && exportMemo.source === source && now - exportMemo.checkedAt < VERSION_TTL_MS) return exportMemo;
+  if (exporting) return exporting;
+  exporting = (async () => {
+    const version = await cacheVersion(pool);
+    if (exportMemo?.version !== version || exportMemo.source !== source) {
+      const entries = currentEntries(await cachedEntries(pool), source);
+      const body = Buffer.from(JSON.stringify({ version, entries }));
+      exportMemo = { source, version, body, gzip: await promisify(zlib.gzip)(body) };
+    }
+    exportMemo.checkedAt = now;
+    return exportMemo;
+  })();
+  try {
+    return await exporting;
+  } finally {
+    exporting = null;
   }
-  exportMemo.checkedAt = now;
-  return exportMemo;
 }
 
 const SOURCE_HASH = /^[a-f0-9]{64}$/;
@@ -347,6 +389,7 @@ module.exports = {
   cacheVersion,
   cachedEntries,
   cachedNamespace,
+  currentEntries,
   exportEntries,
   importEntries,
   live,

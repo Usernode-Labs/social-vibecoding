@@ -38,10 +38,10 @@ function languageRoutes(config) {
     }
   });
 
-  // The whole cache, with the English each translation was made from: what a
-  // platform preview, whose database can start empty, fills its own from
-  // (db/migrate.js seedStagingTranslations). The same public text as the
-  // packs.
+  // The cache's translations of the running English, with the English each
+  // was made from: what a platform preview, whose database can start empty,
+  // fills its own from (db/migrate.js seedStagingTranslations). The same
+  // public text as the packs.
   router.get('/api/languages/cache', languageCacheLimiter, async (req, res) => {
     try {
       const exported = await cache.exportEntries(pool);

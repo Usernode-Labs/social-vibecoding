@@ -4,10 +4,11 @@
 // cache is filled once from production's public export (GET
 // /api/languages/cache, services/language-cache.js exportEntries; db/migrate.js
 // seedStagingTranslations). The export carries the English each translation
-// was made from, so a reworded message is not shown in its old translation;
-// an import keeps what is already cached and skips anything malformed; and
-// the preview boot asks production only in a preview, only once, and never
-// fails over it. Against the real schema.
+// was made from, so a reworded message is not shown in its old translation,
+// and only the running English's, so the never-pruned cache does not
+// multiply it; an import keeps what is already cached and skips anything
+// malformed; and the preview boot asks production only in a preview, only
+// once, and never fails over it. Against the real schema.
 //
 // Run with: TEST_DATABASE_URL=... node --test tests/preview-translations-postgres.test.js
 
@@ -21,6 +22,19 @@ const cache = require('../src/services/language-cache');
 const { seedStagingTranslations } = require('../src/db/migrate');
 
 const HASH = (c) => c.repeat(64);
+const SHA = (text) => crypto.createHash('sha256').update(text).digest('hex');
+// The running build's catalogs (public/locales/.source.json), as served.
+const SOURCE = {
+  files: {
+    'config.json': { sourceLanguage: 'en', languages: { en: 'English', es: 'Español', ar: 'العربية' } },
+    'en/shell.json': {
+      'nav.home': { text: 'Home', description: 'The home tab' },
+      'nav.items_one': { text: '{{count}} item', description: 'A count' },
+      'nav.items_other': { text: '{{count}} items', description: 'A count' },
+    },
+    'en/settings.json': { title: { text: 'Settings', description: 'The settings title' } },
+  },
+};
 
 test('a preview fills its translation cache from production\'s public export, once', {
   skip: !process.env.TEST_DATABASE_URL,
@@ -43,28 +57,38 @@ test('a preview fills its translation cache from production\'s public export, on
     await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
     return pool;
   }));
+  const readSource = cache.readSource;
+  cache.readSource = () => SOURCE;
+  t.after(() => { cache.readSource = readSource; });
   await production.query(
     `INSERT INTO language_translations (language, namespace, key, source, text, model) VALUES
        ('es', 'shell', 'nav.home', $1, 'Inicio', 'model-a'),
        ('es', 'shell', 'nav.home', $2, 'Página principal', 'model-a'),
-       ('ar', 'settings', 'title', $1, 'الإعدادات', 'model-b')`,
-    [HASH('a'), HASH('b')]);
+       ('es', 'shell', 'gone', $1, 'Ya no está', 'model-a'),
+       ('es', 'shell', 'nav.items_many', $3, '{{count}} elementos', 'model-a'),
+       ('ar', 'settings', 'title', $4, 'الإعدادات', 'model-b')`,
+    [SHA('Home'), SHA('Start page'), SHA('{{count}} items'), SHA('Settings')]);
 
   const served = await cache.exportEntries(production);
   const exported = JSON.parse(served.body);
   assert.deepEqual(exported.entries, {
-    es: { shell: { 'nav.home': { [HASH('a')]: 'Inicio', [HASH('b')]: 'Página principal' } } },
-    ar: { settings: { title: { [HASH('a')]: 'الإعدادات' } } },
-  }, 'every translation, under the English it was made from');
+    es: { shell: { 'nav.home': { [SHA('Home')]: 'Inicio' }, 'nav.items_many': { [SHA('{{count}} items')]: '{{count}} elementos' } } },
+    ar: { settings: { title: { [SHA('Settings')]: 'الإعدادات' } } },
+  }, 'the running English\'s translations, under the English they were made from; an older wording and a retired key are left out');
   assert.equal(await cache.exportEntries(production), served, 'served from memory again while the cache stands still');
   assert.deepEqual(JSON.parse(require('node:zlib').gunzipSync(served.gzip)), exported, 'kept gzipped too');
-  // A moved cache is seen once the version is read again.
-  await production.query(`INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('es', 'shell', 'new', $1, 'Nuevo')`, [HASH('c')]);
+  // A moved cache is seen once the version is read again, and built once.
+  await production.query(`INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('es', 'settings', 'title', $1, 'Ajustes')`, [SHA('Settings')]);
   assert.equal(await cache.exportEntries(production), served, 'not before VERSION_TTL_MS');
-  const moved = await cache.exportEntries(production, { now: Date.now() + cache.VERSION_TTL_MS + 1 });
-  assert.equal(JSON.parse(moved.body).entries.es.shell.new[HASH('c')], 'Nuevo');
-  await production.query(`DELETE FROM language_translations WHERE key = 'new'`);
-  await cache.exportEntries(production, { now: Date.now() + 2 * (cache.VERSION_TTL_MS + 1) });
+  const later = Date.now() + cache.VERSION_TTL_MS + 1;
+  const [moved, again] = await Promise.all([1, 2].map(() => cache.exportEntries(production, { now: later })));
+  assert.notEqual(moved, served);
+  assert.equal(again, moved, 'one build at a time');
+  assert.equal(JSON.parse(moved.body).entries.es.settings.title[SHA('Settings')], 'Ajustes');
+  await production.query(`DELETE FROM language_translations WHERE language = 'es' AND namespace = 'settings'`);
+  await cache.exportEntries(production, { now: later + cache.VERSION_TTL_MS + 1 });
+  assert.deepEqual(cache.currentEntries({ es: { shell: { 'nav.home': { [SHA('Home')]: 'Inicio' } } } }, null), {},
+    'a build without catalogs exports nothing');
 
   // Over HTTP: public, gzipped when the client takes it.
   const express = require('express');
@@ -90,16 +114,17 @@ test('a preview fills its translation cache from production\'s public export, on
   // What a preview already holds is kept; a malformed entry is skipped.
   await preview.query(
     `INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('es', 'shell', 'nav.home', $1, 'Mine')`,
-    [HASH('a')]);
+    [SHA('Home')]);
   const added = await cache.importEntries(preview, {
     ...exported.entries,
     'not a tag; DROP TABLE x': { shell: { k: { [HASH('c')]: 'x' } } },
     fr: { shell: { k: { short: 'not a hash', [HASH('d')]: 42 } } },
   });
   assert.equal(added, 2);
-  const rows = (await preview.query('SELECT language, key, source, text FROM language_translations ORDER BY language, source')).rows;
-  assert.deepEqual(rows.map((r) => [r.language, r.key, r.source[0], r.text]), [
-    ['ar', 'title', 'a', 'الإعدادات'], ['es', 'nav.home', 'a', 'Mine'], ['es', 'nav.home', 'b', 'Página principal'],
+  const rows = (await preview.query('SELECT language, key, source, text FROM language_translations ORDER BY language, key')).rows;
+  assert.deepEqual(rows.map((r) => [r.language, r.key, r.source, r.text]), [
+    ['ar', 'title', SHA('Settings'), 'الإعدادات'], ['es', 'nav.home', SHA('Home'), 'Mine'],
+    ['es', 'nav.items_many', SHA('{{count}} items'), '{{count}} elementos'],
   ]);
 
   // The boot's seed: only in a preview, only into an empty cache, from the
