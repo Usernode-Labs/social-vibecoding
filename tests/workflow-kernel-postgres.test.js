@@ -14,6 +14,9 @@ const { CLAIM_LOCKS, PURGE_LOCK } = require('../src/workflow/kernel/services.ts'
 const { waitFor } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+// The budget a wait for a state gets on a busy runner: long enough not to run
+// out while other copies share the CPU, and returned the moment its state holds.
+const BUSY_MS = 20000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // kt-counter: a counter with one event per kernel feature.
@@ -132,7 +135,9 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
   });
 }
 
-test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, async (t) => {
+// The runner's own --test-timeout bounds a hang; setup alone takes about 40 s
+// when this file runs beside other copies of itself.
+test('workflow kernel against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -235,7 +240,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       const control = { control: ++settleMark };
       await pool.query('SELECT pg_notify($1, $2)', ['kt_push', JSON.stringify(control)]);
       await waitFor(() => heard.some((m) => m.control === control.control),
-        { label: 'the settle control notification to be heard after the drain' });
+        { label: 'the settle control notification to be heard after the drain', timeoutMs: BUSY_MS });
       heard.splice(heard.findIndex((m) => m.control === control.control), 1);
     };
     try {
@@ -393,14 +398,22 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       await holder.query('SELECT * FROM kt_rows WHERE id = 1 FOR UPDATE');
       const waiting = await route('k16-wait', 'Lock', { row: 1 });
       const free = await route('k16-free', 'Add', { n: 1 });
-      await quick.drain();
+      // One step only: the oldest pending event is the one that meets the
+      // lock, so a retry still in backoff cannot turn this attempt into two.
+      await quick.processNext();
       const w = await event(waiting);
       assert.equal(w.status, 'pending');
       assert.equal(w.attempts, 1);
       assert.equal(w.error.code, '55P03');
       assert.ok(w.retry_at);
-      assert.equal((await event(free)).result, 'accepted', 'another instance was processed meanwhile');
       assert.equal((await inst('k16-wait')).flag, 'stalled');
+      // The other instance keeps moving while the lock is held; its commit
+      // may be retried past the notify lock, so wait for its outcome.
+      await waitFor(async () => {
+        await quick.drain();
+        return (await event(free)).result === 'accepted';
+      }, { label: 'the free instance\'s event to be accepted while the other is locked', timeoutMs: BUSY_MS });
+      assert.equal((await event(free)).result, 'accepted', 'another instance was processed meanwhile');
     } finally {
       await holder.query('ROLLBACK');
       holder.release();
@@ -409,7 +422,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       await quick.drain();
       const w = await inst('k16-wait');
       return w.flag === null ? w : null;
-    }, { label: 'the stalled event\'s backoff to pass and its retry to succeed' });
+    }, { label: 'the stalled event\'s backoff to pass and its retry to succeed', timeoutMs: BUSY_MS });
     assert.equal(row.flag, null, 'success clears the stall');
     assert.equal(Number(row.version), 2);
   });
@@ -441,14 +454,15 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     const slow = make({ machine: birth, statementTimeoutMs: 100, stallAfter: 1 });
     await flag('birth-slow', true);
     const created = await add(slow, 'b1', 'Create');
-    await slow.drain();
+    // One step only, so a retry still in backoff cannot add a second attempt.
+    await slow.processNext();
     assert.deepEqual([(await event(created)).status, (await event(created)).attempts], ['pending', 1]);
     assert.deepEqual([(await born('b1')).state, (await born('b1')).flag, Number((await born('b1')).version)], [NONE, 'stalled', 0]);
     await flag('birth-slow', false);
     await waitFor(async () => {
       await slow.drain();
       return (await event(created)).result === 'accepted';
-    }, { label: 'the timed-out creation\'s backoff to pass and its retry to be accepted' });
+    }, { label: 'the timed-out creation\'s backoff to pass and its retry to be accepted', timeoutMs: BUSY_MS });
     assert.deepEqual([(await born('b1')).state, (await born('b1')).flag, Number((await born('b1')).version)], ['alive', null, 1]);
     // A throw: faulted, later events held, and a retry creates it as if nothing happened.
     const r = make({ machine: birth });
@@ -482,7 +496,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       // lands while that head holds the instance it is about to create.
       await waitFor(async () => (await pool.query(
         `SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%pg_sleep%' AND pid <> pg_backend_pid()`
-      )).rows.length > 0, { label: 'the new instance\'s head to be copying inside pg_sleep' });
+      )).rows.length > 0, { label: 'the new instance\'s head to be copying inside pg_sleep', timeoutMs: BUSY_MS });
       await caller.query('COMMIT');
       const late = second.processNext();       // takes A, the head now
       await Promise.all([first, late]);
@@ -512,7 +526,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       // The original is applying inside pg_sleep when the copy is committed.
       await waitFor(async () => (await pool.query(
         `SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%pg_sleep%' AND pid <> pg_backend_pid()`
-      )).rows.length > 0, { label: 'the original\'s head to be copying inside pg_sleep' });
+      )).rows.length > 0, { label: 'the original\'s head to be copying inside pg_sleep', timeoutMs: BUSY_MS });
       await caller.query('COMMIT');
       await Promise.all([first, second.processNext()]);
       assert.equal((await event(original)).result, 'accepted');
@@ -532,7 +546,13 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       await holder.query(`SELECT 1 FROM wf_instances WHERE machine = 'kt-counter' AND key = 'k5-b' FOR UPDATE`);
       const send = await route('k5-a', 'Send', { to: 'k5-b', ns: [1] });
       const quick = make({ lockTimeoutMs: 150 });
-      await quick.drain();
+      // The message waits on k5-b's lock and gives up at 150 ms, as it must;
+      // the Send's own commit can still hit the server-wide notify lock and be
+      // retried, so wait for its outcome rather than reading once.
+      await waitFor(async () => {
+        await quick.drain();
+        return (await event(send)).result === 'accepted';
+      }, { label: 'the message to the locked instance to be accepted while it stays locked', timeoutMs: BUSY_MS });
       assert.equal((await event(send)).result, 'accepted');
     } finally {
       await holder.query('ROLLBACK');
@@ -627,7 +647,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     // Its checkpoint is the step it had done when its lease is taken away.
     await waitFor(async () => (await pool.query(
       `SELECT checkpoint->>'step' AS step FROM wf_work WHERE work_key = 'k7-w'`)).rows[0]?.step === 'submitted',
-    { label: 'the handler to checkpoint its step' });
+    { label: 'the handler to checkpoint its step', timeoutMs: BUSY_MS });
     await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7-w'`);
     release();
     await run;
@@ -700,7 +720,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       });
       const r = make({ slots: 1, ...(held ? { pool: heldPool, pollMs: 1 } : {}) });
       await r.start({ loops: true, slots: false });
-      await waitFor(() => started.size >= 2, { label: 'both handlers to start' });
+      await waitFor(() => started.size >= 2, { label: 'both handlers to start', timeoutMs: BUSY_MS });
       if (held) {
         picks = new Promise((resolve) => { letPicksGo = resolve; });
         await pickHeld; // its slot is now in a pick
@@ -710,7 +730,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       if (held) {
         await waitFor(async () => (await pool.query(
           'SELECT status FROM wf_work WHERE work_key = $1', [`${key}-done`])).rows[0].status !== 'running',
-        { label: 'the finished result to be in before the held pick may apply it' });
+        { label: 'the finished result to be in before the held pick may apply it', timeoutMs: BUSY_MS });
         letPicksGo();
       }
       await stopped;
@@ -766,18 +786,18 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     for (let i = 0; i < 3; i++) {
       // As the service loop does: claim again until a slot is free and the item is due.
       await waitFor(() => { void r.runServices(); return seen.length >= i + 1; },
-        { label: `k7r attempt ${i + 1} to start`, everyMs: 50 });
+        { label: `k7r attempt ${i + 1} to start`, everyMs: 50, timeoutMs: BUSY_MS });
       // Its checkpoint is in before the attempt is taken from it.
       await waitFor(async () => (await pool.query(
         `SELECT checkpoint->>'step' AS step FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0]?.step === String(i + 1),
-      { label: `k7r attempt ${i + 1} to checkpoint its step` });
+      { label: `k7r attempt ${i + 1} to checkpoint its step`, timeoutMs: BUSY_MS });
       await stopped('k7r-w');
     }
     // Three lost attempts and maxAttempts 2: a plain handler would be exhausted by now.
     await waitFor(async () => {
       await r.runServices();
       return (await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0].status !== 'running';
-    }, { label: 'k7r to report' });
+    }, { label: 'k7r to report', timeoutMs: BUSY_MS });
     let item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0];
     assert.equal(item.status, 'reported');
     assert.equal(item.attempt_count, 4);
@@ -795,13 +815,13 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.drain();
     for (let i = 0; i < 4; i++) {
       await waitFor(() => { void r.runServices(); return tries >= i + 1; },
-        { label: `k7x attempt ${i + 1} to start`, everyMs: 50 });
+        { label: `k7x attempt ${i + 1} to start`, everyMs: 50, timeoutMs: BUSY_MS });
       await stopped('k7x-w');
     }
     await waitFor(async () => {
       await r.runServices();
       return (await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0].status !== 'running';
-    }, { label: 'k7x to run out of attempts' });
+    }, { label: 'k7x to run out of attempts', timeoutMs: BUSY_MS });
     await rt.drain();
     item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0];
     assert.equal(item.status, 'settled');
@@ -824,13 +844,13 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.drain();
     for (let i = 0; i < 3; i++) {
       await waitFor(() => { void r.runServices(); return runs >= i + 1; },
-        { label: `k7q attempt ${i + 1} to start`, everyMs: 50 });
+        { label: `k7q attempt ${i + 1} to start`, everyMs: 50, timeoutMs: BUSY_MS });
       await lapse('k7q-w');
     }
     await waitFor(async () => {
       await r.runServices();
       return (await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7q-w'`)).rows[0].status === 'reported';
-    }, { label: 'k7q to report' });
+    }, { label: 'k7q to report', timeoutMs: BUSY_MS });
     await rt.drain();
     assert.equal(runs, 4, 'three lapses in a row, and it still runs');
     assert.deepEqual((await inst('k7q')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7q-w']]);
@@ -863,9 +883,15 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     const running = r.runServices();
     await waitFor(async () => (await pool.query(
       `SELECT 1 FROM wf_work WHERE work_key = 'k7f-w' AND status = 'running'`)).rows.length > 0,
-    { label: 'the work item to be running' });
-    // fixed wait: lease renewals must have run before renewing fails
-    await sleep(250);
+    { label: 'the work item to be running', timeoutMs: BUSY_MS });
+    // A renewal that lands is a later lease than the one the claim wrote.
+    const firstUntil = (await pool.query(
+      `SELECT lease_until FROM wf_work WHERE work_key = 'k7f-w'`)).rows[0].lease_until;
+    await waitFor(async () => {
+      const { rows: [{ lease_until: current }] } = await pool.query(
+        `SELECT lease_until FROM wf_work WHERE work_key = 'k7f-w'`);
+      return current && new Date(current).getTime() > new Date(firstUntil).getTime();
+    }, { label: 'a lease renewal to land before renewing fails', timeoutMs: BUSY_MS });
     failRenew = true;
     const { rows: [{ lease_until: until }] } = await pool.query(`SELECT lease_until FROM wf_work WHERE work_key = 'k7f-w'`);
     await running;
@@ -1116,16 +1142,28 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
   });
 
   await t.test('K11 a deadline set earlier than the timer loop\'s wake-up wakes it, not the fallback', async () => {
-    const r = make({ pollMs: 60000 });
+    // Count the loop's completed reads of the nearest deadline: the loop
+    // sleeps right after one, a minute away, until a deadline announces.
+    let looked = 0;
+    const watching = {
+      connect: () => pool.connect(),
+      query: (text, ...rest) => {
+        const reading = pool.query(text, ...rest);
+        if (typeof text === 'string' && text.includes('min(deadline_at)')) reading.then(() => { looked += 1; }, () => {});
+        return reading;
+      },
+    };
+    const r = make({ pollMs: 60000, pool: watching });
     await r.start({ loops: true });
     try {
       await route('k11-wake', 'Create');
-      // fixed wait: the loop must have looked and gone back to sleep (a minute away at the earliest) before the deadline is set
-      await sleep(300);
+      await waitFor(() => looked >= 1, {
+        label: 'the timer loop to look at the nearest deadline and go back to sleep', timeoutMs: BUSY_MS,
+      });
       const started = Date.now();
       await route('k11-wake', 'Arm', { ms: 700 });
       await waitFor(async () => (await inst('k11-wake'))?.data?.ticks, {
-        label: 'the timer to fire from its own announcement, not the 60 s fallback', timeoutMs: 5000,
+        label: 'the timer to fire from its own announcement, not the 60 s fallback', timeoutMs: BUSY_MS,
       });
       assert.ok(Date.now() - started >= 600, 'not before it was due');
     } finally {
@@ -1186,18 +1224,18 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await a.start({ loops: true });
     await b.start({ loops: true });
     // One process quiesces with its items running (a release's drain): they still count.
-    await waitFor(() => gate.length === 2, { label: 'both processes to have an item running' });
+    await waitFor(() => gate.length === 2, { label: 'both processes to have an item running', timeoutMs: BUSY_MS });
     await a.quiesce();
-    const deadline = Date.now() + 20000;
     let done = 0;
     while (done < keys.length) {
-      assert.ok(Date.now() < deadline, 'every item ran');
+      // Each step waits for the next item to be running, then looks at what
+      // the database says while it is: a sleeping step would sample nothing.
+      await waitFor(() => gate.length > 0, { label: 'the next item to be running', timeoutMs: BUSY_MS });
       const running = (await pool.query(
         `SELECT count(*)::int AS n FROM wf_work WHERE key = 'k20' AND status = 'running' AND lease_until > now()`)).rows[0].n;
       assert.ok(running <= 2, `at most two running across both processes (saw ${running})`);
-      if (gate.length) { gate.shift()(); done += 1; }
-      // fixed wait: it gives the other process time to try to exceed the limit
-      await sleep(150);
+      gate.shift()();
+      done += 1;
     }
     assert.equal(most, 2, 'two at once, never more');
     await a.stop();
@@ -1228,9 +1266,9 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.drain();
     await r.start({ loops: true });
     try {
-      await waitFor(() => gates.size >= 1, { label: 'the first item to run' });
-      // fixed wait: the claim count is measured over this window
-      await sleep(300);
+      await waitFor(() => gates.size >= 1, { label: 'the first item to run', timeoutMs: BUSY_MS });
+      // The kind is full the moment its one item runs, so no claim follows:
+      // the count is taken here, and watched over the window below.
       const before = claims;
       // fixed wait: the claim count is measured over this window
       await sleep(1500);
@@ -1238,7 +1276,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       const first = [...gates.keys()][0];
       gates.get(first)();
       await waitFor(() => gates.size >= 2, {
-        label: 'the next item to be claimed as soon as one ends', timeoutMs: 3000,
+        label: 'the next item to be claimed as soon as one ends', timeoutMs: BUSY_MS,
       });
     } finally {
       for (const g of gates.values()) g();
@@ -1250,7 +1288,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       await rt.runServices();
       return (await pool.query(
         `SELECT count(*)::int AS n FROM wf_work WHERE key = 'k20f' AND status IN ('queued', 'running')`)).rows[0].n === 0;
-    }, { label: 'the items it left to finish' });
+    }, { label: 'the items it left to finish', timeoutMs: BUSY_MS });
     await rt.drain();
   });
 
@@ -1346,17 +1384,17 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.drain();
     const r = make({ slots: 1 });
     await r.start({ loops: true });
-    const started = Date.now();
     const replay = await r.appendAndWait(machine, 'k17', { type: 'Add', payload: { n: 1 } },
-      { requestKey: 'k17-a', source: { kind: 'route' }, actor: 'user:1', waitMs: 5000 });
+      { requestKey: 'k17-a', source: { kind: 'route' }, actor: 'user:1', waitMs: BUSY_MS });
     assert.equal(replay.status, 'replayed');
     assert.equal(replay.version, 2);
     assert.deepEqual(replay.reply, { count: 1, projected: 'active:1' }, 'the reply recorded with the receipt');
     assert.equal((await inst('k17')).data.count, 6);
+    const started = Date.now();
     const fresh = await r.appendAndWait(machine, 'k17', { type: 'Add', payload: { n: 0 } },
-      { requestKey: 'k17-b', source: { kind: 'route' }, actor: 'user:1', waitMs: 5000 });
+      { requestKey: 'k17-b', source: { kind: 'route' }, actor: 'user:1', waitMs: BUSY_MS });
     assert.deepEqual([fresh.status, fresh.reason], ['rejected', 'not_positive']);
-    assert.ok(Date.now() - started < 3000, 'answered by notification, not by the budget');
+    assert.ok(Date.now() - started < BUSY_MS, 'answered by notification, not by the budget');
     await r.stop();
   });
 
@@ -1384,7 +1422,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     // the refusal below.
     await waitFor(async () => (await pool.query(
       `SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%pg_sleep%' AND pid <> pg_backend_pid()`
-    )).rows.length > 0, { label: 'the deciding head to be copying inside pg_sleep' });
+    )).rows.length > 0, { label: 'the deciding head to be copying inside pg_sleep', timeoutMs: BUSY_MS });
     const answer = await rt.refuseIfPending(slow.eventId, 'expired');
     await deciding;
     assert.equal(answer.status, 'accepted', 'the decision under way, not a refusal');

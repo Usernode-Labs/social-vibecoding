@@ -52,6 +52,16 @@ test('the failing tests are read off the check output: the unit suite\'s own tes
   assert.equal(many.length, flaky.MAX_TESTS + 1);
 });
 
+test('a multi-line error is quoted from its message, not from the YAML that writes it', () => {
+  // A runner writes a multi-line error as `error: |-` with the message after
+  // it; the request used to quote the block marker instead of the failure.
+  const k5 = `${EM} K5 a transition locks only its own instance ${EM}\n  error: |-\n  Expected values to be strictly equal:\n\n  null !== 'accepted'\n  at Object.<anonymous>`;
+  assert.equal(flaky.errorLine(k5), 'Expected values to be strictly equal:');
+  assert.equal(flaky.errorLine(`  error: >-\n  Expected values to be strictly equal:`), 'Expected values to be strictly equal:');
+  assert.equal(flaky.errorLine("  error: 'boom'"), 'boom', 'a single-line error is unchanged');
+  assert.equal(flaky.errorLine('  error: |-'), '|-', 'nothing after the marker: as before');
+});
+
 test('a test is the same test however it was reported', () => {
   assert.equal(flaky.testKey({ file: 'tests/A.test.js', name: '  kudos   are counted once ' }), flaky.testKey({ file: 'tests/a.test.js', name: 'Kudos are counted once' }));
   assert.ok(flaky.sameTests([{ name: 'x', file: 'f' }], [{ name: 'X', file: 'F' }, { name: 'y' }]));
