@@ -1125,6 +1125,13 @@
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
+      "fingerprint": "0cc0689e7562bfd29e9d",
+      "count": 1,
+      "preview": "`GRANT SELECT ON TABLE ${item.name} TO ${runtime}, ${reader}; REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE ${item.name} FROM ${runtime}"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
       "fingerprint": "0dc7280fb0f709b3f0fb",
       "count": 1,
       "preview": "`GRANT USAGE, SELECT ON SEQUENCE ${sequences.join(', ')} TO ${role}`"
@@ -1142,13 +1149,6 @@
       "fingerprint": "592ffe03aaeca8bcf3cb",
       "count": 1,
       "preview": "`SELECT count(*)::int AS n FROM public.platform_processes WHERE role IN ('web', 'all') AND heartbeat_at > now() - make_interval(secs => $1) AND NOT ${table.reco"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "85af22e27498525bb8b4",
-      "count": 1,
-      "preview": "`GRANT SELECT ON TABLE public.schema_migrations TO ${runtime}, ${reader}; REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.schema_mi"
     },
     {
       "source": "src/services/database-role-grants.js",

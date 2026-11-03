@@ -185,9 +185,12 @@ Admission trusts the actor its producer names: web authenticates people, so a ro
 `user:<id>` is web's word. What web cannot do is speak for the conductor: its login
 appends only the events its machines list (`producer` above) and writes no machine
 state, receipt, work item or outcome. Web can still write the application tables that
-admission and machine facts read (`users`, `app_admins`, a check's result), which is
-separate work. All deciding processes must run the updated code before a new admission
-rule applies across the fleet.
+admission and machine facts read (`users`, `app_admins`, a check's result): since it
+can name any person as the actor anyway, protecting them would not stop a compromised
+web from acting as an administrator (docs/security/database-roles.md, "Web is the
+authentication boundary"). A change to who is an administrator is recorded where
+neither runtime login can alter it (`privilege_changes`). All deciding processes must
+run the updated code before a new admission rule applies across the fleet.
 
 **Pushes.** What browsers should hear is part of the transition. A transition returns
 `push`, and a domain write adds what it inserted with `ctx.push` (a thread line with its
