@@ -177,6 +177,7 @@ test('WP-C: an unaddressed message is read as an idea, not as something said to 
   const llm = read('src/services/llm.js');
   assert.match(llm, /async function readChatAsk\(\{ text, appName = null, toBot = true, changes = \[\], apiKey, telemetryContext \}\)/);
   assert.match(llm, /'Somebody new to the group wrote this'/);
+  const schema = read('src/db/schema.sql');
   assert.match(schema, /CHECK \(kind IN \('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'\)\)/);
   // No first-session card describes the offer: it is the bot's own to make
   // in Discussion (the invited person's tour that ended there is gone, 15
@@ -201,7 +202,6 @@ test('WP-C: offers against the full PostgreSQL schema', { timeout: 180000 }, asy
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = read('src/db/schema.sql');
   await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   await require('../src/db/reference-data').seedReferenceData(pool);
   await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
