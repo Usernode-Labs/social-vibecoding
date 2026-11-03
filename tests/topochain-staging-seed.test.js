@@ -921,3 +921,84 @@ test('the First challenges seed: staging only, idempotent, four ONBOARDING rows 
   const boot = src.indexOf('await seedStagingTopochain(pool, config);');
   assert.ok(boot > 0 && src.indexOf('await seedStagingFirstChallenges(pool);', boot) > boot);
 });
+
+// ─── The standing-order reorder fixture (#6039) ────────────────────────
+//
+// The smarter rank's whole point is that the ORDER moves, and the main
+// fixture cannot show that: every snapshot row it seeds takes the new
+// columns' default of 0, so every player's score is just their points and
+// the board paints in the old order. Its own function (like
+// seedStagingFirstChallenges above), so the fixture counts pinned earlier
+// in this file are untouched.
+test('the standing-order seed: staging only, every INSERT guarded, on the fixture event', async () => {
+  const { seedStagingStandingOrder } = require('../src/db/migrate');
+  process.env.USERNODE_ENV = 'production';
+  const off = mockPool();
+  await seedStagingStandingOrder(off);
+  assert.equal(off.calls.length, 0, 'no query outside staging');
+
+  process.env.USERNODE_ENV = 'staging';
+  const pool = mockPool();
+  await seedStagingStandingOrder(pool);
+  assert.ok(pool.calls.length >= 2, 'a ledger INSERT and the snapshot UPDATEs');
+  for (const call of pool.calls) {
+    if (/INSERT INTO/.test(call.sql)) {
+      assert.match(call.sql, /ON CONFLICT \(id\) DO NOTHING/,
+        `INSERT without ON CONFLICT: ${call.sql.slice(0, 80)}`);
+    }
+    const nums = [...call.sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]));
+    const max = nums.length ? Math.max(...nums) : 0;
+    assert.equal(call.params ? call.params.length : 0, max,
+      `params length must match the highest placeholder for: ${call.sql.slice(0, 80)}`);
+  }
+  const insert = pool.calls.find((c) => /INSERT INTO user_activities/.test(c.sql));
+  assert.ok(insert, 'the ledger rows are seeded');
+  assert.match(insert.sql, /INSERT INTO user_activities/);
+  // The graded rows carry a grader verdict: metadata.grade with a score,
+  // reason and model, the shape the grader writes (#3200). It rides in as a
+  // parameter, not in the SQL text.
+  const graded = insert.params.map((p) => (typeof p === 'string' ? JSON.parse(p) : p))
+    .filter((p) => p && p.grade);
+  assert.equal(graded.length, 1, 'one graded metadata value is passed');
+  assert.equal(graded[0].grade.score, 800);
+  assert.equal(typeof graded[0].grade.reason, 'string');
+  assert.equal(graded[0].grade.model, 'fixture');
+  const updates = pool.calls.filter((c) => /UPDATE leaderboard_snapshots/.test(c.sql));
+  assert.equal(updates.length, 2, 'one UPDATE per player of the pair');
+  for (const u of updates) {
+    assert.match(u.sql, /standings_score = \$4/, 'the new sort key is written');
+    assert.match(u.sql, /graded_points = \$2/);
+    assert.match(u.sql, /distinct_challenges = \$3/);
+  }
+});
+
+test('the standing-order seed only invents ids clear of every other fixture block', async () => {
+  const start = src.indexOf('async function seedStagingStandingOrder');
+  const block = src.slice(start, src.indexOf('\nasync function', start + 10));
+  // Everything the rest of the file already uses — the ids this fixture is
+  // allowed to REFERENCE (challenges 900505-900507, the season snapshots
+  // 900607/900608) minus its own invented ones.
+  const elsewhere = new Set((src.slice(0, start) + src.slice(start + block.length))
+    .match(/\b9\d{5}\b/g) || []);
+  const ids = [...new Set(block.match(/\b9\d{5}\b/g) || [])];
+  assert.ok(ids.length > 0);
+  for (const id of ids) {
+    // 900930-900933 is this fixture's own invented range, clear of the
+    // viewer window (900520-900579), the season snapshots (900600-900611),
+    // the archive activities (900700-900704) and the First-challenge /
+    // invite fixtures (900720-900730, 900900-900910).
+    const own = Number(id) >= 900930 && Number(id) <= 900933;
+    assert.ok(own || elsewhere.has(id),
+      `id ${id} must be in the standing-order range (900930-900933) or an id the file already uses`);
+  }
+  // The invented ids are not shared with anything else in the file.
+  for (const id of ['900930', '900931', '900932', '900933']) {
+    assert.ok(block.includes(id), `${id} is used by the fixture`);
+  }
+});
+
+test('the standing-order seed runs after the fixture it decorates', () => {
+  const boot = src.indexOf('await seedStagingTopochain(pool, config);');
+  assert.ok(boot > 0 && src.indexOf('await seedStagingStandingOrder(pool);', boot) > boot,
+    'it decorates seedStagingTopochain\'s season-board players, so it runs after it');
+});

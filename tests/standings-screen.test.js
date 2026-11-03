@@ -1372,6 +1372,68 @@ test('the empty standings say how often they update (#3187)', () => {
     'the same sentence as the standing card, after the words the declared checks read');
 });
 
+// #6039: the board stopped ranking on points alone, so the table says how a
+// place is worked out. The sentence is one new message id rendered by the
+// pane, and it shows only where there is an order to explain — never on an
+// empty, all-excluded, error or private board.
+test('the standings table says how a place is worked out, and only on the table (#6039)', () => {
+  const render = (body) => {
+    const state = { mounted: true, body, drill: null };
+    const store = { get: () => state, subscribe: () => () => {} };
+    const mod = loadTsx('frontend/src/features/leaderboard/topochain-standings.tsx', {
+      stubs: { './topochain-standings-store.js': { topochainStandingsStore: store } },
+    });
+    return renderToHtml(createElement(mod.TopochainStandingsPane, {}));
+  };
+
+  // The controller only sets orderNote in the table state.
+  const { TL, store } = loadStandings();
+  TL._open = true;
+  TL._loading = false;
+  TL._data = {
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [SEASON_ROW],
+  };
+  TL._meta = { page: 1, per_page: 25, total: 1, total_pages: 1 };
+  TL._renderBody();
+  assert.equal(store.state.body.state, 'table');
+  assert.equal(store.state.body.orderNote, true, 'the controller asks for the note on the table');
+  // ...and no other state carries it.
+  for (const state of ['noentries', 'allexcluded', 'error', 'private']) {
+    TL._data = state === 'error' ? null : { event: { id: 7, display_leaderboard: true }, leaderboard: [] };
+    TL._error = state === 'error' ? 'boom' : null;
+    TL._renderBody();
+    assert.notEqual(store.state.body.orderNote, true, `the ${state} state carries no order to explain`);
+  }
+
+  // The pane draws the sentence, in the disclaimer's muted style, in the
+  // table state and nowhere else.
+  const note = message('leaderboard:standings.orderNote');
+  assert.equal(note,
+    "Place is worked out from points, plus a lift for work that was judged useful and for scoring on more of the season's challenges. Ties go to the better block success rate.");
+  const table = render({
+    state: 'table', challengeLine: null, disclaimer: null, orderNote: true,
+    nonPodiumToggle: null,
+    pagination: { page: 1, totalPages: 1, total: 1, prevDisabled: true, nextDisabled: true },
+    columns: ['rank', 'user', 'points'],
+    headers: { rank: 'Rank', user: 'User', points: 'Points' },
+    rows: [{ index: 0, rank: '1', user: 'Ocank14', anonymous: false, nonPodium: false, points: '1' }],
+  });
+  assert.ok(table.includes(`id="tc-lb-order-note"`), 'the note element renders in the table state');
+  // React escapes the apostrophe in the sentence; compare the escaped form.
+  assert.ok(table.includes(`>${note.replace(/'/g, '&#x27;')}</p>`), 'with the sentence the spec pins');
+  assert.match(table, /id="tc-lb-order-note" class="[^"]*text-xs text-zinc-500[^"]*"/,
+    'in the disclaimer\'s muted style');
+  assert.ok(table.indexOf('tc-lb-row') < table.indexOf('tc-lb-order-note'),
+    'the note sits under the table');
+  assert.ok(table.indexOf('tc-lb-order-note') < table.indexOf('tc-lb-prev'),
+    'and above the page controls');
+
+  // The empty board carries no note.
+  const empty = render({ state: 'noentries', challengeLine: null, disclaimer: null });
+  assert.ok(!empty.includes('tc-lb-order-note'), 'no order to explain on an empty board');
+});
+
 // #4782: someone watched their rank jump six places with no activity of
 // their own and nothing on screen said why — ranks move when OTHER people
 // earn kudos, and the Kudos tab now says so under its ranked lists.

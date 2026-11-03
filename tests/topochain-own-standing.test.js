@@ -45,6 +45,10 @@ const DDL = `
     total_points NUMERIC(15,2) NOT NULL DEFAULT 0,
     extra_points NUMERIC(15,2) NOT NULL DEFAULT 0,
     event_total_produced_blocks BIGINT NOT NULL DEFAULT 0,
+    event_success_rate NUMERIC(5,2),
+    -- #6039: the standing score's stored inputs, which both queries read.
+    graded_points NUMERIC(15,2) NOT NULL DEFAULT 0,
+    distinct_challenges INTEGER NOT NULL DEFAULT 0,
     snapshot_at TIMESTAMPTZ NOT NULL,
     UNIQUE (season_event_id, user_id, snapshot_at)
   );
@@ -92,13 +96,22 @@ async function seed(pool) {
         const points = [0, 10, 25, 25, 40, 100][Math.floor(rand() * 6)];
         const extra = Math.floor(rand() * 5);
         const blocks = Math.floor(rand() * 9);
-        rows.push(`(${eventId}, ${user}, ${points}, ${extra}, ${blocks}, NOW() - INTERVAL '${k} hours')`);
+        // The #6039 inputs, drawn from small sets so equal-points ties get
+        // decided by the rate and the breadth — the tie-breaks this suite
+        // exists to hold the two queries to. graded_points is kept <= points
+        // as the schema's meaning requires (graded is a subset of scored).
+        const rate = [null, 0, 33.33, 50, 100][Math.floor(rand() * 5)];
+        const graded = Math.min(points, [0, 0, 10, 25, 40][Math.floor(rand() * 5)]);
+        const challenges = Math.floor(rand() * 6);
+        rows.push(`(${eventId}, ${user}, ${points}, ${extra}, ${blocks}, ${rate === null ? 'NULL' : rate}, `
+          + `${graded}, ${challenges}, NOW() - INTERVAL '${k} hours')`);
       }
     }
   }
   await pool.query(
     `INSERT INTO leaderboard_snapshots
-       (season_event_id, user_id, total_points, extra_points, event_total_produced_blocks, snapshot_at)
+       (season_event_id, user_id, total_points, extra_points, event_total_produced_blocks,
+        event_success_rate, graded_points, distinct_challenges, snapshot_at)
      VALUES ${rows.join(',')}`,
   );
 }
@@ -142,6 +155,11 @@ test('computeOwnStanding matches computeStandings for every user and scope', asy
           extra_points: expected.extra_points,
           events_participated: expected.events_participated,
           total_produced_blocks: expected.total_produced_blocks,
+          // #6039: the same three fields the season aggregate carries, so
+          // the one-row answer ranks by the same rule.
+          standings_score: expected.standings_score,
+          graded_points: expected.graded_points,
+          distinct_challenges: expected.distinct_challenges,
         }, label);
       }
     }

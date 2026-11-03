@@ -274,7 +274,15 @@ function latestPerUserForEvent(eventId) {
   return [...byUser.values()];
 }
 
+// A per-test override for the shared aggregate's rows (#6039). The fixture
+// board's own order is pinned by other tests (dave leads, alice shares with
+// the last normal player), so a test that needs to see the new ranking rule
+// move someone sets this, runs its request, and clears it — never by
+// editing the shared fixtures in place.
+let standingsOverride = null;
+
 function computeStandingsRows(seasonId, sql) {
+  if (standingsOverride) return standingsOverride;
   const events = SEASON_EVENTS.filter((e) => !e.internal && (seasonId == null || e.season_id === seasonId));
   const byUser = new Map();
   for (const e of events) {
@@ -282,11 +290,19 @@ function computeStandingsRows(seasonId, sql) {
       const acc = byUser.get(s.user_id) || {
         user_id: s.user_id, total_points: 0, extra_points: 0, events: new Set(),
         total_produced_blocks: 0, lastStartsAt: null, lastProduced: 0,
+        // #6039: the season aggregate sums the stored inputs and re-derives
+        // the score from the sums, exactly as STANDINGS_SQL does.
+        graded_points: 0, distinct_challenges: 0, producedByRate: 0,
       };
       acc.total_points += Number(s.total_points);
       acc.extra_points += Number(s.extra_points);
       acc.events.add(s.season_event_id);
       acc.total_produced_blocks += Number(s.event_total_produced_blocks) || 0;
+      acc.graded_points += Number(s.graded_points) || 0;
+      acc.distinct_challenges += Number(s.distinct_challenges) || 0;
+      // won slots implied by the snapshot's own rate (won = produced / rate).
+      const rate = s.event_success_rate == null ? 0 : Number(s.event_success_rate);
+      if (rate > 0) acc.producedByRate += (Number(s.event_total_produced_blocks) || 0) / (rate / 100);
       if (!acc.lastStartsAt || e.starts_at > acc.lastStartsAt) {
         acc.lastStartsAt = e.starts_at;
         acc.lastProduced = Number(s.event_total_produced_blocks) || 0;
@@ -303,11 +319,29 @@ function computeStandingsRows(seasonId, sql) {
       events_participated: acc.events.size,
       total_produced_blocks: acc.total_produced_blocks,
       total_produced_blocks_last_event: acc.lastProduced,
+      // #6039: the fields the real aggregate now carries, so a caller's
+      // rank reaches the row the same way it does against Postgres. The
+      // score is the shared JS spelling of the same formula.
+      standings_score: Math.round(
+        acc.total_points
+        * (1 + 0.25 * (acc.total_points > 0 && acc.graded_points > 0
+          ? Math.min(acc.graded_points / acc.total_points, 1) : 0))
+        * (1 + Math.min(0.2, 0.02 * Math.max(acc.distinct_challenges, 0))) * 100) / 100,
+      graded_points: acc.graded_points,
+      distinct_challenges: acc.distinct_challenges,
+      event_success_rate: acc.producedByRate > 0
+        ? Math.round((acc.total_produced_blocks / acc.producedByRate) * 10000) / 100 : null,
       is_non_podium: user.exclude_podium,
       ...identityCols(sql, user),
     };
   });
-  rows.sort((a, b) => Number(b.total_points) - Number(a.total_points) || a.user_id - b.user_id);
+  // The #6039 chain: score DESC, rate DESC NULLS LAST, blocks DESC,
+  // challenges DESC, user_id ASC.
+  rows.sort((a, b) => b.standings_score - a.standings_score
+    || ((b.event_success_rate ?? -1) - (a.event_success_rate ?? -1))
+    || b.total_produced_blocks - a.total_produced_blocks
+    || b.distinct_challenges - a.distinct_challenges
+    || a.user_id - b.user_id);
   return rows;
 }
 
@@ -931,6 +965,38 @@ test("GET /leaderboard: a 'season'-type event computes its rank live via the sha
   assert.equal(dave.rank, 1);
   assert.equal(dave.wallet_address, null);
   assert.equal(dave.bug_report_points, 0);
+});
+
+test("#6039: the season board ranks by the standing score chain, not raw points", async () => {
+  // Two rows with the same 1,000 points and the same block output: only the
+  // new tie-break chain separates them. The row with graded work and a
+  // wider challenge spread leads, and the podium-excluded one shares the
+  // next rank without consuming a slot — exactly what assignSharedRanks
+  // does with the new order feeding it.
+  const mk = (userId, graded, challenges, score) => ({
+    user_id: userId,
+    total_points: '1000.00', extra_points: '0.00', events_participated: 1,
+    total_produced_blocks: 3, total_produced_blocks_last_event: 3,
+    standings_score: score, graded_points: graded, distinct_challenges: challenges,
+    event_success_rate: 50, is_non_podium: userId === 1,
+    email: null, telegram: null, discord: null, display_name: `u${userId}`, username: `u${userId}`,
+  });
+  // The excluded row sits MID-list, so it shares the next rank (rather than
+  // landing last with no one to share with).
+  standingsOverride = [mk(4, 1000, 9, 1300), mk(1, 1000, 5, 1100), mk(2, 0, 1, 1000)];
+  try {
+    const res = await get('/api/v4/leaderboard?season_event_id=103&include_non_podium=1');
+    assert.equal(res.status, 200);
+    const rows = (await res.json()).data.leaderboard;
+    // The rows arrive in the order the new chain produces (1,300 → 1,100 →
+    // 1,000); assignSharedRanks then gives the podium-excluded row the
+    // SAME rank as the next normal player without consuming a slot.
+    assert.deepEqual(rows.map((r) => r.rank), [1, 2, 2]);
+    assert.deepEqual(rows.map((r) => r.display_name), ['u4', 'u1', 'u2'],
+      'the score chain orders the board, and the excluded row shares the next rank');
+  } finally {
+    standingsOverride = null;
+  }
 });
 
 // ─── GET /leaderboard/global ─────────────────────────────────────────

@@ -22,6 +22,7 @@ let currentMockPool = null;
 poolMod.getPool = () => currentMockPool;
 
 const { buildSnapshots, SNAPSHOT_COLUMNS } = require('../src/services/topochain/snapshot-builder');
+const { standingScore } = require('../src/services/topochain/standing-score');
 const { leaderboardAdminRoutes } = require('../src/routes/topochain/admin/leaderboard');
 const { topochainAdminRoutes } = require('../src/routes/topochain/admin');
 const { topochainPublicRoutes } = require('../src/routes/topochain/public');
@@ -234,6 +235,26 @@ function handleQuery(rawSql, params = []) {
       if (prev === undefined || r.slot_time_ms < prev) byEpoch.set(r.epoch, r.slot_time_ms);
     }
     return { rows: [...byEpoch.entries()].map(([epoch, ms]) => ({ epoch, first_slot_time_ms: String(ms) })) };
+  }
+
+  // Builder (#6039): the standing-score inputs — graded points and the
+  // distinct-challenge count for one event's ledger. Distinguished from the
+  // per-type sums below by the grade filter.
+  if (sql.includes("metadata->'grade'")) {
+    const eventId = params[0];
+    const byUser = new Map();
+    for (const a of db.userActivities) {
+      if (a.season_event_id !== eventId) continue;
+      const acc = byUser.get(a.user_id) || { graded: 0, challenges: new Set() };
+      if (a.metadata && a.metadata.grade != null) acc.graded += Number(a.points) || 0;
+      if (a.challenge_id != null) acc.challenges.add(a.challenge_id);
+      byUser.set(a.user_id, acc);
+    }
+    return {
+      rows: [...byUser.entries()].map(([userId, acc]) => ({
+        user_id: userId, graded_points: String(acc.graded), distinct_challenges: acc.challenges.size,
+      })),
+    };
   }
 
   // Builder + refresh-totals: the per-type ledger sums.
@@ -543,6 +564,42 @@ test('builder: a points-only event scores its ledger at face value, whatever the
   assert.equal(byUser.get(4).rank, 1);
   assert.equal(byUser.get(2).rank, 2);
   assert.equal(byUser.get(1).total_points, 100);
+});
+
+test('builder: the standing score sets the three columns and the sort order (#6039)', async () => {
+  // A clean, points-only board with a deliberate pair: bob holds MORE points
+  // with a plain record; dave holds FEWER but every point was graded and he
+  // scored on ten of the season's challenges. The two capped factors are
+  // enough to move dave past bob — which is the whole point of the smarter
+  // rank, and what a raw-points sort could never do.
+  db.userActivities = [
+    { user_id: 2, season_event_id: 102, activity_type: 'block_produced', points: 3800, challenge_id: 1 },
+    ...Array.from({ length: 10 }, (_, i) => ({
+      user_id: 4, season_event_id: 102, activity_type: 'graded', points: 320, challenge_id: 100 + i,
+      metadata: { grade: { score: 320, reason: 'x', model: 'fixture' } },
+    })),
+  ];
+
+  await buildSnapshots(currentMockPool, { seasonEventId: 102, now: new Date() });
+
+  const rows = db.leaderboardSnapshots.filter((r) => r.season_event_id === 102);
+  const bob = rows.find((r) => r.user_id === 2);
+  const dave = rows.find((r) => r.user_id === 4);
+
+  // The three columns, worked out by the shared service.
+  assert.equal(bob.graded_points, 0);
+  assert.equal(bob.distinct_challenges, 1);
+  assert.equal(bob.standings_score, standingScore({ totalPoints: 3800, gradedPoints: 0, distinctChallenges: 1 }));
+  assert.equal(dave.graded_points, 3200);
+  assert.equal(dave.distinct_challenges, 10);
+  assert.equal(dave.standings_score, standingScore({ totalPoints: 3200, gradedPoints: 3200, distinctChallenges: 10 }));
+
+  // The order the board paints in: dave first despite fewer points.
+  assert.ok(dave.standings_score > bob.standings_score, 'the lift must beat the points gap');
+  assert.equal(dave.rank, 1);
+  assert.equal(bob.rank, 2);
+  // ...and the score never falls below a player's own points.
+  for (const r of rows) assert.ok(Number(r.standings_score) >= Number(r.total_points));
 });
 
 test('builder: a points-only row reports no blocks rather than a missed block', async () => {

@@ -83,6 +83,8 @@ type BodyView =
       rows: RowView[];
       you?: YouView | null;
       nonPodiumToggle: NonPodiumToggle | null;
+      /** #6039: how a place is worked out; rendered under the table. */
+      orderNote?: boolean;
       pagination: {
         page: number;
         totalPages: number;
@@ -146,6 +148,22 @@ const FIGURE = 'px-4 py-3 text-[0.9375rem] tabular-nums text-right';
 function Disclaimer({ text }: { text: string | null }): ReactNode {
   if (!text) return null;
   return <p id="tc-lb-disclaimer" className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">{text}</p>;
+}
+
+/**
+ * #6039: the board stopped ranking on points alone, so the table says in
+ * plain words how a place is worked out and who wins a tie. It reuses the
+ * disclaimer's own muted style, sits directly under the table and above the
+ * page controls, and shows only on the table state (there is no order to
+ * explain on an empty, error or private board).
+ */
+function OrderNote(): ReactNode {
+  const t = useMessages('leaderboard');
+  return (
+    <p id="tc-lb-order-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
+      {t('leaderboard:standings.orderNote')}
+    </p>
+  );
 }
 
 /**
@@ -462,6 +480,7 @@ function Body({ view, drill }: { view: BodyView | null; drill: DrillView | null 
       <YouLine you={view.you} />
       <NonPodiumChip toggle={view.nonPodiumToggle} />
       <StandingsTable view={view} drill={drill} />
+      {view.orderNote ? <OrderNote /> : null}
       <Pagination meta={view.pagination} />
     </>
   );

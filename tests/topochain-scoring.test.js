@@ -325,3 +325,74 @@ test('offchain columns: zero weight zeroes everything; missing types read as 0',
   assert.equal(cols.bug_report_points, 0);
   assert.equal(cols.top_3_points, 0);
 });
+
+// ─── The standing score's two factors (#6039) ───────────────────────────
+//
+// The smarter-rank first version: one score per player per board, made of
+// the player's points lifted by a capped quality factor (how much of their
+// work the grader judged) and a capped breadth factor (how many of the
+// season's challenges they scored on). These pin the arithmetic alone; the
+// SQL spellings of the same expressions are held against these on real
+// Postgres (tests/topochain-own-standing.test.js).
+
+const {
+  qualityFactor,
+  breadthFactor,
+  standingScore,
+  compareStandingRows,
+  standingOrderBy,
+} = require('../src/services/topochain/standing-score');
+
+test('qualityFactor: 1 with nothing graded or no points, and exactly 1.25 at the cap', () => {
+  assert.equal(qualityFactor(0, 100), 1, 'nothing graded → no lift');
+  assert.equal(qualityFactor(100, 0), 1, 'no points → no lift (never a divide-by-zero)');
+  assert.equal(qualityFactor(0, 0), 1);
+  // Nothing is graded at more than 100% of points, so the ratio caps at 1:
+  // 1 + 0.25 * 1 = 1.25 is the ceiling.
+  assert.equal(qualityFactor(100, 100), 1.25);
+  assert.equal(qualityFactor(150, 100), 1.25, 'a ratio over 1 cannot lift past the cap');
+  assert.equal(qualityFactor(50, 100), 1.125, 'half the points graded → half the lift');
+});
+
+test('breadthFactor: 1 at zero challenges, 2% each, clamped at 1.20', () => {
+  assert.equal(breadthFactor(0), 1);
+  assert.equal(breadthFactor(1), 1.02);
+  assert.equal(breadthFactor(5), 1.1);
+  assert.equal(breadthFactor(10), 1.2);
+  assert.equal(breadthFactor(11), 1.2, 'clamps at ten challenges');
+  assert.equal(breadthFactor(500), 1.2);
+});
+
+test('standingScore: both factors lift, and the score is never below total_points', () => {
+  // Nothing graded, one challenge: only the small breadth lift.
+  assert.equal(standingScore({ totalPoints: 1000, gradedPoints: 0, distinctChallenges: 1 }), 1020);
+  // Everything graded, ten challenges: both caps → 1000 * 1.25 * 1.20.
+  assert.equal(standingScore({ totalPoints: 1000, gradedPoints: 1000, distinctChallenges: 10 }), 1500);
+  // The floor: a zero-point or ungraded-zero-breadth player keeps their points.
+  assert.equal(standingScore({ totalPoints: 750, gradedPoints: 0, distinctChallenges: 0 }), 750);
+  assert.equal(standingScore({ totalPoints: 0, gradedPoints: 0, distinctChallenges: 5 }), 0);
+  // Rounded to 2 dp.
+  assert.equal(standingScore({ totalPoints: 333.33, gradedPoints: 100, distinctChallenges: 3 }), 379.83);
+  // Monotone in points: more points, same factors, is never a smaller score.
+  assert.ok(standingScore({ totalPoints: 2000, gradedPoints: 400, distinctChallenges: 4 })
+    >= standingScore({ totalPoints: 1000, gradedPoints: 400, distinctChallenges: 4 }));
+});
+
+test('compareStandingRows: score, then rate (null last), blocks, challenges, user_id', () => {
+  const rows = [
+    { user_id: 3, standings_score: 1200, event_success_rate: 40, event_total_produced_blocks: 5, distinct_challenges: 2 },
+    { user_id: 1, standings_score: 1200, event_success_rate: null, event_total_produced_blocks: 9, distinct_challenges: 9 },
+    { user_id: 2, standings_score: 1200, event_success_rate: 40, event_total_produced_blocks: 5, distinct_challenges: 7 },
+    { user_id: 4, standings_score: 999, event_success_rate: 100, event_total_produced_blocks: 100, distinct_challenges: 100 },
+  ];
+  const sorted = rows.slice().sort(compareStandingRows).map((r) => r.user_id);
+  // 1200 loses to nothing; among the 1200s, rate 40 beats null, then the
+  // 7-challenge row beats the 2, then user_id breaks the rest.
+  assert.deepEqual(sorted, [2, 3, 1, 4]);
+});
+
+test('standingOrderBy: one chain, shared by every surface that ranks a board', () => {
+  assert.equal(standingOrderBy(),
+    'standings_score DESC, event_success_rate DESC NULLS LAST, '
+    + 'event_total_produced_blocks DESC, distinct_challenges DESC, user_id ASC');
+});

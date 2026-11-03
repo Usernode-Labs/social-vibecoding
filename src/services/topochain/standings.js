@@ -28,6 +28,11 @@
 'use strict';
 
 const { num } = require('../../routes/topochain/helpers');
+const {
+  standingOrderBy,
+  standingScoreSql,
+  seasonSuccessRateSql,
+} = require('./standing-score');
 
 // The §4.10 aggregate, extended with:
 //   - `total_produced_blocks_last_event` — SPEC's `GET /leaderboard/global`
@@ -47,7 +52,8 @@ const STANDINGS_SQL = `
   WITH latest AS (
     SELECT DISTINCT ON (ls.season_event_id, ls.user_id)
            ls.user_id, ls.season_event_id, ls.total_points, ls.extra_points,
-           ls.event_total_produced_blocks, se.starts_at
+           ls.event_total_produced_blocks, ls.event_success_rate,
+           ls.graded_points, ls.distinct_challenges, se.starts_at
       FROM leaderboard_snapshots ls
       JOIN season_events se ON se.id = ls.season_event_id
      WHERE se.internal = FALSE
@@ -66,6 +72,23 @@ const STANDINGS_SQL = `
          COUNT(DISTINCT l.season_event_id)         AS events_participated,
          SUM(l.event_total_produced_blocks)        AS total_produced_blocks,
          MAX(le.total_produced_blocks_last_event)  AS total_produced_blocks_last_event,
+         -- #6039: the season board re-derives the SAME two factors the
+         -- per-event board applies, over the SUMS of the stored inputs —
+         -- so one rule ranks both surfaces. The tie-break rate is the
+         -- scope's own produced ÷ won, kept NULL when no slots were won
+         -- anywhere (the "null sorts last" case); the two factors and the
+         -- score come from standing-score.js, never a second spelling.
+         SUM(l.graded_points)                      AS graded_points,
+         SUM(l.distinct_challenges)                AS distinct_challenges,
+         ${standingScoreSql({
+           totalPoints: 'SUM(l.total_points)',
+           gradedPoints: 'SUM(l.graded_points)',
+           distinctChallenges: 'SUM(l.distinct_challenges)',
+         })}                                        AS standings_score,
+         ${seasonSuccessRateSql({
+           producedBlocks: 'l.event_total_produced_blocks',
+           successRate: 'l.event_success_rate',
+         })}                                        AS season_success_rate,
          u.exclude_podium AS is_non_podium,
          u.email, u.telegram, u.discord, u.display_name, u.username
     FROM latest l
@@ -73,7 +96,13 @@ const STANDINGS_SQL = `
     LEFT JOIN last_event le ON le.user_id = l.user_id
    GROUP BY l.user_id, u.exclude_podium, u.email, u.telegram, u.discord, u.display_name,
             u.username
-   ORDER BY SUM(l.total_points) DESC, l.user_id ASC
+   ORDER BY ${standingOrderBy({
+     score: 'standings_score',
+     rate: 'season_success_rate',
+     blocks: 'SUM(l.event_total_produced_blocks)',
+     challenges: 'SUM(l.distinct_challenges)',
+     user: 'l.user_id',
+   })}
 `;
 
 // ─── Shared-rank rule (SPEC 959, 2957) ──────────────────────────────────
@@ -99,10 +128,11 @@ function assignSharedRanks(rows) {
 // computeStandings(pool, { seasonId }) -> ranked rows for one scope.
 //   seasonId undefined/null -> all-time (every public event, any season).
 //   seasonId set            -> that one season's public events only.
-// Returns rows pre-sorted by total_points DESC (then user_id ASC to keep
-// ties deterministic) with `rank` assigned per the shared-rank rule
-// above. Numbers are already cast (num()/Number()) so callers can hand
-// them straight to `ok()` without a second pass.
+// Returns rows pre-sorted by the standing score and its tie-break chain
+// (#6039, the SAME order the builder writes the per-event board in) with
+// `rank` assigned per the shared-rank rule above. Numbers are already
+// cast (num()/Number()) so callers can hand them straight to `ok()`
+// without a second pass.
 async function computeStandings(pool, { seasonId = null } = {}) {
   const { rows } = await pool.query(STANDINGS_SQL, [seasonId]);
   const cast = rows.map((r) => ({
@@ -112,6 +142,11 @@ async function computeStandings(pool, { seasonId = null } = {}) {
     events_participated: Number(r.events_participated) || 0,
     total_produced_blocks: Number(r.total_produced_blocks) || 0,
     total_produced_blocks_last_event: Number(r.total_produced_blocks_last_event) || 0,
+    // #6039: the standing score and its two inputs, carried so a caller can
+    // show why a row sits where it does (the drill-down's figures).
+    standings_score: num(r.standings_score) ?? 0,
+    graded_points: num(r.graded_points) ?? 0,
+    distinct_challenges: Number(r.distinct_challenges) || 0,
     is_non_podium: !!r.is_non_podium,
     email: r.email,
     telegram: r.telegram,
@@ -159,7 +194,20 @@ const OWN_STANDING_SQL = `
            SUM(ls.total_points)                AS total_points,
            SUM(ls.extra_points)                AS extra_points,
            COUNT(DISTINCT ls.season_event_id)  AS events_participated,
-           SUM(ls.event_total_produced_blocks) AS total_produced_blocks
+           SUM(ls.event_total_produced_blocks) AS total_produced_blocks,
+           -- #6039: the same inputs the season aggregate carries, so this
+           -- one-row answer ranks by the same rule (see STANDINGS_SQL).
+           SUM(ls.graded_points)               AS graded_points,
+           SUM(ls.distinct_challenges)         AS distinct_challenges,
+           ${standingScoreSql({
+             totalPoints: 'SUM(ls.total_points)',
+             gradedPoints: 'SUM(ls.graded_points)',
+             distinctChallenges: 'SUM(ls.distinct_challenges)',
+           })}                                  AS standings_score,
+           ${seasonSuccessRateSql({
+             producedBlocks: 'ls.event_total_produced_blocks',
+             successRate: 'ls.event_success_rate',
+           })}                                  AS season_success_rate
       FROM latest_at la
       JOIN leaderboard_snapshots ls
         ON ls.season_event_id = la.season_event_id
@@ -169,17 +217,25 @@ const OWN_STANDING_SQL = `
   ),
   ranked AS (
     SELECT t.user_id, t.total_points, t.extra_points, t.events_participated,
-           t.total_produced_blocks,
+           t.total_produced_blocks, t.standings_score, t.graded_points,
+           t.distinct_challenges,
            COUNT(*) OVER () AS total_participants,
            1 + COALESCE(SUM(CASE WHEN u.exclude_podium THEN 0 ELSE 1 END) OVER (
-                 ORDER BY t.total_points DESC, t.user_id ASC
+                 ORDER BY ${standingOrderBy({
+                   score: 't.standings_score',
+                   rate: 't.season_success_rate',
+                   blocks: 't.total_produced_blocks',
+                   challenges: 't.distinct_challenges',
+                   user: 't.user_id',
+                 })}
                  ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                ), 0) AS rank
       FROM totals t
       JOIN users u ON u.id = t.user_id
   )
   SELECT user_id, total_points, extra_points, events_participated,
-         total_produced_blocks, total_participants, rank
+         total_produced_blocks, standings_score, graded_points,
+         distinct_challenges, total_participants, rank
     FROM ranked
    WHERE user_id = $2
 `;
@@ -210,6 +266,11 @@ async function computeOwnStanding(pool, { seasonId = null, userId } = {}) {
         extra_points: num(r.extra_points) ?? 0,
         events_participated: Number(r.events_participated) || 0,
         total_produced_blocks: Number(r.total_produced_blocks) || 0,
+        // #6039: the standing score and its two inputs, matching what
+        // computeStandings() carries so the two agree field for field.
+        standings_score: num(r.standings_score) ?? 0,
+        graded_points: num(r.graded_points) ?? 0,
+        distinct_challenges: Number(r.distinct_challenges) || 0,
       },
       totalParticipants: Number(r.total_participants) || 0,
     };

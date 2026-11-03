@@ -148,6 +148,12 @@ async function fetchEventLeaderboardRows(pool, event) {
     rank: s.rank,
     total_points: s.total_points,
     extra_points: s.extra_points,
+    // #6039: the season board's standing score and its two inputs, carried
+    // onto the row shape so a season row and a per-event row expose the same
+    // fields (the per-event path gets them from `l.*`).
+    standings_score: s.standings_score,
+    graded_points: s.graded_points,
+    distinct_challenges: s.distinct_challenges,
     exclude_podium: s.is_non_podium,
     email: s.email,
     telegram: s.telegram,

@@ -68,6 +68,11 @@
 
 const { assignSharedRanks } = require('./standings');
 const {
+  standingScore,
+  compareStandingRows,
+  ACTIVITY_STANDING_INPUTS_SQL,
+} = require('./standing-score');
+const {
   round2,
   resolveOffchainWeight,
   epochRatio,
@@ -225,6 +230,10 @@ const SNAPSHOT_COLUMNS = [
   'vrf_total_won_slots', 'canonical_total_won_slots', 'canonical_total_produced_blocks',
   'canonical_won_slots_up_to_current', 'canonical_produced_blocks_up_to_current',
   'max_bp_success_rate_up_to_current', 'season_id', 'challenge_details',
+  // #6039: the standing score and the two inputs it is derived from. Written
+  // on every snapshot so a read never re-computes them (the score is the sort
+  // key) and the season aggregate can sum them.
+  'standings_score', 'graded_points', 'distinct_challenges',
 ];
 
 const SNAPSHOT_UPSERT_SQL = `
@@ -462,9 +471,30 @@ async function aggregateEvent(pool, event, now) {
 // — the two paths differ in how the numbers are worked out, never in
 // what a snapshot row means.
 async function writeSnapshots(pool, event, rows, now) {
-  rows.sort((a, b) => b.total_points - a.total_points
-    || b.event_total_produced_blocks - a.event_total_produced_blocks
-    || a.user_id - b.user_id);
+  // The two factor inputs, one aggregate over the event's points ledger: how
+  // many of a player's points the grader judged, and how many different
+  // challenges they scored on (#6039). Read here, once per event, rather than
+  // threaded through both scoring paths — a row's score is a property of the
+  // snapshot, whatever produced its points.
+  const { rows: inputRows } = await pool.query(ACTIVITY_STANDING_INPUTS_SQL, [event.id]);
+  const inputsByUser = new Map(inputRows.map((r) => [Number(r.user_id), r]));
+
+  for (const row of rows) {
+    const inputs = inputsByUser.get(Number(row.user_id)) || {};
+    row.graded_points = round2(Number(inputs.graded_points) || 0);
+    row.distinct_challenges = Number(inputs.distinct_challenges) || 0;
+    row.standings_score = standingScore({
+      totalPoints: row.total_points,
+      gradedPoints: row.graded_points,
+      distinctChallenges: row.distinct_challenges,
+    });
+  }
+
+  // The board's order: the standing score first, then the tie-break chain
+  // (rate, blocks, challenge breadth, user_id) — the SAME chain standings.js
+  // orders its queries by, so the stored per-event board and the live season
+  // aggregate cannot disagree about the same person.
+  rows.sort(compareStandingRows);
   const ranked = assignSharedRanks(rows);
 
   const client = await pool.connect();
