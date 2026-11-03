@@ -51,7 +51,9 @@ preview's environment, so none relied on a copied row.
 A preview runs its proposal's own code, and shots run both revisions'. Code
 that can boot from an empty database carries `src/db/preview-boot.json`
 (`startsEmpty`), which the platform reads before building
-(`platform-preview-data-policy.js` `startsEmpty`). A platform preview of code
+(`platform-preview-data-policy.js` `startsEmpty`). The preview build reads it
+from the commit (`staging.js` `commitStartsEmpty`): on Kubernetes its clone
+carries only the root's files, so `src/` is not on disk. A platform preview of code
 without it is refused ("Update it with main to preview it",
 `services/staging.js`), and so is a shots pair either revision of which lacks
 it (`shots_preview_needs_update`, `services/shots-environment.js`): started

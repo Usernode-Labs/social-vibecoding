@@ -268,10 +268,49 @@ test('code that cannot start a platform preview empty is refused before any data
   assert.equal(policy.startsEmpty(path.join(__dirname, '..')), true, 'this code can');
   // Both builders ask before they make a database.
   const staging = fs.readFileSync(path.join(__dirname, '../src/services/staging.js'), 'utf8');
-  const refuse = staging.indexOf('previewPolicy.startsEmpty(cloneDir)');
+  const refuse = staging.indexOf('previewPolicy.sourceIdentity(prodDbName) && !await commitStartsEmpty(cloneDir)');
   assert.ok(refuse > 0 && refuse < staging.indexOf('dbManager.cloneDatabase(prodDbName'), 'the preview build refuses before it clones');
   const shots = fs.readFileSync(path.join(__dirname, '../src/services/shots-environment.js'), 'utf8');
   const both = shots.indexOf('[baseCheckout, headCheckout].every((checkout) => previewPolicy.startsEmpty(checkout.dir))');
   assert.ok(both > 0 && both < shots.indexOf('dbManager.prepareStagingCloneSource('), 'shots refuse before preparing a source');
   assert.match(shots, /'shots_preview_needs_update', previewPolicy\.NEEDS_UPDATE/);
+});
+
+// On Kubernetes the preview build's clone carries only the root's files
+// (staging.js rootOnly: --filter=blob:none --sparse), so the marker under
+// src/db is never on disk there: the build reads it from the commit
+// (3 Nov 2026: read from disk, it refused every platform preview).
+test('a preview build reads the marker from the commit, which a root-only clone has', async () => {
+  const os = require('node:os');
+  const { execFileSync } = require('node:child_process');
+  const staging = require('../src/services/staging');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-boot-git-'));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { stdio: 'pipe' });
+  const origin = path.join(root, 'origin');
+  const cloneAs = (name) => {
+    const dir = path.join(root, name);
+    git('clone', '-q', '--depth', '1', '--filter=blob:none', '--sparse', `file://${origin}`, dir);
+    return dir;
+  };
+  try {
+    fs.mkdirSync(path.join(origin, 'src', 'db'), { recursive: true });
+    git('-C', origin, 'init', '-q');
+    git('-C', origin, 'config', 'uploadpack.allowFilter', 'true');
+    fs.writeFileSync(path.join(origin, 'dapp.json'), '{}');
+    fs.writeFileSync(path.join(origin, 'src', 'db', 'preview-boot.json'), '{"startsEmpty":1}');
+    git('-C', origin, 'add', '-A');
+    git('-C', origin, 'commit', '-qm', 'can start empty');
+    const marked = cloneAs('marked');
+    assert.equal(fs.existsSync(path.join(marked, 'dapp.json')), true, 'root files are there');
+    assert.equal(fs.existsSync(path.join(marked, 'src', 'db', 'preview-boot.json')), false, 'src/ is not, as on Kubernetes');
+    assert.equal(policy.startsEmpty(marked), false, 'so the working tree cannot tell');
+    assert.equal(await staging.commitStartsEmpty(marked), true, 'the commit can');
+    fs.writeFileSync(path.join(origin, 'src', 'db', 'preview-boot.json'), '{"startsEmpty":0}');
+    git('-C', origin, 'commit', '-qam', 'not this support');
+    assert.equal(await staging.commitStartsEmpty(cloneAs('unsupported')), false);
+    git('-C', origin, 'rm', '-q', 'src/db/preview-boot.json');
+    git('-C', origin, 'commit', '-qm', 'from before');
+    assert.equal(await staging.commitStartsEmpty(cloneAs('before')), false, 'no marker');
+    assert.equal(await staging.commitStartsEmpty(path.join(root, 'nowhere')), false, 'git cannot say: refused');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
