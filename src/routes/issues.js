@@ -375,6 +375,16 @@ function stagingMockIssues(repoUrl) {
       + 'building. Nobody has claimed it yet. The page says the bot is on it, '
       + 'and still offers Claim for anyone who wants to work on it alongside '
       + 'the bot, but not Start work.', 2),
+    // 3 Nov 2026 (#6213): the request Homeroom bot handed back to a person.
+    // Its discussion carries the note with the suggested replies the person
+    // it names taps (the seeded thread, seedStagingBotWaitingRows in
+    // src/db/migrate.js). A staging copy has no GitHub to read the request
+    // from, so its page's own fetch finds it here, and only the after copy
+    // has it. Nothing else reads this row; the note is the stored message.
+    mk(9103, 'Staging demo: a request handed back to a person',
+      'Staging demo: obviously fake. The bot handed this back because a '
+      + 'person must decide which of the two columns to keep.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 26),
   ];
 }
 
