@@ -103,7 +103,7 @@ function threadsInSql(viewer) {
 const THREADS_SQL = `
 WITH mine AS (${threadsInSql('$1')})
 SELECT * FROM (
-SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
+SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
        a.slug, a.name, a.icon_emoji, a.icon_image_id,
        req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
@@ -322,9 +322,12 @@ function heldBy(capSuppressed) {
  * or wrote in asks nothing more of them). `now` is a Date; `botId` is
  * Homeroom bot's account, so a change it is making says so. `bot` is the
  * bot's stage for the thread's request when it works on it for them
- * (`{ stage, since, capSuppressed }`, botStages), which wins.
+ * (`{ stage, since, capSuppressed }`, botStages), which wins. `facts` is
+ * what the bot's own records say of the request (requestFacts): its newest
+ * live run, its queue place, its labels and whether the viewer decides on
+ * its project.
  */
-function standing(row, viewerId, now = new Date(), botId = null, bot = null) {
+function standing(row, viewerId, now = new Date(), botId = null, bot = null, facts = null) {
   const status = row.change_status || null;
   const theirs = row.change_user != null && Number(row.change_user) === Number(viewerId);
   // In progress is their own work: asked for, built, or followed.
@@ -346,10 +349,14 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null) {
   // a claim): that is where it stands now.
   if (said && (said.what === 'decide' || said.what === 'build_stopped') && (status || row.claimed_by)) said = undefined;
   if (said) {
+    // #6158: a queued or held build also says its place in line.
+    const place = facts && said.what === 'queued' ? facts.queuePlace
+      : facts && said.what === 'held' ? facts.heldPlace : null;
     return {
       ...said,
       at: iso(bot.since || row.last_activity_at || row.request_at || row.created_at),
       ...(said.what === 'held' ? { heldBy: heldBy(bot.capSuppressed) } : {}),
+      ...(place ? { place } : {}),
     };
   }
   if (status === 'merging') return own ? { group: 'next', what: 'merging', at: iso(row.merged_at || row.promoted_at) } : null;
@@ -393,7 +400,37 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null) {
   if (row.request_state === 'open' || row.kind === 'decision') {
     const at = row.request_at || row.created_at;
     const quiet = at ? Math.floor((now - new Date(at)) / DAY_MS) : 0;
-    return { group: 'waiting', what: 'not_picked_up', at: iso(at), quietDays: quiet >= 7 ? quiet : 0 };
+    const quietDays = quiet >= 7 ? quiet : 0;
+    // #6158: what the request waits on, from the bot's own records, whoever
+    // the request was filed by (botStages only covers the bot's requesters).
+    const f = facts && row.number != null ? facts : null;
+    if (f) {
+      const base = { at: iso(at), quietDays };
+      // In Homeroom bot's line on its project.
+      if (f.queuePlace) return { group: 'waiting', what: 'queued', ...base, place: f.queuePlace };
+      // Read and ready, but a limit on the project holds the build.
+      if (f.run && f.run.held) {
+        return { group: 'waiting', what: 'held', ...base, heldBy: heldBy(f.run.capSuppressed), ...(f.heldPlace ? { place: f.heldPlace } : {}) };
+      }
+      const reason = f.run ? firstLine(f.run.reason, 140) || null : null;
+      // Handed back: the requester's (and the project's deciders') to
+      // decide, anyone else's to wait on.
+      if (f.run && f.run.verdict === 'person') {
+        return f.viewerDecides
+          ? { group: 'needs', what: 'decide', ...base, ...(reason ? { reason } : {}) }
+          : { group: 'waiting', what: 'needs_person', ...base, ...(reason ? { reason } : {}) };
+      }
+      if (f.run && f.run.verdict === 'empty') {
+        return { group: 'waiting', what: 'nothing_to_build', ...base, ...(reason ? { reason } : {}) };
+      }
+      const title = row.request_title || row.thread_title || '';
+      const labels = Array.isArray(f.labels) ? f.labels : [];
+      if (/^operator:/i.test(String(title)) || labels.some((l) => /^(operator|infra)$/i.test(String(l)))) {
+        return { group: 'waiting', what: 'operator', ...base };
+      }
+      if (!f.run) return { group: 'waiting', what: 'not_read', ...base };
+    }
+    return { group: 'waiting', what: 'not_picked_up', at: iso(at), quietDays };
   }
   return null;
 }
@@ -406,15 +443,21 @@ const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building
 // build waiting its turn or held back, a request waiting to be read, then one
 // nobody has picked up.
 const WAITING_ORDER = {
-  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5, not_picked_up: 6,
+  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5,
+  not_picked_up: 6, needs_person: 6, nothing_to_build: 6, operator: 6, not_read: 6,
 };
+
+// #6158: the Waiting rows nobody is moving, which the tab folds under one
+// "Not moving" head. They sort last, newest first, as not_picked_up does.
+const STILL_WHATS = new Set(['not_picked_up', 'needs_person', 'nothing_to_build', 'operator', 'not_read']);
 
 /** The key a thread's request is matched to the bot's stage by. */
 const botKey = (slug, number) => `${slug}#${Number(number)}`;
 
-function shapeThread(row, viewerId, now, botId, bots) {
+function shapeThread(row, viewerId, now, botId, bots, facts) {
   const bot = bots && row.slug && row.number != null ? bots.get(botKey(row.slug, row.number)) || null : null;
-  const stand = standing(row, viewerId, now, botId, bot);
+  const about = facts && row.slug && row.number != null ? facts.get(botKey(row.slug, row.number)) || null : null;
+  const stand = standing(row, viewerId, now, botId, bot, about);
   if (!stand) return null;
   // A change's own thread with no number (its PR number is a request's) is
   // named by its change.
@@ -434,17 +477,18 @@ function shapeThread(row, viewerId, now, botId, bots) {
 
 /**
  * Pure: the lists, in the order the view draws them. `bots` maps a request
- * (botKey) to Homeroom bot's stage for it (botStages).
+ * (botKey) to Homeroom bot's stage for it (botStages); `facts` maps it to
+ * what the bot's records say of it (requestFacts).
  */
-function arrange(rows, viewerId, now = new Date(), botId = null, bots = null) {
-  const shaped = rows.map((row) => shapeThread(row, viewerId, now, botId, bots)).filter(Boolean);
+function arrange(rows, viewerId, now = new Date(), botId = null, bots = null, facts = null) {
+  const shaped = rows.map((row) => shapeThread(row, viewerId, now, botId, bots, facts)).filter(Boolean);
   const byAt = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
   const oldest = (a, b) => String(a.at || '').localeCompare(String(b.at || ''));
   const next = shaped.filter((s) => s.group === 'next')
     .sort((a, b) => (NEXT_ORDER[a.what] - NEXT_ORDER[b.what]) || oldest(a, b));
   const waiting = shaped.filter((s) => s.group === 'waiting')
     .sort((a, b) => (WAITING_ORDER[a.what] - WAITING_ORDER[b.what])
-      || (a.what === 'not_picked_up' ? byAt(a, b) : oldest(a, b)));
+      || (STILL_WHATS.has(a.what) ? byAt(a, b) : oldest(a, b)));
   return {
     needs: shaped.filter((s) => s.group === 'needs').sort(byAt),
     next,
@@ -486,6 +530,124 @@ async function botStages(pool, user, deps = {}) {
     log.warn('ai-work', 'Could not read Homeroom bot\'s stages', { message: err.message });
   }
   return stages;
+}
+
+// #6158: every thread's request, by the bot's own records, whoever filed it
+// and whether or not the bot is switched on here. One row a request:
+// its newest live run (verdict, reason, the limit that held it), whether it
+// has any run at all, its unstarted queue row and place on its project, its
+// place among the project's requests held for a slot, its labels, and
+// whether the viewer decides on its project (homeroom-bot.js whoDecides).
+// $1 viewer, $2/$3 the requests' app ids and numbers, $4 the window a held
+// run still counts in (homeroom-bot.js ABANDONED_LIVE_WINDOW_DAYS).
+const FACTS_SQL = `
+WITH wanted AS (
+  SELECT DISTINCT * FROM UNNEST($2::int[], $3::int[]) AS w(app_id, number)
+),
+live_run AS (
+  SELECT DISTINCT ON (r.app_id, r.issue_number)
+         r.app_id, r.issue_number, r.verdict, r.reason, r.cap_suppressed, r.created_at,
+         r.build_ok, r.proposal_session_id,
+         (r.created_at > NOW() - make_interval(days => $4)) AS fresh
+    FROM homeroom_bot_runs r
+   WHERE r.mode = 'live'
+     AND (r.app_id, r.issue_number) IN (SELECT * FROM UNNEST($2::int[], $3::int[]))
+   ORDER BY r.app_id, r.issue_number, r.id DESC
+),
+held AS (
+  SELECT lr.app_id, lr.issue_number,
+         ROW_NUMBER() OVER (PARTITION BY lr.app_id ORDER BY lr.created_at ASC, lr.issue_number ASC) AS place
+    FROM live_run lr
+   WHERE lr.verdict = 'ready' AND lr.fresh
+     AND lr.cap_suppressed IN ('proposals_per_app', 'proposals_total', 'builds_per_app')
+     AND lr.build_ok IS NULL AND lr.proposal_session_id IS NULL
+),
+queue AS (
+  SELECT q.id, q.app_id, q.issue_number,
+         ROW_NUMBER() OVER (PARTITION BY q.app_id ORDER BY q.priority, q.enqueued_at, q.id) AS place
+    FROM homeroom_bot_queue q
+   WHERE q.started_at IS NULL AND q.app_id = ANY($2::int[])
+)
+SELECT w.app_id, w.number, a.slug, rq.title, rq.labels,
+       lr.verdict AS run_verdict, lr.reason AS run_reason, lr.cap_suppressed AS run_cap,
+       lr.created_at AS run_at, lr.fresh AS run_fresh,
+       lr.build_ok AS run_build_ok, lr.proposal_session_id AS run_proposal,
+       EXISTS (SELECT 1 FROM homeroom_bot_runs ar
+                WHERE ar.app_id = w.app_id AND ar.issue_number = w.number) AS any_run,
+       q.id AS queue_id, q.place AS queue_place, h.place AS held_place,
+       (rq.created_by = $1
+        OR (a.self_hosted IS NOT TRUE
+            AND (a.created_by = $1 OR EXISTS (
+              SELECT 1 FROM app_admins aa WHERE aa.app_id = a.id AND aa.user_id = $1)))) AS viewer_decides
+  FROM wanted w
+  JOIN apps a ON a.id = w.app_id
+  LEFT JOIN requests rq ON rq.app_id = w.app_id AND rq.number = w.number
+  LEFT JOIN live_run lr ON lr.app_id = w.app_id AND lr.issue_number = w.number
+  LEFT JOIN held h ON h.app_id = w.app_id AND h.issue_number = w.number
+  LEFT JOIN queue q ON q.app_id = w.app_id AND q.issue_number = w.number`;
+
+/**
+ * #6158: what the bot's records say of each thread's request, by botKey
+ * (slug#number): the newest live run, its queue place and its place held for
+ * a slot, its labels, and whether the viewer decides on its project. Unlike
+ * botStages this is read on staging too (a preview never acts, but its
+ * before and after copies must draw these rows). Queue rows count only on
+ * projects the bot acts on in production; on staging every project does.
+ * Empty on a read error, so the rows fall back to what they said before.
+ */
+async function requestFacts(pool, rows, viewerId, deps = {}) {
+  const facts = new Map();
+  const wanted = (rows || []).filter((r) => r.app_id != null && r.number != null && r.slug);
+  if (!wanted.length) return facts;
+  try {
+    const live = deps.liveSvc || require('./homeroom-bot-live');
+    const staging = !!live.isStaging();
+    // A queue row is the bot's work only on a project it acts on for real.
+    let scope = null;
+    if (!staging) {
+      const settings = deps.settings !== undefined
+        ? deps.settings
+        : await (deps.botSvc || require('./homeroom-bot')).readSettings(pool);
+      if (settings && settings.mode !== 'off' && typeof live.appsScope === 'function') {
+        scope = live.appsScope(settings);
+        if (scope && typeof live.scopeIsEmpty === 'function' && live.scopeIsEmpty(scope)) scope = null;
+        if (scope && typeof live.inScope !== 'function') scope = null;
+      }
+    }
+    const inScope = (slug) => staging || (!!scope && live.inScope(scope, slug));
+    const { ABANDONED_LIVE_WINDOW_DAYS } = require('./homeroom-bot');
+    const { rows: found } = await pool.query(FACTS_SQL, [
+      viewerId,
+      wanted.map((r) => Number(r.app_id)),
+      wanted.map((r) => Number(r.number)),
+      ABANDONED_LIVE_WINDOW_DAYS,
+    ]);
+    for (const f of found) {
+      if (!f.slug || f.number == null) continue;
+      const run = f.run_verdict == null ? null : {
+        verdict: f.run_verdict,
+        reason: f.run_reason || null,
+        capSuppressed: f.run_cap || null,
+        createdAt: f.run_at || null,
+        held: f.run_verdict === 'ready' && f.run_fresh === true
+          && !!f.run_cap && f.run_build_ok == null && f.run_proposal == null,
+      };
+      const scoped = inScope(f.slug);
+      facts.set(botKey(f.slug, f.number), {
+        run,
+        anyRun: f.any_run === true,
+        queue: scoped && f.queue_id != null ? { place: Number(f.queue_place) || null } : null,
+        queuePlace: scoped && f.queue_id != null ? Number(f.queue_place) || null : null,
+        heldPlace: f.held_place == null ? null : Number(f.held_place),
+        labels: Array.isArray(f.labels) ? f.labels : [],
+        viewerDecides: f.viewer_decides === true,
+      });
+    }
+  } catch (err) {
+    log.warn('ai-work', 'Could not read Homeroom bot\'s request facts', { message: err.message });
+    return new Map();
+  }
+  return facts;
 }
 
 function shapePrivate(row) {
@@ -551,9 +713,10 @@ async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
     bot ? pool.query(PRIVATE_SQL, [user.id, bot.id, PRIVATE_MAX]).then((r) => r.rows) : Promise.resolve([]),
     botStages(pool, user, deps),
   ]);
+  const facts = await requestFacts(pool, threadRows, user.id, deps);
   return {
     private: privateRows.map(shapePrivate),
-    ...arrange(threadRows, user.id, new Date(), bot ? bot.id : null, bots),
+    ...arrange(threadRows, user.id, new Date(), bot ? bot.id : null, bots, facts),
   };
 }
 
@@ -598,22 +761,33 @@ const THREAD_SAYS = Object.freeze({
   stalled: 'ready to build; its build has not started',
   queued: 'waiting for a free builder',
   on_hold: 'on hold until Monday',
-  not_picked_up: 'nobody is building it yet',
+  // #6158: what a request nobody is moving waits on, in the bot's words.
+  not_picked_up: 'nobody is on it',
+  needs_person: 'Homeroom bot left it for a person to decide',
+  nothing_to_build: 'Homeroom bot found nothing to build in it',
+  not_read: 'Homeroom bot has not read it yet',
+  operator: 'an operator task: nobody can do it from Homeroom',
   awaiting_plan: 'waiting for their plan: they are working on it with Homeroom bot in a private thread',
 });
 
 /** Pure: one In progress or Waiting row's words. `slotVotes` counts the votes they owe that free a held one's slot. */
 function threadSays(t, slotVotes = 0) {
-  if (t.what === 'building' && t.by === 'bot') return 'Homeroom bot is building it';
-  if (t.what === 'building' && t.by === 'you') return 'they are building it';
-  if (t.what === 'building' && t.claimedBy) return `${t.claimedBy} is building it`;
-  if ((t.what === 'vote' || t.what === 'decision') && t.myVote) return `waiting for votes; they voted ${t.myVote === 'yes' ? 'Yes' : 'No'}`;
-  if (t.what === 'held' && t.heldBy === 'daily') return 'ready to build; held by today\'s limit on this project';
-  if (t.what === 'held' && t.heldBy === 'turn') return 'ready to build; waiting for Homeroom bot\'s turn on this project';
-  if (t.what === 'held' && slotVotes) {
-    return `ready to build; ${slotVotes === 1 ? 'a vote they owe' : `${slotVotes} votes they owe`} on Homeroom bot's changes can free its slot`;
-  }
-  return THREAD_SAYS[t.what] || 'waiting';
+  const says = (() => {
+    if (t.what === 'building' && t.by === 'bot') return 'Homeroom bot is building it';
+    if (t.what === 'building' && t.by === 'you') return 'they are building it';
+    if (t.what === 'building' && t.claimedBy) return `${t.claimedBy} is building it`;
+    if ((t.what === 'vote' || t.what === 'decision') && t.myVote) return `waiting for votes; they voted ${t.myVote === 'yes' ? 'Yes' : 'No'}`;
+    if (t.what === 'held' && t.heldBy === 'daily') return 'ready to build; held by today\'s limit on this project';
+    if (t.what === 'held' && t.heldBy === 'turn') return 'ready to build; waiting for Homeroom bot\'s turn on this project';
+    if (t.what === 'held' && slotVotes) {
+      return `ready to build; ${slotVotes === 1 ? 'a vote they owe' : `${slotVotes} votes they owe`} on Homeroom bot's changes can free its slot`;
+    }
+    return THREAD_SAYS[t.what] || 'waiting';
+  })();
+  // #6158: its place in line, as the tab's rows say it.
+  if (t.what === 'queued' && t.place) return `#${t.place} in line; ${says}`;
+  if (t.what === 'held' && t.place) return `#${t.place} ${t.heldBy === 'turn' ? 'in line' : 'for a slot'}; ${says}`;
+  return says;
 }
 
 /**
@@ -705,6 +879,7 @@ module.exports = {
   filedKey,
   unfiledPrivate,
   botStages,
+  requestFacts,
   workFor,
   threadSays,
   listsOf,

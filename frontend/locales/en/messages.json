@@ -5044,7 +5044,7 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): the request waits in Homeroom bot's queue until the week resets, because this week's building time for it is used up."
   },
   "ai.up.notPickedUp": {
-    "text": "{{project}} · #{{number}} · Nobody is building it yet",
+    "text": "{{project}} · #{{number}} · Nobody is on it",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request in a thread the person is in that nobody has started a change for, and that Homeroom bot is not working on."
   },
   "ai.up.awaitingPlan": {
@@ -5052,16 +5052,56 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): their own request, which Homeroom bot does not build while they work on it with it in a private thread, until they post a plan or let it go ahead."
   },
   "ai.up.notPickedUpBare": {
-    "text": "{{project}} · Nobody is building it yet",
+    "text": "{{project}} · Nobody is on it",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too) with no number (a decision): nobody has started a change for it. {{project}} is the project's name."
   },
   "ai.up.quiet_one": {
-    "text": "{{project}} · #{{number}} · Nobody is building it yet · quiet {{count}} day",
+    "text": "{{project}} · #{{number}} · Nobody is on it · quiet {{count}} day",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request nobody has started a change for and nobody has written on lately. {{count}} is how many days."
   },
   "ai.up.quiet_other": {
-    "text": "{{project}} · #{{number}} · Nobody is building it yet · quiet {{count}} days",
+    "text": "{{project}} · #{{number}} · Nobody is on it · quiet {{count}} days",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request nobody has started a change for and nobody has written on lately. {{count}} is how many days."
+  },
+  "ai.up.inLine": {
+    "text": "{{project}} · #{{number}} · #{{place}} in line for Homeroom bot to read it",
+    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that is in Homeroom bot's queue on its project. {{place}} is its place in that line, counted from 1."
+  },
+  "ai.up.heldPlace": {
+    "text": "{{project}} · #{{number}} · Ready to build · #{{place}} for a slot",
+    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and is ready to build, held for one of the project's slots for changes up for a vote. {{place}} is its place among the requests held the same way, counted from 1, oldest first."
+  },
+  "ai.up.needsPerson": {
+    "text": "{{project}} · #{{number}} · Homeroom bot left it for a person to decide",
+    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and handed back for a person to decide. A person who decides on the project or asked for it sees it under Needs you instead."
+  },
+  "ai.up.needsPersonWhy": {
+    "text": "{{project}} · #{{number}} · Homeroom bot left it for a person to decide: {{reason}}",
+    "description": "The AI tab's main view, Waiting: tooltip of a request's row Homeroom bot read and handed back for a person to decide, with Homeroom bot's own reason. {{reason}} is that reason, cut to its first line."
+  },
+  "ai.up.nothingToBuild": {
+    "text": "{{project}} · #{{number}} · Homeroom bot found nothing to build in it",
+    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and found nothing to build in."
+  },
+  "ai.up.nothingToBuildWhy": {
+    "text": "{{project}} · #{{number}} · Homeroom bot found nothing to build in it: {{reason}}",
+    "description": "The AI tab's main view, Waiting: tooltip of a request's row Homeroom bot read and found nothing to build in, with Homeroom bot's own reason. {{reason}} is that reason, cut to its first line."
+  },
+  "ai.up.notRead": {
+    "text": "{{project}} · #{{number}} · Homeroom bot has not read it yet · ask it from the request's page",
+    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) Homeroom bot has not read yet. The row opens the request's page, where Ask Homeroom bot is."
+  },
+  "ai.up.operator": {
+    "text": "{{project}} · #{{number}} · An operator task: nobody can do it from Homeroom",
+    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) for the people who run Homeroom, which nobody can do from Homeroom."
+  },
+  "ai.up.stillCount_one": {
+    "text": "Not moving · {{count}}",
+    "description": "The AI tab's main view, Waiting: the folded head at the bottom of Waiting over the rows nobody is moving (nobody is on it, not read yet, an operator task, a person's to decide, nothing to build). Press it to open them. {{count}} is how many rows."
+  },
+  "ai.up.stillCount_other": {
+    "text": "Not moving · {{count}}",
+    "description": "The AI tab's main view, Waiting: the folded head at the bottom of Waiting over the rows nobody is moving (nobody is on it, not read yet, an operator task, a person's to decide, nothing to build). Press it to open them. {{count}} is how many rows."
   },
   "ai.live.title_one": {
     "text": "Live this week · {{count}}",
@@ -5232,8 +5272,40 @@
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: on hold until Monday, when the week's building time resets."
   },
   "ai.short.nobody": {
-    "text": "Nobody yet",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: nobody is building it yet."
+    "text": "Nobody on it",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: nobody is working on it."
+  },
+  "ai.short.inLine": {
+    "text": "#{{place}} in line",
+    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request that is in Homeroom bot's queue, or held for the bot's turn among the project's builds. {{place}} is its place in that line, counted from 1."
+  },
+  "ai.short.heldPlace": {
+    "text": "Held · #{{place}} for a slot",
+    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request Homeroom bot is ready to build, held for one of the project's slots for changes up for a vote. {{place}} is its place among the requests held the same way, counted from 1."
+  },
+  "ai.short.needsPerson": {
+    "text": "Needs a person",
+    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request Homeroom bot read and handed back for a person to decide."
+  },
+  "ai.short.nothingToBuild": {
+    "text": "Nothing to build",
+    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request Homeroom bot read and found nothing to build in."
+  },
+  "ai.short.notRead": {
+    "text": "Not read yet",
+    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request Homeroom bot has not read yet."
+  },
+  "ai.short.operator": {
+    "text": "Operator task",
+    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request that is for the people who run Homeroom, which nobody can do from Homeroom."
+  },
+  "ai.short.quiet_one": {
+    "text": "Nobody on it · quiet {{count}} day",
+    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request nobody is working on and nobody has written on lately. {{count}} is how many days."
+  },
+  "ai.short.quiet_other": {
+    "text": "Nobody on it · quiet {{count}} days",
+    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request nobody is working on and nobody has written on lately. {{count}} is how many days."
   },
   "ai.short.yourPlan": {
     "text": "Your plan",
