@@ -7930,7 +7930,7 @@ const DevChat = {
             status: { t: 'status', key: `${key}:s`, icon: 'check', html: msg.content || '', text: msg.content || '', elapsed: null, stamp },
             prUrl: session?.pr_url || msg.prUrl || null,
             prNumber: session?.pr_number || msg.prNumber || null,
-            title: session?.session_title || session?.pr_title || '',
+            title: session?.pr_title || session?.proposed_pr_title || session?.session_title || '',
             closes: DevChat._closesRefs(session),
             // #3605: once the change is up for a vote its status opens the
             // proposal's vote page. Null before then: an underway session has

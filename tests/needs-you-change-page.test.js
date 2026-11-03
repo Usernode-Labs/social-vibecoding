@@ -450,6 +450,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // In flight: the build done, the checks a third of the way, about 6 minutes left.
   const live = testing({
     check_state: 'pending', check_phase: 'testing',
+    checks_checked_at: new Date().toISOString(),
     checks_estimate: { buildMs: 180000, checksMs: 540000, runs: 12 },
     checks_progress: {
       ran: 284, expected: 840, unit: { ran: 6900, expected: 19240, done: false },
@@ -466,6 +467,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // and the time left say the same.
   const unitDone = testing({
     check_state: 'pending', check_phase: 'testing',
+    checks_checked_at: new Date().toISOString(),
     checks_estimate: { buildMs: 180000, checksMs: 540000, runs: 12 },
     checks_progress: {
       ran: 620, expected: 840, unit: { ran: 19240, expected: 19240, done: true },
@@ -483,7 +485,8 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   assert.deepEqual(threeQuarters.note, ['Preview built, checks three quarters done.']);
   // Still building: the build's step, and no checks yet.
   const building = testing({
-    check_state: 'pending', check_phase: 'building', checks_estimate: { buildMs: 180000, checksMs: 540000 },
+    check_state: 'pending', check_phase: 'building', checks_checked_at: new Date().toISOString(),
+    checks_estimate: { buildMs: 180000, checksMs: 540000 },
     checks_progress: { build: { step: 'clone', steps: [{ key: 'source_fetch', ms: 1 }, { key: 'image_build', ms: 1 }] } },
   });
   assert.equal(building.segments[1].pct, 0);
@@ -579,8 +582,32 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   assert.ok(!text.includes('on package.json') && !text.includes('# tests 26'), 'no platform plumbing in the row');
   // Fix it leads the step's buttons; the re-run beside it is the quieter one.
   assert.match(text, /<span class="dev-ledger-ops"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button>/);
-  // "What went wrong" waits for the sentence: the rows already say what failed.
-  assert.ok(!text.includes('data-checks-explained'));
+  // "What went wrong" opens with the failure's own words, and shows
+  // Homeroom's reading only once it has replaced them.
+  assert.match(text, /<div class="dev-ledger-explain" data-checks-explained="">\s*<div class="dev-ledger-unit-k">What went wrong<\/div>\s*<p class="dev-ledger-explain-text">The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>\s*<\/div>/);
+  assert.ok(!text.includes('dev-ledger-explain-source'), 'no reading of the output yet');
+});
+
+test('a unit suite that stopped before any test ran says what it reported', () => {
+  const own = context({ id: 7, username: 'maya' });
+  const EARLY = {
+    ...FAILED,
+    test_results: [{
+      index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+      failureReason: 'The unit suite stopped before any test ran: npm install exited with code 1 | # tests 0',
+      failureDetails: [],
+    }],
+  };
+  const said = '“Repo unit suite (npm test) passes” reported: The unit suite stopped before any test ran: npm install exited with code 1';
+  // The Testing card's second sentence, where the row has no per-test excerpt.
+  const card = plain(own._changeTestingView(EARLY));
+  assert.equal(card.explain.fallback, said);
+  const { page, details } = render(own, EARLY);
+  assert.ok(unescape(page).includes(`<p class="dev-change-gate-why" data-change-gate-why="own-words">One of this change’s tests failed. ${said}</p>`));
+  // And the Checks step's "What went wrong" pane, which used to stay blank.
+  const text = unescape(details);
+  assert.match(text, /<div class="dev-ledger-explain" data-checks-explained="">/);
+  assert.ok(text.includes(`<p class="dev-ledger-explain-text">${said}</p>`));
 });
 
 test('a failed run, read by anybody else: the same words, who has to fix it, and no buttons', () => {

@@ -10,6 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { shellMarkup } = require('./lib/shell-markup');
 const { message } = require('./lib/platform-i18n');
 
@@ -91,20 +92,96 @@ test('the ground is painted before any stylesheet, and the chrome follows the th
     'the light ground is painted with no stylesheet loaded');
   assert.match(src, /html\.dark \{ background-color: #0b0d1b; color-scheme: dark; \}/,
     'and the dark one, keyed off the class apply() has just written');
-  // Written from the RESOLVED theme, not left to a prefers-color-scheme meta
-  // pair: the shell's own Light/Dark override is a class on <html> that no
-  // media query can see, so a viewer who picks Light on a dark OS has to get
-  // the light chrome.
+  // Written from the RESOLVED theme, to EVERY meta. The head now carries a
+  // media-keyed pair (light and dark) that covers the bytes before this
+  // script runs, so a dark device starts dark instead of flashing white;
+  // from here on both metas carry the resolved ground, because the shell's
+  // own Light/Dark override is a class on <html> that no media query can
+  // see. A viewer who picks Light on a dark OS gets the light chrome on
+  // both, with no stale dark value left behind (#6130).
   assert.match(src, /const GROUND = \{ light: '#f4f2e4', dark: '#0b0d1b' \};/);
   const apply = src.slice(src.indexOf('function apply()'), src.indexOf('function set('));
-  assert.match(apply, /meta\[name="theme-color"\]/,
-    'apply() owns the chrome colour');
+  assert.match(apply, /querySelectorAll\('meta\[name="theme-color"\]'\)/,
+    'apply() owns every theme-color meta, not just the first');
   assert.match(apply, /wantDark \? GROUND\.dark : GROUND\.light/,
     'and picks it from the same resolved boolean that writes the class');
-  // The meta has to be PARSED by the time apply() runs — it is head-blocking
-  // and runs during parse, so a tag further down the head would not be found.
-  assert.ok(src.indexOf('name="theme-color"') < src.indexOf('window.Theme'),
-    'the theme-color meta must precede the module that rewrites it');
+  // BOTH metas have to be PARSED by the time apply() runs — it is
+  // head-blocking and runs during parse, so a tag further down the head would
+  // not be found.
+  const metaTags = [...src.matchAll(/<meta name="theme-color"[^>]*>/g)];
+  assert.equal(metaTags.length, 2, 'the head carries the media-keyed pair');
+  assert.ok(metaTags[0].index < src.indexOf('window.Theme')
+    && metaTags[1].index < src.indexOf('window.Theme'),
+  'both theme-color metas must precede the module that rewrites them');
+});
+
+// The theme module is an inline classic script in the head. Run it for real
+// against a fake document, so the class and the metas are checked as the
+// browser would see them rather than as source text.
+function themeScript() {
+  const blocks = [...themeSrc().matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  const mod = blocks.filter((b) => b.includes('window.Theme ='));
+  assert.equal(mod.length, 1, 'one inline theme module');
+  return mod[0];
+}
+
+function runTheme({ osDark, stored }) {
+  const classes = new Set();
+  const metas = [
+    { attrs: new Map([['content', '#f4f2e4']]) },
+    { attrs: new Map([['content', '#0b0d1b']]) },
+  ];
+  const store = new Map();
+  if (stored !== undefined) store.set('theme', stored);
+  const metaList = metas.map((m) => ({
+    getAttribute: (k) => (m.attrs.has(k) ? m.attrs.get(k) : null),
+    setAttribute: (k, v) => m.attrs.set(k, String(v)),
+  }));
+  const sandbox = {
+    URLSearchParams,
+    localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k),
+    },
+    document: {
+      documentElement: {
+        classList: {
+          add: (c) => classes.add(c),
+          remove: (c) => classes.delete(c),
+          contains: (c) => classes.has(c),
+        },
+      },
+      querySelectorAll: (sel) => (sel === 'meta[name="theme-color"]' ? metaList : []),
+    },
+    matchMedia: () => ({ matches: osDark, addEventListener() {} }),
+    addEventListener() {},
+    location: { search: '' },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(themeScript(), sandbox);
+  return { classes, metas: metas.map((m) => m.attrs.get('content')) };
+}
+
+test('an explicit Light choice overwrites both media-keyed metas on a dark OS', () => {
+  // The pair starts dark on a dark device. Picking Light has to win, and
+  // neither meta may keep the dark value: the dark half is the one the device
+  // matches, so a stale value there is exactly the dark band this fixes.
+  const light = runTheme({ osDark: true, stored: 'light' });
+  assert.equal(light.classes.has('dark'), false);
+  assert.deepEqual(light.metas, ['#f4f2e4', '#f4f2e4'],
+    'no stale dark value for the dark half of the pair');
+
+  const dark = runTheme({ osDark: false, stored: 'dark' });
+  assert.equal(dark.classes.has('dark'), true);
+  assert.deepEqual(dark.metas, ['#0b0d1b', '#0b0d1b']);
+
+  // And no stored choice follows the device, as before.
+  const system = runTheme({ osDark: true });
+  assert.equal(system.classes.has('dark'), true);
+  assert.deepEqual(system.metas, ['#0b0d1b', '#0b0d1b']);
 });
 
 test('theme.js registers prefers-color-scheme and storage listeners', () => {

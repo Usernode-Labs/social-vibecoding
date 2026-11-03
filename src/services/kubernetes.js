@@ -772,6 +772,8 @@ function platformAssetEnv(config) {
     { name: 'USERNODE_DOMAIN', value: String(cfg.platformDomain || '') },
     { name: 'USERNODE_APPS_DOMAIN', value: String(cfg.appDomain || cfg.platformDomain || '') },
     { name: 'MARKETING_BASE_URL', value: String(config?.marketingBaseUrl || '') },
+    // Offline apps (services/offline-cache.js): how the shared files are cached.
+    { name: 'APP_OFFLINE_CACHE', value: require('./offline-cache').enabled() ? 'on' : 'off' },
   ];
 }
 

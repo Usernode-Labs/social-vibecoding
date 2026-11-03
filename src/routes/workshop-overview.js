@@ -326,14 +326,14 @@ const ITEMS_TOTAL = 300;
 const ITEMS_SQL = `
   WITH items AS (
     SELECT 'working'::text AS section, 'session'::text AS kind, cs.app_id, cs.id,
-           COALESCE(NULLIF(cs.session_title, ''), NULLIF(cs.pr_title, ''),
-                    NULLIF(cs.proposed_pr_title, ''))::text AS title,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''),
+                    NULLIF(cs.session_title, ''))::text AS title,
            cs.status::text AS status, cs.last_activity_at AS at
       FROM chat_sessions cs
      WHERE ${MY_SESSIONS_WHERE}
     UNION ALL
     SELECT 'working', 'proposal', cs.app_id, cs.id,
-           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, ''))::text,
            cs.status::text, cs.last_activity_at
       FROM chat_sessions cs
      WHERE ${MY_PROPOSALS_WHERE}
@@ -343,7 +343,7 @@ const ITEMS_SQL = `
      WHERE ${MY_GOVERNANCE_WHERE}
     UNION ALL
     SELECT 'needs', 'proposal', cs.app_id, cs.id,
-           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, ''))::text,
            cs.status::text, cs.last_activity_at
       FROM chat_sessions cs
      WHERE ${OWED_PROPOSALS_WHERE}
@@ -452,7 +452,7 @@ const IN_THREADS_WHERE = `
 const needsFeedSql = ({ inThreads = false } = {}) => `
   WITH owed AS (
     SELECT 'proposal'::text AS kind, cs.app_id, cs.id,
-           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text AS title,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, ''))::text AS title,
            LEFT(COALESCE(cs.pr_summary_md, ''), ${NEEDS_FEED_SUMMARY_MAX})::text AS summary,
            u.username::text AS author,
            cs.pr_number AS number,
@@ -535,7 +535,7 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
          CASE WHEN o.kind = 'proposal' AND o.thread_id IS NOT NULL AND cardinality(o.linked_issues) > 0 THEN (
            SELECT jsonb_agg(jsonb_build_object(
                     'id', rb.id, 'number', rb.pr_number,
-                    'title', COALESCE(NULLIF(rb.pr_title, ''), NULLIF(rb.session_title, '')),
+                    'title', COALESCE(NULLIF(rb.pr_title, ''), NULLIF(rb.proposed_pr_title, ''), NULLIF(rb.session_title, '')),
                     'author', ru.username, 'epoch', rb.approval_epoch, 'staging_url', rb.staging_url)
                   ORDER BY rb.id)
              FROM chat_sessions rb LEFT JOIN users ru ON ru.id = rb.user_id

@@ -104,6 +104,13 @@ function makeMockPool(state) {
       return { rows: u ? [{ user_id: u.id, username: u.username }] : [] };
     }
 
+    // ---- the person's picture ----
+    if (/FROM user_avatars av/i.test(s)) {
+      const u = state.users.find((x) => x.id === params[0]);
+      const av = u && !u.profile_disabled_at && state.avatars.find((a) => a.user_id === u.id);
+      return { rows: av ? [{ id: av.id }] : [] };
+    }
+
     // ---- stats aggregate ----
     if (/AS prs_total/i.test(s)) {
       const userId = params[0];
@@ -182,6 +189,8 @@ function fixtureState() {
     users: [{ id: 1, username: 'alice' }, { id: 2, username: 'bob' }],
     // Retired handles, mirroring `username_history`.
     retired: [],
+    // alice has uploaded a picture; bob has none.
+    avatars: [{ id: 77, user_id: 1 }],
     sessions: [
       { id: 10, user_id: 1, status: 'merged', promoted_at: iso(9), merged_at: iso(8),
         created_at: iso(10), is_headless: false, app_public: true,
@@ -253,7 +262,7 @@ test('lists only proposed PRs with credit-union kudos counts and stats', async (
     const body = await res.json();
 
     // Shape
-    assert.deepEqual(body.user, { user_id: 1, username: 'alice' });
+    assert.deepEqual(body.user, { user_id: 1, username: 'alice', avatar_url: '/avatars/77' });
     assert.ok(body.stats);
     assert.ok(Array.isArray(body.items));
 
@@ -275,6 +284,28 @@ test('lists only proposed PRs with credit-union kudos counts and stats', async (
 
     // Short page → no cursor
     assert.equal(body.nextBefore, null);
+  } finally { await srv.close(); }
+});
+
+test('the user block carries the picture, or null for a member without one', async () => {
+  const pool = makeMockPool(fixtureState());
+  const srv = await startTestServer(pool);
+  try {
+    const alice = await (await fetch(`${srv.baseUrl}/api/leaderboard/users/alice/prs`)).json();
+    assert.equal(alice.user.avatar_url, '/avatars/77');
+
+    const bob = await (await fetch(`${srv.baseUrl}/api/leaderboard/users/bob/prs`)).json();
+    assert.equal(bob.user.avatar_url, null);
+  } finally { await srv.close(); }
+});
+
+test('a moderation-disabled profile gets no picture, matching the public card', async () => {
+  const state = fixtureState();
+  state.users.find((u) => u.id === 1).profile_disabled_at = '2026-06-01T00:00:00.000Z';
+  const srv = await startTestServer(makeMockPool(state));
+  try {
+    const body = await (await fetch(`${srv.baseUrl}/api/leaderboard/users/alice/prs`)).json();
+    assert.equal(body.user.avatar_url, null);
   } finally { await srv.close(); }
 });
 
@@ -350,7 +381,7 @@ test('a link shared before the rename resolves, and reports the new handle', asy
     const res = await fetch(`${srv.baseUrl}/api/leaderboard/users/alice/prs`);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.deepEqual(body.user, { user_id: 1, username: 'ada' },
+    assert.deepEqual(body.user, { user_id: 1, username: 'ada', avatar_url: '/avatars/77' },
       'the payload names the handle they hold NOW');
     assert.deepEqual(body.moved, { from: 'alice', to: 'ada' },
       'and says so, so the client can correct the address');

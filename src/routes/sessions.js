@@ -2527,7 +2527,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // separates that from a genuine fork.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-                cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
+                cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
@@ -2879,7 +2879,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // the distinction a bare agent_backend cannot make — an imported row
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, proposed_pr_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
                 created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
                 -- #2779: the agent session a change was started from, so the
                 -- owner's Build door can lead back to that conversation.
@@ -3954,11 +3954,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           ? await require('../services/shots-view')
             .getForSession(pool, detail, detail.app_slug, { viewer: req.user })
           : null;
-        // #4452: how long testing usually takes on this app.
-        detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
         // An update from this version's original, as the proposal read
         // carries it (services/upstream-offers.js changeView); null otherwise.
         detail.upstream = await require('../services/upstream-offers').changeView(pool, session.id);
+      }
+      // #6122: both reads a pending run is shown through carry the usual
+      // time (the checks panel reads /checks; the change page reads /details,
+      // which keeps its estimate whether or not a run is pending).
+      if (req.path.endsWith('/details') || session.check_state === 'pending') {
+        detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).

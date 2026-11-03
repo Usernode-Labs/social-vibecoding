@@ -238,10 +238,11 @@ function ChangeLine({ item, view, letter = null }: { item: ThreadItem; view: Cha
 function PlanLine({ plan }: { plan: RequestSpecCard }): ReactNode {
   const t = useMessages('project');
   const [loading, setLoading] = useState(false);
+  const fromPlan = t('project:topic.thread.page.fromPlan', { title: plan.title });
   return (
     <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-plan={plan.key}>
       <span aria-hidden="true">📋</span>
-      <span className="min-w-0 truncate">{t('project:topic.thread.page.fromPlan', { title: plan.title })}</span>
+      <span className="min-w-0 truncate" title={fromPlan}>{fromPlan}</span>
       <button
         type="button"
         className="shrink-0 font-semibold text-violet-700 hover:underline disabled:opacity-60 dark:text-violet-300"

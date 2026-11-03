@@ -244,7 +244,7 @@ function Row({ view, eager = false }: {
       )}
       title={(
         <span className="flex items-center gap-1.5 min-w-0">
-          <span className="browse-row-name truncate">{view.name}</span>
+          <span className="browse-row-name truncate" title={view.name}>{view.name}</span>
           {/* A DOT ONLY WHEN SOMETHING IS WRONG. Green on every running app
               is a light that is always on, which says nothing; the meta line
               already names a status that is not "running". */}
@@ -324,7 +324,7 @@ function SiteRow({ site }: { site: { href: string; label: string } }): ReactNode
           <GlobeIcon className="w-5 h-5" aria-hidden="true" />
         </IconTile>
       )}
-      title={<span className="browse-row-name truncate">{site.label}</span>}
+      title={<span className="browse-row-name truncate" title={site.label}>{site.label}</span>}
       subtitle={<span className="block truncate">{t('discover:site.subtitle')}</span>}
     />
   );

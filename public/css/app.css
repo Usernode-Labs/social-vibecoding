@@ -15821,8 +15821,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-unit-where { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .dev-ledger-unit-reason { margin: 6px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .dev-ledger-unit-output { margin-top: 8px; }
-/* A failed run's "What went wrong", over its failures. */
-.dev-ledger-explain { margin: 2px 0 8px; font-size: 12.5px; }
+/* A failed run's "What went wrong", over its failures. It spans the run's
+   grid, as the failures' list and its note do. */
+.dev-ledger-explain { grid-column: 1 / -1; margin: 2px 0 8px; font-size: 12.5px; }
 .dev-ledger-explain-text { margin: 2px 0 0; line-height: 1.45; color: var(--text-primary); }
 .dev-ledger-explain-source { margin-top: 2px; font-size: 11px; color: var(--text-muted); }
 .dev-ledger-fix-refused { flex-basis: 100%; font-size: 12px; color: var(--state-blocked); }

@@ -173,9 +173,10 @@ test('an unprivileged observer identifies another role holding a lock without re
     await holder.query('ROLLBACK'); holder.release();
     await running.finally(() => { log.warn = original; });
   }
-  const remaining = await root.query('SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1',
-    [connectionName('schema-observer')]);
-  assert.equal(remaining.rows[0].n, 0, 'the observer connection closes after completion');
+  await waitFor(async () => (await root.query(
+    'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1',
+    [connectionName('schema-observer')])).rows[0].n === 0,
+    { label: 'the observer connection to close after completion', timeoutMs: 5000 });
   // database() owns pool lifetimes; remove roles in a final hook after DROP DB.
   t.after(async () => {
     const admin = new Client({ connectionString: BASE }); await admin.connect();

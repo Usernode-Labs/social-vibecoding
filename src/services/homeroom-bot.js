@@ -3795,6 +3795,12 @@ async function runTriage(pool, config, {
   // weekly allowance of their own (the platform pays, up to that ceiling),
   // and a project's first version is triaged as the whole first version.
   let requester = null;
+  // Whose week pays for this look (billingOf): the one who asked the bot to
+  // start it, else the requester. A look the bot caused itself is free. Read
+  // here, outside the live branch, so the card it starts can name the payer
+  // (#6133: an existing card checks that week when the look starts).
+  const billing = billingOf(item, runMode);
+  let payerId = null;
   if (liveMode) {
     const dm = deps.dm || require('./homeroom-bot-dm');
     requester = await dm.recordRequester(pool, { app, repo, issueNumber, issue }).catch((err) => {
@@ -3803,8 +3809,7 @@ async function runTriage(pool, config, {
     });
     // Whose week pays for this look (billingOf): the one who asked the bot
     // to start it, else the requester. A look the bot caused itself is free.
-    const billing = billingOf(item, runMode);
-    const payerId = billing.payerUserId || requester?.userId || null;
+    payerId = billing.payerUserId || requester?.userId || null;
     if (requester && billing.charged && await look.once('gate:allowance', () => dm.overWeeklyAllowance(pool, settings, payerId))) {
       // Held, not dropped: the row keeps its place (enqueued_at) and waits
       // for the week to reset, so it goes first then, and the refresh does
@@ -3909,6 +3914,9 @@ async function runTriage(pool, config, {
         // (cardKeyOf); any other look has its own, the same across its
         // retries (the look's number).
         app, issueNumber, requester, bot, settings, inDm: DM_REASONS.has(item.reason), reason: item.reason,
+        // #6133: whose week this look spends, so an existing card can warn
+        // before it does. A look the bot started itself is charged to nobody.
+        payerUserId: billing.charged ? payerId : null,
         jobKey: item.reason === 'new' ? cardKeyOf(app.id, issueNumber)
           : (look.n ? loopRules.lookCardKey(app.id, issueNumber, look.n) : item.id),
         deps: { dm: deps.dm },
@@ -9945,6 +9953,13 @@ async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, pe
       await dm.noteOverAllowance(pool, { settings, requester, payer, app, issueNumber: Number(issueNumber), bot }).catch(() => {});
     }
     return { outcome: 'held', until: require('./limits').weeklyResetAt() };
+  }
+  // #6133: the week is nearly spent: the request's thread says so before the
+  // build spends the rest. Its key matches the look's, so it is said once.
+  if (run.charged !== false && requester) {
+    await activity().noteLowAllowance(pool, {
+      app, issueNumber: Number(issueNumber), requester, bot, payerUserId: payerId, settings, deps: { dm },
+    });
   }
   const r = await buildOne(pool, config, { bot, app, run, settings, deps: { ...deps, replyTo } });
   if (r?.requested) return { outcome: 'requested', key: r.requested };

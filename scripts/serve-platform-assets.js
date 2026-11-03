@@ -31,8 +31,9 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-// Pure, and itself dependency-free: the platform modules this server reads.
+// Pure, and themselves dependency-free: the platform modules this server reads.
 const appHostConfig = require('../src/services/app-host-config');
+const offlineCache = require('../src/services/offline-cache');
 const wakingPage = require('../src/services/preview-waking-page');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -156,10 +157,14 @@ const server = http.createServer((req, res) => {
       // an absolute origin during the transition.
       'Access-Control-Allow-Origin': '*',
     };
-    if (req.headers['if-none-match'] === etag) return send(res, 304, headers, null, method);
-    if (method === 'HEAD') return send(res, 200, { ...headers, 'Content-Length': String(stat.size) }, null, method);
+    // While offline apps are on (APP_OFFLINE_CACHE, services/offline-cache.js)
+    // the files may be used stale and refreshed behind, so an app opened
+    // offline in the app still has them; otherwise revalidated every load.
+    const shared = { 'Cache-Control': offlineCache.sharedFileCacheControl(pathname, 'public, max-age=0, must-revalidate') };
+    if (req.headers['if-none-match'] === etag) return send(res, 304, { ...headers, ...shared }, null, method);
+    if (method === 'HEAD') return send(res, 200, { ...headers, ...shared, 'Content-Length': String(stat.size) }, null, method);
 
-    res.writeHead(200, { 'Cache-Control': 'public, max-age=0, must-revalidate', ...headers, 'Content-Length': String(stat.size) });
+    res.writeHead(200, { ...headers, ...shared, 'Content-Length': String(stat.size) });
     const stream = fs.createReadStream(file);
     stream.on('error', () => res.destroy());
     stream.pipe(res);

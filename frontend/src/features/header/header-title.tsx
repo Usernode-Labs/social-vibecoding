@@ -186,6 +186,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
       ref={titleRef}
       id="header-title"
       className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-start"}
+      /* #6118: a community's name the bar ellipsises is readable on hover.
+         On the heading rather than the name span so the switcher's own
+         markup stays as the declared checks select it; never on the
+         logotype, which already draws a word in the space. */
+      title={communityPage && !selfHosted ? (name || text) || undefined : undefined}
     >
       {drawerOn ? <DrawerTitles /> : (
       <span className="inline-flex items-center gap-2 max-w-full align-middle">

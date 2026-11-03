@@ -207,6 +207,7 @@ export function ThreadItems({ slug, number = null, asChange = false, threadId = 
               <ListRow
                 as="button"
                 title={say(row.title)}
+                tooltip={say(row.title)}
                 subtitle={row.facts.map(say).join(' · ')}
                 data-thread-item={row.key}
                 onClick={() => openTopic(row.open)}

@@ -256,6 +256,7 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
           <span className="truncate">{title}</span>
         </span>
       )}
+      tooltip={title || undefined}
       subtitle={entry.excerpt || facts || track ? (
         <span className="flex flex-col gap-1.5">
           {entry.excerpt ? (

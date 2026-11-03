@@ -177,6 +177,9 @@ async function migrate(config) {
   // #5877: the bot's "Ready to try" row about a project, for the bell's
   // leading tile. Needs the capture member (seedCaptureAdminUser).
   await seedStagingBotProjectNotification(pool);
+  // #6133's shots: the quiet "close to this week's building time" line in a
+  // request's thread. Needs the capture member (seedCaptureUser).
+  await seedStagingBotAllowanceWarning(pool);
   await seedStagingYourApps(pool, config);
   await require('../services/staging-apps').seedCatalog(pool, config);
   // A platform preview that can make projects (services/preview-projects-client.js):
@@ -221,6 +224,11 @@ async function migrate(config) {
   // such row for the shots' member fixture, so one is seeded, with the news
   // that the same change went live beside it (that row stays after).
   await seedStagingMergedVoteRow(pool, config);
+  // #6124's before/after shots follow a change renamed before it had a pull
+  // request: the correction is in proposed_pr_title and the session still
+  // carries the old name. A fresh clone has no such row for the shots'
+  // member fixture, so one is seeded on the self app.
+  await seedStagingRenamedChange(pool, config);
   // After it: this thread's second speaker is that seed's fake person.
   await seedStagingScrollTestThread(pool);
   // Must run AFTER seedStagingScrollTestThread — it invites the same member fixture.
@@ -3827,6 +3835,56 @@ async function seedStagingMergedVoteRow(pool, config) {
     }
   } catch (err) {
     log.warn('db', 'Staging merged-vote row seeding failed', { message: err.message });
+  }
+}
+
+// #6124: a change renamed before it has a pull request is saved as the name
+// that pull request will take (proposed_pr_title), and the card reads it
+// before the session's old name. A fresh clone has no such row for the
+// shots' member fixture, so one is seeded on the self app, owned by
+// usernode-capture and still Underway. Idempotent through the branch name;
+// strictly a no-op outside staging.
+async function seedStagingRenamedChange(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: people } = await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1"
+    );
+    const member = people[0];
+    if (!member) {
+      log.warn('db', 'Staging renamed-change fixture skipped: fixture user missing');
+      return;
+    }
+    const { rows: appRows } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging renamed-change fixture skipped: self-app row missing', {
+        slug: config.selfAppSlug,
+      });
+      return;
+    }
+    const branch = 'staging-fixture/renamed-change';
+    const { rowCount } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, proposed_pr_title, status,
+          created_at, last_activity_at)
+       SELECT $1::int, $2::int, $3::varchar, $4::text, $5::text, 'active',
+              NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '5 minutes'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = $3)`,
+      [
+        appId, member.id, branch,
+        '[staging fixture] Add dark mdoe toggel to settings',
+        '[staging fixture] Add a dark mode toggle to Settings',
+      ]
+    );
+    if (rowCount) {
+      log.info('db', 'Staging renamed-change fixture seeded', { appId });
+    }
+  } catch (err) {
+    log.warn('db', 'Staging renamed-change fixture seeding failed', { message: err.message });
   }
 }
 
@@ -7451,6 +7509,147 @@ async function seedStagingBotProjectNotification(pool) {
     log.info('db', 'Staging bot-project notification fixture seeded');
   } catch (err) {
     log.warn('db', 'Staging bot-project notification seeding failed', { message: err.message });
+  }
+}
+
+// #6133's before/after shots: the quiet line the bot says in a request's
+// thread when it begins reading again and the person paying has under a
+// fifth of the week's building time left. Only the live loop says it, and a
+// staging copy never runs the bot, so a fresh copy has no such thread. The
+// rows here are the ones the bot would have sent: one made-up request whose
+// card is the root of its thread, the look's "Reading it again." line, and
+// the warning under it, in that order.
+//
+// The card names no project's page (no appSlug), so its thread is the story
+// that opens where it was told (the staging demo's own requests are the
+// same), which is where the shots can see the line. Nothing hangs off the
+// bell, and both lines count as read, so no Unread badge rides on the tab.
+//
+// The week's spend is NOT seeded: that allowance is the signal the change
+// itself reads, and a preview must not answer it. Idempotent through the
+// messages' own keys; a no-op outside staging.
+async function seedStagingBotAllowanceWarning(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const member = (await pool.query(
+      `SELECT id FROM users WHERE username = 'usernode-capture' AND is_synthetic = FALSE LIMIT 1`
+    )).rows[0];
+    if (!member) {
+      log.warn('db', 'Staging bot allowance-warning fixture skipped: the capture member is missing');
+      return;
+    }
+    // The bot's account, in the posture botAccount() reads: the username with
+    // is_synthetic on top, sentinel password, never a login.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT DO NOTHING`
+    );
+    const bot = (await pool.query(
+      `SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1`
+    )).rows[0];
+    if (!bot || Number(bot.id) === Number(member.id)) return;
+
+    // Their chat with the bot: the pair's conversation when it exists, else
+    // one made the way the platform makes it, both sides already in.
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      `SELECT conversation_id FROM conversation_direct_pairs
+        WHERE user_low_id = $1 AND user_high_id = $2`,
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      conversationId = (await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [bot.id]
+      )).rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs
+           (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', $2, NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, bot.id, member.id]
+    );
+    // An earlier boot (or the AI tab's own open) may have left one side
+    // invited: re-assert both, as ensureAdmittedDirect does.
+    await pool.query(
+      `UPDATE conversation_members
+          SET status = 'member', responded_at = COALESCE(responded_at, NOW()),
+              joined_at = COALESCE(joined_at, NOW()), left_at = NULL
+        WHERE conversation_id = $1 AND status <> 'member'`,
+      [conversationId]
+    );
+    await pool.query(
+      `UPDATE conversations SET status = 'active', updated_at = NOW()
+        WHERE id = $1 AND status <> 'active'`,
+      [conversationId]
+    );
+
+    const about = {
+      appName: 'Staging demo app', issueNumber: 19,
+      issueTitle: 'Staging demo, show how much of the week is left',
+    };
+    const cardKey = 'staging-hrbot-allowance-low-card';
+    let card = (await pool.query(
+      `SELECT id FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+      [conversationId, bot.id, cardKey]
+    )).rows[0];
+    if (!card) {
+      card = (await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - INTERVAL '20 minutes')
+         RETURNING id`,
+        [conversationId, bot.id,
+          `**${about.appName}** · request #${about.issueNumber}: ${about.issueTitle}\n\n`
+            + 'I\'m working on this now. This card updates as I go.',
+          cardKey, JSON.stringify({ homeroomBot: { kind: 'activity', ...about, mirrors: true } })]
+      )).rows[0];
+    }
+
+    // The look's own line, then the warning: the order the live loop writes
+    // them in (homeroom-bot-activity.js noteReading, noteLowAllowance).
+    for (const line of [
+      { key: 'staging-hrbot-allowance-low-reading', step: 'reading', content: 'Reading it again.', minutesAgo: 3 },
+      { key: 'staging-hrbot-allowance-low-line', step: 'allowance_low', content: 'You\'re close to this week\'s building time.', minutesAgo: 2 },
+    ]) {
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, metadata, thread_root_id, created_at)
+         SELECT $1, $2, $3, $4, $5::jsonb, $6, NOW() - ($7::int * INTERVAL '1 minute')
+          WHERE NOT EXISTS (
+            SELECT 1 FROM conversation_messages
+             WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $4::varchar
+          )`,
+        [conversationId, bot.id, line.content, line.key,
+          JSON.stringify({ homeroomBot: { kind: 'step', step: line.step, ...about } }),
+          card.id, line.minutesAgo]
+      );
+    }
+
+    // Read by the member, so the tab's badge is as it was before the seed.
+    await pool.query(
+      `UPDATE conversation_members
+          SET last_read_message_id = GREATEST(COALESCE(last_read_message_id, 0),
+                (SELECT MAX(id) FROM conversation_messages WHERE conversation_id = $1))
+        WHERE conversation_id = $1 AND user_id = $2`,
+      [conversationId, member.id]
+    );
+    log.info('db', 'Staging bot allowance-warning fixture seeded', { conversationId });
+  } catch (err) {
+    log.warn('db', 'Staging bot allowance-warning seeding failed', { message: err.message });
   }
 }
 
@@ -16130,6 +16329,7 @@ module.exports = {
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
   seedStagingBotProjectNotification,
+  seedStagingBotAllowanceWarning,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   followPlatformDefaultModel,

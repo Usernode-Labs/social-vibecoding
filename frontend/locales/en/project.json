@@ -455,6 +455,14 @@
     "text": "Nothing on the board yet.",
     "description": "Note shown in place of the items on a project's Hub or All items page when the project has no requests or proposals, for a person who can only look. The board is the project's list of work."
   },
+  "boardEmpty.start": {
+    "text": "Start a change",
+    "description": "Button under the note on a project's Hub or All items page when the project has no requests or proposals, for a person who builds changes here. It opens a new session to build a change. \"Change\" is a noun."
+  },
+  "boardEmpty.startBot": {
+    "text": "Tell Homeroom bot what to change",
+    "description": "Button under the note on a project's Hub or All items page when the project has no requests or proposals, for a person Homeroom bot builds changes for on this project. It opens their chat with Homeroom bot with this project attached. Keep \"Homeroom bot\" as it is; here \"change\" is a verb."
+  },
   "boardEmpty.press.hub.collab.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement or import a PR; to make one yourself, use Build it now there.",
     "description": "Note on a project's Hub when the project has no requests or proposals. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\", \"Import a PR\" (a GitHub pull request) and \"Build it now\" are rows of that menu."
