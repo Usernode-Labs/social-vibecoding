@@ -214,22 +214,18 @@ test('a batch against the full PostgreSQL schema', { timeout: 120000 }, async (t
   const raised = loop.raisedOf((await pool.query(laneFacts.BATCH_RAISES_SQL)).rows);
   assert.deepEqual(raised, { [`${app.id}:1`]: 6 });
 
-  // ── The proposal hold: five of the bot's changes open on the project ──
-  await asKernel(async (c) => {
-    for (let i = 0; i < 5; i += 1) {
-      await c.query(
-        `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, linked_issues)
-         VALUES ($1, $2, 'promoted', $3, ARRAY[$4]::int[])`,
-        [app.id, bot.id, `bot-${i}`, 100 + i],
-      );
-    }
-  });
+  // ── The building hold (#6156): five of the bot's builds under way on the project ──
+  for (let i = 0; i < 5; i += 1) await run(200 + i, 'ready', { waiting: true });
   const caps = (n) => homeroomBot.simulateCaps(pool, bot, app.id, 'ready', settings, n == null ? {} : { issueNumber: n });
-  assert.equal(await caps(null), 'proposals_per_app', 'no request named: the ordinary hold');
-  assert.equal(await caps(8), 'proposals_per_app', 'a request the batch did not start');
-  assert.equal(await caps(1), null, 'the batch\'s own request goes past five');
+  assert.equal(await caps(null), 'builds_per_app', 'no request named: the ordinary hold');
+  assert.equal(await caps(8), 'builds_per_app', 'a request the batch did not start');
+  assert.equal(await caps(1), null, 'the batch\'s own request is its sixth build');
+  for (let i = 5; i < 10; i += 1) await run(200 + i, 'ready', { waiting: true });
+  assert.equal(await caps(1), 'builds_per_app', 'but never past the batch\'s ten');
+  // ── The waiting hold is the project's own: a batch does not raise it ──
+  await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE app_id = $1 AND issue_number >= 200', [app.id]);
   await asKernel(async (c) => {
-    for (let i = 5; i < 10; i += 1) {
+    for (let i = 0; i < homeroomBot.WAITING_PER_APP; i += 1) {
       await c.query(
         `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, linked_issues)
          VALUES ($1, $2, 'promoted', $3, ARRAY[$4]::int[])`,
@@ -237,7 +233,8 @@ test('a batch against the full PostgreSQL schema', { timeout: 120000 }, async (t
       );
     }
   });
-  assert.equal(await caps(1), 'proposals_per_app', 'but never past the batch\'s ten');
+  assert.equal(await caps(1), 'proposals_per_app', 'the batch\'s request waits for votes like any other');
+  assert.equal((await homeroomBot.capRoomFor(pool, bot, app.id, settings)).proposals_per_app, 0);
 
   // ── The roll-up, patched onto the card from the records ──
   pushes.length = 0;

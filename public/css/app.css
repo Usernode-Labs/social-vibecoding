@@ -14813,6 +14813,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 /* #3984: a vote on its way reads "Sending…" and takes no press until the
    server answers. */
 .dev-vote-btn[aria-busy="true"] { cursor: progress; opacity: 0.75; }
+/* #6098: a vote on its way is shown busy, not switched off, so the button
+   keeps keyboard focus and the next Tab carries on from it. */
+.dev-vote-btn[aria-disabled="true"] { cursor: progress; opacity: 0.75; }
 /* The picker: body-mounted and fixed, like .dev-card-menu, because the
    kanban columns scroll sideways and would clip it. */
 .dev-vote-pop {
@@ -18294,6 +18297,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   margin: 4px 16px 0;
   display: flex; flex-direction: column;
 }
+/* #6199: the vote-type chips sit INSIDE this box, above the deck, so the feed
+   is still the pane's one child (tests/communities-followups.test.js, #3516).
+   The box already carries the page's inset, so the rail's own 16px would set
+   the chips 16px in from the card's edge; they line up with it instead. */
+.workshop-needs-feed > .needs-vote-chips { padding-inline: 0; }
 /* ON A PHONE THE FEED ENDS WHERE #workshop-screen'S CLEARANCE BEGINS (#3516).
 
    It was `height: calc(100dvh - 180px - var(--browser-banner-h, 0px))`: the
@@ -26653,7 +26661,10 @@ html.in-side-panel body {
    are the heavy thing on the page, so it has no fill and one line of type.
    Open (⌄, the title, or the line under the bar), the title wraps in full
    and a card under the bar holds what the change does (.rf-desc). */
-.rf-bar { position: relative; z-index: 9; flex: none; display: flex; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+/* #6199: the vote-type chips sit under the bar's title row, so the folded
+   bar's measurement includes them. */
+.rf-bar .needs-vote-chips { flex-basis: 100%; }
 .rf-back { flex: none; display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: none; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .rf-bar-title { flex: 1; min-width: 0; margin: 0; padding: 11px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 650; line-height: 22px; letter-spacing: -0.015em; }
 .rf-bar-title-btn { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: inherit; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -26768,6 +26779,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-pair-btn { position: relative; flex: 1; min-width: 0; height: 44px; border: 0; border-radius: 999px; background: none; color: var(--rf-ink); display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 600; cursor: pointer; transition: color .2s; }
 .rf-pair-btn[aria-checked="true"] { color: var(--rf-page); }
 .rf-pair-btn:disabled { opacity: .6; }
+/* #6098: the pair is shown busy, not switched off, so it keeps keyboard
+   focus while the vote is sent (`.rf-go`, the reason sheet's Send, stays off). */
+.rf-pair-btn[aria-disabled="true"] { opacity: .6; }
 .rf-pair-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rf-pair-mark { display: flex; width: 0; overflow: hidden; opacity: 0; transition: width .26s cubic-bezier(0.22,1,0.36,1), margin .26s cubic-bezier(0.22,1,0.36,1), opacity .2s; }
 .rf-pair-btn[aria-checked="true"] .rf-pair-mark { width: 18px; margin-inline-end: 6px; opacity: 1; }

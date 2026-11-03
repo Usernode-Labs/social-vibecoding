@@ -70,6 +70,11 @@
       "id": "0014-web-withdraws-at-cutover",
       "sha256": "7339b70b0a71fdd1fe5e5eaa8a59e254e083d7a74cbea7fbcc361e9adcdc9664",
       "schemaSha256": "578bc78aa6cc67c646d1b5b256e4d79efba9ff206661263df6ff8ff42d8f454a"
+    },
+    {
+      "id": "0015-preview-sleep",
+      "sha256": "ef09370bb7fe439247015043afd138c1dbdcc1d3b895cde83f7fc9606d12e8df",
+      "schemaSha256": "80ee80ba3462f0c367b7e9b37dd36ba0ee8847f93c82fc64e25306bf2a768c59"
     }
   ]
 }

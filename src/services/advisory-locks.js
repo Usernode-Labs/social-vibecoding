@@ -133,8 +133,16 @@ const CAPACITY_CLAIM_LOCKS = new Map([['all', 991021], ['web', 991022], ['conduc
 // starting while its worker is evicted waits, then finds it gone; an
 // eviction about to claim a worker a turn just used sees it used.
 const WORKER_EVICTION_LOCK = 991024;
+// #6157: a preview put to sleep or woken (services/preview-sleep.js):
+// `pg_advisory_lock(classifier, sessionId)`, session-scoped, on the
+// process's lock connection, held by the sleep pass over its claim and the
+// scale to no replicas, and by a wake over its scale back up and over the
+// end of its sleep. A wake that comes during a sleep waits for it and then
+// finds it asleep; a sleep never scales down what a wake just scaled up.
+const PREVIEW_SLEEP_LOCK = 991025;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
-  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK };
+  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK,
+  PREVIEW_SLEEP_LOCK };

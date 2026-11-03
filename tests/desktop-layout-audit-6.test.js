@@ -40,8 +40,16 @@ test('W03: the box grid counts its columns from its own width', () => {
   assert.match(SCREEN, /className=\{`browse-pane-body md:grid \$\{BOX_COLUMNS\} md:gap-3 md:p-3`\}/);
 });
 
-test('W06: My apps keeps four columns but stops growing at 40rem; Home\'s search clears the bar', () => {
-  assert.match(read('frontend/src/features/home/app-grid.tsx'), /id="app-list"\s*\n(?:.*\n)*?\s*className="grid grid-cols-4 [^"]* md:max-w-\[40rem\]"/);
+test('W06, reversed by #6154: My apps keeps four columns across the whole column; Home\'s search clears the bar', () => {
+  // The audit capped the grid at 40rem. That left a block empty on its right on
+  // a large screen, so the rendered grid names no width of its own: it is as
+  // wide as the search box and the sections under it.
+  const html = renderComponent('frontend/src/features/home/app-grid.tsx', 'AppGrid');
+  const grid = html.match(/<div[^>]*\bid="app-list"[^>]*>/);
+  assert.ok(grid, 'the grid renders');
+  const className = grid[0].match(/class="([^"]*)"/)[1].split(/\s+/);
+  assert.ok(className.includes('grid-cols-4'), 'four columns, the count a stored layout is keyed by');
+  assert.deepEqual(className.filter((c) => /(^|:)max-w-/.test(c)), [], 'and no cap at any width');
   assert.match(read('frontend/src/features/home/index.tsx'), /<div className="home-column px-3 pt-3 md:pt-5 pb-2">/);
 });
 

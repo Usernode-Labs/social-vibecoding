@@ -36,6 +36,14 @@ const fakePool = {
       if (params[0] === 1) return { rows: [{ name: 'PUZZLE CHAIN' }] };
       return { rows: [] };
     }
+    // #6157: whether a preview host's preview is asleep. Session 77 of
+    // puzzle-chain sleeps; 42 is awake.
+    if (/SELECT cs\.id, cs\.staging_asleep_at, cs\.staging_runtime_kind FROM chat_sessions cs JOIN apps a/.test(sql)) {
+      if (params[1] !== 'puzzle-chain') return { rows: [] };
+      if (params[0] === 77) return { rows: [{ id: 77, staging_asleep_at: '2026-11-02T10:00:00Z', staging_runtime_kind: 'kubernetes' }] };
+      if (params[0] === 42) return { rows: [{ id: 42, staging_asleep_at: null, staging_runtime_kind: 'kubernetes' }] };
+      return { rows: [] };
+    }
     throw new Error(`app-unavailable stub: unexpected query: ${sql}`);
   },
 };
@@ -48,6 +56,17 @@ const poolPath = require.resolve('../src/db/pool');
 const appHealPath = require.resolve('../src/services/app-heal');
 stub(poolPath, { getPool: () => fakePool });
 stub(appHealPath, { reportVisit: (pool, slug) => healCalls.push(slug) });
+// #6157: the platform's wake, faked: what the waking page and the route ask.
+const wakes = [];
+const previewSleepPath = require.resolve('../src/services/preview-sleep');
+const realPreviewSleep = require('../src/services/preview-sleep');
+stub(previewSleepPath, {
+  ...realPreviewSleep,
+  async wakeByHost(config, pool, host) {
+    wakes.push(host);
+    return realPreviewSleep.previewSessionOfHost(host) ? { status: 'waking' } : { status: 'unknown' };
+  },
+});
 delete require.cache[require.resolve('../src/services/app-access')];
 delete require.cache[require.resolve('../src/routes/app-error')];
 
@@ -186,4 +205,133 @@ test('Caddyfile: apex site never proxies its error page (platform is the dead up
     'apex handle_errors must not proxy anywhere — its upstream is the thing that just died');
   assert.match(apexErr, /respond "\{err\.status_code\} \{err\.status_text\}"/,
     'non-document errors keep the terse respond fallback');
+});
+
+// ── #6157: a sleeping preview's direct link ─────────────────────────────
+//
+// With the app-host gate on, the gate proxies a preview's request to its
+// Service, which has no pod while it sleeps, and falls back here. The
+// platform wakes it and answers with the waking page, which asks for the
+// wake itself too, polls, and reloads once the app answers.
+
+const ASLEEP_HOST = `puzzle-chain--s77.${DOMAIN}`;
+
+function post(pathname) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: pathname, method: 'POST' }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+test('#6157 a sleeping preview\'s host gets the waking page, and the platform wakes it', async () => {
+  wakes.length = 0;
+  healCalls.length = 0;
+  const res = await get({ host: ASLEEP_HOST, 'sec-fetch-dest': 'document' });
+  assert.equal(res.status, 503);
+  assert.match(res.headers['cache-control'], /no-store/);
+  assert.match(res.headers['content-type'], /text\/html/);
+  assert.match(res.body, /<title>Waking this preview…<\/title>/);
+  assert.match(res.body, new RegExp(`"//${DOMAIN}/__preview_wake\\?host=${encodeURIComponent(ASLEEP_HOST)}"`),
+    'the page asks the platform\'s own origin to wake it');
+  assert.ok(!res.body.includes('is restarting'));
+  assert.deepEqual(wakes, [ASLEEP_HOST]);
+  assert.deepEqual(healCalls, [], 'a preview is never the production heal\'s');
+
+  const fetched = await get({ host: ASLEEP_HOST, 'sec-fetch-dest': 'empty' });
+  assert.equal(fetched.status, 503);
+  assert.deepEqual(JSON.parse(fetched.body), { error: 'preview_waking' }, 'the page\'s own poll reads a 503 until the app answers');
+
+  const awake = await get({ host: `puzzle-chain--s42.${DOMAIN}`, 'sec-fetch-dest': 'document' });
+  assert.match(awake.body, /is restarting/, 'a preview that is awake and down is down for another reason');
+});
+
+test('#6157 the waking page\'s ask wakes the preview its host names, and nothing else', async () => {
+  wakes.length = 0;
+  const asked = await post(`/__preview_wake?host=${encodeURIComponent(ASLEEP_HOST)}`);
+  assert.equal(asked.status, 202);
+  assert.deepEqual(JSON.parse(asked.body), { status: 'waking' });
+  assert.equal((await post(`/__preview_wake?host=${encodeURIComponent(PUB_HOST)}`)).status, 404);
+  assert.deepEqual(wakes, [ASLEEP_HOST, PUB_HOST]);
+});
+
+test('#6157 through the real app-host gate, a sleeping preview answers the waking page', async () => {
+  const { createGate } = require('../scripts/app-gate');
+  const net = require('node:net');
+  const dead = net.createServer();
+  await new Promise((resolve) => dead.listen(0, '127.0.0.1', resolve));
+  const deadPort = dead.address().port;
+  await new Promise((resolve) => dead.close(resolve));
+  // The platform: its access answer (allowed, to the preview's Service) and
+  // the real error routes.
+  const platformApp = express();
+  platformApp.get('/__caddy/access', (req, res) => {
+    res.set('X-Usernode-Upstream', 'sv-preview-1-s77');
+    res.status(200).send('ok');
+  });
+  platformApp.use(appErrorRoutes({ jwtSecret: 'test-secret' }));
+  const platformServer = http.createServer(platformApp);
+  await new Promise((resolve) => platformServer.listen(0, '127.0.0.1', resolve));
+  const gate = createGate({
+    platformUrl: `http://127.0.0.1:${platformServer.address().port}`,
+    // The Service has no pod while the preview sleeps.
+    resolveUpstream: () => ({ host: '127.0.0.1', port: deadPort }),
+    retryWindowMs: 300, log: { error() {}, warn() {} },
+  });
+  await new Promise((resolve) => gate.listen(0, '127.0.0.1', resolve));
+  wakes.length = 0;
+  try {
+    const res = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: gate.address().port, path: '/', headers: { host: ASLEEP_HOST, 'sec-fetch-dest': 'document' } }, (r) => {
+        let body = '';
+        r.on('data', (d) => { body += d; });
+        r.on('end', () => resolve({ status: r.statusCode, body }));
+      }).on('error', reject);
+    });
+    assert.equal(res.status, 503);
+    assert.match(res.body, /Waking this preview…/);
+    assert.deepEqual(wakes, [ASLEEP_HOST], 'the platform was asked to wake it');
+  } finally {
+    await new Promise((resolve) => gate.close(resolve));
+    await new Promise((resolve) => { platformServer.close(resolve); platformServer.closeAllConnections?.(); });
+  }
+});
+
+test('#6157 the waking page asks for the wake, polls, and reloads once the app answers', async () => {
+  const vm = require('node:vm');
+  const { renderWakingPage } = require('../src/services/preview-waking-page');
+  const page = renderWakingPage({ wakeUrl: `//${DOMAIN}/__preview_wake?host=${ASLEEP_HOST}` });
+  const script = page.slice(page.indexOf('<script>') + '<script>'.length, page.indexOf('</script>'));
+  const requests = [];
+  const answers = [503, 503, 200];
+  const timers = [];
+  let reloads = 0;
+  const window = { location: { href: `https://${ASLEEP_HOST}/rota`, reload: () => { reloads += 1; } } };
+  const sandbox = {
+    window, Date,
+    document: { getElementById: () => ({ textContent: '' }) },
+    setTimeout: (fn) => { timers.push(fn); return timers.length; },
+    // The fake platform and the preview's own address.
+    fetch: (url, opts = {}) => {
+      requests.push({ url, method: opts.method || 'GET', mode: opts.mode || null });
+      if (opts.method === 'POST') return Promise.resolve({ status: 0, type: 'opaque' });
+      return Promise.resolve({ status: answers.shift() });
+    },
+  };
+  vm.runInNewContext(script, sandbox);
+  assert.deepEqual(requests, [{ url: `//${DOMAIN}/__preview_wake?host=${ASLEEP_HOST}`, method: 'POST', mode: 'no-cors' }],
+    'it asks the platform at once');
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  for (let i = 0; i < 5 && !reloads; i += 1) {
+    timers.shift()();
+    await flush();
+  }
+  assert.equal(reloads, 1, 'reloaded once its address answered something other than a 5xx');
+  assert.deepEqual(requests.slice(1).map((r) => [r.url, r.method]), [
+    [window.location.href, 'GET'], [window.location.href, 'GET'], [window.location.href, 'GET'],
+  ], 'it polled its own address');
 });

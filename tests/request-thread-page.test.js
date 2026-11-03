@@ -290,6 +290,9 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   assert.equal(lead({ bot: { what: 'building', since: null } }), 'Homeroom bot is building this.');
   assert.equal(lead({ bot: { what: 'queued', since: null, held: true } }),
     'Homeroom bot will start when one of its changes here is voted in or closed.');
+  // #6156: held for its turn among the project's builds, not for a vote.
+  assert.equal(lead({ bot: { what: 'queued', since: null, held: true, turn: true } }),
+    'Homeroom bot will start when one of the changes it is building here is done.');
   assert.equal(lead({ bot: { what: 'queued', since: null } }), 'Homeroom bot will build this next.');
   // Its sentence is the plan's news: no "Plan v1 is ready for comments." after it.
   assert.match(fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8'), /const specLine = stage === 'spec' && !s\.botSays/);
