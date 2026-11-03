@@ -73,6 +73,8 @@ const LINES: Record<string, string> = {
   'queued.project_building': 'messages:bot.track.line.queued.project_building',
   'queued.person_limit': 'messages:bot.track.line.queued.person_limit',
   'planning.reading': 'messages:bot.track.line.planning.reading',
+  // #6228: the read started after somebody replied on the request.
+  'planning.reply': 'messages:bot.track.line.planning.reply',
   'planning.planning': 'messages:bot.track.line.planning.planning',
   'planning.setting_up': 'messages:bot.track.line.planning.setting_up',
   'planning.answered': 'messages:bot.track.line.planning.answered',

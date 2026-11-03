@@ -477,10 +477,22 @@ class PlaceBusy extends Error {
 async function runTurn(pool, config, { appId, place, through = 0, sorry = false, turnKey, deps = {} }) {
   const turnId = await claim(pool, { appId, place, turnKey });
   if (!turnId) throw new PlaceBusy();
+  // #6228: on a request, the thread's status line follows this turn: reading
+  // once it starts, and its answer (or silence) once it ends. Best-effort.
+  const noteStatus = () => {
+    if (!place || place.type !== 'issue' || place.ref == null) return;
+    try {
+      void require('./homeroom-bot-reply-status')
+        .publish(pool, { appId: Number(appId), issueNumber: Number(place.ref) })
+        .catch(() => {});
+    } catch { /* best effort */ }
+  };
+  noteStatus();
   const record = { outcome: 'quiet', tools: [], failures: [] };
   const finishWith = async (outcome) => {
     record.outcome = outcome;
     await finishTurn(pool, turnId, record);
+    noteStatus();
     return { outcome, throughId: record.throughId || null, replyId: record.replyId || null };
   };
   const cfg = configOf(config);

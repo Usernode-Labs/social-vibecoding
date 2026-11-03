@@ -41,6 +41,7 @@ import { ArrowUpIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
 import { DropOverlay } from '../attachments/file-drag';
+import { BOT_CHIP_CLASS } from './bot-request';
 import {
   PendingStrip,
   type PendingAttachmentView,
@@ -94,6 +95,13 @@ const IDS = {
 export function useComposerSlot(scope: ComposerScope): ComposerSlot {
   return useStoreState(composerStore)[scope];
 }
+
+/** #6228: the status line's words for each state of the bot's reply line. */
+const BOT_STATUS_WORDS = {
+  will_read: 'chat:group.botStatus.willRead',
+  reading: 'chat:group.botStatus.reading',
+  quiet: 'chat:group.botStatus.quiet',
+} as const;
 
 /**
  * "↩ Replying to @alice" over the quoted line (#15).
@@ -172,12 +180,34 @@ function AttachStrip({ scope, items }: { scope: ComposerScope; items: PendingAtt
  * the boxed one, three different insets), which held the line open while it
  * said nothing and made each copy a little different.
  */
-export function StatusLineView({ scope, status }: { scope: ComposerScope; status: string }) {
-  return <ChatStatusLine id={IDS[scope].typing}>{status}</ChatStatusLine>;
+export function StatusLineView({ scope, status, bot = null }: {
+  scope: ComposerScope;
+  status: string;
+  bot?: ComposerSlot['bot'];
+}) {
+  const t = useMessages('chat');
+  // Typing, or the reconnect notice, takes the line while it says something;
+  // the bot's line comes back afterwards.
+  const words = !status && bot
+    ? t(bot.state === 'reading' && bot.mine
+      ? 'chat:group.botStatus.readingYours'
+      : BOT_STATUS_WORDS[bot.state])
+    : '';
+  return (
+    <ChatStatusLine id={IDS[scope].typing}>
+      {status || (bot ? (
+        <span className={BOT_CHIP_CLASS} data-bot-status={bot.state}>
+          {bot.state === 'quiet' ? null : <span aria-hidden="true">👀</span>}
+          <span>{words}</span>
+        </span>
+      ) : null)}
+    </ChatStatusLine>
+  );
 }
 
 export function StatusLine({ scope }: { scope: ComposerScope }) {
-  return <StatusLineView scope={scope} status={useComposerSlot(scope).status} />;
+  const slot = useComposerSlot(scope);
+  return <StatusLineView scope={scope} status={slot.status} bot={slot.bot} />;
 }
 
 /** The three module-fed rows above the form, in their shipped order. */

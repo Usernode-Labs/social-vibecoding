@@ -274,3 +274,26 @@ test('the general chat pane is mounted, not assigned', () => {
   assert.doesNotMatch(fn[1], /usernode_seen_gc_intro|introAppName/);
   assert.doesNotMatch(read('frontend/src/features/group-chat/general-chat.tsx'), /talks and votes on proposed changes|introAppName/);
 });
+
+// #6228 (3 Nov 2026): the status slot under a request's thread says what
+// Homeroom bot is doing with the newest reply, in the bot chip's own style.
+test('#6228: the bot\'s reply line, and typing takes the slot first', () => {
+  const view = (extra) => renderComponent(COMPOSER, 'StatusLineView', { scope: 'thread', status: '', ...extra });
+  const says = (html, id) => assert.ok(html.includes(message(id)), `${id} in ${html}`);
+  const will = view({ bot: { state: 'will_read', mine: true } });
+  says(will, 'chat:group.botStatus.willRead');
+  assert.match(will, /data-bot-status="will_read"/);
+  assert.match(will, /--brand-tint/, 'the bot chip\'s style');
+  assert.match(will, /👀/);
+  // The person who wrote it sees "your reply"; everybody else "the reply".
+  says(view({ bot: { state: 'reading', mine: true } }), 'chat:group.botStatus.readingYours');
+  says(view({ bot: { state: 'reading', mine: false } }), 'chat:group.botStatus.reading');
+  const quiet = view({ bot: { state: 'quiet', mine: true } });
+  says(quiet, 'chat:group.botStatus.quiet');
+  assert.doesNotMatch(quiet, /👀/, 'nothing to add carries no glyph');
+  // Someone typing takes the line; the bot's comes back when they stop.
+  assert.equal(view({ status: 'bob is typing...', bot: { state: 'reading', mine: true } }),
+    '<div id="gc-thread-typing" class="chat-status" aria-live="polite">bob is typing...</div>');
+  // Neither: the slot is empty.
+  assert.equal(view({}), '<div id="gc-thread-typing" class="chat-status" aria-live="polite"></div>');
+});

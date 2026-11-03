@@ -30,6 +30,7 @@
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
+const { replyLateralSql } = require('./homeroom-bot-progress');
 
 const STATES = Object.freeze([
   'queued', 'planning', 'waiting', 'building', 'checks', 'vote', 'going_live', 'live',
@@ -212,6 +213,9 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
   const stage = job.stage || entry?.stage || null;
   const lead = runs.find((run) => Number(run.id) === Number(job.id)) || runs[0] || null;
   let base = stage ? fromStage(stage, { waitingFor: entry?.waitingFor || job.waitingFor || null }) : null;
+  // #6228: a read after somebody's reply says so, in the existing planning
+  // state's line, rather than "Reading the request".
+  if (base?.why === 'reading' && job.reply) base = { ...base, why: 'reply' };
   // #6156: held, it waits at the limit its run was held by, as an ended
   // hold reads it (fromOutcome): the bot's turn, or votes on its changes.
   if (base?.state === 'held' && stage === 'held' && CAP_LIMITS[lead?.cap_suppressed]) {
@@ -506,7 +510,8 @@ const REQUEST_ROWS_SQL = `
                       ORDER BY ri.id DESC LIMIT 1), FALSE)
              OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
                          WHERE cr.app_id = a.id AND cr.issue_number = w.n AND cr.closed_at IS NOT NULL)) AS request_closed,
-         oq.created_at AS question_at
+         oq.created_at AS question_at,
+         reply.reply_id, reply.reply_at, reply.reply_user_id
     FROM UNNEST($2::int[]) AS w(n)
     JOIN apps a ON a.id = $1
     LEFT JOIN homeroom_bot_queue q ON q.app_id = a.id AND q.issue_number = w.n
@@ -521,7 +526,8 @@ const REQUEST_ROWS_SQL = `
         FROM homeroom_bot_runs
        WHERE app_id = a.id AND issue_number = w.n AND mode = 'live'
        ORDER BY id DESC LIMIT 1
-    ) run ON TRUE
+         ) run ON TRUE
+    ${replyLateralSql({ appId: 'a.id', issueNumber: 'w.n', runAt: 'run.created_at' })}
     LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
     LEFT JOIN LATERAL (
       SELECT created_at FROM homeroom_bot_posts
@@ -575,6 +581,8 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null }
     title: row.issue_title || null,
     firstVersion: false,
     stage: state ? state.stage : null,
+    // #6228: the read is of somebody's newest reply.
+    reply: state?.reply === true,
     since: state ? iso(state.since) : null,
     at: iso(row.run_at),
     outcome,

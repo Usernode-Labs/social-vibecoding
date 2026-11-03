@@ -341,6 +341,9 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
   }
   if (row.state !== 'open') return null;
   let said = bot && Object.prototype.hasOwnProperty.call(BOT_STANDING, bot.stage) ? BOT_STANDING[bot.stage] : undefined;
+  // #6228: a read the bot started after somebody replied is reading that
+  // reply, not the request again.
+  if (said && bot.stage === 'reading' && bot.reply === true) said = { group: 'next', what: 'reading_reply' };
   // 1 Nov 2026: Homeroom bot waits for their plan, which nothing it is
   // queued for overtakes: Waiting for your plan, until a change is up.
   if (row.awaiting_plan === true && !status && row.request_state === 'open' && (!said || said.group === 'waiting')) {
@@ -408,6 +411,10 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
     const f = facts && row.number != null ? facts : null;
     if (f) {
       const base = { at: iso(at), quietDays };
+      // #6228: a person replied on a request the bot handed back, and the
+      // bot has it to read: it leaves Needs you at once, not when the read
+      // starts.
+      if (f.replyWaits && f.handedBack) return { group: 'next', what: 'reading_reply', ...base };
       // In Homeroom bot's line on its project.
       if (f.queuePlace) return { group: 'waiting', what: 'queued', ...base, place: f.queuePlace };
       // Read and ready, but a limit on the project holds the build.
@@ -439,7 +446,7 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
 
 // In progress is soonest first: going live, then merging, then a change
 // being fixed or followed up, then made, then a request being read.
-const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building: 3, reading: 4 };
+const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building: 3, reading: 4, reading_reply: 4 };
 // Waiting is the nearest to live first: a vote or a change still waiting for
 // its checks (the oldest has waited longest), a follow-up waiting its turn, a
 // build waiting its turn or held back, a request waiting to be read, then one
@@ -526,6 +533,9 @@ async function botStages(pool, user, deps = {}) {
       if (!stage) continue;
       stages.set(botKey(row.slug, row.issue_number), {
         stage, since: (state ? state.since : row.run_at) || null, capSuppressed: row.cap_suppressed || null,
+        // #6228: only a read of a reply says so; every other stage keeps the
+        // shape it had.
+        ...(state && state.reply === true ? { reply: true } : {}),
       });
     }
   } catch (err) {
@@ -549,7 +559,7 @@ WITH wanted AS (
 live_run AS (
   SELECT DISTINCT ON (r.app_id, r.issue_number)
          r.app_id, r.issue_number, r.verdict, r.reason, r.cap_suppressed, r.created_at,
-         r.build_ok, r.proposal_session_id,
+         r.build_ok, r.build_error, r.proposal_session_id,
          (r.created_at > NOW() - make_interval(days => $4)) AS fresh
     FROM homeroom_bot_runs r
    WHERE r.mode = 'live'
@@ -573,7 +583,14 @@ queue AS (
 SELECT w.app_id, w.number, a.slug, rq.title, rq.labels,
        lr.verdict AS run_verdict, lr.reason AS run_reason, lr.cap_suppressed AS run_cap,
        lr.created_at AS run_at, lr.fresh AS run_fresh,
-       lr.build_ok AS run_build_ok, lr.proposal_session_id AS run_proposal,
+       lr.build_ok AS run_build_ok, lr.build_error AS run_build_error, lr.proposal_session_id AS run_proposal,
+       -- #6228: the newest person's reply on the request after that run, and
+       -- its queue row whether started or not (replyWaits).
+       (SELECT MAX(cm.created_at) FROM chat_messages cm JOIN users ru ON ru.id = cm.user_id
+         WHERE cm.app_id = w.app_id AND cm.thread_type = 'issue' AND cm.thread_ref = w.number
+           AND cm.msg_type = 'message' AND cm.deleted_at IS NULL AND ru.is_synthetic IS NOT TRUE
+           AND lr.created_at IS NOT NULL AND cm.created_at > lr.created_at) AS reply_at,
+       qa.started_at AS queue_started, qa.held_until AS queue_held_until,
        EXISTS (SELECT 1 FROM homeroom_bot_runs ar
                 WHERE ar.app_id = w.app_id AND ar.issue_number = w.number) AS any_run,
        q.id AS queue_id, q.place AS queue_place, h.place AS held_place,
@@ -586,7 +603,8 @@ SELECT w.app_id, w.number, a.slug, rq.title, rq.labels,
   LEFT JOIN requests rq ON rq.app_id = w.app_id AND rq.number = w.number
   LEFT JOIN live_run lr ON lr.app_id = w.app_id AND lr.issue_number = w.number
   LEFT JOIN held h ON h.app_id = w.app_id AND h.issue_number = w.number
-  LEFT JOIN queue q ON q.app_id = w.app_id AND q.issue_number = w.number`;
+  LEFT JOIN queue q ON q.app_id = w.app_id AND q.issue_number = w.number
+  LEFT JOIN homeroom_bot_queue qa ON qa.app_id = w.app_id AND qa.issue_number = w.number`;
 
 /**
  * #6158: what the bot's records say of each thread's request, by botKey
@@ -631,13 +649,31 @@ async function requestFacts(pool, rows, viewerId, deps = {}) {
         reason: f.run_reason || null,
         capSuppressed: f.run_cap || null,
         createdAt: f.run_at || null,
+        buildOk: f.run_build_ok,
+        buildError: f.run_build_error || null,
         held: f.run_verdict === 'ready' && f.run_fresh === true
           && !!f.run_cap && f.run_build_ok == null && f.run_proposal == null,
       };
+      // #6228: handed back to a person (homeroom-bot-progress.js handedBack),
+      // and a reply on it the bot has yet to read (replyWaits).
+      const handedBack = !!run && (run.verdict === 'person'
+        || (run.verdict === 'ready' && run.buildOk === false
+          && !/^(?:skipped|blocked):/.test(String(run.buildError || ''))));
+      const waits = !!run && require('./homeroom-bot-progress').replyWaits({
+        reply_at: f.reply_at,
+        run_at: run.createdAt,
+        started_at: f.queue_started,
+        queue_id: f.queue_started == null && f.queue_id != null ? f.queue_id : null,
+        held_until: f.queue_held_until,
+      });
       const scoped = inScope(f.slug);
       facts.set(botKey(f.slug, f.number), {
         run,
         anyRun: f.any_run === true,
+        // #6228: a reply waiting to be read, and whether the run handed the
+        // request back (the two sides of the same wait).
+        replyWaits: waits,
+        handedBack,
         queue: scoped && f.queue_id != null ? { place: Number(f.queue_place) || null } : null,
         queuePlace: scoped && f.queue_id != null ? Number(f.queue_place) || null : null,
         heldPlace: f.held_place == null ? null : Number(f.held_place),
@@ -753,6 +789,7 @@ const THREAD_SAYS = Object.freeze({
   fixing: 'Homeroom bot is fixing what its tests found',
   revising: 'Homeroom bot is following up on the replies',
   reading: 'Homeroom bot is reading it',
+  reading_reply: 'Homeroom bot is reading the newest reply',
   building: 'being built',
   vote: 'waiting for votes',
   decision: 'waiting for votes',

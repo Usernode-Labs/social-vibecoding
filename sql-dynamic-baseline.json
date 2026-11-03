@@ -1405,9 +1405,23 @@
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
+      "fingerprint": "9b96d2f7309cadf020cc",
+      "count": 1,
+      "preview": "`WITH mine AS ( SELECT r.app_id, r.issue_number, r.issue_title, r.first_version FROM homeroom_bot_requesters r WHERE r.user_id = $1 UNION SELECT q.app_id, q.iss"
+    },
+    {
+      "source": "src/services/homeroom-bot-progress.js",
+      "kind": "structural-template",
       "fingerprint": "eee0d0058ae8c27e0b96",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
+    },
+    {
+      "source": "src/services/homeroom-bot-reply-status.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "748340c4403e63509b60",
+      "count": 1,
+      "preview": "REQUEST_ROWS_SQL"
     },
     {
       "source": "src/services/homeroom-bot-thread-tools/look-into.js",
@@ -1422,6 +1436,13 @@
       "fingerprint": "c88f14f4f226912f6e1e",
       "count": 1,
       "preview": "`SELECT ${require('../app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot-track.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "748340c4403e63509b60",
+      "count": 1,
+      "preview": "REQUEST_ROWS_SQL"
     },
     {
       "source": "src/services/homeroom-bot-tray.js",

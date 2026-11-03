@@ -95,6 +95,9 @@ async function migrate(config) {
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
   await seedStagingBotPlanWaiting(pool);
+  // #6228's shots: a reply on the handed-back request #9103 (above), for the
+  // thread's status line, its track card and the Homeroom bot page's row.
+  await seedStagingBotReplyWaiting(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -1738,6 +1741,62 @@ async function seedStagingBotWaitingRows(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
+  }
+}
+
+// #6228 (3 Nov 2026): the thread's status line and the track card after a
+// person replies on a request the bot handed back. A fresh staging copy has
+// no such request, so this seeds one on a request page staging can open (a
+// mock issue, stagingMockIssues), handed back to a person, with the reply
+// the shots' member fixture (usernode-capture) wrote on it and an unstarted
+// queue row so the read still waits when the shots run (a reply alone stops
+// reading as waiting after REPLY_WAIT_MS). Obviously fake, idempotent, and a
+// no-op outside staging: a staging copy never acts on its queue.
+async function seedStagingBotReplyWaiting(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const number = 900002;
+    const title = 'Staging demo: a request the bot handed back';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, userId, title],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, created_at)
+       SELECT $1, $2, 'live', 'person', 'Staging demo: a person must decide which of the two columns to keep.', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                           WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'person')`,
+      [appId, number],
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+       SELECT $1, $2, 'Staging demo: yep, go ahead.', 'message', 'issue', $3, NOW() - INTERVAL '30 seconds'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $3
+                             AND user_id = $2 AND msg_type = 'message' AND deleted_at IS NULL
+                             AND content = 'Staging demo: yep, go ahead.')`,
+      [appId, userId, number],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by, enqueued_at)
+       SELECT $1, $2, 2, 'refresh', $3, NOW() - INTERVAL '20 seconds'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2)`,
+      [appId, number, userId],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot reply-waiting seeding failed', { message: err.message });
   }
 }
 

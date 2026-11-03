@@ -9945,9 +9945,23 @@ async function lookAt(config, pool, { input, steps, signal = null, owner = null,
     },
   });
   void signal;
-  const r = await lookStore.run(L, () => runTriage(pool, config, {
-    bot, app, item, mode: settings.mode, settings, deps, carried: input.carried || null,
-  }));
+  // #6228: the request's thread says the bot has the reply as soon as this
+  // look starts, and what it made of it when it ends. Best-effort, and kept
+  // here rather than in the machine so the machine reaches nothing new.
+  const noteStatus = () => {
+    try {
+      void require('./homeroom-bot-reply-status').publish(pool, { appId, issueNumber }).catch(() => {});
+    } catch { /* best effort */ }
+  };
+  noteStatus();
+  let r;
+  try {
+    r = await lookStore.run(L, () => runTriage(pool, config, {
+      bot, app, item, mode: settings.mode, settings, deps, carried: input.carried || null,
+    }));
+  } finally {
+    noteStatus();
+  }
   return lookOutcome(r, L, { pool, settings, bot, app, item, deps });
 }
 
