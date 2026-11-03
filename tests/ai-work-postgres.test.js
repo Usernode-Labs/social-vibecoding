@@ -278,6 +278,31 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.deepEqual(page.liveThisWeek.map((r) => r.title), ['Badges']);
   assert.equal(page.counts.inProgress, page.inProgress.length);
 
+  // #6219: an older open question about a request does not hide the plan the
+  // bot wrote later and now waits for her Build it on. The real progress
+  // module is read here, not a stub.
+  await request(app, 33, ada, 'Garden notes');
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+     VALUES ($1, 33, $2, 'Garden notes')`, [app.id, ada.id]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at, created_at)
+     VALUES ($1, 33, 'live', 'ready', NOW() - interval '1 hour', NOW() - interval '1 hour')`, [app.id]);
+  const askedConvo = await one(`INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`, [ada.id]);
+  const askedMessage = await one(
+    `INSERT INTO conversation_messages (conversation_id, sender_id, content) VALUES ($1, $2, 'How deep does the bed go?') RETURNING id`,
+    [askedConvo.id, bot.id]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, question_status, created_at)
+     VALUES ($1, $2, $3, $4, 33, 'question', 'open', NOW() - interval '2 hours')`,
+    [askedMessage.id, ada.id, askedConvo.id, app.id]);
+  const withQuestion = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot, settings: { mode: 'live' } } });
+  assert.deepEqual(withQuestion.needs.map((r) => `${r.number}:${r.what}`), ['33:plan'],
+    'the newer plan wins over the question that was never answered');
+  const pageWithQuestion = await aiWork.pageLists(pool, { user: { id: ada.id }, deps: { bot, settings: { mode: 'live' } } });
+  assert.ok(pageWithQuestion.needsYou.some((r) => r.number === 33 && r.says === 'its plan waits for their Build it'),
+    'Needs you carries the plan row, not the older question\'s Answer');
+
   // Private threads: her own message with replies, and the bot's draft for her.
   const convo = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);
   await pool.query(

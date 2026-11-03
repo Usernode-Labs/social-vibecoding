@@ -796,9 +796,22 @@ function threadSays(t, slotVotes = 0) {
  * Homeroom bot's: its changes up for a vote hold its build slots.
  */
 function listsOf(needs, work, { botUsername = null } = {}) {
-  const items = Array.isArray(needs) ? needs : [];
   // A feed card names a change by its request, as the tab does (model.ts shownNumber).
   const needNumber = (item) => (item.kind === 'ballot' ? item.ballot?.number || item.number : item.number) || null;
+  // #6219: a plan the bot wrote after its question is newer news about that
+  // request than the question is. The person acts on Build it, so the older
+  // question's card gives way to the plan row (the question stays open in
+  // the records, and every other screen still lists it). Undated: as before.
+  const planAt = new Map();
+  for (const t of work?.needs || []) {
+    if (t.what === 'plan' && t.app && t.number) planAt.set(`${t.app.slug}#${t.number}`, t.at || null);
+  }
+  const items = (Array.isArray(needs) ? needs : []).filter((item) => {
+    if (item.kind !== 'question' || !item.app || !item.at) return true;
+    const at = planAt.get(`${item.app.slug}#${needNumber(item)}`);
+    if (!at) return true;
+    return !(new Date(at).getTime() > new Date(item.at).getTime());
+  });
   const shownNumber = (item) => (item.kind === 'proposal' && item.request?.number) || needNumber(item);
   const owed = new Set();
   for (const item of items) {

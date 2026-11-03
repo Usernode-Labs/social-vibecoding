@@ -488,7 +488,16 @@ function stageOf(input, { now = new Date() } = {}) {
   if (row.started_at) {
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
-  if (row.question_at && !closed) {
+  // #6219: the bot read the request again after its question and decided it
+  // is ready to build. The plan waiting for Build it is what the person acts
+  // on now, so the older question gives way (it stays open in the database,
+  // and every other reader still sees it). A question asked at or after the
+  // newest run is still the question, and a newer run that is not live and
+  // ready does not replace it.
+  const supersededQuestion = row.question_at && row.run_at
+    && row.mode === 'live' && row.verdict === 'ready'
+    && new Date(row.run_at).getTime() > new Date(row.question_at).getTime();
+  if (row.question_at && !closed && !supersededQuestion) {
     return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
   }
   // The newest look decided to build it, and nothing has finished it yet.

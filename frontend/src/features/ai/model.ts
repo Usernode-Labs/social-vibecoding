@@ -119,6 +119,12 @@ export interface NeedItem {
    * Approve, as its card and the project's own Needs you do; Vote elsewhere.
    */
   approve?: boolean;
+  /**
+   * When it was put there. Used to tell a plan Homeroom bot wrote after its
+   * question (#6219) from the question itself: the plan is newer news, and
+   * the page shows the Build it row.
+   */
+  at?: string | null;
 }
 
 /** Homeroom bot's account: its changes up for a vote hold a project's build slots. */
@@ -354,11 +360,26 @@ function listedKeys(needs: NeedItem[] | null, work: AiWork | null): Set<string> 
  */
 export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow[] {
   const rows: WorkRow[] = [];
-  const owed = owedKeys(needs);
+  // #6219: a plan Homeroom bot wrote after its question is newer news about
+  // that request than the question is, so the older question's card gives way
+  // to the plan row (the question stays open in the records, and the
+  // Communities feed still lists it). Undated: as before.
+  const planAt = new Map<string, string | null>();
+  for (const t of work?.needs || []) {
+    if (t.what === 'plan' && t.app && t.number) planAt.set(`${t.app.slug}#${t.number}`, t.at || null);
+  }
+  const shown = (needs || []).filter((item) => {
+    if (item.kind !== 'question' || !item.app || !item.at) return true;
+    const number = needNumber(item);
+    const at = number ? planAt.get(`${item.app.slug}#${number}`) : undefined;
+    if (!at) return true;
+    return !(new Date(at).getTime() > new Date(item.at).getTime());
+  });
+  const owed = owedKeys(shown);
   const held = heldProjects(work);
   const filed = filedThreads(work);
-  const listed = listedKeys(needs, work);
-  for (const item of needs || []) {
+  const listed = listedKeys(shown, work);
+  for (const item of shown) {
     const app = item.app || null;
     rows.push({
       key: `need:${item.kind}:${item.id}`,

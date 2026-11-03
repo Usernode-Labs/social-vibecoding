@@ -324,6 +324,27 @@ test('#4539: on a closed request the plan and the question stop waiting, and the
   assert.equal(progress.outcomeOf({ ...waiting }), null, 'open: nothing has come of it yet');
 });
 
+// #6219: a plan waiting for Build it was missing from the Homeroom bot page
+// because the bot had asked a question about the same request earlier and
+// nobody had answered it. The newer look wins: the plan is what the person
+// acts on now, so the request reads as a plan row.
+test('#6219: a newer ready run wins over an older open question', () => {
+  const ready = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(5), plan_waiting_at: ago(4) };
+  assert.deepEqual(stage({ ...ready, question_at: ago(30) }), {
+    stage: 'plan', since: ago(4), waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
+  });
+  // A question asked at or after the newest run is still the question.
+  assert.equal(stage({ ...ready, question_at: ago(2) }).stage, 'question', 'asked after the newest run');
+  assert.equal(stage({ ...ready, question_at: ago(5) }).stage, 'question', 'asked at the same time as it');
+  // A newer run that did not decide to build it does not replace the question.
+  assert.equal(stage({ ...ready, mode: 'shadow', question_at: ago(30) }).stage, 'question', 'a shadow look');
+  assert.equal(stage({ mode: 'live', verdict: 'question', run_at: ago(5), question_at: ago(30) }).stage, 'question',
+    'a newer question run');
+  // Held back by a limit, the newer run still wins: the person is told it waits.
+  assert.equal(stage({ ...ready, cap_suppressed: 'proposals_per_app', question_at: ago(30) }).stage, 'held');
+  assert.equal(stage({ ...ready, cap_suppressed: 'builds_per_app', question_at: ago(30) }).stage, 'held');
+});
+
 // 30 Oct 2026: Main said four closed requests were "ready to build, held
 // back" while the bot tab left them out. The bot's refresh reads open
 // requests only, so no build of a closed one is still to start: held back by

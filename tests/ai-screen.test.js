@@ -110,6 +110,26 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(needsYou(null, { private: [], next: [], waiting: [], live: [] }).length, 0, 'an older server, with no plans');
 });
 
+// #6219: the bot asked a question about a request, nobody answered, and a
+// later look wrote a plan that waits for Build it. The plan is newer news, so
+// Needs you shows the plan row, not the question's Answer card.
+test('#6219: a plan written after the question takes its place in Needs you', () => {
+  const { needsYou } = loadTsx(MODEL);
+  const question = { kind: 'question', id: 31, number: 6210, title: 'Which camera?', app, at: '2026-11-03T11:46:00Z' };
+  const work = {
+    private: [], next: [], waiting: [], live: [],
+    needs: [thread(7, 6210, 'plan', { group: 'needs', title: 'Open a plan row', at: '2026-11-03T12:23:00Z' })],
+  };
+  const rows = needsYou([question], work);
+  assert.deepEqual(rows.map((r) => r.key), ['plan:7'], 'the plan row, not the Answer card');
+  assert.equal(message(rows[0].pill.id), 'Build it');
+  // A question asked after that look is still the question.
+  const newer = { ...question, at: '2026-11-03T12:30:00Z' };
+  assert.deepEqual(needsYou([newer], work).map((r) => r.key), ['need:question:31']);
+  // Undated, the feed's card keeps its place, as before.
+  assert.deepEqual(needsYou([{ ...question, at: null }], work).map((r) => r.key), ['need:question:31']);
+});
+
 test('each section groups its rows by project, and a project shows its first few before its own Show more', () => {
   const { needsYou, byProject, GROUP_FIRST } = loadTsx(MODEL);
   const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: '🎮' };

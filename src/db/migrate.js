@@ -1645,6 +1645,9 @@ async function seedStagingBotWaitingRows(pool) {
         reason: 'Staging demo: a person must decide which of the two columns to keep.',
       },
       { number: 9104, title: 'Staging demo: a request the bot has not read' },
+      // #6219: a plan waiting for their Build it, with an older question
+      // about the same request still open. The plan is what its row shows.
+      { number: 9106, title: 'Staging demo: a plan waiting for Build it', plan: true },
       { number: 9105, title: 'Operator: staging demo, rotate the demo mail key' },
     ];
     for (const d of demo) {
@@ -1670,6 +1673,42 @@ async function seedStagingBotWaitingRows(pool) {
                                WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = $3)`,
           [appId, d.number, d.verdict || 'ready', d.reason || null, d.held || null],
         );
+      }
+      if (d.plan) {
+        await pool.query(
+          `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+           SELECT $1, $2, $3, $4
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2)`,
+          [appId, d.number, userId, d.title],
+        );
+        await pool.query(
+          `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at, created_at)
+           SELECT $1, $2, 'live', 'ready', NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour'
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2)`,
+          [appId, d.number],
+        );
+        const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' LIMIT 1");
+        const asked = await pool.query(
+          `SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1 AND app_id = $2 AND issue_number = $3`,
+          [userId, appId, d.number],
+        );
+        if (bot.rows.length && !asked.rows.length) {
+          const convo = await pool.query(
+            `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+            [userId],
+          );
+          const message = await pool.query(
+            `INSERT INTO conversation_messages (conversation_id, sender_id, content)
+             VALUES ($1, $2, 'Staging demo: how deep should the bed be?') RETURNING id`,
+            [convo.rows[0].id, bot.rows[0].id],
+          );
+          await pool.query(
+            `INSERT INTO homeroom_bot_dm_messages
+               (message_id, user_id, conversation_id, app_id, issue_number, kind, question_status, created_at)
+             VALUES ($1, $2, $3, $4, $5, 'question', 'open', NOW() - INTERVAL '2 hours')`,
+            [message.rows[0].id, userId, convo.rows[0].id, appId, d.number],
+          );
+        }
       }
     }
   } catch (err) {
