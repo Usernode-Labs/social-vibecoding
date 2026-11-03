@@ -329,8 +329,10 @@ const MAX_READS_PER_APP = 6;
 // is a session and a branch of its own (live.buildAndPropose), so they do
 // not share a worker; one at a time made a busy project's ready requests
 // (Homeroom's own above all, where a build can take almost two hours) wait
-// in a line behind each other. Reads stay one per project: they share the
-// project's one session.
+// in a line behind each other. The lane enforces its copy in
+// rules/bot-loop.ts (pickLiveBuilds); this one is what the Mayor, a
+// request's progress and the slots page say. Reads at once are their own
+// number (readsPerApp, MAX_READS_PER_APP above).
 const BUILDS_PER_PROJECT = 3;
 const MAX_PROPOSAL_CEILING = 1000;
 // The automatic ceiling. It was 100 (what twenty live apps had under "5 per
