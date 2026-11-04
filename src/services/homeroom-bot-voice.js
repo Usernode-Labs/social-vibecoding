@@ -777,6 +777,8 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('read_message') ? '- Read one message of this thread in full (read_message).' : null,
     has('read_source') ? '- Read the project\'s code as it is on main (list_source, then read_source) when somebody asks how something works. Say which file you read.' : null,
     has('get_change') ? '- Look up a change, a request, a discussion or the project\'s board on Homeroom (get_change, get_proposal, get_request, get_discussion, list_requests): this project only.' : null,
+    has('tell_me_when') ? '- When somebody asks you to tell them when something about a change happens ("tell me when the update is made", "let me know when it is ready to vote", "ping me when it is merged", "tell me when it is live"), call tell_me_when with that one moment and say its promise in your reply. It is stored and kept: the line comes here. Never tell them you cannot message them later, and never point them at a page to watch it instead.' : null,
+    has('tell_me_when') ? '- When you say work is queued or running, offer to tell them here when it is ready to vote ("Want me to tell you here when it is ready to vote?"). Only store it with tell_me_when once they say yes, or when they already asked you to.' : null,
   ].filter(Boolean);
   return [
     `You are Homeroom bot, a member of the "${app.name || app.slug}" project on Homeroom, replying in ${WHERE[place.type]}.`,
@@ -811,7 +813,10 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- Never say you did something (changed, updated, filed, started, withdrew, closed, posted, told the team) unless a',
     '  tool you called in this turn did it and its result says so. Never promise to look into something or come back to',
-    '  it later: nothing brings you back. When a tool refuses, say plainly why and that nothing was done.',
+    has('tell_me_when')
+      ? '  it later: nothing brings you back to it, except what tell_me_when stored this turn, whose promise is kept here.'
+      : '  it later: nothing brings you back to it.',
+    '  When a tool refuses, say plainly why and that nothing was done.',
     '- Never name a request number you have not seen in the messages, the facts or a tool result.',
     '- A line ending in [cut at ... characters; read_message #id for the rest] was shortened by you reading it, not',
     '  by its writer: the message is whole. Call read_message before you answer anything in it. Never tell anyone',
@@ -879,6 +884,20 @@ function toolsFor(place, {
         why: { type: 'string', description: 'Why, in their words.' },
       }, []));
     }
+  }
+  // #6264: somebody may ask to be told when this change (or, on a request,
+  // its change) is updated, ready to vote, merged or live. Stored, so the
+  // change's own moment keeps the promise here.
+  if (change || place.type === 'issue') {
+    tools.push(fn('tell_me_when', 'Promise to tell the person asking, here, when one thing about the change happens. Stored and kept: the line is posted in this place and their bell rings.', {
+      event: {
+        type: 'string',
+        enum: ['update', 'checks', 'vote', 'merged', 'live'],
+        description: 'The one moment: the update is made, its checks finish, it is ready to vote, it is merged, it is live.',
+      },
+      ...(['chat', 'category', 'message'].includes(place.type)
+        ? { change: { type: 'integer', description: 'Which of your changes: its change id from the facts.' } } : {}),
+    }, ['event']));
   }
   if (place.type === 'issue') {
     tools.push(fn('start_request', 'Start this request now, or read it again. Under a plan waiting for its requester\'s Build it, their asking is Build it.', {}, []));
@@ -1328,6 +1347,8 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         return await updateChange(pool, ctx, args);
       case 'offer_withdraw':
         return await offerWithdraw(pool, ctx, args);
+      case 'tell_me_when':
+        return await tellMeWhen(pool, ctx, args);
       case 'start_request': {
         if (place.type !== 'issue') return { error: 'Not here.' };
         const out = await mayor.startRequest(pool, ctx, { project: app.slug, number: place.ref });
@@ -1432,8 +1453,48 @@ async function updateChange(pool, ctx, args) {
     queued: asked.running
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
-    next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed.',
+    next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed. You may also offer to tell them here when it is ready to vote (tell_me_when), if they would like that.',
   };
+}
+
+/**
+ * tell_me_when: store one promise to tell the speaker, here, when one thing
+ * about the change happens (thread-followups.js). One per reply; the line it
+ * posts later names them, so their bell rings as for a mention.
+ */
+async function tellMeWhen(pool, ctx, args) {
+  const { app, place, user } = ctx;
+  if (ctx.followedUp) return { error: 'One promise per reply: that one is stored.' };
+  const event = String(args.event || '');
+  let change = null;
+  let issueNumber = null;
+  if (place.type === 'session') change = ctx.change;
+  else if (place.type === 'issue') {
+    issueNumber = Number(place.ref);
+    change = ctx.requestChange?.id ? await changeRow(pool, ctx.requestChange.id) : null;
+  } else {
+    const id = Number(args.change) || (ctx.open.length === 1 ? ctx.open[0].change : null);
+    if (!id) return { ok: false, error: 'Several of your changes are up for a vote here: ask which one, or name it. Nothing was stored.', changes: ctx.open };
+    if (!ctx.open.some((c) => c.change === id)) return { ok: false, error: 'That is not one of your changes up for a vote here. Nothing was stored.', changes: ctx.open };
+    change = await changeRow(pool, id);
+  }
+  if (!change?.id && !issueNumber) return { ok: false, error: 'There is no change or request here for me to tell you about. Nothing was stored.' };
+  const placeRef = place.type === 'session' ? Number(place.ref)
+    : place.type === 'issue' ? Number(place.ref)
+      : Number(ctx.triggerMessage?.id);
+  if (!placeRef) return { ok: false, error: 'I cannot tell where to tell you that. Nothing was stored.' };
+  const out = await require('./thread-followups').register(pool, {
+    user, app,
+    sessionId: change?.id || null,
+    issueNumber: change?.id ? null : issueNumber,
+    event,
+    place: { type: place.type, ref: placeRef },
+    head: change?.reviewed_head_sha || null,
+    deps: ctx.deps,
+  });
+  if (!out.ok) return { ok: false, error: out.error };
+  ctx.followedUp = true;
+  return { ok: true, promise: out.promise, next: 'Say that promise in your reply, as it is written or in your own words. Never promise more than that one moment.' };
 }
 
 /** offer_withdraw: Withdraw it / Keep it under the reply, for its requester or the project's owner. */
@@ -1933,7 +1994,19 @@ async function sayReport(pool, config, { appId, place, sessionId, runTag, asks: 
   // In a main chat or a topic, the answer goes under the message it answers.
   const where = (place.type === 'chat' || place.type === 'category') && !answer.length
     ? { type: 'session', ref: Number(sessionId) } : place;
-  return say(pool, { app, place: where, bot, text, answer, mark, deps });
+  const posted = await say(pool, { app, place: where, bot, text, answer, mark, deps });
+  // #6264: this report IS the line an "update" follow-up asked for, so that
+  // promise is kept here and never said a second time.
+  if (posted?.id && outcome?.action === 'revise') {
+    const followups = require('./thread-followups');
+    for (const ask of asks) {
+      if (!ask.asker_id) continue;
+      await followups.satisfiedBy(pool, {
+        sessionId: Number(sessionId), userId: ask.asker_id, place, event: 'update', messageId: posted.id,
+      }).catch(() => {});
+    }
+  }
+  return posted;
 }
 
 /** The voice's words for a follow-up's facts: one short model turn, forced to reply. Null when it cannot. */

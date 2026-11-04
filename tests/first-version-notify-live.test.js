@@ -358,7 +358,7 @@ test('under the plan: a first version gets the switch, whatever this device chos
   assert.equal(plan.notifyFooter(complicated, false, 7), null, 'chosen on this device: not offered again');
 
   const card = read('frontend/src/features/messages/bot-plan.tsx');
-  assert.match(card, /footer=\{state === 'built' && card && card\.state !== 'done'\s*\? notifyFooter\(meta, offer, userId\)\s*: null\}/,
+  assert.match(card, /footer=\{state === 'built' && card && card\.state !== 'done'\s*\? notifyFooter\(meta, offer, userId, conversationId, Number\(message\.id\)\)\s*: null\}/,
     'only once built, and only while it is being built');
 });
 

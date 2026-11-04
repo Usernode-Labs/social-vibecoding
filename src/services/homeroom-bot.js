@@ -5719,6 +5719,8 @@ async function runFollowUp(pool, config, {
       finish: (db) => voice.finishAsks(db, { runTag, runId }),
     }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
   }
+  // #6264: whoever asked to be told when the update is in hears it here.
+  await tellUpdateLanded(pool, session.id, deps);
   // #4612: the updated plan, where the first plan was posted: the spec card
   // in the change's discussion, then its copy on the GitHub issue. Its own
   // comment is pushed into postedAt so the turn does not read it back as
@@ -6265,6 +6267,8 @@ async function runChecksFix(pool, config, {
     // plain words; the turn's own summary stays on the run, and the note
     // links nowhere, as it is on the change's page already.
     await note('checks_revise', { runId, text: followup.checksRevisedText({ failing, broken, skipped }) });
+    // #6264: whoever asked to be told when the update is in hears it here.
+    await tellUpdateLanded(pool, session.id, deps);
     log.info('homeroom-bot', 'Revised its proposal to fix its failing checks', {
       app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, skipped: skipped.length, costUsd, runId,
     });
@@ -10238,7 +10242,26 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));
   // P6: fixes of flaky checks merged or ended, and the changes waiting on them.
   await each('flakyChecks', () => flakyChecks(deps).sweep(pool, config, { deps }));
+  // #6264: a promise about a change that never came is dropped quietly.
+  await each('followupsExpired', () => require('./thread-followups').expireOld(pool));
   return out;
+}
+
+/**
+ * #6264: an update the bot pushed landed. Whoever asked to be told when it
+ * was in hears it, in the place they asked, if it is a newer head than the
+ * one they asked about. Best effort and logged: a failed line is retried by
+ * the change's own work.
+ */
+async function tellUpdateLanded(pool, sessionId, deps = {}) {
+  try {
+    const { rows: [row] } = await pool.query('SELECT reviewed_head_sha FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
+    await require('./thread-followups').fire(pool, {
+      sessionId: Number(sessionId), event: 'update', head: row?.reviewed_head_sha || null, deps,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not tell who asked when an update landed', { sessionId, err: err.message });
+  }
 }
 
 // A live run waiting for its build that no request instance holds: one an
