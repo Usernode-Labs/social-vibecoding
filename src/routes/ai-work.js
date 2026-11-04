@@ -34,6 +34,10 @@ function demoWork() {
     private: [
       { rootId: -9101, title: 'Staging demo idea: a calendar for the garden', kind: 'idea', app: null, at: at(2) },
       { rootId: -9102, title: 'Staging demo draft: sort by date', kind: 'draft_request', app, at: at(5) },
+      // #6250: a private thread filed as a request keeps its row and says
+      // where it went ("Only you · Staging demo app · Filed as #404"). #404 is
+      // obviously fake and names no request the demo lists.
+      { rootId: -9103, title: 'Staging demo: keep my private threads in the list', kind: 'ask', app, at: at(3), state: 'filed', resultRef: 404 },
     ],
     needs: [
       { threadId: -9210, number: 9210, kind: 'work', title: 'Staging demo: a reminder email', app, change: null, href: issue(app, 9210), group: 'needs', what: 'plan', at: at(4) },
