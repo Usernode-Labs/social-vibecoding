@@ -206,13 +206,15 @@ test('the build is asked for the same DESCRIPTION block a dev chat turn ends wit
 
 // ── Before the route runs ────────────────────────────────────────────────
 
-function harness({ spec = SPEC, buildText = BUILD_TEXT } = {}) {
+function harness({ spec = SPEC, buildText = BUILD_TEXT, github = null } = {}) {
   const seq = [];
   const pool = {
     async query(sql, params) {
       const s = String(sql);
       seq.push({ sql: s, params });
-      if (/INSERT INTO chat_sessions/.test(s)) return { rows: [{ id: 5001, app_id: APP.id, user_id: BOT.id }] };
+      if (/INSERT INTO chat_sessions/.test(s)) {
+        return { rows: [{ id: 5001, app_id: APP.id, user_id: BOT.id, linked_issues: [ARGS.issueNumber] }] };
+      }
       return { rows: [] };
     },
   };
@@ -238,6 +240,7 @@ function harness({ spec = SPEC, buildText = BUILD_TEXT } = {}) {
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `homeroom_bot/s${sessionId}` }; } },
     activeWorkers: new Set(),
     votesRouter: router,
+    ...(github ? { github } : {}),
   };
   return { pool, deps, seq };
 }
@@ -312,5 +315,69 @@ test('a failing write never stops the proposal', async () => {
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS });
   assert.equal(out.ok, true);
   assert.ok(promoted(h.seq) >= 0);
+});
+
+// #6209: a change that adds only a written document says so, and does not
+// claim to have built the request's feature.
+test('a document-only change is worded as a document, not as a build', () => {
+  assert.equal(live.isDocOnlyChange(['docs/plans/image-generation.md']), true);
+  assert.equal(live.isDocOnlyChange(['README.md']), true, 'a Markdown file at the root');
+  assert.equal(live.isDocOnlyChange(['docs/notes.txt']), true, 'under docs/');
+  assert.equal(live.isDocOnlyChange(['docs/plans/x.md', 'src/app.js']), false, 'any code is not document-only');
+  assert.equal(live.isDocOnlyChange([]), false, 'nothing changed is not document-only');
+  assert.equal(live.isDocOnlyChange(null), false);
+
+  assert.equal(live.proposalText({ link: 'https://x/change/1', docOnly: true }),
+    'Homeroom bot wrote a plan document for this. It adds a written plan; nothing changes in the app. It\'s up for a vote: https://x/change/1');
+  assert.equal(live.proposalHomeroomText({ title: 'Image generation plan', docOnly: true }),
+    'This adds a written plan; nothing changes in the app. It\'s up for a vote: Image generation plan');
+  assert.equal(live.proposalText({ link: 'https://x/change/1' }),
+    'Homeroom bot built this. It\'s up for a vote: https://x/change/1', 'an ordinary change, as before');
+  assert.equal(live.proposalHomeroomText({ title: 'Image generation' }), 'I built this. It\'s up for a vote: Image generation');
+});
+
+test('#6209: a plan waiting for Build it says plainly that nothing is built yet', () => {
+  const named = live.specCard({
+    sessionId: 5, version: 1, spec: '# Leaderboard\n\nx', bot: BOT, asking: true, requester: 'evan',
+  });
+  assert.equal(named.content, '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for @evan to say Build it.');
+  const unnamed = live.specCard({ sessionId: 5, version: 1, spec: '# Leaderboard\n\nx', bot: BOT, asking: true });
+  assert.equal(unnamed.content,
+    '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for the person who asked for it to say Build it.');
+  assert.match(live.planCommentText({ spec: '# Leaderboard\n\nx' }), /Nothing has been built yet\. It will build it once/);
+});
+
+// #6209: the build's own check unlinks a change that came out as documents
+// only, before its pull request is opened.
+test('a build that adds only documents is unlinked before it is proposed, and says so', async () => {
+  const github = {
+    async getBranchSha() { return 'b'.repeat(40); },
+    async compareRefs(_owner, _repo, range) {
+      assert.equal(range, `${'b'.repeat(40)}...homeroom_bot/s5001`, 'its own branch, from its base');
+      return { files: ['docs/plans/image-generation.md'], filesComplete: true };
+    },
+  };
+  const h = harness({ github });
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS });
+  assert.equal(out.ok, true);
+  assert.equal(out.docOnly, true);
+  const cleared = h.seq.find((q) => /UPDATE chat_sessions SET linked_issues = \$1/.test(q.sql || ''));
+  assert.ok(cleared, 'the request is unlinked before the route reads the session');
+  assert.deepEqual(cleared.params, [[], 5001]);
+  assert.ok(h.seq.indexOf(cleared) < promoted(h.seq), 'before the pull request is opened');
+});
+
+test('#6209: a compare failure or an incomplete list keeps the links, as before', async () => {
+  for (const compareRefs of [
+    async () => { throw new Error('GitHub is down'); },
+    async () => ({ files: ['docs/plans/x.md'], filesComplete: false }),
+    async () => ({ files: ['src/app.js'], filesComplete: true }),
+  ]) {
+    const h = harness({ github: { async getBranchSha() { return 'b'.repeat(40); }, compareRefs } });
+    const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS });
+    assert.equal(out.ok, true);
+    assert.equal(out.docOnly, false);
+    assert.ok(!h.seq.some((q) => /UPDATE chat_sessions SET linked_issues = \$1/.test(q.sql || '')), 'the link stays');
+  }
 });
 

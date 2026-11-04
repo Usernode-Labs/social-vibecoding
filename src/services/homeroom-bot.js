@@ -1642,6 +1642,11 @@ function readVerdict(text) {
       // are reviewed once it is. Only a ready verdict carries it; a first
       // version is always planned with its creator and drops it (actOnVerdict).
       complicated: verdict === 'ready' && obj.complicated === true,
+      // #6209: a request that asks the bot to plan before it builds is still
+      // ready, but its plan is posted for Build it first and nothing is
+      // built. Only a ready verdict carries it; actOnVerdict routes it
+      // through the complicated path.
+      planFirst: verdict === 'ready' && obj.plan_first === true,
       // #4239: a request the bot leaves because it is about Homeroom itself,
       // not the app it was filed on. Only a person verdict carries it.
       platform: verdict === 'person' && obj.platform === true,
@@ -4531,6 +4536,13 @@ async function runTriage(pool, config, {
   const decided = await look.once('verdict', async () => {
     let v = parsed;
     if (v.complicated && requester?.firstVersion) v = { ...v, complicated: false };
+    // #6209: a request whose person asked for a plan first takes the
+    // complicated path: its spec is drafted and posted for Build it, with
+    // nothing built and no vote started. A first version already plans
+    // first, and drops the label above.
+    if (liveMode && v.verdict === 'ready' && v.planFirst && !requester?.firstVersion) {
+      v = { ...v, complicated: true };
+    }
     if (liveMode && v.verdict === 'ready' && !v.complicated && !requester?.firstVersion
       && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
       v = { ...v, complicated: true };
@@ -6441,8 +6453,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
          FROM chat_sessions WHERE id = $1`,
       [built.sessionId],
     ).catch(() => ({ rows: [] }));
-    await say('proposal', live.proposalText({ link }), {
-      homeroomText: live.proposalHomeroomText({ title: named?.title || null }),
+    await say('proposal', live.proposalText({ link, docOnly: built.docOnly === true }), {
+      homeroomText: live.proposalHomeroomText({ title: named?.title || null, docOnly: built.docOnly === true }),
       msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
       dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },
     });
@@ -10152,6 +10164,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('unproposedLooked', () => (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null }));
   await each('strandedAsks', () => sweepStrandedAsks(pool, bot, settings, deps));
   await each('buildsOwed', () => sweepWaitingBuilds(pool, deps));
+  // #6209: bot changes that add only documents stop linking the requests
+  // they plan for, so a merge cannot close one as done.
+  await each('docOnlyUnlinked', () => live.unlinkDocOnlyProposals(pool, { github: deps.github || require('./github') }));
   // Homeroom bot parity (P4, P5): batches' roll-ups, and notes whose build ended first.
   await each('batches', () => require('./homeroom-bot-batches').sweep(pool, deps));
   await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));
