@@ -865,7 +865,37 @@ test('blockReasons: severity order, labels, and the detail sentences', () => {
   assert.ok(!r[0].soft && !r[1].soft, 'a refused merge and a failing check do block');
 });
 
-// ── The invariant the whole change rests on ─────────────────────────────
+// Request 6265: an approved, passing change whose merge GitHub held back
+// (still finishing an earlier merge, or a plain refusal) draws an amber tag
+// that says so, with the queue's next try in the viewer's clock.
+test('blockReasons: a merge GitHub held back draws an amber "Waiting on GitHub" tag', () => {
+  const AppView = makeAppView();
+  const future = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+  const time = new Date(Date.parse(future)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const pr = { status: 'promoted', check_state: 'passing',
+    integration: { blockReasons: ['github_busy'], heldUntil: future } };
+  const tag = AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-github_busy');
+  assert.ok(tag, 'the tag is drawn');
+  assert.equal(tag.label, 'Waiting on GitHub');
+  assert.equal(tag.cls, AppView.STATUS_TAG_CLS.soft, 'amber: nobody has to act on it');
+  assert.match(tag.title, /already in progress/);
+  assert.ok(tag.title.includes(time), `the tooltip names ${time}: ${tag.title}`);
+  assert.equal(tag.data['data-status-tag'], 'github_busy');
+
+  // A plain refusal says GitHub refused it, under the same label.
+  const refused = AppView.statusTagSpecs({ ...pr, integration: { blockReasons: ['github_refused'], heldUntil: future } }, {})
+    .find((t) => t.key === 'tag-github_refused');
+  assert.equal(refused.label, 'Waiting on GitHub');
+  assert.match(refused.title, /GitHub refused the merge/);
+
+  // Past its time, or no time recorded: "in a few minutes".
+  const soon = AppView.blockReasons({ ...pr, integration: { blockReasons: ['github_busy'], heldUntil: null } });
+  assert.match(soon.find((r) => r.key === 'github_busy').detail, /tries again in a few minutes/);
+
+  // Nothing served: no tag.
+  assert.equal(AppView.blockReasons({ status: 'promoted', check_state: 'passing' }).length, 0);
+});
+
 
 test('the bar can only ever be a vote state, whatever is wrong with the row', () => {
   const AppView = makeAppView();

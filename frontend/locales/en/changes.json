@@ -5527,6 +5527,30 @@
     "text": "This proposal needs merging with main, but the platform’s shared token budget is spent for today. It resumes after the midnight UTC reset.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the shared daily AI budget is used up. Keep the words \"midnight UTC\" exactly: the page replaces them with the viewer's local time. \"main\" is the name of the project's main line of code and stays as it is."
   },
+  "badge.reason.githubBusy.label": {
+    "text": "Waiting on GitHub",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote and its checks, but GitHub held its merge back. The platform tries again by itself, so nobody has to act."
+  },
+  "badge.reason.githubBusy.detail": {
+    "text": "GitHub said a merge of this change was already in progress. Homeroom tries again at {{time}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "badge.reason.githubBusy.detailSoon": {
+    "text": "GitHub said a merge of this change was already in progress. Homeroom tries again in a few minutes.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "badge.reason.githubRefused.label": {
+    "text": "Waiting on GitHub",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote and its checks, but GitHub refused its merge for a reason nobody has to act on. The platform tries again by itself."
+  },
+  "badge.reason.githubRefused.detail": {
+    "text": "GitHub refused the merge. Homeroom tries again at {{time}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when GitHub refused the merge for a reason nobody has to act on. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "badge.reason.githubRefused.detailSoon": {
+    "text": "GitHub refused the merge. Homeroom tries again in a few minutes.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when GitHub refused the merge for a reason nobody has to act on, and the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is."
+  },
   "badge.reason.mainPaused.label": {
     "text": "Going live is paused",
     "description": "Status tag on a proposal's card and row label in the ledger on its page: no change of this app can go live for now, because the tests of the app's main line of code are failing."
