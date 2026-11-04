@@ -203,13 +203,13 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
 // $1 viewer, $2 the bot, $3 the most rows, $4 days a done thread stays
 // listed. A thread they started is one of their own messages in the chat
 // with the bot that has replies; a draft the bot opened is a row of
-// private_threads. Only those still open: a filed or posted one is a public
-// thread now, and listed there. 1 Nov 2026: except one holding a design,
-// which stays private and is still worked on (its next post is the plan's
-// next version): it stays listed. #6153: with where it went (its state and
-// the request's number), so the tab draws it as that request's row rather
-// than a second one (model.ts needsYou). #6271: a done thread stays listed
-// for $4 days after it was closed, where Live this week shows it.
+// private_threads. Every private thread is listed except a done one (#6250,
+// 4 Nov 2026: a filed, posted or dropped thread stays, so the way in is
+// always the list, never Main Chat). #6153: with where it went (its state and
+// the request's number), so the tab draws a filed or posted thread as that
+// request's row rather than a second one when a row names it (model.ts
+// needsYou). #6271: a done thread stays listed for $4 days after it was
+// closed, where Live this week shows it.
 const PRIVATE_SQL = `
 SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, p.done_at, a.slug, a.name,
        a.icon_emoji, a.icon_image_id, a.repo_url,
@@ -241,12 +241,11 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
    AND (p.id IS NOT NULL
         OR (m.sender_id = $1 AND EXISTS (SELECT 1 FROM conversation_messages r
                                           WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL)))
-   AND (COALESCE(p.state, 'open') = 'open'
-        OR (p.state IN ('posted', 'filed')
-            AND EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id))
-        -- #6271: a done thread is finished, but stays findable for $4 days
-        -- under Live this week (unless reopened).
-        OR (p.state = 'done' AND p.done_at >= NOW() - make_interval(days => $4)))
+   -- #6250: filed, posted and dropped threads stay listed. #6271: a done
+   -- thread is finished, but stays findable for $4 days under Live this week
+   -- (unless reopened).
+   AND (COALESCE(p.state, 'open') <> 'done'
+        OR p.done_at >= NOW() - make_interval(days => $4))
  ORDER BY COALESCE((SELECT MAX(r.created_at) FROM conversation_messages r
                      WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL), m.created_at) DESC
  LIMIT $3`;
@@ -878,6 +877,19 @@ function threadSays(t, slotVotes = 0) {
 }
 
 /**
+ * Pure (#6250): what Homeroom bot's answer says of a private thread, by where
+ * it went. A filed or posted one names the request; a put-away draft says so;
+ * an open one is not posted yet.
+ */
+function privateSays(p) {
+  const n = Number(p?.resultRef);
+  if (p?.state === 'filed' && n > 0) return `their private thread with Homeroom bot, filed as #${n}`;
+  if (p?.state === 'posted' && n > 0) return `their private thread with Homeroom bot, posted on #${n}`;
+  if (p?.state === 'dropped') return 'their private thread with Homeroom bot, put away';
+  return 'their private thread with Homeroom bot, not posted yet';
+}
+
+/**
  * Pure: the tab's four lists from the Needs you feed (`needs`, its items)
  * and workFor's lists (`work`), as my_work hands them to the bot: each row
  * `{ project, projectName, number?, title, says }`. `botUsername` is
@@ -922,7 +934,7 @@ function listsOf(needs, work, { botUsername = null } = {}) {
       ...items.map((item) => row(item.app, shownNumber(item), (item.kind === 'ballot' && item.ballot?.title) || item.title,
         NEED_SAYS[item.kind] || 'waits for them')),
       ...(work?.needs || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, NEED_SAYS[t.what] || 'waits for them')),
-      ...privates.map((p) => row(p.app, null, p.title, 'their private thread with Homeroom bot, not posted yet')),
+      ...privates.map((p) => row(p.app, null, p.title, privateSays(p))),
     ],
     inProgress: (work?.next || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t))),
     waiting: (work?.waiting || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t, slotVotes(t)))),

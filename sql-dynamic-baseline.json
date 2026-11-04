@@ -1104,7 +1104,7 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "0845e9641752ec7b9b25",
+      "fingerprint": "175574c444ff7c922367",
       "count": 1,
       "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
     },
@@ -1125,9 +1125,9 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "5cb936ab4f83b98b7c6a",
+      "fingerprint": "4bd9d2cd7633576a398b",
       "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS count FROM conversation_messages m WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0) AND (m.thread_root_id IS NULL OR ${ALSO_IN_C"
+      "preview": "`SELECT COUNT(*)::int AS count FROM conversation_messages m WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0) AND (m.thread_root_id IS NULL OR (${ALSO_IN_"
     },
     {
       "source": "src/services/conversations.js",

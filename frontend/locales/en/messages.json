@@ -4951,6 +4951,18 @@
     "text": "Only you · {{project}} · Not posted yet",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) with a draft for a project: only the person can see it, which project it is for, and that it is not posted."
   },
+  "ai.row.privateFiled": {
+    "text": "Only you · {{project}} · Filed as #{{number}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) that was filed as a request on the project: only the person can see it, which project it is for, and the request's number."
+  },
+  "ai.row.privatePosted": {
+    "text": "Only you · {{project}} · Posted on #{{number}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) whose words were posted on a request or change on the project: only the person can see it, which project it is for, and the number it was posted on."
+  },
+  "ai.row.privatePutAway": {
+    "text": "Only you · {{project}} · Put away",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) for a draft the person chose not to send: only the person can see it and which project it is for."
+  },
   "ai.row.privateIdea": {
     "text": "Only you · Not in a community yet",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) with an idea that is for no project yet: only the person can see it."
