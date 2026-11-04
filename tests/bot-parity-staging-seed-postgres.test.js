@@ -182,3 +182,65 @@ test('the staging preview\'s private threads with Homeroom bot, with their new c
   const main = [...(page.messages || page)].sort((a, b) => a.id - b.id);
   assert.equal(main.at(-1).metadata?.homeroomBot?.issueNumber, 18, 'the DM still ends with the demo\'s story card');
 });
+
+// #6306: the already-works request's staging fixture (src/db/migrate.js
+// seedStagingBotAlreadyWorks). The review asked for the request's bell row
+// too, which the first version did not seed, so the shots had nothing to
+// capture. Against a real database, seeded twice: one request, one run
+// carrying already_done, one stored note, and one notification whose detail
+// words it "Already works" with the bot's own sentence and links the request.
+test('the staging already-works request carries its note and its bell row', { timeout: 60000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+
+  const app = (await pool.query(
+    `INSERT INTO apps (name, slug, self_hosted) VALUES ('Homeroom', 'usernode-seed-test', TRUE) RETURNING id`,
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('usernode-capture', 'not-a-login', FALSE),
+       ('homeroom_bot', 'not-a-login', TRUE)`,
+  );
+
+  const { seedStagingBotAlreadyWorks } = require('../src/db/migrate');
+  const previous = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  try {
+    await seedStagingBotAlreadyWorks(pool);
+    await seedStagingBotAlreadyWorks(pool);
+  } finally {
+    if (previous === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previous;
+  }
+
+  const runs = await pool.query(
+    'SELECT verdict, already_done, reason FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 9110',
+    [app.id],
+  );
+  assert.deepEqual(runs.rows, [{
+    verdict: 'person',
+    already_done: true,
+    reason: 'Staging demo: visitors can already get in and play without an account.',
+  }], 'one already-done run, not two');
+
+  const notes = await pool.query(
+    `SELECT content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9110`,
+    [app.id],
+  );
+  assert.equal(notes.rows.length, 1, 'one stored note, not two');
+  assert.match(notes.rows[0].content, /^Already works: /);
+
+  const rings = await pool.query(
+    `SELECT n.kind, n.detail FROM notifications n WHERE n.app_id = $1 AND n.kind = 'build_needs_you'`,
+    [app.id],
+  );
+  assert.equal(rings.rows.length, 1, 'one bell row, not two');
+  const { parseBotDetail, botMomentCopy } = require('../src/services/homeroom-bot-notify-copy');
+  const parsed = parseBotDetail(rings.rows[0].detail);
+  assert.equal(parsed.moment, 'needs_you');
+  assert.equal(parsed.said, 'done');
+  assert.equal(parsed.issueNumber, 9110);
+  assert.equal(parsed.reason, 'Staging demo: visitors can already get in and play without an account.');
+  const copy = botMomentCopy(rings.rows[0].detail);
+  assert.equal(copy.bellLabel, 'Already works');
+  assert.match(copy.body, /^Already works: .* Propose to close it\?$/);
+});

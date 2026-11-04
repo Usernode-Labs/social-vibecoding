@@ -1824,11 +1824,12 @@ async function seedStagingBotWaitingRows(pool) {
 async function seedStagingBotAlreadyWorks(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
-    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const apps = await pool.query('SELECT id, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
     const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
     if (!apps.rows.length || !people.rows.length || !bot.rows.length) return;
     const appId = apps.rows[0].id;
+    const appSlug = apps.rows[0].slug;
     const userId = people.rows[0].id;
     const botId = bot.rows[0].id;
     const number = 9110;
@@ -1852,12 +1853,13 @@ async function seedStagingBotAlreadyWorks(pool) {
                            WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'person')`,
       [appId, number, reason],
     );
-    await pool.query(
+    const note = await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
        SELECT $1, $2, $3, 'message', 'issue', $4, $5, NOW() - INTERVAL '1 day'
         WHERE NOT EXISTS (SELECT 1 FROM chat_messages
                            WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
-                             AND metadata->>'stagingDemo' = 'already-works-note')`,
+                             AND metadata->>'stagingDemo' = 'already-works-note')
+       RETURNING id`,
       [
         appId, botId,
         `Already works: ${reason} Anyone in the project can Propose to close it, or reply here if something is missing.`,
@@ -1865,6 +1867,37 @@ async function seedStagingBotAlreadyWorks(pool) {
         JSON.stringify({ stagingDemo: 'already-works-note', homeroomBot: { kind: 'note' } }),
       ],
     );
+    // The bell row the real sender writes for the same moment, worded by the
+    // service that words it (#6306): Needs you, "Already works", the bot's
+    // sentence. It hangs off the note above so its row opens the request's
+    // thread, and carries `i`/`p` so the bell links to that request, not to
+    // Main Chat. Rows for the shots' member fixture only.
+    let noteId = note.rows[0] ? note.rows[0].id : null;
+    if (noteId == null) {
+      const existing = await pool.query(
+        `SELECT id FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2
+            AND metadata->>'stagingDemo' = 'already-works-note'
+          ORDER BY id LIMIT 1`,
+        [appId, number],
+      );
+      noteId = existing.rows[0] ? existing.rows[0].id : null;
+    }
+    const { botNotificationDetail } = require('../services/homeroom-bot-notify-copy');
+    const detail = botNotificationDetail({
+      moment: 'needs_you', said: 'done', kind: 'person',
+      appName: 'Homeroom', appSlug, requestTitle: title, reason, issueNumber: number,
+    });
+    if (noteId != null && detail) {
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, chat_message_id, source_user_id, kind, detail, read_at, created_at)
+         SELECT $1::int, $2::int, $3::int, $4::int, 'build_needs_you', $5::varchar, NULL, NOW() - INTERVAL '1 day'
+          WHERE NOT EXISTS (SELECT 1 FROM notifications n
+                             WHERE n.user_id = $1 AND n.kind = 'build_needs_you' AND n.chat_message_id = $3::int)`,
+        [userId, appId, noteId, botId, detail],
+      );
+    }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
   }
@@ -17244,6 +17277,8 @@ module.exports = {
   seedStagingBotFixesStopped,
   seedStagingBotProjectNotification,
   seedStagingBotAllowanceWarning,
+  // #6306: the already-works request (run, note and bell row) the shots need.
+  seedStagingBotAlreadyWorks,
   seedStagingDesignThread,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
