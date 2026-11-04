@@ -1142,9 +1142,14 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await t.test('the conductor\'s own code reaches the web side over the bus, other processes see it, and it listens', async () => {
     const before = relayed.length;
     await dmToTheBot();
-    const fromConductor = relayed.slice(before);
-    assert.ok(fromConductor.some((e) => e.k === 'user'),
-      `the DM's answer reaches the person's tabs through the bus (heard: ${[...new Set(fromConductor.map((e) => e.k))].join(', ') || 'nothing'})`);
+    // A busy conductor wraps user pushes in a batch. Wait for the bus,
+    // independently of the committed answer, and inspect its inner pushes
+    // just as a receiving web process does.
+    const fromConductor = () => relayed.slice(before).flatMap((e) => e.k === 'batch' ? e.b : [e]);
+    const isReply = (e) => e.k === 'user' && e.d?.type === 'conversation_message_created';
+    await procs.until(() => fromConductor().some(isReply), 'the conductor\'s DM answer over the bus');
+    assert.ok(fromConductor().some(isReply),
+      `the DM's answer reaches the person's tabs through the bus (heard: ${[...new Set(fromConductor().map((e) => e.k))].join(', ') || 'nothing'})`);
     const { rows } = await pool.query(`SELECT role, state FROM platform_processes WHERE id LIKE $1`, [`%:${workflow.pid}:%`]);
     assert.deepEqual(rows, [{ role: 'conductor', state: 'serving' }], 'its row, so what it holds is seen elsewhere');
     const res = await fetch(`http://127.0.0.1:${workflow.port}/health`);

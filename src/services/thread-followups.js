@@ -303,9 +303,19 @@ async function cancel(pool, { sessionId, deps = {} }) {
 async function satisfiedBy(pool, { sessionId, userId = null, place = null, event, messageId = null }) {
   const sid = Number(sessionId);
   if (!Number.isInteger(sid) || sid <= 0 || !isEvent(event)) return 0;
-  const values = [sid, event, messageId == null ? null : Number(messageId)];
-  let sql = `UPDATE homeroom_bot_followups SET state = 'fired', settled_at = now(), message_id = $3
-              WHERE session_id = $1 AND event = $2 AND state = 'waiting'`;
+  // A promise made while the request's first version was still being built
+  // (#6255) is stored with no session: it is about the request, and the
+  // change that links it is the one that keeps it. Same match `fire` uses.
+  const change = await changeOf(pool, sid);
+  if (!change) return 0;
+  const issues = Array.isArray(change.linked_issues) ? change.linked_issues.map(Number).filter((n) => n > 0) : [];
+  const values = [sid, event, messageId == null ? null : Number(messageId), Number(change.app_id), issues];
+  let sql = `UPDATE homeroom_bot_followups
+                SET state = 'fired', settled_at = now(), message_id = $3,
+                    session_id = COALESCE(session_id, $1)
+              WHERE (session_id = $1
+                     OR ($5::int[] <> '{}' AND session_id IS NULL AND app_id = $4 AND issue_number = ANY($5::int[])))
+                AND event = $2 AND state = 'waiting'`;
   if (userId != null) { values.push(Number(userId)); sql += ` AND user_id = $${values.length}`; }
   if (place?.type) { values.push(place.type); sql += ` AND place_type = $${values.length}`; }
   const { rowCount } = await pool.query(sql, values);

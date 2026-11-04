@@ -82,12 +82,15 @@ function freshFixtures() {
     unitDelayMs: 0,
     // kubernetes: preview Deployments as kubernetes.listPreviews returns them
     kubePreviews: [],
+    kubeResources: null,
     kubeListError: null,
     kubeListCalls: [],
     kubeExists: () => true,
     kubeInspectCalls: [],
     kubeRemoveCalls: [],
     kubeRemoveError: null,
+    kubeRoutingDeleteCalls: [],
+    kubePresentResources: null,
   };
 }
 
@@ -154,8 +157,8 @@ function installStubs() {
     },
   });
   stub(ids.staging, {
-    async teardownStaging(session, app) {
-      fx.teardownCalls.push({ sessionId: session.id, slug: app && app.slug });
+    async teardownStaging(session, app, options) {
+      fx.teardownCalls.push({ sessionId: session.id, slug: app && app.slug, ...(options ? { options } : {}) });
       if (fx.stopHook) fx.stopHook();
       fx.concurrentNow += 1;
       fx.concurrentMax = Math.max(fx.concurrentMax, fx.concurrentNow);
@@ -193,6 +196,19 @@ function installStubs() {
       fx.kubeListCalls.push(config);
       if (fx.kubeListError) throw fx.kubeListError;
       return fx.kubePreviews;
+    },
+    async listPreviewResources(config) {
+      fx.kubeListCalls.push(config);
+      if (fx.kubeListError) throw fx.kubeListError;
+      return fx.kubeResources || fx.kubePreviews;
+    },
+    async previewResourcesPresent(_config, name) {
+      fx.kubeInspectCalls.push(name);
+      return fx.kubePresentResources ? fx.kubePresentResources(name) : fx.kubeExists(name) ? [name] : [];
+    },
+    async deletePreviewRoutingResource(config, kind, metadata) {
+      fx.kubeRoutingDeleteCalls.push({ namespace: config.kubernetes.appNamespace, kind, metadata });
+      if (fx.kubeRemoveError) throw fx.kubeRemoveError;
     },
   });
   stub(ids.previewWorkflow, {
@@ -1160,6 +1176,107 @@ test('Kubernetes: a failed removal is isolated to its own target', async () => {
   assert.equal(outcomes['sv-preview-1559-s4658'], 'failed');
   assert.equal(outcomes['sv-preview-320-s3711'], 'torn_down', 'the chokepoint teardowns still ran');
   assert.equal(outcomes['sv-preview-847-s5080'], 'torn_down');
+});
+
+function routingPreview(id, kinds = ['service', 'ingress']) {
+  const name = `sv-preview-10-s${id}`;
+  return {
+    name, appId: 10, sessionId: id, state: 'not_found', image: null,
+    labels: { [realStagingEnv.LABEL_ENV_FP]: currentFp() },
+    routingResources: kinds.map((kind) => ({ kind, metadata: { name, uid: `${kind}-${id}`, resourceVersion: '1' } })),
+  };
+}
+
+test('Kubernetes: Services and Ingresses are reclaimed even when their Deployment is already gone', async () => {
+  const reap = setup();
+  fx.kubeResources = [routingPreview(7001), routingPreview(7002, ['service']), routingPreview(7003, ['ingress'])];
+  fx.sessions = [
+    { id: 7001, app_id: 10, status: 'merged', staging_runtime_name: null },
+    { id: 7002, app_id: 10, status: 'archived', staging_runtime_name: null },
+    // 7003's session was deleted.
+  ];
+  fx.kubeExists = () => false;
+  fx.kubePresentResources = (name) => [name];
+
+  const { found, outcomes } = await runLeftovers(reap, KUBE);
+
+  assert.equal(found.examined, 3);
+  assert.equal(found.abandoned, 3);
+  assert.deepEqual(Object.values(outcomes), ['torn_down_no_db', 'torn_down_no_db', 'torn_down_no_db']);
+  assert.deepEqual(fx.kubeRoutingDeleteCalls.map((c) => [c.metadata.name, c.kind]), [
+    ['sv-preview-10-s7001', 'service'], ['sv-preview-10-s7001', 'ingress'],
+    ['sv-preview-10-s7002', 'service'], ['sv-preview-10-s7003', 'ingress'],
+  ]);
+  assert.ok(fx.kubeRoutingDeleteCalls.every((c) => c.namespace === 'social-apps'));
+  assert.deepEqual(fx.kubeRemoveCalls, [], 'routing-only cleanup never deletes a Deployment by name');
+  assert.deepEqual(fx.dropCalls, [], 'database cleanup keeps its independent ownership checks');
+});
+
+test('Kubernetes: cleanup inventory leaves linked sleeping previews and workflow-owned routing alone', async () => {
+  const reap = setup();
+  fx.kubeResources = [routingPreview(7011), routingPreview(7012), routingPreview(7013)];
+  fx.sessions = [
+    { id: 7011, status: 'promoted', staging_runtime_name: 'sv-preview-10-s7011', staging_asleep_at: '2026-11-01' },
+    { id: 7012, status: 'active', staging_runtime_name: 'sv-preview-10-s7012' },
+    { id: 7013, status: 'active', staging_runtime_name: null },
+  ];
+  fx.held = [7013];
+
+  assert.deepEqual((await reap.leftovers(KUBE)).items, []);
+  assert.deepEqual(fx.kubeRoutingDeleteCalls, []);
+});
+
+test('Kubernetes: a finished workflow-owned remnant is handed back to its preview machine for retirement', async () => {
+  const reap = setup();
+  fx.kubeResources = [routingPreview(7021), routingPreview(7022)];
+  fx.sessions = [{ id: 7021, app_id: 10, status: 'merged', staging_runtime_name: null }];
+  fx.held = [7021, 7022];
+
+  const { outcomes } = await runLeftovers(reap, KUBE);
+
+  assert.deepEqual(Object.values(outcomes), ['skipped_workflow', 'skipped_workflow']);
+  assert.deepEqual(fx.teardownCalls.map((c) => [c.sessionId, c.options]), [
+    [7021, { terminal: true, reason: 'leftover' }], [7022, { terminal: true, reason: 'leftover' }],
+  ]);
+  assert.deepEqual(fx.kubeRoutingDeleteCalls, [], 'the collector does not bypass machine ownership');
+});
+
+test('Kubernetes: routing adopted or checked since inventory is protected at execution time', async () => {
+  const reap = setup();
+  fx.kubeResources = [routingPreview(7031), routingPreview(7032), routingPreview(7033)];
+  fx.sessions = fx.kubeResources.map((p) => ({ id: p.sessionId, status: 'active', staging_runtime_name: null }));
+  const found = await reap.leftovers(KUBE);
+  assert.equal(found.items.length, 3);
+  fx.sessions[0].staging_runtime_name = 'sv-preview-10-s7031';
+  fx.sessions[1].check_run_open = true;
+  fx.working = [7033];
+
+  const outcomes = [];
+  for (const item of found.items) outcomes.push((await reap.reapLeftover(item.input, KUBE)).outcome);
+  assert.deepEqual(outcomes, ['skipped_linked', 'skipped_checks', 'skipped_busy']);
+  assert.deepEqual(fx.kubeRoutingDeleteCalls, []);
+});
+
+test('Kubernetes: a routing precondition failure remains a failed target to retry', async () => {
+  const reap = setup();
+  fx.kubeResources = [routingPreview(7041)];
+  fx.kubeRemoveError = new Error('Service resourceVersion changed');
+
+  const { outcomes } = await runLeftovers(reap, KUBE);
+
+  assert.equal(outcomes['sv-preview-10-s7041'], 'failed');
+  assert.deepEqual(fx.kubeRemoveCalls, []);
+});
+
+test('Kubernetes: the admin sweep also discovers routing-only leftovers', async () => {
+  const reap = setup();
+  fx.kubeResources = [routingPreview(7051)];
+
+  const job = await runSweep(reap, KUBE);
+
+  assert.equal(job.total, 1);
+  assert.equal(job.failed, 0);
+  assert.deepEqual(fx.kubeRoutingDeleteCalls.map((c) => c.kind), ['service', 'ingress']);
 });
 
 test('Kubernetes: an unreadable API is a no-op sweep, not a blind one', async () => {
