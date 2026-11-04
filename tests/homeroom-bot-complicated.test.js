@@ -67,32 +67,32 @@ test('the triage labels a ready change complicated only when it says so, and onl
   assert.equal(bot.parseVerdict(fence({ verdict: 'person', reason: 'x', complicated: true })).complicated, false);
 });
 
-// #6209: a request that asks for a plan before a build is still ready, and
-// its plan is posted for Build it with nothing built.
-test('a ready verdict that asks for a plan first is read, and planned before anything is built', async (t) => {
+// #6209 (4 Nov 2026, evan): a request that asks for a plan before a build is
+// still ready, and is built straight away when the change is straightforward:
+// its plan is posted on the request as a plan card, then the build goes on.
+// Only a complicated change, or one that says not to build yet, waits.
+test('a ready verdict that asks for a plan first builds straight away unless the change is complicated', async (t) => {
   const ready = (extra) => bot.parseVerdict(fence({ verdict: 'ready', build_note: 'Add image models.', ...extra }));
-  assert.equal(ready({ plan_first: true }).planFirst, true);
-  assert.equal(ready({}).planFirst, false);
-  assert.equal(ready({ plan_first: 'yes' }).planFirst, false, 'only a real true');
-  const question = bot.parseVerdict(fence({
-    verdict: 'question', question: 'Which providers?', default: 'A', answers: ['A', 'B'],
-    blocker: 'user_facing', why_default_fails: 'x', plan_first: true,
-  }));
-  assert.equal(question.planFirst, false, 'a question is never plan-first');
-  assert.equal(bot.parseVerdict(fence({ verdict: 'person', reason: 'x', plan_first: true })).planFirst, false);
+  // The triage has no separate wait signal any more: a plan-first request is
+  // not complicated by itself, and a straightforward one builds.
+  assert.equal(ready({ plan_first: true }).complicated, false, 'asking for a plan first is not complicated by itself');
+  assert.equal(ready({ plan_first: true }).planFirst, undefined, 'no separate plan-first field');
   const md = read('src/prompts/homeroom-bot-triage.md');
-  assert.match(md, /"plan_first": true \(verdict ready, only when a plan is asked for before building\),/);
-  assert.match(md.replace(/\s+/g, ' '), /set `plan_first` when the request, or its discussion, tells the bot to go ahead but to plan, write up or compare options before it builds/);
-  // The decision sends it down the path whose build slot drafts the spec and
-  // waits with awaiting_go_at; actOnVerdict then says plan_queued.
+  assert.match(md.replace(/\s+/g, ' '), /A request to plan before building is `ready`, not `person`; one that says not to build yet is `complicated`\./);
+  assert.doesNotMatch(md, /plan_first/, 'the triage no longer asks for a plan-first signal');
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /if \(liveMode && v\.verdict === 'ready' && v\.planFirst && !requester\?\.firstVersion\) \{\n\s+v = \{ \.\.\.v, complicated: true \};\n\s+\}/);
+  assert.doesNotMatch(src, /v\.planFirst/, 'nothing forces every plan-first request to wait');
   const seen = stubLive(t);
-  const args = verdictArgs({ parsed: { verdict: 'ready', buildNote: 'Add image models.', planFirst: true, complicated: true } });
-  assert.equal(await bot.actOnVerdict(args), 'plan_queued');
+  // Straightforward: the ordinary build path, after its plan card.
+  const small = verdictArgs({ parsed: { verdict: 'ready', buildNote: 'Add image models.' } });
+  assert.equal(await bot.actOnVerdict(small), 'build_queued');
   assert.equal(seen.built.length, 0, 'nothing is built in the triage turn');
-  // A first version already plans first, so the signal changes nothing there.
-  const first = verdictArgs({ firstVersion: true, parsed: { verdict: 'ready', buildNote: 'Add image models.', planFirst: true } });
+  // Complicated, or told not to build yet (the triage labels that
+  // complicated): its plan is drafted and waits for Build it.
+  const big = verdictArgs({ parsed: { verdict: 'ready', buildNote: 'Add image models.', complicated: true } });
+  assert.equal(await bot.actOnVerdict(big), 'plan_queued');
+  // A first version already plans first.
+  const first = verdictArgs({ firstVersion: true, parsed: { verdict: 'ready', buildNote: 'Add image models.' } });
   first.deps.dm = { async sendPlanCard() { return { messageId: 3 }; } };
   assert.equal(await bot.actOnVerdict(first), 'awaiting_go');
 });

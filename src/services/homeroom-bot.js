@@ -1647,11 +1647,6 @@ function readVerdict(text) {
       // are reviewed once it is. Only a ready verdict carries it; a first
       // version is always planned with its creator and drops it (actOnVerdict).
       complicated: verdict === 'ready' && obj.complicated === true,
-      // #6209: a request that asks the bot to plan before it builds is still
-      // ready, but its plan is posted for Build it first and nothing is
-      // built. Only a ready verdict carries it; actOnVerdict routes it
-      // through the complicated path.
-      planFirst: verdict === 'ready' && obj.plan_first === true,
       // #4239: a request the bot leaves because it is about Homeroom itself,
       // not the app it was filed on. Only a person verdict carries it.
       platform: verdict === 'person' && obj.platform === true,
@@ -4608,13 +4603,12 @@ async function runTriage(pool, config, {
   const decided = await look.once('verdict', async () => {
     let v = parsed;
     if (v.complicated && requester?.firstVersion) v = { ...v, complicated: false };
-    // #6209: a request whose person asked for a plan first takes the
-    // complicated path: its spec is drafted and posted for Build it, with
-    // nothing built and no vote started. A first version already plans
-    // first, and drops the label above.
-    if (liveMode && v.verdict === 'ready' && v.planFirst && !requester?.firstVersion) {
-      v = { ...v, complicated: true };
-    }
+    // #6209 (4 Nov 2026, evan): a request that asks for a plan before
+    // building is still built straight away when the change is
+    // straightforward: its spec is posted as a plan card and the build goes
+    // on. Only a complicated change, or one that says not to build yet
+    // (which the triage labels complicated), is planned first and waits for
+    // Build it. Nothing here forces that path for every plan-first request.
     if (liveMode && v.verdict === 'ready' && !v.complicated && !requester?.firstVersion
       && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
       v = { ...v, complicated: true };
