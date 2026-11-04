@@ -4202,6 +4202,9 @@ function voteRoutes(config) {
            cs.integration_merges_clean, cs.integration_conflict_paths,
            cs.integration_merged_tree, cs.integration_checks_base_current,
            cs.integration_block_reasons, cs.integration_error,
+           -- When the queue tries this change again after GitHub held its
+           -- merge back (services/integration.js heldUntil).
+           cs.merge_held_until,
            cs.approval_epoch,
            -- #2061: the recording of what the merge gate last did, which the
            -- card turns into "what this still needs before it merges".
@@ -6407,6 +6410,10 @@ function sessionLabel(session) {
 // as it stands now (null when GitHub could not be read).
 function refusalKind(err, pr) {
   const msg = String((err && err.message) || '').toLowerCase();
+  // GitHub is still finishing an earlier merge of this pull request (it holds
+  // the merge lock until that finishes, or until the request it made times
+  // out). Not a refusal of the head: the attempt asks again.
+  if (/merge already in progress/.test(msg)) return 'github_busy';
   if (pr && pr.draft === true) return 'draft';
   if (/base branch was modified/.test(msg)) return 'base_moved';
   if (pr && (pr.mergeable === false || pr.mergeable_state === 'dirty')) return 'conflict';
@@ -6424,7 +6431,7 @@ function refusalKind(err, pr) {
 //   unverified { message }        a 409 whose revision GitHub would not confirm
 //   reopened   {}                 closed on GitHub, reopened: it can be merged again
 //   closed     { message }        closed on GitHub, and could not be reopened
-//   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main
+//   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main | github_busy
 // An import is only ever merged into main (src/workflow/rules/pr-base.ts):
 // its pull request's base is read before GitHub is asked, one based on any
 // other branch is refused, and every `merged` names the branch it went into
@@ -6434,8 +6441,18 @@ function refusalKind(err, pr) {
 // pull request first, so a lost answer is observed rather than misread as a
 // refusal (merge trace bug 1). An error that is no answer from GitHub (the
 // network, a 5xx, its rate limit) is thrown: the work is tried again,
-// observing first.
-async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, checkpoint = async () => {} } = {}) {
+// observing first. An answer that a merge is "already in progress" is GitHub
+// still busy, not a refusal: the pull request is re-read and the merge asked
+// again a couple of times inside the attempt (BUSY_RETRIES), then the queue
+// is left to try again later.
+const BUSY_RETRY_MS = 20 * 1000;
+const BUSY_RETRIES = 2;
+
+async function attemptMerge(config, pool, sessionId, {
+  head, resumeFrom = null, checkpoint = async () => {},
+  // The busy back-off's clock; tests pass one that returns at once.
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
   const { rows: [session] = [] } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
@@ -6478,7 +6495,9 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
         ? `${label} wasn't merged: it is a draft on GitHub. Its author has to mark it ready for review, and it merges then.`
         : kind === 'base_moved'
           ? `${label} wasn't merged on this attempt: main moved while GitHub was merging it. It is tried again.`
-          : `${label} wasn't merged: GitHub refused it (${said || 'no reason given'}). It is tried again when its commit, main or its votes change.`;
+          : kind === 'github_busy'
+            ? `${label} wasn't merged yet: GitHub said a merge of it was already in progress. It is tried again in a few minutes.`
+            : `${label} wasn't merged: GitHub refused it (${said || 'no reason given'}). It is tried again when its commit, main or its votes change.`;
     return { outcome: 'refused', kind, message, githubMessage: said || null };
   };
   const unanswered = (err) => !err || !Number.isInteger(err.status) || err.status >= 500 || err.status === 429;
@@ -6536,9 +6555,28 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     const data = await client.mergePR(owner, repo, session.pr_number, pinned);
     return { outcome: 'merged', sha: (data && data.sha) || null, ...baseOf(base) };
   };
-  try {
-    return await merge();
-  } catch (err) {
+  // GitHub is still finishing an earlier merge of this pull request ("Merge
+  // already in progress"), not refusing this one. The pull request is read
+  // again first, since the earlier try may have landed; otherwise the merge
+  // is asked again after a short wait, at most BUSY_RETRIES times, and the
+  // queue is left to try again later if GitHub is still busy after that.
+  const busy = (err) => /merge already in progress/i.test(String((err && err.message) || ''));
+  const observedMerge = (pr) => ({
+    outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+    observed: true, ...baseOf(pr.base ? prBase.otherBase(pr) : base),
+  });
+  const reopenOrClosed = async () => {
+    try {
+      await client.reopenPR(owner, repo, session.pr_number);
+      return { outcome: 'reopened' };
+    } catch (reopenErr) {
+      // Only GitHub's refusal is "closed for good": no answer is asked again.
+      if (throttled(reopenErr)) return limited(reopenErr);
+      if (unanswered(reopenErr)) throw reopenErr;
+      return { outcome: 'closed', message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}` };
+    }
+  };
+  const handle = async (err) => {
     if (throttled(err)) return limited(err);
     // The branch is not on the git host (services/code-missing.js; the gate
     // refuses this first, so only a branch deleted since reaches here). Its
@@ -6546,6 +6584,26 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     // queue to resolve.
     if (codeMissing.isError(err)) {
       return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+    }
+    if (busy(err)) {
+      const said = String((err && err.message) || '').slice(0, 300);
+      for (let i = 0; i < BUSY_RETRIES; i++) {
+        await wait(BUSY_RETRY_MS);
+        const pr = await readPr();
+        if (pr && pr.merged) return observedMerge(pr);
+        if (pr && pr.state === 'closed') return reopenOrClosed();
+        try {
+          return await merge();
+        } catch (again) {
+          // Another busy answer loops; anything else is handled as it would
+          // be from the first ask.
+          if (!busy(again)) return handle(again);
+        }
+      }
+      return {
+        outcome: 'refused', kind: 'github_busy', githubMessage: said || null,
+        message: `${label} wasn't merged yet: GitHub said a merge of it was already in progress. It is tried again in a few minutes.`,
+      };
     }
     if (err && err.headMoved) {
       // GitHub answers 409 for a moved head and for a merge it will not make:
@@ -6586,20 +6644,8 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     }
     if (unanswered(err)) throw err;
     const pr = await readPr();
-    if (pr && pr.merged) {
-      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(pr.base ? prBase.otherBase(pr) : base) };
-    }
-    if (pr && pr.state === 'closed') {
-      try {
-        await client.reopenPR(owner, repo, session.pr_number);
-        return { outcome: 'reopened' };
-      } catch (reopenErr) {
-        // Only GitHub's refusal is "closed for good": no answer is asked again.
-        if (throttled(reopenErr)) return limited(reopenErr);
-        if (unanswered(reopenErr)) throw reopenErr;
-        return { outcome: 'closed', message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}` };
-      }
-    }
+    if (pr && pr.merged) return observedMerge(pr);
+    if (pr && pr.state === 'closed') return reopenOrClosed();
     // A draft of ours goes up for review again and is merged once more; an
     // imported one is its author's to mark ready.
     if (pr && pr.draft === true && !isImported && typeof client.markPrReadyForReview === 'function') {
@@ -6613,6 +6659,11 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
       }
     }
     return refused(err, pr);
+  };
+  try {
+    return await merge();
+  } catch (err) {
+    return handle(err);
   }
 }
 

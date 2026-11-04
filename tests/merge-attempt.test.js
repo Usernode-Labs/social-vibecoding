@@ -308,8 +308,64 @@ test('a repository address with a trailing slash is still asked about; one it ca
   } finally { d.restore(); }
 });
 
+test('GitHub still finishing an earlier merge ("Merge already in progress") is asked again inside the attempt, not refused (request 6265)', async () => {
+  const busy = () => status(405, 'Merge already in progress');
+  // The first ask answers busy; the next one merges. One short wait, no
+  // refusal, no line about GitHub having refused it.
+  let waits = 0;
+  const c = load({ session: native, github: { mergePR: (sha, n) => (n === 1 ? Promise.reject(busy()) : { sha: 'squashsha' }) } });
+  c.session = native;
+  try {
+    const { out } = await attempt(c, { wait: async () => { waits++; } });
+    assert.deepEqual(out, { outcome: 'merged', sha: 'squashsha' });
+    assert.equal(waits, 1, 'one short wait between the two asks');
+    assert.equal(c.calls.merge.length, 2);
+  } finally { c.restore(); }
+
+  // A 409 HeadMovedError carrying the same words is still GitHub busy: it is
+  // answered before the head-moved branch can misread it.
+  const hm = load({ session: native, github: { mergePR: (sha, n) => (n === 1 ? Promise.reject(new HeadMovedError('Merge already in progress')) : { sha: 'after' }) } });
+  hm.session = native;
+  try {
+    const { out } = await attempt(hm, { wait: async () => {} });
+    assert.deepEqual(out, { outcome: 'merged', sha: 'after' });
+  } finally { hm.restore(); }
+
+  // The earlier try landed after all: the re-read observes the merge and it
+  // is never asked a third time.
+  const landed = load({ session: native, github: {
+    mergePR: () => { throw busy(); },
+    getPR: () => ({ state: 'open', merged: true, merge_commit_sha: 'lostsha', merged_at: '2026-11-04T10:45:00Z' }),
+  } });
+  landed.session = native;
+  try {
+    const { out } = await attempt(landed, { wait: async () => {} });
+    assert.equal(out.outcome, 'merged');
+    assert.equal(out.observed, true);
+    assert.equal(out.sha, 'lostsha');
+    assert.equal(landed.calls.merge.length, 1, 'never asked again once GitHub says it merged');
+  } finally { landed.restore(); }
+
+  // Busy every time: refused as github_busy (never a conflict or a plain
+  // block), so the queue can try it again on its own.
+  const stuck = load({ session: native, github: { mergePR: () => { throw busy(); } } });
+  stuck.session = native;
+  try {
+    let waits2 = 0;
+    const { out, checkpoints } = await attempt(stuck, { wait: async () => { waits2++; } });
+    assert.equal(out.outcome, 'refused');
+    assert.equal(out.kind, 'github_busy');
+    assert.match(out.message, /already in progress/);
+    assert.match(out.message, /tried again in a few minutes/);
+    assert.equal(waits2, 2, 'BUSY_RETRIES tries after the first ask');
+    assert.equal(stuck.calls.merge.length, 3, 'the first ask and its two retries');
+    assert.deepEqual(checkpoints, [{ asked: true }]);
+  } finally { stuck.restore(); }
+});
+
 test('refusalKind names a refusal from GitHub\'s answer and the pull request as it stands', () => {
   const { refusalKind } = require('../src/routes/votes');
+  assert.equal(refusalKind(status(405, 'Merge already in progress'), { mergeable: true }), 'github_busy', 'GitHub still busy, not a refusal');
   assert.equal(refusalKind(status(405, 'x'), { draft: true }), 'draft');
   assert.equal(refusalKind(status(409, 'Base branch was modified'), {}), 'base_moved');
   assert.equal(refusalKind(status(405, 'x'), { mergeable: false }), 'conflict');

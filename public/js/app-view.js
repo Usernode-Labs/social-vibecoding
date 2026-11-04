@@ -24642,6 +24642,34 @@ const AppView = {
         soft: true,
       });
     }
+    // GitHub held this change's merge back: it was still finishing an earlier
+    // merge, or refused it for a reason nobody has to act on. The queue asks
+    // again by itself, so this is amber and names the next try in the
+    // viewer's own clock. One label for both ("Waiting on GitHub"); only the
+    // detail differs.
+    const heldUntil = p.integration && p.integration.heldUntil ? Date.parse(p.integration.heldUntil) : NaN;
+    const heldSoon = !Number.isFinite(heldUntil) || heldUntil <= Date.now();
+    const heldTime = heldSoon ? null : new Date(heldUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (served.includes('github_busy')) {
+      out.push({
+        key: 'github_busy',
+        label: PlatformI18n.t('changes:badge.reason.githubBusy.label'),
+        detail: heldSoon
+          ? PlatformI18n.t('changes:badge.reason.githubBusy.detailSoon')
+          : PlatformI18n.t('changes:badge.reason.githubBusy.detail', { time: heldTime }),
+        waiting: true,
+      });
+    }
+    if (served.includes('github_refused')) {
+      out.push({
+        key: 'github_refused',
+        label: PlatformI18n.t('changes:badge.reason.githubRefused.label'),
+        detail: heldSoon
+          ? PlatformI18n.t('changes:badge.reason.githubRefused.detailSoon')
+          : PlatformI18n.t('changes:badge.reason.githubRefused.detail', { time: heldTime }),
+        waiting: true,
+      });
+    }
     // The APP's merges are paused by a red main (services/main-watch.js).
     // Not the proposal's fault and not in any column of its own: the row's
     // requirements ledger carries the main-health step live (services/

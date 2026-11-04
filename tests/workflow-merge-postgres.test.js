@@ -17,10 +17,10 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
-const { proposal, sessionKey, MACHINE, WORK, CLAIM_STALE_MS } = require('../src/workflow/proposal/machine.ts');
+const { proposal, sessionKey, MACHINE, WORK, CLAIM_STALE_MS, REFUSAL_RETRY_MS } = require('../src/workflow/proposal/machine.ts');
 const { inspect } = require('../src/workflow/kernel/index.ts');
 const { attentionStates } = require('../src/workflow/platform.ts');
-const { mergeQueue, MACHINE: QUEUE, appKey } = require('../src/workflow/merge-queue/machine.ts');
+const { mergeQueue, MACHINE: QUEUE, appKey, SWEEP_MS } = require('../src/workflow/merge-queue/machine.ts');
 const { preview } = require('../src/workflow/preview/machine.ts');
 const { PROCESS_PRESENCE_LOCK } = require('../src/workflow/rules/presence.ts');
 const { waitFor } = require('./lib/wait-for');
@@ -778,6 +778,57 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(empty.app);
     await settle();
     assert.equal((await qInst(empty.app)).deadline_at, null, 'an empty line sets no sweep');
+  });
+
+  await t.test('M17b GitHub busy, or a plain refusal, comes back on the queue\'s sweep; a conflict stays held (request 6265)', async () => {
+    assert.equal(REFUSAL_RETRY_MS, SWEEP_MS, 'a refusal expires with the queue\'s sweep');
+    // Move the recorded retry into the past: the clock has advanced past it.
+    const expire = (s) => asTransition((c) => c.query(
+      `UPDATE wf_instances SET data = jsonb_set(data, '{refused,retryAt}', to_jsonb($3::text))
+        WHERE machine = $1 AND key = $2`,
+      [MACHINE, sessionKey(s.id), new Date(Date.now() - 1000).toISOString()]));
+    for (const refusal of [
+      { outcome: 'refused', kind: 'github_busy', reason: 'github_busy', message: 'PR #x wasn\'t merged yet: GitHub said a merge of it was already in progress.' },
+      { outcome: 'refused', kind: 'blocked', reason: 'github_refused', message: 'PR #x wasn\'t merged: GitHub refused it (paused).' },
+    ]) {
+      defaults();
+      const s = await proposalRow();
+      await vote(s, await user(), 'yes');
+      let n = 0;
+      work.answer.set(WORK.attempt, () => {
+        if (++n === 1) throw new Error('Server Error'); // a 5xx: no answer
+        return n === 2 ? refusal : { outcome: 'merged', sha: SHA('9') };
+      });
+      await want(s.app, { sessionId: s.id });
+      await settle();
+      assert.equal(calls(WORK.attempt).length, 2, 'the 5xx is retried, then GitHub\'s answer is read');
+      const held = await row(s);
+      assert.deepEqual(held.integration_block_reasons, [refusal.reason], 'the card is told why it waits');
+      assert.ok(held.merge_held_until, 'and when the queue tries again');
+      // Its own refusal record carries the retry, and the reason is served.
+      const pi = await pInst(s);
+      assert.equal(pi.data.refused.retryAt, new Date(held.merge_held_until).toISOString());
+      // Nothing else happens on the app: only the queue's sweep, after the
+      // recorded retry has passed, tries it again.
+      await expire(s);
+      await fire(QUEUE, appKey(s.app.id));
+      assert.equal(calls(WORK.attempt).length, 3, 'the sweep tried it again');
+      const told = await sentTo('merge-followups', sessionKey(s.id));
+      assert.equal(told.length, 1, 'and it merged');
+      assert.equal(told[0].payload.mergeSha, SHA('9'));
+    }
+    // A refusal that needs a person or a code change stays held: a conflict
+    // is not asked again by the sweep.
+    defaults();
+    const c = await proposalRow();
+    await vote(c, await user(), 'yes');
+    work.answer.set(WORK.attempt, { outcome: 'refused', kind: 'conflict', message: 'conflict' });
+    await want(c.app, { sessionId: c.id });
+    await settle();
+    assert.equal((await pInst(c)).data.refused.retryAt, null, 'sticky');
+    const before = calls(WORK.attempt).length;
+    await fire(QUEUE, appKey(c.app.id));
+    assert.equal(calls(WORK.attempt).length, before, 'not asked again by the sweep');
   });
 
   await t.test('M18 GitHub\'s conflict on a head the mirror measures clean goes to the conflict lane, and the turn runs (review: queue 4, attempt 6)', async () => {

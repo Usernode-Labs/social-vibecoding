@@ -97,6 +97,10 @@ function readIntegration(session) {
       ? null : !!s.integration_checks_base_current,
     blockReasons: Array.isArray(s.integration_block_reasons)
       ? s.integration_block_reasons : [],
+    // When the merge queue tries this change again after GitHub held its
+    // merge back (a busy answer or a plain refusal). Read only alongside the
+    // 'github_busy' / 'github_refused' reason, so a stale stamp says nothing.
+    heldUntil: s.merge_held_until ? new Date(s.merge_held_until).toISOString() : null,
     error: s.integration_error || null,
     // Derived, so every surface agrees without re-deriving: is this answer
     // about the head the row currently claims? A measurement about a head

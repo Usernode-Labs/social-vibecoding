@@ -95,6 +95,26 @@
     "text": "This proposal needs merging with main, but the platform’s shared token budget is spent for today. It resumes after the midnight UTC reset.",
     "description": "Tooltip on the \"Waiting on shared budget\" status badge of a proposal. \"main\" is the name of the app's main code branch and stays as it is; tokens are units of AI usage."
   },
+  "merge.status.waitingOnGithub": {
+    "text": "Waiting on GitHub",
+    "description": "Status badge on a proposal that passed its vote and its checks, but GitHub held its merge back: it was still finishing an earlier merge, or refused it for a reason nobody has to act on. The platform tries again by itself."
+  },
+  "merge.title.githubBusy": {
+    "text": "GitHub said a merge of this change was already in progress. Homeroom tries again at {{time}}.",
+    "description": "Tooltip on the \"Waiting on GitHub\" status badge of a proposal. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "merge.title.githubBusySoon": {
+    "text": "GitHub said a merge of this change was already in progress. Homeroom tries again in a few minutes.",
+    "description": "Tooltip on the \"Waiting on GitHub\" status badge of a proposal, when the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "merge.title.githubRefused": {
+    "text": "GitHub refused the merge. Homeroom tries again at {{time}}.",
+    "description": "Tooltip on the \"Waiting on GitHub\" status badge of a proposal whose merge GitHub refused for a reason nobody has to act on. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "merge.title.githubRefusedSoon": {
+    "text": "GitHub refused the merge. Homeroom tries again in a few minutes.",
+    "description": "Tooltip on the \"Waiting on GitHub\" status badge of a proposal whose merge GitHub refused for a reason nobody has to act on, when the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is."
+  },
   "merge.status.goingLive": {
     "text": "Going live…",
     "description": "Status badge on a proposal that has been merged while the live app is still being updated to run it. Shown with a spinner."
