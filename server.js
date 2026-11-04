@@ -681,10 +681,10 @@ app.use(socialIdentityRoutes(config));
 // consent POST must never be satisfiable by a bearer token approving itself.
 app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
-// #6081: translate a person's words into the reader's language, on a tap.
-app.use(require('./src/routes/user-content-translations').userContentTranslationRoutes(config));
 // Apple and Google sign-in, and Admin → Sign-in providers, where they are set up.
 app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
+// #6081: translate a person's words into the reader's language, on a tap.
+app.use(require('./src/routes/user-content-translations').userContentTranslationRoutes(config));
 // Firebase phone sign-in and sign-up (routes/phone-auth.js), pre-login
 // (middleware/auth.js PUBLIC_PATHS): fail-closed 404 unless
 // FIREBASE_PHONE_AUTH_ENABLED and its three companion values are set

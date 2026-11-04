@@ -166,7 +166,14 @@ test('media column removal refuses incomplete migrations, preserves references, 
   assert.equal(afterReceipts.length,plan.length);
   const afterCatalog=await catalog(pool);
   const expectedTables=TABLES.map(t=>'public.'+t).sort();
-  assert.deepEqual(afterCatalog.relations.filter(r=>JSON.stringify(r)!==JSON.stringify(beforeCatalog.relations.find(p=>p.name===r.name))).map(r=>r.name).sort(),expectedTables);
+  // The media contract is about these six tables. A migration later in
+  // history may add tables of its own, so the comparison is scoped to the
+  // tables this migration owns rather than every changed relation.
+  const mediaNames=new Set(expectedTables);
+  assert.deepEqual(afterCatalog.relations
+    .filter(r=>mediaNames.has(r.name))
+    .filter(r=>JSON.stringify(r)!==JSON.stringify(beforeCatalog.relations.find(p=>p.name===r.name)))
+    .map(r=>r.name).sort(),expectedTables);
   assert.deepEqual(afterCatalog.sequences,beforeCatalog.sequences);
 
   await t.test('new constraints reject missing keys, wrong hashes and inconsistent originals',async()=>{

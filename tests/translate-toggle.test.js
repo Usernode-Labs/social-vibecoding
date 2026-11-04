@@ -85,10 +85,14 @@ test('the request page offers Translate only on someone else’s request, beside
 
 test('a message gets Translate in its ⋯ menu, only when someone else wrote it', () => {
   const src = read(ROW);
-  assert.match(src, /const translation = useTranslate\(message\.content \? \[message\.content\] : \[\], \{\s*enabled: !mine && !!message\.content && !message\.deleted && !message\.moderated,/);
-  assert.match(src, /if \(!mine && message\.content && !message\.deleted && !message\.moderated\) \{/);
+  // A person's words only: the bot's cards and the platform's notices are
+  // not user-generated content, and the bot already writes in the reader's
+  // language.
+  assert.match(src, /const canTranslate = !mine && !message\.sender\.bot && !message\.system\s*&& !!message\.content && !message\.deleted && !message\.moderated;/);
+  assert.match(src, /const translation = useTranslate\(message\.content \? \[message\.content\] : \[\], \{\s*enabled: canTranslate,/);
+  assert.match(src, /if \(canTranslate\) \{/);
   assert.match(src, /key: 'translate', label, icon: GlobeIcon, disabled: translation\.state === 'pending'/);
-  assert.match(src, /translation\.state === 'shown' \? translation\.texts\[0\] : message\.content/);
+  assert.match(src, /const translatedBody = translation\.state === 'shown' && !editing\s*\? <>\{quote\}<MessageMarkdown content=\{translation\.texts\[0\]\}/);
   assert.match(src, /<TranslateNote view=\{translation\} className="mt-1" \/>/);
 });
 

@@ -179,9 +179,12 @@ export const MessageRow = memo(function MessageRow({
   const t = useMessages('messages');
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
   // #6081: someone else's words can be read in the reader's language. Asked
-  // for on a tap from the ⋯ menu; never on a page load.
+  // for on a tap from the ⋯ menu; never on a page load. Only what a person
+  // wrote: the bot's cards and the platform's notices are not translated.
+  const canTranslate = !mine && !message.sender.bot && !message.system
+    && !!message.content && !message.deleted && !message.moderated;
   const translation = useTranslate(message.content ? [message.content] : [], {
-    enabled: !mine && !!message.content && !message.deleted && !message.moderated,
+    enabled: canTranslate,
   });
   // #4655: in a direct message people are named bare ("ada", not "@ada") in
   // the Block and Report labels; group chats and channels keep the @ there.
@@ -312,7 +315,7 @@ export const MessageRow = memo(function MessageRow({
   }
   // #6081: someone else's words, in the reader's language. One more item in
   // the same menu, so a chat does not fill up with a button on every message.
-  if (!mine && message.content && !message.deleted && !message.moderated) {
+  if (canTranslate) {
     // #6081: while it is being translated the words stay as written and the
     // item says so, rather than offering a second tap that does nothing.
     const label = translation.state === 'pending'
@@ -394,7 +397,7 @@ export const MessageRow = memo(function MessageRow({
   const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
   const words = !message.content ? null : head
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
-    : <MessageMarkdown content={translation.state === 'shown' ? translation.texts[0] : message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
+    : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
 
   // #5680: which rows have a side. A DM and a group do; a channel does not
   // (#2783), and neither does a row that is not something a person said: the
@@ -411,11 +414,12 @@ export const MessageRow = memo(function MessageRow({
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
   // place and nothing else (#2387).
+  const quote = <>{message.reply && !quoteAgain ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}</>;
   const body = message.deleted ? (
     <p className="messages-deleted">{t('messages:row.deleted')}</p>
   ) : (
     <>
-      {message.reply && !quoteAgain ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
+      {quote}
       {/* Homeroom bot parity, P1: what the reply looked at, above its words (./bot-looked.tsx). */}
       {!editing ? <BotLookedLine message={message} /> : null}
       {editing ? (
@@ -456,6 +460,13 @@ export const MessageRow = memo(function MessageRow({
       ) : words}
     </>
   );
+
+  // #6081: a person's words read in another language on a tap. The quoted
+  // reply stays above them, and the same markdown renderer draws the
+  // translation, so the row reads as it did.
+  const translatedBody = translation.state === 'shown' && !editing
+    ? <>{quote}<MessageMarkdown content={translation.texts[0]} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} /></>
+    : null;
 
   // Everything a message carries besides its text: files, shared items,
   // reactions, the thread under it and the status line.
@@ -613,9 +624,9 @@ export const MessageRow = memo(function MessageRow({
         {/* #5680: in a conversation the words sit in a bubble on their
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}
-        {sided ? <div className="messages-bubble" dir="auto">{body}</div> : body}
+        {sided ? <div className="messages-bubble" dir="auto">{translatedBody || body}</div> : translatedBody || body}
         {/* #6081: under the words, the way back to them, or why they stayed. */}
-        {message.content && !message.deleted && !message.moderated ? <TranslateNote view={translation} className="mt-1" /> : null}
+        {canTranslate ? <TranslateNote view={translation} className="mt-1" /> : null}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
         {failedNote}
