@@ -142,7 +142,14 @@ export function NotifyMeView({ state, settings = false, onTap, onSettings }: {
   );
 }
 
-export function NotifyMe({ userId }: { userId: number | null | undefined }) {
+export function NotifyMe({ userId, appSlug, issueNumber, conversationId, threadRootId }: {
+  userId: number | null | undefined;
+  /** #6264: the request and its chat, so the tap also stores the promise on the server. */
+  appSlug?: string;
+  issueNumber?: number;
+  conversationId?: number;
+  threadRootId?: number;
+}) {
   const [state, setState] = useState<NotifyMeState>('offer');
   const [settings, setSettings] = useState(false);
 
@@ -150,7 +157,19 @@ export function NotifyMe({ userId }: { userId: number | null | undefined }) {
     if (state !== 'offer') return;
     setState('asking');
     markNotifyMeChosen(userId);
+    // The server's promise and the device's permission are asked for
+    // together; neither failing stops the other.
+    const stored = appSlug && Number(issueNumber) > 0
+      ? api.addFollowUp({
+        appSlug, issueNumber: Number(issueNumber), event: 'vote',
+        conversationId: conversationId ?? null, threadRootId: threadRootId ?? null,
+      }).catch((err) => {
+        console.warn('[notify-me] Follow-up not stored:', err);
+        return false;
+      })
+      : Promise.resolve(false);
     const answered = await askToNotify();
+    void stored;
     setSettings(answered.settings);
     setState(answered.state);
   }

@@ -263,7 +263,7 @@ test('#3734, #3740: the prompt never lets the bot promise what no tool started, 
   // #11 (WP3): and never a promise to come back to it later, nor "the team
   // has been told" or "it was withdrawn" with nothing behind it.
   assert.match(prompt, /- Never say you will do something \(revise, change, build, post, file, withdraw, report, look at it again\)\n  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it\n  under way\./);
-  assert.match(prompt, /Never promise to follow up, look into, sort out, investigate or get back to them later: nothing\n  brings you back to it\./);
+  assert.match(prompt, /Never promise to follow up, look into, sort out, investigate or get back to them later: nothing\n  brings you back to it, except what tell_me_when stored this turn \(say its promise and nothing more\)\./);
   assert.match(prompt, /Never say the team has been told, or that a change was withdrawn or closed, unless\n  report_problem or withdraw_proposal did it in this turn\./);
   assert.match(prompt, /When you cannot do something, say so plainly, and what they can do instead: leave it, vote\n  No on the change, comment on the request, or use Send feedback\./);
   assert.match(prompt, /If a tool refused, say plainly why, and that\n  nothing was done\./);

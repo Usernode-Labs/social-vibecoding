@@ -658,7 +658,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Never say you will do something (revise, change, build, post, file, withdraw, report, look at it again)',
     '  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it',
     '  under way. Never promise to follow up, look into, sort out, investigate or get back to them later: nothing',
-    '  brings you back to it. Never say the team has been told, or that a change was withdrawn or closed, unless',
+    '  brings you back to it, except what tell_me_when stored this turn (say its promise and nothing more).',
+    '  Never say the team has been told, or that a change was withdrawn or closed, unless',
     '  report_problem or withdraw_proposal did it in this turn. If a tool refused, say plainly why, and that',
     '  nothing was done. When you cannot do something, say so plainly, and what they can do instead: leave it, vote',
     '  No on the change, comment on the request, or use Send feedback. When you have not started something you',
@@ -1625,7 +1626,7 @@ const CLAIMS = Object.freeze([
     // running does come back (look_into posts what it finds here). P4, P5: a
     // batch's reads, a note sent to a build.
     backed: (ctx) => !!(ctx.revised || ctx.commented || ctx.started || ctx.withdrew || ctx.reported || ctx.lookRunning
-      || ctx.batchQueued || ctx.steered),
+      || ctx.batchQueued || ctx.steered || ctx.followedUp),
     said: 'promises to come back to something later',
     instead: CANT_LOOK_TEXT,
   },
@@ -1635,7 +1636,9 @@ const CLAIMS = Object.freeze([
     // know what it turns up", "I'll report back": only a look this turn
     // started, still running, posts anything here later.
     re: /\b(?:I(?:'ll| will|'m going to| am going to)|we(?:'ll| will))\s+(?:(?:then|also|soon|just)\s+)?(?:post|share|send|report|tell you|let you know|come back|update you|write)\b[^.!?\n]{0,60}?(?:\bwhat (?:I|it|they|we|the helper) (?:finds?|turns? up|comes? up)\b|\b(?:the |my |its )?findings\b|\b(?:the |its )?results?\b|\bback\b|\bwhen (?:it|I|the look|the helper)(?:'s| is|'m| am)? (?:done|finished|back)\b)/i,
-    backed: (ctx) => !!ctx.lookRunning,
+    // #6264: a promise stored by tell_me_when is kept by the change's own
+    // moment, which posts it here.
+    backed: (ctx) => !!(ctx.lookRunning || ctx.followedUp),
     said: 'says it will post findings here later',
     instead: 'Nothing I started is still looking into it, so nothing will be posted here later.',
   },

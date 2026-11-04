@@ -98,6 +98,9 @@ async function migrate(config) {
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
   await seedStagingBotPlanWaiting(pool);
+  // #6264: a request whose bot kept its word, for the before & after shots
+  // of "tell me when it's done" (the promise, then the line it posted).
+  await seedStagingBotFollowUp(pool);
   // #6228's shots: a reply on the handed-back request #9103 (above), for the
   // thread's status line, its track card and the Homeroom bot page's row.
   await seedStagingBotReplyWaiting(pool);
@@ -1947,6 +1950,53 @@ async function seedStagingBotStaleDescription(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot stale-description seeding failed', { message: err.message });
+  }
+}
+
+// #6264: a request where the bot promised to say when an update was in, and
+// then said it. A fresh staging copy has no such exchange (nothing here runs
+// a model), so the before & after shots get one, obviously fake, on the
+// self-hosted Homeroom project, for the shots' member fixture
+// (usernode-capture) as the person who asked. The messages are ordinary bot
+// bubbles in the request's discussion; none of it is a signal anything
+// reads. Idempotent by request number and by each line's text; a no-op
+// outside staging.
+async function seedStagingBotFollowUp(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!apps.rows.length || !people.rows.length || !bots.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const botId = bots.rows[0].id;
+    const number = 9107;
+    const title = 'Staging demo: a request where the bot kept its word';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. An update was asked for and told.', $4, NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    const lines = [
+      [botId, "Got it, @usernode-capture: I've queued that update to PR 9107. I start on it now.", '2 days'],
+      [userId, 'Tell me when the update is made.', '47 hours'],
+      [botId, "Sure, @usernode-capture. I'll tell you here when it's in.", '47 hours'],
+      [botId, '@usernode-capture, the update to PR 9107 is in, and its checks are running.', '46 hours'],
+    ];
+    for (const [author, content, ago] of lines) {
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', $4, NOW() - ($5)::interval
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                               AND user_id = $2 AND content = $3 AND deleted_at IS NULL)`,
+        [appId, author, content, number, ago],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot follow-up seeding failed', { message: err.message });
   }
 }
 

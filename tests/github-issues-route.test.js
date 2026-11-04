@@ -225,7 +225,7 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 19 appended mocks (900008 joined in #556, 900009 in
+    // 5 live issues + 20 appended mocks (900008 joined in #556, 900009 in
     // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
     // applying / retry-pending mock close proposals, 900013 with the
     // card-as-pointer revision — the deliberately BARE row, which the
@@ -238,8 +238,10 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // muddying it, and 900018 for the request the Homeroom bot is building,
     // which carries a synthetic `bot` and nothing else, and 9103 for #6213,
     // the request the bot handed back to a person whose discussion carries
-    // the seeded note and its suggested replies).
-    assert.strictEqual(body.issues.length, 24);
+    // the seeded note and its suggested replies, and 9107 for #6264, the
+    // request whose discussion carries the bot's promise to tell someone
+    // when the update was in and the line it posted when it was).
+    assert.strictEqual(body.issues.length, 25);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
