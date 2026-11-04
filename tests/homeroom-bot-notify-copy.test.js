@@ -189,6 +189,24 @@ test('a quiet message carries no detail, and an answer keeps its old token', () 
   assert.deepEqual([reply.title, reply.body], ['Homeroom bot', 'Yes, Pin notes is up.']);
 });
 
+test('4 Nov 2026 (#6290): a request\'s detail carries its project, so the bell opens its thread', () => {
+  // The bell opens `#homeroom-bot/request/<slug>/<n>` from the row's own
+  // project, or else the detail's `p` (src/services/notifications.js sends
+  // appSlug on the bot rows it knows a project for).
+  const detail = copy.botNotificationDetail({ ...BASE, moment: 'stopped', said: 'build_other' });
+  assert.equal(copy.parseBotDetail(detail).appSlug, 'plant-pal');
+  // Only beside a request number: a quiet row does not grow by it.
+  const noIssue = copy.botNotificationDetail({ ...BASE, issueNumber: null, moment: 'needs_you', said: 'decide' });
+  assert.equal(copy.parseBotDetail(noIssue).appSlug, '');
+  assert.ok(!noIssue.includes('"p"'), noIssue);
+  // A slug that is not the address's shape is neither stored nor read.
+  const bad = copy.botNotificationDetail({ ...BASE, appSlug: 'Not A Slug', moment: 'needs_you', said: 'decide' });
+  assert.equal(copy.parseBotDetail(bad).appSlug, '');
+  assert.ok(!bad.includes('"p"'), bad);
+  // A row from before "one story" carries none.
+  assert.equal(copy.parseBotDetail('hrbot:question:Plant Pal').appSlug, '');
+});
+
 test('the detail fits its column whatever it is given, and a broken one reads as nothing', () => {
   const long = 'x'.repeat(5000);
   const detail = copy.botNotificationDetail({
