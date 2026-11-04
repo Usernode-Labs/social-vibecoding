@@ -468,7 +468,7 @@ test('a reply after a walkthrough written beside a call sends the walkthrough, a
         content: walk,
         toolCalls: [
           callOf('a', 'read_source', { project: 'gym', path: 'public/index.html' }),
-          callOf('b', 'offer_request', { project: 'gym', title: 'Mark today on the main screen', details: 'Mark today and who is next.' }),
+          callOf('b', 'offer_request', { project: 'gym', title: 'Mark today on the main screen', details: 'Mark today and who is next.', doneWhen: ['Today and who is next show on the main screen.'] }),
         ],
       };
     }
@@ -523,7 +523,7 @@ test('a thread tool\'s card stays under a reply that ends in an offer', async ()
   const chat = scripted([
     { calls: [
       callOf('a', 'offer_options', { title: 'Ways to remind', options: [{ title: 'A banner' }, { title: 'A calendar file' }] }),
-      callOf('b', 'offer_request', { project: 'gym', title: 'Add a reminder banner' }),
+      callOf('b', 'offer_request', { project: 'gym', title: 'Add a reminder banner', doneWhen: ['A reminder banner shows on the main screen.'] }),
     ] },
     { calls: [callOf('c', 'reply', { text: 'Two ways; the first is drafted as a request.' })] },
   ]);
