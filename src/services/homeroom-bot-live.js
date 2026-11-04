@@ -206,7 +206,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null }) {
+function personText({ reason, platform = false, project = null, done = false }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -214,6 +214,12 @@ function personText({ reason, platform = false, project = null }) {
   if (platform) {
     return `Homeroom bot thinks this is about Homeroom itself, not ${name}: ${reasonSentence(reason)}\n\n`
       + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have it filed on Homeroom's own board too, or moved there.`;
+  }
+  // #6306: the ask is already there, so there is nothing to build and no
+  // decision to make: it only waits to be closed.
+  if (done) {
+    return `Homeroom bot found this already works: ${reasonSentence(reason)}\n\n`
+      + 'Anyone in the project can propose to close it, or reply here if something is missing.';
   }
   // GitHub never carries a platform username (#723): its copy names nobody.
   // Homeroom's names who can say Go ahead (personHomeroomText).
@@ -226,13 +232,17 @@ function personText({ reason, platform = false, project = null }) {
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [] }) {
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false }) {
   // #4239, #6311: about Homeroom itself. The requester is offered the copy
   // in the thread and the move in their DM. Plain words, in the first
   // person: no checkout, no head commit, no build agent.
   if (platform) {
     return firstPerson(`I think this is about Homeroom itself, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
       + 'I can put it on Homeroom\'s own board too and keep this request open here.');
+  }
+  // #6306: already there: no Go ahead, only a close vote.
+  if (done) {
+    return `Already works: ${reasonSentence(reason)} Anyone in the project can Propose to close it, or reply here if something is missing.`;
   }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';

@@ -117,9 +117,14 @@
       "schemaSha256": "2cc3815976fedc3273f251b6859216f97e9eb37ef41a2a6943cdea3c73ece1b0"
     },
     {
+      "id": "homeroom-bot-run-already-done",
+      "sha256": "995da0193b6766f63412fc26716255470fd1b0976225e6dd9bbbff147201bd4e",
+      "schemaSha256": "9710077860526a1a6641fc2d7f952f188382e4c869f2dbe9b55608b64e29eecf"
+    },
+    {
       "id": "allow-copy-request-dm-action",
       "sha256": "99530db4c42ba06f4e2f607e04631d5583d81f753e301853143868cbfa4ee982",
-      "schemaSha256": "68379fc29db33cfb1d13879077175547e5ab82e8da71c9eda31c9b97e6730125"
+      "schemaSha256": "bf0d6e4d69387025e021981ec0a46cebc5f3b70826f5cd14346adf00fdda12ad"
     }
   ]
 }

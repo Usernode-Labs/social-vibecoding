@@ -288,6 +288,14 @@ function firstLine(text, max = 90) {
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
+// #6306: the bot's first whole sentence, cut at `max` with "…" when it does
+// not fit. The row says what it found in one sentence; the page keeps all.
+function firstSentence(text, max = 140) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  const sentence = (flat.match(/^.+?[.!?](?=\s|$)/) || [flat])[0];
+  return sentence.length > max ? `${sentence.slice(0, max - 1).trimEnd()}…` : sentence;
+}
+
 // #6282: one ask, as the row's one line of words: 80 characters at most,
 // ending in "…" when cut (the way the bot's own lines are shortened,
 // homeroom-bot-voice.js clip). Whitespace folds, so a tooltip stays one line.
@@ -311,6 +319,9 @@ const BOT_STANDING = Object.freeze({
   // Handed back to them (homeroom-bot-progress.js handedBack): nothing moves
   // until somebody decides, or asks it to try the build again.
   decide: { group: 'needs', what: 'decide' },
+  // #6306: the ask is already there, so nothing is left to build: the row
+  // offers Propose to close, never reads as a decision.
+  already_works: { group: 'needs', what: 'already_works' },
   build_stopped: { group: 'needs', what: 'build_stopped' },
   // #6284: the bot stopped at its own limit on failing checks; somebody may
   // let it try once more.
@@ -385,7 +396,8 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
   if (said === null) return null;
   // Handed back, and somebody has taken it up since (a change of theirs, or
   // a claim): that is where it stands now.
-  if (said && (said.what === 'decide' || said.what === 'build_stopped') && (status || row.claimed_by)) said = undefined;
+  if (said && (said.what === 'decide' || said.what === 'already_works' || said.what === 'build_stopped')
+      && (status || row.claimed_by)) said = undefined;
   // #6282 (4 Nov 2026): an update on its way holds the vote. While a turn
   // runs on the change, or the bot holds an ask it took, the row reads
   // Updating; while an ask waits its turn, Update queued. It is listed for
@@ -416,6 +428,8 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
       at,
       ...(said.what === 'held' ? { heldBy: heldBy(bot.capSuppressed) } : {}),
       ...(place ? { place } : {}),
+      // #6306: an already-done hand-back says why in the bot's own sentence.
+      ...(said.what === 'already_works' && bot.reason ? { reason: bot.reason } : {}),
     };
   }
   if (status === 'merging') return own ? { group: 'next', what: 'merging', at: iso(row.merged_at || row.promoted_at) } : null;
@@ -479,6 +493,14 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
         return { group: 'waiting', what: 'held', ...base, heldBy: heldBy(f.run.capSuppressed), ...(f.heldPlace ? { place: f.heldPlace } : {}) };
       }
       const reason = f.run ? firstLine(f.run.reason, 140) || null : null;
+      // #6306: already there. The requester (and the project's deciders) are
+      // offered to close it; anyone else waits on that, and it never reads
+      // as a decision.
+      if (f.run && (f.run.verdict === 'person' || f.run.verdict === 'empty') && f.run.alreadyDone) {
+        return f.viewerDecides
+          ? { group: 'needs', what: 'already_works', ...base, ...(reason ? { reason } : {}) }
+          : { group: 'waiting', what: 'needs_person', ...base, ...(reason ? { reason } : {}) };
+      }
       // Handed back: the requester's (and the project's deciders') to
       // decide, anyone else's to wait on.
       if (f.run && f.run.verdict === 'person') {
@@ -600,6 +622,9 @@ async function botStages(pool, user, deps = {}) {
         // #6313: and only a read queued after a plan that could not be
         // written says it is retrying the plan.
         ...(state && state.retry ? { retry: state.retry } : {}),
+        // #6306: a request found already done brings the bot's reason with
+        // it, so the row and the page say "Already works: …".
+        ...(stage === 'already_works' ? { reason: firstSentence(row.run_reason, 140) || null } : {}),
       });
     }
   } catch (err) {
@@ -622,7 +647,7 @@ WITH wanted AS (
 ),
 live_run AS (
   SELECT DISTINCT ON (r.app_id, r.issue_number)
-         r.app_id, r.issue_number, r.verdict, r.reason, r.cap_suppressed, r.created_at,
+         r.app_id, r.issue_number, r.verdict, r.reason, r.already_done, r.cap_suppressed, r.created_at,
          r.build_ok, r.build_error, r.proposal_session_id,
          (r.created_at > NOW() - make_interval(days => $4)) AS fresh
     FROM homeroom_bot_runs r
@@ -645,7 +670,8 @@ queue AS (
    WHERE q.started_at IS NULL AND q.app_id = ANY($2::int[])
 )
 SELECT w.app_id, w.number, a.slug, rq.title, rq.labels,
-       lr.verdict AS run_verdict, lr.reason AS run_reason, lr.cap_suppressed AS run_cap,
+       lr.verdict AS run_verdict, lr.reason AS run_reason, lr.already_done AS run_already_done,
+       lr.cap_suppressed AS run_cap,
        lr.created_at AS run_at, lr.fresh AS run_fresh,
        lr.build_ok AS run_build_ok, lr.build_error AS run_build_error, lr.proposal_session_id AS run_proposal,
        -- #6228: the newest person's reply on the request after that run, and
@@ -717,6 +743,7 @@ async function requestFacts(pool, rows, viewerId, deps = {}) {
       const run = f.run_verdict == null ? null : {
         verdict: f.run_verdict,
         reason: f.run_reason || null,
+        alreadyDone: f.run_already_done === true,
         capSuppressed: f.run_cap || null,
         createdAt: f.run_at || null,
         buildOk: f.run_build_ok,
@@ -866,6 +893,8 @@ const NEED_SAYS = Object.freeze({
   bot_question: 'waits for their answer',
   plan: 'its plan waits for their Build it',
   decide: 'Homeroom bot handed it back: a person needs to decide',
+  // #6306: nothing left to build; it only waits to be closed.
+  already_works: 'already works, so Homeroom bot offered to close it (Propose to close)',
   build_stopped: 'Homeroom bot\'s build of it stopped: it waits for them to ask it to try again',
   fix_stopped: 'its checks are failing, and Homeroom bot stopped fixing them: it waits for them to let it try again',
 });
@@ -975,7 +1004,10 @@ function listsOf(needs, work, { botUsername = null } = {}) {
     needsYou: [
       ...items.map((item) => row(item.app, shownNumber(item), (item.kind === 'ballot' && item.ballot?.title) || item.title,
         NEED_SAYS[item.kind] || 'waits for them')),
-      ...(work?.needs || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, NEED_SAYS[t.what] || 'waits for them')),
+      ...(work?.needs || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title,
+        t.what === 'already_works' && t.reason
+          ? `${NEED_SAYS.already_works}: ${t.reason}`
+          : (NEED_SAYS[t.what] || 'waits for them'))),
       ...privates.map((p) => row(p.app, null, p.title, privateSays(p))),
     ],
     inProgress: (work?.next || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t))),

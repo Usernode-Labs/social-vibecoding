@@ -453,55 +453,55 @@
   },
   "review.end.line": {
     "text": "That's everything for now",
-    "description": "Quiet line at the end of the new Needs you feed (an experiment), under a check mark, once every waiting change has been shown."
+    "description": "Quiet line at the end of Needs you feed, under a check mark, once every waiting change has been shown."
   },
   "review.end.throughAll": {
     "text": "You've been through them all",
-    "description": "Title at the end of the new Needs you run (an experiment) when the person skipped some changes without voting, so not everything is done. Shown over a small stack of the skipped changes."
+    "description": "Title at the end of Needs you when the person skipped some changes without voting, so not everything is done. Shown over a small stack of the skipped changes."
   },
   "review.end.waiting_one": {
     "text": "1 is still waiting for your vote.",
-    "description": "Line under \"You've been through them all\" at the end of the new Needs you run (an experiment), when the person skipped one change without voting."
+    "description": "Line under \"You've been through them all\" at the end of Needs you, when the person skipped one change without voting."
   },
   "review.end.waiting_other": {
     "text": "{{count}} are still waiting for your vote.",
-    "description": "Line under \"You've been through them all\" at the end of the new Needs you run (an experiment), when the person skipped several changes without voting. {{count}} is how many."
+    "description": "Line under \"You've been through them all\" at the end of Needs you, when the person skipped several changes without voting. {{count}} is how many."
   },
   "review.end.again_one": {
     "text": "Look at it again",
-    "description": "Main button at the end of the new Needs you run (an experiment) when one change was skipped: opens that change again so the person can vote."
+    "description": "Main button at the end of Needs you when one change was skipped: opens that change again so the person can vote."
   },
   "review.end.again_other": {
     "text": "Look at the {{count}} again",
-    "description": "Main button at the end of the new Needs you run (an experiment) when several changes were skipped: goes through them again so the person can vote. {{count}} is how many."
+    "description": "Main button at the end of Needs you when several changes were skipped: goes through them again so the person can vote. {{count}} is how many."
   },
   "review.thumbs.label": {
     "text": "Screens",
-    "description": "Accessible name of the row of small screen pictures under a change's before and after slider in the new Needs you flow (an experiment)."
+    "description": "Accessible name of the row of small screen pictures under a change's before and after slider in Needs you flow."
   },
   "review.thumbs.one": {
     "text": "Screen {{n}} of {{total}}",
-    "description": "Accessible name of one small screen picture under a change's slider in the new Needs you flow (an experiment). {{n}} is its position, {{total}} how many there are."
+    "description": "Accessible name of one small screen picture under a change's slider in Needs you flow. {{n}} is its position, {{total}} how many there are."
   },
   "review.strip.all_one": {
     "text": "All {{count}} screen",
-    "description": "Accessible name of the first tile in the strip under a change's picture (new Needs you flow, an experiment): it shows every screen of the change at once. {{count}} is how many screens."
+    "description": "Accessible name of the first tile in the strip under a change's picture (Needs you flow): it shows every screen of the change at once. {{count}} is how many screens."
   },
   "review.strip.all_other": {
     "text": "All {{count}} screens",
-    "description": "Accessible name of the first tile in the strip under a change's picture (new Needs you flow, an experiment): it shows every screen of the change at once. {{count}} is how many screens."
+    "description": "Accessible name of the first tile in the strip under a change's picture (Needs you flow): it shows every screen of the change at once. {{count}} is how many screens."
   },
   "review.alt.after": {
     "text": "The screen after this change",
-    "description": "Alt text of the after picture in a change's before and after slider (new Needs you flow, an experiment)."
+    "description": "Alt text of the after picture in a change's before and after slider (Needs you flow)."
   },
   "review.alt.before": {
     "text": "The screen before this change",
-    "description": "Alt text of the before picture in a change's before and after slider (new Needs you flow, an experiment)."
+    "description": "Alt text of the before picture in a change's before and after slider (Needs you flow)."
   },
   "review.compare.label": {
     "text": "Compare before and after",
-    "description": "Accessible name of the before and after slider on a change's page (new Needs you flow, an experiment). Drag sideways, or use the arrow keys, to compare."
+    "description": "Accessible name of the before and after slider on a change's page (Needs you flow). Drag sideways, or use the arrow keys, to compare."
   },
   "review.compare.showingAfter": {
     "text": "Showing the screen after the change",
@@ -513,19 +513,19 @@
   },
   "review.compare.captionBefore": {
     "text": "Before <0>· Today</0>",
-    "description": "Caption printed at the top left of the before picture on a change's page (new Needs you flow, an experiment), in small capitals. <0> wraps the quieter part. Keep it very short."
+    "description": "Caption printed at the top left of the before picture on a change's page (Needs you flow), in small capitals. <0> wraps the quieter part. Keep it very short."
   },
   "review.compare.captionAfter": {
     "text": "<0>If it passes ·</0> After",
-    "description": "Caption printed at the top right of the after picture on a change's page (new Needs you flow, an experiment), in small capitals: the screen as it will be if the vote passes. <0> wraps the quieter part. Keep it very short."
+    "description": "Caption printed at the top right of the after picture on a change's page (Needs you flow), in small capitals: the screen as it will be if the vote passes. <0> wraps the quieter part. Keep it very short."
   },
   "review.compare.switch": {
     "text": "Show the screen before the change",
-    "description": "Accessible name of the small switch at the foot of the before and after picture (new Needs you flow, an experiment). On: the before screen fills the picture. Off: the after screen."
+    "description": "Accessible name of the small switch at the foot of the before and after picture (Needs you flow). On: the before screen fills the picture. Off: the after screen."
   },
   "review.sheet.label": {
     "text": "Your vote",
-    "description": "Accessible name of the vote sheet at the foot of a change's page (new Needs you flow, an experiment)."
+    "description": "Accessible name of the vote sheet at the foot of a change's page (Needs you flow)."
   },
   "review.sheet.more": {
     "text": "More about voting",
@@ -553,11 +553,11 @@
   },
   "review.vote.skip": {
     "text": "Skip",
-    "description": "Button beside the Yes | No pair at the foot of a change's page in the new Needs you run (an experiment). It moves on to the next change at once without a vote; nothing is recorded and the change keeps waiting in Needs you. After a vote the same place shows Next. One word."
+    "description": "Button beside the Yes | No pair at the foot of a change's page in Needs you. It moves on to the next change at once without a vote; nothing is recorded and the change keeps waiting in Needs you. After a vote the same place shows Next. One word."
   },
   "review.vote.skipLabel": {
     "text": "Skip this change for now",
-    "description": "Screen-reader name of the Skip button beside the Yes | No pair in the new Needs you run (an experiment). It moves on without a vote; the change keeps waiting in Needs you."
+    "description": "Screen-reader name of the Skip button beside the Yes | No pair in Needs you. It moves on without a vote; the change keeps waiting in Needs you."
   },
   "review.no.placeholder": {
     "text": "One line for {{name}}",
@@ -573,15 +573,15 @@
   },
   "review.reason.add": {
     "text": "Add a reason",
-    "description": "Quiet link above the vote buttons after someone voted No on a change (new Needs you flow, an experiment). It opens the sheet that asks why."
+    "description": "Quiet link above the vote buttons after someone voted No on a change (Needs you flow). It opens the sheet that asks why."
   },
   "review.reason.label": {
     "text": "Your reason, optional",
-    "description": "Accessible name of the one-line field where someone adds a reason to their No vote (new Needs you flow, an experiment)."
+    "description": "Accessible name of the one-line field where someone adds a reason to their No vote (Needs you flow)."
   },
   "review.reason.share": {
     "text": "Share",
-    "description": "Button inside the one-line reason field: sends the reason with the No vote (new Needs you flow, an experiment)."
+    "description": "Button inside the one-line reason field: sends the reason with the No vote (Needs you flow)."
   },
   "review.why.title": {
     "text": "What’s not working for you?",
@@ -625,47 +625,47 @@
   },
   "review.desc.show": {
     "text": "What this change does",
-    "description": "Accessible name of the ⌄ button beside the change's title at the top of the new Needs you flow (an experiment): drops the change's full description over the page."
+    "description": "Accessible name of the ⌄ button beside the change's title at the top of Needs you flow: drops the change's full description over the page."
   },
   "review.desc.hide": {
     "text": "Hide what this change does",
-    "description": "Accessible name of the same button while the change's full description is open (new Needs you flow, an experiment): folds it away."
+    "description": "Accessible name of the same button while the change's full description is open (Needs you flow): folds it away."
   },
   "review.desc.by": {
     "text": "Made by {{name}}",
-    "description": "Small line under a change's description in the card that opens from the bar of the new Needs you run (an experiment). {{name}} is the person who made the change."
+    "description": "Small line under a change's description in the card that opens from the bar of Needs you. {{name}} is the person who made the change."
   },
   "review.help.label": {
     "text": "Help with this change",
-    "description": "Screen-reader name of the help rows (Ask privately, Discussion, Try it) at the foot of the card that opens from the bar of the new Needs you run (an experiment)."
+    "description": "Screen-reader name of the help rows (Ask privately, Discussion, Try it) at the foot of the card that opens from the bar of Needs you."
   },
   "review.help.ask": {
     "text": "Ask privately",
-    "description": "Help row in the card that opens from the bar of the new Needs you run (an experiment). Opens a private question to the AI about this change; only the person sees the answers."
+    "description": "Help row in the card that opens from the bar of Needs you. Opens a private question to the AI about this change; only the person sees the answers."
   },
   "review.help.talk": {
     "text": "Discussion",
-    "description": "Help row in the card that opens from the bar of the new Needs you run (an experiment). Opens the change's discussion thread: what others said about it."
+    "description": "Help row in the card that opens from the bar of Needs you. Opens the change's discussion thread: what others said about it."
   },
   "review.help.try": {
     "text": "Try it",
-    "description": "Help row in the card that opens from the bar of the new Needs you run (an experiment). Opens a live copy of the app with this change, when one is running."
+    "description": "Help row in the card that opens from the bar of Needs you. Opens a live copy of the app with this change, when one is running."
   },
   "review.back.label": {
     "text": "Back to {{place}}",
-    "description": "Accessible name of the back control at the top of the new Needs you flow (an experiment). {{place}} is the place it goes back to: all of the person's communities, or the project's name."
+    "description": "Accessible name of the back control at the top of Needs you flow. {{place}} is the place it goes back to: all of the person's communities, or the project's name."
   },
   "review.said.nextShort": {
     "text": "Next",
-    "description": "Button in the vote sheet after voting (new Needs you flow, an experiment): moves sideways to the next change waiting on you. A small count in a ring follows it. Keep it one short word."
+    "description": "Button in the vote sheet after voting (Needs you flow): moves sideways to the next change waiting on you. A small count in a ring follows it. Keep it one short word."
   },
   "review.said.nextLeft_one": {
     "text": "Next change, 1 still waiting",
-    "description": "Accessible name of the Next button in the new Needs you flow (an experiment), when one change still waits besides the one on screen. The button shows that number in a ring that fills as the run is decided."
+    "description": "Accessible name of the Next button in Needs you flow, when one change still waits besides the one on screen. The button shows that number in a ring that fills as the run is decided."
   },
   "review.said.nextLeft_other": {
     "text": "Next change, {{count}} still waiting",
-    "description": "Accessible name of the Next button in the new Needs you flow (an experiment): {{count}} is how many changes still wait besides the one on screen, the number the button shows in a ring that fills as the run is decided."
+    "description": "Accessible name of the Next button in Needs you flow: {{count}} is how many changes still wait besides the one on screen, the number the button shows in a ring that fills as the run is decided."
   },
   "review.said.done": {
     "text": "Done",
@@ -733,94 +733,94 @@
   },
   "review.more.open": {
     "text": "Open the change page",
-    "description": "Row in the vote sheet’s help, and a link in its About and Try it panels (new Needs you flow, an experiment): leaves the run for the change’s own page in its project."
+    "description": "Row in the vote sheet’s help, and a link in its About and Try it panels (Needs you flow): leaves the run for the change’s own page in its project."
   },
   "review.benefit.fixed": {
     "text": "Fixed",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.benefit.stability": {
     "text": "Stability",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.benefit.clarity": {
     "text": "Clarity",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.benefit.more": {
     "text": "Can do more",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.benefit.results": {
     "text": "Better results",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.benefit.speed": {
     "text": "Speed",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.benefit.effort": {
     "text": "Less effort",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.benefit.security": {
     "text": "Security & privacy",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.benefit.behind": {
     "text": "Behind the scenes",
-    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+    "description": "Label over a drawn picture in Needs you: the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
   },
   "review.area.agents": {
     "text": "Agents",
-    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+    "description": "Label over a drawn picture in Needs you, after the benefit: the part of Homeroom the change is felt in."
   },
   "review.area.proposals": {
     "text": "Proposals",
-    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+    "description": "Label over a drawn picture in Needs you, after the benefit: the part of Homeroom the change is felt in."
   },
   "review.area.platform": {
     "text": "Platform",
-    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+    "description": "Label over a drawn picture in Needs you, after the benefit: the part of Homeroom the change is felt in."
   },
   "review.area.projects": {
     "text": "Projects",
-    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+    "description": "Label over a drawn picture in Needs you, after the benefit: the part of Homeroom the change is felt in."
   },
   "review.area.accounts": {
     "text": "Accounts",
-    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+    "description": "Label over a drawn picture in Needs you, after the benefit: the part of Homeroom the change is felt in."
   },
   "review.area.admin": {
     "text": "Admin",
-    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+    "description": "Label over a drawn picture in Needs you, after the benefit: the part of Homeroom the change is felt in."
   },
   "review.area.messages": {
     "text": "Messages",
-    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+    "description": "Label over a drawn picture in Needs you, after the benefit: the part of Homeroom the change is felt in."
   },
   "review.area.challenges": {
     "text": "Challenges",
-    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+    "description": "Label over a drawn picture in Needs you, after the benefit: the part of Homeroom the change is felt in."
   },
   "review.decision.closeIssue": {
     "text": "Close a request",
-    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+    "description": "Label over a group decision's drawn picture in Needs you: what kind of decision it is. Shown in small capitals beside the project's name."
   },
   "review.decision.rename": {
     "text": "Rename",
-    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+    "description": "Label over a group decision's drawn picture in Needs you: what kind of decision it is. Shown in small capitals beside the project's name."
   },
   "review.decision.secret": {
     "text": "Secret",
-    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+    "description": "Label over a group decision's drawn picture in Needs you: what kind of decision it is. Shown in small capitals beside the project's name."
   },
   "review.decision.other": {
     "text": "Group decision",
-    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+    "description": "Label over a group decision's drawn picture in Needs you: what kind of decision it is. Shown in small capitals beside the project's name."
   },
   "review.end.backToProject": {
     "text": "Back to the Workshop",
-    "description": "Button at the end of a project's Needs you in the new review flow (an experiment), once every waiting change has been shown: opens the project's Workshop."
+    "description": "Button at the end of a project's Needs you in the review flow, once every waiting change has been shown: opens the project's Workshop."
   }
 }

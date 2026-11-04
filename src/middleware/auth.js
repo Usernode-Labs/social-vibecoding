@@ -386,7 +386,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -462,8 +462,6 @@ function authMiddleware(config) {
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
             // #1281: opt-in for the session-CLI bridge venue. Default FALSE.
             sessionBridgeEnabled: !!rows[0].session_bridge_enabled,
-            // New Needs you, the experimental review flow. Default FALSE.
-            reviewFlowEnabled: !!rows[0].review_flow_enabled,
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -581,7 +579,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
   // personas by their fixed ids, seeded with their fixture roles. Username
   // match is defense-in-depth against a token naming another row's id.
   const findUser = async () => (await pool.query(
-    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, review_flow_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
     [payload.id]
   )).rows[0];
   let userRow;
@@ -641,7 +639,6 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     sessionBridgeEnabled: !!userRow.session_bridge_enabled,
-    reviewFlowEnabled: !!userRow.review_flow_enabled,
     locale: userRow.locale || null,
     hasPlatformAccess: !!userRow.has_platform_access,
     privateMember: isPrivateMember(userRow),

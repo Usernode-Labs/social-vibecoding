@@ -114,7 +114,7 @@ test('the Skin module runs before the first stylesheet', () => {
 test('Settings › Experimental carries the New look switch, last of the switches', () => {
   const src = experimentalSrc();
   assert.match(src, /<SwitchRow id="new-look-enabled">/);
-  assert.ok(src.indexOf('id="review-flow-enabled"') < src.indexOf('id="new-look-enabled"'));
+  assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
   assert.ok(src.indexOf('id="new-look-enabled"') < src.indexOf('id="settings-local-agents-section"'));
   assert.match(src, /settings:experimental\.newLook\.label/);
   assert.match(src, /settings:experimental\.newLook\.description/);

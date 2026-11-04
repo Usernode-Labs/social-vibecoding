@@ -61,6 +61,7 @@ import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { i18n } from '../../../lib/i18n/runtime';
 import { projectChangesOnGithub } from '../../../lib/change-ref';
 import { reload as reloadTab } from '../../../lib/tab-build';
+import { detailDrawn, detailEntry, markShotsArrival, takeShotsArrival } from '../../ai/detail';
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
@@ -280,21 +281,59 @@ function PlanLine({ plan }: { plan: RequestSpecCard }): ReactNode {
  * 1 Nov 2026: a verified run's first screen, before and after, small, with
  * Expand: the change page's own viewer (AppView.shotsHtml's `thread`
  * reading) opens in the detail column beside the thread (#6230).
+ *
+ * #6315: the column is drawn by every page that has one (a request's, the
+ * Workshop's panel, the general chat), and by the bot page. Where a surface
+ * has none — Expand pressed on a page that hosts no detail — the person is
+ * sent to the change's page instead, and the arrival below opens the before
+ * and after as soon as the change is drawn. A restored address (a reload
+ * while the before and after were open) has a shots entry with no html: this
+ * page carries it, so the effect fills it in rather than leaving "Loading…".
  */
-function ShotsPair({ id, s }: { id: number; s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
+function ShotsPair({ id, number, s }: {
+  id: number; number: number | null; s: NonNullable<ChangeThreadView['shots']>;
+}): ReactNode {
   const t = useMessages('project');
   const thumbs = s.state === 'verified' ? s.thumbs : null;
-  if (!thumbs || !s.html) return null;
-  // #6230: Expand opens the change's before and after in the detail column
-  // beside the thread, as a design's preview and a plan do, instead of in a
-  // popover over the page.
-  const expand = () => {
+  const html = s.html;
+  const open = () => {
     (window as any).UsernodeReact?.detail?.open({
       kind: 'shots',
       ref: { changeId: id },
       version: null,
-      payload: { html: s.html },
+      payload: { html },
     });
+  };
+  useEffect(() => {
+    if (!thumbs || !html) return;
+    const entry = detailEntry();
+    // A reload's restored entry: the same change, no html yet.
+    if (entry && entry.kind === 'shots' && entry.ref.changeId === id && !entry.payload?.html) open();
+    else if (takeShotsArrival(id)) open();
+    // `open` is rebuilt with `html` and `id`, which are the dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, html, thumbs]);
+  if (!thumbs || !html) return null;
+  // #6230: Expand opens the change's before and after in the detail column
+  // beside the thread, as a design's preview and a plan do, instead of in a
+  // popover over the page.
+  const expand = () => {
+    open();
+    // #6315: two frames for the column to open where this page has one; if
+    // nothing drew it, go to the change's page, where the arrival opens it.
+    const slug = pageSlug();
+    const target = number && slug ? `app/${encodeURIComponent(slug)}/dev/changes/${number}` : '';
+    const after = () => {
+      if (detailDrawn() || !target) return;
+      if (window.location.hash.replace(/^#/, '') === target) return;
+      markShotsArrival(id);
+      window.location.hash = target;
+    };
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(after));
+    } else {
+      window.setTimeout(after, 32);
+    }
   };
   return (
     <div className="dev-thread-shots" data-thread-change-shots={id}>
@@ -442,7 +481,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
         ? <p className="dev-change-stale" role="note" data-thread-change-stale={item.id}>{t('project:topic.change.summaryStale')}</p>
         : null}
       {plan ? <PlanLine plan={plan} /> : null}
-      {view?.v.shots ? <ShotsPair id={item.id} s={view.v.shots} /> : null}
+      {view?.v.shots ? <ShotsPair id={item.id} number={item.number ?? null} s={view.v.shots} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
         <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'building'}>
           {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
