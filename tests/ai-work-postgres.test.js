@@ -289,6 +289,33 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.deepEqual(page.liveThisWeek.map((r) => r.title), ['Badges']);
   assert.equal(page.counts.inProgress, page.inProgress.length);
 
+  // #6245 (4 Nov 2026): opening a change's page, or its preview waking,
+  // writes chat_sessions.last_activity_at. No list's sort reads it any more,
+  // so neither a row's place nor its sort key moves.
+  const threadRows = async () => (await pool.query(
+    aiWork.THREADS_SQL, [ada.id, false, false, aiWork.THREADS_MAX, aiWork.LIVE_DAYS])).rows;
+  const beforeView = await threadRows();
+  await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE app_id = $1', [app.id]);
+  const afterView = await threadRows();
+  assert.deepEqual(afterView.map((r) => r.id), beforeView.map((r) => r.id), 'looking at something moves no row');
+  assert.deepEqual(afterView.map((r) => r.sort_at), beforeView.map((r) => r.sort_at), 'and changes no sort key');
+
+  // #6245: Needs you is ordered by when each item began needing you, newest
+  // first. A change promoted earlier but touched more recently stays below
+  // the one promoted later, and each card is timed from when its vote opened.
+  await request(app, 40, ada, 'Gallery A');
+  const earlier = await change(app, 41, bob, 40, 'promoted', { promotedAt: new Date(Date.now() - 7200000), checkState: 'passing' });
+  await request(app, 42, ada, 'Gallery B');
+  const later = await change(app, 43, bob, 42, 'promoted', { promotedAt: new Date(Date.now() - 3600000), checkState: 'passing' });
+  await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [earlier.id]);
+  const workshop = require('../src/routes/workshop-overview');
+  const feed = await workshop.needsFeedFor(pool, { user: { id: ada.id }, inThreads: true });
+  const pair = feed.filter((item) => item.kind === 'proposal' && [41, 43].includes(item.number));
+  assert.deepEqual(pair.map((item) => item.number), [43, 41], 'the vote that opened later comes first');
+  const promotedAt = async (id) => (await one('SELECT promoted_at FROM chat_sessions WHERE id = $1', [id])).promoted_at.toISOString();
+  assert.equal(pair[0].at, await promotedAt(later.id), 'timed from when its vote opened, not its last activity');
+  assert.equal(pair[1].at, await promotedAt(earlier.id));
+
   // Private threads: her own message with replies, and the bot's draft for her.
   const convo = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);
   await pool.query(
