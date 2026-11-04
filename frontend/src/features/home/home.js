@@ -108,9 +108,30 @@ const Home = {
     }
     const run = Home._loadOnce();
     Home._loadInFlight = run;
-    const settle = () => { if (Home._loadInFlight === run) Home._loadInFlight = null; };
+    const settle = () => {
+      if (Home._loadInFlight === run) Home._loadInFlight = null;
+      Home._settleLoadingState();
+    };
     run.then(settle, settle);
     return run;
+  },
+
+  /**
+   * A load that ended without an answer leaves the launcher's placeholders up
+   * forever: no apps, no notice, so `#app-list` stays on its skeletons and
+   * nothing says the read failed or offers Try again. Every ending runs this,
+   * whichever path got there (a throw outside the read, a failure inside the
+   * failure path, a load that never reached the fetch).
+   */
+  _settleLoadingState() {
+    const state = gridStore.get();
+    if (Home._appsLoaded || state.ready || state.notice) return;
+    gridStore.set({
+      ready: true, view: 'grid', rowTemplate: '', items: [],
+      resultsHeading: null, emptyQuery: null, create: null,
+      editing: false,
+      notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
+    });
   },
 
   async _loadOnce() {
