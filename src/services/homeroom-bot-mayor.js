@@ -563,7 +563,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  exactly one of theirs, the card asks "Did you mean ...?", so never say it is the closest match and carry on.',
     '  When they answer No, another app, list the few of their projects (my_projects) whose names are closest and',
     '  ask which. When offer_request names similar open requests, say so and offer to add their words to one of',
-    '  them (comment_on_request) instead.',
+    '  them (comment_on_request) instead. The draft shows its title, its words and what it carries: say one short',
+    '  line about it at most, and never write the draft\'s words into your reply.',
     // #6251: the draft carries what makes it buildable, checked before File it.
     '- Before drafting a request, search the project\'s open requests (list_requests with a query). Put up to three',
     '  that overlap in related, each with how (part_of, depends_on, build_together), and treat a clearly identical',
@@ -1009,7 +1010,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          text: { type: 'string', description: 'Your reply in plain words: short for small talk, longer and laid out when they ask for analysis, options or detail.' },
+          text: { type: 'string', description: 'Your reply in plain words: short for small talk, longer and laid out when they ask for analysis, options or detail. Under a draft, one short line about it at most: the card shows the draft\'s title and words, so never write them here.' },
           cards: {
             type: 'array',
             maxItems: MAX_CARDS,
@@ -1597,7 +1598,9 @@ const CLAIMS = Object.freeze([
     // what kind of offer it was.
     backed: (ctx) => !!ctx.offer,
     said: 'says a drafted request with File it is under it',
-    instead: 'I haven\'t drafted it yet, so there\'s nothing to tap. Tell me what you want filed and I\'ll draft it for you to confirm.',
+    // #6307: they have already said what they want; asking them again reads
+    // as though nothing they wrote was heard.
+    instead: 'I haven\'t drafted it yet, so there\'s nothing to tap.',
   },
   {
     kind: 'posted',
@@ -1738,10 +1741,107 @@ async function unknownRequests(pool, ctx, numbers) {
   return numbers.filter((n) => !found.has(n));
 }
 
+// ── The projects a reply names (#6307) ─────────────────────────────────────
+//
+// On 4 November a reply garbled a project's name ("Community Components" for
+// Community Tier Lists) and named a project nothing had returned ("Block
+// World"), while the card under it was right. A project a reply names must be
+// one this turn's tools returned, spelled as the tool returned it; a sentence
+// naming any other is cut, as a request number that does not exist is.
+
+/** Places and features on screen, which a sentence may name without it being a project. */
+const PROJECT_NAME_STOPWORDS = new Set([
+  'main chat', 'workshop', 'discover', 'messages', 'home', 'needs you', 'hub', 'all communities', 'settings',
+  'homeroom bot', 'the app',
+]);
+// A sentence that speaks of a draft, a request or the next one is where a
+// project's name is expected.
+const PROJECT_MENTION_ANCHOR = /\b(?:drafts?|drafted|drafting|file it|filed|filing|requests?|next one|projects?)\b/i;
+// "the draft for Community Components", "on Ear Trainer", a quoted name too.
+const PROJECT_NAME_AFTER = /\b(?:for|on)\s+(?:"([^"]{2,60})"|([A-Z][\w'’&.-]*(?:\s+[A-Z0-9][\w'’&.-]*){0,5}))/g;
+const QUOTED_NAME = /"([^"]{2,60})"/g;
+
+/** Pure: the project names `text` gives as a draft's or a request's, once each. */
+function projectMentions(text) {
+  const out = [];
+  for (const sentence of String(text || '').split(/(?<=[.!?\n])\s+|\n+/)) {
+    if (!PROJECT_MENTION_ANCHOR.test(sentence)) continue;
+    for (const m of sentence.matchAll(PROJECT_NAME_AFTER)) out.push(m[1] || m[2]);
+    // "Next after this is \"Block World\"" says a project without the word draft.
+    if (/\bprojects?\b/i.test(sentence)) for (const m of sentence.matchAll(QUOTED_NAME)) out.push(m[1]);
+  }
+  return [...new Set(out.map((n) => String(n).trim()).filter((n) => n && !PROJECT_NAME_STOPWORDS.has(squashWords(n))))];
+}
+
+/** Note a project a tool returned this turn, so a reply naming another one is caught. */
+function noteKnownProjects(ctx, result) {
+  if (!ctx || !result || typeof result !== 'object' || result.error) return;
+  if (!ctx.knownProjects) ctx.knownProjects = new Set();
+  const add = (name, slug) => {
+    for (const value of [name, slug]) {
+      const key = squashWords(value);
+      if (key) ctx.knownProjects.add(key);
+    }
+  };
+  add(result.projectName, result.project);
+  if (result.app && typeof result.app === 'object') add(result.app.name, result.app.slug);
+  for (const p of Array.isArray(result.projects) ? result.projects : []) {
+    if (p && typeof p === 'object') add(p.projectName || p.name, p.project || p.slug);
+  }
+}
+
+/** The projects this turn's tools returned, as squashed names and short names. */
+async function knownProjectNames(pool, ctx) {
+  const known = new Set(ctx?.knownProjects || []);
+  const add = (name, slug) => {
+    for (const value of [name, slug]) {
+      const key = squashWords(value);
+      if (key) known.add(key);
+    }
+  };
+  add(ctx?.offer?.app?.name, ctx?.offer?.app?.slug);
+  const ids = [...(ctx?.appIds || [])].map(Number).filter((id) => Number.isInteger(id) && id > 0);
+  if (ids.length) {
+    try {
+      const { rows } = await pool.query('SELECT name, slug FROM apps WHERE id = ANY($1::int[])', [ids]);
+      for (const row of rows) add(row.name, row.slug);
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not check the projects a reply names', { err: err.message });
+    }
+  }
+  return known;
+}
+
+/**
+ * Pure: does `name`, as a reply wrote it, name a project a tool returned?
+ * The mention stops at the first lowercase word ("on Note board request #6"
+ * gives "Note"), so a known name that begins with it at a word boundary is
+ * the same project said short, never a garbled one ("Community Components"
+ * does not begin Community Tier Lists).
+ */
+function namesReturnedProject(known, name) {
+  const key = squashWords(name);
+  if (!key) return true;
+  if (known.has(key)) return true;
+  for (const candidate of known) {
+    if (candidate.startsWith(`${key} `)) return true;
+  }
+  return false;
+}
+
+/** The project names among `names` that no tool returned this turn. */
+async function unknownProjects(pool, ctx, text) {
+  const names = projectMentions(text);
+  if (!names.length) return [];
+  const known = await knownProjectNames(pool, ctx);
+  return names.filter((name) => !namesReturnedProject(known, name));
+}
+
 /**
  * Pure apart from the request lookup: what `text` claims that this turn did
  * not do, as [{ kind, said }], plus { kind: 'unknown', numbers } for request
- * numbers that do not exist. Empty when it is all true.
+ * numbers that do not exist and { kind: 'unknown_project', names } for
+ * projects no tool returned. Empty when it is all true.
  */
 async function claimProblems(pool, ctx, text) {
   // Read as it would be sent: a leading note is taken off first.
@@ -1754,6 +1854,12 @@ async function claimProblems(pool, ctx, text) {
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not check the requests a reply names', { err: err.message });
   }
+  try {
+    const projects = await unknownProjects(pool, ctx, body);
+    if (projects.length) out.push({ kind: 'unknown_project', names: projects, said: `names ${projects.map((n) => `"${n}"`).join(' and ')}, which no tool returned this turn` });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not check the projects a reply names', { err: err.message });
+  }
   return out;
 }
 
@@ -1763,14 +1869,19 @@ function checkNote(problems) {
   const unknown = problems.some((p) => p.kind === 'unknown')
     ? ' Check request numbers with my_work, request_detail or list_requests, and never name one that does not exist.'
     : '';
+  // #6307: a project named that no tool returned (a garbled name, a guessed one).
+  const unknownProject = problems.some((p) => p.kind === 'unknown_project')
+    ? ' A project you name must be one a tool returned in this turn, spelled exactly as it returned it: never guess or abbreviate a name. Drop the sentence naming any other project.'
+    : '';
   // #11 (WP3): a promise to come back later has no tool that keeps it.
   const promised = problems.some((p) => p.kind === 'promised')
     ? ' Never promise to look into something or come back to it later: say what you cannot do from here, and what they can do (leave it, vote No on the proposal, comment on the request, or use Send feedback), or offer report_problem.'
     : '';
   // #4605: a draft promised with no offer behind it. The second pass drafts
   // it; refused, the promise is cut (stripClaims) rather than sent again.
+  // #6307: it drafts it now, and says one line about it, never its words.
   const drafted = problems.some((p) => p.kind === 'drafted')
-    ? ' Your reply says a draft with File it and Not now is under it, but you did not call offer_request in this turn, so nothing is under it. Call offer_request now with the project, title and details, then reply. If offer_request is refused, say why plainly and do not mention File it.'
+    ? ' Your reply says a draft with File it and Not now is under it, but you did not call offer_request in this turn, so nothing is under it. Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it. Then reply with one short line about the draft at most: the card under it shows its title and words, so never write them in your reply.'
     : '';
   // 1 Nov 2026: a screen said to be drawing with no draw_screen behind it.
   const drawing = problems.some((p) => p.kind === 'drawing')
@@ -1787,27 +1898,45 @@ function checkNote(problems) {
     'offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts',
     'one, revise_proposal changes your proposal, withdraw_proposal withdraws one of your proposals, report_problem',
     'tells the Homeroom team. Otherwise say plainly that it has not been done.',
-    `${promised}${drafted}${drawing}${noControl}${unknown} Then call reply again.]`,
+    `${promised}${drafted}${drawing}${noControl}${unknown}${unknownProject} Then call reply again.]`,
   ].join(' ').replace(/\s+/g, ' ').trim();
 }
+
+// #6307: what a reply says about a draft, when the draft it promised was not
+// made. Cut with it, so the plain line never sits over words that still
+// promise one ("Here's the next one, for The Best Color").
+const DRAFT_PROMISE_RE = /\b(?:drafts?|drafted|drafting|File it)\b|\bnext one\b|\bthe one below\b/i;
 
 /**
  * Pure: `text` less every sentence that still claims what was not done, led
  * by a plain line saying it was not, and the rest when anything worth
- * sending is left. A request that does not exist is said not to.
+ * sending is left. A request that does not exist is said not to, and so is a
+ * project no tool returned.
  */
 function stripClaims(text, problems) {
   if (!problems?.length) return text;
   const kinds = new Set(problems.map((p) => p.kind));
   const res = CLAIMS.filter((c) => kinds.has(c.kind));
+  const unknownProjectNames = (problems.find((p) => p.kind === 'unknown_project')?.names || []).map((n) => squashWords(n)).filter(Boolean);
+  const keeps = (sentence) => {
+    if (res.some((c) => c.re.test(sentence))) return false;
+    if (kinds.has('drafted') && DRAFT_PROMISE_RE.test(sentence)) return false;
+    if (unknownProjectNames.length && projectMentions(sentence).some((n) => {
+      const key = squashWords(n);
+      return key && unknownProjectNames.some((u) => u === key || u.startsWith(`${key} `) || key.startsWith(`${u} `));
+    })) return false;
+    return true;
+  };
   const kept = String(text || '').split('\n').map((line) => line
     .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => !res.some((c) => c.re.test(sentence)))
+    .filter(keeps)
     .join(' ')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
   const lines = res.map((c) => c.instead);
   if (kept.replace(/[^\w]/g, '').length >= 20) lines.push(kept);
   const unknown = problems.find((p) => p.kind === 'unknown');
   if (unknown) lines.push(`(I can't find ${unknown.numbers.map((n) => `request #${n}`).join(' or ')} on your projects.)`);
+  const unknownProject = problems.find((p) => p.kind === 'unknown_project');
+  if (unknownProject) lines.push(`(I can't find ${unknownProject.names.map((n) => `a project called "${n}"`).join(' or ')}.)`);
   return lines.join('\n\n');
 }
 
@@ -2139,6 +2268,59 @@ function answerText(besides = [], text = '') {
   }
   const inside = said && squashWords(kept.join(' ')).includes(said);
   return [...kept, ...(reply && !inside ? [reply] : [])].join('\n\n');
+}
+
+/**
+ * Pure (#6307): `text` less a paragraph that repeats an earlier one, compared
+ * ignoring case and spacing. A reply that says the same thing twice reads as
+ * two answers.
+ */
+function dropRepeatedParagraphs(text) {
+  const paragraphs = String(text || '').split(/\n{2,}/);
+  if (paragraphs.length < 2) return text;
+  const seen = new Set();
+  const kept = [];
+  for (const paragraph of paragraphs) {
+    const said = squashWords(paragraph);
+    if (said && seen.has(said)) continue;
+    if (said) seen.add(said);
+    kept.push(paragraph);
+  }
+  return kept.length === paragraphs.length ? text : kept.join('\n\n').trim();
+}
+
+// The shortest block that counts as the draft's own body written into a reply.
+const DRAFT_ECHO_MIN_CHARS = 40;
+
+/**
+ * Pure (#6307): a reply that wrote the draft's words into its text, which the
+ * card under it already shows, has that block taken out, as a suggestions
+ * list is lifted out of the text (#6272). The card is still the only place
+ * the draft is read; at most a short line about it stays.
+ */
+function dropDraftEcho(text, offer) {
+  const body = squashWords(offer?.details);
+  if (!body || body.length < DRAFT_ECHO_MIN_CHARS) return text;
+  const paragraphs = String(text || '').split(/\n{2,}/);
+  const kept = [];
+  let dropped = false;
+  for (const paragraph of paragraphs) {
+    const said = squashWords(paragraph);
+    if (said.length < DRAFT_ECHO_MIN_CHARS) { kept.push(paragraph); continue; }
+    // A piece of the draft, or a paragraph carrying all of it.
+    if (body.includes(said)) { dropped = true; continue; }
+    if (said.includes(body)) {
+      dropped = true;
+      // Keep its first line when that is a short line about the draft rather
+      // than the draft itself.
+      const first = paragraph.split('\n')[0].trim();
+      if (first && first.length <= 80 && !squashWords(first).includes(body)) kept.push(first);
+      continue;
+    }
+    kept.push(paragraph);
+  }
+  if (!dropped) return text;
+  return kept.join('\n\n').trim();
 }
 
 // ── What the turn looked at (Homeroom bot parity, P1) ─────────────────────
@@ -3019,8 +3201,10 @@ async function draftPlace(pool, { ctx }) {
 }
 
 /**
- * Pure (#6251): the draft's Where, Related and Done when lines, in the
- * draft's own words. Empty when there is nothing to say.
+ * Pure (#6251, #6307): the draft's Where, Related and Done when lines, in
+ * the draft's own words. Where names a place in the app: the request it is
+ * about, its project, and what they saw. It never quotes the chat back
+ * ("your message in Main Chat"), and is left out when no place is known.
  */
 function draftExtrasText(extras) {
   if (!extras || typeof extras !== 'object') return '';
@@ -3028,11 +3212,9 @@ function draftExtrasText(extras) {
   const where = [];
   const req = extras.context?.request;
   if (req) where.push(`request #${Number(req.number)} on ${req.name || req.slug}`);
-  if (extras.context?.quoted?.excerpt) where.push(`my message "${extras.context.quoted.excerpt}"`);
-  if (extras.context?.saw) where.push(extras.context.saw);
-  const whereText = where.length ? where.join(' · ')
-    : String(extras.chatHref || '').includes('/thread/') ? 'your message in this thread' : 'your message in Main Chat';
-  lines.push(`**Where:** ${whereText}`);
+  else if (extras.project) where.push(String(extras.project));
+  if (extras.context?.saw) where.push(String(extras.context.saw));
+  if (where.length) lines.push(`**Where:** ${where.join(' · ')}`);
   if (Array.isArray(extras.related) && extras.related.length) {
     lines.push('', '**Related:**', ...extras.related.map((r) => `- #${Number(r.number)} ${r.title}: ${DRAFT_RELATION_WORDS[r.relation] || r.relation}${r.why ? `, ${r.why}` : ''}`));
   }
@@ -3145,6 +3327,8 @@ async function runTool(pool, ctx, name, args) {
           related: related.ok,
           context: { ...context.ok, ...(place.quoted ? { quoted: place.quoted } : {}) },
           doneWhen,
+          // #6307: the draft's Where names its project, a place in the app.
+          project: app.name || app.slug,
           chatHref: place.href,
         };
         // #4501: a name they wrote that is not exactly this project's is a
@@ -3775,6 +3959,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             if (!(platform && PLATFORM_TOOLS.includes(name))) noteRequests(ctx, result);
             // P1: what it read, for the reply's "Looked at" line.
             noteLookup(ctx, name, args, result);
+            // #6307: the projects the tools returned, which a reply may name.
+            noteKnownProjects(ctx, result);
             messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), MAX_TOOL_RESULT_CHARS) });
           }
           const shown = picturesMessage(takeImages({ images: pictures }));
@@ -3804,6 +3990,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         draft?.clear();
         ctx.reply = null;
         finalText = '';
+        // #6307: the first pass's words beside its calls go too, so the second
+        // pass's answer is not joined under them (answerText). One reply's
+        // text is sent, not two.
+        ctx.besides = [];
+        ctx.besideNoted = false;
         // One round for a tool (offer_request, say) and one for the reply,
         // or the reply alone when two would not fit the transport's limit.
         limit = rounds + (messages.length + MAX_CALLS_PER_ROUND + 2 <= MAX_MESSAGES ? 2 : 1);
@@ -3826,7 +4017,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       try { await platform?.close?.(); } catch {}
     }
   }
-  let text = clip(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText)), MAX_REPLY_CHARS);
+  // #6307: a paragraph said once, and the draft's own words left to the card
+  // under the reply, before what it still claims is cut.
+  let text = dropDraftEcho(dropRepeatedParagraphs(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText))), ctx.offer);
+  text = clip(text, MAX_REPLY_CHARS);
   // P1: nothing more is shown as it is written; the message takes the card's place.
   draft?.close({ clear: !text });
   // Whatever the second pass still claimed with nothing behind it is cut.
@@ -6289,6 +6483,11 @@ module.exports = {
   claimProblems,
   checkNote,
   stripClaims,
+  projectMentions,
+  noteKnownProjects,
+  unknownProjects,
+  dropRepeatedParagraphs,
+  dropDraftEcho,
   DRAWING_CLAIM,
   NO_CONTROL_CLAIM,
   closeThread,
