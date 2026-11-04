@@ -153,6 +153,15 @@ test('a thread\'s read cursor, and what the Homeroom bot page counts', { timeout
   });
   assert.equal(ok.status, 200);
   assert.deepEqual(await ok.json(), { ok: true, unread: 0 });
+  // A page's own number that has no thread (a staging mock request, a row
+  // the backfill has not reached) is an answer, not a 4xx a page would log.
+  const missing = await fetch(`${base}/api/apps/tr-threads/threads/read`, {
+    method: 'POST',
+    headers: { 'x-test-user': String(ada.id), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_type: 'issue', thread_ref: 404 }),
+  });
+  assert.equal(missing.status, 200);
+  assert.deepEqual(await missing.json(), { ok: true, unread: 0 });
   const otherThread = await one(`INSERT INTO threads (app_id) VALUES ($1) RETURNING id`, [other.id]);
   const hidden = await fetch(`${base}/api/apps/tr-threads/threads/read`, {
     method: 'POST',

@@ -108,14 +108,21 @@ function aiWorkRoutes(config = {}) {
         threadId = await threadReads.threadOf(pool, app.id, String(body.thread_type), Number(body.thread_ref));
       }
       if (!threadId) {
-        // ?demo=1 on staging draws mock threads that exist in no database
-        // (the page's own demo app has no request 9210): reading one is a
-        // no-op, not an error a preview's checks would report.
-        if (IS_STAGING && req.query.demo === '1') return res.json({ ok: true, unread: 0 });
-        return res.status(400).json({ error: 'A thread_id or thread_type/thread_ref is required' });
+        // A page asks about its own number on every open, and some have no
+        // thread: a staging mock request, a row the backfill has not reached,
+        // ?demo=1's fake threads. That is an answer, not an error — a 4xx
+        // here is a console error on a page that is otherwise fine (the same
+        // reason GET threads/:number answers `thread: null`).
+        return res.json({ ok: true, unread: 0 });
       }
       const { rows } = await pool.query('SELECT id FROM threads WHERE id = $1 AND app_id = $2', [threadId, app.id]);
-      if (!rows.length) return res.status(404).json({ error: 'Thread not found' });
+      if (!rows.length) {
+        // A number whose thread moved away is still an answer; a thread_id
+        // the caller named is a mistake, and 404s (and another app's thread
+        // is not this app's).
+        if (body.thread_id == null) return res.json({ ok: true, unread: 0 });
+        return res.status(404).json({ error: 'Thread not found' });
+      }
       const moved = await threadReads.markRead(pool, { userId: req.user.id, threadId });
       if (!moved) return res.status(404).json({ error: 'Thread not found' });
       return res.json({ ok: true, unread: moved.unread });
