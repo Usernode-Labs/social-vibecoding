@@ -327,6 +327,14 @@
     "text": "More apps",
     "description": "Heading over the rest of Discover's default list, below the \"Featured\" group."
   },
+  "list.why.recommended": {
+    "text": "Picked by Homeroom's staff.",
+    "description": "One line under the \"Featured\" heading in Discover's default list, saying how those rows were chosen: Homeroom's staff feature them, so it is not a personal recommendation."
+  },
+  "list.why.rest": {
+    "text": "Every app that runs, the most used first.",
+    "description": "One line under the \"More apps\" or \"Apps to try\" heading in Discover's default list, saying what the rows are and the order they are in (apps with the most users first)."
+  },
   "list.heading.allApps": {
     "text": "Apps to try",
     "description": "Heading over Discover's default list (the For you view) when there is no \"Featured\" group above it: the apps that run, in Homeroom's suggested order. Not a personal recommendation, and not every app (the Browse view is), so it says neither \"for you\" nor \"all\"."
