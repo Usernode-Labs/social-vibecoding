@@ -74,10 +74,12 @@
 //
 // ── A new test file brings its baseline entry ──────────────────────────
 //
-// Every test file must appear in tests/baselines/test-durations.json, or the
-// unit suite fails on the change that adds it (tests/test-shard-plan.test.js).
-// A new suite here is reported with the one command that adds it, and the
-// run ends with a failure: `npm run test:durations -- --add <files>`.
+// Every test file should appear in tests/baselines/test-durations.json. The
+// unit suite never fails over a missing entry (tests/test-shard-plan.test.js
+// prints a diagnostic: a file the baseline does not know is planned at the
+// default), but this local run does report it, with the one command that
+// adds it, and ends with a failure so the change that adds a test file adds
+// its entry too: `npm run test:durations -- --add <files>`.
 
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');

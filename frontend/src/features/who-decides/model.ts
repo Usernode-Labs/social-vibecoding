@@ -110,9 +110,36 @@ export interface ApprovalPayload {
   rules?: Array<Rule & { size?: number; need?: number | null; empty?: boolean }> | null;
   groups?: Array<{ name: string; key?: string; people: string[] }>;
   creator?: { id: number; username: string; display_name?: string | null } | null;
+  /** The creator's account no longer exists (apps.created_by is NULL on a
+      project that is not the platform's own). Absent from an older server. */
+  creator_gone?: boolean;
   /** Invited approvers' usernames, for a viewer who may read the roster;
       null otherwise, and absent from an older server. */
   approvers?: string[] | null;
+}
+
+/**
+ * The line under the built-in Creator group: the creator's username, else
+ * that the account is gone, else (the platform's own project) that there is
+ * no creator.
+ */
+export function creatorGroupLine(creator: string | null, gone: boolean): string {
+  if (creator) return creator;
+  return translate(gone ? 'dialogs:whoDecides.group.creatorGone' : 'dialogs:whoDecides.group.creatorNobody');
+}
+
+/**
+ * The groups a rule may name, in the screen's order. Creator is left out when
+ * the project has none (the account is gone) unless the rule being edited is
+ * already the Creator rule, so the screen still says what that rule is.
+ */
+export function ruleGroupChoices(
+  groups: readonly Group[],
+  opts: { creatorGone?: boolean; current?: string | null },
+): string[] {
+  const choices = ['creator', 'members', 'admins', ...groups.map((g) => groupKey(g.name))];
+  if (opts.creatorGone && opts.current !== 'creator') return choices.filter((g) => g !== 'creator');
+  return choices;
 }
 
 /**

@@ -22,6 +22,25 @@ const { PROCESS_PRESENCE_LOCK } = require('../src/workflow/rules/presence.ts');
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
 
+test('a queued leftover retirement cannot close a session reopened since inventory', () => {
+  const machine = preview({ maxRetries: 6 });
+  const event = { type: 'RetireRequested', payload: { reason: 'leftover', terminal: true, sessionId: 1 } };
+  const ctx = { key: 'session:1', appId: 1, now: new Date(), version: 1 };
+  for (const name of ['idle', 'preparing', 'checking', 'settled', 'failed', 'retiring', '(none)', 'detached']) {
+    const state = { name, data: { exit: { terminal: false } } };
+    const guard = machine.entryFor(name, 'RetireRequested').guard;
+    for (const status of ['active', 'paused', 'promoted', 'merging']) {
+      assert.deepEqual(guard(state, event, { session: { status }, app: { id: 1 } }, ctx), { reject: 'session_open' },
+        `${name}: ${status} was reopened before the retirement applied`);
+    }
+    if (!['(none)', 'detached'].includes(name)) {
+      for (const session of [null, { status: 'merged' }, { status: 'archived' }]) {
+        assert.equal(guard(state, event, { session }, ctx), true, `${name}: a terminal leftover can retire`);
+      }
+    }
+  }
+});
+
 test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
