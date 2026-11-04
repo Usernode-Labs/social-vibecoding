@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import { useMessages } from '../../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { PlanCardView, type PlanCardState } from '../../messages/bot-plan-view';
 import { WORK_CHANGED_EVENT } from '../../messages/bot-shared';
 import { PlanCrops } from '../../messages/plan-crops';
@@ -169,11 +169,16 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
         request={plan.title || ''}
         sub={sub}
         card={{ summary: plan.summary, lines: plan.lines }}
-        planSpec={<PlanCrops html={specHtml} />}
+        planSpec={<PlanCrops html={specHtml} lines={plan.lines} />}
         readWhole={spec ? (
           <button type="button" className="dev-request-plan-read" data-request-plan-read="" onClick={() => { void openRequestSpec(spec); }}>
-            <span>{t('project:topic.request.botPlan.readWhole')}</span>
-            {plan.spec?.chars ? <small>{t('project:topic.request.botPlan.readLength', { chars: (Math.max(1, Math.round(plan.spec.chars / 1000)) * 1000).toLocaleString() })}</small> : null}
+            {plan.spec?.chars ? (
+              <RichMessage
+                id="project:topic.request.botPlan.readWholeLength"
+                values={{ chars: (Math.max(1, Math.round(plan.spec.chars / 1000)) * 1000).toLocaleString() }}
+                components={[<span />, <small />]}
+              />
+            ) : <span>{t('project:topic.request.botPlan.readWhole')}</span>}
           </button>
         ) : null}
         footer={refused ? <p className="messages-bot-answered" role="status" data-request-plan-refused="">{t(refused)}</p> : null}

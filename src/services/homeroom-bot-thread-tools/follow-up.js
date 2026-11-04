@@ -15,8 +15,8 @@ const EVENT_DESC = 'The one moment they asked about: the update is made, its che
 
 function dmOf(ctx) { return ctx?.deps?.dm || require('../homeroom-bot-dm'); }
 function mayorOf(ctx) { return ctx?.deps?.mayor || require('../homeroom-bot-mayor'); }
-function followupsOf() { return require('../thread-followups'); }
-function liveOf() { return require('../homeroom-bot-live'); }
+function followupsOf(ctx) { return ctx?.deps?.followups || require('../thread-followups'); }
+function liveOf(ctx) { return ctx?.deps?.live || require('../homeroom-bot-live'); }
 
 /** Pure: whether this turn may promise a follow-up (a private chat with the bot). */
 function offered(ctx) {
@@ -27,7 +27,7 @@ const TELL_ME_WHEN = Object.freeze({
   type: 'function',
   function: {
     name: 'tell_me_when',
-    description: 'Promise to tell them here, in this chat, when one thing about one of your changes happens. It is stored and kept: the line comes here and their bell rings. One per turn.',
+    description: 'Promise to tell them here, in this chat, when one thing about one of your changes happens. It is stored and kept: the line comes here and their bell rings. One per turn. It also works while you are still building the request, or have it queued: for a first version there is no vote yet, so being made and being ready to vote are the same moment, and update and checks mean vote.',
     parameters: {
       type: 'object',
       properties: {
@@ -51,7 +51,33 @@ function promptLines(ctx) {
     '- When they ask to be told when something about a change happens, call tell_me_when with that one moment and say its',
     '  promise in your reply. Never tell them you cannot message them later. When you say work is queued or running,',
     '  offer to tell them here when it is ready to vote, and store it only once they say yes or when they asked for it.',
+    '- tell_me_when also works for a request still being built or queued, before any change is up for a vote: ask for vote',
+    '  (update and checks mean the same moment), and the line comes here when it is ready to vote. Only promise it when',
+    '  that request is in progress for them.',
   ];
+}
+
+/**
+ * Whether the bot is doing something on that request for this person now: it
+ * started it in this reply, or its own progress record lists it. A request
+ * with no change up for a vote still has a moment to promise, the first
+ * version's arrival (#6255).
+ */
+async function inProgress(pool, ctx, mayor, app, n) {
+  if (ctx.started && (ctx.cards || []).some((c) => c && c.type === 'issue'
+      && Number(c.appId) === Number(app.id) && Number(c.issueNumber) === n)) return true;
+  let progress = ctx.progress;
+  if (!progress && typeof mayor.progressOf === 'function') {
+    try {
+      progress = await mayor.progressOf(pool, {
+        userId: ctx.user.id, settings: ctx.settings, config: ctx.config, deps: ctx.deps || {},
+      });
+      ctx.progress = progress;
+    } catch {
+      progress = null;
+    }
+  }
+  return (progress?.rightNow || []).some((e) => e.project === app.slug && Number(e.number) === n);
 }
 
 async function run(pool, ctx, name, args) {
@@ -65,12 +91,24 @@ async function run(pool, ctx, name, args) {
   }
   const bot = await dmOf(ctx).botAccount(pool);
   if (!bot) return { ok: false, error: 'I could not keep that just now. Nothing was stored.' };
-  const change = await liveOf().openBotProposal(pool, bot.id, app.id, n).catch(() => null);
-  if (!change?.id) {
-    return { ok: false, error: `You have no change up for a vote on ${app.name || app.slug} request #${n}, so there is nothing to tell them about. Nothing was stored.` };
+  const change = await liveOf(ctx).openBotProposal(pool, bot.id, app.id, n).catch(() => null);
+  let sessionId = null;
+  let issueNumber = null;
+  let event = String(args.event || '');
+  if (change?.id) {
+    sessionId = change.id;
+  } else {
+    // #6255: no change up for a vote yet. While the first version is on its
+    // way, that arrival IS the moment: update and checks have nothing else
+    // to tell them about, so they are the same promise as vote.
+    if (!(await inProgress(pool, ctx, mayor, app, n))) {
+      return { ok: false, error: `Nothing is being built on ${app.name || app.slug} request #${n}, so there is nothing to tell them about yet. Nothing was stored. Offer to start it.` };
+    }
+    issueNumber = n;
+    if (event === 'update' || event === 'checks') event = 'vote';
   }
-  const out = await followupsOf().register(pool, {
-    user: ctx.user, app, sessionId: change.id, event: String(args.event || ''),
+  const out = await followupsOf(ctx).register(pool, {
+    user: ctx.user, app, sessionId, issueNumber, event,
     place: { type: 'dm', ref: null },
     conversationId: ctx.conversationId ?? null,
     threadRootId: ctx.deps?.threadRootId ?? null,
@@ -81,4 +119,4 @@ async function run(pool, ctx, name, args) {
   return { ok: true, promise: out.promise, next: 'Say that promise in your reply, as written or in your own words. Never promise more than that one moment.' };
 }
 
-module.exports = { tools, run, promptLines, offered };
+module.exports = { tools, run, promptLines, offered, inProgress };

@@ -2503,8 +2503,8 @@ async function retirePlatformPreviewPolicy(config, appId, digest, { timeoutMs = 
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/app-id=${appId},social.usernode.io/environment=staging`;
   const { apps, core } = getClients();
   // Use the runtime's existing get/update-Service, list Deployment/RS/Pod,
-  // and foreground-delete-Deployment permissions. It deliberately cannot
-  // list Services or directly delete ReplicaSets/Pods.
+  // and foreground-delete-Deployment permissions. This retirement needs no
+  // Service list or direct ReplicaSet/Pod-delete permission.
   const ours = object => object.metadata?.labels?.['social.usernode.io/app-id'] === String(appId)
     && object.metadata.labels['social.usernode.io/environment'] === 'staging'
     && object.metadata.labels['app.kubernetes.io/managed-by'] === MANAGED_BY;
@@ -2560,12 +2560,13 @@ async function retirePlatformPreviewPolicy(config, appId, digest, { timeoutMs = 
   }
 }
 
-async function listPreviews(config) {
+async function listPreviews(config, { strict = false } = {}) {
   const namespace = config.kubernetes.appNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
     namespace,
     labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=staging`,
   });
+  if (strict && !Array.isArray(deployments?.items)) throw new Error('Invalid Deployment preview inventory');
   const previews = [];
   for (const deployment of deployments.items || []) {
     const name = deployment.metadata?.name || '';
@@ -2583,6 +2584,75 @@ async function listPreviews(config) {
     });
   }
   return previews;
+}
+
+function previewRoutingIdentity(metadata) {
+  const match = PREVIEW_NAME_RE.exec(metadata?.name || '');
+  const tags = metadata?.labels || {};
+  if (!match || tags['app.kubernetes.io/managed-by'] !== MANAGED_BY
+      || tags['social.usernode.io/environment'] !== 'staging'
+      || tags['social.usernode.io/app-id'] !== match[1]
+      || tags['social.usernode.io/session-id'] !== match[2]
+      || tags['social.usernode.io/shots-run'] || tags['social.usernode.io/evidence-run']) return null;
+  const appId = Number(match[1]), sessionId = Number(match[2]);
+  return Number.isSafeInteger(appId) && appId > 0 && Number.isSafeInteger(sessionId) && sessionId > 0
+    ? { appId, sessionId } : null;
+}
+
+// Cleanup also sees routing left after a Deployment disappeared. Runtime
+// status and env recovery still use listPreviews: routing alone is no pod.
+// Read every list before returning anything; an unreadable list is not an
+// empty one on which a garbage collector may base a deletion.
+async function listPreviewResources(config) {
+  const { core, networking } = getClients();
+  const namespace = config.kubernetes.appNamespace;
+  const labelSelector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=staging`;
+  const all = async (api, method) => {
+    const items = [];
+    let next;
+    do {
+      const page = await api[method]({ namespace, labelSelector, limit: 500, _continue: next });
+      if (!Array.isArray(page?.items)) throw new Error(`Invalid ${method} preview inventory`);
+      items.push(...page.items);
+      next = page.metadata?.continue;
+    } while (next);
+    return items;
+  };
+  const [previews, services, ingresses] = await Promise.all([
+    listPreviews(config, { strict: true }), all(core, 'listNamespacedService'), all(networking, 'listNamespacedIngress'),
+  ]);
+  const deployments = new Set(previews.map((p) => p.name));
+  const byName = new Map(previews.map((p) => [p.name, p]));
+  for (const [kind, objects] of [['service', services], ['ingress', ingresses]]) {
+    for (const object of objects) {
+      const metadata = object.metadata;
+      const identity = previewRoutingIdentity(metadata);
+      if (!identity || deployments.has(metadata.name)) continue;
+      if (!byName.has(metadata.name)) byName.set(metadata.name, {
+        name: metadata.name, ...identity, state: 'not_found', image: null,
+        labels: metadata.labels, routingResources: [],
+      });
+      byName.get(metadata.name).routingResources.push({ kind, metadata: {
+        name: metadata.name, uid: metadata.uid, resourceVersion: metadata.resourceVersion, labels: metadata.labels,
+      } });
+    }
+  }
+  return [...byName.values()];
+}
+
+// Only the routing object the sweep judged, never a same-named replacement
+// or one updated by a new build after inventory. A missing object is done;
+// a precondition failure is retried from a fresh inventory next time.
+async function deletePreviewRoutingResource(config, kind, metadata) {
+  const { name, uid, resourceVersion } = metadata || {};
+  if (!previewRoutingIdentity(metadata) || !uid || !resourceVersion) {
+    throw new Error('Preview routing deletion requires matching ownership labels, UID and resourceVersion');
+  }
+  const { core, networking } = getClients();
+  const target = { service: [core, 'deleteNamespacedService'], ingress: [networking, 'deleteNamespacedIngress'] }[kind];
+  if (!target) throw new Error(`Unknown preview routing kind: ${kind}`);
+  await deleteIfPresent(target[0], target[1], name, config.kubernetes.appNamespace,
+    { body: { preconditions: { uid, resourceVersion } } });
 }
 
 // Shots fixtures use the production environment label; paired runtimes use
@@ -3890,7 +3960,7 @@ module.exports = {
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker,
   workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers,
-  listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listShotsRuntimes, isQuotaExceeded,
+  listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listPreviewResources, deletePreviewRoutingResource, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   readPlatformPod, stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum, _upsertForTest: upsert,
