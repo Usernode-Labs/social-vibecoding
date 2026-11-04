@@ -52,7 +52,7 @@
  * progress, Waiting or Live, with the track's word on its right), which
  * opens the thread and is lit while it is in the column.
  */
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import type { ReactNode } from 'react';
 
@@ -67,7 +67,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  GROUP_FIRST, NOT_MOVING, byProject, changeOnGithub, groupRows, holdOrder, nextWords, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf,
+  GROUP_FIRST, NOT_MOVING, byProject, changeOnGithub, freshByProject, freshCount, freshFirst, groupRows, holdOrder, nextWords, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -101,6 +101,8 @@ interface Line {
   owe: boolean;
   /** Its chat is the one in the column beside the list: where you are. */
   lit?: boolean;
+  /** #6262: someone has written in its thread since you last opened it. */
+  fresh?: boolean;
   open: () => void;
   /** #6159: a private thread's row: its ⋯ has Mark done. */
   done?: { rootId: number; mark: () => void } | null;
@@ -114,6 +116,7 @@ function needGlyph(row: WorkRow): ReactNode {
   if (kind === 'plan') return <PlayIcon className={G} />;
   if (kind === 'decide') return <HandRaisedIcon className={G} />;
   if (kind === 'stopped') return <ArrowPathIcon className={G} />;
+  if (kind === 'fix_stopped') return <ArrowPathIcon className={G} />;
   if (kind === 'private') return <LockIcon className={G} />;
   return <BallotIcon className={G} />;
 }
@@ -122,7 +125,8 @@ function nextGlyph(t: AiThread): ReactNode {
   if (t.what === 'going_live' || t.what === 'merging') return <ArrowUpTrayIcon className={G} />;
   if (t.what === 'reading' || t.what === 'reading_reply') return <EyeIcon className={G} />;
   if (t.what === 'fixing') return <CogIcon className={G} />;
-  if (t.what === 'revising') return <ReplyArrowIcon className={G} />;
+  // #6282: Updating is the bot following up on it, as Revising was.
+  if (t.what === 'revising' || t.what === 'updating') return <ReplyArrowIcon className={G} />;
   return <CodeIcon className={G} />;
 }
 
@@ -136,32 +140,49 @@ const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 // Where you are: the row whose chat is in the column, on the lit tint.
 const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
 
-function LineRow({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
+function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   // #6159: a private thread's row has its ⋯ beside it, with Mark done.
   if (line.done) {
     const { rootId, mark } = line.done;
     return (
       <div className="flex min-w-0 items-center gap-1" data-ai-line-done="">
-        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} /></div>
+        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} freshTitles={freshTitles} /></div>
         <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} className="shrink-0" />
       </div>
     );
   }
-  return <LineButton line={line} quiet={quiet} />;
+  return <LineButton line={line} quiet={quiet} freshTitles={freshTitles} />;
 }
 
-function LineButton({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
+/**
+ * #6262: the dot in the row's leading margin, so rows with and without one
+ * stay lined up. The accent the page already uses for Vote and Decide.
+ */
+const DOT = 'absolute -start-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
+
+/**
+ * #6312 (4 Nov 2026, Evan): the box a fold clips, while it animates open and
+ * shut. The dot stands 12px past its row's start edge (DOT), so the box keeps
+ * 16px of room on that side: the negative start margin widens the clip edge,
+ * and the same padding leaves every row exactly where it was, so a row with
+ * something new shows its dot folded and open alike.
+ */
+const FOLD_CLIP = 'min-h-0 overflow-hidden -ms-4 ps-4';
+
+function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   const t = useMessages('messages');
   return (
     <button
       type="button"
-      className={line.lit ? LIT_ROW : quiet ? LIVE_ROW : ROW}
+      className={`${line.lit ? LIT_ROW : quiet ? LIVE_ROW : ROW} relative`}
       onClick={line.open}
       title={line.tooltip}
       data-ai-line={line.kind}
       data-ai-lit={line.lit ? '' : undefined}
+      data-ai-fresh={line.fresh ? '' : undefined}
       aria-current={line.lit ? 'true' : undefined}
     >
+      {line.fresh ? <span className={DOT} aria-hidden="true" data-ai-dot="" /> : null}
       <span className={line.owe ? GLYPH_OWE : GLYPH} aria-hidden="true">{line.glyph}</span>
       {/* Not on a phone, where the drawer's list is 85% of the screen: the
           title needs the room more, and the tooltip still says the number.
@@ -175,7 +196,13 @@ function LineButton({ line, quiet = false }: { line: Line; quiet?: boolean }): R
           ? 'block truncate text-sm leading-5 font-medium'
           : quiet
             ? 'block truncate text-[13px] leading-5 text-zinc-600 dark:text-zinc-400'
-            : 'block truncate text-sm leading-5 font-medium text-zinc-900 dark:text-zinc-100'}
+            : line.fresh
+              // #6262: what is new is bold; the rest of Needs you, once
+              // anything there is new, is lighter so it stands out.
+              ? 'block truncate text-sm leading-5 font-bold text-zinc-900 dark:text-zinc-100'
+              : freshTitles
+                ? 'block truncate text-sm leading-5 font-normal text-zinc-600 dark:text-zinc-400'
+                : 'block truncate text-sm leading-5 font-medium text-zinc-900 dark:text-zinc-100'}
         >
           {line.title}
         </span>
@@ -191,6 +218,36 @@ function LineButton({ line, quiet = false }: { line: Line; quiet?: boolean }): R
       </span>
       <span className="sr-only">{line.tooltip}</span>
     </button>
+  );
+}
+
+/**
+ * #6262: the line between what is new in a project and what the reader has
+ * already seen. The small caps label style of the section headings.
+ */
+function EarlierRule(): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className="flex items-center gap-2 py-1.5" data-ai-earlier="">
+      <span className="h-px flex-1 bg-[color:var(--app-sheet-line)]" aria-hidden="true" />
+      <span className="text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('messages:ai.work.earlier')}</span>
+      <span className="h-px flex-1 bg-[color:var(--app-sheet-line)]" aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
+ * #6262: a count of new threads, on a chip or beside a heading. The number
+ * is decoration; the spoken words say what it counts.
+ */
+function FreshBadge({ count, className = '' }: { count: number; className?: string }): ReactNode {
+  const t = useMessages('messages');
+  if (count <= 0) return null;
+  return (
+    <span className={`inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-bold ${className}`} data-ai-fresh="">
+      <span aria-hidden="true">{count}</span>
+      <span className="sr-only">{t('messages:ai.filter.fresh', { count })}</span>
+    </span>
   );
 }
 
@@ -298,7 +355,16 @@ function GroupMore({ hidden, open, onClick }: { hidden: number; open: boolean; o
  * folded away: past the first rows it joins them, so where you are is
  * always shown.
  */
-function GroupList({ lines, quiet = false, heads, first }: { lines: Line[]; quiet?: boolean; heads: boolean; first: number }): ReactNode {
+function GroupList({ lines, quiet = false, heads, first, freshStyle = false, freshProjects }: {
+  lines: Line[];
+  quiet?: boolean;
+  heads: boolean;
+  first: number;
+  /** #6262: Needs you draws new rows first, under an Earlier line. */
+  freshStyle?: boolean;
+  /** How many rows each project has that are new, for its name's pill. */
+  freshProjects?: Record<string, number>;
+}): ReactNode {
   const t = useMessages('messages');
   const [opened, setOpened] = useState<Record<string, boolean>>({});
   return (
@@ -308,8 +374,16 @@ function GroupList({ lines, quiet = false, heads, first }: { lines: Line[]; quie
         const open = !!opened[key];
         // #6245: only a folded group lifts the row you are on. Once its Show
         // more has opened every row, they keep their own order, so pressing
-        // one does not slide it up under the pointer.
+        // one does not slide it up under the pointer. #6262: a fresh row is
+        // never folded either.
         const { items, shown, hidden } = groupRows(g.items, first, open);
+        const anyFresh = freshStyle && g.items.some((line) => line.fresh);
+        const firstOld = anyFresh ? items.findIndex((line) => !line.fresh) : -1;
+        // The line only where an older row is actually drawn: with every
+        // older row folded, Show more already says there is more.
+        const earlierAt = firstOld >= 0 && firstOld < shown ? firstOld : -1;
+        const freshHere = freshStyle && g.app ? freshProjects?.[g.app.slug] || 0 : 0;
+        const draw = (line: Line) => <LineRow key={line.key} line={line} quiet={quiet} freshTitles={freshStyle} />;
         return (
           <div key={key} data-ai-group={key}>
             {heads ? (
@@ -317,11 +391,21 @@ function GroupList({ lines, quiet = false, heads, first }: { lines: Line[]; quie
                 {/* A private idea in no project yet goes under Only you, with a lock. */}
                 {g.app ? <SmallTile app={g.app} size="head" /> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" />}
                 <span className="truncate">{g.app ? g.app.name || g.app.slug : t('messages:ai.short.private')}</span>
+                {freshHere > 0 ? (
+                  <span className="ms-auto shrink-0 rounded-full bg-violet-600/10 px-2 py-0.5 text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-500/20 dark:text-violet-300" data-ai-fresh="">
+                    {t('messages:ai.work.fresh', { count: freshHere })}
+                  </span>
+                ) : null}
               </div>
             ) : null}
             {/* The rows sit in a little under their project's name. */}
             <div className={heads ? 'ms-3' : undefined}>
-              {(hidden ? items.slice(0, shown) : items).map((line) => <LineRow key={line.key} line={line} quiet={quiet} />)}
+              {(hidden ? items.slice(0, shown) : items).map((line, i) => (
+                <Fragment key={line.key}>
+                  {i === earlierAt ? <EarlierRule /> : null}
+                  {draw(line)}
+                </Fragment>
+              ))}
               {/* The rest, folded: a grid row that grows from 0fr to 1fr, so
                   it opens to its own height without measuring it. */}
               {hidden ? (
@@ -331,8 +415,8 @@ function GroupList({ lines, quiet = false, heads, first }: { lines: Line[]; quie
                   inert={!open}
                   data-ai-group-rest=""
                 >
-                  <div className="min-h-0 overflow-hidden">
-                    {items.slice(shown).map((line) => <LineRow key={line.key} line={line} quiet={quiet} />)}
+                  <div className={FOLD_CLIP}>
+                    {items.slice(shown).map(draw)}
                   </div>
                 </div>
               ) : null}
@@ -345,7 +429,7 @@ function GroupList({ lines, quiet = false, heads, first }: { lines: Line[]; quie
   );
 }
 
-function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads }: {
+function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads, fresh = 0, freshBySlug, freshStyle = false }: {
   /** Which list, for the page's checks: work, busy, live. */
   list: string;
   /** Said over the rows, whatever they are: why the lists show less than they should. */
@@ -367,7 +451,14 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   first: number;
   /** The project's name over its rows; not when one project's chip says it already. */
   heads: boolean;
+  /** #6262: how many of its rows have something new, for the band's pill. */
+  fresh?: number;
+  /** #6262: each project's count of new rows, for its name's pill. */
+  freshBySlug?: Record<string, number>;
+  /** #6262: Needs you draws new first, with an Earlier line (GroupList). */
+  freshStyle?: boolean;
 }): ReactNode {
+  const t = useMessages('messages');
   const [stillOpen, setStillOpen] = useState(false);
   // #6245: while the pointer is over Needs you or a row in it has keyboard
   // focus, keep the order it was drawn in, so a live refresh cannot slide a
@@ -378,10 +469,13 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   const drawn = useRef<string[] | null>(null);
   const [holding, setHolding] = useState(false);
   const hold = list === 'work';
-  const held = hold && holding && drawn.current ? holdOrder(lines, drawn.current) : lines;
+  // #6262: Needs you draws what is new first, before the order is held, so
+  // a held list keeps the order it was drawn in (#6245).
+  const ordered = freshStyle ? freshFirst(lines) : lines;
+  const held = hold && holding && drawn.current ? holdOrder(ordered, drawn.current) : ordered;
   const startHold = () => {
     if (!hold) return;
-    if (!drawn.current) drawn.current = lines.map((line) => line.key);
+    if (!drawn.current) drawn.current = ordered.map((line) => line.key);
     setHolding(true);
   };
   const endHold = () => {
@@ -398,7 +492,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
     <>
       {note}
       {!lines.length ? empty : null}
-      <GroupList lines={held} quiet={quiet} heads={heads} first={first} />
+      <GroupList lines={held} quiet={quiet} heads={heads} first={first} freshStyle={freshStyle} freshProjects={freshBySlug} />
       {still && still.lines.length ? (
         <div data-ai-still-part="">
           <button
@@ -417,7 +511,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
             inert={!stillShown}
             data-ai-still-rest=""
           >
-            <div className="min-h-0 overflow-hidden">
+            <div className={FOLD_CLIP}>
               <GroupList lines={still.lines} quiet={quiet} heads={heads} first={still.lines.length} />
             </div>
           </div>
@@ -436,7 +530,14 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
       onBlur={(e) => { if (!within(e.relatedTarget)) endHold(); }}
     >
       <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
-        <SectionHeader className={`px-0 pt-0 pb-0 ${label}`}>{head}</SectionHeader>
+        <SectionHeader className={`px-0 pt-0 pb-0 ${label}`}>
+          {head}
+          {fresh > 0 ? (
+            <span className="ms-1.5 rounded-full bg-violet-600/10 px-2 py-0.5 align-middle text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-500/20 dark:text-violet-300" data-ai-fresh="">
+              {t('messages:ai.work.fresh', { count: fresh })}
+            </span>
+          ) : null}
+        </SectionHeader>
       </div>
       <div className="px-4">{body}</div>
     </section>
@@ -519,8 +620,16 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   const past = ranked.length - rail.length;
   const shows = (app: AiApp | null) => !picked.length || (!!app && picked.includes(app.slug));
   const toggle = (slug: string) => setOnly(picked.includes(slug) ? picked.filter((x) => x !== slug) : [...picked, slug]);
+  // #6262: what is new. The heading and the hero follow the chips (as the
+  // owed count does); each chip carries its project's own count, and All the
+  // whole page's.
+  const freshAll = freshCount(rows);
+  const freshByApp = freshByProject(rows);
+  const needRowsShown = rows.filter((row) => shows(row.app));
+  const freshShown = freshCount(needRowsShown);
+  const freshProjects = freshByProject(needRowsShown);
 
-  const needLines: Line[] = rows.filter((row) => shows(row.app)).map((row) => ({
+  const needLines: Line[] = needRowsShown.map((row) => ({
     key: row.key,
     kind: row.key.startsWith('need:') ? 'need' : row.key.split(':')[0],
     app: row.app,
@@ -535,6 +644,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     why: say(whyOf(row)),
     owe: !!row.pill,
     lit: !!lit && rowKey(row) === lit,
+    fresh: row.unread > 0,
     open: () => openRow(row),
     done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
   }));
@@ -553,6 +663,7 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     // #6153: a request filed from a private thread opens that thread, and
     // is where you are while it is in the column.
     lit: !!lit && rowKey(th) === lit,
+    fresh: (th.unread || 0) > 0,
     open: () => openThread(th),
   });
   const progressShown = progress.filter((x) => shows(x.app));
@@ -617,11 +728,13 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
             <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1">
               <Chip size="bar" className={`px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
                 {t('messages:ai.filter.all')}
+                <FreshBadge count={freshAll} className={!picked.length ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white' : 'bg-violet-600 text-white'} />
               </Chip>
               {rail.map((app) => (
                 <Chip key={app.slug} size="bar" className={`gap-2 ps-2.5 pe-4 ${CHIP_EDGE}`} selected={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
                   <SmallTile app={app} />
                   {app.name || app.slug}
+                  <FreshBadge count={freshByApp[app.slug] || 0} className={picked.includes(app.slug) ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white' : 'bg-violet-600 text-white'} />
                 </Chip>
               ))}
             </FadeRail>
@@ -680,6 +793,9 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
           )}
           first={GROUP_FIRST.needs}
           heads={heads}
+          fresh={freshShown}
+          freshBySlug={freshProjects}
+          freshStyle
         />
       </div>
       {busyLines.length || stillLines.length ? (

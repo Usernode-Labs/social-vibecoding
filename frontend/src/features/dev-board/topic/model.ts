@@ -555,6 +555,8 @@ export interface RequestView {
   titleEditing: { issue: number; initial: string } | null;
   /** The request's words, rendered, without the leading "**Source:**" line. */
   bodyHtml: string;
+  /** #6081: the same words as markdown, what Translate sends to the model. */
+  bodyMarkdown: string;
   /**
    * The author's editor for the words. `source` is the "**Source:**" line
    * the page leaves out, put back in front of what they save.
@@ -670,6 +672,12 @@ export interface ChangeGateView {
   label: string;
   /** The one line under the card, as its sentences. */
   note: string[];
+  /**
+   * #6282: the card asks for no vote while an update to the change is on its
+   * way (AppView._changeVotesView): a yes cast now is cleared when it lands.
+   * Votes only; the card keeps its tally and its note.
+   */
+  hold?: boolean;
   /** Why this status is shown, disclosed beside the note when available. */
   noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */
@@ -694,7 +702,7 @@ export interface ChangeGateView {
    * changeBotFix), carried on the card as `data-change-bot-fix`. The words
    * are in `authorNote`.
    */
-  botFix?: 'fixing' | 'queued' | 'handed_off' | null;
+  botFix?: 'fixing' | 'queued' | 'handed_off' | 'stopped' | null;
   /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps

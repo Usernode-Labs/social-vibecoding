@@ -6214,6 +6214,7 @@ const AppView = {
       title: issue.title || '',
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
+      bodyMarkdown: words.text,
       editor: {
         issue: n,
         markdown: words.text,
@@ -7645,7 +7646,12 @@ const AppView = {
     const maj = Math.max(1, Number(pill.majority) || 1);
     const roster = AppView._voteRoster[item.id];
     const ready = roster && roster.phase === 'ready' ? roster : null;
+    // #6282 (4 Nov 2026): an update is on its way to this change. A yes cast
+    // now is cleared when it lands, so the card says so and offers no Vote
+    // until then; the tally and who can vote stay as they are.
+    const updateComing = item.status === 'promoted' && !!item.update_coming;
     const note = [];
+    if (updateComing) note.push(PlatformI18n.t('changes:page.votes.note.updateComing'));
     if (item.status === 'merged' || item.status === 'merging') {
       const said = ready && ready.yesNames && ready.yesNames.length
         ? AppView._saidYesLine(ready.yesNames) : null;
@@ -7679,7 +7685,7 @@ const AppView = {
     if (item.first_version === true && item.status === 'promoted') return AppView._firstVersionVotesView(item);
     const waitsOnMember = AppView._awaitingOtherMember(item);
     const reached = yes >= maj && !waitsOnMember;
-    const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted';
+    const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted' && !updateComing;
     let figure;
     let tone;
     if (pill.key === 'reject_countdown') { figure = pill.label; tone = 'bad'; }
@@ -7689,8 +7695,9 @@ const AppView = {
       figure = canVote && item.approval_policy !== 'invited' ? PlatformI18n.t('changes:page.votes.figure.needsYours') : PlatformI18n.t('changes:page.votes.figure.needsAnother');
       tone = canVote ? 'ask' : 'warn';
     } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { yes, needed: maj }); tone = 'done'; }
-    else if (pill.key === 'needs_vote' && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
+    else if (pill.key === 'needs_vote' && !updateComing && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
     else { figure = PlatformI18n.t('changes:page.votes.figure.needsMore', { count: maj - yes }); tone = canVote ? 'ask' : 'muted'; }
+    if (updateComing) tone = 'muted';
     if (reached && ready && ready.yesNames && ready.yesNames.length) {
       note.push(AppView._saidYesLine(ready.yesNames));
     } else if (!reached) {
@@ -7729,6 +7736,9 @@ const AppView = {
       segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
       label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
       note,
+      // #6282: no Vote button while the update is on its way (change-head.tsx
+      // gateActions), so the card never asks for a yes that would be cleared.
+      ...(updateComing ? { hold: true } : {}),
     };
   },
 
@@ -8090,6 +8100,15 @@ const AppView = {
         };
       }
       if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
+      // #6284: the bot stopped at its own limit. The requester or an admin
+      // may let it try once more.
+      if (botFix && botFix.state === 'stopped' && botFix.canTryAgain) {
+        actions.unshift({
+          key: 'tryAgain', cls: 'gc-vote-btn gc-vote-btn-accent',
+          label: PlatformI18n.t('changes:tryAgain.label'),
+          act: { fn: 'letBotTryAgain', args: [item.id] }, passNode: true,
+        });
+      }
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.failing'),
@@ -19507,6 +19526,13 @@ const AppView = {
     }
     if (botFix.state === 'queued') return PlatformI18n.t('changes:page.testing.note.botQueued');
     if (botFix.state === 'handed_off') return PlatformI18n.t('changes:page.testing.note.botHandedOff');
+    if (botFix.state === 'stopped') {
+      const count = Math.max(1, Number(botFix.tries) || 3);
+      const key = botFix.canTryAgain
+        ? (count === 1 ? 'changes:page.testing.note.botStopped_one' : 'changes:page.testing.note.botStopped_other')
+        : (count === 1 ? 'changes:page.testing.note.botStoppedOthers_one' : 'changes:page.testing.note.botStoppedOthers_other');
+      return PlatformI18n.t(key, { count });
+    }
     return null;
   },
 
@@ -20601,6 +20627,9 @@ const AppView = {
   // server; progress arrives via the checks_ready / staging_ready broadcasts
   // that drive refreshDevData, so we just disable the button transiently.
   _recheckInFlight: new Set(),
+
+  // #6284: one press at a time of Let it try again, as a re-run is.
+  _tryAgainInFlight: new Set(),
   _sessionChecksClose: null,
   openSessionChecks(sessionId) {
     if (AppView._sessionChecksClose) AppView._sessionChecksClose();
@@ -20616,6 +20645,36 @@ const AppView = {
     };
     AppView._sessionChecksClose = close;
     react.mountSessionChecks(host, { sessionId, onClose: close });
+  },
+
+  // #6284: let Homeroom bot try once more at a change it stopped fixing on
+  // its own. One press is one grant, which buys exactly one round.
+  async letBotTryAgain(sessionId, btn) {
+    if (AppView._tryAgainInFlight.has(sessionId)) return;
+    AppView._tryAgainInFlight.add(sessionId);
+    if (btn) { btn.disabled = true; btn.textContent = PlatformI18n.t('changes:tryAgain.asking'); }
+    try {
+      const slug = AppView.appData?.slug || App.currentApp || '';
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${sessionId}/let-it-try-again`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:tryAgain.failedHttp', { status: resp.status }));
+        if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
+        return;
+      }
+      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.done'));
+      AppView.refreshDevData('tryAgain');
+      if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(sessionId) }));
+      return true;
+    } catch (err) {
+      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.failedWith', { error: err.message }));
+      if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
+    } finally {
+      AppView._tryAgainInFlight.delete(sessionId);
+    }
   },
 
   async castRecheck(sessionId, btn) {

@@ -564,7 +564,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       '',
       'Search notes by their text.',
       '',
-      '**Where:** your message in Main Chat',
+      '**Where:** Note board',
       '',
       '**Done when:**',
       '- It does what was asked.',
@@ -1691,16 +1691,24 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [samRun.id]);
     await pool.query('DELETE FROM community_members WHERE community_id = $1 AND user_id = $2', [notes.community_id, sam.id]);
 
-    // It has already revised this proposal as many times as it may.
+    // #6284: the bot's own three fixes never stop an ask; updates people
+    // asked for have their own, higher cap.
     const { rows: revisions } = await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id)
        SELECT $1, 5, 'live', 'revise', $2 FROM generate_series(1, $3) RETURNING id`,
       [notes.id, proposal.id, followup.MAX_REVISIONS],
     );
+    assert.equal((await ask()).ok, true, 'its own three do not stop an ask');
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [revisions.map((r) => r.id)]);
+    const { rows: askedRuns } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, asked)
+       SELECT $1, 5, 'live', 'revise', $2, TRUE FROM generate_series(1, $3) RETURNING id`,
+      [notes.id, proposal.id, followup.MAX_ASKED_REVISIONS],
+    );
     const capped = await ask();
     assert.equal(capped.ok, false);
-    assert.match(capped.error, new RegExp(`^You have already changed this proposal ${followup.MAX_REVISIONS} times, as many as you may on your own, so you cannot change it again\\. Nothing was sent or queued\\.`));
-    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [revisions.map((r) => r.id)]);
+    assert.equal(capped.error, followup.askedLimitText());
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [askedRuns.map((r) => r.id)]);
 
     // The bot switched off, or the project paused: nobody would pick it up.
     const off = await ask({ settings: { ...settings, mode: 'off' } });

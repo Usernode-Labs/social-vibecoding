@@ -100,6 +100,21 @@
       "id": "check-explanations-main-sha",
       "sha256": "3ebbf775aa2755df08d99b44873755415d9413fef730f1ae51e580a2af3ca6f7",
       "schemaSha256": "3856a83adab04787544d6fabeb2f13edf90d579807a85eab22ef19880aafa4e6"
+    },
+    {
+      "id": "thread-reads",
+      "sha256": "e050b014130d789510952071e7cf5f6109043babb2d180eded3ba1a7bd991db6",
+      "schemaSha256": "338645fbf8c97d50854fd8dee8f891693a90c337e3f6e5b59bb7cbcbb49a0d22"
+    },
+    {
+      "id": "bot-revision-grants",
+      "sha256": "f58d9406fdbb616b0f25b4775a4919805a0eb249bb68d2c6d38644e8c9c1101e",
+      "schemaSha256": "0c0ddb653e3e27fa9c83a79f266b770de3b3961d7c34752fbea557772302ff6f"
+    },
+    {
+      "id": "user-content-translations",
+      "sha256": "91f4a28ba6d8dfb0e33768dd0f0ae3da3ed6c3db5819d217d8daa139e2ec9efa",
+      "schemaSha256": "2cc3815976fedc3273f251b6859216f97e9eb37ef41a2a6943cdea3c73ece1b0"
     }
   ]
 }

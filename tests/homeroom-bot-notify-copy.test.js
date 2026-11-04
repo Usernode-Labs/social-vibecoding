@@ -40,6 +40,13 @@ const BODIES = [
   ['stopped', 'build_not_proposed', {}, 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.'],
   ['stopped', 'build_no_start', {}, 'Stopped: I couldn\'t get started. Tap Try again.'],
   ['stopped', 'build_other', {}, 'Stopped: something went wrong while I was building. Tap Try again.'],
+  // #6313: the plan could not be written; nothing was built, and the bot is
+  // trying again by itself, so no tap is asked for.
+  ['stopped', 'build_no_plan', {}, 'Stopped: I couldn\'t write the plan for it. I\'m trying again.'],
+  // #6267: the build finished and GitHub refused the upload.
+  ['stopped', 'build_push', {}, 'Built, but GitHub refused the upload. I\'ll try again soon.'],
+  ['stopped', 'build_push_permanent', {}, 'Built, but GitHub wouldn\'t take the upload. Reply to try again.'],
+  ['stopped', 'build_push_gave_up', {}, 'Built, but GitHub kept refusing the upload. Reply to send it.'],
   ['stopped', 'update_failed', {}, 'Stopped: I couldn\'t update it. It\'s as it was.'],
   ['stopped', 'needs_look', {}, 'Stopped: it\'s built, but a person needs to look at it before you can try it.'],
   ['stopped', 'checks', {}, 'Stopped: its checks still fail. A person needs to look.'],
@@ -187,6 +194,24 @@ test('a quiet message carries no detail, and an answer keeps its old token', () 
   assert.equal(copy.botNotificationDetail({ moment: 'reply' }), 'hrbot:reply:');
   const reply = copy.botMomentCopy('hrbot:reply:', 'Yes, **Pin notes** is up.');
   assert.deepEqual([reply.title, reply.body], ['Homeroom bot', 'Yes, Pin notes is up.']);
+});
+
+test('4 Nov 2026 (#6290): a request\'s detail carries its project, so the bell opens its thread', () => {
+  // The bell opens `#homeroom-bot/request/<slug>/<n>` from the row's own
+  // project, or else the detail's `p` (src/services/notifications.js sends
+  // appSlug on the bot rows it knows a project for).
+  const detail = copy.botNotificationDetail({ ...BASE, moment: 'stopped', said: 'build_other' });
+  assert.equal(copy.parseBotDetail(detail).appSlug, 'plant-pal');
+  // Only beside a request number: a quiet row does not grow by it.
+  const noIssue = copy.botNotificationDetail({ ...BASE, issueNumber: null, moment: 'needs_you', said: 'decide' });
+  assert.equal(copy.parseBotDetail(noIssue).appSlug, '');
+  assert.ok(!noIssue.includes('"p"'), noIssue);
+  // A slug that is not the address's shape is neither stored nor read.
+  const bad = copy.botNotificationDetail({ ...BASE, appSlug: 'Not A Slug', moment: 'needs_you', said: 'decide' });
+  assert.equal(copy.parseBotDetail(bad).appSlug, '');
+  assert.ok(!bad.includes('"p"'), bad);
+  // A row from before "one story" carries none.
+  assert.equal(copy.parseBotDetail('hrbot:question:Plant Pal').appSlug, '');
 });
 
 test('the detail fits its column whatever it is given, and a broken one reads as nothing', () => {

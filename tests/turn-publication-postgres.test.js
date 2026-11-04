@@ -45,11 +45,11 @@ test('conductor completion durably publishes a committed turn without repeating 
     turn.publicationTarget = target;
     const result = { resultSeen: true, sha: SHA, ahead: mode === 'sync' ? 0 : 1, pushOk: false,
       ...(mode === 'sync' ? { syncResult: 'clean' } : {}) };
-    let clock = Date.now(); const pushes = [];
+    let clock = Date.now(); const pushes = []; const slept = [];
     const options = { pool, sessionId: s.id, turnId: turn.turnId, journal: turn.journal, mode, branchName, result,
-      now: () => clock, sleep: async ms => { clock += ms; },
+      now: () => clock, sleep: async ms => { slept.push(ms); clock += ms; },
       push: async (branch, expected) => { pushes.push({ branch, expected }); return { sha: SHA }; } };
-    return { ...options, options, turn, target, pushes, id: s.id,
+    return { ...options, options, turn, target, pushes, slept, id: s.id, advance: ms => { clock += ms; },
       receipt: async () => (await pool.query('SELECT * FROM turn_effects WHERE turn_id = $1 AND effect_key = $2', [publication.receiptId(turn), publication.EFFECT])).rows[0],
       saved: async () => (await pool.query('SELECT unpushed_sha FROM session_workers WHERE session_id = $1', [s.id])).rows[0]?.unpushed_sha };
   }
@@ -74,7 +74,20 @@ test('conductor completion durably publishes a committed turn without repeating 
     } });
     assert.equal(calls, 3); assert.equal(out.pushOk, true);
   });
-  for (const code of ['github_paused', 'no_token', 'bad_branch']) await t.test(`${code}: permanent failure is recorded and the commit retained`, async () => {
+  await t.test('a temporary refusal retries at 15 s, 1 min and 4 min before it succeeds', async () => {
+    const f = await fixture(); let calls = 0;
+    const out = await publication.publish({ ...f.options, push: async () => {
+      if (++calls < 4) throw Object.assign(new Error('502 Bad Gateway'), { code: 'push_failed' });
+      return { sha: SHA };
+    } });
+    assert.equal(calls, 4);
+    assert.deepEqual(f.slept, [15000, 60000, 240000], 'the whole schedule, about five minutes');
+    assert.equal(out.pushOk, true);
+    assert.equal(out.pushFailure, undefined);
+    assert.equal((await f.receipt()).state, 'completed');
+    assert.equal(await f.saved(), null, 'a landed commit is no longer saved');
+  });
+  for (const code of ['github_paused', 'no_token', 'bad_branch', 'non_fast_forward']) await t.test(`${code}: permanent failure is recorded and the commit retained`, async () => {
     const f = await fixture(); let calls = 0;
     const opts = { ...f.options, push: async () => { calls++; throw Object.assign(new Error(code), { code, permanent: true }); } };
     const out = await publication.publish(opts);
@@ -86,7 +99,10 @@ test('conductor completion durably publishes a committed turn without repeating 
   await t.test('an exhausted transient failure records its cause and keeps the saved commit', async () => {
     const f = await fixture(); let calls = 0;
     const out = await publication.publish({ ...f.options, push: async () => { calls++; throw new Error('still unavailable'); } });
-    assert.equal(calls, 5); assert.equal(out.pushFailure.permanent, false);
+    assert.equal(calls, 4, 'one try and the three retries');
+    assert.deepEqual(f.slept, [15000, 60000, 240000]);
+    assert.equal(out.pushFailure.permanent, false);
+    assert.equal(out.pushFailure.exhausted, true, 'the caller may wait to push rather than fail the build');
     assert.equal(await f.saved(), SHA); assert.equal((await f.receipt()).state, 'completed');
   });
   await t.test('restart after intent/before retry resumes only publication', async () => {

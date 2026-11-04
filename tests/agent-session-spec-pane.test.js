@@ -128,7 +128,7 @@ test('beside from 1024px up, decided after mount; the list steps aside; the divi
   assert.match(panel, /const beside = useSidePaneBeside\(embedded \? 'messages' : 'screen'\);/);
   assert.match(panel, /\{beside \? \(\s*<SidePane sheet=\{snapshot\.specSheet\} preview=\{snapshot\.preview\} tab=\{snapshot\.paneTab\} containerRef=\{root\} \/>\s*\) : snapshot\.specSheet \? <SpecSheet sheet=\{snapshot\.specSheet\} \/> : null\}/,
     'beside when there is room, the sheet otherwise');
-  assert.match(panel, /data-agent-session-chat>[\s\S]*<ChangesDrawer[\s\S]*<\/div>\s*\{beside \?/,
+  assert.match(panel, /data-agent-session-chat[^>]*>[\s\S]*<ChangesDrawer[\s\S]*<\/div>\s*\{beside \?/,
     'the changes drawer covers the chat, not the pane beside it');
   assert.match(panel, /role="separator"\s+aria-orientation="vertical"\s+aria-label=\{showing === 'preview' \? t\('agent:session\.sidePane\.resizePreview'\) : t\('agent:session\.sidePane\.resizeSpec'\)\}/);
   assert.equal(message('agent:session.sidePane.resizePreview'), 'Resize the preview');

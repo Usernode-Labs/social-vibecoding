@@ -119,6 +119,7 @@ const OFFER_WORDS = Object.freeze({
   file_request: { yes: 'File it', no: 'Not now' },
   withdraw_change: { yes: 'Withdraw it', no: 'Keep it' },
   close_request: { yes: 'Propose to close', no: 'Keep it open' },
+  try_again: { yes: 'Let it try again', no: 'Not now' },
 });
 
 let sharedConfig = null;
@@ -886,9 +887,7 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
   if (change && Number(change.app_id) === Number(app.id)) {
     const own = Number(change.user_id) === Number(bot.id) && !change.is_headless;
     const request = Array.isArray(change.linked_issues) && change.linked_issues.length ? Number(change.linked_issues[0]) : null;
-    const { rows: [rev] } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`, [change.id],
-    );
+    const counts = await followup.revisionCounts(pool, change.id);
     const asks = await askState(pool, change.id);
     const busy = await changeBusy(pool, change.id);
     lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR ${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${own ? 'built by you' : 'built by somebody else'}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
@@ -897,7 +896,10 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     if (repoRef.isGithub(app.repo_url)) lines.push('On this project a change is written as PR N, from GitHub\'s own counter; #N is only ever a request.');
     if (change.check_state) lines.push(`Its checks: ${change.check_state}.`);
     if (own) {
-      lines.push(`You have updated it ${rev?.n || 0} of ${followup.MAX_REVISIONS} times you may on your own.`);
+      lines.push(`You have made ${counts.own} of ${followup.MAX_REVISIONS} fixes on it by yourself, and ${counts.asked} of ${followup.MAX_ASKED_REVISIONS} updates people asked for.`);
+      if (counts.own >= followup.MAX_REVISIONS && !counts.openGrant) {
+        lines.push('You stopped at your own limit, so you cannot fix it again until the person who asked for it or an admin lets you try once more (let_try_again).');
+      }
       lines.push(busy || asks.running
         ? `A run on it is going right now${asks.queued ? `, and ${asks.queued} more ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} behind it` : ''}.`
         : asks.queued ? `${asks.queued} ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} for its next update.` : 'Nothing is running on it now.');
@@ -1059,6 +1061,10 @@ function toolsFor(place, {
       ...(['chat', 'category', 'message'].includes(place.type)
         ? { change: { type: 'integer', description: 'Which of your changes: its change id from the facts.' } } : {}),
     }, ['description']));
+    tools.push(fn('let_try_again', 'Let yourself try once more at a change you stopped fixing on your own, when the person who asked for it or an admin asks you to try again or continue.', {
+      ...(['chat', 'category', 'message'].includes(place.type)
+        ? { change: { type: 'integer', description: 'Which of your changes: its change id from the facts.' } } : {}),
+    }, []));
     if (place.type !== 'chat' && place.type !== 'category' && place.type !== 'message') {
       tools.push(fn('offer_withdraw', 'Offer to withdraw your change: its requester or the project\'s owner taps Withdraw it.', {
         why: { type: 'string', description: 'Why, in their words.' },
@@ -1153,11 +1159,11 @@ async function changeGate(pool, { app, change, speaker, settings, bot, deps = {}
   if (await require('./conversations').blockedEitherWay(pool, bot.id, speaker.id)) {
     return refused('You cannot act for them: one of you has blocked the other. Nothing was queued.');
   }
-  const { rows: [rev] } = await pool.query(
-    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`, [change.id],
-  );
-  if ((rev?.n || 0) >= followup.MAX_REVISIONS) {
-    return refused(`You have already updated this change ${rev.n} times, as many as you may on your own. Nothing was queued. A person can make the change.`);
+  // #6284: updates people asked for have their own, higher limit; the bot's
+  // own three never stop an ask.
+  const counts = await followup.revisionCounts(pool, change.id);
+  if (counts.asked >= followup.MAX_ASKED_REVISIONS) {
+    return refused(followup.askedLimitText());
   }
   if (await dm.overWeeklyAllowance(pool, settings, speaker.id)) {
     return refused('Their building time for this week is used up, so the change cannot be made this week. Nothing was queued. It resets on Monday.');
@@ -1576,6 +1582,8 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         return await updateChange(pool, ctx, args);
       case 'update_change_description':
         return await updateChangeDescription(pool, ctx, args);
+      case 'let_try_again':
+        return await letTryAgain(pool, ctx, args);
       case 'offer_withdraw':
         return await offerWithdraw(pool, ctx, args);
       case 'tell_me_when':
@@ -1669,6 +1677,21 @@ async function updateChange(pool, ctx, args) {
   }
   const gate = await changeGate(pool, { app, change, speaker: user, settings, bot, deps });
   if (!gate.ok) return gate;
+  // #6284: a plain "try again" to the bot on a stopped change counts the
+  // same as pressing Let it try again: one grant, one more round.
+  if (/^(?:please\s+|can you\s+|could you\s+)?(?:try again|try once more|keep trying|continue)\b/i.test(instruction)) {
+    const retry = require('./homeroom-bot-retry-grants');
+    const out = await retry.grant(pool, { sessionId: change.id, user, deps });
+    if (out.ok) {
+      ctx.revised = true;
+      return {
+        ok: true,
+        said: 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.',
+      };
+    }
+    if (out.why === 'not_allowed') return { ok: false, error: retry.grantRefusalText(out.why) };
+    // Not stopped (or a try is already waiting): their words are an ask.
+  }
   const asked = await recordAsk(pool, {
     appId: app.id, sessionId: change.id, issueNumber: gate.issueNumber, askerId: user.id, instruction,
     source: place.type === 'session' ? 'thread' : place.type, place, messageId: ctx.triggerMessage.id,
@@ -1685,6 +1708,27 @@ async function updateChange(pool, ctx, args) {
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
     next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed. You may also offer to tell them here when it is ready to vote (tell_me_when), if they would like that.',
+  };
+}
+
+/**
+ * #6284: somebody asked the bot to try again at a change it stopped fixing
+ * on its own. The same grant the Let it try again button makes: the
+ * requester or an admin may; one grant is one more round.
+ */
+async function letTryAgain(pool, ctx, args) {
+  const { place, user, deps } = ctx;
+  if (ctx.offer) return { error: 'One offer per reply.' };
+  const sessionId = place.type === 'session' ? place.ref
+    : ctx.requestChange?.id || Number(args.change) || (ctx.open.length === 1 ? ctx.open[0].change : null);
+  if (!sessionId) return { ok: false, error: 'Which change: ask which one, or name it. Nothing was queued.' };
+  const out = await require('./homeroom-bot-retry-grants').grant(pool, {
+    sessionId: Number(sessionId), user, deps,
+  });
+  if (!out.ok) return { ok: false, error: require('./homeroom-bot-retry-grants').grantRefusalText(out.why) };
+  return {
+    ok: true,
+    said: 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.',
   };
 }
 
@@ -2030,6 +2074,16 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp =
     return settle('done', { issueNumber: n }, n
       ? `Filed as request ${requestMd(domainOf(deps), full.slug, n)}${here.builds ? '. I\'ll start on it, and the chip on the message shows how it goes.' : ', for the group.'}`
       : 'Filed.');
+  }
+  if (offer.kind === 'try_again') {
+    // #6284: the same grant the change's Testing card makes.
+    const out = await require('./homeroom-bot-retry-grants').grant(pool, {
+      sessionId: Number(args.sessionId), user, deps,
+    });
+    if (!out.ok) {
+      return settle('failed', { error: out.why }, require('./homeroom-bot-retry-grants').grantRefusalText(out.why));
+    }
+    return settle('done', { sessionId: Number(args.sessionId) }, 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.');
   }
   return settle('failed', { error: 'unknown_kind' }, null);
 }

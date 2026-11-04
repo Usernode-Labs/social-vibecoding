@@ -894,13 +894,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "3b9fc58f8fe52776a79d",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
       "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
@@ -925,6 +918,13 @@
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "e6089463636a4a45d8c7",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
     {
       "source": "src/routes/votes.js",
@@ -1104,7 +1104,7 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "0845e9641752ec7b9b25",
+      "fingerprint": "175574c444ff7c922367",
       "count": 1,
       "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
     },
@@ -1125,9 +1125,9 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "5cb936ab4f83b98b7c6a",
+      "fingerprint": "4bd9d2cd7633576a398b",
       "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS count FROM conversation_messages m WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0) AND (m.thread_root_id IS NULL OR ${ALSO_IN_C"
+      "preview": "`SELECT COUNT(*)::int AS count FROM conversation_messages m WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0) AND (m.thread_root_id IS NULL OR (${ALSO_IN_"
     },
     {
       "source": "src/services/conversations.js",
@@ -1159,17 +1159,17 @@
     },
     {
       "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "01e08fd9d8d7511b2ca6",
+      "kind": "runtime-expression",
+      "fingerprint": "96c1fb05c4f66e1d6284",
       "count": 1,
-      "preview": "`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE ${tables.join(', ')} FROM ${role}`"
+      "preview": "statements.join(';\\n')"
     },
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
-      "fingerprint": "0cc0689e7562bfd29e9d",
+      "fingerprint": "01e08fd9d8d7511b2ca6",
       "count": 1,
-      "preview": "`GRANT SELECT ON TABLE ${item.name} TO ${runtime}, ${reader}; REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE ${item.name} FROM ${runtime}"
+      "preview": "`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE ${tables.join(', ')} FROM ${role}`"
     },
     {
       "source": "src/services/database-role-grants.js",
@@ -1188,6 +1188,13 @@
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
+      "fingerprint": "5595dfe45f4625d5d3a3",
+      "count": 1,
+      "preview": "` SELECT c.oid::regclass::text AS name, c.relkind AS kind, n.nspname || '.' || c.relname AS qualified_name, ${required('$3')} AS web_ready, ${required('$4')} AS"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
       "fingerprint": "592ffe03aaeca8bcf3cb",
       "count": 1,
       "preview": "`SELECT count(*)::int AS n FROM public.platform_processes WHERE role IN ('web', 'all') AND heartbeat_at > now() - make_interval(secs => $1) AND NOT ${table.reco"
@@ -1202,37 +1209,9 @@
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
-      "fingerprint": "8dfce378dabb4eacb36e",
-      "count": 1,
-      "preview": "`REVOKE CREATE ON SCHEMA ${schema} FROM PUBLIC; GRANT USAGE ON SCHEMA ${schema} TO ${runtime}, ${reader}; ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA $"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
       "fingerprint": "9b13ef88245dc8d28eb9",
       "count": 1,
       "preview": "`GRANT SELECT ON TABLE ${tables.join(', ')} TO ${role}`"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "9f766fdb6eafbeca0016",
-      "count": 1,
-      "preview": "`GRANT SELECT ON ${kind} ${item.name} TO ${reader}`"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "bcac2736e4c8905c37f8",
-      "count": 1,
-      "preview": "`GRANT EXECUTE ON ROUTINE ${item.name} TO ${runtime}`"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "e108d5d62c6e003e3f4a",
-      "count": 1,
-      "preview": "`GRANT ${privileges} ON ${kind} ${item.name} TO ${isKernelRelation(item.qualified_name) ? conductor : runtime}`"
     },
     {
       "source": "src/services/db-manager.js",
@@ -1258,13 +1237,6 @@
     {
       "source": "src/services/debug-access.js",
       "kind": "runtime-built-identifier",
-      "fingerprint": "35f1322f2f4f01e6afff",
-      "count": 1,
-      "preview": "stmt"
-    },
-    {
-      "source": "src/services/debug-access.js",
-      "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
       "count": 1,
       "preview": "sql"
@@ -1282,6 +1254,13 @@
       "fingerprint": "8d1c343d22d20864eb5c",
       "count": 1,
       "preview": "`GRANT CONNECT ON DATABASE ${quoteIdent(dbName)} TO ${ROLE}`"
+    },
+    {
+      "source": "src/services/debug-access.js",
+      "kind": "structural-template",
+      "fingerprint": "b2a10721e45b83a06b27",
+      "count": 1,
+      "preview": "`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE};\\n${grants.join(';\\n')}`"
     },
     {
       "source": "src/services/debug-access.js",
@@ -1412,16 +1391,16 @@
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
-      "fingerprint": "78c2595a6c02401a3e85",
+      "fingerprint": "43c3069c8da8dec5a75e",
       "count": 1,
-      "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
+      "preview": "`WITH mine AS ( SELECT r.app_id, r.issue_number, r.issue_title, r.first_version FROM homeroom_bot_requesters r WHERE r.user_id = $1 UNION SELECT q.app_id, q.iss"
     },
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
-      "fingerprint": "9b96d2f7309cadf020cc",
+      "fingerprint": "78c2595a6c02401a3e85",
       "count": 1,
-      "preview": "`WITH mine AS ( SELECT r.app_id, r.issue_number, r.issue_title, r.first_version FROM homeroom_bot_requesters r WHERE r.user_id = $1 UNION SELECT q.app_id, q.iss"
+      "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
     },
     {
       "source": "src/services/homeroom-bot-progress.js",
@@ -1767,6 +1746,27 @@
       "preview": "`SELECT cs.id, cs.pr_number, COALESCE(cs.pr_title, cs.session_title) AS title, cs.pr_summary_md, cs.promoted_at, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.sess"
     },
     {
+      "source": "src/services/readonly-role-state.js",
+      "kind": "runtime-expression",
+      "fingerprint": "0e3d77e39cefc654ef46",
+      "count": 1,
+      "preview": "parents.map(r => r.statement).join(';\\n')"
+    },
+    {
+      "source": "src/services/readonly-role-state.js",
+      "kind": "runtime-expression",
+      "fingerprint": "4158e120b354740d5079",
+      "count": 1,
+      "preview": "rows.map(r => r.statement).join(';\\n')"
+    },
+    {
+      "source": "src/services/readonly-role-state.js",
+      "kind": "runtime-expression",
+      "fingerprint": "bbbdcbfee234c00be0b4",
+      "count": 1,
+      "preview": "overrides.map(r => r.statement).join(';\\n')"
+    },
+    {
       "source": "src/services/report-ai.js",
       "kind": "structural-template",
       "fingerprint": "6300e3c7db647c91a87a",
@@ -1907,6 +1907,13 @@
       "preview": "`SELECT cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'ru"
     },
     {
+      "source": "src/services/thread-reads.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 1,
+      "preview": "sql"
+    },
+    {
       "source": "src/services/threads.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "3e276e9485da30387b4b",
@@ -1926,13 +1933,6 @@
       "fingerprint": "0d73f67849537e7007aa",
       "count": 1,
       "preview": "`/* challenge onboarding */ SELECT c.id, c.season_event_id, c.challenge_template_id, c.display_order, c.enabled, c.completed, COALESCE(c.schedule_start, ct.sche"
-    },
-    {
-      "source": "src/services/topochain/db-console-role.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "35f1322f2f4f01e6afff",
-      "count": 1,
-      "preview": "stmt"
     },
     {
       "source": "src/services/topochain/db-console-role.js",
@@ -1961,6 +1961,13 @@
       "fingerprint": "a4497f4684c07f2bfa7c",
       "count": 1,
       "preview": "`GRANT ${ROLE} TO ${quoteIdent(dbUser)}`"
+    },
+    {
+      "source": "src/services/topochain/db-console-role.js",
+      "kind": "structural-template",
+      "fingerprint": "b2a10721e45b83a06b27",
+      "count": 1,
+      "preview": "`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE};\\n${grants.join(';\\n')}`"
     },
     {
       "source": "src/services/topochain/db-export.js",

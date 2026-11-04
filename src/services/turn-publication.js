@@ -11,7 +11,11 @@ const effects = require('./turn-effects');
 const savedWork = require('./worker-unpushed-commit');
 
 const EFFECT = 'git_publication';
-const RETRY_MS = [1000, 2000, 5000, 10000];
+// A temporary refusal (a 5xx from the host, a timeout, a dropped connection)
+// gets about five minutes: 15 s, 1 min, 4 min. A pass through this schedule
+// rides out a short GitHub incident (4 Nov 2026, #6267). The durable
+// attempts/retryAt receipt lets a restart resume the same attempt.
+const RETRY_MS = [15000, 60000, 240000];
 
 // Old records can lack a UUID. Their unique journal still names one physical
 // attempt; use a deterministic UUID in the existing receipt table.
@@ -50,8 +54,9 @@ function apply(result, outcome) {
 }
 
 async function publish({ pool, sessionId, turnId, journal, mode, branchName, result, push,
-  now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+  now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), retryMs = RETRY_MS }) {
   if (!eligible(mode, result)) return result;
+  const waits = Array.isArray(retryMs) ? retryMs : RETRY_MS;
   const role = require('./process-role');
   if (!role.runsWorkflow(role.processRole())) throw new Error('Turn publication requires a conductor');
   let lost = false;
@@ -113,8 +118,12 @@ async function publish({ pool, sessionId, turnId, journal, mode, branchName, res
             message: String(err.message || 'Publication failed').slice(0, 2000), userMessage: err.userMessage || null };
         }
         if (lost) throw new Error('Turn publication lost its lock');
-        if (outcome.ok || outcome.permanent || attempts > RETRY_MS.length) return finish(outcome);
-        const wait = RETRY_MS[attempts - 1];
+        if (outcome.ok || outcome.permanent || attempts > waits.length) {
+          // Ran out of retries on a temporary failure: the caller keeps the
+          // session and its saved commit and asks for this again later.
+          return finish(outcome.ok || outcome.permanent ? outcome : { ...outcome, exhausted: true });
+        }
+        const wait = waits[attempts - 1];
         await pool.query(`UPDATE turn_effects SET result = $3::jsonb, updated_at = NOW()
           WHERE turn_id = $1 AND effect_key = $2 AND state = 'pending'`,
         [id, EFFECT, JSON.stringify({ ...intent, attempts, retryAt: now() + wait, lastFailure: outcome })]);
@@ -149,4 +158,4 @@ async function beforeCleanup(pool, sessionId, turn) {
   } });
 }
 
-module.exports = { publish, captureTarget, beforeCleanup, eligible, receiptId, EFFECT };
+module.exports = { publish, captureTarget, beforeCleanup, eligible, receiptId, EFFECT, RETRY_MS };

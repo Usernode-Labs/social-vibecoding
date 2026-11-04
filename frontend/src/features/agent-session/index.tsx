@@ -1811,6 +1811,20 @@ export function StopStatus({ turn, onStop }: {
   );
 }
 
+/**
+ * Files pasted, picked or dropped into a session join its tray (#4065,
+ * #6254). A pasted screenshot gets a name. Module-level so the chat column
+ * around the box can take a drop, as the box always did.
+ */
+function takeSessionFiles(list: FileList | File[] | null | undefined): boolean {
+  const picked = Array.from(list || []);
+  if (!picked.length) return false;
+  addAttachments(picked.map((file, index) => (
+    file.name && file.name !== 'image.png' ? file : new File([file], pastedName(file, index), { type: file.type })
+  )));
+  return true;
+}
+
 function Composer({ id }: { id: string }) {
   const t = useMessages('agent');
   // The fields the box draws from, and not the streamed text: a reply
@@ -2000,16 +2014,6 @@ function Composer({ id }: { id: string }) {
     sendTyped();
   }
 
-  // Pasted or dropped files join the tray (a pasted screenshot gets a name).
-  const takeFiles = (list: FileList | File[] | null | undefined) => {
-    const picked = Array.from(list || []);
-    if (!picked.length) return false;
-    addAttachments(picked.map((file, index) => (
-      file.name && file.name !== 'image.png' ? file : new File([file], pastedName(file, index), { type: file.type })
-    )));
-    return true;
-  };
-
   const onSendDraft = (draft: SavedDraft) => {
     if (running) return;
     if (needsLowCreditCheck(credit)) {
@@ -2049,14 +2053,12 @@ function Composer({ id }: { id: string }) {
     input.current?.focus();
   };
 
-  const drop = useFileDrag({ disabled: archived, onFiles: (dropped) => { takeFiles(dropped); } });
-
   const kind = saving ? 'save' : running ? 'stop' : 'send';
   return (
     // `platform-safe-bar` on the outer box: its padding clears the tab bar
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
-    <div className="platform-safe-bar shrink-0 px-3 pt-1" {...drop.handlers}>
+    <div className="platform-safe-bar shrink-0 px-3 pt-1">
     {archived ? (
       <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
         <span className="min-w-0 flex-1">{t('agent:session.composer.archivedNote')}</span>
@@ -2069,10 +2071,6 @@ function Composer({ id }: { id: string }) {
       className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}
     >
-      {/* #4065: the drop zone, over the card while a file is held anywhere
-          on the bar around it (the drop is the bar's, a little wider than
-          the card, so a near miss still attaches). */}
-      {drop.dragging ? <DropOverlay /> : null}
       {files.length ? (
         <PendingStrip
           id={`${id}-attachments`}
@@ -2109,7 +2107,7 @@ function Composer({ id }: { id: string }) {
         onChange={(event) => update(event.target.value)}
         onPaste={(event) => {
           if (archived || !event.clipboardData?.files?.length) return;
-          if (takeFiles(event.clipboardData.files)) event.preventDefault();
+          if (takeSessionFiles(event.clipboardData.files)) event.preventDefault();
         }}
         onKeyDown={(event) => {
           // Enter is a new line; Send (or Ctrl/Cmd+Enter, as in the dev chat) sends.
@@ -2162,7 +2160,7 @@ function Composer({ id }: { id: string }) {
           tabIndex={-1}
           aria-hidden="true"
           onChange={(event) => {
-            takeFiles(event.currentTarget.files);
+            takeSessionFiles(event.currentTarget.files);
             event.currentTarget.value = '';
           }}
         />
@@ -2439,6 +2437,12 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   }));
   const scroll = useRef<HTMLDivElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
+  // #6254: the whole chat column takes a dropped file, not just the box at
+  // its foot. An archived session, or one with no session yet, takes none.
+  const drop = useFileDrag({
+    disabled: snapshot.session?.status === 'archived' || !snapshot.session,
+    onFiles: takeSessionFiles,
+  });
   // The side pane beside the chat (the spec, a preview, or both), or the
   // spec over it (./spec-layout.ts). False until mounted, so the first
   // render is the one the prerender printed.
@@ -2519,7 +2523,8 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
 
   return (
     <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat {...drop.handlers}>
+        {drop.dragging ? <DropOverlay /> : null}
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
         <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 [overflow-wrap:anywhere]" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
