@@ -225,15 +225,12 @@ test('the topic frame carries the detail slot, as the general chat pane does', (
 // #6317: the slot opened only for a plan (`kind === 'plan'`), so a change's
 // before and after — which opens a `shots` entry, from the thumbnails and
 // from Expand (thread-changes.tsx ShotsPair) — was rendered but stayed
-// `display: none`. The store holds an entry only while something is open, so
-// the slot opens for every kind it can show.
+// `display: none`. The slot now opens through `slotOpens`, the rule
+// tests/ai-detail.test.js pins; this is that rule seen from the component
+// itself, so a shots entry that opens in the store is drawn open by the
+// markup app.css lays out.
 test('the detail slot opens for a shots entry, not only a plan (#6317)', () => {
   const SLOT = 'frontend/src/features/detail/detail-slot.tsx';
-  const slot = read(SLOT);
-  assert.match(slot, /const open = !!state\.entry;/,
-    'the open test is the entry itself, whatever its kind');
-  assert.doesNotMatch(slot, /state\.entry\.kind === 'plan'/,
-    'no kind gate keeps the before and after viewer closed');
 
   // Rendered through the real component: the store is stubbed to hold a
   // shots entry (its server snapshot is closed, so a real one renders shut).
