@@ -563,8 +563,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     const stranger = await app({ createdBy: author.id });
     await communities.join(pool, garden, me.id);
     await communities.join(pool, swap, me.id);
+    // #6245: the feed is ordered by when the vote opened (promoted_at), never
+    // by a change's last activity, so that is what these rows set.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, last_activity_at)
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, promoted_at)
        VALUES ($1, $2, 'promoted', $3, '## Why\n- because', 7, NOW() - $4::interval) RETURNING id`,
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(garden, 'Older change', '2 days');
@@ -612,8 +614,9 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     for (const a of [mine, strict]) await collaborate(a.id, me.id);
     // A rule asking for two Yes votes keeps the vote, as on the card.
     await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [strict.id]);
+    // #6245: a vote's place is when it opened, not the change's last activity.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, last_activity_at)
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at)
        VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
       [a.id, bot.id, title, ago])).rows[0].id;
     await promote(mine, 'Sunday reminder', '1 hour');
@@ -643,8 +646,9 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     // approver roster, under approver_policy='invited'.
     await pool.query('UPDATE apps SET approver_policy = \'invited\' WHERE id = $1', [approvers.id]);
     await pool.query('INSERT INTO app_approvers (app_id, user_id) VALUES ($1, $2)', [approvers.id, author.id]);
+    // #6245: a vote's place is when it opened, not the change's last activity.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, last_activity_at)
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at)
        VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(plain, 'Older deciding change', '2 days');
