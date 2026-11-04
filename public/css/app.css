@@ -608,6 +608,9 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    a phone — the same reading the dev session gives, where the session sheet
    sits ON the strip rather than abutting it. */
 .messages-thread-pane {
+  /* #6254: the pane is the thread's drop zone, so its outline (which lies
+     absolute over its parent) frames the whole thread. */
+  position: relative;
   flex-direction: column;
   width: 100%;
   min-width: 0;
@@ -2223,7 +2226,6 @@ form.agent-session-composer:focus-within {
 .messages-emoji-menu .messages-emoji-menu-list button[aria-selected="true"] { background: var(--messages-surface-2); }
 .messages-emoji-option-glyph { flex: none; width: 24px; font-size: 20px; line-height: 24px; text-align: center; }
 .messages-emoji-option-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay,
 .attach-drop-overlay {
   position: absolute;
@@ -2245,6 +2247,11 @@ form.agent-session-composer:focus-within {
    the card is the positioned parent. `#feedback-form` is "Suggest an
    improvement", where the whole form is the drop zone. */
 .attach-drop-overlay { inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--bg-primary) 94%, transparent); }
+/* #6254: the thread's outline frames the whole pane — header, messages and
+   box — since any of them takes the file. The reply thread beside a chat is
+   its own pane and its own zone. */
+.messages-thread-pane > .messages-drop-overlay,
+.messages-reply-pane > .messages-drop-overlay { inset: 8px; }
 .gc-composer-card,
 #gc-form,
 #gc-thread-form,
