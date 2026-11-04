@@ -309,7 +309,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(filed[0].title, 'Sort the list by due date');
     assert.equal(filed[0].messageId, id, 'the chip goes on their message');
     assert.equal(filed[0].fileKey, `voice-offer:${offer.id}`, 'filed under the act\'s key');
-    assert.match(sent[sent.length - 1].content, /Filed as request #13/);
+    assert.match(sent[sent.length - 1].content, /Filed as request \[#13\]\(https:\/\/[^)]*\/dev\/issues\/13\)/);
     const saidCount = sent.length;
     // Its work retried after it settled: nothing is filed or said twice.
     assert.deepEqual(await act('offer:1'), { decision: 'done' });
@@ -321,6 +321,27 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(message.metadata.homeroomBot.offer.status, 'done');
     assert.deepEqual(message.metadata.homeroomBot.actions, [], 'the buttons go for everybody');
     assert.ok(broadcasts.some((f) => f.type === 'chat_message_updated' && f.id === sent[0].id));
+  });
+
+  await t.test('a tap on Propose to close reports the vote with the request\'s link', async () => {
+    sent.length = 0;
+    const id = await say(sam, '@Homeroom bot #12 is done, close it');
+    const { rows: [o] } = await pool.query(
+      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, 'close_request', $2, $3) RETURNING id`,
+      [app.id, JSON.stringify({ issueNumber: 12, title: 'Show due dates', why: 'Done.' }), sam.id]);
+    const reply = await say(homeroomBot, 'Propose to close?', { type: 'message', ref: id }, { homeroomBot: { kind: 'voice', offer: { id: o.id, status: 'open' } } });
+    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [o.id, reply]);
+    // The request read and the vote's filing are stood in for: this is about
+    // what the settled report says.
+    const mayor = Object.create(require('../src/services/homeroom-bot-mayor'));
+    mayor.closeGate = async (p, a) => ({ ok: true, issueNumber: Number(a.issueNumber), issue: { title: 'Show due dates' } });
+    const out = await voice.actOnOffer(pool, {}, {
+      offerId: o.id, userId: sam.id, choice: 'yes', key: 'offer:close',
+      deps: { ws: { ...ws, async sendSystemMessage() {} }, mayor, workflow: { async fileProposal() {} } },
+    });
+    assert.deepEqual(out, { decision: 'done' });
+    assert.match(sent[sent.length - 1].content,
+      /^Done: a vote on closing request \[#12\]\(https:\/\/[^)]*\/dev\/issues\/12\) is open\. It closes if the group votes for it\.$/);
   });
 
   await t.test('a tap\'s act cut short after its claim carries on when its work is retried', async () => {
@@ -342,7 +363,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     const out = await voice.actOnOffer(pool, {}, { offerId: o.id, userId: sam.id, choice: 'yes', key: 'offer:cut', deps: { ws, chatSvc } });
     assert.deepEqual(out, { decision: 'done' }, 'its own claim passes');
     assert.equal(filed.length, 1);
-    assert.match(sent[sent.length - 1].content, /Filed as request #14/);
+    assert.match(sent[sent.length - 1].content, /Filed as request \[#14\]\(https:\/\/[^)]*\/dev\/issues\/14\)/);
     // Settled, and its process went before its line: the retry says it, once.
     const lines = sent.length;
     await pool.query(`DELETE FROM chat_messages WHERE metadata->'homeroomBot'->'turn'->>'key' = 'offer:cut:said'`);
@@ -351,7 +372,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
       { decision: 'done' });
     assert.equal(filed.length, 1, 'nothing filed again');
     assert.equal(sent.length, 1);
-    assert.match(sent[0].content, /Filed as request #14/);
+    assert.match(sent[0].content, /Filed as request \[#14\]\(https:\/\/[^)]*\/dev\/issues\/14\)/);
     await voice.actOnOffer(pool, {}, { offerId: o.id, userId: sam.id, choice: 'yes', key: 'offer:cut', deps: { ws, chatSvc } });
     assert.equal(sent.length, 1, 'and once');
     assert.ok(lines);
