@@ -7,6 +7,9 @@
 //
 // A new test file brings its own entry: `--add` writes it with the default
 // seconds and lists it as unmeasured, so it costs balance, not correctness.
+// A full refresh completes the tree the same way: a test file it did not
+// time gets the default and is listed as unmeasured, so a baseline written
+// on a branch cut before a new test file merged still names every file.
 // Run a full refresh now and then, not on every change, to replace those
 // placeholders with measured times: a plan made from durations a few weeks
 // old still balances well. Run it where the suite runs, for numbers that
@@ -94,8 +97,8 @@ function addEntries(raw, names) {
 
 /**
  * Write a baseline in the read-by-a-person layout: one file entry per line,
- * and the unmeasured list sorted. A full run has no list at all — every entry
- * is measured.
+ * and the unmeasured list sorted. A run that timed every file has no list at
+ * all; one that did not lists only the files it gave the default.
  */
 function writeBaseline(raw, file = shardPlan.DURATIONS_FILE) {
   const out = { ...raw };
@@ -106,6 +109,17 @@ function writeBaseline(raw, file = shardPlan.DURATIONS_FILE) {
     .replace(/\],"/g, '],\n"')
     .replace(/\},"tests\//g, '},\n"tests/');
   fs.writeFileSync(file, `${text}\n`);
+}
+
+/**
+ * `raw` with an entry for every named test file the run did not time: the
+ * default seconds and one core, listed as unmeasured. A run that times only
+ * part of the tree (a branch cut before a new test file merged, or a suite
+ * that stopped early) still writes a baseline complete for that tree.
+ */
+function withUntimed(raw, current) {
+  const timed = new Set(Object.keys(raw.files || {}));
+  return addEntries(raw, current.filter((name) => !timed.has(name))).raw;
 }
 
 function readBaseline() {
@@ -155,8 +169,10 @@ function main(argv = process.argv.slice(2)) {
   let overrides = {};
   try { overrides = JSON.parse(fs.readFileSync(shardPlan.DURATIONS_FILE, 'utf8')).overrides || {}; } catch { /* a first baseline */ }
   const note = `${new Date().toISOString().slice(0, 10)}, node ${process.version}, ${os.availableParallelism()} CPUs available`;
-  writeBaseline(baseline(files, note, overrides));
-  process.stdout.write(`test:durations: ${Object.keys(files).length} files written to ${path.relative(ROOT, shardPlan.DURATIONS_FILE)}\n`);
+  const next = withUntimed(baseline(files, note, overrides), shardPlan.listTestFiles(ROOT));
+  writeBaseline(next);
+  const untimed = next.unmeasured ? next.unmeasured.length : 0;
+  process.stdout.write(`test:durations: ${Object.keys(files).length} files measured${untimed ? `, ${untimed} not timed and given the default` : ''}; written to ${path.relative(ROOT, shardPlan.DURATIONS_FILE)}\n`);
   return 0;
 }
 
@@ -167,4 +183,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { summarise, baseline, addEntries, writeBaseline };
+module.exports = { summarise, baseline, addEntries, withUntimed, writeBaseline };

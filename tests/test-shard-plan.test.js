@@ -175,6 +175,16 @@ test('a refresh charges a file with its child processes, keeps each process\'s l
   assert.deepEqual(b.overrides, { 'tests/a.test.js': { cores: 5, why: 'x' } });
   assert.equal(b.defaultSeconds, 4, 'the median');
   assert.equal('unmeasured' in b, false, 'a full run measures every entry, so writes no placeholder list');
+
+  // A refresh that did not time every test file still writes a complete
+  // baseline: a file it did not see gets the default and is listed as
+  // unmeasured, so a branch cut before a new test file merged cannot leave
+  // main with a gap the next check fails on.
+  const current = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js'];
+  const complete = td.withUntimed(b, current);
+  assert.deepEqual(complete.files['tests/c.test.js'], [4, 1], 'the untimed file gets the default seconds');
+  assert.deepEqual(complete.unmeasured, ['tests/c.test.js']);
+  assert.deepEqual(shardPlan.baselineGaps(current, complete).missing, [], 'no file is left without an entry');
 });
 
 test('--add writes a default entry for a new file, lists it as unmeasured, and leaves known entries alone', () => {
