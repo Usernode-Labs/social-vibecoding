@@ -26,15 +26,35 @@ test('the design bot offers a plan and a project as cards, its tools last, and n
   }
   const plan = designBot.TOOLS.find((t) => t.function.name === 'offer_plan').function;
   assert.deepEqual(plan.parameters.properties.target.enum, ['request', 'new']);
+  assert.equal(plan.parameters.properties.project.type, 'string');
+  assert.match(plan.parameters.properties.project.description, /existing project/);
+  assert.match(plan.description, /pass project when they name an existing project/);
   assert.match(plan.description, /Never say it was posted: it is posted only when they tap\./);
   const prompt = designBot.designPrompt({
     username: 'ada', design: { surface: 'app', app: { name: 'Plant pal' }, title: 'List', width: 390, height: 844 }, version: 2, html: '<p>x</p>',
   });
   assert.match(prompt, /You never post, file or make anything yourself: when they say it looks good,\n {2}or ask to post it, offer it with offer_plan/);
+  assert.match(prompt, /offer it with offer_plan and project when they name an existing project to put it on, and with offer_project\n {2}only when they want a new project/);
   const src = read('src/services/design-bot.js');
   assert.match(src, /if \(offered && !changed && !error\) \{\n {4}return mayor\.sendDesignOffer\(/, 'the card is the turn\'s answer');
   assert.match(src, /key: `hrbot-design-offer-\$\{message\.id\}`/, 'or follows the version the same turn made');
   assert.match(src, /if \(design && !\['open', 'posted', 'filed'\]\.includes\(design\.state\)\) return say\(CLOSED_TEXT\);/, 'a posted design is still worked on');
+});
+
+test('a new-project design\'s plan says it was drawn with Homeroom\'s own stylesheets', () => {
+  const designs = require('../src/services/design-threads');
+  const html = designs.planHtml({
+    design: { width: 390, height: 844, title: 'Saved replies', route: null, surface: 'new' },
+    title: 'Saved replies', notes: '', before: null, after: '<main><h1>Saved replies</h1></main>', version: 3,
+  });
+  assert.match(html, /a mockup drawn with Homeroom's own stylesheets/);
+  assert.doesNotMatch(html, /drawn with the project's stylesheets/);
+  assert.equal(designs.planDesignVersion(html), 3);
+  const ofProject = designs.planHtml({
+    design: { width: 390, height: 844, title: 'List', route: null, surface: 'app' },
+    title: 'List', notes: '', before: null, after: '<main>x</main>', version: 2,
+  });
+  assert.match(ofProject, /a mockup drawn with the project's stylesheets/);
 });
 
 test('a plan\'s card carries only yes or no: the request is the server\'s', () => {
@@ -49,7 +69,7 @@ test('a plan\'s card carries only yes or no: the request is the server\'s', () =
   ]);
   const settle = read('src/services/homeroom-bot-mayor.js');
   assert.match(settle, /if \(action\.kind === 'post_design'\) return decidePostDesign\(pool, config, \{ user, action, yes, ack, key, deps: actDeps \}\);/);
-  assert.match(settle, /issueNumber: Number\(action\.source_issue_number\) > 0 \? Number\(action\.source_issue_number\) : null, deps,/);
+  assert.match(settle, /issueNumber: Number\(action\.source_issue_number\) > 0 \? Number\(action\.source_issue_number\) : null,\n {6}appId: Number\(action\.app_id\) \|\| null, deps,/);
   const migration = read('src/db/migrations/0005-plans-and-projects.sql');
   assert.match(migration, /'post_reply',\n {18}'post_design'\)\);/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS built_from_session_id INTEGER;/);

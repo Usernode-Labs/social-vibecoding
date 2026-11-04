@@ -415,12 +415,14 @@ const TOOLS = Object.freeze([
         + 'they tap. Leave target out to offer it on the request this thread is about (or the one it was posted on '
         + 'before); with none, the card asks New request or Add to an existing request. target "new" offers a new '
         + 'request; target "request" with issueNumber offers the request they named, by the number they gave you. '
+        + 'For a design with no project yet, pass project when they name an existing project to put it on. '
         + 'Never say it was posted: it is posted only when they tap.',
       parameters: {
         type: 'object',
         properties: {
           target: { type: 'string', enum: ['request', 'new'] },
           issueNumber: { type: 'integer', description: 'The request they named, in their own words.' },
+          project: { type: 'string', description: 'The existing project they named, by its name or slug, in their words.' },
         },
         additionalProperties: false,
       },
@@ -763,8 +765,10 @@ function designPrompt({
     '- If what they ask is unclear, ask one short question instead of guessing. Never say you drew or changed something',
     '  you did not draw with write_screen or change with edit_design.',
     '- You never post, file or make anything yourself: when they say it looks good,',
-    '  or ask to post it, offer it with offer_plan (a design for a new project: offer_project), and their tap on the',
-    '  card does it. Propose it above the preview does the same. After "Add to an existing request", ask which one.',
+    '  or ask to post it, offer it with offer_plan, and their tap on the card does it. A design for a new project:',
+    '  offer it with offer_plan and project when they name an existing project to put it on, and with offer_project',
+    '  only when they want a new project. Propose it above the preview does the same. After "Add to an existing',
+    '  request", ask which one.',
     // Homeroom bot parity (P2, P8).
     '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it up',
     '  again." Never tell them to close it on their side: there is no such control.',

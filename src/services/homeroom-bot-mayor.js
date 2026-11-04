@@ -3862,11 +3862,28 @@ const MAX_PROJECT_NAME = 60;
  * for the model.
  */
 async function checkPlanOffer(pool, { user, design, args = {}, deps = {} }) {
+  let app = null;
   if (!design?.app) {
-    return { ok: false, error: 'This design has no project yet, so it cannot be a plan on a request. When it is for a new project and they like it, offer to make the project with offer_project.' };
+    // A design for a screen that has no project yet: the project they named.
+    const asked = String(args.project || '').trim();
+    if (!asked) {
+      return { ok: false, error: 'Which project should it go on? Ask them, then offer it again with project. If they want a new project, offer_project.' };
+    }
+    app = await findApp(pool, asked);
+    if (!app || !(await canView(pool, app, user))) {
+      return { ok: false, error: `There is no project called ${clip(asked, MAX_PROJECT_NAME)} that they can see. Ask them which one.` };
+    }
+  } else {
+    app = await findApp(pool, design.app.slug);
+    if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'Its project is not one they can see.' };
+    const asked = String(args.project || '').trim();
+    if (asked) {
+      const named = await findApp(pool, asked);
+      if (named && Number(named.id) !== Number(app.id)) {
+        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project.` };
+      }
+    }
   }
-  const app = await findApp(pool, design.app.slug);
-  if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'Its project is not one they can see.' };
   const name = app.name || app.slug;
   if (!(await canFile(pool, app, user))) {
     return { ok: false, error: `They need to join ${name} before a plan can go on it. Tell them they can join it from its page.` };
@@ -3985,7 +4002,8 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
   try {
     posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
       user, rootId: Number(thread.root_message_id), version: Number(action.design_version) || null,
-      issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null, deps,
+      issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null,
+      appId: Number(action.app_id) || null, deps,
     });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not post a design as a plan', { actionId: action.id, err: err.message });
