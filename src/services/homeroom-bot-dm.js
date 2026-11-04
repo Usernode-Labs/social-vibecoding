@@ -442,6 +442,8 @@ const RINGING_MOMENTS = new Set(['needs_you', 'ready', 'stopped', 'on_hold', 'li
 const BUILD_SAID = Object.freeze({
   time: 'build_time', restart: 'build_restart', restarts: 'build_restart', no_change: 'build_no_change',
   unproposed: 'build_not_proposed', no_start: 'build_no_start', other: 'build_other',
+  // #6313: nothing was built; the plan could not be written.
+  plan: 'build_no_plan',
 });
 
 /** Pure: the contract's moment for a message of the bot's, by its kind, or null. */
@@ -1395,6 +1397,11 @@ function buildFailedCause(reason) {
   if (/could not start|would not start|could not open a session|could not create its branch/.test(r)) {
     return { cause: 'no_start' };
   }
+  // #6313: the plan turn ended before it wrote a plan (homeroom-bot-live.js
+  // buildAndPropose: "no plan could be written (…)", the spec turn's final
+  // message "only part of a spec"). Nothing was built, so it is never said as
+  // something that went wrong "during the build".
+  if (/no plan could be written|only part of a spec/.test(r)) return { cause: 'plan' };
   return { cause: 'other' };
 }
 
@@ -1422,6 +1429,8 @@ const FAILED_SAID = Object.freeze({
     push: (d, it) => `I built ${it}, but GitHub refused the upload (GitHub is having problems right now). I'll try again in a few minutes.`,
     push_permanent: (d, it) => `I built ${it}, but GitHub wouldn't take the upload, and sending it again won't help.`,
     push_gave_up: (d, it) => `I built ${it}, but GitHub kept refusing the upload, so I've stopped trying for now.`,
+    // #6313: nothing was built, so it says the plan, never "during the build".
+    plan: (d, it) => `I couldn't finish writing the plan for ${it}.`,
     other: (d, it) => `I couldn't ${d.verb} ${it}: something went wrong while I was working on it.`,
   }),
   bot: Object.freeze({
@@ -1434,6 +1443,8 @@ const FAILED_SAID = Object.freeze({
     push: (d, it) => `Homeroom bot built ${it}, but GitHub refused the upload (GitHub is having problems right now). It will try again in a few minutes.`,
     push_permanent: (d, it) => `Homeroom bot built ${it}, but GitHub wouldn't take the upload, and sending it again won't help.`,
     push_gave_up: (d, it) => `Homeroom bot built ${it}, but GitHub kept refusing the upload, so it has stopped trying for now.`,
+    // #6313: nothing was built, so it says the plan, never "during the build".
+    plan: (d, it) => `Homeroom bot couldn't finish writing the plan for ${it}.`,
     other: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: something went wrong during the ${d.noun}.`,
   }),
 });
@@ -1609,6 +1620,9 @@ function requestNews(kind, dm, context) {
         // #6267: the platform retries a temporary refusal itself, so the
         // maker is not asked to do anything; the others say how a tap helps.
         if (cause === 'push') return why;
+        // #6313: a retry already queued (or the bot trying again by itself)
+        // is not something a person has to ask for.
+        if (dm.retrying === true) return `${why} I'm trying again.`;
         if (cause === 'push_gave_up') return `${why} Tap Try again and I'll send it.`;
         return `${why} ${finishes ? 'Tap Try again and I\'ll finish it.' : 'Tap Try again and I\'ll start over.'}`;
       }
@@ -1618,6 +1632,10 @@ function requestNews(kind, dm, context) {
         const cause = buildFailedCause(dm.reason).cause;
         const words = `${line}\n\n${buildFailedWords(dm.reason, it)}`;
         if (cause === 'push') return words;
+        // #6313: only ask for a reply when a reply is what restarts it. A
+        // failure the bot is already trying again by itself says so instead
+        // of asking for something that is already happening.
+        if (dm.retrying === true) return `${words} I'm trying again.`;
         if (cause === 'push_gave_up') return `${words} Reply here and I'll send it again.`;
         return `${words} Reply here and I'll try again.`;
       }

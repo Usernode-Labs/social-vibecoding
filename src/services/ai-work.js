@@ -371,6 +371,9 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
   // #6228: a read the bot started after somebody replied is reading that
   // reply, not the request again.
   if (said && bot.stage === 'reading' && bot.reply === true) said = { group: 'next', what: 'reading_reply' };
+  // #6313: a read queued again after a plan that could not be written is
+  // retrying the plan, not waiting for a free builder as if nothing happened.
+  if (said && said.what === 'queued' && bot.retry === 'plan') said = { group: 'waiting', what: 'retrying_plan' };
   // 1 Nov 2026: Homeroom bot waits for their plan, which nothing it is
   // queued for overtakes: Waiting for your plan, until a change is up.
   if (row.awaiting_plan === true && !status && row.request_state === 'open' && (!said || said.group === 'waiting')) {
@@ -503,7 +506,7 @@ const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, updating
 // build waiting its turn or held back, a request waiting to be read, then one
 // nobody has picked up.
 const WAITING_ORDER = {
-  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, update_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5,
+  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, update_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, retrying_plan: 4, on_hold: 5,
   not_picked_up: 6, needs_person: 6, nothing_to_build: 6, operator: 6, not_read: 6,
 };
 
@@ -591,6 +594,9 @@ async function botStages(pool, user, deps = {}) {
         // #6228: only a read of a reply says so; every other stage keeps the
         // shape it had.
         ...(state && state.reply === true ? { reply: true } : {}),
+        // #6313: and only a read queued after a plan that could not be
+        // written says it is retrying the plan.
+        ...(state && state.retry ? { retry: state.retry } : {}),
       });
     }
   } catch (err) {
@@ -868,6 +874,8 @@ const THREAD_SAYS = Object.freeze({
   revising: 'Homeroom bot is following up on the replies',
   reading: 'Homeroom bot is reading it',
   reading_reply: 'Homeroom bot is reading the newest reply',
+  // #6313: queued again after a plan that could not be written.
+  retrying_plan: 'Homeroom bot is trying the plan again',
   building: 'being built',
   vote: 'waiting for votes',
   decision: 'waiting for votes',

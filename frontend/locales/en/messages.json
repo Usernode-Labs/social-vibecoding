@@ -6082,5 +6082,17 @@
   "ai.thread.aboutChangeUntitledPr": {
     "text": "Change PR {{number}}",
     "description": "The name over a private thread with Homeroom bot that was opened from a change's page, when the change's title is not known. On a project whose code is on GitHub, the change's number is written PR, not #."
+  },
+  "bot.track.line.queued.planRetry": {
+    "text": "Retrying the plan",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn in the chat with the bot, a request's thread, the request's page and the bot's slots page. Its line for a request queued to be read again after Homeroom bot could not write its plan, so it is trying the plan again."
+  },
+  "ai.short.retryPlan": {
+    "text": "Retrying the plan",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: Homeroom bot is queued to try the plan again after it could not write one, and has not started reading the request yet."
+  },
+  "ai.up.retryingPlan": {
+    "text": "Homeroom bot is trying the plan again",
+    "description": "The AI tab's main view: the tooltip of a one-line row in Waiting whose request is queued to be read again after Homeroom bot could not write its plan."
   }
 }
