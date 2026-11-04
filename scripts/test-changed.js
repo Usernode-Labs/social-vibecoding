@@ -71,10 +71,18 @@
 // The command is the `test` script from package.json with the selected
 // files in place of its glob, so the two cannot drift: same preload, same
 // flags, same timeout.
+//
+// ── A new test file brings its baseline entry ──────────────────────────
+//
+// Every test file must appear in tests/baselines/test-durations.json, or the
+// unit suite fails on the change that adds it (tests/test-shard-plan.test.js).
+// A new suite here is reported with the one command that adds it, and the
+// run ends with a failure: `npm run test:durations -- --add <files>`.
 
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const shardPlan = require('./test-shard-plan');
 
 const ROOT = path.resolve(__dirname, '..');
 const TESTS_DIR = 'tests';
@@ -319,6 +327,19 @@ function testCommand(packageJson, suites) {
   return [...script.slice(0, -SUITE_GLOB.length).trim().split(/\s+/), ...suites];
 }
 
+// The new test files this change adds that have no entry in the baseline:
+// every test file must be named there, so the unit suite stays green on main
+// (tests/test-shard-plan.test.js). An unreadable baseline (null) counts as
+// missing every one. `exists` ignores a deleted file still in the diff.
+function missingBaselineEntries(changed, baselineFiles = readBaselineFiles(), exists = (file) => fs.existsSync(path.join(ROOT, file))) {
+  return changed.filter((file) => isSuite(file) && exists(file)
+    && (baselineFiles === null || !Object.prototype.hasOwnProperty.call(baselineFiles, file)));
+}
+
+function readBaselineFiles() {
+  try { return JSON.parse(fs.readFileSync(shardPlan.DURATIONS_FILE, 'utf8')).files || {}; } catch { return null; }
+}
+
 function main(argv = process.argv.slice(2)) {
   const opts = parseArgs(argv);
   if (opts.help) {
@@ -366,21 +387,27 @@ function main(argv = process.argv.slice(2)) {
     process.stdout.write(`  + ${guards.length} tree-wide guard suite${guards.length === 1 ? '' : 's'}, run on every change:\n`);
     for (const suite of guards) process.stdout.write(`    ${suite}\n`);
   }
+  const missingDurations = missingBaselineEntries(changed);
+  if (missingDurations.length) {
+    process.stdout.write('These new test files have no entry in tests/baselines/test-durations.json; add them with:\n'
+      + `  npm run test:durations -- --add ${missingDurations.join(',')}\n`);
+    for (const file of missingDurations) process.stdout.write(`    ${file}\n`);
+  }
   const selected = [...selection.suites, ...guards].sort();
   if (!selected.length) {
     process.stdout.write('test:changed: nothing to run — no suite reads any of the changed files.\n');
-    return 0;
+    return missingDurations.length ? 1 : 0;
   }
   const command = testCommand(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')), selected);
   process.stdout.write(`Running ${selected.length} of ${suites.length} suites:\n  ${command.join(' ')}\n`);
-  if (opts.list) return 0;
+  if (opts.list) return missingDurations.length ? 1 : 0;
   const [bin, ...args] = command;
   const run = spawnSync(bin === 'node' ? process.execPath : bin, args, { cwd: ROOT, stdio: 'inherit' });
-  return run.status == null ? 1 : run.status;
+  return missingDurations.length ? 1 : (run.status == null ? 1 : run.status);
 }
 
 module.exports = {
-  parseArgs, namePatterns, selectSuites, alwaysSuites, declaredPaths, importersOf, importedPaths, testCommand, changedFiles, resolveBase, main,
+  parseArgs, namePatterns, selectSuites, alwaysSuites, declaredPaths, importersOf, importedPaths, testCommand, changedFiles, resolveBase, missingBaselineEntries, main,
   SUITE_GLOB, IMPORT_ROOTS, DEFAULT_BASES,
 };
 
