@@ -5285,6 +5285,17 @@ async function rescueUnpushedCommit(sessionId, { turnId = null, forTurnStart = f
     log.warn('worker', 'Could not preserve a finished build\'s commit', {
       sessionId, branch, sha: pending.sha, code: err.code || null, err: err.message,
     });
+    // #6267 (run 4536): the branch moved past this saved commit. Pushing it
+    // again can only fail again, and it blocked every later turn. Drop the
+    // record, keep its id in the log, and let the next build go ahead.
+    if (err.code === 'non_fast_forward') {
+      await unpushedCommits.clear(_getPoolSafe(), sessionId, pending.sha, branch)
+        .catch((clearErr) => log.warn('worker', 'Could not drop a stale saved commit', { sessionId, err: clearErr.message }));
+      log.warn('worker', 'Dropped a saved build commit the branch has moved past', {
+        sessionId, branch, sha: pending.sha,
+      });
+      return { attempted: true, pushed: false, dropped: true };
+    }
     const reason = err.userMessage || String(err.message || 'The push failed').replace(/^push proxy failed:\s*/, '').trim().slice(0, 200);
     const message = `An earlier build's commit ${String(pending.sha).slice(0, 8)} on ${branch} could not be pushed: ${reason}`
       + `${/[.!?]$/.test(reason) ? '' : '.'} It is kept in this session and has to be pushed before another build can start.`;
@@ -6241,6 +6252,9 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
     const wrapped = new Error(`push proxy failed: ${cleanMsg}`);
     wrapped.code = err.code || 'push_failed';
     wrapped.permanent = err.permanent === true;
+    // What the pusher knew in words a person can act on (a non-fast-forward
+    // rejection, #6267), not only the Git hint.
+    wrapped.userMessage = err.userMessage || null;
     wrapped.stderr = cleanStderr;
     log.warn('worker', 'Push proxy failed', {
       sessionId, branch: branchName, err: cleanMsg,

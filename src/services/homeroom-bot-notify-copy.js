@@ -64,7 +64,7 @@ const SAID_BY_MOMENT = Object.freeze({
     'blocked', 'empty', 'done', 'platform']),
   ready: Object.freeze(['ready', 'ready_group', 'ready_first', 'ready_broken']),
   stopped: Object.freeze(['build_time', 'build_restart', 'build_no_change', 'build_not_proposed', 'build_no_start',
-    'build_other', 'update_failed', 'needs_look', 'checks', 'first_failed']),
+    'build_other', 'build_push', 'build_push_permanent', 'build_push_gave_up', 'update_failed', 'needs_look', 'checks', 'first_failed']),
   // 16 Oct 2026: `slots`, a build held because the project's changes waiting
   // for votes are as many as it may have (homeroom-bot.js WAITING_PER_APP),
   // rings once; #6156: `builds`, because its builds are (BUILDS_PER_APP).
@@ -139,6 +139,8 @@ const BUILD_CAUSES = Object.freeze({
   no_change: 'build_no_change', no_changes: 'build_no_change', empty_diff: 'build_no_change',
   not_proposed: 'build_not_proposed', promote_failed: 'build_not_proposed',
   no_start: 'build_no_start', not_started: 'build_no_start',
+  // #6267: the build finished and GitHub refused the upload.
+  push: 'build_push', push_permanent: 'build_push_permanent', push_gave_up: 'build_push_gave_up',
 });
 
 function oneLine(value, max) {
@@ -369,6 +371,11 @@ function bodyFor(d) {
       ? 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.'
       : 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.';
     case 'build_no_start': return 'Stopped: I couldn\'t get started. Tap Try again.';
+    // #6267: the build finished; the upload to GitHub did not. The platform
+    // retries a temporary refusal itself, so the first needs no tap.
+    case 'build_push': return 'Built, but GitHub refused the upload. I\'ll try again soon.';
+    case 'build_push_permanent': return 'Built, but GitHub wouldn\'t take the upload. Reply to try again.';
+    case 'build_push_gave_up': return 'Built, but GitHub kept refusing the upload. Reply to send it.';
     case 'build_other': return 'Stopped: something went wrong while I was building. Tap Try again.';
     case 'update_failed': return 'Stopped: I couldn\'t update it. It\'s as it was.';
     case 'needs_look': return 'Stopped: it\'s built, but a person needs to look at it before you can try it.';
