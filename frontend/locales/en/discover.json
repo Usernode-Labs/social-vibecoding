@@ -63,6 +63,18 @@
     "text": "{{count}} open issues",
     "description": "Tooltip of the issues chip on an app. {{count}} is how many issues are open, meaning not yet resolved. \"Open\" is an adjective."
   },
+  "pill.new": {
+    "text": "New",
+    "description": "Status chip on a Discover row for an app created in the last two weeks. One word; shown only when nothing on the row asks for attention."
+  },
+  "pill.newTip_one": {
+    "text": "Made in the last day",
+    "description": "Tooltip on the \"New\" chip in Discover; {{count}} is the window in days (the singular form is unused in practice)."
+  },
+  "pill.newTip_other": {
+    "text": "Made in the last {{count}} days",
+    "description": "Tooltip on the \"New\" chip in Discover; {{count}} is the window in days (14)."
+  },
   "pill.private": {
     "text": "Private",
     "description": "Chip with a lock icon on an app's card or row: only the app's members can open and use it."

@@ -1569,6 +1569,27 @@ test('rowView: status pills and the status word ride the row', () => {
     ['Missing secrets', '2 to vote', '1 issue']);
 });
 
+test('a Discover row made this fortnight wears "New", the quietest chip (#5928 item 9)', () => {
+  const { Browse, AppCard } = makeBrowse();
+  const now = Date.parse('2026-11-04T12:00:00Z');
+  const fresh = app({ slug: 'fresh', created_at: '2026-10-30T09:00:00Z' });
+  const old = app({ slug: 'old', created_at: '2026-10-01T09:00:00Z' });
+  const labels = (a, opts) => Array.from(AppCard.appPillsFor(a, opts).chips, (c) => c.label);
+  // Only where asked for: Discover's rows ask, Home's tiles (and every other
+  // caller) do not, so your own fresh project is not news to you for a fortnight.
+  assert.deepEqual(labels(fresh), []);
+  assert.deepEqual(labels(fresh, { newBadge: true, now }), ['New']);
+  assert.deepEqual(labels(old, { newBadge: true, now }), []);
+  assert.equal(AppCard.appPillsFor(fresh, { newBadge: true, now }).chips[0].tip, 'Made in the last 14 days');
+  // After anything that asks for attention: one pill per row, and "1 issue" wins.
+  assert.deepEqual(labels({ ...fresh, open_issues: 1 }, { newBadge: true, now }), ['1 issue', 'New']);
+  // The window is Discover's New filter's window.
+  assert.equal(AppCard.NEW_PILL_DAYS, Browse.NEW_WINDOW_DAYS);
+  // A record with no created_at, or a date that does not parse, says nothing.
+  assert.deepEqual(labels(app({ slug: 'undated' }), { newBadge: true, now }), []);
+  assert.deepEqual(labels(app({ slug: 'odd', created_at: 'yesterday' }), { newBadge: true, now }), []);
+});
+
 test('metaLine: users · updated · status, pluralised, missing bits skipped', () => {
   const { Browse } = makeBrowse();
   assert.match(Browse.metaLine(app({ active_users: 1 })), /^1 user\b/);
