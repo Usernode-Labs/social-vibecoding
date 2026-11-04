@@ -3128,13 +3128,15 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
       bot, requester, app: { id: run.id, slug: run.slug, name: run.name }, issueNumber: Number(run.issue_number),
       sessionId: id, saidIn: told.threadRootId || null,
     });
-    // #6264: the card that just said "ready to try" is also the line a
-    // follow-up asked for, so it keeps that promise and nothing else is said.
-    if (requester?.userId) {
-      await require('./thread-followups').satisfiedBy(pool, {
-        sessionId: id, userId: requester.userId, place: { type: 'dm' }, event: 'vote', messageId: told.messageId,
-      }).catch(() => {});
-    }
+  }
+  // #6264: the card that just said "ready to try" is also the line a
+  // follow-up asked for, so it keeps that promise and nothing else is said.
+  // #6255: this is also true of a first version, whose promise was stored
+  // against the request alone while it was still being built.
+  if (told?.messageId && requester?.userId) {
+    await require('./thread-followups').satisfiedBy(pool, {
+      sessionId: id, userId: requester.userId, place: { type: 'dm' }, event: 'vote', messageId: told.messageId,
+    }).catch(() => {});
   }
   // Nobody else is asked to approve a change part of which does not work:
   // its requester's card says what, and the bot's hand-off said so where

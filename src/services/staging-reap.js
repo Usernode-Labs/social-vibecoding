@@ -285,16 +285,20 @@ async function listStagingContainers() {
  * Every preview Deployment in the app namespace, in the same item shape as
  * listStagingContainers. The slug is not part of a Deployment's name, so it
  * stays null until classify() reads it off the session's app.
+ * Cleanup also includes Services and Ingresses whose Deployment is gone.
  *
  * Same failure contract: [] when the API cannot be read, so an unreadable
  * cluster is a no-op sweep rather than a blind one.
  */
-async function listKubernetesPreviews(config) {
+async function listKubernetesPreviews(config, { includeRouting = false } = {}) {
   try {
-    const previews = await kubernetes.listPreviews(kubernetesConfig(config));
+    const previews = includeRouting
+      ? await kubernetes.listPreviewResources(kubernetesConfig(config))
+      : await kubernetes.listPreviews(kubernetesConfig(config));
     return previews.map((preview) => ({
       name: preview.name,
       slug: null,
+      appId: preview.appId,
       sessionId: preview.sessionId,
       state: preview.state || null,
       image: preview.image || null,
@@ -302,6 +306,7 @@ async function listKubernetesPreviews(config) {
       // mean the Deployment carries none.
       fingerprint: preview.labels?.[stagingEnv.LABEL_ENV_FP] || null,
       runtimeKind: 'kubernetes',
+      ...(preview.routingResources ? { routingResources: preview.routingResources } : {}),
     }));
   } catch (err) {
     log.warn('staging-reap', 'Kubernetes preview list failed', { err: err.message });
@@ -310,9 +315,9 @@ async function listKubernetesPreviews(config) {
 }
 
 // The complete preview inventory for the runtime this platform deploys to.
-async function listPreviews(config) {
+async function listPreviews(config, options) {
   return applicationRuntime.mode(config) === 'kubernetes'
-    ? listKubernetesPreviews(config)
+    ? listKubernetesPreviews(config, options)
     : listStagingContainers();
 }
 
@@ -473,8 +478,8 @@ function staleSweepIntervalMs() {
  * inspect before such a reading is used. A Kubernetes label is read off the
  * API object itself, so there is nothing to verify.
  */
-async function inventory(config) {
-  const containers = await listPreviews(config);
+async function inventory(config, options) {
+  const containers = await listPreviews(config, options);
   if (!containers.length) return [];
   if (containers[0].runtimeKind === 'docker' && containers.every((c) => c.fingerprint === null)) {
     const probe = await docker.inspectContainer(containers[0].name);
@@ -504,7 +509,7 @@ async function leftovers(config, { after = null, limit = Infinity } = {}) {
   const out = { examined: 0, abandoned: 0, unlinked: 0, items: [], after: null };
   if (isStagingEnv()) return out;      // a preview manages no other previews
   try {
-    const items = await inventory(config);
+    const items = await inventory(config, { includeRouting: true });
     out.examined = items.length;
     if (!items.length) return out;
     const { rows } = await getPool(config).query(MACHINE_HELD_SESSIONS_SQL);
@@ -523,7 +528,9 @@ async function leftovers(config, { after = null, limit = Infinity } = {}) {
     out.after = rest.length > taken.length ? taken[taken.length - 1].name : null;
     out.items = taken.map((i) => ({
       target: i.name,
-      input: { name: i.name, sessionId: i.sessionId, slug: i.slug || null, image: i.image || null, runtimeKind: i.runtimeKind },
+      input: { name: i.name, sessionId: i.sessionId, slug: i.slug || null, image: i.image || null, runtimeKind: i.runtimeKind,
+        ...(i.appId != null ? { appId: i.appId } : {}),
+        ...(i.routingResources ? { routingResources: i.routingResources } : {}) },
     }));
   } catch (err) {
     log.warn('staging-reap', 'Leftover preview inventory failed', { err: err.message });
@@ -541,6 +548,7 @@ async function reapLeftover(item, config = {}) {
   const status = fresh.session ? fresh.session.status : null;
   // Its session opened again, and its row names it once more: it serves.
   if (status && !FINISHED_STATUSES.has(status) && namesPreview(fresh, fresh.session)) return { outcome: 'skipped_linked' };
+  if (status && !FINISHED_STATUSES.has(status) && fresh.session.check_run_open) return { outcome: 'skipped_checks' };
   // An open session somebody works on (a turn about to replace its
   // preview): its leftover waits for the next run.
   if (status && !FINISHED_STATUSES.has(status)
@@ -745,7 +753,7 @@ async function runJob(ctx, { config, pool }) {
     ...SHAPE,
     concurrency: concurrency(),
     list: async () => {
-      const containers = await listPreviews(config);
+      const containers = await listPreviews(config, { includeRouting: true });
       const classified = await classify(pool, containers);
       const busy = await require('./active-workers').busySessionsAnywhere(classified.map((item) => item.sessionId), { pool });
       const { stale, selected } = selectReapable(
@@ -763,7 +771,7 @@ async function runJob(ctx, { config, pool }) {
     // since the list was taken, and the preview may have been rebuilt with
     // the current environment meanwhile (same name, its new fingerprint).
     unit: async (item) => {
-      const now = (await listPreviews(config)).find((p) => p.name === item.name);
+      const now = (await listPreviews(config, { includeRouting: true })).find((p) => p.name === item.name);
       // Not in the runtime's list (gone, or the list could not be read):
       // nothing is torn down blind.
       if (!now) return { outcome: 'skipped_unseen' };
@@ -1407,6 +1415,22 @@ async function reapOne(item, config = {}) {
   const linked = namesPreview(item, item.session);
   // A preview the machine holds is the machine's to retire, by identity.
   if (!linked && item.sessionId && await require('./preview-workflow').held(item.sessionId)) {
+    // A failed instance may still hold a finished or deleted session after
+    // its row lost the runtime pointer. Ask it to retire instead of leaving
+    // the leftover behind forever. An open session keeps its protection.
+    if ((!item.session || FINISHED_STATUSES.has(item.session.status))
+        && (item.session?.app_id != null || item.appId != null)) {
+      try {
+        const result = await require('./staging').teardownStaging(
+          item.session || { id: item.sessionId, app_id: item.appId },
+          { id: item.appId, slug: item.session?.app_slug || item.slug },
+          { terminal: true, reason: 'leftover' }
+        );
+        if (result?.leaked) return { outcome: FAILED, error: 'preview workflow refused leftover retirement' };
+      } catch (err) {
+        return { outcome: FAILED, error: err.message };
+      }
+    }
     return { outcome: 'skipped_workflow' };
   }
 
@@ -1436,9 +1460,16 @@ async function reapOne(item, config = {}) {
   // By-name path. The container is the only thing we are sure about.
   if (kube) {
     try {
-      await applicationRuntime.remove(kubernetesConfig(config), {
-        runtimeKind: 'kubernetes', runtimeName: item.name,
-      });
+      if (item.routingResources) {
+        for (const resource of item.routingResources) {
+          if (resource.metadata?.name !== item.name) throw new Error('Preview routing resource names another preview');
+          await kubernetes.deletePreviewRoutingResource(kubernetesConfig(config), resource.kind, resource.metadata);
+        }
+      } else {
+        await applicationRuntime.remove(kubernetesConfig(config), {
+          runtimeKind: 'kubernetes', runtimeName: item.name,
+        });
+      }
     } catch (err) {
       log.warn('staging-reap', 'Kubernetes preview removal failed', { name: item.name, err: err.message });
       return { outcome: FAILED, error: err.message };
@@ -1488,10 +1519,7 @@ async function reapOne(item, config = {}) {
 // "already gone", or a preview would be reported reaped while still running.
 async function kubernetesPreviewExists(config, name) {
   try {
-    const found = await applicationRuntime.inspect(kubernetesConfig(config), {
-      runtimeKind: 'kubernetes', runtimeName: name,
-    });
-    return found?.status !== 'not_found';
+    return (await kubernetes.previewResourcesPresent(kubernetesConfig(config), name)).length > 0;
   } catch (_) {
     return true;
   }
