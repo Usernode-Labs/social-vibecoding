@@ -239,6 +239,13 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
           ) : null}
         </p>
       ) : null}
+      {shown.mainFailure?.href ? (
+        <p className="dev-change-gate-note">
+          <a className="dev-change-gate-link" href={shown.mainFailure.href} data-change-main-fix="">
+            {shown.mainFailure.label}
+          </a>
+        </p>
+      ) : null}
       {shown.fix ? <FixRow fix={shown.fix} rerun={rerun} /> : null}
       {shown.noteDetail ? (
         <details className="dev-change-gate-note" data-change-gate-explanation="">
