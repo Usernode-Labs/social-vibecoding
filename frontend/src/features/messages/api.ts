@@ -1315,6 +1315,24 @@ export async function setFirstVersionNotify(slug: string, on: boolean): Promise<
   return bool(pick(data, 'on'), on);
 }
 
+/** #6264: the plan card's "Notify me when it's ready" stores the same promise the bot makes in words. */
+export async function addFollowUp(input: {
+  appSlug: string; issueNumber: number; event: 'update' | 'checks' | 'vote' | 'merged' | 'live';
+  conversationId?: number | null; threadRootId?: number | null;
+}): Promise<boolean> {
+  await request<unknown>('/api/conversations/homeroom-bot/followups', {
+    method: 'POST',
+    body: JSON.stringify({
+      appSlug: input.appSlug,
+      issueNumber: input.issueNumber,
+      event: input.event,
+      conversationId: input.conversationId ?? null,
+      threadRootId: input.threadRootId ?? null,
+    }),
+  });
+  return true;
+}
+
 /** B8: the signed-in person's chat with Homeroom bot, made the first time. */
 export async function openBotConversation(): Promise<number | null> {
   const data = record(await request<unknown>('/api/conversations/homeroom-bot', { method: 'POST', body: '{}' }));

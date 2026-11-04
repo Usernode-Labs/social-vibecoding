@@ -2521,8 +2521,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
    * 31 Oct 2026: open in Main Chat's column on the Homeroom bot tab, the
    * only place the chat with the bot is drawn. The thread covers the chat
    * there (app.css `[data-main-chat]`). 1 Nov 2026: alone, under its own
-   * head: its title and "Only you can see this thread", with no ✕ and no way
-   * back to Main Chat, which is a row of the tab's list now.
+   * head: its title and "Only you can see this thread", with no ✕. 4 Nov
+   * 2026: it leads with ‹ Back to Main Chat, which closes it and shows Main
+   * Chat in the column again.
    */
   inMain?: boolean;
   /** A phone's drawer: the back arrow that leads the head, to the list. */
@@ -2853,6 +2854,13 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>
             <ChevronLeftIcon aria-hidden="true" />
           </button>
+        ) : inMain ? (
+          // 4 Nov 2026: the docked column's thread leads with the way back to
+          // Main Chat, which a phone's onBack takes to the list instead.
+          <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
+            aria-label={t('messages:replies.backToMain')} title={t('messages:replies.backToMain')} onClick={() => closeThread()}>
+            <ChevronLeftIcon aria-hidden="true" />
+          </button>
         ) : null}
         {inMain ? (
           // 1 Nov 2026: the thread alone in Main Chat's place, under its own
@@ -2892,7 +2900,8 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
         ) : null}
         {/* On a phone the Messages screen's header bar has the way back
             (app.css hides this one there, polish N16). In Main Chat's column
-            the thread is the column's: Main Chat is a row of the list. */}
+            the thread's head leads with ‹ Back to Main Chat instead, so no ✕
+            is drawn. */}
         {inMain ? null : (
           <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
             <XIcon aria-hidden="true" />
@@ -2961,6 +2970,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             text={privateThreadWords(root, replies, meId)}
             where={privateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
+            working={!!threadWorking}
           />
         ) : null}
       </div>

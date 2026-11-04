@@ -385,6 +385,16 @@ function stagingMockIssues(repoUrl) {
       'Staging demo: obviously fake. The bot handed this back because a '
       + 'person must decide which of the two columns to keep.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 26),
+    // 4 Nov 2026 (#6264): the request whose discussion shows the bot
+    // keeping its word, "I'll tell you here when it's in." then the line it
+    // posted when the update was in (seedStagingBotFollowUp in
+    // src/db/migrate.js stores those messages). A staging copy has no
+    // GitHub to read the request from, so its page's own fetch finds it
+    // here, and only the after copy has it.
+    mk(9107, 'Staging demo: a request where the bot kept its word',
+      'Staging demo: obviously fake. An update to this request was asked '
+      + 'for, and the bot said it would tell the person when it was in.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 46),
   ];
 }
 

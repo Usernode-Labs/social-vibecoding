@@ -342,7 +342,12 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
   const own = row.own === true || theirs;
   if (status === 'merged') {
     if (!row.live_at) return own ? { group: 'next', what: 'going_live', at: iso(row.merged_at) } : null;
-    if (now - new Date(row.live_at) <= LIVE_DAYS * DAY_MS) return { group: 'live', what: 'live', at: iso(row.live_at) };
+    if (now - new Date(row.live_at) <= LIVE_DAYS * DAY_MS) {
+      // #6233: merged_at and the change's id let the tab compare the change
+      // with the build it loaded (the "reload to get it" wording).
+      return { group: 'live', what: 'live', at: iso(row.live_at),
+        mergedAt: iso(row.merged_at), changeId: Number(row.change_id) || null };
+    }
     return null;
   }
   if (row.state !== 'open') return null;

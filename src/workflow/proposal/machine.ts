@@ -69,6 +69,13 @@ import type { Facts, Row } from './facts.ts';
 export const MACHINE = 'proposal';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
 
+// How long a refusal the queue may simply meet again is remembered as
+// blocking: a GitHub busy answer, or a plain refusal nobody has to act on,
+// is tried again on the queue's next sweep. A conflict, a draft, a wrong base
+// branch and code missing from the git host keep their record until the head
+// or main moves. Keep equal to the merge queue's SWEEP_MS (a test pins it).
+export const REFUSAL_RETRY_MS = 4 * 60 * 1000;
+
 export const WORK = Object.freeze({
   open: 'review.open',
   close: 'pr.close',
@@ -187,8 +194,10 @@ export interface Data {
   lastSync?: SyncOutcome | null;
   // GitHub's last refusal (named once per head), what the AI could not
   // resolve (never paid for twice against the same main), and the back-off
-  // after a sync the machinery under it broke.
-  refused?: { head: string | null; main: string | null; kind: string } | null;
+  // after a sync the machinery under it broke. `at` is when it was recorded;
+  // `retryAt` is when the queue may try it again, or null for a refusal that
+  // stays held until the head or main moves.
+  refused?: { head: string | null; main: string | null; kind: string; at?: string; retryAt?: string | null } | null;
   gaveUp?: { head: string | null; main: string | null } | null;
   backoff?: { until: string; failures: number } | null;
   // The change under this one's base is on main: its pull request is being
@@ -1094,10 +1103,23 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
       // refusal of this head (an earlier one is forgotten): the next ask tries it again.
       const said = s.data.refused && s.data.refused.head === f.row!.head && s.data.refused.kind === kind;
       const writes: DomainWrite[] = kind === 'conflict' ? [{ type: 'conflictMarked', sessionId: s.data.sessionId }] : [];
+      // GitHub busy, or a plain refusal nobody has to act on: the queue may
+      // simply meet it again, so it comes back on the sweep and the card says
+      // it is waiting on GitHub. A conflict, a draft, a wrong base or code
+      // missing from the git host stays held until the head or main moves.
+      const retryAt = kind === 'github_busy' || (kind === 'blocked' && !r?.codeMissing)
+        ? new Date(ctx.now.getTime() + REFUSAL_RETRY_MS).toISOString()
+        : null;
+      if (retryAt) {
+        writes.push({ type: 'mergeHeld', sessionId: s.data.sessionId,
+          reason: kind === 'github_busy' ? 'github_busy' : 'github_refused' });
+      }
       return backToReview(s, e, f, ctx, deps, {
         outcome: 'refused', extra: { kind }, line: said ? null : (r?.message || null), writes,
         push: { mergeFailed: true, resolving: kind === 'conflict' },
-        refused: kind === 'base_moved' ? null : { head: f.row!.head, main: f.row!.integrationMain, kind },
+        refused: kind === 'base_moved' ? null : {
+          head: f.row!.head, main: f.row!.integrationMain, kind, at: ctx.now.toISOString(), retryAt,
+        },
       });
     }
   }
@@ -1969,6 +1991,16 @@ const WRITES = {
   blockReasons: async (tx: Tx, w: any) => tx.query(
     `UPDATE chat_sessions SET integration_block_reasons = $2::jsonb
       WHERE id = $1 AND integration_block_reasons IS DISTINCT FROM $2::jsonb`, [w.sessionId, JSON.stringify(w.reasons || [])]),
+  // GitHub held this change's merge back (it was busy, or refused it for a
+  // reason nobody has to act on): the card says so. The time of the next try
+  // is this machine's own refusal record (`refused.retryAt`, below), which the
+  // session reads carry alongside these reasons. Its reasons are the server's
+  // alone; the queue's laneReasons rewrite leaves them alone.
+  mergeHeld: async (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions
+        SET integration_block_reasons = (COALESCE(integration_block_reasons, '[]'::jsonb) - 'github_busy' - 'github_refused')
+              || jsonb_build_array($2::text)
+      WHERE id = $1`, [w.sessionId, w.reason]),
   // The once-records of the platform's own syncs, written with the sync.
   bootFailureClaim: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET boot_failure_sync_head = $2 WHERE id = $1', [w.sessionId, w.head]),

@@ -143,9 +143,12 @@ function pick(d: Data, f: Facts, ctx: TransitionContext): Outcome<QState> {
   const tried = new Set(data.tried);
   const named = new Set(data.named);
   // GitHub refused this very head against this main: not asked again until
-  // something changes (its head, main, or an ask that names it).
+  // something changes (its head, main, an ask that names it, or — for a
+  // refusal that may simply be met again, like GitHub still finishing an
+  // earlier merge — its retry time).
   const refusedHere = (c: Candidate) => !!c.refused && c.refused.head === c.head
-    && (c.refused.main == null || c.integrationMain == null || c.refused.main === c.integrationMain) && !named.has(c.id);
+    && (c.refused.main == null || c.integrationMain == null || c.refused.main === c.integrationMain) && !named.has(c.id)
+    && !(c.refused.retryAt && Date.parse(c.refused.retryAt) <= ctx.now.getTime());
 
   // Direct lane.
   const direct = line

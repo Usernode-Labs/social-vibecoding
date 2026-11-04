@@ -274,6 +274,23 @@
     // take the slot, because on those surfaces there is nowhere else for them
     // to go. Both are in-flight or waiting: neither asks the reader to act.
     var served = (integ && Array.isArray(integ.blockReasons)) ? integ.blockReasons : [];
+    // GitHub held this change's merge back: it was still finishing an earlier
+    // merge, or refused it for a reason nobody has to act on. The queue tries
+    // it again on its own, and the tooltip says when. Amber, no spinner:
+    // waiting, not working, and the reader has nothing to do.
+    var held = served.indexOf('github_busy') !== -1 ? 'github_busy'
+      : served.indexOf('github_refused') !== -1 ? 'github_refused' : null;
+    if (status === 'promoted' && held) {
+      var until = integ && integ.heldUntil ? Date.parse(integ.heldUntil) : NaN;
+      var soon = !Number.isFinite(until) || until <= Date.now();
+      var time = soon ? null : new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      var title = held === 'github_busy'
+        ? t(soon ? 'session:merge.title.githubBusySoon' : 'session:merge.title.githubBusy', { time: time })
+        : t(soon ? 'session:merge.title.githubRefusedSoon' : 'session:merge.title.githubRefused', { time: time });
+      return descriptor('merge_held', t('session:merge.status.waitingOnGithub'), 'amber', false, {
+        votes: votes, title: title,
+      });
+    }
     if (status === 'promoted' && served.indexOf('integrating') !== -1) {
       return descriptor('integrating', t('session:merge.status.integrating'), 'amber', true, {
         votes: votes,
