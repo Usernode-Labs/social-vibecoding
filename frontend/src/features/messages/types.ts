@@ -761,6 +761,12 @@ export interface ThreadRootRef {
   /** Its start, one line's worth; empty when it was deleted. */
   content: string;
   deleted: boolean;
+  /**
+   * #6250: the thread was started from the bot's "+", so neither its opener
+   * line nor its replies are in Main Chat (bot-shared.ts alsoInChat). A
+   * thread the bot opened from Main stays, as the way to its row.
+   */
+  plusThread?: boolean;
 }
 
 export interface ConversationSummary {

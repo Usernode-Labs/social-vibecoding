@@ -46,7 +46,7 @@ import { requestPageOf } from './request-page';
 import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
-import { isPrivateThreadOpener, isRequestNews, requestKey } from './bot-request';
+import { isPlusThreadOpener, isRequestNews, requestKey } from './bot-request';
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
 import { useMessagesDrawer } from './phone-drawer';
@@ -2204,9 +2204,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const day = dayKey(message);
     // #6207: Main Chat is the conversation; a request's news is on its page.
     if (botDm && isRequestNews(message)) continue;
-    // #6250: the bot's line that opens a private thread is the thread's own
-    // first line, not Main Chat's.
-    if (botDm && isPrivateThreadOpener(message)) continue;
+    // #6250: only the line that opens a thread from the bot's "+" is the
+    // thread's own, not Main Chat's; one the bot opened from Main stays.
+    if (botDm && isPlusThreadOpener(message)) continue;
     const asks = asking(message);
     const settled = botDm && isBotNews(message) && !asks && !!newsStatusOf(message, botWork)?.settled;
     if (!settled || (day && day !== previousDay) || (lineAt !== null && message.id >= lineAt && !lineDrawn)) flushRun();
