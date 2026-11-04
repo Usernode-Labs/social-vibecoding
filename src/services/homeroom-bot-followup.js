@@ -123,7 +123,10 @@ function newReplies({
 function describeReply(r) {
   const place = r.via === 'ask' ? `asked you for a change ${ASKED_IN[r.askedIn] || 'in Homeroom'}, as you wrote it down when they asked`
     : r.where === 'proposal' ? 'in the proposal\'s discussion' : (r.via === 'github' ? 'on the GitHub issue' : 'in the issue\'s discussion');
-  return `- ${r.author}, ${place} (${String(r.createdAt || '').slice(0, 16)}):\n${clipText(r.body, 2000).split('\n').map((l) => `  ${l}`).join('\n')}`;
+  // A person's ask is passed on whole (up to the chat message limit); other
+  // replies keep the short form.
+  const limit = r.via === 'ask' ? 8000 : 2000;
+  return `- ${r.author}, ${place} (${String(r.createdAt || '').slice(0, 16)}):\n${clipText(r.body, limit).split('\n').map((l) => `  ${l}`).join('\n')}`;
 }
 
 // Where a change asked of the bot was asked (homeroom_bot_change_asks.source).
