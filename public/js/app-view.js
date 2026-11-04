@@ -7988,6 +7988,15 @@ const AppView = {
         };
       }
       if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
+      // #6284: the bot stopped at its own limit. The requester, an admin or
+      // anybody who voted on the change may let it try once more.
+      if (botFix && botFix.state === 'stopped' && botFix.canTryAgain) {
+        actions.unshift({
+          key: 'tryAgain', cls: 'gc-vote-btn gc-vote-btn-accent',
+          label: PlatformI18n.t('changes:tryAgain.label'),
+          act: { fn: 'letBotTryAgain', args: [item.id] }, passNode: true,
+        });
+      }
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.failing'),
@@ -19404,6 +19413,13 @@ const AppView = {
     }
     if (botFix.state === 'queued') return PlatformI18n.t('changes:page.testing.note.botQueued');
     if (botFix.state === 'handed_off') return PlatformI18n.t('changes:page.testing.note.botHandedOff');
+    if (botFix.state === 'stopped') {
+      const count = Math.max(1, Number(botFix.tries) || 3);
+      const key = botFix.canTryAgain
+        ? (count === 1 ? 'changes:page.testing.note.botStopped_one' : 'changes:page.testing.note.botStopped_other')
+        : (count === 1 ? 'changes:page.testing.note.botStoppedOthers_one' : 'changes:page.testing.note.botStoppedOthers_other');
+      return PlatformI18n.t(key, { count });
+    }
     return null;
   },
 
@@ -20498,6 +20514,9 @@ const AppView = {
   // server; progress arrives via the checks_ready / staging_ready broadcasts
   // that drive refreshDevData, so we just disable the button transiently.
   _recheckInFlight: new Set(),
+
+  // #6284: one press at a time of Let it try again, as a re-run is.
+  _tryAgainInFlight: new Set(),
   _sessionChecksClose: null,
   openSessionChecks(sessionId) {
     if (AppView._sessionChecksClose) AppView._sessionChecksClose();
@@ -20513,6 +20532,36 @@ const AppView = {
     };
     AppView._sessionChecksClose = close;
     react.mountSessionChecks(host, { sessionId, onClose: close });
+  },
+
+  // #6284: let Homeroom bot try once more at a change it stopped fixing on
+  // its own. One press is one grant, which buys exactly one round.
+  async letBotTryAgain(sessionId, btn) {
+    if (AppView._tryAgainInFlight.has(sessionId)) return;
+    AppView._tryAgainInFlight.add(sessionId);
+    if (btn) { btn.disabled = true; btn.textContent = PlatformI18n.t('changes:tryAgain.asking'); }
+    try {
+      const slug = AppView.appData?.slug || App.currentApp || '';
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${sessionId}/let-it-try-again`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:tryAgain.failedHttp', { status: resp.status }));
+        if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
+        return;
+      }
+      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.done'));
+      AppView.refreshDevData('tryAgain');
+      if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(sessionId) }));
+      return true;
+    } catch (err) {
+      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.failedWith', { error: err.message }));
+      if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
+    } finally {
+      AppView._tryAgainInFlight.delete(sessionId);
+    }
   },
 
   async castRecheck(sessionId, btn) {

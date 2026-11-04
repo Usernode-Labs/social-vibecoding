@@ -5102,7 +5102,8 @@ function voteRoutes(config) {
         // #6234: Homeroom bot fixing its own change's failing checks, for the
         // Testing card (services/homeroom-bot-progress.js changeBotFix);
         // null for any change of a person's.
-        proposal.bot_fix = await require('../services/homeroom-bot-progress').changeBotFix(pool, proposal.id).catch(() => null);
+        proposal.bot_fix = await require('../services/homeroom-bot-progress')
+          .changeBotFix(pool, proposal.id, { viewer: req.user }).catch(() => null);
         // #4479: the plan it was built from, for the page's plan card.
         proposal.plan = await require('./sessions')
           .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);

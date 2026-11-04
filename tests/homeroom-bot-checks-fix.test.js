@@ -216,6 +216,9 @@ function harness({
         return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 82, reviewed_head_sha: HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
+      // #6284: the checks path counts the bot's own rounds, apart from
+      // updates people asked for.
+      if (/COUNT\(\*\) FILTER \(WHERE NOT asked\)/.test(s)) return { rows: [{ own: revisions, asked: 0 }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
       if (/FROM platform_settings/.test(s)) {
         return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }] };
@@ -486,9 +489,9 @@ test('out of revisions: no turn, and one note hands it to a person', async (t) =
   const post = h.calls.posts[0];
   assert.equal(post.kind, 'followup_person');
   assert.equal(post.proposalSessionId, 5001, 'on the proposal too');
-  assert.match(post.text, /can't get this change past its checks on its own: 1 check is still failing/);
-  // Why, as a whole sentence (followup.whySentence), then who takes it (#6234).
-  assert.match(post.text, /Homeroom bot has already updated it 3 times, as many as it may on its own\. The person who asked for it, or any member of this project, can take it from here\.$/);
+  assert.match(post.text, /I stopped after 3 tries at getting this change past its checks\. 1 check is still failing\./);
+  // Who can let it try once more (#6284), in the same note.
+  assert.match(post.text, /The person who asked for it, an admin or anyone who voted on it can let me try once more\.$/);
   assert.match(post.dm.reason, /its checks are failing/, 'the requester hears it in the DM');
   assert.equal(insertOf(h).params[21], HEAD, 'and it is not said again for the same head');
 });

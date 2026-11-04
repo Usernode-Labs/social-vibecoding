@@ -299,6 +299,9 @@ const BOT_STANDING = Object.freeze({
   // until somebody decides, or asks it to try the build again.
   decide: { group: 'needs', what: 'decide' },
   build_stopped: { group: 'needs', what: 'build_stopped' },
+  // #6284: the bot stopped at its own limit on failing checks; somebody may
+  // let it try once more.
+  fix_stopped: { group: 'needs', what: 'fix_stopped' },
   reading: { group: 'next', what: 'reading' },
   starting: { group: 'next', what: 'building', by: 'bot' },
   planning: { group: 'next', what: 'building', by: 'bot' },
@@ -821,6 +824,7 @@ const NEED_SAYS = Object.freeze({
   plan: 'its plan waits for their Build it',
   decide: 'Homeroom bot handed it back: a person needs to decide',
   build_stopped: 'Homeroom bot\'s build of it stopped: it waits for them to ask it to try again',
+  fix_stopped: 'its checks are failing, and Homeroom bot stopped fixing them: it waits for them to let it try again',
 });
 
 /** What an In progress or Waiting row says, by what it waits on (the tab's tooltips, model.ts nextWords). */

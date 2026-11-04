@@ -69,7 +69,7 @@ export interface AiThread {
   href: string;
   group: 'needs' | 'next' | 'waiting' | 'live';
   what:
-    | 'plan' | 'decide' | 'build_stopped'
+    | 'plan' | 'decide' | 'build_stopped' | 'fix_stopped'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading' | 'reading_reply'
     | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
     | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
@@ -300,6 +300,7 @@ const PILLS: Record<string, string> = {
   plan: 'messages:ai.pill.buildIt',
   decide: 'messages:ai.pill.decide',
   build_stopped: 'messages:ai.pill.tryAgain',
+  fix_stopped: 'messages:ai.pill.letTryAgain',
 };
 
 /**
@@ -431,7 +432,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   for (const t of work?.needs || []) {
     if (isOwed(owed, t)) continue;
     rows.push({
-      key: `${t.what === 'decide' ? 'decide' : t.what === 'build_stopped' ? 'stopped' : 'plan'}:${t.threadId}`,
+      key: `${t.what === 'decide' ? 'decide' : t.what === 'build_stopped' ? 'stopped' : t.what === 'fix_stopped' ? 'fix_stopped' : 'plan'}:${t.threadId}`,
       title: t.title || '',
       app: t.app,
       who: 'all',
@@ -444,7 +445,9 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
         ? { id: 'messages:ai.row.decide', values: where(t.app, t.number) }
         : t.what === 'build_stopped'
           ? { id: 'messages:ai.row.buildStopped', values: where(t.app, t.number) }
-          : whereLine(t.app, t.number),
+          : t.what === 'fix_stopped'
+            ? { id: 'messages:ai.row.fixStopped', values: where(t.app, t.number) }
+            : whereLine(t.app, t.number),
       pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
       href: t.href,
       rootId: null,
@@ -490,6 +493,7 @@ export function owedCount(rows: WorkRow[]): number {
 const WHY: Record<string, string> = {
   'messages:ai.row.decide': 'messages:ai.why.decide',
   'messages:ai.row.buildStopped': 'messages:ai.why.buildStopped',
+  'messages:ai.row.fixStopped': 'messages:ai.why.fixStopped',
   'messages:ai.row.voteFreesSlot': 'messages:ai.why.voteFreesSlot',
 };
 

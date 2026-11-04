@@ -2939,8 +2939,8 @@ async function insertRunRow(pool, run) {
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha, charged, payer_user_id, read_reason)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+        checks_head_sha, charged, payer_user_id, read_reason, asked, asked_by, limit_stop)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -2956,7 +2956,10 @@ async function insertRunRow(pool, run) {
       run.charged ?? run.mode === 'live', run.payerUserId || null,
       // What started this read (readReasonOf), so a request read again and
       // again says why.
-      run.readReason || null],
+      run.readReason || null,
+      // #6284: a revise run a person asked for (or a granted round), who
+      // asked, and why a run stopped ('own_revisions' on the limit hand-off).
+      run.asked === true, run.askedBy || null, run.limitStop || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -5422,19 +5425,22 @@ async function runFollowUp(pool, config, {
   // would count), the head it works on (its reconcile moves it) and the spec
   // it reads (its revision may publish the next version).
   const basis = await look.once('basis', async () => {
-    const { rows: revisionRows } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
-        WHERE proposal_session_id = $1 AND verdict = 'revise'`,
-      [session.id],
-    );
-    return { revisions: revisionRows[0]?.n || 0, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id) };
+    // #6284: only the bot's own revise runs count toward MAX_REVISIONS.
+    // Updates a person asked for have their own higher cap, and an open
+    // grant buys one more of the bot's own.
+    const revisions = await followup.revisionCounts(pool, session.id);
+    return { ...revisions, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id) };
   });
-  const canRevise = basis.revisions < followup.MAX_REVISIONS;
+  // A checks fix may run on the bot's own rounds, or on a grant somebody
+  // spent; a reply may update the change while asked updates remain.
+  const canRevise = checks
+    ? (basis.own < followup.MAX_REVISIONS || !!basis.openGrant)
+    : basis.asked < followup.MAX_ASKED_REVISIONS;
   const mode = canRevise ? 'build' : 'scout';
 
   if (checks) {
     return runChecksFix(pool, config, {
-      bot, app, repo, item, issue, session, checks, canRevise, mode, runMode, model, turnBudgetMs, startedMs,
+      bot, app, repo, item, issue, session, checks, canRevise, basis, mode, runMode, model, turnBudgetMs, startedMs,
       recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps, reasoningEffort,
     });
   }
@@ -5712,6 +5718,9 @@ async function runFollowUp(pool, config, {
     buildNote: action === 'revise' ? (parsed?.summary || null) : null,
     threadSeenAt: seenThrough, model,
     durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
+    // #6284: a reply revision is an update a person asked for, so it never
+    // counts toward the bot's own three.
+    ...(action === 'revise' ? { asked: true, askedBy: asks[0]?.asker_id || null } : {}),
   });
   await recordSnapshot(runId);
   look.consume();
@@ -5861,6 +5870,13 @@ const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_stat
               SELECT 1 FROM homeroom_bot_runs r
                WHERE r.proposal_session_id = cs.id
                  AND r.checks_head_sha = LOWER(cs.reviewed_head_sha)
+                 -- #6284: a grant somebody spent after that look opens the
+                 -- head again, for exactly one more round.
+                 AND NOT EXISTS (
+                   SELECT 1 FROM homeroom_bot_revision_grants g
+                    WHERE g.session_id = cs.id AND g.used_at IS NULL
+                      AND g.created_at > r.created_at
+                 )
             ) AS looked,
             EXISTS (
               SELECT 1 FROM homeroom_bot_runs r
@@ -5945,9 +5961,16 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
     return { queued: false, why: 'infra' };
   }
   const { appendEvent } = require('../workflow/kernel/index.ts');
+  // #6284: a grant somebody spent is its own ask, so an earlier refusal for
+  // this head does not swallow it.
+  const { rows: grantRows } = await pool.query(
+    'SELECT id FROM homeroom_bot_revision_grants WHERE session_id = $1 AND used_at IS NULL ORDER BY id DESC LIMIT 1',
+    [Number(row.id)],
+  ).catch(() => ({ rows: [] }));
+  const grantKey = grantRows[0]?.id ? `:grant:${grantRows[0].id}` : '';
   await appendEvent(pool, loopRules.BOT_REQUEST, loopRules.requestKey(row.app_id, issueNumber), {
     type: 'FixAsked', payload: { appId: Number(row.app_id), issueNumber, sessionId: Number(row.id), head: due.head },
-  }, { requestKey: `fix:${Number(row.id)}:${due.head}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
+  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
   log.info('homeroom-bot', due.failing.length
     ? 'Its proposal\'s checks failed; asked its request to fix them'
     : due.broken?.length
@@ -5972,7 +5995,7 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
  * triage's does.
  */
 async function runChecksFix(pool, config, {
-  bot, app, repo, item, issue, session, checks, canRevise, mode, runMode, model, turnBudgetMs, startedMs,
+  bot, app, repo, item, issue, session, checks, canRevise, basis = null, mode, runMode, model, turnBudgetMs, startedMs,
   recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps, reasoningEffort = null,
 }) {
   const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
@@ -6014,6 +6037,13 @@ async function runChecksFix(pool, config, {
     });
     return { ran: false, reason: 'checks_infra' };
   }
+
+  // #6284: a grant somebody spent buys this one round, even when the bot's
+  // own three are used up. Its round is recorded as asked, not as one of the
+  // bot's own, and the grant becomes used before the turn runs.
+  const grantedRound = !!(basis?.openGrant) && Number(basis?.own || 0) >= followup.MAX_REVISIONS;
+  let grantedBy = null;
+  const tries = Number(basis?.own || 0) + Number(basis?.grants || 0);
 
   let runId = null;
   // #5220: before its own fix turn, a failure that looks like main's
@@ -6161,10 +6191,41 @@ async function runChecksFix(pool, config, {
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
-    const text = followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
+    // #6284: the stop offers Let it try again and Not now under its message,
+    // like the bot's other offers in a thread. The buttons are for the
+    // requester; an admin presses the one on the Testing card.
+    let offer = null;
+    let offerFor = null;
+    if (extra.limitStop && failing.length) {
+      const dmModule = deps.dm || require('./homeroom-bot-dm');
+      const who = typeof dmModule.requesterOf === 'function'
+        ? await dmModule.requesterOf(pool, app.id, issueNumber).catch(() => null)
+        : null;
+      offerFor = who?.userId ? Number(who.userId) : null;
+      const { rows: offerRows } = await pool.query(
+        `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
+         VALUES ($1, 'try_again', $2, $3) RETURNING id`,
+        [app.id, JSON.stringify({ sessionId: Number(session.id) }), offerFor],
+      ).catch(() => ({ rows: [] }));
+      offer = offerRows[0] || null;
+    }
+    const offerMeta = offer ? {
+      homeroomBot: {
+        kind: 'voice',
+        offer: { id: Number(offer.id), kind: 'try_again', status: 'open', forUserId: offerFor },
+        actions: [
+          { id: 'yes', label: 'Let it try again', style: 'primary', offerId: Number(offer.id) },
+          { id: 'no', label: 'Not now', style: 'secondary', offerId: Number(offer.id) },
+        ],
+      },
+    } : null;
+    const text = extra.limitStop && failing.length
+      ? followup.stoppedHandOffText({ failingCount: failing.length, tries })
+      : followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
     const posted = await postOnce(look, 'followup_person', () => live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person', runId, text,
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
+      metadata: offerMeta,
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
       // Red checks a person must look at reach the requester as a stop
@@ -6176,6 +6237,15 @@ async function runChecksFix(pool, config, {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;
     }));
+    // #6284: bind the offer to the message the post made, so a tap decides it
+    // (homeroom-bot-voice.decideOffer finds the offer by its message).
+    if (offer && posted?.postId) {
+      await pool.query(
+        `UPDATE homeroom_bot_voice_offers o SET message_id = p.thread_message_id
+           FROM homeroom_bot_posts p WHERE o.id = $1 AND p.id = $2 AND p.thread_message_id IS NOT NULL`,
+        [offer.id, posted.postId],
+      ).catch(() => {});
+    }
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt,
       postedAt: posted?.githubCreatedAt ? [posted.githubCreatedAt] : [], proposalSessionId: session.id,
@@ -6204,7 +6274,15 @@ async function runChecksFix(pool, config, {
     return handOff({
       why: `it has already updated this change ${followup.MAX_REVISIONS} times, as many as it may on its own`,
       verdict: 'person',
+      extra: { limitStop: 'own_revisions' },
     });
+  }
+
+  // #6284: the grant becomes used only now, when a round is really spent:
+  // a sync above did not use it.
+  if (grantedRound) {
+    const used = await look.once('grant', () => require('./homeroom-bot-retry-grants').useGrant(pool, session.id));
+    grantedBy = used?.granted_by || null;
   }
 
   // #6234: one line on the change as its fix starts, so the request's page
@@ -6305,6 +6383,9 @@ async function runChecksFix(pool, config, {
       reason: parsed?.reply || summary, buildNote: summary,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
       proposalSessionId: session.id, checksHeadSha: head, ...spent,
+      // #6284: a round a person let it try counts as asked, never as one of
+      // its own three.
+      ...(grantedRound ? { asked: true, askedBy: grantedBy } : {}),
     });
     await recordSnapshot(runId);
     await dropRow();
@@ -6363,7 +6444,14 @@ async function runChecksFix(pool, config, {
   return handOff({
     why,
     verdict: parsed?.action === 'person' ? 'person' : 'failed',
-    extra: { ...spent, ...(turn.stopped ? { budgetStop: 'wall clock' } : {}) },
+    // #6284: a granted round that did not get past its checks stops again,
+    // and the card says so ("after 4 tries"); one that hands over because a
+    // person must decide is a hand-off, not a stop.
+    extra: {
+      ...spent,
+      ...(turn.stopped ? { budgetStop: 'wall clock' } : {}),
+      ...(grantedRound && parsed?.action !== 'person' ? { limitStop: 'own_revisions' } : {}),
+    },
     // The turn found the failures are not the change's (followup.CAUSES).
     notChange: parsed?.action === 'person' && parsed.cause === 'not_change' && failing.length > 0 && !broken.length,
     cause: parsed?.action === 'person' ? parsed.cause : null,

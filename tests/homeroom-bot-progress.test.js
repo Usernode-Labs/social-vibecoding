@@ -617,8 +617,8 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   const fs = require('node:fs');
   const path = require('node:path');
   const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
-  assert.match(read('src/routes/sessions.js'), /detail\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\.changeBotFix\(pool, session\.id\)\.catch\(\(\) => null\);/);
-  assert.match(read('src/routes/votes.js'), /proposal\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\.changeBotFix\(pool, proposal\.id\)\.catch\(\(\) => null\);/);
+  assert.match(read('src/routes/sessions.js'), /detail\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\s*\.changeBotFix\(pool, session\.id, \{ viewer: req\.user \}\)\.catch\(\(\) => null\);/);
+  assert.match(read('src/routes/votes.js'), /proposal\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\s*\.changeBotFix\(pool, proposal\.id, \{ viewer: req\.user \}\)\.catch\(\(\) => null\);/);
   // The Homeroom bot page's own stage for it (ai-work.js BOT_STANDING), as
   // stageOf reads a started checks_failing row.
   const open = { proposal_status: 'promoted', proposal_at: ago(20), check_state: 'failing', checks_sha: 'a'.repeat(40), reviewed_head_sha: 'a'.repeat(40) };

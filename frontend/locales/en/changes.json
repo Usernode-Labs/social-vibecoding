@@ -9003,6 +9003,42 @@
     "text": "Homeroom bot couldn’t fix this on its own. The person who asked for it, or any member of this project, can take it from here.",
     "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot (the change's author) gave up fixing what failed: who can take it over. \"It\" in the second sentence is the change."
   },
+  "page.testing.note.botStopped_one": {
+    "text": "Checks failing · Homeroom bot stopped after {{count}} try. You can let it try once more.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit of fixes it may make by itself. Shown to someone who may let it try again (the requester, an admin, or anyone who voted on the change). {{count}} is the number of its tries, always 1 here."
+  },
+  "page.testing.note.botStopped_other": {
+    "text": "Checks failing · Homeroom bot stopped after {{count}} tries. You can let it try once more.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit of fixes it may make by itself. Shown to someone who may let it try again (the requester, an admin, or anyone who voted on the change). {{count}} is the number of its tries."
+  },
+  "page.testing.note.botStoppedOthers_one": {
+    "text": "Checks failing · Homeroom bot stopped after {{count}} try. The person who asked for it, an admin or anyone who voted on it can let it try again.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit. Shown to someone who may not let it try again. {{count}} is the number of its tries, always 1 here."
+  },
+  "page.testing.note.botStoppedOthers_other": {
+    "text": "Checks failing · Homeroom bot stopped after {{count}} tries. The person who asked for it, an admin or anyone who voted on it can let it try again.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit. Shown to someone who may not let it try again. {{count}} is the number of its tries."
+  },
+  "tryAgain.label": {
+    "text": "Let it try again",
+    "description": "Button on the Testing card of a change whose checks failed, after Homeroom bot stopped at its own limit: lets it make one more fix round."
+  },
+  "tryAgain.asking": {
+    "text": "Asking…",
+    "description": "The Let it try again button while the request is in flight."
+  },
+  "tryAgain.done": {
+    "text": "Homeroom bot will try once more.",
+    "description": "Toast after someone lets Homeroom bot try once more at a change's failing checks."
+  },
+  "tryAgain.failedHttp": {
+    "text": "Could not let it try again ({{status}}).",
+    "description": "Toast when letting Homeroom bot try again failed with an HTTP status."
+  },
+  "tryAgain.failedWith": {
+    "text": "Could not let it try again: {{error}}",
+    "description": "Toast when letting Homeroom bot try again failed for a reason the server gave."
+  },
   "page.testing.note.botRerun": {
     "text": "Re-running the checks now would restart its fix.",
     "description": "Sentence after the \"Homeroom bot is fixing this\" line on the Testing card of a change's page, shown to a viewer who could press Re-run checks, which is disabled while the bot's fix runs. \"Its\" is Homeroom bot's."

@@ -4523,11 +4523,9 @@ async function voteLineTarget(pool, { sessionId }) {
     const settings = await settingsModule().readSettings(pool);
     if (!require('./homeroom-bot-live').isLiveFor(settings, app)
       || (settings?.pausedApps || []).includes(app.slug)) return null;
-    const { rows: [revisions] } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`,
-      [id],
-    );
-    if ((revisions?.n || 0) >= require('./homeroom-bot-followup').MAX_REVISIONS) return null;
+    // #6284: only updates people asked for count against their own limit.
+    const counts = await require('./homeroom-bot-followup').revisionCounts(pool, id);
+    if (counts.asked >= require('./homeroom-bot-followup').MAX_ASKED_REVISIONS) return null;
     return { app, sessionId: id, issueNumber };
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not read where a No\'s line goes', { sessionId: id, err: err.message });

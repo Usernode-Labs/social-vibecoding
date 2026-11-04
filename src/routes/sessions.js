@@ -3615,6 +3615,32 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // hosted connector's submit_platform_build still takes ownership of a
   // build this way before proposing it, so an external connector token (not
   // a delegated grant) is the one caller left.
+  // #6284: a person lets the Homeroom bot try once more at a change it
+  // stopped fixing on its own. The requester, an admin or anybody who voted
+  // on the change may; one grant buys exactly one more round.
+  router.post('/api/apps/:slug/changes/:id/let-it-try-again', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id) return res.status(404).json({ error: 'Change not found' });
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1 AND a.slug = $2`,
+        [id, req.params.slug],
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Change not found' });
+      const out = await require('../services/homeroom-bot-retry-grants')
+        .grant(pool, { sessionId: id, user: req.user });
+      if (!out.ok) {
+        if (out.why === 'not_allowed') return res.status(403).json({ error: 'not_allowed' });
+        return res.status(409).json({ error: out.why });
+      }
+      return res.json({ granted: true });
+    } catch (err) {
+      log.error('sessions', 'Could not let the bot try again', { message: err.message });
+      return res.status(500).json({ error: 'Could not let it try again' });
+    }
+  });
+
   router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     if (!req.connectorClientId || req.mcpDelegation) {
       return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
@@ -3968,7 +3994,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // change page's Testing card (services/homeroom-bot-progress.js
       // changeBotFix); null for any change of a person's.
       if (req.path.endsWith('/details')) {
-        detail.bot_fix = await require('../services/homeroom-bot-progress').changeBotFix(pool, session.id).catch(() => null);
+        detail.bot_fix = await require('../services/homeroom-bot-progress')
+          .changeBotFix(pool, session.id, { viewer: req.user }).catch(() => null);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).

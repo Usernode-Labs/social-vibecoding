@@ -95,6 +95,11 @@
       "id": "bot-followups",
       "sha256": "fd61d6185077d024a85db7ceec16fc53bd56fa823994558f99e7cb0c62310c9e",
       "schemaSha256": "a6eeb9cbaf64abb0dab1fb773d8dcbf45136cb20a843adb866b4488f32a954fc"
+    },
+    {
+      "id": "bot-revision-grants",
+      "sha256": "f58d9406fdbb616b0f25b4775a4919805a0eb249bb68d2c6d38644e8c9c1101e",
+      "schemaSha256": "31de7ff70f830be694cbe2e650e1246363f0f39c1291566a586ed3c61326bc4e"
     }
   ]
 }
