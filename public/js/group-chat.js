@@ -23,6 +23,8 @@ const GroupChat = {
   oldestMessageId: null,
   hasMore: true,
   _historyLoad: null,
+  // #6262: the thread this mount already marked read, so one open posts once.
+  _threadReadSent: null,
   // The general stream's catch-up state (#4177): `_latestLoad` is the
   // catch-up in flight; `_streamLoaded` says its first page has loaded, even
   // an empty one; the rest are `_general`'s, explained in "One rule for every
@@ -1225,6 +1227,10 @@ const GroupChat = {
     // `chat_delete` patches the same fields).
     const deleted = !!msg.deleted;
     const threadType = scopeType;
+    // #2236: 'agent' when the connector posted this on the author's behalf
+    // (`posted_via` on a loaded row, `postedVia` on a live broadcast);
+    // null for a person typing. Only the one value the server writes.
+    const postedVia = (msg.postedVia || msg.posted_via) === 'agent' ? 'agent' : null;
     return {
       id: msg.id == null ? null : Number(msg.id),
       // #6229: a bot note written once on its request's page still says which
@@ -1263,10 +1269,13 @@ const GroupChat = {
       editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
       unread: !!msg.has_unread_notification,
       bookmarked: !!(msg.saved || msg.bookmarked),
-      // #2236: 'agent' when the connector posted this on the author's behalf
-      // (`posted_via` on a loaded row, `postedVia` on a live broadcast);
+      // #2236: 'agent' when the connector posted this on the author's behalf;
       // null for a person typing. Only the one value the server writes.
-      postedVia: (msg.postedVia || msg.posted_via) === 'agent' ? 'agent' : null,
+      postedVia,
+      // #6268: Homeroom bot will not answer this connector message, and the
+      // row says so quietly; the reason was decided when it was posted
+      // (`metadata.homeroomBotSkip` on both loaded and live rows).
+      botSkipped: postedVia === 'agent' && !!(meta && meta.homeroomBotSkip),
       canEdit: msg.userId === App.user?.id || msg.user_id === App.user?.id,
       // The three header controls, gated exactly as the string template gated
       // them: edit is your own message and not read-only (#621), react is not
@@ -1682,6 +1691,9 @@ const GroupChat = {
     GroupChat._threadPlaced = false;
     GroupChat._threadPinned = false;
     GroupChat._attachThreadFollow(GroupChat._threadScrollEl());
+    // #6262: a fresh mount of a thread may mark it read once its first page
+    // is drawn (loadThreadHistory, or below when the cache has it already).
+    GroupChat._threadReadSent = null;
 
     // Full general-chat interaction set on the thread list: tap-to-quote,
     // long-press / hover reactions, quote-jump, reference chips.
@@ -1779,7 +1791,11 @@ const GroupChat = {
     const st = GroupChat._threadState(type, ref);
     if (closed) return;
     if (!st.loaded) GroupChat.loadThreadHistory(type, ref);
-    else if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
+    else {
+      // #6262: a cached first page is drawn now; opening still clears it.
+      GroupChat._noteThreadRead(type, ref);
+      if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
+    }
   },
 
   // #4417: the cards a topic's channel draws by time changed while it is
@@ -1827,6 +1843,28 @@ const GroupChat = {
     GroupChat._threadComposerWiring?.abort();
     GroupChat._threadComposerWiring = new AbortController();
     return GroupChat._threadComposerWiring.signal;
+  },
+
+  // #6262: the Homeroom bot page marks a thread with something new by a dot
+  // (frontend/src/features/ai/). Opening its page clears it, whichever door
+  // was used: its first page is drawn and the document is visible, so the
+  // cursor moves. Once per mount (mountThread resets _threadReadSent); the
+  // cursor only moves forward server-side.
+  _noteThreadRead(type, ref) {
+    if (!['issue', 'session', 'governance'].includes(type)) return;
+    const key = GroupChat.threadKey(type, ref);
+    if (GroupChat._threadReadSent === key) return;
+    if (document.visibilityState === 'hidden') return;
+    const slug = GroupChat.appSlug;
+    if (!slug) return;
+    GroupChat._threadReadSent = key;
+    try {
+      fetch(`/api/apps/${encodeURIComponent(slug)}/threads/read${GroupChat._specDemoQS()}`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ thread_type: type, thread_ref: Number(ref) }),
+      }).then((res) => (res.ok ? res.text() : null)).catch(() => { GroupChat._threadReadSent = null; });
+    } catch (_) { GroupChat._threadReadSent = null; }
   },
 
   async loadThreadHistory(type, ref) {
@@ -1887,6 +1925,7 @@ const GroupChat = {
       }
       st.loaded = true;
       st.failed = false;
+      if (isFirstPage) GroupChat._noteThreadRead(type, ref);
       if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread({ flush: true });
     } catch { /* surfaced below */ } finally {
       if (timeout) clearTimeout(timeout);

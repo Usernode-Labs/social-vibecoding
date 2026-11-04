@@ -1623,6 +1623,10 @@
     "text": "Before and after · {{count}} changes",
     "description": "On Homeroom bot's plan card, the row that opens the plan's pictures: one close-up, before and after, for each numbered change. {{count}} is how many changes have one."
   },
+  "bot.plan.crops.summaryPlain": {
+    "text": "Before and after",
+    "description": "On Homeroom bot's plan card, the row that opens the plan's pictures when the lines above it are not the plan's own numbered lines, so a count would name changes that are not showing."
+  },
   "bot.plan.crops.before": {
     "text": "Before",
     "description": "On Homeroom bot's plan card, the small label over the close-up of a change as the screen is today."
@@ -4855,6 +4859,34 @@
     "text": "Needs you: {{needs}}",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Line under the heading when nothing of theirs is being worked on: {{needs}} is how many things in its Needs you list ask something of the person (a vote, an answer, a Build it)."
   },
+  "ai.hero.bothFresh_one": {
+    "text": "Needs you: {{needs}} · <0>{{fresh}} new</0> · In progress: {{next}}",
+    "description": "The AI tab's main view: line under the heading when something needs the person and something is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour), {{next}} how many of their pieces of work are being worked on."
+  },
+  "ai.hero.bothFresh_other": {
+    "text": "Needs you: {{needs}} · <0>{{fresh}} new</0> · In progress: {{next}}",
+    "description": "The AI tab's main view: line under the heading when something needs the person and something is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour), {{next}} how many of their pieces of work are being worked on."
+  },
+  "ai.hero.needsFresh_one": {
+    "text": "Needs you: {{needs}} · <0>{{fresh}} new</0>",
+    "description": "The AI tab's main view: line under the heading when something needs the person and nothing of theirs is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour)."
+  },
+  "ai.hero.needsFresh_other": {
+    "text": "Needs you: {{needs}} · <0>{{fresh}} new</0>",
+    "description": "The AI tab's main view: line under the heading when something needs the person and nothing of theirs is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour)."
+  },
+  "ai.work.fresh_one": {
+    "text": "{{count}} new",
+    "description": "The AI tab's Needs you list: a small pill beside its heading or a project's name, saying how many threads there have a message the person has not read. Shown only above zero."
+  },
+  "ai.work.fresh_other": {
+    "text": "{{count}} new",
+    "description": "The AI tab's Needs you list: a small pill beside its heading or a project's name, saying how many threads there have a message the person has not read. Shown only above zero."
+  },
+  "ai.work.earlier": {
+    "text": "Earlier",
+    "description": "The AI tab's Needs you list: a small line inside a project, between the threads with something new and the ones the person has already seen."
+  },
   "ai.work.title": {
     "text": "Needs you",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Label over the first list: what waits on the person (a vote, an answer, a plan to say Build it to) in the threads they are in, then their private threads."
@@ -5183,6 +5215,14 @@
     "text": "{{project}} · #{{number}} · Live",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a one-line row in Live this week: its project and number."
   },
+  "ai.live.closed": {
+    "text": "{{project}} · Private thread · Closed",
+    "description": "Tooltip of a private thread marked done this week, in Live this week: only the person can see it, which project it is for, and that it is closed. The row's lock says the same."
+  },
+  "ai.live.closedSolo": {
+    "text": "Private thread · Closed",
+    "description": "Tooltip of a private thread marked done this week, in Live this week, that is for no project yet: only the person can see it, and it is closed. The row's lock says the same."
+  },
   "ai.drawer.back": {
     "text": "Back to the list",
     "description": "The AI tab on a phone: the back arrow over what is open beside the list (Main Chat, the chat with Homeroom bot, or one of its threads), which slides the list back in. Its accessible name and tooltip."
@@ -5202,6 +5242,14 @@
   "ai.filter.more_other": {
     "text": "{{count}} more",
     "description": "The AI tab's main view: the last chip over the lists, after the three projects that need the person most; opens the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many projects have no chip of their own."
+  },
+  "ai.filter.fresh_one": {
+    "text": "{{count}} new",
+    "description": "The AI tab's filter chips: the number on a project's chip (and on All), how many of that project's threads in Needs you have a message the person has not read. A screen reader hears this instead of the number; shown only above zero."
+  },
+  "ai.filter.fresh_other": {
+    "text": "{{count}} new",
+    "description": "The AI tab's filter chips: the number on a project's chip (and on All), how many of that project's threads in Needs you have a message the person has not read. A screen reader hears this instead of the number; shown only above zero."
   },
   "ai.filter.search": {
     "text": "Find a project",

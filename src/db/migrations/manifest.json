@@ -95,6 +95,16 @@
       "id": "bot-followups",
       "sha256": "fd61d6185077d024a85db7ceec16fc53bd56fa823994558f99e7cb0c62310c9e",
       "schemaSha256": "a6eeb9cbaf64abb0dab1fb773d8dcbf45136cb20a843adb866b4488f32a954fc"
+    },
+    {
+      "id": "check-explanations-main-sha",
+      "sha256": "3ebbf775aa2755df08d99b44873755415d9413fef730f1ae51e580a2af3ca6f7",
+      "schemaSha256": "3856a83adab04787544d6fabeb2f13edf90d579807a85eab22ef19880aafa4e6"
+    },
+    {
+      "id": "thread-reads",
+      "sha256": "e050b014130d789510952071e7cf5f6109043babb2d180eded3ba1a7bd991db6",
+      "schemaSha256": "338645fbf8c97d50854fd8dee8f891693a90c337e3f6e5b59bb7cbcbb49a0d22"
     }
   ]
 }
