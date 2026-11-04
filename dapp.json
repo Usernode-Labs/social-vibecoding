@@ -5192,6 +5192,19 @@
       "path": "/?demo=1#homeroom-bot",
       "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"] [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"going_live\"] ~ [data-ai-line=\"building\"] ~ [data-ai-line=\"vote\"]",
       "expectText": "Going live"
+    },
+    {
+      "name": "Experimental offers the interface mode switch",
+      "path": "/?demo=1#settings/experimental",
+      "expectSelector": "#settings-experimental-section [data-interface-mode] input[type=\"checkbox\"]",
+      "expectText": "Advanced mode",
+      "id": "settings-interface-mode",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/settings/interface-mode*",
+        "frontend/src/features/settings/sections/experimental.tsx",
+        "frontend/locales/en/settings.json"
+      ]
     }
   ],
   "governance": {
