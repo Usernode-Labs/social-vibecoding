@@ -25,10 +25,20 @@ function database({ failBootstrap = false, failPolicy = false } = {}) {
       if (sql.includes('DO $$')) {
         if (failBootstrap) throw new Error('tuple concurrently updated');
         db.rolePassword = /PASSWORD '([0-9a-f]+)'/.exec(sql)?.[1] || db.rolePassword;
+        if (sql.includes('topochain_console_ro')) db.consoleCreated = true;
         return { rows: [] };
       }
+      if (sql.includes('r.rolcanlogin')) {
+        const consoleRole = params[0] === 'topochain_console_ro';
+        return { rows: (consoleRole ? db.consoleCreated : db.rolePassword) ? [{
+          rolcanlogin: !consoleRole, connects: true, uses_public: true,
+          rolconfig: ['default_transaction_read_only=on', `statement_timeout=${consoleRole ? '10s' : '5s'}`],
+        }] : [] };
+      }
+      if (sql.includes('AS table_select')) return { rows: [{ schema: 'public', table: 'issues', kind: 'r',
+        table_select: true, selected: ['id','title'], table_write: false, column_write: false }] };
       if (sql.includes('current_database')) return { rows: [{ db: 'usernode', usr: 'usernode' }] };
-      if (sql.includes('FROM pg_catalog.pg_class') || sql.includes('information_schema')) {
+      if (sql.includes('array_agg(a.attname') || sql.includes('FROM pg_catalog.pg_class') || sql.includes('information_schema')) {
         return { rows: [{ table: 'issues', kind: 'r', columns: ['id', 'title'] }] };
       }
       if (sql.startsWith('INSERT INTO platform_db_roles')) {
@@ -102,7 +112,7 @@ test('a web process runs prod-debug queries with the password the leader made, r
   assert.equal(web.isAvailable(), true);
 });
 
-test('a newer leader rotates the password; a web process reads it again when Postgres refuses the old one', async () => {
+test('a release reuses a valid password and repairs a password changed outside its record', async () => {
   const db = database();
   const leader = processWith(db, '../src/services/debug-access');
   const web = processWith(db, '../src/services/debug-access');
@@ -111,8 +121,15 @@ test('a newer leader rotates the password; a web process reads it again when Pos
   const before = db.rolePassword;
 
   const newer = processWith(db, '../src/services/debug-access');
+  const start = db.queries.length;
   await newer.ensureRole(config);
-  assert.notEqual(db.rolePassword, before, 'every election makes a new password');
+  assert.equal(db.rolePassword, before, 'an unchanged role keeps its working credential');
+  assert.ok(!db.queries.slice(start).some(sql => /^\s*(DO|ALTER|GRANT|REVOKE)\b/.test(sql)),
+    'the verified role needs no permission or role DDL');
+
+  db.rolePassword = 'changed-outside-the-record';
+  await newer.ensureRole(config);
+  assert.notEqual(db.rolePassword, before, 'an unusable saved credential triggers repair');
 
   const out = await web.runQuery('SELECT 1', { config });
   assert.equal(out.rowCount, 1, 'the refusal sends it back to the record, once');

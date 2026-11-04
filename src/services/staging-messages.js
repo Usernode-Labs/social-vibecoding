@@ -901,11 +901,23 @@ async function ensureBotDmStory(pool, { botId, conversationId, cardKey }) {
 //   2. a batch of requests worked through at once, with its roll-up, and a
 //      note added to a build that is running (batch.tsx, build-note.tsx);
 //   3. an investigation that checks in for days (investigation.tsx).
+//   4. #6250: a thread filed as a request, which stays in the list with where
+//      it went ("Filed as #404"), and whose opener line Main Chat leaves out.
 // Obviously fake ("Staging demo"), with no project, batch, note or
 // investigation behind the cards: a tap on one decides nothing (the demo's
 // card route answers { demo }), and nothing rings (notify: false). Each
 // thread is sent once, keyed on its root's idempotency key.
 const PARITY_THREADS = Object.freeze([
+  {
+    // #6250: a filed thread stays in the list, saying where it went (#404 is
+    // obviously fake and names no request the demo lists).
+    key: 'staging-hrbot-parity-filed',
+    appSlug: 'staging-demo-app', state: 'filed', resultRef: 404,
+    lines: [
+      { me: true, content: 'Staging demo: keep my private threads in the list' },
+      { content: 'Staging demo: filed as request #404. This thread stays open.' },
+    ],
+  },
   {
     key: 'staging-hrbot-parity-talk',
     lines: [
@@ -1052,10 +1064,15 @@ async function ensureBotParityThreads(pool, { user, botId, conversationId }) {
     }, { notify: false, metadata: { homeroomBot: { kind: 'opened_thread', changeKind: 'any' } } });
     const rootId = root?.messageId ?? root?.message?.id;
     if (!rootId) continue;
+    // #6250: a filed thread keeps its app and its request, so its row says
+    // where it went; the others are open and in no project.
+    const app = thread.appSlug
+      ? (await pool.query('SELECT id FROM apps WHERE slug = $1', [thread.appSlug])).rows[0]
+      : null;
     await pool.query(
-      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-       VALUES ($1, $2, $3, NULL, 'ask', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
-      [user.id, conversationId, rootId]
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, result_ref)
+       VALUES ($1, $2, $3, $4, 'ask', $5, $6) ON CONFLICT (root_message_id) DO NOTHING`,
+      [user.id, conversationId, rootId, app ? app.id : null, thread.state || 'open', thread.resultRef || null]
     );
     let index = 0;
     for (const line of thread.lines) {

@@ -39,17 +39,17 @@ test('the plan holds every test file of this repository exactly once, at every s
   }
 });
 
-test('the baseline is well formed and every test file has an entry in it', (t) => {
+test('the baseline is well formed, and a missing entry is advice, not a failure', (t) => {
   const raw = JSON.parse(fs.readFileSync(shardPlan.DURATIONS_FILE, 'utf8'));
   assert.equal(raw.version, 1);
   assert.ok(raw.defaultSeconds > 0);
   const gaps = shardPlan.baselineGaps(files, raw);
-  // Every test file is planned from its own entry, never left to the
-  // default: a change that adds a test file adds its entry, so main stays
-  // complete and a merge cannot tip it over. Add missing entries with:
-  assert.deepEqual(gaps.missing, [],
-    `${gaps.missing.length} of ${files.length} test files have no entry in the baseline; add them with:\n`
-    + `  npm run test:durations -- --add ${gaps.missing.join(',')}`);
+  // A file the baseline does not know is planned at defaultSeconds: a new
+  // file costs a little balance, never a place. So a missing entry is a note
+  // for the next refresh, never a red main that pauses every merge. A
+  // baseline that is BROKEN still fails: loadDurations throws for one, and
+  // the guard above (this test) never gets as far as the gaps.
+  if (gaps.missingAdvisory) t.diagnostic(gaps.missingAdvisory);
   // Placeholder entries are a balance question, never a failure. A full
   // refresh (npm run test:durations) replaces them with measured times.
   if (gaps.advisory) t.diagnostic(gaps.advisory);
@@ -59,14 +59,20 @@ test('baselineGaps: a missing entry is reported, placeholders only advise, a com
   const list = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js', 'tests/d.test.js', 'tests/e.test.js', 'tests/f.test.js'];
   const entries = Object.fromEntries(list.map((file) => [file, [1, 1]]));
   const full = shardPlan.baselineGaps(list, { files: entries });
-  assert.deepEqual(full, { missing: [], unmeasured: [], advisory: null }, 'every file measured: nothing to say');
+  assert.deepEqual(full, { missing: [], unmeasured: [], advisory: null, missingAdvisory: null }, 'every file measured: nothing to say');
 
   const { 'tests/a.test.js': _gone, ...withoutA } = entries;
   const oneMissing = shardPlan.baselineGaps(list, { files: withoutA });
-  assert.deepEqual(oneMissing, { missing: ['tests/a.test.js'], unmeasured: [], advisory: null });
+  assert.deepEqual(oneMissing.missing, ['tests/a.test.js']);
+  // A missing entry names the file and the command that adds it, and never
+  // fails: the planner gives the file the default time.
+  assert.match(oneMissing.missingAdvisory, /^1 of 6 test files have no entry/);
+  assert.match(oneMissing.missingAdvisory, /tests\/a\.test\.js/);
+  assert.match(oneMissing.missingAdvisory, /npm run test:durations -- --add tests\/a\.test\.js\b/);
 
   const placeholders = shardPlan.baselineGaps(list, { files: entries, unmeasured: ['tests/b.test.js', 'tests/a.test.js'] });
   assert.deepEqual(placeholders.missing, []);
+  assert.equal(placeholders.missingAdvisory, null);
   assert.deepEqual(placeholders.unmeasured, ['tests/a.test.js', 'tests/b.test.js']);
   assert.match(placeholders.advisory, /^2 of 6 test files have placeholder durations/);
   assert.match(placeholders.advisory, /npm run test:durations/);
@@ -175,6 +181,16 @@ test('a refresh charges a file with its child processes, keeps each process\'s l
   assert.deepEqual(b.overrides, { 'tests/a.test.js': { cores: 5, why: 'x' } });
   assert.equal(b.defaultSeconds, 4, 'the median');
   assert.equal('unmeasured' in b, false, 'a full run measures every entry, so writes no placeholder list');
+
+  // A refresh that did not time every test file still writes a complete
+  // baseline: a file it did not see gets the default and is listed as
+  // unmeasured, so a branch cut before a new test file merged cannot leave
+  // main with a gap the next check fails on.
+  const current = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js'];
+  const complete = td.withUntimed(b, current);
+  assert.deepEqual(complete.files['tests/c.test.js'], [4, 1], 'the untimed file gets the default seconds');
+  assert.deepEqual(complete.unmeasured, ['tests/c.test.js']);
+  assert.deepEqual(shardPlan.baselineGaps(current, complete).missing, [], 'no file is left without an entry');
 });
 
 test('--add writes a default entry for a new file, lists it as unmeasured, and leaves known entries alone', () => {

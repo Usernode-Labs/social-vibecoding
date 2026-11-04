@@ -590,6 +590,42 @@ test('the working card shows the answer as it grows, under "Writing"', () => {
   assert.equal(card.botDraftText({ kind: 'drawing' }), '');
 });
 
+// 4 Nov 2026 (#6302): the card flashed between the answer so far and what the
+// bot was doing next, because each doing event replaced the whole entry. The
+// words are held on the Typist now: a read or a wordless "thinking" leaves
+// them in place, a newer answer replaces them, and they leave with the card.
+test('the answer so far stays on the working card while the bot reads or thinks', () => {
+  const store = loadTsx('frontend/src/features/messages/store.ts');
+  const writing = store.botDoingOf({ kind: 'writing', text: 'A couple of the names you gave' });
+  const first = store.botTypist(undefined, 'Homeroom bot', writing);
+  assert.equal(first.draft, 'A couple of the names you gave');
+
+  const reading = store.botTypist(first, 'Homeroom bot', store.botDoingOf({ kind: 'request', number: 436 }));
+  assert.deepEqual(reading, {
+    name: 'Homeroom bot', unnamed: false, bot: true,
+    doing: { kind: 'request', number: 436 },
+    draft: 'A couple of the names you gave',
+  }, 'held while it reads the request');
+
+  const thinking = store.botTypist(reading, 'Homeroom bot', store.botDoingOf(undefined));
+  assert.equal(thinking.draft, 'A couple of the names you gave', 'and while it thinks, with no doing');
+  assert.deepEqual(thinking.doing, null);
+
+  const more = store.botTypist(thinking, 'Homeroom bot', store.botDoingOf({ kind: 'writing', text: 'So I checked: the list is right' }));
+  assert.equal(more.draft, 'So I checked: the list is right', 'a newer answer replaces the one before it');
+  assert.equal(store.botTypist(undefined, 'Homeroom bot', null).draft, undefined, 'a fresh turn starts with nothing');
+
+  const card = loadTsx('frontend/src/features/messages/bot-working.tsx');
+  const html = renderToHtml(createElement(card.BotWorkingCard, { typist: reading }));
+  assert.match(html, /data-bot-working="request"/);
+  assert.match(html, /<span class="min-w-0 truncate" data-bot-working-doing="">Reading request #436<\/span>/);
+  assert.match(html, /data-bot-working-draft=""/);
+  assert.match(html, /A couple of the names you gave/);
+  const heldThinking = renderToHtml(createElement(card.BotWorkingCard, { typist: thinking }));
+  assert.match(heldThinking, /data-bot-working="thinking"/);
+  assert.match(heldThinking, /data-bot-working-draft=""/, 'the words are still drawn under "Thinking"');
+});
+
 const botMessage = (homeroomBot, extra = {}) => ({
   id: 901, conversationId: 41, content: 'It saves on Finish.', createdAt: '2026-11-01T12:00:00.000Z', deleted: false,
   sender: { id: 2, username: 'homeroom_bot', bot: true }, attachments: [], objects: [], reactions: [],

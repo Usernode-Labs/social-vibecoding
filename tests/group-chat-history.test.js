@@ -13,6 +13,12 @@ function setup(scope) {
     setTimeout, clearTimeout, AbortController,
     document: { getElementById: () => null },
     fetch: (url, init) => new Promise((resolve, reject) => {
+      // Opening a thread also posts its read (#6262): not a page read, and
+      // answered at once so it never sits in `requests`.
+      if (String(url).includes('/threads/read')) {
+        resolve({ ok: true, text: async () => '' });
+        return;
+      }
       const req = { url, resolve, reject };
       // #4640: a first page's fetch carries an abort signal, so a request
       // that never answers is given up on. The stub honours it the way the

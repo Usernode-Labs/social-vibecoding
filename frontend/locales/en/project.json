@@ -3427,6 +3427,10 @@
     "text": "Show less",
     "description": "Button under a request's own words on its page, and under a change's summary on a change's page, once the text is unfolded: folds it back to four lines."
   },
+  "topic.request.words.translate": {
+    "text": "Translate",
+    "description": "Button beside Show more under someone else's request on its page: shows its title and words in the language the reader uses Homeroom in. A verb."
+  },
   "topic.request.editor.label": {
     "text": "The request",
     "description": "Accessible name of the text box in which the person who filed a request rewrites its words, on the request's page. A noun."

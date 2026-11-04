@@ -11,7 +11,7 @@
 // and the platform executes the reads on its side:
 //
 //   - SQL runs through a dedicated `usernode_debug_ro` Postgres role
-//     whose password each release's migration step regenerates
+//     whose password each release's migration step verifies and repairs
 //     (services/db-roles.js), and whose grants expose only reviewed
 //     operational columns (READABLE_COLUMNS below). Every process
 //     reads it from platform_db_roles, encrypted with the data key as app
@@ -29,6 +29,7 @@ const { getPool } = require('../db/pool');
 const log = require('./logger');
 const secrets = require('./secrets');
 const { verifyDebugRole } = require('./debug-role-policy');
+const { readOnlyRoleCurrent, repairReadOnlyDrift } = require('./readonly-role-state');
 
 const ROLE = 'usernode_debug_ro';
 const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/;
@@ -373,7 +374,7 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 async function ensureRole(config, { admin = null } = {}) {
   for (let attempt = 1; attempt <= BOOTSTRAP_ATTEMPTS; attempt++) {
     try {
-      await bootstrapRole(config, admin);
+      if (!await reuseVerifiedRole(config)) await bootstrapRole(config, admin);
       await recordBootstrap(config, { ok: true, password: _roPassword });
       return;
     } catch (err) {
@@ -395,6 +396,37 @@ async function ensureRole(config, { admin = null } = {}) {
       await recordBootstrap(config, { ok: false, reason: _unavailableReason });
     }
   }
+}
+
+async function reuseVerifiedRole(config) {
+  const pool = getPool(config);
+  const { rows: [row] } = await pool.query(
+    'SELECT ok, reason, secret_enc FROM platform_db_roles WHERE role = $1', [ROLE]);
+  if (!row?.ok || !row.secret_enc) return false;
+  if (!await readOnlyRoleCurrent(pool, { role: ROLE, login: true, timeoutMs: QUERY_TIMEOUT_MS })) return false;
+  try { await verifyDebugRole(pool, { role: ROLE, readableColumns: READABLE_COLUMNS }); }
+  catch (err) { if (err.code === 'DEBUG_POLICY_MISMATCH') return false; throw err; }
+  let password;
+  try { password = secrets.decrypt(row.secret_enc, config && config.dataEncryptionKey); }
+  catch { return false; }
+  if (!password) return false;
+  // Catalogs do not expose password verifiers to the migrator. Authenticate
+  // once as the saved role, so a manual password change still gets repaired.
+  closePool();
+  _roPassword = password;
+  const probe = _getRoPool(config);
+  try { await probe.query('SELECT 1'); }
+  catch (err) {
+    if (['28P01', '28000'].includes(err.code)) return false;
+    throw err;
+  } finally {
+    await probe.end();
+    if (_roPool === probe) _roPool = null;
+  }
+  _available = true;
+  _unavailableReason = null;
+  log.info('prod-debug', 'Read-only debug role verified; permissions unchanged');
+  return true;
 }
 
 // What the migration step made, for every process (loadShared): whether the
@@ -496,6 +528,8 @@ async function bootstrapRole(config, admin = null) {
   // query starts read-only, and the role has no write grants anyway.
   await roleAdmin.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
   await roleAdmin.query(`ALTER ROLE ${ROLE} SET statement_timeout = '${QUERY_TIMEOUT_MS}ms'`);
+  await roleAdmin.query(`ALTER ROLE ${ROLE} VALID UNTIL 'infinity'`);
+  await repairReadOnlyDrift(pool, ROLE, roleAdmin);
 
   const { rows: dbRows } = await pool.query('SELECT current_database() AS db');
   const dbName = dbRows[0].db;
@@ -509,7 +543,6 @@ async function bootstrapRole(config, admin = null) {
   // PostgreSQL also clears corresponding column ACLs with this table-level
   // revoke, including grants on views and foreign tables. Reapply only the
   // reviewed base-table columns below.
-  await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE}`);
   const { rows: tableRows } = await pool.query(
     `SELECT c.relname AS table, c.relkind AS kind,
             array_agg(a.attname::text ORDER BY a.attnum) AS columns
@@ -521,12 +554,13 @@ async function bootstrapRole(config, admin = null) {
       GROUP BY c.relname, c.relkind`
   );
   const grants = buildGrantStatements(tableRows);
-  for (const stmt of grants) {
-    await pool.query(stmt);
-  }
+  await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE};\n${grants.join(';\n')}`);
   // No shared success record or credential is published until the effective
   // privileges and reviewed column definitions match the current policy.
   const verified = await verifyDebugRole(pool, { role: ROLE, readableColumns: READABLE_COLUMNS });
+  if (!await readOnlyRoleCurrent(pool, { role: ROLE, login: true, timeoutMs: QUERY_TIMEOUT_MS })) {
+    throw new Error('Debug role authority could not be repaired');
+  }
 
   // Rebuild the RO pool so it picks up the fresh password.
   if (_roPool) {

@@ -216,6 +216,11 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
   // #6228: a read after somebody's reply says so, in the existing planning
   // state's line, rather than "Reading the request".
   if (base?.why === 'reading' && job.reply) base = { ...base, why: 'reply' };
+  // #6313: a read queued again after a plan that could not be written says
+  // it is retrying the plan, not only that it waits its turn.
+  if (base?.state === 'queued' && (entry?.retry === 'plan' || job.retry === 'plan')) {
+    base = { ...base, why: 'plan_retry' };
+  }
   // #6156: held, it waits at the limit its run was held by, as an ended
   // hold reads it (fromOutcome): the bot's turn, or votes on its changes.
   if (base?.state === 'held' && stage === 'held' && CAP_LIMITS[lead?.cap_suppressed]) {
@@ -549,6 +554,8 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null }
     stage: state ? state.stage : null,
     // #6228: the read is of somebody's newest reply.
     reply: state?.reply === true,
+    // #6313: the queued read is retrying a plan that could not be written.
+    retry: state?.retry || null,
     since: state ? iso(state.since) : null,
     at: iso(row.run_at),
     outcome,

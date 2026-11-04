@@ -279,6 +279,164 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.match(sent[0].content, /The header is blue\./, 'the description it read is quoted');
   });
 
+  // #6270: a change of the bot's on request 61, its own, for the correction
+  // tests below: kept apart from `change` so its waits are nobody else's.
+  let mainLinkChange = null;
+  const mainLink = async () => {
+    if (!mainLinkChange) {
+      const { rows: [row] } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, linked_issues, promoted_at, pr_number)
+         VALUES ($1, $2, 'dev/homeroom_bot-main-link', 'promoted', 'Keep plus threads out of Main', $3, NOW(), 32) RETURNING id`,
+        [app.id, homeroomBot.id, [61]],
+      );
+      mainLinkChange = row.id;
+    }
+    return mainLinkChange;
+  };
+
+  await t.test('#6270: a turn that reads every round is capped, warned, and answers on its last', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, '@Homeroom bot does the header show on every page?', place);
+    let n = 0;
+    const call = (name, args) => ({
+      content: '',
+      toolCalls: [{ id: `c${++n}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }],
+      usage: { inputTokens: 100, outputTokens: 20, costUsd: 0 },
+    });
+    // The messages of every request are the same array, read as it stands when
+    // the request is made: what each round was told is kept as it was.
+    const snaps = [];
+    const model = scripted([
+      (req) => {
+        snaps.push(req.messages.map((m) => ({ ...m })));
+        return req.tools.some((tl) => tl.function.name === 'read_message')
+          ? call('read_message', { id })
+          : call('reply', { text: 'Yes: the header shows on every page.' });
+      },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'reads-1' });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, voice.MAX_ROUNDS, 'its eight rounds, the last of them the answer');
+    const lastResult = (i) => {
+      const results = snaps[i].filter((m) => m.role === 'tool');
+      return results.length ? String(results[results.length - 1].content) : '';
+    };
+    assert.doesNotMatch(lastResult(4), /reading for this turn is done/, 'the fourth read is served');
+    assert.match(lastResult(5), /reading for this turn is done/, 'the fifth is refused');
+    const last = model.seen[voice.MAX_ROUNDS - 1];
+    assert.equal(last.toolChoice, 'required');
+    assert.deepEqual(last.tools.map((tl) => tl.function.name).sort(), ['reply', 'stay_quiet', 'update_change'],
+      'nothing to read on the last round, and the change it can queue');
+    assert.ok(snaps[voice.MAX_ROUNDS - 1].some((m) => m.role === 'user' && /This is your last round\. Answer now with what you have/.test(String(m.content))));
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /Yes: the header shows on every page\./);
+  });
+
+  await t.test('#6270: a stand-in reply is refused once, then the honest line is posted', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, 'Would that keep the thread out of Main?', place);
+    const snaps = [];
+    const model = scripted([
+      (req) => {
+        snaps.push(req.messages.map((m) => ({ ...m })));
+        return {
+          content: '',
+          toolCalls: [{ id: `s${snaps.length}`, type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'placeholder' }) } }],
+          usage: { inputTokens: 100, outputTokens: 20, costUsd: 0 },
+        };
+      },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'stand-in-1' });
+    assert.equal(out.outcome, 'fallback');
+    assert.equal(model.seen.length, 2, 'one more round after the stand-in');
+    assert.ok(snaps[1].some((m) => /That reply is a stand-in, not an answer/.test(String(m.content))),
+      'the retry is told what it did');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /^Sorry, I couldn't answer just now\. Ask me again in a minute\.$/);
+    const { rows: [record] } = await pool.query('SELECT outcome, failures FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1');
+    assert.equal(record.outcome, 'fallback');
+    assert.ok(record.failures.includes('stand_in'), JSON.stringify(record.failures));
+  });
+
+  await t.test('#6270: a stand-in followed by a real answer posts the real answer', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, 'And would Main still link out?', place);
+    const model = scripted([
+      { tool: 'reply', args: { text: '...' } },
+      { tool: 'reply', args: { text: 'Yes: a thread you started from Main still links out.' } },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'stand-in-2' });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, 2);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].content, 'Yes: a thread you started from Main still links out.');
+  });
+
+  await t.test('#6270: a correction phrased as a question queues the change on the request', async () => {
+    sent.length = 0;
+    const place = { type: 'issue', ref: 61 };
+    const sessionId = await mainLink();
+    const id = await say(evan, 'Only if I started it from the plus button, should it not show up in main?', place);
+    const model = scripted([
+      { tool: 'update_change', args: { instruction: 'Only a thread started from the plus button stays out of Main; one started from Main still links out.' } },
+      { tool: 'reply', args: { text: 'Done: it is queued, so only a thread started from the plus button stays out of Main. It is not made yet.' } },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'question-1' });
+    assert.equal(out.outcome, 'replied');
+    const { rows: asks } = await pool.query(
+      'SELECT instruction, status, asker_id, issue_number, message_id FROM homeroom_bot_change_asks WHERE session_id = $1 ORDER BY id DESC',
+      [sessionId]);
+    assert.equal(asks.length, 1, 'the correction is queued as a change');
+    assert.equal(asks[0].instruction, 'Only a thread started from the plus button stays out of Main; one started from Main still links out.');
+    assert.equal(asks[0].status, 'queued');
+    assert.equal(asks[0].asker_id, evan.id);
+    assert.equal(asks[0].issue_number, 61);
+    assert.equal(asks[0].message_id, id, 'where it was asked is where the answer goes');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].thread.type, 'issue');
+    assert.match(sent[0].content, /^Got it, it is queued/, 'a reply about a queued change never says it is done');
+  });
+
+  await t.test('#6270: a change queued on the last round still gets one round to say so', async () => {
+    sent.length = 0;
+    const place = { type: 'issue', ref: 61 };
+    const sessionId = await mainLink();
+    const id = await say(evan, 'Only a thread started from the plus button should stay out of main, right?', place);
+    let n = 0;
+    const call = (name, args) => ({
+      content: '',
+      toolCalls: [{ id: `q${++n}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }],
+      usage: { inputTokens: 100, outputTokens: 20, costUsd: 0 },
+    });
+    const model = scripted([
+      (req) => {
+        const names = req.tools.map((tl) => tl.function.name);
+        if (names.length === 1 && names[0] === 'reply') {
+          return call('reply', { text: 'Yes. I have queued the change so only one started from the plus button stays out of Main. It is not made yet.' });
+        }
+        if (req.toolChoice === 'required') {
+          return call('update_change', { instruction: 'Only a thread started from the plus button stays out of Main' });
+        }
+        return call('request_detail', { number: 61 });
+      },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'question-2' });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, voice.MAX_ROUNDS + 1, 'a round after the last one, because it queued a change');
+    assert.deepEqual(model.seen[voice.MAX_ROUNDS].tools.map((tl) => tl.function.name), ['reply'],
+      'that round is only there to say it');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /queued the change/);
+    assert.doesNotMatch(sent[0].content, /Sorry, I couldn't answer/);
+    // This change's asks belong to these two tests: the app's counts below are
+    // the other tests'. Removed, so none is left waiting on a change nothing
+    // follows up.
+    await pool.query('DELETE FROM homeroom_bot_change_asks WHERE session_id = $1', [sessionId]);
+  });
+
   await t.test('words a DM passed on as an ask are the follow-up\'s, not answered again', async () => {
     const place = { type: 'session', ref: change.id };
     const before = sent.length;

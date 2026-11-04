@@ -64,10 +64,16 @@ const shotsState = require('./shots-state');
 const proposalDescription = require('./proposal-description');
 const { withoutEmDashes } = require('./em-dashes');
 
-// Revisions the bot makes to one proposal on its own. Each one clears the
-// votes the proposal had, so an unbounded loop of "one more tweak" costs the
-// group its review every time. After this many, the turn runs read-only.
+// Revisions the bot makes to one proposal ON ITS OWN (a check fix, a shots
+// fix): updates nobody asked for. Each one clears the votes the proposal
+// had, so an unbounded loop of "one more tweak" costs the group its review
+// every time. After this many, the bot stops and a person may let it try
+// once more (#6284).
 const MAX_REVISIONS = 3;
+// #6284: updates people ASKED for (a thread ask, Main Chat's revise, a No
+// vote's reason) have their own, higher limit. They still clear the votes,
+// so they are capped too, and the cap is said in words.
+const MAX_ASKED_REVISIONS = 10;
 // #3767: the longest name a revision may give its proposal.
 const MAX_TITLE_CHARS = 120;
 
@@ -462,11 +468,73 @@ function revisedText({ summary, reply, planVersion = null, descriptionStale = fa
 // false) is not one a reply gets updated, so it says so.
 function revisionFailedText({ why, canRevise = true }) {
   if (canRevise === false) {
-    return 'Homeroom bot couldn\'t update this change: it has already updated it as many times as it may on its own, '
-      + 'so a person needs to make this one. The change is as it was.';
+    return `Homeroom bot couldn't update this change: it has already made ${MAX_ASKED_REVISIONS} updates people `
+      + 'asked for on it, as many as it may. A person can make the next one. The change is as it was.';
   }
   const words = require('./homeroom-bot-dm').updateFailedWords(why, 'this change', 'bot');
   return `${words} The change is as it was. Reply here (or on the GitHub issue) and it will try again.`;
+}
+
+/**
+ * #6284: what the record says about this change's revisions: the bot's own
+ * rounds (`own`, which the three-round limit counts), the rounds people
+ * asked for (`asked`, with their own higher limit), how many grants have
+ * been used, and the open grant's id if somebody may still spend one.
+ * Never throws: a grants table that is not there yet reads as no grants.
+ */
+async function revisionCounts(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return { own: 0, asked: 0, grants: 0, openGrant: null };
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE NOT asked)::int AS own,
+            COUNT(*) FILTER (WHERE asked)::int AS asked
+       FROM homeroom_bot_runs
+      WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+    [id],
+  );
+  let grants = 0;
+  let openGrant = null;
+  try {
+    const { rows: g } = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE used_at IS NOT NULL)::int AS used,
+              MAX(id) FILTER (WHERE used_at IS NULL) AS open
+         FROM homeroom_bot_revision_grants WHERE session_id = $1`,
+      [id],
+    );
+    grants = Number(g[0]?.used || 0);
+    openGrant = g[0]?.open ? Number(g[0].open) : null;
+  } catch {
+    // The migration has not run here (a test's own schema, an old copy).
+  }
+  return { own: Number(rows[0]?.own || 0), asked: Number(rows[0]?.asked || 0), grants, openGrant };
+}
+
+/**
+ * #6284: the line the change and the thread show when the bot stopped at its
+ * own limit. `tries` is its own rounds plus the grants people spent.
+ */
+function stoppedAtLimitText({ failingCount = 0, tries = MAX_REVISIONS, you = false } = {}) {
+  const who = you
+    ? 'You can let it try once more.'
+    : 'The person who asked for it or an admin can let it try again.';
+  const failing = failingCount > 0
+    ? `${failingCount} of this change's checks failed on its preview.`
+    : 'Its checks are failing on its preview.';
+  return `Checks failing · Homeroom bot stopped after ${tries} tries. ${who} ${failing}`;
+}
+
+/** #6284: the bot stopped at its own limit, as its own thread message. */
+function stoppedHandOffText({ failingCount = 0, tries = MAX_REVISIONS } = {}) {
+  const failing = failingCount === 1
+    ? ' 1 check is still failing.'
+    : failingCount > 1 ? ` ${failingCount} checks are still failing.` : '';
+  return `I stopped after ${tries} tries at getting this change past its checks.${failing} `
+    + 'The person who asked for it or an admin can let me try once more.';
+}
+
+/** #6284: the cap on updates people asked for, said in words. */
+function askedLimitText() {
+  return `I've made ${MAX_ASKED_REVISIONS} updates people asked for on this change, as many as I may. A person can make the next one.`;
 }
 
 // #4610: a person who wrote to the bot on its change heard nothing until
@@ -1095,6 +1163,11 @@ function headMoved({ mode, result, reviewedHeadSha, action }) {
 
 module.exports = {
   MAX_REVISIONS,
+  MAX_ASKED_REVISIONS,
+  revisionCounts,
+  stoppedAtLimitText,
+  stoppedHandOffText,
+  askedLimitText,
   MAX_SPEC_CHARS,
   ACTIONS,
   VERDICT_FOR,

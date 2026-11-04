@@ -129,10 +129,12 @@ test('revealed, Unread keeps its stacks and draws the older rows as sections of 
   // The older rows are every row Unread does not list.
   assert.match(SHEET_SRC, /const listedIds = new Set\(unread\.map\(\(view\) => view\.id\)\);/);
   assert.match(SHEET_SRC, /const olderSections = olderGrouped \? groupOlderByTime\(all\.filter\(\(view\) => !listedIds\.has\(view\.id\)\), t\) : \[\];/);
-  const at = SHEET_SRC.indexOf('{!searching && (groupedUnread ? appGroups.map(renderAppGroup) : olderGrouped ? (');
+  // #5929 item 1: the groups render through renderAppGroups(), which labels
+  // the two kinds when both are there; the gate and the order are the same.
+  const at = SHEET_SRC.indexOf('{!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (');
   assert.ok(at > 0, 'the revealed branch sits under the same search gate');
   const branch = SHEET_SRC.slice(at, SHEET_SRC.indexOf('{today.length ? (', at));
-  assert.match(branch, /\{appGroups\.map\(renderAppGroup\)\}\s*\{olderSections\.map\(renderOlderSection\)\}/);
+  assert.match(branch, /\{renderAppGroups\(\)\}\s*\{olderSections\.map\(renderOlderSection\)\}/);
   assert.doesNotMatch(SHEET_SRC, /renderOlderGroup|olderGroups/, 'no older stack per project is left');
   // All, and the search, keep the flat Today / Earlier list.
   assert.ok(SHEET_SRC.indexOf('{today.length ? (', at) > at);

@@ -156,7 +156,9 @@ test('a conversation, its reply threads and a blank thread with Homeroom bot: th
   ], 'a reply thread');
   inOrder(read(NEW_THREAD), [
     'className="messages-thread-scroll messages-reply-scroll platform-safe-scroll flex flex-col justify-end chat-transcript"',
-    '<ChatComposerBar as="form" className="messages-composer messages-composer-thread"',
+    // #6256: the bar also carries the drag state's class, so the literal is
+    // the start of the template it renders.
+    '<ChatComposerBar as="form" className={`messages-composer messages-composer-thread${drop.dragging ? \' messages-composer-dragging\' : \'\'}`}',
   ], 'a blank thread');
   // The composer's bar is the primitive in each of its shapes; only "you
   // can't send here", a line in the card's place, names the clearance itself.

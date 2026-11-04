@@ -89,7 +89,7 @@ test('it is shown from a layout effect after the fill, measuring what that read'
 });
 
 test('while it holds, the spinner stays up over rows laid out but hidden', () => {
-  assert.match(THREAD, /data-opening=\{holding \? '' : undefined\}>/,
+  assert.match(THREAD, /data-opening=\{holding \? '' : undefined\} \{\.\.\.drop\.handlers\}>/,
     'marked on the pane, so the scroller keeps its class string and attributes');
   assert.match(THREAD, /\{holding \? <div className="messages-state" data-opening-state=""><span className="messages-spinner" \/>\{t\('messages:thread\.loading'\)\}<\/div> : null\}/,
     'the same words and spinner as before the first page, so the open reads as one wait');

@@ -54,10 +54,13 @@
 //   BOT_BUILD_CRASH_LANES      builds run at once (default 4), a database each
 //   BOT_BUILD_CRASH_ONLY       a,b,…: only the kill points whose name has one
 //   BOT_BUILD_CRASH_BUDGET_MS  stop starting kill points after this long
-//                              (default 150000); the rest are skipped, and a
-//                              run whose wait that deadline cut short and
-//                              then timed out is skipped the same way, so
-//                              the file stays under the runner's 180 s timeout
+//                              (default 120000, then 10 s of grace for a
+//                              stuck build); the rest are skipped, and a run
+//                              whose wait that deadline cut short and then
+//                              timed out is skipped the same way, so budget
+//                              plus grace plus teardown stay well under the
+//                              runner's 180 s per-file timeout
+//                              (tests/bot-build-crash-budget.js)
 //   BOT_BUILD_CRASH_DEBUG=1    the children's output
 //   BOT_BUILD_CRASH_TIMING=1   each run's timeline
 //   BOT_BUILD_CRASH_RESULTS=1  what each kill point ended with, as JSON
@@ -70,11 +73,12 @@ const os = require('node:os');
 const path = require('node:path');
 const { Pool } = require('pg');
 const world = require('./lib/bot-build-crash');
+const { BUDGET_MS: BUDGET_MS_DEFAULT, GRACE_MS } = require('./lib/bot-build-crash-budget');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const LANES = Math.max(1, Number(process.env.BOT_BUILD_CRASH_LANES) || 4);
 const ONLY = process.env.BOT_BUILD_CRASH_ONLY || null;
-const BUDGET_MS = Number(process.env.BOT_BUILD_CRASH_BUDGET_MS) || 150000;
+const BUDGET_MS = Number(process.env.BOT_BUILD_CRASH_BUDGET_MS) || BUDGET_MS_DEFAULT;
 const MODEL = 'test/coder';
 const REVIEWER = 'test/reviewer';
 const CONFIG = {
@@ -195,9 +199,10 @@ test('bot builds and bench trials carried on through a crash at every step they 
   for (let i = 0; i < LANES; i += 1) {
     const name = `bbc_${tag}_${i}`;
     await admin.query(`CREATE DATABASE ${name} TEMPLATE ${template}`);
-    // A build still going this long after the budget ran out is called stuck:
-    // the file ends inside the runner's 180 s, its teardown included.
-    lanes.push(makeLane(name, i, childEnv, started + BUDGET_MS + 20000));
+    // A build still going this long after the budget ran out is called stuck.
+    // Budget plus this grace plus teardown ends well inside the runner's
+    // 180 s (tests/bot-build-crash-budget.js), so the file is never cut off.
+    lanes.push(makeLane(name, i, childEnv, started + BUDGET_MS + GRACE_MS));
   }
 
   // ── The uninterrupted runs ──────────────────────────────────────────

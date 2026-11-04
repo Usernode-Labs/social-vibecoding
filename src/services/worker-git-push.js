@@ -212,6 +212,20 @@ async function publish({ remoteUrl, branchName, token, exportWorker, expectedSha
     const safe = new Error(redact(`${error.message}${detail}`, token, username).slice(0, 2000));
     safe.code = error.code;
     safe.permanent = error.permanent === true;
+    // #6267 (run 4536): the branch on GitHub moved past the commit this push
+    // would put there. Sending it again cannot help: an earlier build's stale
+    // commit must not be re-pushed on every later turn, so this is permanent
+    // with its own code (worker.js rescueUnpushedCommit drops the record).
+    // `git push --porcelain` reports the rejection on stdout ("! ...
+    // [rejected] (non-fast-forward)"); older Git and the hints say it on
+    // stderr, so both are read.
+    if (/\[rejected\]|non-fast-forward|\(fetch first\)|stale info/i.test(
+      `${error.stdout || ''}\n${error.stderr || ''}\n${error.message || ''}`,
+    )) {
+      safe.code = 'non_fast_forward';
+      safe.permanent = true;
+      safe.userMessage = 'The branch on GitHub has newer work than this commit.';
+    }
     safe.stderr = redact(error.stderr, token, username).slice(0, 8000);
     throw safe;
   } finally {

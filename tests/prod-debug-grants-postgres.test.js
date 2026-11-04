@@ -22,7 +22,8 @@ function debugModule(pool, role) {
   const modulePath = require.resolve('../src/services/debug-access');
   Module._load = function (name) {
     if (name === '../db/pool') return { getPool: () => ({
-      query: (sql, values) => pool.query(sql.replaceAll('usernode_debug_ro', role), values),
+      query: (sql, values) => pool.query(sql.replaceAll('usernode_debug_ro', role),
+        values?.map(value => value === 'usernode_debug_ro' ? role : value)),
     }) };
     if (name === 'pg') return { Pool: class extends Pool {
       constructor(options) { super({ ...options, user: role }); }
@@ -141,6 +142,37 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
   await denied("UPDATE apps SET status = 'changed'");
 
   const verify = () => verifyDebugRole(pool, { role, readableColumns: debug.READABLE_COLUMNS, requireAllColumns: true });
+  const ddl = [];
+  const originalQuery = pool.query.bind(pool);
+  pool.query = (sql, values) => {
+    if (typeof sql === 'string' && /^\s*(GRANT|REVOKE|ALTER|DO)\b/.test(sql)) ddl.push(sql);
+    return originalQuery(sql, values);
+  };
+  await debug.ensureRole(config);
+  assert.deepEqual(ddl, [], 'a verified role keeps its password and executes no permission DDL');
+  for (const drift of [
+    `REVOKE SELECT (id) ON apps FROM ${quote(role)}`,
+    `GRANT UPDATE (status) ON apps TO ${quote(role)}`,
+    `GRANT SELECT ON new_private_store TO ${quote(role)}`,
+    `ALTER ROLE ${quote(role)} SET default_transaction_read_only = off`,
+    `ALTER ROLE ${quote(role)} IN DATABASE ${quote(database)} SET statement_timeout = '1h'`,
+    `ALTER ROLE ${quote(role)} PASSWORD 'changed-outside-the-record'`,
+  ]) {
+    await pool.query(drift);
+    ddl.length = 0;
+    await debug.ensureRole(config);
+    assert.equal(debug.isAvailable(), true, `repair succeeds: ${drift}`);
+    await verify();
+    assert.ok(ddl.length, 'drift triggers role or permission repair');
+    assert.equal((await read(`SELECT id FROM apps WHERE id = ${app.id}`)).rows[0].id, app.id);
+    ddl.length = 0;
+    await debug.ensureRole(config);
+    assert.deepEqual(ddl, [], 'an already-repaired role needs no repeated permission DDL');
+  }
+  await pool.query(`DROP OWNED BY ${quote(role)}; DROP ROLE ${quote(role)}`);
+  await debug.ensureRole(config);
+  assert.equal(debug.isAvailable(), true, 'a dropped role is recreated from the declared policy');
+  await verify();
   const checked = await verify();
   t.diagnostic(`complete-schema catalog audit: ${checked.columns} approved columns, ${checked.durationMs} ms`);
   // Roll back every fault, including cluster-wide role/default ACL changes.

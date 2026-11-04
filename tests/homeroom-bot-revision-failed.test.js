@@ -123,13 +123,15 @@ test('in the DM: what happened, and Change something on the change to try again'
   assert.match(dm.dmText('followup_failed', { reason: 'x', sessionId: 5001 }, { ...CONTEXT, firstVersion: true }),
     /\n\nI couldn't update the first version: something went wrong/);
   // One it may not revise again says so, with no retry that would not happen.
+  // #6284: canRevise false is the cap on updates people asked for (the bot's
+  // own three no longer stop an ask), so the note names that cap.
   const done = dm.dmText('followup_failed', { reason: 'the turn produced no change', canRevise: false, sessionId: 5001 }, CONTEXT);
-  assert.equal(done.split('\n\n')[1], 'I couldn\'t update your change: I\'ve already updated it as many times as I can on my own, '
-    + 'so a person needs to make this one. It\'s as it was.');
+  assert.equal(done.split('\n\n')[1], 'I couldn\'t update your change: I\'ve already made 10 updates people '
+    + 'asked for on it, as many as I may. A person can make the next one. It\'s as it was.');
   assert.doesNotMatch(done, /try again/i);
   assert.equal(followup.revisionFailedText({ why: 'x', canRevise: false }),
-    'Homeroom bot couldn\'t update this change: it has already updated it as many times as it may on its own, '
-      + 'so a person needs to make this one. The change is as it was.');
+    'Homeroom bot couldn\'t update this change: it has already made 10 updates people '
+      + 'asked for on it, as many as it may. A person can make the next one. The change is as it was.');
 });
 
 test('the DM rings as a stop, in the stop\'s own words', async () => {
