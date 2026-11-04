@@ -53,6 +53,9 @@ test('readOf: work under way wins, a verdict counts while it is fresh, anything 
   assert.equal(read({ run: { verdict: 'ready', created_at: ago(DAY) } }).read, 'ready');
   assert.deepEqual(read({ run: { verdict: 'person', reason: 'Needs a vote on pricing', created_at: ago(DAY) } }),
     { read: 'person', note: 'Needs a vote on pricing', why: null });
+  // #6306: a person verdict that found the ask already there is done.
+  assert.deepEqual(read({ run: { verdict: 'person', reason: 'It already ships', already_done: true, created_at: ago(DAY) } }),
+    { read: 'done', note: 'It already ships', why: 'works' });
   assert.deepEqual(read({ run: { verdict: 'empty', reason: 'It is already there', created_at: ago(DAY) } }),
     { read: 'done', note: 'It is already there', why: 'empty' });
   assert.equal(read({ run: asked }).read, 'question');

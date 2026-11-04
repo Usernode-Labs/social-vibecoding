@@ -60,35 +60,6 @@ test('#3270, #3488: the feed\'s rows are a project\'s own Needs you rows, each c
   assert.deepEqual(decision.thread, { type: 'governance', ref: 9 });
 });
 
-test('#3488: one feed for both Needs you screens, addressed per row', () => {
-  const src = read('frontend/src/features/workshop/needs-reel.tsx');
-  assert.match(src, /import \{ NeedsFeed \} from '\.\.\/dev-board\/workshop\/workshop';/);
-  assert.match(src, /<NeedsFeed\s+rows=\{rows\}[\s\S]*?doneLabel=\{t\('communities:reel\.done'\)\}\s+renderApp=\{ReelApp\}/);
-  assert.equal(message('communities:reel.done'), 'Back to your communities');
-  assert.match(src, /callAppView\('_cardMenuInit'\);/, 'the ⋯ works when this screen is the first opened');
-  const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(lander, /export function NeedsFeed\(/);
-  // Every address the feed builds is the ROW's project on this screen.
-  assert.match(lander, /function rowSlug\(row: QueueRow, slug: string\): string \{\n\s*return row\.app && row\.app\.slug \? row\.app\.slug : slug;/);
-  assert.match(lander, /const cardHref = row \? openHref\(rowSlug\(row, slug\), row\.card\) : null;/);
-  assert.match(lander, /\/api\/apps\/\$\{encodeURIComponent\(rowSlug\(row, slug\)\)\}\/workshop\/ask\/thread/);
-  assert.match(lander, /\/api\/apps\/\$\{encodeURIComponent\(rowSlug\(sending, slug\)\)\}\/workshop\/ask`/,
-    'an answer is asked of the project the row was in when it was sent');
-  assert.match(lander, /<FeedThread slug=\{rowSlug\(row, slug\)\}/);
-  // The keys answer only while the feed is on screen: it stays mounted under
-  // a hidden screen, where V then Y would cast a vote nobody saw.
-  assert.match(lander, /const feed = scrollRef\.current;\n\s*if \(!feed \|\| !feed\.offsetParent\) return;\n\s*const k = e\.key;/);
-  // A group decision's vote sheet opens its page instead of two dead buttons.
-  assert.match(lander, /\{row\.yes \|\| row\.no \|\| !cardHref \? \([\s\S]*?<a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href=\{cardHref\}>\{t\('project:needsYou\.voteSheet\.openToDecide'\)\}<\/a>/);
-  assert.equal(message('project:needsYou.voteSheet.openToDecide'), 'Open to decide');
-  const css = read('public/css/app.css');
-  // The box keeps its floor and its column; its HEIGHT moved out of this rule
-  // in #3516 (the phone's comes from the screen's clearance, the desktop's
-  // from its own rule) — see the #3516 test below.
-  assert.match(css, /\.workshop-needs-feed \{[^}]*min-height: 360px;[^}]*display: flex; flex-direction: column;/);
-  assert.match(css, /\.workshop-needs-feed \.dev-ws-keys \{ inset-inline-end: 102px; \}/, 'the legend clears the rail');
-  assert.doesNotMatch(css, /\.workshop-reel-card|\.workshop-reel-yes|\.workshop-reel-decide/, 'the old cards\' rules went with them');
-});
 
 test('#3516: on a phone the Communities feed ends where the screen\'s clearance begins', () => {
   // "Some elements get hidden under the resume app banner." The feed was
@@ -135,8 +106,6 @@ test('#3516: on a phone the Communities feed ends where the screen\'s clearance 
   // 1024px it was drawn beside the list (D) until the sidebar nested its
   // second columns.
   assert.match(screen, /\{state\.tab === 'needs' \? \(\n\s*<div data-workshop-pane="needs">/);
-  const reel = read('frontend/src/features/workshop/needs-reel.tsx');
-  assert.match(reel, /<>\n\s*<div className="workshop-needs-feed" data-needs-reel="">/, 'the feed is a child of the pane');
   // And the clearance counts the strip: one token for the bar and the strip,
   // read by every screen through .platform-safe-scroll.
   assert.match(css, /\.platform-safe-scroll \{[^}]*padding-bottom: max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\) !important;/);

@@ -1,13 +1,13 @@
 /**
- * EXPERIMENTAL (Settings › Experimental, "New Needs you"; ./settings.ts):
- * the Communities tab's Needs you as one run through the changes waiting
- * on you: look, decide, move on, with nothing else in the way.
+ * The Communities tab's Needs you as one run through the changes waiting on
+ * you: look, decide, move on, with nothing else in the way.
  *
  * ── The run ─────────────────────────────────────────────────────────────
  * Needs you opens straight on the first change waiting on you, across your
  * communities, in the feed's own order (GET /api/workshop/needs-feed). There
- * is no list to pick from. On a phone the page covers the shell's header
- * with a light bar of its own: Back, the change's title on one line, and ⌄.
+ * is no list to pick from. On a phone the page sits in the tab, below the
+ * shell's header and above its tab bar, with a light bar of its own: Back,
+ * the change's title on one line, and ⌄.
  * Back always leaves the run, for Communities or the project's hub. Next
  * PUSHES the next change in from the side; it goes only to a change you have
  * not voted on or skipped, and carries how many are left after this one (the
@@ -38,19 +38,18 @@
  * over it. A change with one screen opens it by itself; a change with
  * nothing to compare shows its drawn picture, as before.
  *
- * From 768px the same page is a panel (app.css): under the app's header,
- * rounded, as tall as what it holds, with the vote sheet as its foot and
- * the pane behind it dimmed. A click on the dim is Back. A project's own
- * Needs you is the same run, under that project's header, which already
- * names the community and the place.
+ * From 768px the same page is a panel (app.css): in the pane under the app's
+ * header, rounded, as tall as what it holds, with the vote sheet as its
+ * foot and nothing behind it dimmed. A project's own Needs you is the same
+ * run, under that project's header, which already names the community and
+ * the place.
  *
  * ── Island rules ────────────────────────────────────────────────────────
  * Rendered only while the Needs you pane shows, from data the controller
- * loads in an effect; the page is a portal on <body>.
+ * loads in an effect; the page is drawn in place, inside the tab.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 
@@ -522,7 +521,6 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const anchorRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const dimRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const foldedBar = useRef(0);
@@ -539,7 +537,6 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const [index, setIndex] = useState(0);
   const [from, setFrom] = useState<{ index: number; view: View } | null>(null);
   const [done, setDone] = useState(false);
-  const [shown, setShown] = useState(true);
   const [votes, setVotes] = useState<Record<string, Vote>>({});
   const [skipped, setSkipped] = useState<Record<string, true>>({});
   const [sheet, setSheet] = useState<SheetState>('ask');
@@ -570,7 +567,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const item = run[index] && run[index].kind !== 'governance' ? run[index] : null;
   const leaving = from ? run[from.index] : null;
   const next = item ? nextIndex(run, index, passed) : -1;
-  const open = !!item && !done && shown;
+  const open = !!item && !done;
 
   // The page's size once it is up; again if the window changes.
   useLayoutEffect(() => {
@@ -594,12 +591,43 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     return () => window.removeEventListener('resize', measure);
   }, [open]);
 
-  // The run comes up over the pane: the page fades in.
+  // The run comes up in the pane: the page fades in.
   useLayoutEffect(() => {
     if (!open || !pageRef.current || reducedMotion()) return;
     pageRef.current.animate([{ opacity: 0 }, { opacity: 1 }], { duration: OPEN_MS, easing: EASE });
-    dimRef.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: OPEN_MS, easing: EASE });
   }, [open]);
+
+  /* ── Swipe down: the next change, without a vote ── */
+  // A downward drag on the page, never on the picture or a control, moves on
+  // as Skip does before a vote and as Next does after one. Touch and pen
+  // only: with a mouse people use the buttons. Nothing is preventDefaulted,
+  // so native scrolling still works.
+  const swipe = useRef<{ id: number; x: number; y: number; x0: number; y0: number } | null>(null);
+  const swipeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+    const stage = stageRef.current;
+    if (!item || !stage || stage.scrollTop > 0 || sheetOpen(sheet) || desc || busy.current) return;
+    const el = e.target as Element | null;
+    if (el?.closest('[data-rf-picture], .rf-sheet, .rf-desc-wrap[data-open], button, a, input, textarea')) return;
+    swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY };
+  };
+  const swipeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const s = swipe.current;
+    if (!s || s.id !== e.pointerId) return;
+    s.x = e.clientX;
+    s.y = e.clientY;
+  };
+  const swipeEnd = (e: ReactPointerEvent<HTMLDivElement>, cancelled: boolean) => {
+    const s = swipe.current;
+    if (!s || s.id !== e.pointerId) return;
+    swipe.current = null;
+    if (cancelled || !item) return;
+    const dx = e.clientX - s.x0;
+    const dy = e.clientY - s.y0;
+    if (dy >= 72 && dy > 2 * Math.abs(dx)) {
+      if (votes[item.key]) goNext(); else skip();
+    }
+  };
 
   /* ── Push: this change → the next ── */
   const goTo = (n: number) => {
@@ -707,22 +735,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // A help sheet over the page, from the card: the card folds first.
   const help = (to: SheetState) => { setDesc(false); setSheet(to); };
 
-  // Going anywhere else (a link on the page, a tab, Back) takes the page
-  // down at once: it is fixed over the shell, and the screen under it may
-  // only hide, not unmount. It comes back when the pane shows again.
-  useEffect(() => {
-    const route = () => {
-      stop();
-      setShown(false);
-      requestAnimationFrame(() => setShown(!!anchorRef.current && anchorRef.current.getClientRects().length > 0));
-    };
-    window.addEventListener('hashchange', route);
-    window.addEventListener('popstate', route);
-    return () => {
-      window.removeEventListener('hashchange', route);
-      window.removeEventListener('popstate', route);
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // The page is drawn in the tab now, so going anywhere else (a tab, another
+  // place, Back) unmounts the pane and the run with it. Nothing to take down
+  // from here.
 
   // Escape closes the help first, then leaves the run.
   useEffect(() => {
@@ -809,11 +824,18 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     return <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
   }
 
-  const page = open ? createPortal(
+  const page = open ? (
     <div className="rf-page-wrap" data-rf-page="">
-      {/* From 768px, the pane behind the panel, dimmed; a click on it is Back. */}
-      <div ref={dimRef} className="rf-page-dim" onClick={onDone} aria-hidden="true" />
-      <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
+      <div
+        ref={pageRef}
+        className="rf-page"
+        role="region"
+        aria-label={item.title}
+        onPointerDown={swipeStart}
+        onPointerMove={swipeMove}
+        onPointerUp={(e) => swipeEnd(e, false)}
+        onPointerCancel={(e) => swipeEnd(e, true)}
+      >
         <div ref={safeRef} className="rf-safe-probe" aria-hidden="true" />
         <div ref={barRef} className="rf-bar" data-open={desc ? '' : undefined}>
           <button type="button" className="rf-back" onClick={onDone} aria-label={backName} data-rf-back="">
@@ -885,13 +907,12 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           onSkip={skip}
         />
       </div>
-    </div>,
-    document.body,
+    </div>
   ) : null;
 
   return (
     <>
-      <div ref={anchorRef} className="rf-run" data-review-flow="" />
+      <div ref={anchorRef} className="rf-run" data-review-flow="" hidden={open} />
       {page}
     </>
   );

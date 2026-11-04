@@ -137,6 +137,11 @@ function readOf({ track = null, run = null, queued = false, personAt = null, now
   if (fresh) {
     if (run.verdict === 'ready') return { read: 'ready', note: null, why: null };
     if (run.verdict === 'question') return { read: 'question', note: run.question ? clip(run.question, NOTE_CHARS) : null, why: null };
+    // #6306: a request the triage found already done is done, not a decision
+    // for the group: it counts with the finished ones and offers a close.
+    if (run.verdict === 'person' && run.already_done === true) {
+      return { read: 'done', note: run.reason ? clip(run.reason, NOTE_CHARS) : null, why: 'works' };
+    }
     if (run.verdict === 'person') return { read: 'person', note: run.reason ? clip(run.reason, NOTE_CHARS) : null, why: null };
     if (run.verdict === 'empty') return { read: 'done', note: run.reason ? clip(run.reason, NOTE_CHARS) : null, why: 'empty' };
   }
@@ -287,8 +292,10 @@ const TITLES_SQL = `
                   (SELECT i.created_by FROM issues i WHERE i.app_id = $1 AND i.github_issue_number = x.n
                     ORDER BY i.id LIMIT 1)) AS requester_id
     FROM unnest($2::int[]) AS x(n)`;
+// #6306: `already_done` rides along so a person verdict that found the ask
+// already there reads as done, not as a decision for the group.
 const RUNS_SQL = `
-  SELECT DISTINCT ON (r.issue_number) r.issue_number, r.id, r.verdict, r.question, r.reason, r.created_at
+  SELECT DISTINCT ON (r.issue_number) r.issue_number, r.id, r.verdict, r.question, r.reason, r.already_done, r.created_at
     FROM homeroom_bot_runs r
    WHERE r.app_id = $1 AND r.issue_number = ANY($2::int[]) AND r.mode = 'live'
      AND r.verdict IN ('ready', 'question', 'person', 'empty')

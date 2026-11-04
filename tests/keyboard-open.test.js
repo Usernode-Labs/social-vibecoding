@@ -561,7 +561,8 @@ const SENDS = [
   ['frontend/src/features/agent-session/index.tsx', 'variant="pillDanger" ink="dangerTint" size="icon"'],
   ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-draft-send'],
   ['frontend/src/features/agent-session/propose-confirm.tsx', 'data-agent-session-propose-confirm'],
-  ['frontend/src/features/dev-board/workshop/workshop.tsx', 'className="dc-send-btn dc-circle-send dev-ws-ask-send"'],
+  // The Workshop's own Ask composer went with the reel (#6276); questions
+  // about a change are asked in the AI chat now.
   ['frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'],
   ['frontend/src/features/dev-board/card/dev-card.tsx', 'className={`dev-vote-reason-send dev-vote-reason-send-${side}`}'],
   ['frontend/src/features/dev-chat/spec-viewer.tsx', 'id="dc-spec-share-send"'],

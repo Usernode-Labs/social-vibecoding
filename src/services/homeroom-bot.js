@@ -3002,6 +3002,12 @@ async function insertRunRow(pool, run) {
     await pool.query('UPDATE homeroom_bot_runs SET about_platform = TRUE WHERE id = $1', [id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record a platform verdict', { runId: id, err: err.message }));
   }
+  // #6306: a request whose ask is already there, so Needs you and the chat
+  // say "Already works" and offer to close it, the same way.
+  if (id && run.alreadyDone) {
+    await pool.query('UPDATE homeroom_bot_runs SET already_done = TRUE WHERE id = $1', [id])
+      .catch((err) => log.warn('homeroom-bot', 'Could not record an already-done verdict', { runId: id, err: err.message }));
+  }
   return id;
 }
 
@@ -3501,7 +3507,7 @@ function readFingerprintOf({ issue, comments = [], threadMessages = [], botLogin
 async function heldReadyRun(pool, appId, issueNumber) {
   const { rows } = await pool.query(
     `SELECT id, verdict, cap_suppressed, mode, read_fingerprint, determined, missing_fact, build_note, reason,
-            plan, complicated, about_platform, model
+            plan, complicated, about_platform, already_done, model
        FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2
         AND budget_stop IS DISTINCT FROM 'input tokens'
@@ -3577,6 +3583,7 @@ async function reuseHeldVerdict(pool, config, {
       verdict: 'ready', determined: held.determined, missingFact: held.missing_fact, buildNote: held.build_note,
       reason: held.reason, plan: held.plan && typeof held.plan === 'object' ? held.plan : null,
       complicated: held.complicated === true, platform: held.about_platform === true,
+      done: held.already_done === true,
     };
     // As a fresh read: a change its requester was asked to plan is planned
     // with them again.
@@ -3596,7 +3603,7 @@ async function reuseHeldVerdict(pool, config, {
     readReason: readReasonOf(item),
     appId: app.id, issueNumber, mode: runMode,
     verdict: 'ready', determined: parsed.determined, missingFact: parsed.missingFact,
-    plan: parsed.plan, aboutPlatform: parsed.platform, complicated: parsed.complicated,
+    plan: parsed.plan, aboutPlatform: parsed.platform, alreadyDone: parsed.done, complicated: parsed.complicated,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
     model: held.model || null, costUsd: 0, inputTokens: 0, outputTokens: 0,
@@ -4636,7 +4643,7 @@ async function runTriage(pool, config, {
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
-    plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated,
+    plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,

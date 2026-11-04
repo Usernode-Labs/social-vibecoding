@@ -772,18 +772,6 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // New Needs you (an experiment), kept on the account
-      // (features/review-flow/settings.ts): the change is the save, and a
-      // failed save puts the switch back to what the account has.
-      const reviewToggle = document.getElementById('review-flow-enabled');
-      if (reviewToggle) {
-        reviewToggle.addEventListener('change', async (e) => {
-          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
-          const ok = pref ? await pref.setEnabled(e.target.checked) : false;
-          if (!ok) reviewToggle.checked = !!pref?.enabled();
-        });
-      }
-
       // New look (an experiment), kept on the device by the head's
       // window.Skin: the change is the save, and the look applies at once.
       const lookToggle = document.getElementById('new-look-enabled');
@@ -1906,9 +1894,6 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const review = document.getElementById('review-flow-enabled');
-      const reviewPref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
-      if (review) review.checked = !!reviewPref?.enabled();
       const look = document.getElementById('new-look-enabled');
       if (look) look.checked = window.Skin?.get?.() === 'brand';
       this._renderLocalAgentsSection();

@@ -525,6 +525,54 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   assert.match(lists, /const ROW = 'flex w-full min-h-\[44px\] md:min-h-\[36px\]/, 'a phone\'s 44px tap target');
 });
 
+test('#6306: a request the bot found already works says so, and offers Propose to close', () => {
+  const { needsYou, whyOf } = loadTsx(MODEL);
+  const work = {
+    private: [], next: [], live: [],
+    needs: [
+      thread(7, 410, 'already_works', { group: 'needs', reason: 'Visitors get the lobby and play as a guest.' }),
+      thread(8, 411, 'already_works', { group: 'needs' }),
+      thread(9, 412, 'decide', { group: 'needs', reason: 'It changes who can sign in' }),
+    ],
+    waiting: [],
+  };
+  const rows = needsYou([], work);
+  assert.deepEqual(rows.map((r) => r.key), ['works:7', 'works:8', 'decide:9']);
+  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Propose to close', 'Propose to close', 'Decide']);
+  assert.deepEqual(rows.map((r) => words(r.sub)), [
+    'Garden club · #410 · Already works: Visitors get the lobby and play as a guest.',
+    'Garden club · #411 · Already works',
+    'Garden club · #412 · Homeroom bot says a person needs to decide',
+  ]);
+  assert.deepEqual(rows.map((r) => whyOf(r) && words(whyOf(r))), [
+    'Already works: Visitors get the lobby and play as a guest.',
+    'Already works',
+    'Homeroom bot needs a person to decide',
+  ]);
+  assert.equal(rows[0].href, '#app/garden/dev/issues/410', 'the row opens the request, where Propose to close lives');
+  // The glyph is a check, not the raised hand a decision gets.
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /if \(kind === 'works'\) return <CheckIcon className=\{G\} \/>;/);
+});
+
+test('#6306: the chat names already-done requests as working, not as decisions', () => {
+  const aiWork = require('../src/services/ai-work');
+  const lists = aiWork.listsOf([], {
+    private: [], next: [], waiting: [], live: [],
+    needs: [
+      { threadId: 1, number: 410, kind: 'work', title: 'Work for people who aren\'t signed in', app: { slug: 'garden', name: 'Garden club' },
+        what: 'already_works', reason: 'Visitors get the lobby and play as a guest.' },
+      { threadId: 2, number: 412, kind: 'work', title: 'Rebuild the map editor', app: { slug: 'garden', name: 'Garden club' },
+        what: 'decide', reason: 'It changes who can sign in' },
+    ],
+  });
+  assert.deepEqual(lists.needsYou.map((r) => r.says), [
+    'already works, so Homeroom bot offered to close it (Propose to close): Visitors get the lobby and play as a guest.',
+    'Homeroom bot handed it back: a person needs to decide',
+  ]);
+  assert.doesNotMatch(lists.needsYou[0].says, /person needs to decide/);
+});
+
 test('#6158: a Waiting row says what it waits on, and the rows nobody is moving fold under "Not moving"', () => {
   const { shortWords, nextWords, NOT_MOVING } = loadTsx(MODEL);
   const row = (what, extra = {}) => thread(1, 7, what, extra);
@@ -732,6 +780,10 @@ test('a request the bot handed back is one its records say it left for a person,
   assert.equal(handedBack({ ...looked, proposal_status: 'promoted' }), null, 'nor with a change of it up');
   assert.equal(handedBack({ ...looked, mode: 'shadow' }), null, 'only its acted-on looks');
   assert.equal(handedBack({ ...looked, verdict: 'empty' }), null);
+  // #6306: a look that found the ask already there only waits to be closed.
+  assert.equal(handedBack({ ...looked, run_already_done: true }), 'already_works');
+  assert.equal(handedBack({ ...looked, verdict: 'empty', run_already_done: true }), 'already_works');
+  assert.equal(handedBack({ ...looked, verdict: 'ready', run_already_done: true }), null, 'a ready verdict is unchanged');
   // botStages reads it where nothing is in progress.
   const aiWork = require('../src/services/ai-work');
   const stages = await aiWork.botStages(null, { id: 5 }, {
