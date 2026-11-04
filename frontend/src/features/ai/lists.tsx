@@ -156,7 +156,7 @@ function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; qui
  * #6262: the dot in the row's leading margin, so rows with and without one
  * stay lined up. The accent the page already uses for Vote and Decide.
  */
-const DOT = 'absolute -left-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
+const DOT = 'absolute -start-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
 
 function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   const t = useMessages('messages');

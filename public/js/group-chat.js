@@ -1690,10 +1690,10 @@ const GroupChat = {
     // once (`_threadPlaced`, polish board #12).
     GroupChat._threadPlaced = false;
     GroupChat._threadPinned = false;
+    GroupChat._attachThreadFollow(GroupChat._threadScrollEl());
     // #6262: a fresh mount of a thread may mark it read once its first page
     // is drawn (loadThreadHistory, or below when the cache has it already).
     GroupChat._threadReadSent = null;
-    GroupChat._attachThreadFollow(GroupChat._threadScrollEl());
 
     // Full general-chat interaction set on the thread list: tap-to-quote,
     // long-press / hover reactions, quote-jump, reference chips.

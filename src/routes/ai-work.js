@@ -6,6 +6,8 @@ const appAccess = require('../services/app-access');
 const threadReads = require('../services/thread-reads');
 const aiWork = require('../services/ai-work');
 const log = require('../services/logger');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { appChatReadLimiter } = require('../middleware/rate-limits');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -90,7 +92,7 @@ function aiWorkRoutes(config = {}) {
   // thread_ref }, where the type is 'issue' (a request's number), 'session'
   // (a chat_sessions id) or 'governance' (an issues id). Reading is not
   // taking part, so there is no join gate; the thread must be this app's.
-  router.post('/api/apps/:slug/threads/read', async (req, res) => {
+  router.post('/api/apps/:slug/threads/read', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
