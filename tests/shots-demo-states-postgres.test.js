@@ -603,11 +603,37 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     '**Homeroom** · new request: Week by week tracking in insights',
     '',
     'Show insights week by week, not only as a total.',
+    '',
+    '**Where:** the insights page',
+    '',
+    '**Related:**',
+    '- #6230 One detail column for plans and designs: build together, it is the same column',
+    '',
+    '**Done when:**',
+    '- Insights show week by week, not only as a total',
+    '- The same weeks are counted however the list is sorted',
   ].join('\n'));
-  assert.deepEqual(fileOffer.metadata.homeroomBot,
-    mayor.confirmMeta('file_request', {
-      app: { slug: SLUG }, name: 'Homeroom', actionId: fileAction.id, question: 'File this as a request on Homeroom?',
-    }));
+  const { draftExtras, ...cardMeta } = fileOffer.metadata.homeroomBot;
+  assert.deepEqual(cardMeta, mayor.confirmMeta('file_request', {
+    app: { slug: SLUG }, name: 'Homeroom', actionId: fileAction.id, question: 'File this as a request on Homeroom?',
+  }));
+  // #6251: the picture the draft names is on the draft's own message.
+  const { rows: draftPictures } = await pool.query(
+    "SELECT filename FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'", [fileOffer.id]);
+  assert.deepEqual(draftPictures.map((r) => r.filename), ['insights.png']);
+  // And on the person's own message, as the attachment offer_request names.
+  const { rows: askPictures } = await pool.query(
+    "SELECT filename, user_id FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'",
+    [fileAsk.id]);
+  assert.deepEqual(askPictures, [{ filename: 'insights.png', user_id: member }]);
+  assert.deepEqual(draftExtras, {
+    attachmentIds: (await pool.query("SELECT id FROM conversation_message_attachments WHERE message_id = $1", [fileAsk.id]))
+      .rows.map((r) => r.id),
+    related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+    context: { saw: 'the insights page' },
+    doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
+    chatHref: '#homeroom-bot/main',
+  });
   assert.deepEqual(fileOffer.metadata.homeroomBot.actions.map((a) => a.label), ['File it', 'Not now']);
 
   // A request whose change waits for approval, as the Requests board reads

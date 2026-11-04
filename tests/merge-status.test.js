@@ -517,3 +517,39 @@ test('B10a: the session payload says whose project it is, so the header pill can
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
   assert.match(src, /const membership = await communities\.getMembership\(pool, \{ id: rows\[0\]\.app_id \}, req\.user\.id\);\n\s+rows\[0\]\.app_audience = membership \? membership\.audience : null;/);
 });
+
+// Request 6265: an approved, passing change whose merge GitHub held back
+// (still finishing an earlier merge, or a plain refusal) says so, with the
+// time of the queue's next try. Nobody has to act, so it is amber and does
+// not spin.
+test('a merge GitHub held back reads "Waiting on GitHub", with the next try in the viewer\'s clock', () => {
+  const future = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+  const time = new Date(Date.parse(future)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const busy = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing', yes_count: 1, votes_required: 1,
+    integration: { blockReasons: ['github_busy'], heldUntil: future },
+  });
+  assert.equal(busy.key, 'merge_held');
+  assert.equal(busy.label, 'Waiting on GitHub');
+  assert.equal(busy.tone, 'amber');
+  assert.equal(busy.spinner, false);
+  assert.match(busy.title, /merge of this change was already in progress/);
+  assert.ok(busy.title.includes(time), `the tooltip names ${time}: ${busy.title}`);
+
+  const refused = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing', integration: { blockReasons: ['github_refused'], heldUntil: future },
+  });
+  assert.equal(refused.key, 'merge_held');
+  assert.match(refused.title, /GitHub refused the merge/);
+  assert.ok(refused.title.includes(time));
+
+  // Past its time (or no time recorded): "in a few minutes".
+  for (const heldUntil of [new Date(Date.now() - 60 * 1000).toISOString(), null, undefined]) {
+    const life = MergeStatus.lifecycle({ status: 'promoted', integration: { blockReasons: ['github_busy'], heldUntil } });
+    assert.match(life.title, /tries again in a few minutes/, String(heldUntil));
+  }
+
+  // Only an approved, promoted row: a merged one is merged.
+  assert.equal(key({ status: 'merged', integration: { blockReasons: ['github_busy'] } }), 'merged');
+  assert.equal(key({ status: 'promoted', check_state: 'passing', integration: { blockReasons: [] } }), 'in_vote');
+});

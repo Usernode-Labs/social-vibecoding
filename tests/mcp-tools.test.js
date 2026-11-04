@@ -1254,6 +1254,39 @@ test('post_message reports the route\'s marker rather than assuming it', async (
   }
 });
 
+// #6268: when Homeroom bot will not answer the agent's message, the route
+// stored why on the row; the tool hands the agent the same sentence the
+// thread says, so it can tell its person instead of posting again.
+test('post_message says when Homeroom bot will not answer the message', async () => {
+  const c = connector((method, pathname) => (method === 'POST' && pathname === '/api/apps/recipe-box/messages'
+    ? { message: { id: 9, posted_via: 'agent', metadata: { homeroomBotSkip: { why: 'connector_run' } } } }
+    : { __http: { ok: false, status: 500, body: { error: 'unexpected call' } } }), postScopes);
+  try {
+    const out = (await c.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'issue', ref: 12, content: '@Homeroom bot, one more thing.',
+    })).structuredContent;
+    assert.deepEqual(out.botAnswer, {
+      skipped: true,
+      reason: 'connector_run',
+      note: require('../src/services/homeroom-bot-voice').CONNECTOR_NOTE,
+    });
+    assert.match(out.botAnswer.note, /doesn't answer this message/);
+    assert.match(out.botAnswer.note, /@ it in your own words/);
+  } finally {
+    c.restore();
+  }
+  // An ordinary post carries no note at all.
+  const plain = connector(() => ({ message: { id: 10, posted_via: 'agent', metadata: {} } }), postScopes);
+  try {
+    const out = (await plain.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'issue', ref: 12, content: 'Here it is.',
+    })).structuredContent;
+    assert.equal(out.botAnswer, null);
+  } finally {
+    plain.restore();
+  }
+});
+
 test('post_message refuses bad input and an over-long message before any call', async () => {
   const c = connector(() => ({ message: { id: 1, posted_via: 'agent' } }), postScopes);
   try {

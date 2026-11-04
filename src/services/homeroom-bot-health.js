@@ -38,6 +38,9 @@ const THRESHOLDS = Object.freeze({
   turnFailures: Object.freeze({ above: 0.1, min: 10 }),
   // DM answers the model could not write.
   chatFailures: Object.freeze({ above: 0.1, min: 10 }),
+  // Plan cards that fell back to the older unnumbered lines, rather than
+  // showing their own (or their own lines without a failing summary).
+  cardFallbacks: Object.freeze({ above: 0.2, min: 5 }),
 });
 
 const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
@@ -63,11 +66,12 @@ function watchFor(h) {
     turnFailures: past(h.turns.runs + h.turns.builds, share(h.turns.failed + h.turns.buildsFailed, h.turns.runs + h.turns.builds),
       THRESHOLDS.turnFailures, (v) => v > THRESHOLDS.turnFailures.above),
     chatFailures: past(h.chat.turns, share(h.chat.failed, h.chat.turns), THRESHOLDS.chatFailures, (v) => v > THRESHOLDS.chatFailures.above),
+    cardFallbacks: past(h.cards.total, share(h.cards.fallback, h.cards.total), THRESHOLDS.cardFallbacks, (v) => v > THRESHOLDS.cardFallbacks.above),
   };
 }
 
-/** The four figures from their query rows. Pure. */
-function shapeHealth({ proposals = {}, questions = {}, turns = {}, chat = {} } = {}, days = DAYS) {
+/** The five figures from their query rows. Pure. */
+function shapeHealth({ proposals = {}, questions = {}, turns = {}, chat = {}, cards = {} } = {}, days = DAYS) {
   const up = int(proposals.up);
   const merged = int(proposals.merged);
   const open = int(proposals.open);
@@ -108,6 +112,14 @@ function shapeHealth({ proposals = {}, questions = {}, turns = {}, chat = {} } =
       unanswered: int(chat.broken),
       recovered: int(chat.recovered),
       claimsCaught: int(chat.claims),
+    },
+    cards: {
+      total: int(cards.total),
+      repaired: int(cards.repaired),
+      whole: int(cards.whole),
+      lines: int(cards.lines_only),
+      fallback: int(cards.fallback),
+      kinds: cards.kinds && typeof cards.kinds === 'object' && !Array.isArray(cards.kinds) ? cards.kinds : {},
     },
   };
   return { ...h, watch: watchFor(h), thresholds: THRESHOLDS };
@@ -167,6 +179,30 @@ const TURNS_SQL = `
     FROM homeroom_bot_runs
    WHERE created_at >= NOW() - make_interval(days => $1::int)`;
 
+// Its plan cards that failed a check (#6269): how many were repaired, how
+// many kept their numbered lines without a failing summary, how many fell
+// back to the older unnumbered lines, and each rule that broke, by code
+// (events BOT_PLAN_CARD, homeroom-bot-live.js draftSpec).
+const CARDS_SQL = `
+  WITH cards AS (
+    SELECT metadata
+      FROM events
+     WHERE event_type = 'bot_plan_card'
+       AND created_at >= NOW() - make_interval(days => $1::int)
+  )
+  SELECT COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE metadata->>'repaired' = 'true')::int AS repaired,
+         COUNT(*) FILTER (WHERE metadata->>'used' = 'whole')::int AS whole,
+         COUNT(*) FILTER (WHERE metadata->>'used' = 'lines')::int AS lines_only,
+         COUNT(*) FILTER (WHERE metadata->>'used' = 'fallback')::int AS fallback,
+         COALESCE(
+           (SELECT jsonb_object_agg(kind, n)
+              FROM (SELECT k AS kind, COUNT(*)::int AS n
+                      FROM cards c, LATERAL jsonb_array_elements_text(COALESCE(c.metadata->'kinds', '[]'::jsonb)) AS k
+                     GROUP BY k) per_kind),
+           '{}'::jsonb) AS kinds
+    FROM cards`;
+
 // Its DM answers (homeroom_bot_dm_turns): `error` is why the model could
 // not write one, and a fallback answered instead; 'broken' is the fallback
 // that could not answer either. A claims:* failure is a reply that said
@@ -200,13 +236,14 @@ async function rolloutHealth(pool, { botUsername, days = DAYS, failSoft = true }
       return {};
     }
   };
-  const [proposals, questions, turns, chat] = await Promise.all([
+  const [proposals, questions, turns, chat, cards] = await Promise.all([
     read('proposals', () => pool.query(PROPOSALS_SQL, [botUsername, days])),
     read('questions', () => pool.query(QUESTIONS_SQL, [days])),
     read('turns', () => pool.query(TURNS_SQL, [days])),
     read('chat', () => pool.query(CHAT_SQL, [days])),
+    read('cards', () => pool.query(CARDS_SQL, [days])),
   ]);
-  return shapeHealth({ proposals, questions, turns, chat }, days);
+  return shapeHealth({ proposals, questions, turns, chat, cards }, days);
 }
 
 module.exports = {

@@ -423,7 +423,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
 
   await t.test('#4501: a project named inexactly is asked about on the card; its exact name files as before', async () => {
     const guessed = await read(await turn('file this on ear trainr: show interval names', [
-      [['offer_request', { project: 'ear-trainer', named: 'Ear Trainr', title: 'Show interval names', details: 'Name each interval.' }]],
+      [['offer_request', { project: 'ear-trainer', named: 'Ear Trainr', title: 'Show interval names', details: 'Name each interval.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Here is what I would file.' }]],
     ]));
     const meta = guessed.metadata.homeroomBot;
@@ -435,7 +435,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.match(guessed.content, /\*\*Ear trainer\*\* · new request: Show interval names/, 'the card still names the request');
 
     const exact = await read(await turn('file this on ear trainer: show chord names', [
-      [['offer_request', { project: 'ear-trainer', named: 'ear-trainer', title: 'Show chord names', details: 'Name each chord.' }]],
+      [['offer_request', { project: 'ear-trainer', named: 'ear-trainer', title: 'Show chord names', details: 'Name each chord.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Here is what I would file.' }]],
     ]));
     assert.equal(exact.metadata.homeroomBot.question, 'File this as a request on Ear trainer?');

@@ -83,9 +83,11 @@
 // own ledger, scoped to one person, which is a handful of queries here.
 
 const log = require('./logger');
+const crypto = require('node:crypto');
 const { withoutEmDashes } = require('./em-dashes');
 const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
+const { GITHUB_ISSUE_BODY_MAX } = require('./issue-body-limit');
 const { labelledAsPullRequest } = require('./request-mentions');
 
 const MAX_HISTORY = 24;
@@ -562,6 +564,13 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  When they answer No, another app, list the few of their projects (my_projects) whose names are closest and',
     '  ask which. When offer_request names similar open requests, say so and offer to add their words to one of',
     '  them (comment_on_request) instead.',
+    // #6251: the draft carries what makes it buildable, checked before File it.
+    '- Before drafting a request, search the project\'s open requests (list_requests with a query). Put up to three',
+    '  that overlap in related, each with how (part_of, depends_on, build_together), and treat a clearly identical',
+    '  one as comment_on_request instead. Pass in attachmentIds the ids of their pictures that belong with the',
+    '  request, from the "id ..." in a picture\'s history line. Give context.request whenever they name a request',
+    '  number, and ask which project when a bare number is ambiguous; put what they saw in context.saw. Propose one',
+    '  to three doneWhen checks in their words, of what is true when it is done. They see all of it on the draft.',
     '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
     '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
     '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
@@ -584,7 +593,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  a private thread (from Main Chat, a new one, which it says), and changes it at their word there. Call it alone,',
     '  and do not reply: the designer answers them. When they have asked you to draw, render, show or mock up a',
     '  screen, call draw_screen in that turn: never answer with what you are about to do, and never ask whether to',
-    '  start it.',
+    '  start it. Put in only what they said of the app and the screen, never a screen they did not describe. When they',
+    '  have not said yet, call it anyway: your designer asks them in the thread before it draws. When your designer',
+    '  asked them there what the app is for and what this screen should do, and they answered, call draw_screen with',
+    '  their answer in that turn.',
     '- Read the code of a project they can build on, as it is on main, when they ask how something works or what',
     '  the code does (list_source to find files by path or name, then read_source). Answer from what the code says,',
     '  in plain words, and say which file you read. Never quote secrets, and say plainly when the code you read does',
@@ -595,8 +607,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     // Homeroom bot parity (P1-P9): what the thread tools add this turn (homeroom-bot-thread-tools/).
     ...extra,
     'Finish every turn by calling reply exactly once: plain text (short unless they asked for more), cards for up to 3 requests,',
-    'changes or projects you mention, and up to 3 suggestions: short things they might say next, in their own',
-    'words ("How long will it take?"), each something you can do or answer from this chat. Offer at least one',
+    'changes or projects you mention, and up to 3 suggestions in the reply tool\'s suggestions field: short things they',
+    'might say next, in their own words ("How long will it take?"), each something you can do or answer from this',
+    'chat. They are shown as buttons. Never write them in the text. Offer at least one',
     'unless the conversation has plainly ended.',
     '',
     'HOW HOMEROOM WORKS',
@@ -655,7 +668,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Never say you will do something (revise, change, build, post, file, withdraw, report, look at it again)',
     '  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it',
     '  under way. Never promise to follow up, look into, sort out, investigate or get back to them later: nothing',
-    '  brings you back to it. Never say the team has been told, or that a change was withdrawn or closed, unless',
+    '  brings you back to it, except what tell_me_when stored this turn (say its promise and nothing more).',
+    '  Never say the team has been told, or that a change was withdrawn or closed, unless',
     '  report_problem or withdraw_proposal did it in this turn. If a tool refused, say plainly why, and that',
     '  nothing was done. When you cannot do something, say so plainly, and what they can do instead: leave it, vote',
     '  No on the change, comment on the request, or use Send feedback. When you have not started something you',
@@ -831,8 +845,49 @@ const TOOLS = [
           named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
           details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
+          attachmentIds: {
+            type: 'array', maxItems: 3,
+            items: { type: 'string' },
+            description: 'Ids of pictures THEY attached in this chat that go with the request, from its history line "id ...". At most three.',
+          },
+          related: {
+            type: 'array', maxItems: 3,
+            items: {
+              type: 'object',
+              properties: {
+                number: { type: 'integer', description: 'An open request number on this project.' },
+                relation: { type: 'string', enum: ['same', 'part_of', 'depends_on', 'build_together'], description: 'How it relates. "same" means it is the same request, so offer comment_on_request instead.' },
+                why: { type: 'string', description: 'One line saying how, at most 140 characters.' },
+              },
+              required: ['number', 'relation'],
+              additionalProperties: false,
+            },
+            description: 'Open requests on this project that overlap, from list_requests.',
+          },
+          context: {
+            type: 'object',
+            properties: {
+              request: {
+                type: 'object',
+                properties: {
+                  project: { type: 'string', description: 'The request\'s project, its name or short name.' },
+                  number: { type: 'integer', description: 'The request number.' },
+                },
+                required: ['project', 'number'],
+                additionalProperties: false,
+              },
+              saw: { type: 'string', description: 'What they saw and where, in a few words, at most 200 characters (a page, a message).' },
+            },
+            additionalProperties: false,
+            description: 'Where it happened, when they named a request or described something they saw.',
+          },
+          doneWhen: {
+            type: 'array', minItems: 1, maxItems: 3,
+            items: { type: 'string' },
+            description: 'One to three short checks, in their words, of what is true when it is done.',
+          },
         },
-        required: ['project', 'title', 'details'],
+        required: ['project', 'title', 'details', 'doneWhen'],
         additionalProperties: false,
       },
     },
@@ -1622,7 +1677,7 @@ const CLAIMS = Object.freeze([
     // running does come back (look_into posts what it finds here). P4, P5: a
     // batch's reads, a note sent to a build.
     backed: (ctx) => !!(ctx.revised || ctx.commented || ctx.started || ctx.withdrew || ctx.reported || ctx.lookRunning
-      || ctx.batchQueued || ctx.steered),
+      || ctx.batchQueued || ctx.steered || ctx.followedUp),
     said: 'promises to come back to something later',
     instead: CANT_LOOK_TEXT,
   },
@@ -1632,7 +1687,9 @@ const CLAIMS = Object.freeze([
     // know what it turns up", "I'll report back": only a look this turn
     // started, still running, posts anything here later.
     re: /\b(?:I(?:'ll| will|'m going to| am going to)|we(?:'ll| will))\s+(?:(?:then|also|soon|just)\s+)?(?:post|share|send|report|tell you|let you know|come back|update you|write)\b[^.!?\n]{0,60}?(?:\bwhat (?:I|it|they|we|the helper) (?:finds?|turns? up|comes? up)\b|\b(?:the |my |its )?findings\b|\b(?:the |its )?results?\b|\bback\b|\bwhen (?:it|I|the look|the helper)(?:'s| is|'m| am)? (?:done|finished|back)\b)/i,
-    backed: (ctx) => !!ctx.lookRunning,
+    // #6264: a promise stored by tell_me_when is kept by the change's own
+    // moment, which posts it here.
+    backed: (ctx) => !!(ctx.lookRunning || ctx.followedUp),
     said: 'says it will post findings here later',
     instead: 'Nothing I started is still looking into it, so nothing will be posted here later.',
   },
@@ -2416,14 +2473,16 @@ async function historyMessages(pool, {
     const parts = [];
     const lines = attached.map((f) => {
       const picture = shown.get(f.id);
+      // #6251: the id is on the line, so offer_request can name the ones
+      // that belong with the request it drafts.
       if (picture) {
         parts.push(imagePart(picture));
-        return `[Homeroom: they attached the picture ${clip(f.filename, 120)}, shown below.]`;
+        return `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}), shown below.]`;
       }
-      if (f.kind !== 'image') return `[Homeroom: they attached the file ${clip(f.filename, 120)}, which you cannot open.]`;
+      if (f.kind !== 'image') return `[Homeroom: they attached the file ${clip(f.filename, 120)} (id ${f.id}), which you cannot open.]`;
       return imageInput
-        ? `[Homeroom: they attached the picture ${clip(f.filename, 120)}. Only the newest pictures are shown.]`
-        : `[Homeroom: they attached the picture ${clip(f.filename, 120)}, which you cannot see: your model reads text only.]`;
+        ? `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}). Only the newest pictures are shown.]`
+        : `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}), which you cannot see: your model reads text only.]`;
     });
     const card = fromBot && kind === 'activity' ? cardNow.get(Number(m.id)) : null;
     if (card) lines.push(`[Homeroom: this activity card now reads "${card}".]`);
@@ -2662,6 +2721,51 @@ function suggestionLabels(list) {
   return out;
 }
 
+/** Pure: a heading a reply may have written its suggestions under. */
+const SUGGESTIONS_HEADING_RE = /^\s*[*_]{0,2}(suggestions|you could say)\s*:?\s*[*_]{0,2}\s*:?\s*$/i;
+/** Pure: one line of a list: `-`, `*`, `•`, `1.` or `1)`. */
+const SUGGESTIONS_ITEM_RE = /^\s*(?:[-*•]|\d+[.)])\s+(.*\S)\s*$/;
+
+/** Pure: a list item's words, its marker and surrounding quotes gone. */
+function suggestionItem(line) {
+  const m = SUGGESTIONS_ITEM_RE.exec(line);
+  if (!m) return null;
+  return m[1].replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Pure (#6272): a reply that still wrote its suggested replies into its text,
+ * under a "Suggestions:" or "You could say:" heading, has them moved out into
+ * `suggestions`, where say() turns them into the buttons the people it
+ * answered tap. Only a list at the very end is moved and the rest of the text
+ * stays as it was written; a reply that already gave suggestions as buttons,
+ * or whose text would be left empty, is untouched. A move is logged so the
+ * prompt fix can be measured.
+ */
+function liftTextSuggestions(text, suggestions, logContext = {}) {
+  if (suggestionLabels(suggestions).length) return { text, suggestions, moved: false };
+  const body = String(text == null ? '' : text);
+  const lines = body.split(/\r?\n/);
+  for (let start = lines.length - 1; start >= 0; start -= 1) {
+    if (!SUGGESTIONS_HEADING_RE.test(lines[start])) continue;
+    const items = [];
+    let list = true;
+    for (const line of lines.slice(start + 1)) {
+      if (!line.trim()) continue;
+      const item = suggestionItem(line);
+      if (item == null) { list = false; break; }
+      items.push(item);
+    }
+    if (!list || !items.length) continue;
+    const before = lines.slice(0, start).join('\n').replace(/\s+$/, '');
+    if (!before) return { text, suggestions, moved: false };
+    const labels = suggestionLabels(items);
+    log.warn('homeroom-bot-mayor', 'Moved a suggestions list out of a reply\'s text', { ...logContext, count: labels.length });
+    return { text: before, suggestions: labels, moved: true };
+  }
+  return { text, suggestions, moved: false };
+}
+
 /** Cards from the model's `reply`, resolved to Messages' shared objects. */
 async function resolveCards(pool, user, cards) {
   const out = [];
@@ -2759,6 +2863,185 @@ async function startProjectThread(pool, ctx, args = {}) {
   };
 }
 
+// ── What a draft request carries besides its words (#6251) ────────────────
+//
+// offer_request's extras: the person's pictures that belong with the
+// request, up to three open requests it overlaps (and how), where it
+// happened, and one to three Done when checks. They are checked against
+// what this person can actually see (their own pictures in this chat, the
+// project's open board, its requests), drawn on the draft, and kept for
+// File it.
+
+const DRAFT_RELATION_WORDS = Object.freeze({
+  same: 'the same thing', part_of: 'part of it', depends_on: 'depends on it', build_together: 'build together',
+});
+const MAX_DRAFT_ATTACHMENTS = 3;
+const MAX_RELATED = 3;
+const MAX_RELATED_WHY = 140;
+const MAX_DONE_WHEN = 140;
+const MAX_SAW = 200;
+const MAX_QUOTED = 160;
+
+/** Pure: doneWhen as kept, or null when it is not one to three plain lines. */
+function draftDoneWhen(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) return null;
+  const list = [];
+  for (const item of value) {
+    const line = clip(withoutEmDashes(String(item ?? '').replace(/\s+/g, ' ')).trim(), MAX_DONE_WHEN);
+    if (!line) return null;
+    list.push(line);
+  }
+  return list;
+}
+
+/** The person's own pictures in this chat, by their ids: { ok, ids } or { ok: false, error }. */
+async function draftPictures(pool, { ids, conversationId, userId }) {
+  if (ids === undefined || ids === null) return { ok: true, ids: [] };
+  if (!Array.isArray(ids)) return { ok: false, error: 'attachmentIds must be a list of picture ids.' };
+  const wanted = [...new Set(ids.map((id) => String(id ?? '').trim()).filter(Boolean))];
+  if (wanted.length > MAX_DRAFT_ATTACHMENTS) {
+    return { ok: false, error: `At most ${MAX_DRAFT_ATTACHMENTS} pictures go with one request. Pick the ones that belong with it.` };
+  }
+  if (!wanted.length) return { ok: true, ids: [] };
+  const { rows } = await pool.query(
+    `SELECT a.id FROM conversation_message_attachments a
+       JOIN conversation_messages m ON m.id = a.message_id
+      WHERE a.id = ANY($1::text[]) AND a.kind = 'image' AND a.conversation_id = $2 AND a.user_id = $3
+        AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL`,
+    [wanted, conversationId, userId],
+  );
+  const found = new Set(rows.map((r) => String(r.id)));
+  const missing = wanted.filter((id) => !found.has(id));
+  if (missing.length) {
+    return { ok: false, error: `These pictures are not pictures they attached in this chat: ${missing.join(', ')}. Pass only ids from their own attachments here.` };
+  }
+  return { ok: true, ids: wanted };
+}
+
+/** The open requests on `app`'s board ({ number, title }), or [] when it cannot be read. */
+async function draftBoard(app, deps) {
+  try {
+    const github = deps.github || require('./github');
+    const repo = require('./homeroom-bot').parseRepo(app.repo_url);
+    if (!repo || typeof github.fetchPublicIssues !== 'function') return [];
+    const board = await github.fetchPublicIssues(repo.owner, repo.repo);
+    return Array.isArray(board?.issues) ? board.issues : [];
+  } catch {
+    return [];
+  }
+}
+
+/** related as kept: [{ number, title, relation, why }], or { ok: false, error }. */
+async function draftRelated(pool, { app, list, deps }) {
+  if (list === undefined || list === null) return { ok: [] };
+  if (!Array.isArray(list)) return { ok: false, error: 'related must be a list of open requests.' };
+  if (!list.length) return { ok: [] };
+  if (list.length > MAX_RELATED) return { ok: false, error: `At most ${MAX_RELATED} related requests.` };
+  const name = app.name || app.slug;
+  const board = await draftBoard(app, deps);
+  const titles = new Map(board.map((issue) => [Number(issue.number), String(issue.title || '').trim()]));
+  const kept = [];
+  for (const item of list) {
+    const number = Number(item?.number);
+    const relation = String(item?.relation || '');
+    if (!Number.isInteger(number) || number <= 0) return { ok: false, error: 'Each related request needs its number.' };
+    if (!DRAFT_RELATION_WORDS[relation]) {
+      return { ok: false, error: `relation must be one of ${Object.keys(DRAFT_RELATION_WORDS).join(', ')}.` };
+    }
+    if (!titles.has(number)) {
+      return { ok: false, error: `There is no open request #${number} on ${name}. Name an open request from list_requests.` };
+    }
+    if (relation === 'same') {
+      return {
+        ok: false,
+        error: `#${number} is the same request: do not draft a new one. Call comment_on_request with project "${app.slug}" and number ${number} instead, or use another relation if they say it is different.`,
+      };
+    }
+    const why = clip(withoutEmDashes(String(item?.why ?? '').replace(/\s+/g, ' ')).trim(), MAX_RELATED_WHY);
+    kept.push({ number, title: titles.get(number), relation, ...(why ? { why } : {}) });
+  }
+  return { ok: kept };
+}
+
+/** context as kept: { request?: { slug, name, number }, saw? } or { ok: false, error }. */
+async function draftContext(pool, { app, value }) {
+  if (value === undefined || value === null) return { ok: {} };
+  if (typeof value !== 'object' || Array.isArray(value)) return { ok: false, error: 'context must be an object.' };
+  const kept = {};
+  if (value.request != null) {
+    const project = String(value.request.project || '').trim();
+    const number = Number(value.request.number);
+    if (!project || !Number.isInteger(number) || number <= 0) {
+      return { ok: false, error: 'context.request needs the request\'s project and number.' };
+    }
+    const on = await findApp(pool, project);
+    if (!on) return { ok: false, error: `No project called ${project}. Ask which project they mean.` };
+    const { rows } = await pool.query(
+      'SELECT 1 FROM issues WHERE app_id = $1 AND github_issue_number = $2 LIMIT 1', [on.id, number],
+    );
+    if (!rows.length) {
+      return { ok: false, error: `No request #${number} on ${on.name || on.slug}. Ask which project they mean.` };
+    }
+    kept.request = { slug: on.slug, name: on.name || on.slug, number };
+  }
+  if (value.saw != null) {
+    const saw = clip(withoutEmDashes(String(value.saw).replace(/\s+/g, ' ')).trim(), MAX_SAW);
+    if (saw) kept.saw = saw;
+  }
+  return { ok: kept };
+}
+
+/** The server's own part: the thread the message is in, and the bot message it quotes. */
+async function draftPlace(pool, { ctx }) {
+  const href = '#homeroom-bot/main';
+  try {
+    const { rows: [own] } = await pool.query(
+      'SELECT thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+      [ctx.messageId, ctx.conversationId],
+    );
+    if (!own) return { href, quoted: null };
+    const root = Number(own.thread_root_id) || null;
+    let quoted = null;
+    if (own.reply_to_id) {
+      const { rows: [by] } = await pool.query(
+        'SELECT content, sender_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+        [own.reply_to_id, ctx.conversationId],
+      );
+      if (by && Number(by.sender_id) === Number(ctx.bot?.id)) {
+        const excerpt = clip(withoutEmDashes(String(by.content || '').replace(/\s+/g, ' ')).trim(), MAX_QUOTED);
+        if (excerpt) quoted = { excerpt };
+      }
+    }
+    return { href: root ? `#homeroom-bot/thread/${root}` : href, quoted };
+  } catch {
+    return { href, quoted: null };
+  }
+}
+
+/**
+ * Pure (#6251): the draft's Where, Related and Done when lines, in the
+ * draft's own words. Empty when there is nothing to say.
+ */
+function draftExtrasText(extras) {
+  if (!extras || typeof extras !== 'object') return '';
+  const lines = [];
+  const where = [];
+  const req = extras.context?.request;
+  if (req) where.push(`request #${Number(req.number)} on ${req.name || req.slug}`);
+  if (extras.context?.quoted?.excerpt) where.push(`my message "${extras.context.quoted.excerpt}"`);
+  if (extras.context?.saw) where.push(extras.context.saw);
+  const whereText = where.length ? where.join(' · ')
+    : String(extras.chatHref || '').includes('/thread/') ? 'your message in this thread' : 'your message in Main Chat';
+  lines.push(`**Where:** ${whereText}`);
+  if (Array.isArray(extras.related) && extras.related.length) {
+    lines.push('', '**Related:**', ...extras.related.map((r) => `- #${Number(r.number)} ${r.title}: ${DRAFT_RELATION_WORDS[r.relation] || r.relation}${r.why ? `, ${r.why}` : ''}`));
+  }
+  if (Array.isArray(extras.doneWhen) && extras.doneWhen.length) {
+    lines.push('', '**Done when:**', ...extras.doneWhen.map((line) => `- ${line}`));
+  }
+  return lines.join('\n');
+}
+
 /** Run one tool call for this person. Never throws: errors are results. */
 async function runTool(pool, ctx, name, args) {
   const { user, settings, deps } = ctx;
@@ -2844,10 +3127,30 @@ async function runTool(pool, ctx, name, args) {
         const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
         const details = clip(args.details, MAX_DETAILS_CHARS);
         if (title.length < 3) return { ok: false, error: 'The title is too short.' };
+        // #6251: what the draft carries besides its words, checked against
+        // this person's own chat and the project's open board.
+        const doneWhen = draftDoneWhen(args.doneWhen);
+        if (!doneWhen) {
+          return { ok: false, error: 'Give one to three short Done when checks, in their words, of what will be true when it is done.' };
+        }
+        const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
+        if (!pictures.ok) return { ok: false, error: pictures.error };
+        const related = await draftRelated(pool, { app, list: args.related, deps });
+        if (!related.ok) return { ok: false, error: related.error };
+        const context = await draftContext(pool, { app, value: args.context });
+        if (!context.ok) return { ok: false, error: context.error };
+        const place = await draftPlace(pool, { ctx });
+        const extras = {
+          attachmentIds: pictures.ids,
+          related: related.ok,
+          context: { ...context.ok, ...(place.quoted ? { quoted: place.quoted } : {}) },
+          doneWhen,
+          chatHref: place.href,
+        };
         // #4501: a name they wrote that is not exactly this project's is a
         // guess, and a guess is confirmed on the card before anything files.
         const guess = guessedProject(args.named, app);
-        ctx.offer = { app, title, details, ...(guess ? { guess } : {}) };
+        ctx.offer = { app, title, details, extras, ...(guess ? { guess } : {}) };
         // A request already on its board that looks like this one is said,
         // so their words can go on it instead (request-similarity.js).
         const similar = await require('./request-similarity').openSimilar(app, title, { github: ctx.deps?.github });
@@ -2858,14 +3161,17 @@ async function runTool(pool, ctx, name, args) {
             : 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.',
           ...(similar.length ? {
             similarOpen: similar,
-            similarNote: 'These open requests on the same project look like the same thing. Say so, show them as cards, and offer to add their words to one (comment_on_request) instead. The offer stays under your reply for them to decide.',
+            similarNote: 'These open requests on the same project look like the same thing. Say so, show them as cards, and offer to add their words to one (comment_on_request) instead. The offer stays under your reply for them to decide. Also name any that overlap in related.',
           } : {}),
         };
       }
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
       case 'reply': {
-        ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: args.suggestions };
+        // #6272: a list the model still wrote into its text becomes buttons.
+        const lifted = liftTextSuggestions(String(args.text == null ? '' : args.text), args.suggestions,
+          { userId: user.id, chat: ctx.conversationId });
+        ctx.reply = { text: clip(lifted.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: lifted.suggestions };
         return { ok: true };
       }
       default: {
@@ -3781,6 +4087,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       '',
       `**${name}** · new request: ${o.title}`,
       ...(o.details ? ['', clip(o.details, 1200)] : []),
+      ...(o.extras && draftExtrasText(o.extras) ? ['', draftExtrasText(o.extras)] : []),
     ].join('\n');
   // #6019 follow-up (plan v3: "Drafts: the bot opens a locked thread and
   // links it from Main"): a draft (a request to file, or words to post) is
@@ -3823,6 +4130,10 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
         })),
       // 2 Nov 2026: the turn's "Looked at" line and a thread tool's card (answer()).
       ...(extra || {}),
+      // #6251: what the draft showed besides its words (pictures, related
+      // requests, where, Done when), kept on the message it was said in, so
+      // File it can file the same. Read back by settleOffer.
+      ...(o.extras ? { draftExtras: o.extras } : {}),
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -3836,8 +4147,50 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       [sent.messageId, user.id, conversationId]);
   } else if (sent?.messageId) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
+    // #6251: the pictures that go with the request show on the draft, the
+    // same thumbnails as any picture in a chat message. Only on the new
+    // message: an offer said already keeps the ones it had.
+    await copyDraftPictures(pool, {
+      ids: o.extras?.attachmentIds, conversationId, messageId: sent.messageId, botId: bot.id,
+    });
   }
   return sent;
+}
+
+/** Copy the person's own pictures onto the bot's draft, so the draft shows them. Never throws. */
+async function copyDraftPictures(pool, { ids, conversationId, messageId, botId }) {
+  const wanted = Array.isArray(ids) ? [...new Set(ids.map(String))].slice(0, MAX_DRAFT_ATTACHMENTS) : [];
+  if (!wanted.length || !messageId) return;
+  try {
+    await pool.query(
+      `INSERT INTO conversation_message_attachments (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, meta, data)
+       SELECT md5(random()::text || clock_timestamp()::text || a.id), a.conversation_id, $1, $2, a.kind, a.filename, a.content_type, a.size_bytes, a.meta, a.data
+         FROM conversation_message_attachments a
+        WHERE a.id = ANY($3::text[]) AND a.conversation_id = $4`,
+      [messageId, botId, wanted, conversationId],
+    );
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not put the pictures on a draft', { messageId, err: err.message });
+  }
+}
+
+/**
+ * #6251: the extras the draft showed, as offer() kept them on the draft's
+ * own message. Null for an offer made before that, or one whose message is
+ * gone. Never throws: a filing without them is still a filing.
+ */
+async function draftExtrasOf(pool, messageId) {
+  if (!messageId) return null;
+  try {
+    const { rows: [row] } = await pool.query(
+      'SELECT metadata FROM conversation_messages WHERE id = $1', [Number(messageId)],
+    );
+    const extras = row?.metadata?.homeroomBot?.draftExtras;
+    return extras && typeof extras === 'object' && !Array.isArray(extras) ? extras : null;
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read a draft\'s extras back', { messageId, err: err.message });
+    return null;
+  }
 }
 
 // ── A design's offers (threads, one loop: C2.2 and C2.4) ─────────────────
@@ -3862,11 +4215,28 @@ const MAX_PROJECT_NAME = 60;
  * for the model.
  */
 async function checkPlanOffer(pool, { user, design, args = {}, deps = {} }) {
+  let app = null;
   if (!design?.app) {
-    return { ok: false, error: 'This design has no project yet, so it cannot be a plan on a request. When it is for a new project and they like it, offer to make the project with offer_project.' };
+    // A design for a screen that has no project yet: the project they named.
+    const asked = String(args.project || '').trim();
+    if (!asked) {
+      return { ok: false, error: 'Which project should it go on? Ask them, then offer it again with project. If they want a new project, offer_project.' };
+    }
+    app = await findApp(pool, asked);
+    if (!app || !(await canView(pool, app, user))) {
+      return { ok: false, error: `There is no project called ${clip(asked, MAX_PROJECT_NAME)} that they can see. Ask them which one.` };
+    }
+  } else {
+    app = await findApp(pool, design.app.slug);
+    if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'Its project is not one they can see.' };
+    const asked = String(args.project || '').trim();
+    if (asked) {
+      const named = await findApp(pool, asked);
+      if (named && Number(named.id) !== Number(app.id)) {
+        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project.` };
+      }
+    }
   }
-  const app = await findApp(pool, design.app.slug);
-  if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'Its project is not one they can see.' };
   const name = app.name || app.slug;
   if (!(await canFile(pool, app, user))) {
     return { ok: false, error: `They need to join ${name} before a plan can go on it. Tell them they can join it from its page.` };
@@ -3985,7 +4355,8 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
   try {
     posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
       user, rootId: Number(thread.root_message_id), version: Number(action.design_version) || null,
-      issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null, deps,
+      issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null,
+      appId: Number(action.app_id) || null, deps,
     });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not post a design as a plan', { actionId: action.id, err: err.message });
@@ -4315,8 +4686,12 @@ async function settleOffer(pool, config, {
   try {
     // B4: what they asked for: the request as it is filed (askedFor).
     const askedText = askedFor(action);
+    // #6251: the pictures, related requests, where and Done when the draft
+    // showed, read back from the draft message it was said in.
+    const extras = await draftExtrasOf(pool, action.message_id);
     const filed = await fileRequest(pool, config, {
       user, app, title: action.title, details: action.details, settings, deps, askedText, fileKey: `dm-action:${action.id}`,
+      extras, conversationId: action.conversation_id,
     });
     await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
     await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'filed', ref: filed.issueNumber });
@@ -4390,6 +4765,85 @@ function askedFor(action) {
 }
 
 /**
+ * Pure (#6251): the body a request is filed with. Without extras, or with an
+ * explicit `footer` (the B9 callers), it is exactly what it always was. With
+ * them: the person's words, their pictures, Done when, Related (each a link
+ * to its request) and Where it happened, then the footer linking the chat.
+ * `slug` is the project the request is on (the related requests are on its
+ * board); `screenshotIds` are the ids copied into issue_screenshots.
+ */
+function requestBody({ details, username, extras = null, screenshotIds = [], domain = '', footer = null, slug = null }) {
+  const plain = [
+    details || '',
+    '',
+    '---',
+    footer || `Filed from ${username}'s chat with Homeroom bot.`,
+  ].join('\n').trim();
+  if (!extras || footer) return plain;
+  const base = domain ? `https://${domain}` : '';
+  const link = (toSlug, n) => `${base}/#app/${encodeURIComponent(toSlug)}/dev/issues/${Number(n)}`;
+  const sections = [];
+  if (Array.isArray(extras.doneWhen) && extras.doneWhen.length) {
+    sections.push(['**Done when**', ...extras.doneWhen.map((line) => `- ${line}`)].join('\n'));
+  }
+  if (Array.isArray(extras.related) && extras.related.length) {
+    sections.push(['**Related**', ...extras.related.map((r) => {
+      const how = DRAFT_RELATION_WORDS[r.relation] || r.relation;
+      return `- [#${Number(r.number)}](${link(slug || extras.context?.request?.slug, r.number)}) ${r.title}: ${how}${r.why ? `, ${r.why}` : ''}`;
+    })].join('\n'));
+  }
+  const where = [];
+  const req = extras.context?.request;
+  if (req) where.push(`- [Request #${Number(req.number)} on ${req.name || req.slug}](${link(req.slug, req.number)})`);
+  if (extras.context?.quoted?.excerpt) where.push(`- Homeroom bot's message: "${extras.context.quoted.excerpt}"`);
+  if (extras.context?.saw) where.push(`- ${extras.context.saw}`);
+  if (where.length) sections.push(['**Where it happened**', ...where].join('\n'));
+  const href = extras.chatHref || '#homeroom-bot/main';
+  const chatFooter = `Filed from ${username}'s [chat with Homeroom bot](${base}/${href}).`;
+  const embed = Array.isArray(screenshotIds) && screenshotIds.length
+    ? require('../routes/feedback').buildScreenshotsEmbed(screenshotIds, domain)
+    : '';
+  const assemble = (said) => `${said || ''}${embed}${sections.length ? `\n\n${sections.join('\n\n')}` : ''}\n\n---\n${chatFooter}`;
+  const body = assemble(details);
+  if (body.length <= GITHUB_ISSUE_BODY_MAX) return body;
+  // The extras are the contract; the person's words give way to the limit.
+  const over = body.length - GITHUB_ISSUE_BODY_MAX;
+  const keep = Math.max(0, String(details || '').length - over - 1);
+  return assemble(`${String(details || '').slice(0, keep)}…`);
+}
+
+/**
+ * Copy the pictures the draft named into the request's own store, so they
+ * stay even if the chat message is deleted. Ones gone from the chat are
+ * skipped. Resolves the new issue_screenshots ids, in the order offered.
+ */
+async function copyRequestPictures(pool, { ids, conversationId, userId }) {
+  const wanted = Array.isArray(ids) ? [...new Set(ids.map(String))].slice(0, MAX_DRAFT_ATTACHMENTS) : [];
+  if (!wanted.length || !conversationId) return [];
+  const { rows } = await pool.query(
+    `SELECT id, content_type, size_bytes, data FROM conversation_message_attachments
+      WHERE id = ANY($1::text[]) AND conversation_id = $2`,
+    [wanted, conversationId],
+  );
+  const by = new Map(rows.map((row) => [String(row.id), row]));
+  const out = [];
+  for (const id of wanted) {
+    const row = by.get(id);
+    if (!row) {
+      log.info('homeroom-bot-mayor', 'A picture named for a request is gone from the chat; filing without it', { userId, pictureId: id });
+      continue;
+    }
+    const copy = crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `INSERT INTO issue_screenshots (id, user_id, content_type, size_bytes, data) VALUES ($1, $2, $3, $4, $5)`,
+      [copy, Number(userId), row.content_type, Number(row.size_bytes) || row.data.length, row.data],
+    );
+    out.push(copy);
+  }
+  return out;
+}
+
+/**
  * File a request on `app` as `user`, the way POST /api/apps/:slug/issues
  * files a general one: its GitHub issue, the platform's row, the people
  * who follow new requests told, and a line in its own thread. It is
@@ -4399,17 +4853,11 @@ function askedFor(action) {
  */
 async function fileRequest(pool, config, {
   user, app, title, details, settings, deps = {}, askedText = null, footer = null, reason = 'dm_request', fileKey = null,
+  extras = null, conversationId = null,
 }) {
   const github = deps.github || require('./github');
   const ws = deps.ws || require('./ws');
   const notifications = deps.notifications || require('./notifications');
-  const body = [
-    details || '',
-    '',
-    '---',
-    // B9: where it was asked, when not in their chat with the bot.
-    footer || `Filed from ${user.username}'s chat with Homeroom bot.`,
-  ].join('\n').trim();
   // `fileKey`: the tap's act it is filed for (workflow work). A retry after
   // a restart finds the request that act filed and files no second one, and
   // finishes what that attempt had not: its requester, its notices, its
@@ -4434,6 +4882,16 @@ async function fileRequest(pool, config, {
       requesterKnown = !!had.requester;
     }
   }
+  // #6251: the pictures get their own copy in the request's store before
+  // the issue is made, so the body can link them; a retry files no second.
+  const screenshotIds = !recovered && extras
+    ? await copyRequestPictures(pool, { ids: extras.attachmentIds, conversationId, userId: user.id })
+    : [];
+  // B9: where it was asked, when not in their chat with the bot.
+  const body = requestBody({
+    details, username: user.username, extras: extras && !footer ? extras : null,
+    screenshotIds, domain: domainOf(deps), footer, slug: app.slug,
+  });
   if (!recovered) {
     const m = repoRef.ownerRepo(app.repo_url);
     if (!m || !github.isEnabled()) throw new Error('github_unavailable');
@@ -4448,6 +4906,15 @@ async function fileRequest(pool, config, {
       [app.id, issueNumber, title, body, user.id, JSON.stringify(fileKey ? { fileKey: String(fileKey) } : {})],
     );
     issueId = issueRows[0]?.id;
+    // The orphan sweep leaves a linked row alone; a failure here only risks
+    // the picture being swept, never a failed request.
+    if (screenshotIds.length) {
+      await pool.query(
+        `UPDATE issue_screenshots SET issue_owner = $2, issue_repo = $3, issue_number = $4
+          WHERE id = ANY($1::varchar[]) AND user_id = $5 AND issue_number IS NULL`,
+        [screenshotIds, m.owner, m.repo, issueNumber, user.id],
+      ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not stamp a request\'s pictures', { app: app.slug, err: err.message }));
+    }
   }
   await pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
@@ -5744,6 +6211,10 @@ module.exports = {
   looksLikeQuestion,
   attachedPendingChange,
   askedFor,
+  draftExtrasText,
+  requestBody,
+  draftDoneWhen,
+  DRAFT_RELATION_WORDS,
   systemPrompt,
   RETRY_OUTPUT_TOKENS,
   RETRYABLE_MODEL_ERRORS,
@@ -5757,6 +6228,7 @@ module.exports = {
   retryAct,
   normalizeCalls,
   myWork,
+  progressOf,
   requestDetail,
   myProjects,
   // #4145
@@ -5811,6 +6283,7 @@ module.exports = {
   noteRequests,
   namedCards,
   suggestionLabels,
+  liftTextSuggestions,
   MAX_SUGGESTIONS,
   MAX_SUGGESTION_CHARS,
   claimProblems,

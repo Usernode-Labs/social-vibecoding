@@ -7653,6 +7653,8 @@ const AppView = {
       // Where the rollout is, in the pill's own states.
       const LIVE = {
         deployed: 'changes:page.votes.note.live', merged: 'changes:page.votes.note.live', deploying: 'changes:page.votes.note.goingLive', merging: 'changes:page.votes.note.goingLive',
+        // #6233: Live, but this tab is older than the build that carries it.
+        deployed_reload: 'changes:page.votes.note.liveReload', merged_reload: 'changes:page.votes.note.liveReload',
         delivery_pending: 'changes:page.votes.note.goingLive', deployment_stalled: 'changes:page.votes.note.stuck', delivery_failed: 'changes:page.votes.note.failed',
       };
       // A merge of Homeroom itself says when its release comes instead:
@@ -7785,15 +7787,108 @@ const AppView = {
     return Math.round(ms / 60000);
   },
 
+  // #6288 — main's own red, as a change may trust it: main's verdict says
+  // failing, it named every one of its failures, and merges are paused. While
+  // it holds, every change built on that main fails the same tests through no
+  // fault of its own, and the page must not ask its author to fix them.
+  // Anything less (a green main, a partial list, a resumed pause) is null and
+  // the page blames the change as it did before.
+  _mainFailures() {
+    const mc = AppView._proposalsCtx && AppView._proposalsCtx.mainCheck;
+    if (!mc || typeof mc !== 'object' || !mc.paused || mc.state !== 'failing') return null;
+    const d = mc.detail && typeof mc.detail === 'object' ? mc.detail : null;
+    if (!d || d.failingTestsComplete !== true || !Array.isArray(d.failingTests)) return null;
+    const tests = d.failingTests
+      .filter((t) => t && typeof t.test === 'string' && t.test.trim())
+      .map((t) => ({ file: t.file ? String(t.file) : null, test: String(t.test) }));
+    if (!tests.length) return null;
+    const slug = (AppView.appData && AppView.appData.slug)
+      || (typeof App !== 'undefined' ? App.currentApp : null);
+    return {
+      tests,
+      sha: mc.pausedSha || mc.sha || null,
+      requestNumber: Number.isInteger(mc.requestNumber) ? mc.requestNumber : null,
+      slug: slug || null,
+      // Where the request main watch filed lives, when it was filed. The
+      // card offers this as the one thing to read while main is red.
+      href: Number.isInteger(mc.requestNumber) && slug
+        ? `#app/${slug}/dev/issues/${mc.requestNumber}` : null,
+    };
+  },
+
+  // Does this failing test also fail on main? Same test name, and the same
+  // file when both name one. src/services/checks-explanation.js
+  // isMainFailure is the same rule on the server.
+  _isMainFailure(detail, tests) {
+    const test = String((detail && detail.test) || '').trim();
+    if (!test) return false;
+    const file = detail && detail.file ? String(detail.file).trim() : '';
+    return (Array.isArray(tests) ? tests : []).some((t) => {
+      if (!t || String(t.test || '').trim() !== test) return false;
+      const mainFile = t.file ? String(t.file).trim() : '';
+      return !file || !mainFile || file === mainFile;
+    });
+  },
+
+  // The app's own failing tests, split by whose they are: main's, and the
+  // change's own. Null when main has no trusted red, when the unit suite is
+  // not what failed, or when none of its tests fail on main. `mixed` is true
+  // when the change also fails something itself — another of its tests, or a
+  // declared check (which never runs on main).
+  _mainFailureSplit(v) {
+    const main = AppView._mainFailures();
+    if (!main || !v || !Array.isArray(v.failures)) return null;
+    const row = v.failures.find((r) => r && r.unit);
+    if (!row) return null;
+    const details = (Array.isArray(row.details) ? row.details : []).filter((d) => d && d.test);
+    if (!details.length) return null;
+    const onMain = details.filter((d) => AppView._isMainFailure(d, main.tests));
+    if (!onMain.length) return null;
+    const own = details.filter((d) => !AppView._isMainFailure(d, main.tests));
+    const ownChecks = v.failures
+      .filter((r) => r && r !== row && !r.advisory)
+      .map((r) => r.name || r.path || PlatformI18n.t('changes:badge.reason.checksFailing.unnamed'));
+    return {
+      ...main,
+      onMain: onMain.map((d) => d.test),
+      own: own.map((d) => d.test),
+      ownChecks,
+      mixed: own.length > 0 || ownChecks.length > 0,
+    };
+  },
+
+  // The card's door to the request main watch filed for this red: the one
+  // thing worth reading while main is red. Null when no request was filed.
+  _mainFailureLink(v) {
+    const split = AppView._mainFailureSplit(v);
+    if (!split || !split.requestNumber || !split.href) return null;
+    return {
+      href: split.href,
+      label: PlatformI18n.t('changes:page.testing.mainFix.link', { number: split.requestNumber }),
+      mixed: split.mixed,
+    };
+  },
+
   // The Testing card's first sentence on a failed run: how many of the app's
   // tests failed when its own test suite is all that failed, else how many
   // of its checks. Blocking failures are counted; advisory ones only when
-  // nothing else failed.
+  // nothing else failed. While main is red with the same tests (#6288), it
+  // says whose they are instead of blaming the change.
   _failedLead(v) {
     const all = v ? v.failures : [];
     const blocking = all.filter((r) => !r.advisory);
     const rows = blocking.length ? blocking : all;
     if (!rows.length) return PlatformI18n.t('changes:page.testing.note.checkFailed');
+    const split = AppView._mainFailureSplit(v);
+    if (split && !split.mixed) {
+      return PlatformI18n.t('changes:page.testing.lead.mainAll', { count: split.onMain.length });
+    }
+    if (split) {
+      return PlatformI18n.t('changes:page.testing.lead.mainSome', {
+        main: PlatformI18n.listText(split.onMain),
+        own: PlatformI18n.listText(split.own.concat(split.ownChecks)),
+      });
+    }
     if (rows.length === 1 && rows[0].unit) {
       const r = rows[0];
       const n = (r.unitTally && r.unitTally.failed) || (r.details && r.details.length) || 1;
@@ -7852,6 +7947,11 @@ const AppView = {
       id: Number(item.id),
       at: String(item.checks_checked_at),
       fallback: AppView._failureInWords(v),
+      // #6288: whose these tests are, above the failure's own words in the
+      // Checks step, so it does not read as the change's fault either. Left
+      // out entirely when main is not failing them, so the view's shape is
+      // exactly what it was before this change.
+      ...(AppView._mainFailureSplit(v) ? { mainLead: AppView._failedLead(v) } : {}),
       page: path && stagingUrl ? { path, stagingUrl } : null,
     };
   },
@@ -7959,15 +8059,46 @@ const AppView = {
       const v = AppView._checksVerdictView(item);
       const fix = AppView._fixChecksView(item);
       const rerun = recheck();
-      if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
       const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
+      // #6234: a change Homeroom bot built, whose checks it is fixing itself
+      // (`bot_fix`, services/homeroom-bot-progress.js changeBotFix): the
+      // card says so in place of "Its author needs to fix this". While the
+      // fix runs the card reads "Fixing", still moving, and the re-run is
+      // offered disabled: running the checks now would restart its fix.
+      const botFix = item.bot_fix && typeof item.bot_fix === 'object' && item.bot_fix.state ? item.bot_fix : null;
+      const botNote = botFix ? AppView._botFixNote(botFix) : null;
+      // #6288: left out when main is not failing these tests, so the card's
+      // shape is exactly what it was before this change.
+      const mainFailure = AppView._mainFailureLink(v);
+      if (botFix && botFix.state === 'fixing') {
+        if (rerun) {
+          actions.push({
+            key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: PlatformI18n.t('changes:recheck.label'),
+            disabled: true, title: PlatformI18n.t('changes:recheck.botFixing'),
+          });
+        }
+        return {
+          name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.botFixing'), tone: 'muted', done: false,
+          segments: [{ weight: 1, pct: 100, state: 'moving' }],
+          label: PlatformI18n.t('changes:page.testing.label.botFixing'),
+          note: [AppView._failedLead(v)], actions, details: true,
+          explain: AppView._checksExplainView(item, v),
+          ...(mainFailure ? { mainFailure } : {}),
+          fix,
+          authorNote: rerun ? `${botNote} ${PlatformI18n.t('changes:page.testing.note.botRerun')}` : botNote,
+          botFix: 'fixing',
+        };
+      }
+      if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.failing'),
         note: [AppView._failedLead(v)], actions, details: true,
         explain: AppView._checksExplainView(item, v),
+        ...(mainFailure ? { mainFailure } : {}),
         fix,
-        authorNote: mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes'),
+        authorNote: botNote || (mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes')),
+        botFix: botFix ? botFix.state : null,
       };
     }
     if (cs && cs !== 'pending') {
@@ -10213,8 +10344,8 @@ const AppView = {
     return run;
   },
 
-  // Fetch the vote snapshot (promoted + merged) that powers the inline
-  // vote buttons on group-chat activity rows (AppView.voteState — see
+  // Fetch the vote snapshot (promoted + merged) that powers the vote cards
+  // under a chat's rows about a change (AppView.voteState — see
   // group-chat.js refreshVoteControls). The chat sub-tab calls this in
   // place of the old full vote-panel load.
   async loadVoteState(slug) {
@@ -11600,7 +11731,11 @@ const AppView = {
       || (card.actionPreview && card.actionPreview.state === 'live')));
     const settled = (pill) => {
       if (!pill) return;
-      if (pill.key === 'deployed' || pill.key === 'merged') { tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.live'), tone: 'ok' }); return; }
+      // #6233: the _reload keys are the same settled state, in an older tab.
+      if (pill.key === 'deployed' || pill.key === 'merged'
+          || pill.key === 'deployed_reload' || pill.key === 'merged_reload') {
+        tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.live'), tone: 'ok' }); return;
+      }
       // A merge of Homeroom itself says when its release comes, on hover.
       const release = pill.key === 'deploying' ? AppView._releaseSentence(it) : null;
       tags.push({
@@ -17965,11 +18100,10 @@ const AppView = {
     return AppView._approveSolo(pr) ? PlatformI18n.t('changes:card.waiting.yourApproval') : PlatformI18n.t('changes:card.waiting.approval');
   },
 
-  // The card's Yes/No pair, and ONLY that pair. voteButtonsHtml stays as it
-  // is — group-chat.js's inline activity rows, the work drawer and the home
-  // strip all consume it, and its Preview/Retry/Admin-merge concatenation is
-  // still the right shape there. On the board those three moved to the icon
-  // slot and the ⋯ menu, so the card needs its own narrower builder.
+  // The card's Yes/No pair, and ONLY that pair. Preview, Retry and Admin
+  // merge moved to the icon slot and the ⋯ menu, so the card needs its own
+  // narrower builder (the chat's Preview/Yes/No/Admin-merge concatenation,
+  // voteButtonsHtml, is gone with its row — #6236).
   //
   // Keeps the reviewed_head_sha revision argument: the server rejects a vote
   // cast against a head the voter never saw, and dropping it here would
@@ -19354,6 +19488,26 @@ const AppView = {
       heading: PlatformI18n.t('changes:consoleNote.heading'),
       rows,
     };
+  },
+
+  // #6234: where Homeroom bot's own fix of a change's failing checks stands,
+  // as the Testing card's line under the figure (the server's `bot_fix`,
+  // services/homeroom-bot-progress.js changeBotFix): fixing since when (in
+  // minutes, "just now" under one), and once more after running out of
+  // time; waiting its turn; or handed to the people who can take it on.
+  _botFixNote(botFix) {
+    if (!botFix || typeof botFix !== 'object') return null;
+    if (botFix.state === 'fixing') {
+      const at = botFix.since ? new Date(botFix.since).getTime() : NaN;
+      const minutes = Number.isFinite(at) ? Math.max(0, Math.round((Date.now() - at) / 60000)) : 0;
+      const started = minutes
+        ? PlatformI18n.t('changes:page.testing.note.botFixing', { count: minutes })
+        : PlatformI18n.t('changes:page.testing.note.botFixingNow');
+      return botFix.reason === 'retry' ? `${started} ${PlatformI18n.t('changes:page.testing.note.botRetry')}` : started;
+    }
+    if (botFix.state === 'queued') return PlatformI18n.t('changes:page.testing.note.botQueued');
+    if (botFix.state === 'handed_off') return PlatformI18n.t('changes:page.testing.note.botHandedOff');
+    return null;
   },
 
   // "Re-run checks", when the viewer may ask for one. Returns null when the
@@ -22403,8 +22557,8 @@ const AppView = {
   // Admin force-apply for an env-var (secret_change) proposal: bypass the
   // active-user vote majority and apply the change right now. Gated
   // server-side by /api/issues/:id/admin-apply (admin-only). Mirrors
-  // castAdminMerge's ConfirmModal misclick guard — the button sits inline
-  // with the regular Yes/No buttons.
+  // castAdminMerge's ConfirmModal misclick guard — the button sits beside
+  // the regular Yes/No buttons.
   async castIssueAdminApply(issueId) {
     if (!App.user?.isAdmin) return;
     const key = `issue-admin-apply:${issueId}`;
@@ -24553,16 +24707,30 @@ const AppView = {
       const failed = Array.isArray(p.test_results)
         ? p.test_results.filter((r) => r && r.status !== 'pass') : [];
       const n = failed.length;
+      // #6288: while main is red with the same tests, the tooltip says so
+      // rather than reading as this change's fault (the same split the
+      // Testing card and Details use).
+      const split = AppView._mainFailureSplit(AppView._checksVerdictView(p));
+      const detail = n
+        ? (split
+          ? (split.mixed
+            ? PlatformI18n.t('changes:badge.reason.checksFailing.mainSomeDetail', {
+              main: PlatformI18n.listText(split.onMain),
+              own: PlatformI18n.listText(split.own.concat(split.ownChecks)),
+            })
+            : PlatformI18n.t('changes:badge.reason.checksFailing.mainDetail', {
+              tests: PlatformI18n.listText(split.onMain),
+            }))
+          : PlatformI18n.t('changes:badge.reason.checksFailing.detailNames', {
+            count: n,
+            tests: PlatformI18n.listText(failed.map((r) => r.name || r.path || PlatformI18n.t('changes:badge.reason.checksFailing.unnamed'))),
+          }))
+        : PlatformI18n.t('changes:badge.reason.checksFailing.detail');
       out.push({
         key: 'checks_failing',
         label: n ? PlatformI18n.t('changes:badge.reason.checksFailing.labelCount', { count: n }) : PlatformI18n.t('changes:badge.reason.checksFailing.label'),
         ...(n ? { name: PlatformI18n.t('changes:badge.reason.checksFailing.label'), sub: String(n), count: n } : {}),
-        detail: n
-          ? PlatformI18n.t('changes:badge.reason.checksFailing.detailNames', {
-            count: n,
-            tests: PlatformI18n.listText(failed.map((r) => r.name || r.path || PlatformI18n.t('changes:badge.reason.checksFailing.unnamed'))),
-          })
-          : PlatformI18n.t('changes:badge.reason.checksFailing.detail'),
+        detail,
       });
     }
     // Behind main is information, not a block: a head that merges cleanly
@@ -24640,6 +24808,34 @@ const AppView = {
         detail: (window.ResetTime ? window.ResetTime.localizeResetText : (t) => t)(
           PlatformI18n.t('changes:badge.reason.budget.detail')),
         soft: true,
+      });
+    }
+    // GitHub held this change's merge back: it was still finishing an earlier
+    // merge, or refused it for a reason nobody has to act on. The queue asks
+    // again by itself, so this is amber and names the next try in the
+    // viewer's own clock. One label for both ("Waiting on GitHub"); only the
+    // detail differs.
+    const heldUntil = p.integration && p.integration.heldUntil ? Date.parse(p.integration.heldUntil) : NaN;
+    const heldSoon = !Number.isFinite(heldUntil) || heldUntil <= Date.now();
+    const heldTime = heldSoon ? null : new Date(heldUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (served.includes('github_busy')) {
+      out.push({
+        key: 'github_busy',
+        label: PlatformI18n.t('changes:badge.reason.githubBusy.label'),
+        detail: heldSoon
+          ? PlatformI18n.t('changes:badge.reason.githubBusy.detailSoon')
+          : PlatformI18n.t('changes:badge.reason.githubBusy.detail', { time: heldTime }),
+        waiting: true,
+      });
+    }
+    if (served.includes('github_refused')) {
+      out.push({
+        key: 'github_refused',
+        label: PlatformI18n.t('changes:badge.reason.githubRefused.label'),
+        detail: heldSoon
+          ? PlatformI18n.t('changes:badge.reason.githubRefused.detailSoon')
+          : PlatformI18n.t('changes:badge.reason.githubRefused.detail', { time: heldTime }),
+        waiting: true,
       });
     }
     // The APP's merges are paused by a red main (services/main-watch.js).
@@ -24925,6 +25121,24 @@ const AppView = {
     return PlatformI18n.t('changes:badge.pill.thresholdWas', { now, was });
   },
 
+  // #6233: is this change Live in a build newer than the one this tab
+  // loaded? Only the platform's own app has a merge order to compare with,
+  // and the tab-build store (frontend/src/lib/tab-build.ts) holds it once
+  // /api/version answered with ?have=. Unknown is never "lacking".
+  _tabLacksChange(p) {
+    try {
+      const bridge = window.UsernodeReact && window.UsernodeReact.tabBuild;
+      if (!bridge || typeof bridge.tabLacks !== 'function' || !p) return false;
+      return !!bridge.tabLacks({
+        liveAt: p.live_at || null,
+        mergedAt: p.merged_at || p.created_at || null,
+        id: p.id,
+        appSlug: AppView.appData && AppView.appData.slug,
+        selfHosted: !!(AppView.appData && AppView.appData.self_hosted),
+      });
+    } catch { return false; }
+  },
+
   statusPillState(item, opts) {
     // No row, no pill. The guard used to sit in `statusPillHtml`, which is
     // retired with the rest of the card markup — leaving it out here would
@@ -24971,16 +25185,26 @@ const AppView = {
     // tones. The card's edge follows the tone (edgeFor), so a live card's
     // spine is green again too.
     if (p.status === 'merged') {
+      // #6233: a Live change this tab's build is older than says so, with a
+      // Reload on its line, rather than a bare Live the reader cannot see.
+      const tabBehind = AppView._tabLacksChange(p);
+      const livePill = (key) => (tabBehind
+        ? { key: `${key}_reload`, label: PlatformI18n.t('changes:badge.pill.liveReload'),
+          title: PlatformI18n.t('changes:badge.pill.liveReloadTitle') }
+        : { key, label: PlatformI18n.t('changes:badge.pill.live'), title: PlatformI18n.t('changes:badge.pill.liveTitle') });
       if (p.deployment_state === 'deployed') {
-        return { ...base, tier: 0, key: 'deployed', label: PlatformI18n.t('changes:badge.pill.live'), tone: 'ok', lock: false, advisory: 0,
-          title: PlatformI18n.t('changes:badge.pill.liveTitle') };
+        const live = livePill('deployed');
+        return { ...base, tier: 0, key: live.key, label: live.label, tone: 'ok', lock: false, advisory: 0, title: live.title };
       }
       // A merge of Homeroom itself waits for the platform's next release:
       // the pill's title says when (_releaseSentence), where a child app's
       // says only that the app is still on the version before.
       const releaseWords = AppView._releaseSentence(p);
       if (p.deployment_state === 'deploying') {
-        return { ...base, tier: 0, key: 'deploying', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
+        // #6233: the step, when the release outlook knows it ("rolling out").
+        const goingLive = p.release && p.release.state === 'rolling'
+          ? PlatformI18n.t('changes:badge.pill.goingLiveRolling') : PlatformI18n.t('changes:badge.pill.goingLive');
+        return { ...base, tier: 0, key: 'deploying', label: goingLive, tone: 'progress', spinner: true, lock: false, advisory: 0,
           title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
       if (p.deployment_state === 'stalled') {
@@ -25007,10 +25231,14 @@ const AppView = {
       // it does (the merge-followups workflow machine). A row without the
       // field reads as it always did.
       if (p.live_at === null) {
-        return { ...base, tier: 0, key: 'deploying', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
+        const goingLive = p.release && p.release.state === 'rolling'
+          ? PlatformI18n.t('changes:badge.pill.goingLiveRolling') : PlatformI18n.t('changes:badge.pill.goingLive');
+        return { ...base, tier: 0, key: 'deploying', label: goingLive, tone: 'progress', spinner: true, lock: false, advisory: 0,
           title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
-      return { ...base, tier: 0, key: 'merged', label: PlatformI18n.t('changes:badge.pill.live'), tone: 'ok', lock: false, advisory: 0 };
+      const live = livePill('merged');
+      return { ...base, tier: 0, key: live.key, label: live.label, tone: 'ok', lock: false, advisory: 0,
+        ...(tabBehind ? { title: live.title } : {}) };
     }
     // 1 — in flight.
     if (p.status === 'merging') {
@@ -25314,19 +25542,10 @@ const AppView = {
       + `</span>` + advisoryChip + explicitChip;
   },
 
-  // "Merging…" badge shown alongside (not instead of) the vote controls
-  // once a PR crosses the threshold and the merge pipeline is in flight.
-  // Shared by the vote panel rows and the inline group-chat rows.
-  mergingBadgeHtml() {
-    return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${PlatformI18n.htmlText('changes:badge.merge.merging')}</span>`;
-  },
-
-  // "Merged" badge — the settled counterpart of the merging badge, shown
-  // next to the (now read-only) tally pill / "You voted X" box on group-chat
-  // rows after a PR lands so the voting info doesn't disappear.
-  mergedBadgeHtml() {
-    return `<span class="gc-merged-badge">${PlatformI18n.htmlText('changes:badge.merge.merged')}</span>`;
-  },
+  // `mergingBadgeHtml` / `mergedBadgeHtml` — the "Merging…" and "✓ Merged"
+  // badges beside a chat vote row's tally — went with that row (#6236): the
+  // vote card says the same in words (chat:group.voteCard.merging / merged).
+  // The board's own merging chip is `statusPillState`'s.
 
   // #361's persistent merge-status badges (conflictFailedBadgeHtml /
   // behindBadgeHtml) are GONE: the composite status pill derives
@@ -27249,81 +27468,16 @@ const AppView = {
     return out;
   },
 
-  voteButtonsHtml(pr, opts) {
-    if (!pr) return '';
-    AppView._rememberSessionTesting(pr.id, pr);
-    // Group-chat inline rows pass { collapseVoted: true }: once the viewer
-    // has voted, the whole control set is replaced by a single read-only
-    // "You voted X" box. The activity drawer passes nothing, so it keeps the
-    // full Preview/Yes/No/Admin-merge set (with the chosen side highlighted)
-    // so voters can re-cast or preview after voting.
-    if (opts && opts.collapseVoted && (pr.my_vote === 'yes' || pr.my_vote === 'no')) {
-      const voted = pr.my_vote === 'yes' ? PlatformI18n.htmlText('changes:vote.row.votedYes') : PlatformI18n.htmlText('changes:vote.row.votedNo');
-      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">${voted}</span>${AppView._uncountedVoteNoteHtml(pr)}`;
-    }
-    // In the chat, a merging/merged PR has closed voting — don't render live
-    // (now no-op) Yes/No buttons for someone who never voted; the pill +
-    // status badge already convey the outcome.
-    if (opts && opts.collapseVoted && pr.status !== 'promoted') return '';
-    const preview = AppView._previewAffordanceHtml(pr);
-    // #621: read-only viewers keep the Preview affordance but get no
-    // vote controls — the tally pill on the card already shows counts.
-    // #866: they also get no "Retry preview" (the ensure POST is
-    // collab-gated), so the unavailable chip renders bare for them.
-    if (AppView.readOnly) return preview;
-    const retryPreview = (!pr.staging_url && pr.staging_error)
-      ? `<button class="gc-vote-btn" title="${PlatformI18n.htmlText('changes:vote.row.retryPreviewTitle')}" onclick="AppView.swapToStagingForSession(${pr.id}, '')">${PlatformI18n.htmlText('changes:vote.row.retryPreview')}</button>`
-      : '';
-    // #788: force-merge is available to platform admins AND to the app's
-    // own declared admins (ctx.canManage covers creator + app admins,
-    // but only app admins / platform admins get force-merge — the
-    // server is the authority; this just decides whether to render the
-    // button). The one carve-out: a proposal that changes the admins
-    // block can't be force-merged by an app admin (self-escalation), so
-    // there the button is platform-admin-only.
-    const vbCtx = AppView._proposalsCtx || {};
-    const canForceMerge = App.user?.canAdminWrite
-      || (!!vbCtx.isAppAdmin && !pr.requires_explicit_approval);
-    const adminMerge = canForceMerge
-      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${escapeAttr(AppView._adminMergeTitle(pr))}" onclick="AppView.castAdminMerge(${pr.id})">${PlatformI18n.htmlText('changes:vote.row.adminMerge')}</button>`
-      : '';
-    // The vote carries the approval epoch this card was rendered with, so a
-    // proposal that genuinely changed under the voter is still refused —
-    // while one the platform merely rebased is not.
-    // #2038: see _cardVoteButtonSpecs — the epoch, not the commit.
-    const voteEpoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
-      ? parseInt(pr.approval_epoch, 10) : null;
-    const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
-    const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'yes');
-    const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'no');
-    // V03 (audit, 2 Nov 2026): a side nobody has taken says no count. "Yes
-    // (0)" and "No (0)" spelled out two zeros on every new change's row.
-    const yesWords = yesT.label === '0'
-      ? PlatformI18n.htmlText('changes:vote.row.yesNone')
-      : PlatformI18n.htmlText('changes:vote.row.yes', { tally: yesT.label });
-    const noWords = noT.label === '0'
-      ? PlatformI18n.htmlText('changes:vote.row.noNone')
-      : PlatformI18n.htmlText('changes:vote.row.no', { tally: noT.label });
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">${yesWords}</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">${noWords}</button>`;
-    return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
-  },
-
-  // One line beside the legacy vote controls: a test account's vote is
-  // recorded but not counted (my_vote_uncounted), and #4747 a viewer
-  // outside the people who decide has an advisory vote (my_vote_advisory)
-  // — recorded, shown, but it does not decide this one. The test-account
-  // line wins when both apply. The board card's picker carries the same
-  // words (VotePicker).
-  _uncountedVoteNoteHtml(pr) {
-    if (!pr) return '';
-    if (pr.my_vote_uncounted === true) {
-      return `<span class="gc-vote-uncounted" data-vote-uncounted="">${PlatformI18n.htmlText('changes:vote.row.uncounted')}</span>`;
-    }
-    return pr.my_vote_advisory === true
-      ? `<span class="gc-vote-uncounted" data-vote-uncounted="">${PlatformI18n.htmlText('changes:vote.row.advisory')}</span>`
-      : '';
-  },
+  // `voteButtonsHtml`, `_uncountedVoteNoteHtml` and `_previewAffordanceHtml`
+  // lived here: the Preview / Yes / No / Admin merge row (with the "You
+  // voted X" box, the Retry preview chip and the uncounted-vote line) that
+  // group-chat.js filled into a chat's vote rows. #6236 retired the row: a
+  // line about a change draws features/group-chat/vote-card.tsx now — the
+  // change's name with See the vote on its request's page, a small card with
+  // Preview and Vote elsewhere — and Admin merge is only in the change's ⋯
+  // menu (_proposalMenuItems). The Dev board's card and the change page
+  // never called these: their vote is _cardVoteButtonSpecs and VotePicker,
+  // their preview _cardPreviewSpec through card/dev-card.tsx.
 
   // #866: the Preview slot has three states, not two.
   //
@@ -27339,16 +27493,16 @@ const AppView = {
   //                        the first build is still running would only ever
   //                        return 'rebuilding' and park a loader.
   //   staging_error      → "Preview unavailable" with the captured reason in
-  //                        the tooltip; voteButtonsHtml adds "Retry preview"
-  //                        beside it for viewers who can trigger a rebuild.
+  //                        the tooltip; a change's Testing card offers the
+  //                        retry to viewers who can trigger a rebuild.
   // Neither flag (a plain GC'd or not-yet-built native row) keeps today's
   // empty slot.
   //
   // ── The ONE preview affordance ──────────────────────────────────────
   //
   // "Preview" used to be built in four separate places with four different
-  // tooltips and four different gating rules: proposal cards (through
-  // voteButtonsHtml), the viewer's own session cards, other users' shared
+  // tooltips and four different gating rules: proposal cards (through the
+  // since-retired voteButtonsHtml), the viewer's own session cards, other users' shared
   // session cards, and the headless branch of an issue card. All four
   // already funnelled into swapToStagingForSession(id, url), so the only
   // real differences were wording and which of staging_url / can_preview /
@@ -27444,21 +27598,6 @@ const AppView = {
   // `_cardPreviewSpec` through card/dev-card.tsx's `Preview` now, so the
   // truth table has exactly one renderer again.
 
-  _previewAffordanceHtml(pr) {
-    if (!pr) return '';
-    if (pr.staging_url) {
-      return `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">${PlatformI18n.htmlText('changes:vote.row.preview')}</button>`;
-    }
-    if (pr.staging_building) {
-      return `<span class="gc-checks-running-badge" title="${PlatformI18n.htmlText('changes:vote.row.previewBuildingTitle')}">`
-        + `<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${PlatformI18n.htmlText('changes:vote.row.previewBuilding')}</span>`;
-    }
-    if (pr.staging_error) {
-      return `<span class="gc-conflict-badge" title="${escapeAttr(String(pr.staging_error).slice(0, 300))}">${PlatformI18n.htmlText('changes:vote.row.previewUnavailable')}</span>`;
-    }
-    return '';
-  },
-
   // #695: the Yes/No button tally. On invited-approver apps (row carries
   // approval_policy='invited' + a qualifying count) the label splits into
   // approver votes (✓, the ones that count) plus the advisory surplus —
@@ -27493,9 +27632,9 @@ const AppView = {
   // Admin force-merge: bypass the active-user vote majority entirely
   // and merge a promoted PR right now. Gated server-side by
   // /api/sessions/:id/admin-merge (admin-only). The ConfirmModal here
-  // is the misclick guard — the "Admin merge" button sits inline with
-  // the regular Yes/No buttons, and we don't want a fat-finger to
-  // accidentally bypass voting when the admin meant to just vote.
+  // is the misclick guard: Admin merge is a row of the change's ⋯ menu
+  // (_proposalMenuItems) and nowhere else since #6236 — never inline in a
+  // chat line, where a fat-finger could bypass the vote by mistake.
   async castAdminMerge(sessionId) {
     if (!App.user?.isAdmin) return;
     const key = `admin-merge:${sessionId}`;

@@ -74,6 +74,22 @@ const ANSWER_WINDOW_MINUTES = 60;
 // The next message after the bot's own in a reply thread, this soon after
 // it, is to the bot.
 const CONTINUE_MINUTES = 30;
+// #6268: a person's coding agent posts for them through the connector
+// (`posted_via = 'agent'`). On these places it is heard as the person's own
+// message; on a channel it is not answered, as before.
+const CONNECTOR_PLACES = Object.freeze(['issue', 'session', 'message']);
+// An agent and the bot must not answer each other forever: a connector
+// message replying to the bot this soon after the bot's last one, or this
+// many connector messages in a row with no person's own message between,
+// is not answered.
+const CONNECTOR_LOOP_SECONDS = 10;
+const MAX_CONNECTOR_RUN = 2;
+// The reasons a connector message is not answered, kept for admins.
+const CONNECTOR_REASONS = Object.freeze(['connector', 'connector_loop', 'connector_run', 'switched_off']);
+// What the thread says under such a message, and what the connector's
+// post_message result says back: a server sentence (not catalogued), word for
+// word in both places.
+const CONNECTOR_NOTE = 'Homeroom bot doesn\'t answer this message; @ it in your own words to ask it.';
 const MAX_ROUNDS = 5;
 // Homeroom bot parity (P1): the voice keeps the chat's old room per request (homeroom-bot-mayor.js
 // raised its own for private conversations), so a public reply stays short and quick.
@@ -260,6 +276,110 @@ async function quotesBot(pool, row, botId) {
   return !!rows[0] && Number(rows[0].user_id) === Number(botId);
 }
 
+/**
+ * The SQL that names a place's thread in chat_messages, and the params it
+ * needs after `$1` (the app id).
+ */
+function placeScope(place, alias = '') {
+  const thread = threadOf(place);
+  const p = alias ? `${alias}.` : '';
+  return thread
+    ? { sql: `${p}thread_type = $2 AND ${p}thread_ref = $3`, params: [thread.type, Number(thread.ref)] }
+    : { sql: `${p}thread_type IS NULL`, params: [] };
+}
+
+/**
+ * #6268: whether a connector message (`posted_via = 'agent'`) must not start
+ * a turn, so that an agent and the bot never answer each other forever.
+ * Resolves 'connector_loop', 'connector_run' or null.
+ *
+ * `beforeId` is the row's own id when it is stored (the gate reads it), or
+ * null at post time, when the newest message in the place is the one before
+ * it. `at` is when it was written.
+ */
+async function connectorGuard(pool, { appId, place, botId, quote, beforeId, at }) {
+  if (!place || !botId) return null;
+  const scope = placeScope(place);
+  const rowId = Number(beforeId) > 0 ? Number(beforeId) : null;
+  const params = [Number(appId), ...scope.params];
+  const before = rowId ? `AND id < $${params.length + 1}` : '';
+  if (rowId) params.push(rowId);
+  const when = at ? new Date(at) : new Date();
+
+  // Is this message a reply to the bot? It quotes one, or it is the next
+  // message in a reply thread after the bot's own.
+  let replyToBot = await quotesBot(pool, { metadata: { quote } }, botId);
+  if (!replyToBot && place.type === 'message') {
+    const { rows: [last] } = await pool.query(
+      `SELECT user_id FROM chat_messages
+        WHERE app_id = $1 AND ${scope.sql} AND msg_type = 'message' AND deleted_at IS NULL ${before}
+        ORDER BY id DESC LIMIT 1`,
+      params,
+    );
+    replyToBot = !!last && Number(last.user_id) === Number(botId);
+  }
+  if (replyToBot) {
+    const lastParams = [Number(appId), ...scope.params, Number(botId)];
+    const botIdx = lastParams.length;
+    const beforeBot = rowId ? `AND id < $${botIdx + 1}` : '';
+    if (rowId) lastParams.push(rowId);
+    const { rows: [said] } = await pool.query(
+      `SELECT created_at FROM chat_messages
+        WHERE app_id = $1 AND ${scope.sql} AND user_id = $${botIdx}
+          AND msg_type = 'message' AND deleted_at IS NULL ${beforeBot}
+        ORDER BY id DESC LIMIT 1`,
+      lastParams,
+    );
+    const delta = said ? when.getTime() - new Date(said.created_at).getTime() : Infinity;
+    if (delta >= 0 && delta < CONNECTOR_LOOP_SECONDS * 1000) return 'connector_loop';
+  }
+
+  // How many connector messages in a row, with no person's own message
+  // between them, come just before this one (the bot's replies skipped, so
+  // they neither count nor reset the run).
+  const runParams = [Number(appId), ...scope.params];
+  const beforeRun = rowId ? `AND m.id < $${runParams.length + 1}` : '';
+  if (rowId) runParams.push(rowId);
+  const { rows: walk } = await pool.query(
+    `SELECT m.user_id, m.posted_via, u.is_synthetic
+       FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND ${placeScope(place, 'm').sql}
+        AND m.msg_type = 'message' AND m.deleted_at IS NULL ${beforeRun}
+      ORDER BY m.id DESC LIMIT 20`,
+    runParams,
+  );
+  let run = 0;
+  for (const r of walk) {
+    if (Number(r.user_id) === Number(botId)) continue;
+    if (r.is_synthetic) continue;
+    if (r.posted_via === 'agent') { run += 1; continue; }
+    break;
+  }
+  if (run >= MAX_CONNECTOR_RUN) return 'connector_run';
+  return null;
+}
+
+/**
+ * #6268: whether a connector message being posted now is one the bot will
+ * not answer, decided when it is posted so that the thread and the
+ * connector's tool result can say so straight away. Resolves { why } or
+ * null.
+ */
+async function connectorSkip(pool, { appId, appSlug, thread, content, metadata, settings, botId }) {
+  const place = placeOf(thread);
+  if (!place) return null;
+  const addressed = mentionsBot(content) || await quotesBot(pool, { metadata: metadata || {} }, botId);
+  let guard = null;
+  try {
+    guard = await connectorGuard(pool, { appId, place, botId, quote: metadata?.quote, beforeId: null, at: new Date() });
+  } catch { guard = null; }
+  if (!addressed) return guard ? { why: guard } : null;
+  if (!voiceOn(settings, place)) return { why: 'switched_off' };
+  if ((settings?.pausedApps || []).includes(appSlug)) return { why: 'paused' };
+  if (!CONNECTOR_PLACES.includes(place.type)) return { why: 'connector' };
+  return guard ? { why: guard } : null;
+}
+
 /** Whether message `messageId` was passed on to one of the bot's changes as an ask. */
 async function queuedAsAsk(pool, messageId) {
   const { rows } = await pool.query(
@@ -310,9 +430,18 @@ async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }
   if ((settings.pausedApps || []).includes(app.slug)) return no('paused');
   if (!speaker || speaker.isSynthetic || Number(speaker.id) === Number(bot.id)) return no('not_a_person');
   if (row.msg_type !== 'message' || row.deleted_at) return no('not_a_message');
-  if (row.posted_via === 'agent') return no('connector');
+  // #6268: a person's agent posting for them is heard as the person is on a
+  // request, a change and a reply thread; a channel keeps today's rule. The
+  // loop guard decides before the place's own rules get to speak.
+  if (row.posted_via === 'agent' && !CONNECTOR_PLACES.includes(place.type)) return no('connector');
   if (isRelay(row.content)) return no('relayed');
   if (!dmModule(deps).hasBot(settings, speaker)) return no('not_let_in');
+  if (row.posted_via === 'agent') {
+    const looped = await connectorGuard(pool, {
+      appId: app.id, place, botId: bot.id, quote: row.metadata?.quote, beforeId: row.id, at: row.created_at,
+    });
+    if (looped) return no(looped);
+  }
   const mentioned = mentionsBot(row.content);
   const replied = mentioned ? false : await quotesBot(pool, row, bot.id);
   const addressed = mentioned ? 'mentioned' : replied ? 'replied' : null;
@@ -581,10 +710,6 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     return finishWith('replied');
   }
   const chatPlace = place.type === 'chat' || place.type === 'category';
-  if (!voiceOn(settings, place) && !chatPlace) {
-    record.throughId = (await newestIn(pool, { app, place })) || through;
-    return finishWith('quiet');
-  }
   // What the place has answered: the machine's `through`, or (an instance
   // new since an older release answered here) what that release recorded.
   // Never the bot's own last message: a report or an offer's line says
@@ -601,14 +726,20 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   if (!fresh.length) return finishWith('quiet');
   // Which of them were to the bot (the gate, for each): the newest of those
   // is who it answers. (With the voice off in a chat, nobody: the chat's
-  // older ask has them, below.)
+  // older ask has them, below. With it off elsewhere, a connector's message
+  // is still read, so that a skip is recorded for admins.)
   const addressed = [];
-  for (const m of voiceOn(settings, place) ? fresh : []) {
+  let connectorWhy = null;
+  const toGate = voiceOn(settings, place)
+    ? fresh
+    : fresh.filter((m) => m.posted_via === 'agent' && !chatPlace);
+  for (const m of toGate) {
     const speaker = await personRow(pool, m.user_id);
     const decided = await gate(pool, {
       app, place, row: { ...m, deleted_at: null, thread_type: place.type === 'chat' ? null : place.type }, bot, settings, speaker, deps,
     });
     if (decided.speak) addressed.push({ message: m, speaker, why: decided.why });
+    else if (!connectorWhy && m.posted_via === 'agent' && CONNECTOR_REASONS.includes(decided.why)) connectorWhy = decided.why;
   }
   // What the project's chat does with what nobody said to the bot (a
   // newcomer's idea, offered to be suggested; the older ask with the voice
@@ -620,6 +751,9 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     : null);
   if (!addressed.length) {
     await restOfChat();
+    // #6268: a connector message nobody answers is recorded with its reason,
+    // so the admin summary shows it beside the turns that failed.
+    if (connectorWhy) record.error = connectorWhy;
     return finishWith('quiet');
   }
   const last = addressed[addressed.length - 1];
@@ -814,6 +948,8 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('read_source') ? '- Read the project\'s code as it is on main (list_source, then read_source) when somebody asks how something works. Say which file you read.' : null,
     has('get_change') ? '- Look up a change, a request, a discussion or the project\'s board on Homeroom (get_change, get_proposal, get_request, get_discussion, list_requests): this project only. get_change also shows a change\'s description, the text people vote on, and whether it is out of date.' : null,
     has('update_change_description') ? '- Reword the description of one of your own changes when somebody asks (update_change_description): write the whole new description. Only its text changes: no code, the checks do not run again, the votes stay. A reword is not update_change.' : null,
+    has('tell_me_when') ? '- When somebody asks you to tell them when something about a change happens ("tell me when the update is made", "let me know when it is ready to vote", "ping me when it is merged", "tell me when it is live"), call tell_me_when with that one moment and say its promise in your reply. It is stored and kept: the line comes here. Never tell them you cannot message them later, and never point them at a page to watch it instead.' : null,
+    has('tell_me_when') ? '- When you say work is queued or running, offer to tell them here when it is ready to vote ("Want me to tell you here when it is ready to vote?"). Only store it with tell_me_when once they say yes, or when they already asked you to.' : null,
   ].filter(Boolean);
   return [
     `You are Homeroom bot, a member of the "${app.name || app.slug}" project on Homeroom, replying in ${WHERE[place.type]}.`,
@@ -837,9 +973,10 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     'Finish every turn by calling reply exactly once, or stay_quiet when the newest messages are people talking to each',
     'other and nothing is asked of you.',
     ...(['issue', 'session'].includes(place.type)
-      ? ['End the reply with one to three short things the people you answered might say next, in their own words, as',
-        'suggestions: the buttons send them as that person\'s own reply. Leave them out when the conversation has plainly',
-        'ended (the change is built or live, the request is closed, or you are only saying where things stand).']
+      ? ['Put one to three short things the people you answered might say next, in their own words, in the reply',
+        'tool\'s suggestions field. They are shown as buttons that send them as that person\'s own reply. Never',
+        'write them in the text. Leave them out when the conversation has plainly ended (the change is built or',
+        'live, the request is closed, or you are only saying where things stand).']
       : []),
     '',
     'Rules:',
@@ -851,7 +988,10 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- Never say you did something (changed, updated, filed, started, withdrew, closed, posted, told the team) unless a',
     '  tool you called in this turn did it and its result says so. Never promise to look into something or come back to',
-    '  it later: nothing brings you back. When a tool refuses, say plainly why and that nothing was done.',
+    has('tell_me_when')
+      ? '  it later: nothing brings you back to it, except what tell_me_when stored this turn, whose promise is kept here.'
+      : '  it later: nothing brings you back to it.',
+    '  When a tool refuses, say plainly why and that nothing was done.',
     '- Never name a request number you have not seen in the messages, the facts or a tool result.',
     '- A line ending in [cut at ... characters; read_message #id for the rest] was shortened by you reading it, not',
     '  by its writer: the message is whole. Call read_message before you answer anything in it. Never tell anyone',
@@ -924,6 +1064,20 @@ function toolsFor(place, {
         why: { type: 'string', description: 'Why, in their words.' },
       }, []));
     }
+  }
+  // #6264: somebody may ask to be told when this change (or, on a request,
+  // its change) is updated, ready to vote, merged or live. Stored, so the
+  // change's own moment keeps the promise here.
+  if (change || place.type === 'issue') {
+    tools.push(fn('tell_me_when', 'Promise to tell the person asking, here, when one thing about the change happens. Stored and kept: the line is posted in this place and their bell rings.', {
+      event: {
+        type: 'string',
+        enum: ['update', 'checks', 'vote', 'merged', 'live'],
+        description: 'The one moment: the update is made, its checks finish, it is ready to vote, it is merged, it is live.',
+      },
+      ...(['chat', 'category', 'message'].includes(place.type)
+        ? { change: { type: 'integer', description: 'Which of your changes: its change id from the facts.' } } : {}),
+    }, ['event']));
   }
   if (place.type === 'issue') {
     tools.push(fn('start_request', 'Start this request now, or read it again. Under a plan waiting for its requester\'s Build it, their asking is Build it.', {}, []));
@@ -1371,9 +1525,13 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
   try {
     switch (name) {
       case 'reply': {
-        const text = String(args.text || '').trim();
+        let text = String(args.text || '').trim();
         if (!text) return { error: 'Say something, or call stay_quiet.' };
-        ctx.reply = { text, ...(Array.isArray(args.suggestions) ? { suggestions: args.suggestions } : {}) };
+        // #6272: a list the model still wrote into its text becomes buttons.
+        const lifted = mayor.liftTextSuggestions(text, args.suggestions,
+          { app: app.slug, appId: app.id, thread: placeKey(app.id, place) });
+        text = lifted.text;
+        ctx.reply = { text, ...(Array.isArray(lifted.suggestions) ? { suggestions: lifted.suggestions } : {}) };
         return { ok: true };
       }
       case 'stay_quiet':
@@ -1420,6 +1578,8 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         return await updateChangeDescription(pool, ctx, args);
       case 'offer_withdraw':
         return await offerWithdraw(pool, ctx, args);
+      case 'tell_me_when':
+        return await tellMeWhen(pool, ctx, args);
       case 'start_request': {
         if (place.type !== 'issue') return { error: 'Not here.' };
         const out = await mayor.startRequest(pool, ctx, { project: app.slug, number: place.ref });
@@ -1524,8 +1684,48 @@ async function updateChange(pool, ctx, args) {
     queued: asked.running
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
-    next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed.',
+    next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed. You may also offer to tell them here when it is ready to vote (tell_me_when), if they would like that.',
   };
+}
+
+/**
+ * tell_me_when: store one promise to tell the speaker, here, when one thing
+ * about the change happens (thread-followups.js). One per reply; the line it
+ * posts later names them, so their bell rings as for a mention.
+ */
+async function tellMeWhen(pool, ctx, args) {
+  const { app, place, user } = ctx;
+  if (ctx.followedUp) return { error: 'One promise per reply: that one is stored.' };
+  const event = String(args.event || '');
+  let change = null;
+  let issueNumber = null;
+  if (place.type === 'session') change = ctx.change;
+  else if (place.type === 'issue') {
+    issueNumber = Number(place.ref);
+    change = ctx.requestChange?.id ? await changeRow(pool, ctx.requestChange.id) : null;
+  } else {
+    const id = Number(args.change) || (ctx.open.length === 1 ? ctx.open[0].change : null);
+    if (!id) return { ok: false, error: 'Several of your changes are up for a vote here: ask which one, or name it. Nothing was stored.', changes: ctx.open };
+    if (!ctx.open.some((c) => c.change === id)) return { ok: false, error: 'That is not one of your changes up for a vote here. Nothing was stored.', changes: ctx.open };
+    change = await changeRow(pool, id);
+  }
+  if (!change?.id && !issueNumber) return { ok: false, error: 'There is no change or request here for me to tell you about. Nothing was stored.' };
+  const placeRef = place.type === 'session' ? Number(place.ref)
+    : place.type === 'issue' ? Number(place.ref)
+      : Number(ctx.triggerMessage?.id);
+  if (!placeRef) return { ok: false, error: 'I cannot tell where to tell you that. Nothing was stored.' };
+  const out = await require('./thread-followups').register(pool, {
+    user, app,
+    sessionId: change?.id || null,
+    issueNumber: change?.id ? null : issueNumber,
+    event,
+    place: { type: place.type, ref: placeRef },
+    head: change?.reviewed_head_sha || null,
+    deps: ctx.deps,
+  });
+  if (!out.ok) return { ok: false, error: out.error };
+  ctx.followedUp = true;
+  return { ok: true, promise: out.promise, next: 'Say that promise in your reply, as it is written or in your own words. Never promise more than that one moment.' };
 }
 
 /** update_change_description: reword one of the bot's own changes, as the text people vote on. */
@@ -2079,7 +2279,19 @@ async function sayReport(pool, config, { appId, place, sessionId, runTag, asks: 
   // In a main chat or a topic, the answer goes under the message it answers.
   const where = (place.type === 'chat' || place.type === 'category') && !answer.length
     ? { type: 'session', ref: Number(sessionId) } : place;
-  return say(pool, { app, place: where, bot, text, answer, mark, deps });
+  const posted = await say(pool, { app, place: where, bot, text, answer, mark, deps });
+  // #6264: this report IS the line an "update" follow-up asked for, so that
+  // promise is kept here and never said a second time.
+  if (posted?.id && outcome?.action === 'revise') {
+    const followups = require('./thread-followups');
+    for (const ask of asks) {
+      if (!ask.asker_id) continue;
+      await followups.satisfiedBy(pool, {
+        sessionId: Number(sessionId), userId: ask.asker_id, place, event: 'update', messageId: posted.id,
+      }).catch(() => {});
+    }
+  }
+  return posted;
 }
 
 /** The voice's words for a follow-up's facts: one short model turn, forced to reply. Null when it cannot. */
@@ -2278,6 +2490,10 @@ module.exports = {
   MAX_ASK_TRIES,
   OFFER_WORDS,
   SORRY_TEXT,
+  CONNECTOR_PLACES,
+  CONNECTOR_LOOP_SECONDS,
+  MAX_CONNECTOR_RUN,
+  CONNECTOR_NOTE,
   setConfig,
   placeOf,
   placeKey,
@@ -2287,6 +2503,8 @@ module.exports = {
   enabledFor,
   mentionsBot,
   isRelay,
+  connectorGuard,
+  connectorSkip,
   gate,
   runTurn,
   replyOf,
@@ -2294,6 +2512,7 @@ module.exports = {
   systemPrompt,
   requestMd,
   toolsFor,
+  runTool,
   scopedPlatformCall,
   unreadDescriptionClaims,
   stripUnreadClaims,

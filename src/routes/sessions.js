@@ -3964,6 +3964,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (req.path.endsWith('/details') || session.check_state === 'pending') {
         detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
       }
+      // #6234: Homeroom bot fixing its own change's failing checks, for the
+      // change page's Testing card (services/homeroom-bot-progress.js
+      // changeBotFix); null for any change of a person's.
+      if (req.path.endsWith('/details')) {
+        detail.bot_fix = await require('../services/homeroom-bot-progress').changeBotFix(pool, session.id).catch(() => null);
+      }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
       res.set('Cache-Control', 'no-store').json({ session: listTestResults.forItem(req, detail) });
@@ -4001,8 +4007,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       const session = rows[0];
       if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      // #6288: what main is already failing, so the sentence does not blame
+      // this change for a test that fails on main through no fault of its
+      // own. The same verdict the change page's Testing card reads.
+      const main = await require('../services/main-watch').mergePause(pool, session.app_id);
       const explanation = await require('../services/checks-explanation')
-        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale) });
+        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale), main });
       return res.set('Cache-Control', 'no-store').json({ explanation, runAt: session.checks_checked_at });
     } catch (err) {
       log.error('sessions', 'Failed to explain failing checks', { message: err.message });
@@ -4066,7 +4076,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                     ORDER BY t.created_at, t.id
                     LIMIT 1),
                   cs.handoff_base_sha
-                ) AS base_sha
+                ) AS base_sha,
+                -- When the merge queue tries this change again after GitHub
+                -- held its merge back (services/integration.js HELD_UNTIL_SQL).
+                ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND (cs.user_id = $2 OR $3::boolean)`,
@@ -4309,6 +4322,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
       session.freshness = require('../services/proposal-freshness').readFreshness(session);
+      // The server's own merge answers ride along, as the board card gets
+      // them (#2038): the header pill reads the same blockReasons, including
+      // a merge GitHub held back (github_busy / github_refused) and when the
+      // queue tries it again (merge_held_until, the queue's own record).
+      session.integration = require('../services/integration').readIntegration(session);
 
       res.json({ session, messages, drafts });
     } catch (err) {

@@ -24,7 +24,8 @@ export interface RolloutHealthData {
   };
   turns: { runs: number; failed: number; builds: number; buildsFailed: number };
   chat: { turns: number; failed: number; unanswered: number; recovered: number; claimsCaught: number };
-  watch: { mergeRate: Watch; hoursToProposal: Watch; questionsWaiting: Watch; turnFailures: Watch; chatFailures: Watch };
+  cards: { total: number; repaired: number; whole: number; lines: number; fallback: number; kinds: Record<string, number> };
+  watch: { mergeRate: Watch; hoursToProposal: Watch; questionsWaiting: Watch; turnFailures: Watch; chatFailures: Watch; cardFallbacks: Watch };
 }
 
 // One DM answer that failed on the way, as the payload's dmChat lists the
@@ -39,7 +40,7 @@ export interface ChatFailure {
 }
 
 export interface HealthRow {
-  key: 'proposals' | 'time' | 'questions' | 'turns' | 'chat';
+  key: 'proposals' | 'time' | 'questions' | 'turns' | 'chat' | 'cards';
   label: string;
   value: string;
   detail: string;
@@ -63,9 +64,26 @@ export function duration(hours: number | null | undefined): string {
 
 const percent = (rate: number | null) => (rate == null ? '–' : `${Math.round(rate * 100)}%`);
 
+// #6269: a plan card check that broke, by the code the event carries.
+const CARD_KIND: Record<string, string> = {
+  summary_long: 'summary too long',
+  line_empty: 'line empty',
+  line_long: 'line too long',
+  line_not_sentence: 'line not a whole sentence',
+  line_unmarked: 'no screen marks the change',
+};
+
+/** The rule cards broke most often, "summary too long (4)", or ''. Pure. */
+function cardKindLine(kinds: Record<string, number>): string {
+  const entries = Object.entries(kinds).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (!entries.length) return '';
+  const [code, n] = entries[0];
+  return `${CARD_KIND[code] || code} (${n})`;
+}
+
 /** The panel's rows, from the payload's figures. Pure. */
 export function healthRows(h: RolloutHealthData, now: number = Date.now()): HealthRow[] {
-  const { proposals: p, questions: q, turns: t, chat: c, watch: w } = h;
+  const { proposals: p, questions: q, turns: t, chat: c, cards: k, watch: w } = h;
   const tooFew = (what: string) => `Too few ${what} to judge yet.`;
   const oldest = q.oldestWaitingAt ? Date.parse(q.oldestWaitingAt) : NaN;
   return [
@@ -118,6 +136,17 @@ export function healthRows(h: RolloutHealthData, now: number = Date.now()): Heal
       watch: w.chatFailures,
       note: w.chatFailures ? 'More than 1 in 10 of its DM answers failed. The failures are listed below.'
         : w.chatFailures == null ? tooFew('DM answers') : '',
+    },
+    {
+      key: 'cards',
+      label: 'Plan cards that fell back',
+      value: `${k.fallback} of ${k.total}`,
+      detail: k.total
+        ? `${k.repaired} fixed by a repair turn, ${k.lines} kept their numbered lines without a summary, ${k.fallback} fell back to the older lines.${cardKindLine(k.kinds) ? ` Most often: ${cardKindLine(k.kinds)}.` : ''}`
+        : 'No plan card failed its checks.',
+      watch: w.cardFallbacks,
+      note: w.cardFallbacks ? 'More than 1 in 5 of its plan cards fell back to the older lines. The rules they broke are the place to start.'
+        : w.cardFallbacks == null ? tooFew('plan cards') : '',
     },
   ];
 }
