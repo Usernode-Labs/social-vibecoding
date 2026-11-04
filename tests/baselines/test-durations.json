@@ -1008,6 +1008,7 @@
 "tests/homeroom-bot-holds-postgres.test.js":[10.5,0.2],
 "tests/homeroom-bot-holds.test.js":[0.8,0.6],
 "tests/homeroom-bot-live-outcome-postgres.test.js":[11.3,0.2],
+"tests/homeroom-bot-live-stage-cap-postgres.test.js":[1.3,1],
 "tests/homeroom-bot-live.test.js":[2.9,0.5],
 "tests/homeroom-bot-mayor-close-postgres.test.js":[10.1,0.2],
 "tests/homeroom-bot-mayor-move-postgres.test.js":[13.4,0.2],
@@ -2373,4 +2374,4 @@
 "tests/ws-validate-thread-merged.test.js":[0.6,0.6],
 "tests/ws-workflow-relay.test.js":[1.4,0.5],
 "tests/x-link.test.js":[0.5,0.5],
-"tests/your-standing.test.js":[1.5,0.4]}}
+"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/homeroom-bot-live-stage-cap-postgres.test.js"]}

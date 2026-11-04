@@ -3531,6 +3531,10 @@
     "text": "Plan for #{{number}} · any member can build it",
     "description": "On a request's page, under the title of Homeroom bot's plan for it, when the person who asked for it is not known: any member of the community may press Build it. {{number}} is the request's number."
   },
+  "topic.request.botPlan.subBuilding": {
+    "text": "Plan for #{{number}} · building",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it once somebody pressed Build it: the bot is building what the plan describes. It replaces the line that said the plan waits for Build it. {{number}} is the request's number."
+  },
   "topic.request.botPlan.readWhole": {
     "text": "Read the whole plan",
     "description": "On a request's page, a row under the lines of Homeroom bot's plan: opens the whole written plan."
