@@ -1534,23 +1534,19 @@ test('render() and load() are the only publishers of the grid model', () => {
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^[ \t]*\/\/.*$/gm, '');
   const sites = [...code.matchAll(/gridStore\.\w+\(/g)].map((m) => m.index);
-  assert.equal(sites.length, 5,
+  assert.equal(sites.length, 3,
     'a new gridStore write needs its own drag guard — see the note above');
-  // _settleLoadingState() reads the store and writes its fallback notice;
-  // load()'s _loadOnce() has its two failure paths; render() is the paint.
-  const settle = code.indexOf('  _settleLoadingState() {');
+  // Each one is inside load() (its two failure paths) or render() (the paint).
+  // load() is the single-flight gate; the load itself is _loadOnce().
   const load = code.indexOf('async _loadOnce() {');
   const render = code.indexOf('  render() {');
   const afterRender = code.indexOf('  _renderAppsMore(count) {');
-  assert.ok(settle > 0 && load > settle && render > load && afterRender > render);
-  const inSettle = sites.filter((at) => at > settle && at < load).length;
-  assert.equal(inSettle, 2, '_settleLoadingState()\'s read and its notice');
+  assert.ok(load > 0 && render > load && afterRender > render);
   const inLoad = sites.filter((at) => at > load && at < render).length;
-  assert.equal(inLoad, 2, 'load()\'s offline and failure notices');
   const inRender = sites.filter((at) => at > render && at < afterRender).length;
+  assert.equal(inLoad, 2, 'load()\'s offline and failure notices');
   assert.equal(inRender, 1, 'the paint');
-  // And every entry point opens with the guard.
-  assert.match(code.slice(settle, settle + 400), /if \(Home\._dragActive\) \{\s*Home\._reloadPending = true;\s*return;/);
+  // And both entry points open with the guard.
   assert.match(code.slice(load, load + 400), /if \(Home\._dragActive\) \{\s*Home\._reloadPending = true;\s*return;/);
   assert.match(code.slice(render, render + 300), /if \(Home\._dragActive\) \{\s*Home\._reloadPending = true;\s*return;/);
 });

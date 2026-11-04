@@ -54,7 +54,6 @@ function makeHome({ apps = 'unreached' } = {}) {
     fetch: async (url) => {
       if (!String(url).startsWith('/api/apps')) return { ok: true, json: async () => ({}) };
       if (answer === 'unreached') throw new TypeError('Network request timed out');
-      if (answer === 'hang') return new Promise(() => {});
       if (answer === 'refused') return { ok: false, status: 500, json: async () => ({}) };
       return { ok: true, json: async () => ({ apps: answer }) };
     },
@@ -114,26 +113,6 @@ test('with nothing drawn yet, it is the error card and its Retry, as before', as
   const h = makeHome();
   await h.Home.load();
   assert.deepEqual(h.grid().notice, { text: "Couldn't load your apps", tone: 'error' });
-});
-
-test('a read that never answers leaves the placeholders for the error card', async () => {
-  // The phone Home error state: the request neither resolves nor rejects, so
-  // no settle handler ever runs. The deadline turns the skeletons into the
-  // error card, and the Retry starts a fresh read rather than queueing behind
-  // the dead one.
-  const h = makeHome({ apps: 'hang' });
-  h.Home.load();
-  assert.equal(h.grid().ready, false, 'the placeholders are still up while it waits');
-  const watchdog = h.later.find((entry) => entry.ms === h.Home._loadWatchdogMs);
-  assert.ok(watchdog, 'the read has a deadline');
-  watchdog.fn();
-  assert.equal(h.grid().ready, true);
-  assert.deepEqual(h.grid().notice, { text: "Couldn't load your apps", tone: 'error' });
-  assert.equal(h.Home._loadInFlight, null, 'the dead read no longer blocks a Retry');
-
-  h.answer([APP]);
-  await h.Home.load();
-  assert.equal(h.grid().items.length, 1, 'Try again reads Home afresh');
 });
 
 test('an answer that failed is still the error card', async () => {

@@ -92,13 +92,6 @@ const Home = {
   _loadInFlight: null,
   _loadQueued: null,
 
-  // How long a read may leave the grid on its placeholders before the error
-  // card takes over. A request the network never answers (a hung connection,
-  // not a refusal) fires neither then-handler, so `settle` below never runs
-  // and nothing else would ever replace the skeletons.
-  _loadWatchdogMs: 15000,
-  _loadWatchdog: null,
-
   load() {
     // Edit mode (#4669) does not survive a reload of the catalog. The router
     // calls load() on every visit to Home, so leaving the screen and coming
@@ -115,47 +108,9 @@ const Home = {
     }
     const run = Home._loadOnce();
     Home._loadInFlight = run;
-    // The placeholders are only meant to be a moment. If the read has not
-    // answered by now, show the same error card and Retry every other failure
-    // gets, and let go of the dead read so that Retry starts a fresh one
-    // instead of queueing behind a request that will never settle.
-    if (Home._loadWatchdog) clearTimeout(Home._loadWatchdog);
-    Home._loadWatchdog = setTimeout(() => {
-      Home._loadWatchdog = null;
-      if (Home._loadInFlight !== run) return;
-      Home._loadInFlight = null;
-      Home._settleLoadingState();
-    }, Home._loadWatchdogMs);
-    const settle = () => {
-      if (Home._loadWatchdog) { clearTimeout(Home._loadWatchdog); Home._loadWatchdog = null; }
-      if (Home._loadInFlight === run) Home._loadInFlight = null;
-      Home._settleLoadingState();
-    };
+    const settle = () => { if (Home._loadInFlight === run) Home._loadInFlight = null; };
     run.then(settle, settle);
     return run;
-  },
-
-  /**
-   * A load that ended without an answer leaves the launcher's placeholders up
-   * forever: no apps, no notice, so `#app-list` stays on its skeletons and
-   * nothing says the read failed or offers Try again. Every ending runs this,
-   * whichever path got there (a throw outside the read, a failure inside the
-   * failure path, a load that never reached the fetch).
-   */
-  _settleLoadingState() {
-    // Same invariant as render() and _loadOnce(): nothing publishes the grid
-    // model while a drag holds the guard, because React cannot reconcile
-    // `#app-list` under the overlay mid-gesture. Whatever is owed paints on
-    // settle.
-    if (Home._dragActive) { Home._reloadPending = true; return; }
-    const state = gridStore.get();
-    if (Home._appsLoaded || state.ready || state.notice) return;
-    gridStore.set({
-      ready: true, view: 'grid', rowTemplate: '', items: [],
-      resultsHeading: null, emptyQuery: null, create: null,
-      editing: false,
-      notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
-    });
   },
 
   async _loadOnce() {
