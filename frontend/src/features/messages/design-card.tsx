@@ -121,6 +121,7 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
             sandbox={DESIGN_SANDBOX}
             referrerPolicy="no-referrer"
             srcDoc={doc}
+            data-design-frame=""
             tabIndex={-1}
             aria-hidden="true"
             style={{
