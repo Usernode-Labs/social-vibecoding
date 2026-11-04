@@ -101,6 +101,9 @@ async function migrate(config) {
   // #6228's shots: a reply on the handed-back request #9103 (above), for the
   // thread's status line, its track card and the Homeroom bot page's row.
   await seedStagingBotReplyWaiting(pool);
+  // #6263's shots: a bot-built change on a request page whose description is
+  // marked out of date, so the note under it has a state to show.
+  await seedStagingBotStaleDescription(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -1899,6 +1902,54 @@ async function seedStagingBotPlanWaiting(pool) {
   }
 }
 
+// #6263 (4 Nov 2026): a bot-built change whose description no longer matches
+// it, on a request page a fresh staging copy can open (mock issue 900004,
+// stagingMockIssues). The note under the summary is the state the before &
+// after shots need; without the row there is no change for it to sit under.
+// Filed by the shots' member fixture (usernode-capture), the change owned by
+// homeroom_bot as a real one is; obviously fake, idempotent, and strictly a
+// no-op outside staging.
+async function seedStagingBotStaleDescription(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const number = 900004;
+    const title = 'Staging demo: a change whose description is out of date';
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const botRow = await pool.query(
+      "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
+    );
+    if (!botRow.rows.length) return;
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, status, linked_issues, promoted_at,
+          pr_summary_md, pr_summary_source, pr_summary_input_version, pr_summary_stale,
+          created_at, last_activity_at)
+       SELECT $1, $2, 'staging-fixture/stale-description', $3, 'promoted', ARRAY[$4]::int[], NOW() - INTERVAL '2 days',
+              'Staging demo: the sample screen gets a sample banner. This text describes the first version of the change, not what it does now.',
+              'author', 1, TRUE, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = 'staging-fixture/stale-description')`,
+      [appId, botRow.rows[0].id, title, number],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot stale-description seeding failed', { message: err.message });
+  }
+}
+
 // #6264: a request where the bot promised to say when an update was in, and
 // then said it. A fresh staging copy has no such exchange (nothing here runs
 // a model), so the before & after shots get one, obviously fake, on the
@@ -1946,7 +1997,8 @@ async function seedStagingBotFollowUp(pool) {
   }
 }
 
-async function seedStagingSupportUser(pool) {  if (process.env.USERNODE_ENV !== 'staging') return;
+async function seedStagingSupportUser(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     await pool.query(
       `INSERT INTO users (id, username, password, is_admin, can_create_apps,
