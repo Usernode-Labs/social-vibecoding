@@ -147,7 +147,8 @@ declare global {
       sheet?(opts: KitSurfaceOpts): KitHandle | null;
       panel?(opts: KitSurfaceOpts & { side?: 'left' | 'right' }): KitHandle | null;
       pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
-      toast?(message: string): void;
+      /** The kit's transient notice; `priority` holds the slot for an undo flow, `action` is its one button. */
+      toast?(message: string, options?: { duration?: number; priority?: boolean; error?: boolean; dismissible?: boolean; action?: { label: string; handler?: () => void }; onClose?: (reason: string) => void }): unknown;
       /** A native-style confirm card; resolves true on the confirm button. */
       confirm?(opts: { title?: string; message?: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>;
       /** A one-field prompt; resolves the text, or null when cancelled. */
