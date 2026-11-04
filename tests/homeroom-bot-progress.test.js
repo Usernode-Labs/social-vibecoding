@@ -539,3 +539,94 @@ test('#6228: the reply read is one SQL definition, shared with the track', () =>
   const trackSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-track.js'), 'utf8');
   assert.match(trackSrc, /replyLateralSql\(\{ appId: 'a\.id', issueNumber: 'w\.n', runAt: 'run\.created_at' \}\)/);
 });
+
+// ── #6234: the bot's own fix of a change's failing checks, for its page ───
+//
+// On a request's page, the bot's change read "Its author needs to fix this
+// before it can go live" while its author, the bot, was fixing it (its
+// request's checks_failing queue row, started). changeBotFix reads where
+// that fix stands, and the Testing card says it (AppView._changeTestingView).
+
+function fixPool({ session, queue = [], runs = [], retried = false, down = false } = {}) {
+  const asked = [];
+  return {
+    asked,
+    async query(sql, params) {
+      const s = String(sql);
+      asked.push({ s, params });
+      if (down) throw new Error('connection refused');
+      if (/FROM chat_sessions cs/.test(s)) return { rows: session ? [session] : [] };
+      if (/FROM homeroom_bot_queue/.test(s)) return { rows: queue };
+      // homeroom-bot.js checksRetried: this head's fix ran out of time once.
+      if (/AND error = \$2/.test(s)) return { rows: retried ? [{ one: 1 }] : [] };
+      if (/FROM homeroom_bot_runs/.test(s)) return { rows: runs };
+      return { rows: [] };
+    },
+  };
+}
+
+const BOT_CHANGE = {
+  app_id: 9, status: 'promoted', check_state: 'failing', reviewed_head_sha: 'A'.repeat(40), linked_issues: [50], username: 'homeroom_bot',
+};
+
+test('#6234: where the bot\'s fix of its change\'s checks stands: fixing, queued, handed off, or nothing', async () => {
+  const fixing = fixPool({ session: BOT_CHANGE, queue: [{ started_at: ago(10), enqueued_at: ago(12) }] });
+  assert.deepEqual(await progress.changeBotFix(fixing, 5001), { state: 'fixing', since: ago(10), reason: null });
+  const queueRead = fixing.asked.find((q) => /FROM homeroom_bot_queue/.test(q.s));
+  assert.match(queueRead.s, /issue_number = ANY\(\$2::int\[\]\) AND reason = \$3/, 'the queue is keyed by request: reached through linked_issues');
+  assert.deepEqual(queueRead.params, [9, [50], 'checks_failing']);
+  // Its second try after running out of time (homeroom-bot.js checksRetried).
+  const retried = fixPool({ session: BOT_CHANGE, queue: [{ started_at: ago(3), enqueued_at: ago(12) }], retried: true });
+  assert.deepEqual(await progress.changeBotFix(retried, 5001), { state: 'fixing', since: ago(3), reason: 'retry' });
+  assert.deepEqual(retried.asked.find((q) => /AND error = \$2/.test(q.s)).params, [5001, `checks: ran out of time on ${'a'.repeat(40)}, trying once more`]);
+  // Waiting its turn.
+  const queued = fixPool({ session: BOT_CHANGE, queue: [{ started_at: null, enqueued_at: ago(2) }] });
+  assert.deepEqual(await progress.changeBotFix(queued, 5001), { state: 'queued', since: ago(2), reason: null });
+  // Handed over: its newest run on this head gave it to a person or failed.
+  const handed = fixPool({ session: BOT_CHANGE, runs: [{ id: 901 }] });
+  assert.deepEqual(await progress.changeBotFix(handed, 5001), { state: 'handed_off', since: null, reason: null });
+  const runRead = handed.asked.find((q) => /FROM homeroom_bot_runs/.test(q.s));
+  assert.match(runRead.s, /proposal_session_id = \$1 AND LOWER\(checks_head_sha\) = \$2 AND verdict IN \('person', 'failed'\)/);
+  assert.deepEqual(runRead.params, [5001, 'a'.repeat(40)], 'the head up for approval, lower-cased as the runs record it');
+  // Nothing of the bot's recorded on this head: the card's usual words.
+  assert.equal(await progress.changeBotFix(fixPool({ session: BOT_CHANGE }), 5001), null);
+});
+
+test('#6234: a change of a person\'s, one not up for a vote, one whose checks pass, and a read that fails all read as nothing', async () => {
+  const person = fixPool({ session: { ...BOT_CHANGE, username: 'maya' }, queue: [{ started_at: ago(1), enqueued_at: ago(2) }] });
+  assert.equal(await progress.changeBotFix(person, 5001), null);
+  assert.equal(person.asked.length, 1, 'nothing more is read for a person\'s change');
+  for (const session of [
+    { ...BOT_CHANGE, status: 'merged' },
+    { ...BOT_CHANGE, status: 'active' },
+    { ...BOT_CHANGE, check_state: 'pending' },
+    { ...BOT_CHANGE, check_state: 'passing' },
+    null,
+  ]) {
+    assert.equal(await progress.changeBotFix(fixPool({ session, queue: [{ started_at: ago(1), enqueued_at: ago(2) }] }), 5001), null);
+  }
+  assert.equal(await progress.changeBotFix(fixPool({ session: BOT_CHANGE, down: true }), 5001), null, 'a read that fails keeps today\'s words');
+  assert.equal(await progress.changeBotFix(fixPool({ session: BOT_CHANGE }), 'x'), null);
+  // A change with no request of its own has no queue row to read; its runs still count.
+  const bare = fixPool({ session: { ...BOT_CHANGE, linked_issues: [] }, runs: [{ id: 1 }] });
+  assert.deepEqual(await progress.changeBotFix(bare, 5001), { state: 'handed_off', since: null, reason: null });
+  assert.ok(!bare.asked.some((q) => /FROM homeroom_bot_queue/.test(q.s)));
+});
+
+test('#6234: both reads of a change carry it, and the Homeroom bot page keeps its fixing stage', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  assert.match(read('src/routes/sessions.js'), /detail\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\.changeBotFix\(pool, session\.id\)\.catch\(\(\) => null\);/);
+  assert.match(read('src/routes/votes.js'), /proposal\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\.changeBotFix\(pool, proposal\.id\)\.catch\(\(\) => null\);/);
+  // The Homeroom bot page's own stage for it (ai-work.js BOT_STANDING), as
+  // stageOf reads a started checks_failing row.
+  const open = { proposal_status: 'promoted', proposal_at: ago(20), check_state: 'failing', checks_sha: 'a'.repeat(40), reviewed_head_sha: 'a'.repeat(40) };
+  assert.deepEqual(stage({ ...open, started_at: ago(4), queue_reason: 'checks_failing' }),
+    { stage: 'fixing', since: ago(4), doing: 'fixing what its tests found' });
+  assert.equal(stage({ ...open, queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }).stage, 'fix_queued');
+  const { BOT_STANDING } = require('../src/services/ai-work');
+  assert.deepEqual(BOT_STANDING.fixing, { group: 'next', what: 'fixing' });
+  assert.deepEqual(BOT_STANDING.fix_queued, { group: 'waiting', what: 'fix_queued' });
+  assert.equal(require('../src/services/homeroom-bot-track').fromStage('fixing').why, 'fixing');
+});

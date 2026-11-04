@@ -75,6 +75,10 @@ import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 import { installApiCacheIdentity } from './lib/api-cache-identity';
 import { installReadTimeout } from './lib/read-timeout';
+// #6233: publishes window.UsernodeReact.tabBuild at module scope. app.js's
+// /api/version poll writes the build this tab loaded and its merge boundary
+// here, and screens read it to say "Live · reload to get it".
+import './lib/tab-build';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and

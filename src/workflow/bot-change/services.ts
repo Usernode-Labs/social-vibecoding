@@ -82,6 +82,26 @@ export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
       },
     },
 
+    // #6264: a promise somebody asked for, kept at the change's own moment:
+    // one line where they asked, mentioning them. A close cancels every
+    // promise still waiting and says so.
+    [WORK.followups]: {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const followups = legacy('services/thread-followups');
+        const sessionId = Number(input.sessionId);
+        if (input.event === 'closed') return { told: await followups.cancel(pool, { sessionId }) };
+        const told = await followups.fire(pool, {
+          sessionId,
+          event: String(input.event),
+          head: input.head ?? null,
+          verdict: input.verdict ?? null,
+        });
+        return { told: Number(told) || 0 };
+      },
+    },
+
     // Live: whoever the bot built it for hears it, in their DM.
     [WORK.liveDm]: {
       maxAttempts: 5,

@@ -5192,6 +5192,19 @@
         "frontend/src/features/settings/sections/experimental.tsx",
         "frontend/locales/en/settings.json"
       ]
+    },
+    {
+      "name": "#6271 (4 Nov 2026): a private thread marked done this week is listed under Live this week, with its lock and the day it closed",
+      "path": "/?demo=1#homeroom-bot",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"live\"] [data-ai-line=\"closed\"]",
+      "expectText": "Private thread · Closed",
+      "id": "ai-live-closed-private-thread",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/ai/model.ts",
+        "frontend/src/features/ai/lists.tsx",
+        "frontend/locales/en/messages.json"
+      ]
     }
   ],
   "governance": {

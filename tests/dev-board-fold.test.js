@@ -1723,8 +1723,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // a settings route with no existing declared check to extend.
   // 753 → 751: −2 (#6276) the old Needs-you reel's four declared checks
   // become the review flow's two: a project's Needs you draws it, and its
-  // change page is drawn in place in the pane. 751 leaves 129 slots.
-  checkCap.assertPinned(DAPP.tests.length, 751);
+  // change page is drawn in place in the pane.
+  // 751 → 752: +1 (#6271) a private thread marked done this week is listed
+  // under Live this week with its lock and the day it closed. Live this week
+  // had no declared check to extend. 752 leaves 128 slots.
+  checkCap.assertPinned(DAPP.tests.length, 752);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

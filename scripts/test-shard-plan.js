@@ -64,6 +64,10 @@ function loadDurations(file = DURATIONS_FILE) {
   if (!raw || raw.version !== 1 || typeof raw.files !== 'object' || raw.files === null) {
     throw new Error(`${path.relative(ROOT, file)} is not a version 1 durations baseline`);
   }
+  if (raw.unmeasured !== undefined
+    && (!Array.isArray(raw.unmeasured) || raw.unmeasured.some((name) => typeof name !== 'string'))) {
+    throw new Error(`${path.relative(ROOT, file)} has an unmeasured list that is not an array of paths`);
+  }
   const defaultSeconds = Number(raw.defaultSeconds);
   if (!(defaultSeconds > 0)) throw new Error('the durations baseline has no defaultSeconds');
   const files = new Map();
@@ -80,6 +84,28 @@ function loadDurations(file = DURATIONS_FILE) {
     if (known) files.set(name, { ...known, cores: Number(o.cores) });
   }
   return { defaultSeconds, files };
+}
+
+/**
+ * What the baseline is missing, and whether its placeholders have piled up:
+ * `{ missing, unmeasured, advisory }`. `missing` is the test files with no
+ * entry at all — every one must be named, because a change that adds a test
+ * file adds its entry too, so the tree stays complete. `unmeasured` is the
+ * placeholder entries that still name a test file. `advisory` is a note to
+ * print when those placeholders pass a fifth of all files, or null: fresh
+ * timings are advice, never a failure.
+ */function baselineGaps(files, raw) {
+  const known = new Set(Object.keys((raw && raw.files) || {}));
+  const present = new Set(files);
+  const missing = files.filter((file) => !known.has(file));
+  const unmeasured = [...new Set(Array.isArray(raw && raw.unmeasured) ? raw.unmeasured : [])]
+    .filter((name) => present.has(name))
+    .sort();
+  const advisory = unmeasured.length > files.length * 0.2
+    ? `${unmeasured.length} of ${files.length} test files have placeholder durations, not measured ones;`
+      + ' refresh them with npm run test:durations (in the worker image, 8 CPUs, PostgreSQL up)'
+    : null;
+  return { missing, unmeasured, advisory };
 }
 
 /**
@@ -149,5 +175,5 @@ function parseShard(value) {
 }
 
 module.exports = {
-  CONCURRENCY, CPUS, DURATIONS_FILE, listTestFiles, loadDurations, plan, verifyPartition, planId, parseShard,
+  CONCURRENCY, CPUS, DURATIONS_FILE, listTestFiles, loadDurations, baselineGaps, plan, verifyPartition, planId, parseShard,
 };

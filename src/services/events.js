@@ -263,6 +263,11 @@ const EVENT_TYPES = Object.freeze({
   // specMs, ok, stopped, model }. A spec that saved none is also logged as
   // a warning.
   BOT_SPEC_SCREENS: 'bot_spec_screens',
+  // #6269: a plan's card text that failed its checks, once per plan, with
+  // { kinds (its problems by code), repaired (whether a repair turn changed
+  // it), kindsAfter (what still fails), used ('whole', 'lines' or
+  // 'fallback') and model }. Rollout health reads it; the log line stays.
+  BOT_PLAN_CARD: 'bot_plan_card',
   // #4449: Live, the new app shown taking shape while its first version is
   // built (services/first-version-live.js). Written to compare build times
   // with and without the watcher, and to see how often Live showed nothing.

@@ -51,10 +51,12 @@ export interface AiPrivate {
    * #6153: where it went: a design thread stays listed once it is filed as
    * a request, or posted on one as its plan (absent from an older server).
    */
-  /** #6159: `done` once finished; a done thread is not listed. */
+  /** #6159: `done` once finished; #6271: a done thread is Live this week's for a week. */
   state?: 'open' | 'filed' | 'posted' | 'dropped' | 'done';
   /** #6153: the number of the request it was filed as, or posted on. */
   resultRef?: number | null;
+  /** #6271: the day it was marked done, for Live this week (absent from an older server). */
+  doneAt?: string | null;
 }
 
 export interface AiThread {
@@ -71,8 +73,17 @@ export interface AiThread {
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading' | 'reading_reply'
     | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
     | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
-    | 'live';
+    | 'live'
+    /** #6271: a private thread marked done this week. */
+    | 'closed';
   at: string | null;
+  /**
+   * #6233: on a Live row, when the change merged and its id, so the tab can
+   * tell whether the build it loaded contains it (the "reload to get it"
+   * wording). Absent on an older server.
+   */
+  mergedAt?: string | null;
+  changeId?: number | null;
   quietDays?: number;
   /** #6158: its place in Homeroom bot's line, or among the project's builds held for a slot (1-based). */
   place?: number;
@@ -526,10 +537,42 @@ export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[
   });
 }
 
-/** Pure: Live this week; #6153: a request filed from a private thread carries it, as In progress does. */
-export function liveThisWeek(work: AiWork | null): AiThread[] {
+/** How long a done private thread stays under Live this week. */
+const CLOSED_DAYS = 7;
+
+/**
+ * Pure: Live this week; #6153: a request filed from a private thread carries
+ * it, as In progress does. #6271: then the private threads marked done in the
+ * last seven days (newest closed first), each with the thread it opens. One
+ * whose filed request already has a row in any list stays that row, never a
+ * second one (#6153).
+ */
+export function liveThisWeek(work: AiWork | null, now = Date.now()): AiThread[] {
   const filed = filedThreads(work);
-  return (work?.live || []).map((t) => withThread(filed, t));
+  const rows = (work?.live || []).map((t) => withThread(filed, t));
+  const listed = listedKeys(null, work);
+  const closed: AiThread[] = [];
+  for (const p of work?.private || []) {
+    if (p.state !== 'done' || !p.doneAt) continue;
+    const done = new Date(p.doneAt).getTime();
+    if (!Number.isFinite(done) || now - done > CLOSED_DAYS * 86400000) continue;
+    if (p.app && Number(p.resultRef) > 0 && listed.has(`${p.app.slug}#${Number(p.resultRef)}`)) continue;
+    closed.push({
+      threadId: 0,
+      number: null,
+      kind: 'private',
+      title: p.title,
+      app: p.app,
+      change: null,
+      href: '',
+      group: 'live',
+      what: 'closed',
+      at: p.doneAt,
+      rootId: p.rootId,
+    });
+  }
+  closed.sort((a, b) => new Date(b.at as string).getTime() - new Date(a.at as string).getTime());
+  return [...rows, ...closed];
 }
 
 /** The words of an In progress or Waiting row's tooltip, by what it waits on. */

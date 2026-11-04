@@ -43,7 +43,8 @@ test('the model is asked for what they might say next, and its suggestions becom
   assert.equal(reply.properties.suggestions.maxItems, 3);
   assert.deepEqual(reply.required, ['text'], 'never required: a reply can stand without them');
   const source = read('src/services/homeroom-bot-mayor.js');
-  assert.match(source, /up to 3 suggestions: short things they might say next, in their own/);
+  assert.match(source, /up to 3 suggestions in the reply tool\\'s suggestions field: short things they/);
+  assert.match(source, /They are shown as buttons\. Never write them in the text\./);
   assert.match(source, /Offer at least one',\s*'unless the conversation has plainly ended\.'/);
   assert.deepEqual(mayor.suggestionLabels([
     '  How long will   it take? ', 'how long will it take?', 'x'.repeat(61), '', null, 42, 'Start it now', 'Show my requests', 'One more',
