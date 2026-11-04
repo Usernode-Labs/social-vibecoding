@@ -286,6 +286,68 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
 });
 
+// #6312 (4 Nov 2026, Evan): "Show 11 more" made two rows' blue dots disappear
+// the instant it was pressed. Folded, a new row is lifted above the fold, so
+// its dot shows. Opened, every row keeps its own order, so a new row past the
+// first few sits back in the box the fold clips while it animates, and that
+// box's overflow-hidden cut the dot off, 12px outside its row. The box keeps
+// the dot's room on the start side: the negative margin moves its clip edge
+// out, and the same padding leaves every row exactly where it was.
+test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded or open', () => {
+  const { groupRows, GROUP_FIRST } = loadTsx(MODEL);
+  const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i === 6 }));
+  // Opened, the fresh row that was lifted goes back into the order, past the
+  // first few: the part that folds.
+  const opened = groupRows(many, GROUP_FIRST.needs, true);
+  assert.deepEqual(opened.items.map((r) => r.key), many.map((r) => r.key), 'every row keeps its own place');
+  assert.equal(opened.shown, GROUP_FIRST.needs, 'the first few show');
+  assert.ok(opened.items.slice(opened.shown).some((r) => r.fresh), 'and the new one past them is in the folded part');
+
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const line = (key, title, unread) => ({
+    key, title, app, who: 'all', unread,
+    sub: { id: 'messages:ai.row.where', values: { project: app.name, number: 1 } },
+    pill: { id: 'messages:ai.pill.vote' }, href: '#app/garden/dev/issues/1', rootId: null,
+    threadId: Number(key.replace(/\D/g, '')) + 40,
+  });
+  const html = renderComponent(LISTS, 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: many.map((r, i) => line(`need:proposal:${i + 1}`, `Row ${i + 1}`, i === 6 ? 1 : 0)),
+    lit: null, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
+  });
+  // Folded, the new row is drawn above the fold, dot and all.
+  const folded = html.slice(0, html.indexOf('data-ai-group-rest'));
+  assert.ok(folded.includes('Row 7'), 'the new row is lifted above the fold');
+
+  // The box a fold clips: it still clips (the animation needs it), and it
+  // carries the dot's room on the start side.
+  const groupClip = /data-ai-group-rest=""><div class="([^"]*)">/.exec(html);
+  assert.ok(groupClip, 'a project folds its rest away');
+  assert.match(groupClip[1], /overflow-hidden/, 'the fold still clips');
+  assert.match(groupClip[1], /(?:^| )-ms-4(?: |$)/, 'its clip edge stands past the rows');
+  assert.match(groupClip[1], /(?:^| )ps-4(?: |$)/, 'and the same room is padding, so no row moves');
+
+  // The Still waiting fold clips the same way, so it keeps the same room.
+  const still = renderComponent(LISTS, 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0, rows: [],
+    progress: [], live: [], openRow() {}, openThread() {},
+    waiting: [thread(1, 71, 'vote'), thread(2, 72, 'not_read'), thread(3, 73, 'operator')],
+  });
+  const stillClip = /data-ai-still-rest=""><div class="([^"]*)">/.exec(still);
+  assert.ok(stillClip, 'the still rows fold away under their own head');
+  assert.match(stillClip[1], /overflow-hidden/);
+  assert.match(stillClip[1], /(?:^| )-ms-4(?: |$)/);
+  assert.match(stillClip[1], /(?:^| )ps-4(?: |$)/);
+
+  // The room must stay at least the dot's own offset: 12px out (start-3), so
+  // 16px (4) of room, in the same 4px steps.
+  const src = read(LISTS);
+  const at = Number(/const DOT = '[^']*-start-(\d+)/.exec(src)[1]);
+  const room = Number(/ps-(\d+)/.exec(groupClip[1])[1]);
+  assert.ok(room >= at, `the fold keeps ${room * 4}px for a dot ${at * 4}px outside its row`);
+});
+
 test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {
   const { needsYou, rankProjects, railProjects, RAIL_PROJECTS } = loadTsx(MODEL);
   const at = (slug, name) => ({ slug, name, icon_url: null, icon_emoji: null });

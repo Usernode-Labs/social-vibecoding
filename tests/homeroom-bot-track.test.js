@@ -316,3 +316,34 @@ test('#6228: a read of somebody\'s reply is planning, why "reply"', () => {
   assert.equal(j.reply, true);
   assert.equal(j.stage, 'reading');
 });
+
+// #6313 (4 Nov 2026): a request queued again after a plan that could not be
+// written says it is trying the plan again, not merely that it waits for a
+// free builder. Once a read starts, its own line returns ("Reading the
+// request"): the retry word is the waiting row's.
+test('#6313: a read queued after a plan that could not be written says it is retrying the plan', () => {
+  const progress = require('../src/services/homeroom-bot-progress');
+  const row = {
+    slug: 'homeroom', name: 'Homeroom', issue_number: 6313, run_id: 9, mode: 'live', verdict: 'ready',
+    run_at: ago(20), build_ok: false, build_error: 'no plan could be written (timeout)',
+    build_session_id: null, proposal_session_id: null, run_proposal: null,
+    queue_id: 44, started_at: null, enqueued_at: ago(1), held_until: null, reply_at: null, request_closed: false,
+  };
+  const state = progress.stageOf(row, { now: new Date(NOW) });
+  assert.equal(state.stage, 'queued');
+  assert.equal(state.retry, 'plan');
+  const j = track.jobOfRow(row, { stageOf: progress.stageOf, outcomeOf: () => null, now: new Date(NOW) });
+  assert.equal(j.stage, 'queued');
+  assert.equal(j.retry, 'plan');
+  const t = track.trackOf({ job: { ...job(), stage: j.stage, retry: j.retry }, runs: [] });
+  assert.equal(t.state, 'queued');
+  assert.equal(t.why, 'plan_retry');
+  // Another failure waiting its turn is unchanged.
+  const other = progress.stageOf({ ...row, build_error: 'the build turn failed (exit 1)' }, { now: new Date(NOW) });
+  assert.equal(other.retry, undefined);
+  assert.equal(track.trackOf({ job: { ...job(), stage: 'queued' }, runs: [] }).why, 'turn');
+  // A read under way is reading the request, not retrying anything.
+  const reading = progress.stageOf({ ...row, queue_id: null, started_at: ago(1) }, { now: new Date(NOW) });
+  assert.equal(reading.stage, 'reading');
+  assert.equal(reading.retry, undefined);
+});

@@ -71,7 +71,7 @@ export interface AiThread {
   what:
     | 'plan' | 'decide' | 'build_stopped' | 'fix_stopped'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'updating' | 'building' | 'reading' | 'reading_reply'
-    | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'update_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
+    | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'update_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'retrying_plan' | 'on_hold'
     | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
     | 'live'
     /** #6271: a private thread marked done this week. */
@@ -673,6 +673,8 @@ const THREAD_WORDS: Record<string, string> = {
   held: 'messages:ai.up.held',
   stalled: 'messages:ai.up.stalled',
   queued: 'messages:ai.up.queued',
+  // #6313: queued again after a plan that could not be written.
+  retrying_plan: 'messages:ai.up.retryingPlan',
   on_hold: 'messages:ai.up.onHold',
   not_picked_up: 'messages:ai.up.notPickedUp',
   // #6158: what a request nobody is moving waits on.
@@ -812,6 +814,7 @@ const SHORT_WORDS: Record<string, string> = {
   fix_queued: 'messages:ai.short.builder',
   followup_queued: 'messages:ai.short.builder',
   queued: 'messages:ai.short.builder',
+  retrying_plan: 'messages:ai.short.retryPlan',
   build_queued: 'messages:ai.short.turn',
   held: 'messages:ai.short.slot',
   stalled: 'messages:ai.short.stalled',
