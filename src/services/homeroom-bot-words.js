@@ -94,6 +94,8 @@ const FIRST_PERSON = Object.freeze([
   [/can tap Try again in their chat with Homeroom bot, and it will finish it\./,
     'can tap Try again in their chat with me, and I\'ll finish it.'],
   [/: it ended up with no changes to show\./, ': I ended up with no changes to show.'],
+  // #6313: a failure the bot is already trying again by itself.
+  [/\. It is trying again\./, '. I\'m trying again.'],
   [/Homeroom bot couldn't\b/g, 'I couldn\'t'],
   // Leaving a request to the people holding it (homeroom-bot-holds.js).
   [/, so Homeroom bot is leaving it to the vote\./, ', so I\'m leaving it to the vote.'],

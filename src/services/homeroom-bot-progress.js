@@ -742,7 +742,8 @@ function stageOf(input, { now = new Date() } = {}) {
     if (replyWaits(row, { now })) {
       return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
     }
-    return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder' };
+    return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder',
+      ...(planFailed(row) ? { retry: 'plan' } : {}) };
   }
   // #6228: a reply nobody has queued a read for yet still reads as one
   // coming, for REPLY_WAIT_MS: the bot's refresh sees it and queues it.
@@ -751,6 +752,18 @@ function stageOf(input, { now = new Date() } = {}) {
   }
   return null;
 }
+
+/**
+ * Pure (#6313): whether a request's newest look could not write its plan
+ * (homeroom-bot-live.js buildAndPropose: "no plan could be written (…)", the
+ * spec turn's final message "only part of a spec"). Nothing was built; the
+ * request is queued for another read, which is a retry of the plan.
+ */
+function planFailed(row) {
+  return row?.build_ok === false
+    && /no plan could be written|only part of a spec/.test(String(row.build_error || ''));
+}
+
 /**
  * Pure (14 Oct 2026, newcomer run eight): whether a first version's build
  * stopped, from its request row (requestRows) while nothing about it is in
@@ -1526,6 +1539,8 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     ...(typical ? { typicalMinutes: typical } : {}),
     ...(state.waitingOn ? { waitingOn: state.waitingOn } : {}),
     ...(state.waitingFor ? { waitingFor: state.waitingFor } : {}),
+    // #6313: a queued read after a plan that could not be written says so.
+    ...(state.retry ? { retry: state.retry } : {}),
     ...(proposal ? { proposal } : {}),
     // WP1 (#10): the request's other builds, beside the one described.
     ...(row.also_building ? { alsoBuilding: row.also_building } : {}),

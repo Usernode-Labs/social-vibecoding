@@ -6552,6 +6552,17 @@ async function recordLiveBuild(pool, runId, built, model = null) {
 }
 
 /**
+ * Pure (#6313): whether the bot is already trying this failure again by
+ * itself, so its words say "I'm trying again" and ask nobody for a reply. A
+ * plan that could not be written (nothing was built) is read again by the
+ * bot's own queue: its post on the request is what moves the request, and
+ * the bot reads a moved request again.
+ */
+function retriesItself(reason) {
+  return require('./homeroom-bot-dm').buildFailedCause(reason).cause === 'plan';
+}
+
+/**
  * What a live build came to, said on its issue: the proposal (and the spec
  * on it, where the group votes), the request found impossible, or the build
  * that did not become a proposal. Shared by the live path and the recovery
@@ -6621,7 +6632,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
       app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
     });
     if (!await runPosted(pool, runId, 'build_failed')) {
-      await say('build_failed', live.buildFailedText(built.error, { firstVersion }), { dm: { reason: built.error } });
+      await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
+        { dm: { reason: built.error, retrying: retriesItself(built.error) } });
     }
     return 'waiting_to_push';
   }
@@ -6630,7 +6642,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
   });
   // Said once per run, whatever brought the build here again.
   if (!await runPosted(pool, runId, 'build_failed')) {
-    await say('build_failed', live.buildFailedText(built.error, { firstVersion }), { dm: { reason: built.error } });
+    await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
+      { dm: { reason: built.error, retrying: retriesItself(built.error) } });
   }
   return 'build_failed';
 }

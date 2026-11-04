@@ -107,7 +107,9 @@ test('the run\'s own record is never the sentence anybody reads', () => {
   const announce = src.slice(src.indexOf('async function announceBuilt('), src.indexOf('async function actOnVerdict('));
   assert.match(announce, /await recordLiveBuild\(pool, runId, built/);
   assert.match(announce, /log\.warn\('homeroom-bot', 'Live build did not become a proposal', \{[\s\S]*?error: built\.error/);
-  assert.match(announce, /say\('build_failed', live\.buildFailedText\(built\.error, \{ firstVersion \}\), \{ dm: \{ reason: built\.error \} \}\)/);
+  // #6313: what it says also knows whether the bot is already trying the
+  // failure again (homeroom-bot.js retriesItself), for the words and the DM.
+  assert.match(announce, /say\('build_failed', live\.buildFailedText\(built\.error, \{ firstVersion, retrying: retriesItself\(built\.error\) \}\),\s*\{ dm: \{ reason: built\.error, retrying: retriesItself\(built\.error\) \} \}\)/);
   assert.match(read('frontend/src/features/admin/admin-homeroom-bot.tsx'), /Live build did not become a proposal: \$\{why\}\./);
 });
 
@@ -324,4 +326,59 @@ test('a refused upload is said as that, in both voices, with the retry or a repl
     const metadata = { moment: 'stopped', kind: 'build_failed', appName: 'Book Club', requestTitle: 'Dark mode', cause: dm.buildFailedCause(reason).cause };
     assert.equal(notifyCopy.parseBotDetail(notifyCopy.botNotificationDetail(metadata)).said, said, reason);
   }
+});
+
+// #6313 (4 Nov 2026, #6306 and #6225): "I couldn't finish building this:
+// something went wrong during the build. Reply here and I'll try again."
+// was posted five times in 28 minutes on a request nothing was being built
+// on: the plan alone could not be written ("no plan could be written (the
+// spec turn's final message was only part of a spec …)"), which had no cause
+// of its own and fell to 'other'. Pinned here: the plan has its own words
+// and never says "during the build"; and a failure the bot is already
+// trying again by itself says so instead of asking for a reply.
+const PLAN_REASON = 'no plan could be written (the spec turn\'s final message was only part of a spec '
+  + '(no "# " title, no <article data-spec> and neither half\'s "##" heading), so it was not kept)';
+
+test('#6313: a plan that could not be written is said as the plan, not as something that went wrong during the build', () => {
+  assert.deepEqual(dm.buildFailedCause(PLAN_REASON), { cause: 'plan' });
+  assert.equal(dm.buildFailedWords(PLAN_REASON), 'I couldn\'t finish writing the plan for this.');
+  assert.equal(dm.buildFailedWords(PLAN_REASON, 'this', 'bot'), 'Homeroom bot couldn\'t finish writing the plan for this.');
+  assert.doesNotMatch(dm.buildFailedWords(PLAN_REASON, 'this', 'bot'), /during the build/);
+  // The first version names its plan the same way.
+  assert.equal(dm.buildFailedWords(PLAN_REASON, 'the first version'),
+    'I couldn\'t finish writing the plan for the first version.');
+});
+
+test('#6313: only ask for a reply when a reply is what restarts it', () => {
+  const them = (extra) => dm.dmText('build_failed', { reason: PLAN_REASON, ...extra }, { appName: 'Plate', issueNumber: 7 });
+  // A reply still restarts it when nothing is queued.
+  assert.equal(them({}),
+    '**Plate** · request #7\n\nI couldn\'t finish writing the plan for this. Reply here and I\'ll try again.');
+  // Already trying again: said so, and nobody is asked for anything.
+  assert.equal(them({ retrying: true }),
+    '**Plate** · request #7\n\nI couldn\'t finish writing the plan for this. I\'m trying again.');
+  assert.doesNotMatch(them({ retrying: true }), /Reply here/);
+  // The request's thread says it in the bot's voice, the same way.
+  assert.equal(live.buildFailedText(PLAN_REASON, { retrying: true }),
+    'Homeroom bot couldn\'t finish writing the plan for this. It is trying again.');
+  assert.equal(live.buildFailedText(PLAN_REASON),
+    'Homeroom bot couldn\'t finish writing the plan for this. '
+      + 'Reply here (or on the GitHub issue) and it will try again.');
+});
+
+// #6313: the push and the bell row say the plan too, and ask for no tap for
+// a retry that is already coming.
+test('#6313: the notification for a plan that could not be written says the plan', async () => {
+  const pool = { async query() { return { rows: [] }; } };
+  const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
+  assert.equal(dm.saidOf('build_failed', { cause: 'plan' }), 'build_no_plan');
+  const metadata = {
+    kind: 'build_failed', appName: 'Plate', requestTitle: 'Print view',
+    said: dm.saidOf('build_failed', { cause: dm.buildFailedCause(PLAN_REASON).cause }),
+  };
+  const detail = await dm.notificationDetail(pool, dm.momentOf(metadata), metadata);
+  assert.deepEqual(notifyCopy.parseBotDetail(detail).said, 'build_no_plan');
+  const copy = notifyCopy.botMomentCopy(detail);
+  assert.equal(copy.body, 'Stopped: I couldn\'t write the plan for it. I\'m trying again.');
+  assert.doesNotMatch(copy.body, /while I was building|Tap Try again/);
 });

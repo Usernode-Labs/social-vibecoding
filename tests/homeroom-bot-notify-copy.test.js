@@ -40,6 +40,9 @@ const BODIES = [
   ['stopped', 'build_not_proposed', {}, 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.'],
   ['stopped', 'build_no_start', {}, 'Stopped: I couldn\'t get started. Tap Try again.'],
   ['stopped', 'build_other', {}, 'Stopped: something went wrong while I was building. Tap Try again.'],
+  // #6313: the plan could not be written; nothing was built, and the bot is
+  // trying again by itself, so no tap is asked for.
+  ['stopped', 'build_no_plan', {}, 'Stopped: I couldn\'t write the plan for it. I\'m trying again.'],
   // #6267: the build finished and GitHub refused the upload.
   ['stopped', 'build_push', {}, 'Built, but GitHub refused the upload. I\'ll try again soon.'],
   ['stopped', 'build_push_permanent', {}, 'Built, but GitHub wouldn\'t take the upload. Reply to try again.'],
