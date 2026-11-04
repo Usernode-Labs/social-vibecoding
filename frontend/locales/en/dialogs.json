@@ -3475,6 +3475,30 @@
     "text": "How changes are approved",
     "description": "Name of the second kind of change in the list of changes to propose."
   },
+  "whoDecides.builderYes.title": {
+    "text": "A Yes from the creator or an admin is enough",
+    "description": "Title of the switch in the Who can see & change it sheet, under How changes are approved, that lets the project's creator or one of its app admins put a change live with their Yes alone. \"Yes\" is a vote on a change."
+  },
+  "whoDecides.builderYes.sub": {
+    "text": "Their Yes puts a change live on its own, once its checks pass.",
+    "description": "Line under the builder-Yes switch: what the creator's or an admin's Yes does."
+  },
+  "whoDecides.builderYes.note": {
+    "text": "Off unless the group turns it on. Changes to who decides still go by You or the group.",
+    "description": "Note under the builder-Yes switch: it starts off, and turning it on is itself a change the group decides."
+  },
+  "whoDecides.change.builderYes": {
+    "text": "Creator's or admin's Yes",
+    "description": "Name of the change in the list to propose when the builder-Yes switch is flipped."
+  },
+  "whoDecides.builderYes.on": {
+    "text": "On",
+    "description": "State of the builder-Yes switch when it is on."
+  },
+  "whoDecides.builderYes.off": {
+    "text": "Off",
+    "description": "State of the builder-Yes switch when it is off."
+  },
   "whoDecides.changeLine": {
     "text": "{{what}}: {{from}} → {{to}}",
     "description": "One change in the list to propose. {{what}} is what changes; {{from}} and {{to}} are the old and new settings."

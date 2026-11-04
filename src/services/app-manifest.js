@@ -2103,6 +2103,8 @@ function sameRules(a, b) {
     preset: v.preset || null,
     groups: (v.groups || []).map((g) => ({ name: g.name, people: g.people || [], ids: g.ids || [] })),
     rules: (v.rules || []).map((r) => ({ group: r.group, kind: r.kind, n: r.n ?? null, min: r.min ?? null })),
+    // #5816: a flip of the switch alone is a different rule.
+    builderYes: v.builderYes === true,
   }) : null);
   return canon(a) === canon(b);
 }

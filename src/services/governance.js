@@ -405,7 +405,7 @@ function viewerDecides(gov, { approverIds, facts, explicitApproval, explicitReas
   if (gov && gov.rules) {
     const value = explicitApproval && isWhoDecidesReason(explicitReason ?? null)
       ? { rules: governanceRules.WHO_DECIDES }
-      : gov.rules;
+      : { rules: governanceRules.effectiveRules(gov.rules, { explicitApproval }) };
     return value.rules.some((rule) => {
       if (rule.group === 'members') return true;
       if (rule.group === 'creator') return facts ? facts.creatorId === id : false;
@@ -735,6 +735,7 @@ async function describeApproval(pool, appId, gov) {
       rules: null,
       groups: [],
       creatorId: null,
+      builderYes: false,
     };
   }
   const facts = await rulesFacts(pool, appId, gov);
@@ -751,6 +752,8 @@ async function describeApproval(pool, appId, gov) {
     groups: gov.rules.groups.map((g) => ({ name: g.name, key: g.key, people: g.people })),
     creatorId: facts.creatorId,
     required: gate.required,
+    // #5816: whether a Yes from the creator or an admin is enough on its own.
+    builderYes: !!gov.rules.builderYes,
   };
 }
 

@@ -144,6 +144,59 @@ test('new projects start on You or the group', () => {
   assert.equal(rules.DEFAULT_PRESET, 'you_or_the_group');
 });
 
+// ── #5816: a Yes from the creator or an admin ──────────────────────────
+
+test('#5816: builderYes is true or false; absent or false is off and anything else is refused', () => {
+  assert.equal(rules.parseRulesBlock({ preset: 'two_yeses' }).builderYes, undefined);
+  assert.equal(rules.parseRulesBlock({ preset: 'two_yeses', builderYes: false }).builderYes, undefined);
+  const on = rules.parseRulesBlock({ preset: 'two_yeses', builderYes: true });
+  assert.equal(on.builderYes, true);
+  assert.equal(on.preset, 'two_yeses');
+  const own = rules.parseRulesBlock({ rules: [{ group: 'members', atLeast: 2 }], builderYes: true });
+  assert.equal(own.builderYes, true);
+  for (const bad of [{ preset: 'two_yeses', builderYes: 'yes' }, { preset: 'two_yeses', builderYes: 1 },
+    { rules: [{ group: 'members', atLeast: 1 }], builderYes: [] }]) {
+    assert.throws(() => rules.parseRulesBlock(bad), rules.RulesError, JSON.stringify(bad));
+  }
+  // Without a preset or rules beside it, the key belongs to no rule block.
+  assert.throws(() => rules.parseRulesBlock({ builderYes: true }), /needs a preset or rules beside it/);
+  const lenient = rules.readRulesBlock({ builderYes: 'yes' });
+  assert.equal(lenient.value, null);
+  assert.match(lenient.error, /builderYes/);
+});
+
+test('#5816: blockFor writes builderYes only when on, and it reads back', () => {
+  assert.deepEqual(rules.blockFor(rules.parseRulesBlock({ preset: 'two_yeses' })), { preset: 'two_yeses' });
+  const on = rules.parseRulesBlock({ preset: 'two_yeses', builderYes: true });
+  assert.deepEqual(rules.blockFor(on), { preset: 'two_yeses', builderYes: true });
+  assert.equal(rules.parseRulesBlock(rules.blockFor(on)).builderYes, true);
+  const own = rules.parseRulesBlock({ rules: [{ group: 'members', atLeast: 3 }], builderYes: true });
+  assert.deepEqual(rules.blockFor(own), { rules: [{ group: 'members', atLeast: 3 }], builderYes: true });
+  assert.equal(rules.storedForm(on).builderYes, true);
+  assert.equal(rules.storedForm(rules.parseRulesBlock({ preset: 'two_yeses' })).builderYes, undefined);
+});
+
+test('#5816: effectiveRules adds the creator and admin rules once, never to a protected change', () => {
+  const stored = rules.parseRulesBlock({ preset: 'group_vote', builderYes: true });
+  const added = rules.effectiveRules(stored, { explicitApproval: false });
+  assert.deepEqual(added.map((r) => [r.group, r.kind, r.n]), [
+    ['members', 'majority', null],
+    ['creator', 'atLeast', 1],
+    ['admins', 'atLeast', 1],
+  ]);
+  // A rule that is already there is not added twice.
+  const you = rules.parseRulesBlock({ preset: 'you_or_the_group', builderYes: true });
+  assert.deepEqual(rules.effectiveRules(you, {}).map((r) => `${r.group}:${r.kind}:${r.n}`), [
+    'creator:atLeast:1', 'members:majority:null', 'admins:atLeast:1',
+  ]);
+  // Off is exactly today's rules.
+  const off = rules.parseRulesBlock({ preset: 'group_vote' });
+  assert.deepEqual(rules.effectiveRules(off, {}), off.rules);
+  // A change to who decides or to the keys keeps the project's own rules.
+  assert.deepEqual(rules.effectiveRules(stored, { explicitApproval: true }), stored.rules);
+});
+
+
 // ── You or the group ──────────────────────────────────────────────────
 
 test('You or the group: the creator’s own change goes live on proposing it', () => {

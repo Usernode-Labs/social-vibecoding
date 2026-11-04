@@ -31,6 +31,17 @@
  * and a block that has either is a "rules" block: the old two keys are then
  * ignored, and a project without one keeps exactly the rule it had.
  *
+ * ── A Yes from the creator or an admin (#5816) ─────────────────────────
+ *
+ * Any rules block may carry `"builderYes": true` beside `preset` or `rules`.
+ * It is off unless the group turns it on, so an absent (or false) key is
+ * exactly the rule the project has always had. When it is on, the project's
+ * creator and its app admins each get an extra one-yes rule
+ * (effectiveRules), so a Yes from either puts a change live on its own once
+ * every other gate has passed. It never touches a change to who decides or
+ * to the project's keys: those are explicit-approval changes, and
+ * effectiveRules leaves them alone.
+ *
  * ── Groups ─────────────────────────────────────────────────────────────
  *
  * Three are built in: `creator` (the person who made the project; nobody on
@@ -136,7 +147,14 @@ const USERNAME_MAX = 64;
  */
 export interface Rule { group: string; kind: Measure; n: number | null; min?: number | null }
 export interface Group { name: string; people: string[] }
-export interface RulesValue { preset: PresetKey | null; groups: Group[]; rules: Rule[] }
+export interface RulesValue {
+  preset: PresetKey | null;
+  groups: Group[];
+  rules: Rule[];
+  // #5816: a Yes from the creator or an admin is enough on its own. Off
+  // unless the group turns it on.
+  builderYes?: boolean;
+}
 
 /** Each preset, as the rules it stands for. */
 export const PRESETS: Readonly<Record<PresetKey, readonly Rule[]>> = Object.freeze({
@@ -274,10 +292,15 @@ function parseMinimum(v: unknown, kind: Measure, i: number): number | null {
 export function parseRulesBlock(raw: unknown): RulesValue | null {
   if (raw == null) return null;
   if (!isPlainObject(raw)) throw new RulesError('governance must be an object');
+  if (raw.builderYes != null && typeof raw.builderYes !== 'boolean') {
+    throw new RulesError('governance.builderYes must be true or false');
+  }
+  const builderYes = raw.builderYes === true;
   const hasPreset = raw.preset != null;
   const hasRules = raw.rules != null;
   if (!hasPreset && !hasRules) {
     if (raw.groups != null) throw new RulesError('governance.groups needs governance.rules beside it');
+    if (raw.builderYes != null) throw new RulesError('governance.builderYes needs a preset or rules beside it');
     return null;
   }
   if (hasPreset && hasRules) throw new RulesError('governance takes a preset or rules, not both');
@@ -286,7 +309,10 @@ export function parseRulesBlock(raw: unknown): RulesValue | null {
       throw new RulesError(`governance.preset must be one of ${PRESET_KEYS.join(', ')}`);
     }
     if (raw.groups != null) throw new RulesError('governance.groups goes with governance.rules, not a preset');
-    return { preset: raw.preset, groups: [], rules: PRESETS[raw.preset].map((r) => ({ ...r })) };
+    return {
+      preset: raw.preset, groups: [], rules: PRESETS[raw.preset].map((r) => ({ ...r })),
+      ...(builderYes ? { builderYes: true } : {}),
+    };
   }
   const groupsRaw = raw.groups == null ? [] : raw.groups;
   if (!Array.isArray(groupsRaw)) throw new RulesError('governance.groups must be a list');
@@ -308,7 +334,7 @@ export function parseRulesBlock(raw: unknown): RulesValue | null {
     if (seenRule.has(k)) throw new RulesError('The same rule is listed twice');
     seenRule.add(k);
   }
-  return { preset: null, groups, rules };
+  return { preset: null, groups, rules, ...(builderYes ? { builderYes: true } : {}) };
 }
 
 /**
@@ -348,9 +374,10 @@ export function matchPreset(rules: readonly Rule[] | null | undefined): PresetKe
  * written as the preset. Every group is written, including one no rule
  * names yet: its people are still a choice somebody made.
  */
-export function blockFor({ preset = null, groups = [], rules = [] }: Partial<RulesValue> = {}): Record<string, unknown> {
+export function blockFor({ preset = null, groups = [], rules = [], builderYes = false }: Partial<RulesValue> = {}): Record<string, unknown> {
   const same = preset || (groups.length ? null : matchPreset(rules));
-  if (same) return { preset: same };
+  const builder = builderYes ? { builderYes: true } : {};
+  if (same) return { preset: same, ...builder };
   const nameOf = new Map(groups.map((g) => [groupKey(g.name), g.name]));
   const out: Record<string, unknown> = {};
   if (groups.length) out.groups = groups.map((g) => ({ name: g.name, people: [...g.people] }));
@@ -360,7 +387,7 @@ export function blockFor({ preset = null, groups = [], rules = [] }: Partial<Rul
     if (r.min != null && r.kind !== 'atLeast') rule.minimum = r.min;
     return rule;
   });
-  return out;
+  return { ...out, ...builder };
 }
 
 /**
@@ -380,7 +407,41 @@ export function storedForm(value: Partial<RulesValue>, idsByGroup: Map<string, n
       group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : r.n,
       ...(r.min != null && r.kind !== 'atLeast' ? { min: r.min } : {}),
     })),
+    ...(value.builderYes ? { builderYes: true } : {}),
   };
+}
+
+// #5816: the extra rules a project with `builderYes` counted on gets, each a
+// one-yes rule on a built-in group. An empty group (the platform's own app
+// has no creator; a project has no admins) never passes.
+const BUILDER_RULES: readonly Rule[] = Object.freeze([
+  Object.freeze({ group: 'creator', kind: 'atLeast', n: 1 }),
+  Object.freeze({ group: 'admins', kind: 'atLeast', n: 1 }),
+]);
+
+/**
+ * The rules the gate evaluates. With #5816's `builderYes` on and a change
+ * that is NOT flagged for explicit approval, the project's own rules plus a
+ * one-yes rule for its creator and one for its admins, each added only when
+ * a rule with the same signature is not already there. An explicit-approval
+ * change (who decides, admins, visibility, keys, platform settings) gets the
+ * stored rules untouched, so the switch can never weaken those votes.
+ */
+export function effectiveRules(
+  value: { builderYes?: boolean; rules: readonly Rule[] } | null | undefined,
+  { explicitApproval = false }: { explicitApproval?: boolean } = {},
+): readonly Rule[] {
+  const rules = value && Array.isArray(value.rules) ? value.rules : [];
+  if (explicitApproval || !value || !value.builderYes) return rules;
+  const have = new Set(rules.map(ruleSignature));
+  const out: Rule[] = [...rules];
+  for (const rule of BUILDER_RULES) {
+    const sig = ruleSignature(rule);
+    if (have.has(sig)) continue;
+    have.add(sig);
+    out.push({ ...rule });
+  }
+  return out;
 }
 
 // ── Saying the rules in words ───────────────────────────────────────────

@@ -14,6 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const appManifest = require('../src/services/app-manifest');
+const governanceRules = require('../src/services/governance-rules');
 
 function withManifest(content, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-gov-'));
@@ -213,4 +214,43 @@ test('reconcile: vanished app row is a no-op', async () => {
   const changed = await appManifest.reconcileAppGovernance(pool, { id: 9 },
     { governance: { approvers: 'invited', approvals: 1 } });
   assert.equal(changed, false);
+});
+
+// ── #5816: the creator-or-admin switch ────────────────────────────────
+
+// A pool that answers the rules column with an existing rule, so a flip is
+// compared against a project that already has one.
+function rulesPool(column) {
+  const calls = [];
+  return {
+    calls,
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/SELECT id, slug, approver_policy, approvals_required FROM apps/.test(sql)) {
+        return { rows: [{ id: 1, slug: 'patch', approver_policy: 'anyone', approvals_required: null }] };
+      }
+      if (/SELECT governance_rules FROM apps/.test(sql)) return { rows: [{ governance_rules: column }] };
+      return { rows: [] };
+    },
+  };
+}
+
+test('#5816: a flip of builderYes alone rewrites the rules column', async () => {
+  const column = {
+    preset: 'group_vote', groups: [], rules: [{ group: 'members', kind: 'majority', n: null }],
+  };
+  const pool = rulesPool(column);
+  const changed = await appManifest.reconcileAppGovernance(pool, { id: 1 }, {
+    governance: { rules: governanceRules.parseRulesBlock({ preset: 'group_vote', builderYes: true }) },
+  });
+  assert.equal(changed, true);
+  const update = pool.calls.find((c) => /UPDATE apps SET governance_rules/.test(c.sql));
+  assert.ok(update, 'the rules column is written');
+  assert.equal(JSON.parse(update.params[0]).builderYes, true);
+});
+
+test('#5816: an invalid builderYes is dropped and the project keeps its rule', () => {
+  withManifest({ governance: { preset: 'two_yeses', builderYes: 'yes' } }, (m) => {
+    assert.equal(m.governance, null);
+  });
 });

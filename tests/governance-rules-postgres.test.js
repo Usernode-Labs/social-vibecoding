@@ -149,6 +149,23 @@ test('a project’s rules, stored by the reconcile and read by the gate', { time
     assert.deepEqual(described.rules.map((r) => [r.group, r.size, r.need]), [['lifeguards', 2, 2]]);
   });
 
+  await t.test('#5816: a Yes from an admin alone puts the change live', async () => {
+    await pool.query('INSERT INTO app_admins (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.id, maya.id]);
+    assert.equal(await reconcile({ preset: 'group_vote', builderYes: true }), true);
+    const stored = (await pool.query('SELECT governance_rules FROM apps WHERE id = $1', [app.id])).rows[0].governance_rules;
+    assert.equal(stored.builderYes, true, 'the switch is stored with the rule');
+
+    const his = await proposal(snait);
+    assert.equal((await gate(his)).mergeable, false, 'the group vote alone has not passed');
+    await vote(his, maya, 'yes');
+    const g = await gate(his);
+    assert.equal(g.mergeable, true);
+    assert.equal(g.passedBy.group, 'admins');
+
+    const described = await governance.describeApproval(pool, app.id, await governance.getGovernance(pool, app.id));
+    assert.equal(described.builderYes, true);
+  });
+
   await t.test('an old-style block takes the project back to the two columns', async () => {
     assert.equal(await reconcile({ approvers: 'anyone', approvals: { atLeast: 1 } }), true);
     const gov = await governance.getGovernance(pool, app.id);

@@ -99,13 +99,30 @@ function diffChange(change, current) {
   return out;
 }
 
+/** The rules part of a value, compared without #5816's `builderYes` switch. */
+function rulesPart(v) {
+  const block = governanceRules.blockFor(v);
+  delete block.builderYes;
+  return JSON.stringify(block);
+}
+
+/** Whether the only governance change is #5816's switch. */
+function onlyBuilderYesChanges(governance, was) {
+  return !!governance && !!governance.builderYes && !!was && !!was.rules
+    && rulesPart(was.rules) === rulesPart(governance);
+}
+
 /** The PR's title: what it does, in the sheet's words. */
-function describeChange({ visibility, governance }) {
+function describeChange({ visibility, governance, was }) {
   const vis = visibility === 'public' ? 'a public community' : 'a private community';
   const rule = governance ? governanceRules.describeRules(governance) : null;
-  if (visibility && rule) return `Make this ${vis}, approved by ${rule}`;
+  const builderYes = !!(governance && governance.builderYes);
+  const builder = builderYes ? ', and a Yes from the creator or an admin' : '';
+  const onlyBuilder = builderYes && onlyBuilderYesChanges(governance, was);
+  if (visibility && rule) return `Make this ${vis}, approved by ${rule}${builder}`;
   if (visibility) return `Make this ${vis}`;
-  return `Approve changes by ${rule}`;
+  if (onlyBuilder) return 'Let a Yes from the creator or an admin put changes live';
+  return `Approve changes by ${rule}${builder}`;
 }
 
 /**
@@ -141,6 +158,10 @@ function describeRulesChange(change) {
   const full = governanceRules.describeRulesInFull(change.governance);
   const lines = ['A change goes live when any one of these rules passes:'];
   for (const sentence of full.sentences) lines.push(`- ${sentence}`);
+  if (change.governance.builderYes) {
+    lines.push('');
+    lines.push('A Yes from the creator or an app admin also puts a change live.');
+  }
   if (full.groups.length) {
     lines.push('');
     for (const group of full.groups) lines.push(groupPeopleLine(group));
@@ -163,6 +184,13 @@ function describeRulesChange(change) {
       if (added.length) how.push(`adds ${added.map((p) => `@${p}`).join(', ')}`);
       if (removed.length) how.push(`removes ${removed.map((p) => `@${p}`).join(', ')}`);
       changes.push(`- ${name}: ${how.join(', ')}.`);
+    }
+    // #5816: the switch is a change to who decides like any other, and a
+    // flip alone must still say what changed.
+    const builderNow = !!change.governance.builderYes;
+    const builderWas = !!(was.rules && was.rules.builderYes);
+    if (builderNow !== builderWas) {
+      changes.push(`- Turned ${builderNow ? 'on' : 'off'}: a Yes from the creator or an admin is enough.`);
     }
     if (changes.length) {
       lines.push('');

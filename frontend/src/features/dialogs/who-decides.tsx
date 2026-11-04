@@ -119,6 +119,9 @@ export function WhoDecidesDialog() {
   const [opened, setOpened] = useState<{ sessionId: number | null; prNumber: number | null } | null>(null);
   const [admins, setAdmins] = useState<string[] | null>(null);
   const [everyone, setEveryone] = useState<string[] | null>(null);
+  // #5816: null means "unchanged", so opening the sheet never proposes a
+  // flip of the switch by itself.
+  const [builderYes, setBuilderYes] = useState<boolean | null>(null);
   const pending = useRef(false);
 
   const dialog = useDialog<{ slug?: string; screen?: Screen }>('whoDecides', {
@@ -139,6 +142,7 @@ export function WhoDecidesDialog() {
       setOpened(null);
       setAdmins(null);
       setEveryone(null);
+      setBuilderYes(null);
       if (target) void reloadCommunity(target);
     },
     onClose: () => {
@@ -193,7 +197,21 @@ export function WhoDecidesDialog() {
 
   const close = () => dialog.close();
   const pickedValue = choiceValue(choice);
-  const ruleChanged = !!pickedValue && !sameValue(pickedValue, current);
+  // #5816: the switch's own value, and the rules value actually proposed:
+  // the pick (or today's rule) with the switch on it.
+  const pickedBase = pickedValue || current;
+  const builderShown = builderYes != null ? builderYes : !!current?.builderYes;
+  const builderDisabled = !pickedBase;
+  const pickedGov: RulesValue | null = pickedBase ? { ...pickedBase, builderYes: builderShown } : null;
+  // Whether the rule itself changed, ignoring the switch: picking the rule
+  // the project already has is not a change, even with the switch on.
+  const rulesSame = (a: RulesValue | null, b: RulesValue | null) => sameValue(
+    a ? { ...a, builderYes: false } : null,
+    b ? { ...b, builderYes: false } : null,
+  );
+  const ruleChanged = !!pickedValue && !rulesSame(pickedValue, current);
+  const builderChanged = !!current && builderYes != null && builderYes !== !!current.builderYes;
+  const govChanged = ruleChanged || builderChanged;
   const visChanged = !!vis && (vis !== currentVis || (vis === 'public' && buildLimited));
   const changes: Array<{ label: string; from: string; to: string }> = [];
   const describeValue = (value: RulesValue | null): string => {
@@ -211,6 +229,14 @@ export function WhoDecidesDialog() {
   if (ruleChanged) {
     changes.push({ label: t('dialogs:whoDecides.change.rule'), from: describeValue(current), to: describeValue(pickedValue) });
   }
+  if (builderChanged) {
+    const word = (on: boolean) => t(on ? 'dialogs:whoDecides.builderYes.on' : 'dialogs:whoDecides.builderYes.off');
+    changes.push({
+      label: t('dialogs:whoDecides.change.builderYes'),
+      from: word(!!current?.builderYes),
+      to: word(builderShown),
+    });
+  }
   const pickedPreset = choice ? (choice.kind === 'preset' ? choice.key : null) : nowPreset;
   const pickedOwn = choice ? choice.kind === 'own' : (!!current && !nowPreset);
   const warnPublic = pickedVis === 'public' && (pickedPreset === 'open_floor' || pickedPreset === 'two_yeses');
@@ -223,14 +249,14 @@ export function WhoDecidesDialog() {
   };
 
   async function propose() {
-    if (pending.current || !slug || (!visChanged && !ruleChanged)) return;
+    if (pending.current || !slug || (!visChanged && !govChanged)) return;
     pending.current = true;
     setBusy(true);
     setError('');
     try {
       const result = await proposeWhoDecides(slug, {
         visibility: visChanged ? pickedVis : null,
-        governance: ruleChanged ? pickedValue : null,
+        governance: govChanged ? pickedGov : null,
       });
       if (result.state === 'notVerified') {
         setError(t('dialogs:whoDecides.notVerified'));
@@ -250,9 +276,15 @@ export function WhoDecidesDialog() {
 
   function startOwn() {
     // Starts from what is picked: a preset's rules, the project's own, or,
-    // for an old setting no preset is, Group vote's.
+    // for an old setting no preset is, Group vote's. It keeps #5816's
+    // switch as it stands.
     const from = pickedValue || current || presetValue('group_vote');
-    setDraft({ preset: null, groups: from.groups.map((g) => ({ ...g, people: [...g.people] })), rules: from.rules.map((r) => ({ ...r })) });
+    setDraft({
+      preset: null,
+      groups: from.groups.map((g) => ({ ...g, people: [...g.people] })),
+      rules: from.rules.map((r) => ({ ...r })),
+      ...(builderShown ? { builderYes: true } : {}),
+    });
     setScreen('own');
   }
 
@@ -393,6 +425,28 @@ export function WhoDecidesDialog() {
             trailing={pickedOwn ? <Picked on /> : undefined}
           />
         </GroupedList>
+
+        {/* #5816: a Yes from the creator or an admin, on its own. Off
+            unless the group turns it on; it goes up with the rest of this
+            sheet as a change to who decides. */}
+        <GroupedList className="mx-0 mt-2" data-who-builder-yes="">
+          <label
+            htmlFor="who-builder-yes"
+            className={`flex items-center justify-between gap-3 px-4 py-3 ${builderDisabled ? '' : 'cursor-pointer select-none'}`}
+          >
+            <span className="min-w-0">
+              <span className="block text-[15px] font-[650] leading-snug">{t('dialogs:whoDecides.builderYes.title')}</span>
+              <span className="block text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.builderYes.sub')}</span>
+            </span>
+            <Switch
+              id="who-builder-yes"
+              checked={builderShown}
+              disabled={builderDisabled}
+              onChange={(event) => setBuilderYes(event.target.checked)}
+            />
+          </label>
+        </GroupedList>
+        <p className={`mt-2 ${NOTE}`}>{t('dialogs:whoDecides.builderYes.note')}</p>
 
         <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.plays.title')}</SectionHeader>
         <PlaysOut preset={pickedOwn ? null : pickedPreset} viewer={viewer} />

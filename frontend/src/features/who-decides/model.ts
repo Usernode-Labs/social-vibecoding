@@ -20,7 +20,13 @@ export interface Rule { group: string; kind: Kind; n: number | null; min?: numbe
 /** A named group, by the usernames in it. */
 export interface Group { name: string; people: string[] }
 /** A rule list, with the groups it can name. `preset` when it is one by name. */
-export interface RulesValue { preset: PresetKey | null; groups: Group[]; rules: Rule[] }
+export interface RulesValue {
+  preset: PresetKey | null;
+  groups: Group[];
+  rules: Rule[];
+  /** #5816: a Yes from the creator or an admin is enough on its own. */
+  builderYes?: boolean;
+}
 
 export const PRESET_KEYS: readonly PresetKey[] = ['you_or_the_group', 'two_yeses', 'open_floor', 'group_vote'];
 export const DEFAULT_PRESET: PresetKey = 'you_or_the_group';
@@ -80,7 +86,8 @@ export function presetValue(key: PresetKey): RulesValue {
  */
 export function blockFor(value: RulesValue): Record<string, unknown> {
   const same = !value.groups.length ? (value.preset || matchPreset(value.rules)) : null;
-  if (same) return { preset: same };
+  const builder = value.builderYes ? { builderYes: true } : {};
+  if (same) return { preset: same, ...builder };
   const nameOf = new Map(value.groups.map((g) => [groupKey(g.name), g.name]));
   const out: Record<string, unknown> = {};
   if (value.groups.length) out.groups = value.groups.map((g) => ({ name: g.name, people: [...g.people] }));
@@ -90,7 +97,7 @@ export function blockFor(value: RulesValue): Record<string, unknown> {
     if (minOf(r) != null) rule.minimum = minOf(r);
     return rule;
   });
-  return out;
+  return { ...out, ...builder };
 }
 
 /** Whether two values decide the same way (what the server would see as no change). */
@@ -110,6 +117,8 @@ export interface ApprovalPayload {
   rules?: Array<Rule & { size?: number; need?: number | null; empty?: boolean }> | null;
   groups?: Array<{ name: string; key?: string; people: string[] }>;
   creator?: { id: number; username: string; display_name?: string | null } | null;
+  /** #5816: whether a Yes from the creator or an admin is enough on its own. */
+  builder_yes?: boolean;
   /** Invited approvers' usernames, for a viewer who may read the roster;
       null otherwise, and absent from an older server. */
   approvers?: string[] | null;
@@ -130,7 +139,7 @@ export function currentValue(approval: ApprovalPayload | null | undefined): Rule
       return minOf(r) != null ? { ...rule, min: minOf(r) } : rule;
     });
     const preset = groups.length ? null : (approval.preset || matchPreset(rules));
-    return { preset, groups, rules };
+    return { preset, groups, rules, ...(approval.builder_yes ? { builderYes: true } : {}) };
   }
   if (approval.policy === 'anyone' && approval.approvals_required == null) return presetValue('group_vote');
   return null;

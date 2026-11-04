@@ -284,6 +284,111 @@ test('a rules project arms the clock with no counted Yes; its author\'s proposin
   assert.equal(g.rejectable, true);
 });
 
+// ── #5816: a Yes from the creator or an admin ─────────────────────────
+//
+// With the switch on, the creator's or an admin's Yes passes the approvals
+// gate on its own. Everything else the gate does is unchanged, and a change
+// to who decides or to the keys never counts it.
+
+const rulesFor = (value) => require('../src/services/governance-rules').parseRulesBlock(value);
+const rulesGov = (value) => ({ approverPolicy: 'anyone', approvalsRequired: null, rules: rulesFor(value) });
+const builderFacts = (over = {}) => ({
+  creatorId: 3, memberCount: 4, membersActive: 4, adminIds: [9], groups: new Map(), activeIds: null, ...over,
+});
+
+test('#5816: with builderYes on, an admin\'s Yes alone puts a group-vote change live', () => {
+  const now = Date.now();
+  const g = governance.computeGate(rulesGov({ preset: 'group_vote', builderYes: true }), 4, 1, 0, now, now, {
+    voters: { yes: new Set([9]), no: new Set() },
+    rulesFacts: builderFacts(),
+    authorId: 2,
+    memberCount: 4,
+  });
+  assert.equal(g.mode, 'rules');
+  assert.equal(g.mergeable, true, 'one admin Yes is enough');
+  assert.deepEqual(g.passedBy, { group: 'admins', kind: 'atLeast', n: 1 });
+});
+
+test('#5816: with builderYes on, the creator proposing is enough', () => {
+  const now = Date.now();
+  const g = governance.computeGate(rulesGov({ preset: 'group_vote', builderYes: true }), 4, 0, 0, now, now, {
+    voters: { yes: new Set(), no: new Set() },
+    rulesFacts: builderFacts({ adminIds: [] }),
+    authorId: 3,
+    memberCount: 4,
+  });
+  assert.equal(g.mergeable, true);
+  assert.deepEqual(g.passedBy, { group: 'creator', kind: 'atLeast', n: 1 });
+});
+
+test('#5816: a change Homeroom bot made still needs a person\'s tapped Yes', () => {
+  const now = Date.now();
+  const opts = (yes) => ({
+    voters: { yes: new Set(yes), no: new Set() },
+    rulesFacts: builderFacts({ adminIds: [] }),
+    authorId: 3,
+    authorIsBot: true,
+    memberCount: 4,
+  });
+  const gov = rulesGov({ preset: 'group_vote', builderYes: true });
+  assert.equal(governance.computeGate(gov, 4, 0, 0, now, now, opts([])).mergeable, false,
+    'the bot proposing is not the creator\'s yes');
+  assert.equal(governance.computeGate(gov, 4, 1, 0, now, now, opts([3])).mergeable, true,
+    'once the creator taps Yes, it counts');
+});
+
+test('#5816: off or absent is exactly today\'s gate', () => {
+  const now = Date.now();
+  const off = rulesFor({ preset: 'group_vote' });
+  const explicitOff = rulesFor({ preset: 'group_vote', builderYes: false });
+  const draw = (value) => governance.computeGate(
+    { approverPolicy: 'anyone', approvalsRequired: null, rules: value }, 4, 1, 0, now, now, {
+      voters: { yes: new Set([9]), no: new Set() },
+      rulesFacts: builderFacts(),
+      authorId: 2,
+      memberCount: 4,
+    });
+  assert.deepEqual({ ...draw(off) }, { ...draw(explicitOff) },
+    'an absent switch and an explicit false decide the same');
+});
+
+test('#5816: a change to who decides or to the keys ignores the switch', () => {
+  const now = Date.now();
+  const gov = rulesGov({ preset: 'group_vote', builderYes: true });
+  for (const reason of ['governance', 'admins', 'visibility', 'secrets']) {
+    const g = governance.computeGate(gov, 4, 1, 0, now, now, {
+      voters: { yes: new Set([9]), no: new Set() },
+      rulesFacts: builderFacts(),
+      authorId: 2,
+      memberCount: 4,
+      explicitApproval: true,
+      explicitReason: reason,
+    });
+    assert.equal(g.mergeable, false, `${reason}: an admin's Yes alone must not pass`);
+  }
+});
+
+test('#5816: on the platform\'s own app there is no creator, so it means admins only', () => {
+  const now = Date.now();
+  const gov = rulesGov({ preset: 'group_vote', builderYes: true });
+  const g = governance.computeGate(gov, 4, 1, 0, now, now, {
+    voters: { yes: new Set([9]), no: new Set() },
+    rulesFacts: builderFacts({ creatorId: null }),
+    authorId: 2,
+    memberCount: 4,
+  });
+  assert.equal(g.mergeable, true);
+  assert.deepEqual(g.passedBy, { group: 'admins', kind: 'atLeast', n: 1 });
+  // A creator rule on an app with no creator never passes.
+  const creator = governance.computeGate(gov, 4, 0, 0, now, now, {
+    voters: { yes: new Set(), no: new Set() },
+    rulesFacts: builderFacts({ creatorId: null, adminIds: [] }),
+    authorId: 2,
+    memberCount: 4,
+  });
+  assert.equal(creator.mergeable, false);
+});
+
 // ── #5947: an approver's lone No sets a change aside after two days ───
 //
 // On an invited project only approvers' votes count, so nothing else ever

@@ -199,8 +199,28 @@ test('a minimum on a majority or a share, in words, sent and read back as the se
     'the same rule with and without a minimum are two rules');
 });
 
-test('the sheet refuses what the server would, in words', () => {
+// #5816: the creator-or-admin switch, read, sent and compared.
+test('#5816: the switch is what the project has, what the sheet sends, and a difference', () => {
   const model = loadTsx(MODEL);
+  const approval = {
+    policy: 'anyone', approvals_required: null, electorate: 4, required: 2, mode: 'rules',
+    preset: 'two_yeses', rules: serverRules.PRESETS.two_yeses.map((r) => ({ ...r })), groups: [],
+    creator: { id: 1, username: 'evan' }, builder_yes: true,
+  };
+  const value = model.currentValue(approval);
+  assert.equal(value.builderYes, true);
+  assert.deepEqual(model.blockFor(value), { preset: 'two_yeses', builderYes: true });
+  assert.deepEqual(model.blockFor(value), serverRules.blockFor(value));
+  assert.deepEqual(serverRules.parseRulesBlock(model.blockFor(value)).builderYes, true);
+  // Off is the same value the server has always read, and it is a change.
+  const off = { ...value, builderYes: false };
+  assert.deepEqual(model.blockFor(off), { preset: 'two_yeses' });
+  assert.equal(model.sameValue(value, off), false);
+  // An older server that does not send the key means off.
+  assert.equal(model.currentValue({ ...approval, builder_yes: undefined }).builderYes, undefined);
+});
+
+test('the sheet refuses what the server would, in words', () => {  const model = loadTsx(MODEL);
   assert.match(model.valueProblem({ preset: null, groups: [], rules: [] }), /at least one rule/);
   assert.match(model.valueProblem({ preset: null, groups: [], rules: [{ group: 'gone', kind: 'atLeast', n: 1 }] }), /group that is gone/);
   assert.match(model.valueProblem({

@@ -115,3 +115,43 @@ test('a change to who can see it too keeps the wording it had', async (t) => {
   assert.ok(!body.includes('how changes to "Patch" are approved'));
   assert.ok(body.includes('A change goes live when any one of these rules passes:'));
 });
+
+// #5816: a Yes from the creator or an admin.
+test('#5816: a flip of the switch alone is its own title', async (t) => {
+  const was = {
+    rules: {
+      preset: 'two_yeses', groups: [], rules: [{ group: 'members', kind: 'atLeast', n: 2 }],
+    },
+    approverPolicy: 'anyone',
+    approvalsRequired: null,
+  };
+  const now = rules.parseRulesBlock({ preset: 'two_yeses', builderYes: true });
+  assert.equal(whoDecides.describeChange({ visibility: null, governance: now, was }),
+    'Let a Yes from the creator or an admin put changes live');
+  const { body, title } = await bodyFor(t, { visibility: null, governance: now, was });
+  assert.equal(title, 'Let a Yes from the creator or an admin put changes live');
+  assert.ok(body.includes('A Yes from the creator or an app admin also puts a change live.'));
+  assert.ok(body.includes('Compared with today:'));
+  assert.ok(body.includes('- Turned on: a Yes from the creator or an admin is enough.'));
+  assert.doesNotMatch(body, /—/);
+});
+
+test('#5816: a rule change with the switch on names both', () => {
+  const now = rules.parseRulesBlock({ preset: 'two_yeses', builderYes: true });
+  assert.equal(whoDecides.describeChange({ visibility: null, governance: now }),
+    'Approve changes by Two yeses, and a Yes from the creator or an admin');
+});
+
+test('#5816: turning the switch off says what changed', async (t) => {
+  const was = {
+    rules: {
+      preset: 'two_yeses', groups: [], rules: [{ group: 'members', kind: 'atLeast', n: 2 }], builderYes: true,
+    },
+    approverPolicy: 'anyone',
+    approvalsRequired: null,
+  };
+  const now = rules.parseRulesBlock({ preset: 'two_yeses' });
+  const { body } = await bodyFor(t, { visibility: null, governance: now, was });
+  assert.ok(body.includes('- Turned off: a Yes from the creator or an admin is enough.'));
+  assert.ok(!body.includes('also puts a change live'));
+});

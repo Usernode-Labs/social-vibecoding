@@ -4422,6 +4422,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           groups: described ? described.groups : [],
           creator,
           approvers: approverNames,
+          // #5816: whether a Yes from the creator or an admin is enough.
+          builder_yes: described ? !!described.builderYes : !!(gov.rules && gov.rules.builderYes),
         },
         // #4666: who can see it, as the two columns say, for the sheet.
         visibility: { build: app.collab_visibility, view: app.view_visibility },

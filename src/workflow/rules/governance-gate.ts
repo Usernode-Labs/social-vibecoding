@@ -35,7 +35,7 @@
 //      window to 0.
 
 import {
-  BUILT_IN_GROUPS, PRESET_KEYS, WHO_DECIDES, evaluateRules, groupKey, matchPreset,
+  BUILT_IN_GROUPS, PRESET_KEYS, WHO_DECIDES, effectiveRules, evaluateRules, groupKey, matchPreset,
 } from './governance-rules.ts';
 import type { PresetKey, Rule, RulesFacts } from './governance-rules.ts';
 
@@ -346,7 +346,13 @@ export function mergeGate(active: Count, yesCount: Count, noCount: Count, opened
 //      keeps regimes 1-3.
 
 export interface StoredGroup { name: string; key: string; people: string[]; ids: number[] }
-export interface StoredRules { preset: PresetKey | null; groups: StoredGroup[]; rules: Rule[] }
+export interface StoredRules {
+  preset: PresetKey | null;
+  groups: StoredGroup[];
+  rules: Rule[];
+  // #5816: a Yes from the creator or an admin is enough on its own.
+  builderYes?: boolean;
+}
 
 export interface Governance {
   approverPolicy: 'anyone' | 'invited';
@@ -380,7 +386,7 @@ export function rulesFromColumn(raw: unknown): StoredRules | null {
     });
   if (!rules.length) return null;
   const preset = typeof v.preset === 'string' && (PRESET_KEYS as readonly string[]).includes(v.preset) ? v.preset as PresetKey : null;
-  return { preset, groups, rules };
+  return { preset, groups, rules, ...(v.builderYes === true ? { builderYes: true } : {}) };
 }
 
 // The governance columns of an apps row, as readGovernance returns them.
@@ -802,7 +808,9 @@ export function computeRulesGate(
   const stored = gov.rules!;
   const explicitApproval = !!opts.explicitApproval;
   const whoDecides = explicitApproval && isWhoDecidesReason(opts.explicitReason ?? null);
-  const value = whoDecides ? { rules: WHO_DECIDES } : stored;
+  // #5816: with the switch on, a change that is not a change to who decides
+  // or to the keys also passes on a Yes from the creator or an admin alone.
+  const value = whoDecides ? { rules: WHO_DECIDES } : { rules: effectiveRules(stored, { explicitApproval }) };
   const facts: RulesFacts = opts.rulesFacts || {
     creatorId: null, memberCount: (opts.memberCount ?? 0) as number, membersActive: active as number,
     adminIds: [], groups: new Map(), activeIds: null,
