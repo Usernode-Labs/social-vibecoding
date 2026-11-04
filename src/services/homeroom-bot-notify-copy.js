@@ -21,6 +21,10 @@
 const DETAIL_PREFIX = 'hrbot2:';
 const LEGACY_RE = /^hrbot:([a-z_]{1,20}):(.*)$/s;
 
+// A project slug, as features/ai/door.ts reads one: the bell opens a request's
+// thread by its project and number, so both must be the shape the address takes.
+const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,254}$/;
+
 // The moments, in the words the bell heads a row with.
 const BELL_LABELS = Object.freeze({
   needs_you: 'Needs you',
@@ -261,7 +265,14 @@ function botNotificationDetail(metadata) {
   const broken = brokenCount(metadata);
   if (said === 'ready_broken' && broken) out.b = Math.min(broken, 99);
   const issue = positiveInt(metadata.issueNumber);
-  if (issue) out.i = issue;
+  if (issue) {
+    out.i = issue;
+    // 4 Nov 2026 (#6290): the project too, so a notification about a request
+    // opens that request's own thread rather than Main Chat. Only beside a
+    // request number, so no quiet message grows by it.
+    const slug = typeof metadata.appSlug === 'string' ? metadata.appSlug : '';
+    if (APP_SLUG_RE.test(slug)) out.p = slug;
+  }
   const root = positiveInt(metadata.threadRootId);
   if (root) out.r = root;
   return `${DETAIL_PREFIX}${JSON.stringify(out)}`;
@@ -275,7 +286,7 @@ function parseBotDetail(detail) {
     try { raw = JSON.parse(detail.slice(DETAIL_PREFIX.length)); } catch { return null; }
     if (!raw || typeof raw !== 'object') return null;
     const moment = normalizeMoment(raw.m);
-    if (!moment || moment === 'reply') return moment === 'reply' ? { moment, said: 'reply' } : null;
+    if (!moment || moment === 'reply') return moment === 'reply' ? { moment, said: 'reply', appSlug: '' } : null;
     const said = SAID_BY_MOMENT[moment].includes(raw.s) ? raw.s : saidFor(moment, {});
     return {
       moment,
@@ -291,13 +302,14 @@ function parseBotDetail(detail) {
       count: positiveInt(raw.c),
       broken: positiveInt(raw.b),
       issueNumber: positiveInt(raw.i),
+      appSlug: APP_SLUG_RE.test(String(raw.p || '')) ? String(raw.p) : '',
       threadRootId: positiveInt(raw.r),
     };
   }
   const m = LEGACY_RE.exec(detail);
   if (!m || !LEGACY_SAID[m[1]]) return null;
   const [moment, said] = LEGACY_SAID[m[1]];
-  if (moment === 'reply') return { moment, said };
+  if (moment === 'reply') return { moment, said, appSlug: '' };
   const appName = oneLine(m[2], 80);
   return {
     moment,
@@ -312,6 +324,7 @@ function parseBotDetail(detail) {
     count: null,
     broken: null,
     issueNumber: null,
+    appSlug: '',
     threadRootId: null,
     legacy: true,
   };

@@ -173,6 +173,37 @@ test('one story: a bell row or push tap opens the request\'s thread in the chat 
   assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: null })), '#messages/9');
 });
 
+test('4 Nov 2026 (#6290): a moment about a request opens that request\'s own thread, not Main Chat', () => {
+  const N = loadBell();
+  const row = (extra) => ({ id: 1, createdAt: AT, conversationId: 9, conversationKind: 'direct', ...extra });
+  // #6207: a request's news is in its own thread, so the bell opens it there
+  // (#homeroom-bot/request/<slug>/<n>, features/ai/door.ts botItemAddress).
+  assert.equal(N._conversationHref(row({
+    kind: 'build_stopped', conversationMessageId: 80, appSlug: 'homeroom', storyIssueNumber: 6256,
+    detail: D({ moment: 'stopped', said: 'build_other', issueNumber: 6256 }),
+  })), '#homeroom-bot/request/homeroom/6256', 'the row\'s own project');
+  // The project the moment's detail carries is the fallback.
+  assert.equal(N._conversationHref(row({
+    kind: 'build_needs_you', conversationMessageId: 80,
+    detail: D({ moment: 'needs_you', said: 'plan', issueNumber: 6256, appSlug: 'homeroom' }),
+  })), '#homeroom-bot/request/homeroom/6256', 'the detail\'s project');
+  // A thread root still opens its thread first.
+  assert.equal(N._conversationHref(row({
+    kind: 'build_ready', conversationMessageId: 80, conversationThreadRootId: 77, appSlug: 'homeroom', storyIssueNumber: 6256,
+    detail: D({ moment: 'ready', said: 'ready', issueNumber: 6256, appSlug: 'homeroom', threadRootId: 77 }),
+  })), '#homeroom-bot/thread/77');
+  // A request number with no project anywhere keeps the message's own place.
+  assert.equal(N._conversationHref(row({
+    kind: 'build_stopped', conversationMessageId: 80, storyIssueNumber: 6256,
+    detail: D({ moment: 'stopped', said: 'build_other', issueNumber: 6256 }),
+  })), '#homeroom-bot/main/m/80');
+  // The bot's reply on a request's thread names it by the row's story.
+  assert.equal(N._conversationHref(row({
+    kind: 'conversation_reply', conversationMessageId: 80, sourceUsername: 'homeroom_bot',
+    appSlug: 'homeroom', storyIssueNumber: 6256, detail: 'hrbot:reply:',
+  })), '#homeroom-bot/request/homeroom/6256');
+});
+
 test('B4: the push and the bell keep one copy of the words', () => {
   const N = loadBell();
   // The bell's moment labels are catalog entries (notifications:row.bot.label.*):
