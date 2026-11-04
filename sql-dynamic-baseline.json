@@ -1104,9 +1104,16 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "0845e9641752ec7b9b25",
+      "fingerprint": "00de08570502b570ba23",
       "count": 1,
       "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
+    },
+    {
+      "source": "src/services/conversations.js",
+      "kind": "structural-template",
+      "fingerprint": "119be1898e9d76905037",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS count FROM conversation_messages m WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0) AND (m.thread_root_id IS NULL OR ${ALSO_IN_C"
     },
     {
       "source": "src/services/conversations.js",
@@ -1121,13 +1128,6 @@
       "fingerprint": "28b6532f867bb73f10ff",
       "count": 1,
       "preview": "`${MESSAGE_SELECT} WHERE m.conversation_id = $1 AND ${MAIN_STREAM_ROW} AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $2 AND b.blocked_user_id"
-    },
-    {
-      "source": "src/services/conversations.js",
-      "kind": "structural-template",
-      "fingerprint": "5cb936ab4f83b98b7c6a",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS count FROM conversation_messages m WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0) AND (m.thread_root_id IS NULL OR ${ALSO_IN_C"
     },
     {
       "source": "src/services/conversations.js",

@@ -588,11 +588,12 @@ async function aboutContext(pool, { user, draft, deps = {} }) {
 
 // ── Finishing a thread (#6159, 3 Nov 2026) ───────────────────────────────
 //
-// A private thread can be done: on its own when its request goes live or is
-// closed (finishForRequest), by Mark done in its ⋯ (markDone), or by asking
-// the bot (its close_thread tool, which calls markDone). A done thread leaves
-// the Homeroom bot page's lists (ai-work.js PRIVATE_SQL); its messages stay,
-// and a link still opens it. Reopen, or anything the person writes in it
+// A private thread can be done by Mark done in its ⋯ (markDone), or by asking
+// the bot (its close_thread tool, which calls markDone). A request going live
+// or being closed does NOT finish one (#6250, 4 Nov 2026): the bot still says
+// so in the thread, which stays open and listed. A done thread leaves the
+// Homeroom bot page's lists (ai-work.js PRIVATE_SQL); its messages stay, and a
+// link still opens it. Reopen, or anything the person writes in it
 // (reopenOnReply), puts it back where it was (`done_from`). Every change
 // tells the bot page to read its lists again (homeroom-bot-tray).
 
@@ -613,7 +614,7 @@ async function markDone(pool, { user, rootId, bot = null, deps = {} }) {
   const { rows: [was] = [] } = await pool.query(
     'SELECT state FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [root.id, user.id],
   );
-  if (was && (was.state === 'done' || was.state === 'dropped')) return { ok: true, state: 'done', unchanged: true };
+  if (was && was.state === 'done') return { ok: true, state: 'done', unchanged: true };
   if (!was) {
     await pool.query(
       `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state, done_from, done_at)
@@ -622,9 +623,10 @@ async function markDone(pool, { user, rootId, bot = null, deps = {} }) {
       [user.id, root.conversation_id, root.id],
     );
   } else {
+    // #6250: a put-away draft is listed too, so Mark done removes it as well.
     await pool.query(
       `UPDATE private_threads SET done_from = state, state = 'done', done_at = NOW(), updated_at = NOW()
-        WHERE root_message_id = $1 AND user_id = $2 AND state IN ('open', 'filed', 'posted')`,
+        WHERE root_message_id = $1 AND user_id = $2 AND state IN ('open', 'filed', 'posted', 'dropped')`,
       [root.id, user.id],
     );
   }
@@ -668,11 +670,11 @@ async function reopenOnReply(pool, { userId, message, deps = {} }) {
 }
 
 /**
- * The private threads a request's going live or closing finishes: a draft
- * or design filed as it or posted on it, and a thread about it. Marks the
- * ones not done yet, and resolves every one (those already done too, so a
- * retried caller says its line again and the line's own key drops the copy)
- * as [{ userId, rootId, conversationId }].
+ * The private threads a request's going live or closing says so in: a draft
+ * or design filed as it or posted on it, and a thread about it. They are NOT
+ * finished (#6250): the thread stays open and listed, and only the caller's
+ * line reports it. Resolves every one as [{ userId, rootId, conversationId }]
+ * so that line is said in each thread.
  */
 async function finishForRequest(pool, { appId, issueNumber, deps = {} }) {
   const { rows } = await pool.query(
@@ -682,17 +684,7 @@ async function finishForRequest(pool, { appId, issueNumber, deps = {} }) {
              OR (about_kind = 'request' AND about_number = $2 AND state IN ('open', 'filed', 'posted', 'done')))`,
     [appId, issueNumber],
   );
-  const users = new Set();
-  for (const row of rows) {
-    if (row.state === 'done') continue;
-    await pool.query(
-      `UPDATE private_threads SET done_from = state, state = 'done', done_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND state IN ('open', 'filed', 'posted')`,
-      [row.id],
-    );
-    users.add(Number(row.user_id));
-  }
-  for (const userId of users) workChanged(userId, deps);
+  for (const row of rows) workChanged(Number(row.user_id), deps);
   return rows.map((row) => ({ userId: Number(row.user_id), rootId: Number(row.root_message_id), conversationId: Number(row.conversation_id) }));
 }
 

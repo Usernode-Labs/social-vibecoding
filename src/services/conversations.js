@@ -611,6 +611,15 @@ const REQUEST_NEWS = `COALESCE(m.metadata->'homeroomBot' IS NOT NULL
           AND COALESCE(m.metadata->'homeroomBot'->>'kind', '') NOT IN (${[...BOT_CONVERSATION_KINDS].map((k) => `'${k}'`).join(', ')})
           AND (COALESCE(m.metadata->'homeroomBot'->>'issueNumber', '') ~ '^[1-9][0-9]{0,9}$'
                OR m.metadata->'homeroomBot'->>'kind' = 'activity'), FALSE)`;
+// #6250 (4 Nov 2026): the bot's line that opens a private thread (metadata
+// kind `opened_thread`, `opened_about`, `opened_draft` or `opened_design`) is
+// the thread's own first line, not Main Chat's: the thread is in the Homeroom
+// bot page's list, and Main holds what the person said there and the bot's
+// replies to it. What they wrote stays even when a thread grew from it, and
+// only the bot's own line carries such a kind. Nothing is deleted, so a link
+// still opens the thread. LEFT, not LIKE: `_` would be a wildcard.
+const PRIVATE_THREAD_OPENER = `(m.metadata->'homeroomBot' IS NOT NULL
+          AND LEFT(COALESCE(m.metadata->'homeroomBot'->>'kind', ''), 7) = 'opened_')`;
 const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
           m.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden_root
@@ -619,7 +628,8 @@ const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
           AND (${ALSO_IN_CHAT}
                OR NOT EXISTS (SELECT 1 FROM conversations dc
                                WHERE dc.id = m.conversation_id AND dc.kind = 'direct'))))
-        AND NOT ${REQUEST_NEWS}`;
+        AND NOT ${REQUEST_NEWS}
+        AND NOT ${PRIVATE_THREAD_OPENER}`;
 async function mainStreamBefore(db, user, conversationId, before, count) {
   if (before) {
     return (await db.query(
@@ -1018,6 +1028,7 @@ async function conversationRow(db, user, conversationId) {
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id
             AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+            AND NOT ${PRIVATE_THREAD_OPENER}
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -1041,6 +1052,7 @@ async function countUnread(db, conversationId, userId, cursor) {
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
         AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+        AND NOT ${PRIVATE_THREAD_OPENER}
         AND (m.metadata->'homeroomBot'->>'quiet') IS DISTINCT FROM 'true'
         AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3
@@ -2555,6 +2567,7 @@ module.exports = {
   BOT_CONVERSATION_KINDS,
   ALSO_IN_CHAT,
   REQUEST_NEWS,
+  PRIVATE_THREAD_OPENER,
   BOT_METADATA_KEY,
   updateTitle,
   respond,

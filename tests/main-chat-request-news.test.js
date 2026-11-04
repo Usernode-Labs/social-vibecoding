@@ -47,7 +47,7 @@ test('the client and the server agree on what a request\'s news is', () => {
   assert.match(index, /if \(botDm && isRequestNews\(message\)\) continue;/);
   // The stream, the preview and the unread count all leave it out.
   const server = read('src/services/conversations.js');
-  assert.match(server, /dc\.kind = 'direct'\)\)\)\)\s+AND NOT \$\{REQUEST_NEWS\}`;/, 'the main stream');
+  assert.match(server, /dc\.kind = 'direct'\)\)\)\)\s+AND NOT \$\{REQUEST_NEWS\}\s+AND NOT \$\{PRIVATE_THREAD_OPENER\}`;/, 'the main stream');
   assert.equal((server.match(/AND m\.deleted_at IS NULL AND NOT \$\{REQUEST_NEWS\}/g) || []).length, 2, 'the preview and the unread count');
 });
 

@@ -3986,8 +3986,8 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   return sent;
 }
 
-/** Pure (#6159): the line a private thread is finished with, by how its request ended. */
-const DONE_SUFFIX = 'This thread is done; reply here to pick it up again.';
+/** Pure (#6159): the line a private thread is told how its request ended (#6250: the thread stays open). */
+const DONE_SUFFIX = 'This thread stays open.';
 function doneLine({ how, issueNumber }) {
   const n = Number(issueNumber);
   if (how === 'closed') return `#${n} was closed without going in. ${DONE_SUFFIX}`;
@@ -3996,11 +3996,11 @@ function doneLine({ how, issueNumber }) {
 }
 
 /**
- * #6159: a request went live, went in another way, or was closed: the
- * private threads it was filed from, posted on or about are done
- * (private-threads.js finishForRequest), and each says so in a line of its
- * own, but the one the request's own live line already landed in (`saidIn`),
- * whose head says it. Once per thread and ending (its key). Never throws.
+ * #6159: a request went live, went in another way, or was closed: every
+ * private thread it was filed from, posted on or about says so in a line of
+ * its own (#6250: it stays open), but the one the request's own live line
+ * already landed in (`saidIn`), whose head says it. Once per thread and
+ * ending (its key). Never throws.
  */
 async function finishRequestThreads(pool, { app, issueNumber, how = 'live', saidIn = null, deps = {} }) {
   try {

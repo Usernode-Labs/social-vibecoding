@@ -264,8 +264,10 @@ is no replay plan to write and nothing to verify locally.
   where Homeroom bot's plan is drawn for everyone and any member may press
   Build it, paid from their own week. A thread in Main is only a private
   one, which the page lists, which says "Only you can see this thread", and
-  which can be done (Mark done, its request going live, or asking the bot)
-  and reopened.
+  which can be done (Mark done, or asking the bot) and reopened. The bot's
+  line that opens a private thread is not drawn in Main
+  (`conversations.js` PRIVATE_THREAD_OPENER leaves it out, old and new): the
+  thread is in the page's list, and Main holds what you said there.
   Discover is a tab on the rail only: on a phone it is a page Home's
   Discover section opens, with Back to Home. The markup is the rail's
   order, and app.css orders the phone's five cells.

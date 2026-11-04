@@ -341,8 +341,9 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const mine = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).private;
   assert.deepEqual(mine.map((p) => [p.title, p.kind, p.app ? p.app.slug : null]).sort(), [
     ['A calendar for the garden', 'idea', null],
+    ['Already filed', 'draft_request', 'aw-seeds'],
     ['I drafted it as a request.', 'draft_request', 'aw-seeds'],
-  ].sort(), 'open ones only; a filed one is a public thread now');
+  ].sort(), '#6250: a filed thread stays listed, as an open one does');
   // #6153: one holding a design stays listed once filed, and says where it
   // went: the tab draws it as that request's row (model.ts needsYou).
   await pool.query(

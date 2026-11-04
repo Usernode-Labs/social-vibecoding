@@ -60,6 +60,20 @@ export function isRequestNews(message: ConversationMessage): boolean {
 }
 
 /**
+ * Pure (#6250, 4 Nov 2026): the bot's line that opens a private thread, which
+ * Main Chat no longer draws. A private thread is in the Homeroom bot page's
+ * list; Main holds what the person said there and the bot's replies to it.
+ * The server leaves the same lines out of Main's stream
+ * (services/conversations.js PRIVATE_THREAD_OPENER); this is for one that
+ * arrives live. Only the bot's own line carries such a kind, so a thread that
+ * grew from the person's own message keeps that message in Main.
+ */
+export function isPrivateThreadOpener(message: ConversationMessage): boolean {
+  const meta = message.sender.bot ? message.metadata?.homeroomBot : null;
+  return !!meta && typeof meta.kind === 'string' && meta.kind.startsWith('opened_');
+}
+
+/**
  * Pure: the message a request's story opens on, read from the main stream:
  * its thread's root, else (news from before threads) its oldest piece, which
  * the story pane draws with the pieces after it. Null when the chat holds

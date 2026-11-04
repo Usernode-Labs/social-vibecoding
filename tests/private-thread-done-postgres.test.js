@@ -102,16 +102,21 @@ test('a private thread is done, comes back, and finishes with its request', { ti
     assert.equal(await privateThreads.reopenOnReply(pool, { userId: evan.id, message: { id: reply, thread_root_id: ideaRoot } }), false);
   });
 
-  await t.test('its request going live finishes it, once; Reopen puts it back to filed', async () => {
+  await t.test('its request going live says so in it and leaves it open; Mark done removes it', async () => {
     const roots = await privateThreads.finishForRequest(pool, { appId: app.id, issueNumber: 14 });
     assert.deepEqual(roots.map((r) => r.rootId), [filedRoot]);
     const { rows: [row] } = await pool.query('SELECT state, done_from, done_at FROM private_threads WHERE root_message_id = $1', [filedRoot]);
-    assert.equal(row.state, 'done');
-    assert.equal(row.done_from, 'filed');
+    assert.equal(row.state, 'filed', '#6250: a request going live no longer finishes the thread');
+    assert.equal(row.done_from, null);
+    assert.equal(row.done_at, null);
     const again = await privateThreads.finishForRequest(pool, { appId: app.id, issueNumber: 14 });
     assert.deepEqual(again.map((r) => r.rootId), [filedRoot], 'a retry still names it, so its line is said under its key');
-    const { rows: [same] } = await pool.query('SELECT done_at FROM private_threads WHERE root_message_id = $1', [filedRoot]);
-    assert.equal(String(same.done_at), String(row.done_at), 'and does not finish it twice');
+    const listed = (await pool.query(aiWork.PRIVATE_SQL, [evan.id, bot.id, aiWork.PRIVATE_MAX])).rows;
+    assert.ok(listed.some((r) => Number(r.root_id) === filedRoot), 'the thread stays in the lists');
+    // Mark done is what takes the row away.
+    assert.deepEqual(await privateThreads.markDone(pool, { user: evan, rootId: filedRoot, deps }), { ok: true, state: 'done' });
+    const gone = (await pool.query(aiWork.PRIVATE_SQL, [evan.id, bot.id, aiWork.PRIVATE_MAX])).rows;
+    assert.ok(!gone.some((r) => Number(r.root_id) === filedRoot), 'Mark done removes it from the lists');
     assert.deepEqual(await privateThreads.reopen(pool, { user: evan, rootId: filedRoot }), { ok: true, state: 'filed' });
     assert.equal((await privateThreads.reopen(pool, { user: ada, rootId: filedRoot })).status, 404);
   });
@@ -136,7 +141,7 @@ test('the bot never tells them to close a thread on their side', () => {
   ]) assert.match(said, mayor.NO_CONTROL_CLAIM, said);
   assert.doesNotMatch('Done. Reply here to pick it up again.', mayor.NO_CONTROL_CLAIM);
   const dm = require('../src/services/homeroom-bot-dm');
-  assert.equal(dm.doneLine({ how: 'live', issueNumber: 14 }), '#14 is live. This thread is done; reply here to pick it up again.');
-  assert.equal(dm.doneLine({ how: 'closed', issueNumber: 14 }), '#14 was closed without going in. This thread is done; reply here to pick it up again.');
-  assert.equal(dm.doneLine({ how: 'merged', issueNumber: 14 }), '#14 went in. This thread is done; reply here to pick it up again.');
+  assert.equal(dm.doneLine({ how: 'live', issueNumber: 14 }), '#14 is live. This thread stays open.');
+  assert.equal(dm.doneLine({ how: 'closed', issueNumber: 14 }), '#14 was closed without going in. This thread stays open.');
+  assert.equal(dm.doneLine({ how: 'merged', issueNumber: 14 }), '#14 went in. This thread stays open.');
 });

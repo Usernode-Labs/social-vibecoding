@@ -440,13 +440,25 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
     });
   }
   for (const p of work?.private || []) {
-    // #6159: a done thread is finished (the server leaves it out too).
+    // #6159: a done thread is the only one left out (the server leaves it out too).
     if (p.state === 'done') continue;
     const key = filedKey(p);
     if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
     // 1 Nov 2026: a thread about a request or a change is drawn by it, its
     // number before its title as a request's row is ("#18 Dark mode").
     const about = p.about && p.about.number > 0 && p.app ? p.about : null;
+    // #6250: a filed, posted or put-away thread stays listed and says where
+    // it went. One whose request already has a row was folded above.
+    const project = p.app ? p.app.name || p.app.slug : '';
+    const went: Phrase | null = !p.app
+      ? null
+      : p.state === 'filed' && p.resultRef
+        ? { id: 'messages:ai.row.privateFiled', values: { project, number: p.resultRef } }
+        : p.state === 'posted' && p.resultRef
+          ? { id: 'messages:ai.row.privatePosted', values: { project, number: p.resultRef } }
+          : p.state === 'dropped'
+            ? { id: 'messages:ai.row.privatePutAway', values: { project } }
+            : null;
     rows.push({
       key: `private:${p.rootId}`,
       title: p.title,
@@ -459,9 +471,9 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
             : 'messages:ai.row.privateAbout',
           values: { project: p.app!.name || p.app!.slug, number: about.number },
         }
-        : p.app
-          ? { id: 'messages:ai.row.privateDraft', values: { project: p.app.name || p.app.slug } }
-          : { id: 'messages:ai.row.privateIdea' },
+        : went || (p.app
+          ? { id: 'messages:ai.row.privateDraft', values: { project } }
+          : { id: 'messages:ai.row.privateIdea' }),
       pill: null,
       href: null,
       rootId: p.rootId,
