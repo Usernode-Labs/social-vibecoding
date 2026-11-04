@@ -5463,6 +5463,14 @@
     "text": "Automated tests are not passing on the staging build.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: checks are failing and it is not known which."
   },
+  "badge.reason.checksFailing.mainDetail": {
+    "text": "These automated tests also fail on main, so they are not this change’s: {{tests}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: every test that failed also fails on main, the project's shared code, so the change is not at fault. {{tests}} lists their names. \"main\" is the name of the code branch and stays in English."
+  },
+  "badge.reason.checksFailing.mainSomeDetail": {
+    "text": "These automated tests also fail on main: {{main}}. These fail only in this change: {{own}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: some failing tests also fail on main, the project's shared code, and some fail only in this change. {{main}} and {{own}} each list test names. \"main\" is the name of the code branch and stays in English."
+  },
   "badge.reason.behind.label": {
     "text": "Behind main",
     "description": "Status tag on a proposal's card and row label in the ledger on its page: the main line of code has moved on since the proposal was made. Not a block, only worth knowing. \"main\" is the name of the project's main line of code and stays as it is."
@@ -8699,6 +8707,10 @@
     "text": "It’s live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page once the approved change is applied to the running app."
   },
+  "page.votes.note.updateComing": {
+    "text": "An update is coming: votes cast now are cleared when it lands.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page when Homeroom bot or the change's author is changing it, or has a change queued: a Yes or No cast now is thrown away when the update lands, and everyone is asked again."
+  },
   "page.votes.note.goingLive": {
     "text": "It’s going live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while the approved change is being applied to the running app."
@@ -8942,6 +8954,22 @@
   "page.testing.note.skipped": {
     "text": "Its checks were skipped.",
     "description": "One sentence of the line under the figure on the Testing card of a change's page when the change's automated checks did not run."
+  },
+  "page.testing.lead.mainAll_one": {
+    "text": "Main is failing this test too, so it isn’t this change. Merges are paused until main’s fix lands, and this change’s checks run again by themselves then.",
+    "description": "First sentence on the Testing card of a change's page when the only test that failed also fails on main, the project's shared code, so the change is not at fault. \"main\" is the name of the code branch and stays in English. Followed by a link to the request that fixes main."
+  },
+  "page.testing.lead.mainAll_other": {
+    "text": "Main is failing these tests too, so they aren’t this change. Merges are paused until main’s fix lands, and this change’s checks run again by themselves then.",
+    "description": "First sentence on the Testing card of a change's page when every test that failed also fails on main, the project's shared code, so the change is not at fault. \"main\" is the name of the code branch and stays in English. Followed by a link to the request that fixes main."
+  },
+  "page.testing.lead.mainSome": {
+    "text": "These tests also fail on main, so they are not this change’s: {{main}}. These fail only in this change: {{own}}.",
+    "description": "First sentence on the Testing card of a change's page when some of the failing tests also fail on main, the project's shared code, and some fail only in this change. {{main}} and {{own}} each list test names, as the app's code wrote them, usually in English. \"main\" is the name of the code branch and stays in English."
+  },
+  "page.testing.mainFix.link": {
+    "text": "See the request to fix main (#{{number}})",
+    "description": "Link under the Testing card of a change's page, to the request the platform filed to fix main, the project's shared code. {{number}} is the request's number. \"main\" is the name of the code branch and stays in English."
   },
   "page.testing.lead.tests_one": {
     "text": "One of this change’s tests failed.",

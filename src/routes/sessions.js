@@ -4034,8 +4034,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       const session = rows[0];
       if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      // #6288: what main is already failing, so the sentence does not blame
+      // this change for a test that fails on main through no fault of its
+      // own. The same verdict the change page's Testing card reads.
+      const main = await require('../services/main-watch').mergePause(pool, session.app_id);
       const explanation = await require('../services/checks-explanation')
-        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale) });
+        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale), main });
       return res.set('Cache-Control', 'no-store').json({ explanation, runAt: session.checks_checked_at });
     } catch (err) {
       log.error('sessions', 'Failed to explain failing checks', { message: err.message });

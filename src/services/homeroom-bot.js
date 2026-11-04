@@ -3789,6 +3789,13 @@ async function runTriage(pool, config, {
   // #3146: on an app in the live list the verdict is acted on, and the run
   // is recorded as 'live' so the ledger says which runs spoke.
   const liveMode = live.isLiveFor(settings, app);
+  // #6267: a request whose newest run finished and waits for its upload is
+  // not read (or built) again, whatever started this look: a reply sends the
+  // saved commit and, when it lands, the look has answered.
+  if (liveMode) {
+    const resumed = await resumeWaitingPush(pool, config, { bot, app, issueNumber, deps });
+    if (resumed) return { ran: false, reason: 'waiting_to_push' };
+  }
   // A follow-up may have been started while the app's session runs
   // something else (#3703); anything but a follow-up would use that session.
   if (item.followUp && !liveMode) return { ran: false, reason: NOT_FOLLOW_UP };
@@ -6544,6 +6551,9 @@ async function keepNoChange(pool, runId, noChange) {
  */
 function autoRetryable(built) {
   if (!built || built.ok || built.skipped || built.blocked || built.lostClaim || built.notProposed) return false;
+  // #6267: a build waiting for its upload was built; another try would pay
+  // for it again and leave the saved commit behind.
+  if (built.waitingToPush) return false;
   // Its project's setup failed (15 Oct 2026): another try would stop the same way.
   if (built.setupFailed) return false;
   if (built.partial) return false;
@@ -6619,7 +6629,7 @@ async function recordLiveBuild(pool, runId, built, model = null) {
             build_session_id = COALESCE(build_session_id, $8), build_spec_md = COALESCE($9, build_spec_md),
             build_model = COALESCE($10, build_model), build_no_change = COALESCE($11::jsonb, build_no_change)
       WHERE id = $1 AND (proposal_session_id IS NULL OR proposal_session_id = $8)`,
-    [runId, !!built.ok, error, built.branchName || null, built.sha || null,
+    [runId, built.waitingToPush ? null : !!built.ok, error, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
       Number.isFinite(built.costUsd) ? built.costUsd : null,
       built.sessionId || null, built.specMd || null, model || built.model || null,
@@ -6682,6 +6692,26 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
       await say('blocked', live.blockedText(built.blocked), { dm: { reason: built.blocked } });
     }
     return 'blocked';
+  }
+  if (built.waitingToPush) {
+    // #6267: the build finished, and GitHub refused the upload for a reason
+    // that may pass. The session and its saved commit are kept, so this is
+    // not said as a failed build; it is said once, and the sweep (or a
+    // person's reply) pushes the same commit later.
+    await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_finish = COALESCE(build_finish, '{}'::jsonb)
+                || jsonb_build_object('waiting_at', COALESCE(build_finish->>'waiting_at', NOW()::text))
+        WHERE id = $1`,
+      [runId],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record when a build started waiting to push', { runId, err: err.message }));
+    log.warn('homeroom-bot', 'Live build finished and waits for its upload', {
+      app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
+    });
+    if (!await runPosted(pool, runId, 'build_failed')) {
+      await say('build_failed', live.buildFailedText(built.error, { firstVersion }), { dm: { reason: built.error } });
+    }
+    return 'waiting_to_push';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
     app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
@@ -6964,6 +6994,258 @@ async function proposeFinished(pool, config, { run, app, user, bot, deps, onProp
     log.warn('homeroom-bot', 'Try again proposed a first version, but could not say so', { runId: run.id, sessionId, err: err.message });
   }
   return { ok: true, sessionId, prNumber, app };
+}
+
+// ── A finished build waiting for its upload (#6267) ──────────────────────
+//
+// 4 Nov 2026: GitHub refused one push while it was having problems, and
+// homeroom-bot-live.js threw away a build that had finished (run 4530). Now
+// a temporary refusal keeps the session, its worker volume and the saved
+// commit, and the run is recorded waiting to push. finishWaitingPush sends
+// that exact commit (worker.rescueUnpushedCommit) and proposes it, with no
+// agent turn and no second build cost. The sweep retries every ten minutes
+// for up to six hours; a person's reply takes the same path (resumeWaitingPush).
+const WAITING_PUSH_RETRY_MINUTES = 10;
+const WAITING_PUSH_HOURS = 6;
+
+async function waitingPushRun(pool, runId) {
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT r.id, r.app_id, r.issue_number, r.build_ok, r.build_session_id, r.build_branch, r.build_sha,
+            r.build_commits, r.build_spec_md, r.build_error, r.build_finish,
+            bs.status AS session_status, bs.branch_name AS session_branch, bs.user_id AS session_user_id,
+            sw.unpushed_sha, sw.unpushed_branch_name,
+            a.slug, a.name, a.repo_url,
+            (SELECT n.id FROM homeroom_bot_runs n
+              WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number
+              ORDER BY n.id DESC LIMIT 1) AS newest_run_id
+       FROM homeroom_bot_runs r
+       JOIN apps a ON a.id = r.app_id
+       LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+       LEFT JOIN session_workers sw ON sw.session_id = r.build_session_id
+      WHERE r.id = $1`,
+    [Number(runId)],
+  );
+  return run || null;
+}
+
+/** The temporary push code kept in a waiting run's reason. */
+function waitingPushCode(reason) {
+  return /\(([a-z0-9_]+), temporary\)/i.exec(String(reason || ''))?.[1] || 'push_failed';
+}
+
+/**
+ * Send the saved commit of a run whose build finished and whose upload was
+ * refused for a temporary reason, then propose it. Claimed once per run
+ * (build_finish->>'claimed_at'), so a sweep and a reply cannot propose
+ * twice. Never runs an agent turn. Never throws.
+ */
+async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
+  let run;
+  let app = null;
+  try {
+    run = await waitingPushRun(pool, runId);
+    if (!run || run.build_ok !== null || !run.build_session_id) return { ok: false, why: 'no_run', app };
+    if (Number(run.newest_run_id) !== Number(run.id)) return { ok: false, why: 'not_newest', app };
+    if (!run.build_error || !String(run.build_error).startsWith('waiting to push:')) {
+      return { ok: false, why: 'not_waiting', app };
+    }
+    if (Number(run.session_user_id) !== Number((await ensureBotUser(pool, config)).id)) return { ok: false, why: 'not_bots', app };
+    // Its session is the bot's and still open, on the branch it built. It
+    // rests between turns ('paused'); a session left 'active' is accepted
+    // too because rescueUnpushedCommit refuses to touch one under a turn.
+    if (!['paused', 'active'].includes(run.session_status)) return { ok: false, why: 'session_gone', app };
+    if (run.build_branch && run.session_branch !== run.build_branch) return { ok: false, why: 'branch_moved', app };
+    if (run.build_sha && run.unpushed_sha !== run.build_sha) return { ok: false, why: 'commit_gone', app };
+    app = { id: Number(run.app_id), slug: run.slug, name: run.name, repo_url: run.repo_url };
+    const bot = await ensureBotUser(pool, config);
+    const sessionId = Number(run.build_session_id);
+    const { rows: claimed } = await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_finish = COALESCE(build_finish, '{}'::jsonb)
+                || jsonb_build_object('claimed_at', NOW(), 'by', $2::int, 'session_id', $3::int)
+        WHERE id = $1 AND build_ok IS NULL AND proposal_session_id IS NULL AND build_session_id = $3
+          AND build_error LIKE 'waiting to push:%'
+          AND (build_finish->>'claimed_at' IS NULL
+               OR (build_finish->>'claimed_at')::timestamptz < NOW() - make_interval(mins => $4))
+        RETURNING id`,
+      [run.id, Number(bot.id), sessionId, WAITING_PUSH_RETRY_MINUTES],
+    );
+    if (!claimed.length) return { ok: true, already: true, app };
+
+    const code = waitingPushCode(run.build_error);
+    let pushed;
+    try {
+      pushed = await (deps.worker || require('./worker')).rescueUnpushedCommit(sessionId);
+    } catch (err) {
+      const permanent = err.permanent === true;
+      log.warn('homeroom-bot', 'A build waiting for its upload could not be pushed', {
+        app: app.slug, issueNumber: run.issue_number, runId: run.id, sessionId, code: err.code || code, permanent,
+      });
+      if (!permanent) return { ok: false, why: 'push_failed', app };
+      const reason = `couldn't push the build's commit (${err.code || code}, permanent)`;
+      await pool.query(
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+                build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'failed')
+          WHERE id = $1 AND build_ok IS NULL`,
+        [run.id, reason],
+      );
+      await sayGaveUpOrPermanent({ pool, deps, app, bot, run, reason });
+      return { ok: false, why: 'push_permanent', app };
+    }
+    if (pushed?.dropped) {
+      // The branch moved on GitHub while this waited: the commit cannot go
+      // on top of it. Drop the saved record (done) and say retrying cannot fix it.
+      const reason = `couldn't push the build's commit (non_fast_forward, permanent)`;
+      await pool.query(
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+                build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'failed')
+          WHERE id = $1 AND build_ok IS NULL`,
+        [run.id, reason],
+      );
+      await sayGaveUpOrPermanent({ pool, deps, app, bot, run, reason });
+      return { ok: false, why: 'push_permanent', app };
+    }
+    if (!pushed?.pushed) return { ok: false, why: 'push_failed', app };
+
+    const settings = await readSettings(pool);
+    let promoted;
+    try {
+      promoted = await live.proposedAlready(pool, sessionId) || await live.promoteOwnBuild({
+        pool, steps: durableSteps.none(), ...(Array.isArray(deps.proposeRetryMs) ? { waits: deps.proposeRetryMs } : {}),
+        config, bot, sessionId, router: deps.votesRouter || null, ceiling: botProposalCeiling(settings),
+      });
+    } catch (err) {
+      promoted = { status: 500, body: { error: err.message } };
+    }
+    if (promoted?.status !== 200 || !promoted.body?.ok) {
+      log.warn('homeroom-bot', 'A waiting build was pushed but could not be proposed', {
+        app: app.slug, issueNumber: run.issue_number, runId: run.id, sessionId,
+        why: promoted?.body?.error || promoted?.body?.message || `promotion answered ${promoted?.status}`,
+      });
+      return { ok: false, why: 'refused', app };
+    }
+    const prNumber = promoted.body.prNumber ?? null;
+    const github = deps.github || require('./github');
+    const ws = deps.ws || require('./ws');
+    const repo = parseRepo(run.repo_url);
+    const postedAt = [];
+    let botLogin = null;
+    try { botLogin = await live.botUsernameOf(github); } catch { /* not known: no mentions */ }
+    const say = liveSayer({
+      pool, github, ws, app, repo, issueNumber: Number(run.issue_number), issue: null, runId: run.id, bot, botLogin,
+      notifications: deps.notifications || null, postedAt,
+    });
+    const { rows: [spec] = [] } = await pool.query(
+      'SELECT version FROM chat_session_specs WHERE session_id = $1 ORDER BY version DESC LIMIT 1', [sessionId],
+    ).catch(() => ({ rows: [] }));
+    await announceBuilt({
+      pool, ws, app, bot, issueNumber: Number(run.issue_number), runId: run.id, say,
+      domain: deps.domain || require('./caddy').USERNODE_DOMAIN,
+      built: {
+        ok: true, sessionId, prNumber, branchName: run.session_branch || run.build_branch,
+        sha: run.build_sha || null,
+        commits: run.build_commits == null ? undefined : Number(run.build_commits),
+        specMd: run.build_spec_md || null, specVersion: spec?.version ?? null,
+      },
+    });
+    log.info('homeroom-bot', 'A waiting build was pushed and proposed', {
+      app: app.slug, issueNumber: run.issue_number, runId: run.id, sessionId, prNumber,
+    });
+    return { ok: true, sessionId, prNumber, app };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not finish a build waiting for its upload', { runId, err: err.message });
+    return { ok: false, why: 'error', app };
+  }
+}
+
+/** Say a waiting build's upload cannot be sent again (permanent, or gave up). */
+async function sayGaveUpOrPermanent({ pool, deps, app, bot, run, reason }) {
+  try {
+    const github = deps.github || require('./github');
+    const ws = deps.ws || require('./ws');
+    const say = liveSayer({
+      pool, github, ws, app, repo: parseRepo(run.repo_url), issueNumber: Number(run.issue_number),
+      issue: null, runId: run.id, bot, botLogin: null, notifications: deps.notifications || null, postedAt: [],
+    });
+    await say('build_failed', live.buildFailedText(reason), { dm: { reason } });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not say a waiting build cannot be pushed', { runId: run.id, err: err.message });
+  }
+}
+
+/**
+ * The sweep: push and propose the runs whose build finished and waits for
+ * its upload. Runs waiting more than six hours stop trying (the saved commit
+ * and the session stay, so a reply still sends it).
+ */
+async function sweepWaitingPushes(pool, config, deps = {}) {
+  const { rows } = await pool.query(
+    `SELECT r.id,
+            COALESCE((r.build_finish->>'waiting_at')::timestamptz, r.created_at) AS waiting_since
+       FROM homeroom_bot_runs r
+      WHERE r.build_ok IS NULL AND r.build_error LIKE 'waiting to push:%'
+        AND r.build_session_id IS NOT NULL AND r.proposal_session_id IS NULL
+        AND (r.build_finish->>'claimed_at' IS NULL
+             OR (r.build_finish->>'claimed_at')::timestamptz < NOW() - make_interval(mins => $1))
+        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs n
+                         WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id)
+      ORDER BY r.id LIMIT 50`,
+    [WAITING_PUSH_RETRY_MINUTES],
+  );
+  let pushed = 0;
+  let gaveUp = 0;
+  for (const r of rows) {
+    const waitedMs = Date.now() - new Date(r.waiting_since).getTime();
+    if (waitedMs > WAITING_PUSH_HOURS * 3600 * 1000) {
+      if (await giveUpWaitingPush(pool, config, { runId: Number(r.id), deps })) gaveUp += 1;
+      continue;
+    }
+    const out = await finishWaitingPush(pool, config, { runId: Number(r.id), deps });
+    if (out?.ok) pushed += 1;
+  }
+  return pushed || gaveUp ? { pushed, gaveUp } : null;
+}
+
+async function giveUpWaitingPush(pool, config, { runId, deps = {} } = {}) {
+  const run = await waitingPushRun(pool, runId);
+  if (!run || run.build_ok !== null || Number(run.newest_run_id) !== Number(run.id)) return false;
+  const code = waitingPushCode(run.build_error);
+  const reason = `couldn't push the build's commit (${code}, gave up after 6 hours)`;
+  const { rows } = await pool.query(
+    `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+            build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'gave_up')
+      WHERE id = $1 AND build_ok IS NULL AND build_error LIKE 'waiting to push:%'
+      RETURNING id`,
+    [run.id, reason],
+  );
+  if (!rows.length) return false;
+  const bot = await ensureBotUser(pool, config);
+  const app = { id: Number(run.app_id), slug: run.slug, name: run.name, repo_url: run.repo_url };
+  await sayGaveUpOrPermanent({ pool, deps, app, bot, run, reason });
+  log.warn('homeroom-bot', 'A build waited six hours for its upload; stopped trying', { runId: run.id, code });
+  return true;
+}
+
+/**
+ * A person's reply on a request whose newest run waits for its upload takes
+ * the same path instead of being read (and built) again. Answers whether a
+ * waiting run was found: the caller then skips the read, so no new run is
+ * recorded over it and the sweep can still retry (a temporary refusal that
+ * outlasts this try leaves it waiting for the next sweep).
+ */
+async function resumeWaitingPush(pool, config, { bot, app, issueNumber, deps = {} } = {}) {
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT r.id FROM homeroom_bot_runs r
+      WHERE r.app_id = $1 AND r.issue_number = $2 AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+        AND r.build_error LIKE 'waiting to push:%'
+        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs n
+                         WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id)
+      ORDER BY r.id DESC LIMIT 1`,
+    [app.id, Number(issueNumber)],
+  );
+  if (!run) return false;
+  await finishWaitingPush(pool, config, { runId: Number(run.id), deps });
+  return true;
 }
 
 // The caps that hold a ready verdict for want of room for one more change:
@@ -10375,6 +10657,8 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('unproposedLooked', () => (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null }));
   await each('strandedAsks', () => sweepStrandedAsks(pool, bot, settings, deps));
   await each('buildsOwed', () => sweepWaitingBuilds(pool, deps));
+  // #6267: a build finished while GitHub refused its upload.
+  await each('pushesWaiting', () => sweepWaitingPushes(pool, config, deps));
   // #6209: bot changes that add only documents stop linking the requests
   // they plan for, so a merge cannot close one as done.
   await each('docOnlyUnlinked', () => live.unlinkDocOnlyProposals(pool, { github: deps.github || require('./github') }));
@@ -10554,6 +10838,10 @@ module.exports = {
   claimAutoRetry,
   // 15 Oct 2026: Try again finishes a first version that was built.
   finishBuiltFirstVersion,
+  // #6267: a build finished while GitHub refused its upload.
+  finishWaitingPush,
+  sweepWaitingPushes,
+  resumeWaitingPush,
   finishableRun,
   whyNotFinish,
   FINISH_STALE_MINUTES,

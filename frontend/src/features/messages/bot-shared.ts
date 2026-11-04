@@ -35,8 +35,16 @@ export function threadsAllowed(conversation: { kind?: string; homeroomBot?: bool
 }
 
 /** A thread reply the bot also lists in the main chat: one of the four moments that ring. */
-export function alsoInChat(message: { threadRootId?: number | null; metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null }): boolean {
-  return !!message.threadRootId && message.metadata?.homeroomBot?.alsoInChat === true;
+export function alsoInChat(message: {
+  threadRootId?: number | null;
+  threadRoot?: { plusThread?: boolean } | null;
+  metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
+}): boolean {
+  if (!message.threadRootId || message.metadata?.homeroomBot?.alsoInChat !== true) return false;
+  // #6250: a thread started from the bot's "+" stays out of Main Chat, its
+  // replies included. One the bot opened from Main has no such mark, and its
+  // moments are Main's too, as the way to its row in the list.
+  return message.threadRoot?.plusThread !== true;
 }
 
 /**
@@ -44,7 +52,11 @@ export function alsoInChat(message: { threadRootId?: number | null; metadata?: {
  * unread and moves the read cursor: a message of the conversation itself, or
  * a thread reply it also lists there (`alsoInChat`).
  */
-export function inMainStream(message: { threadRootId?: number | null; metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null }): boolean {
+export function inMainStream(message: {
+  threadRootId?: number | null;
+  threadRoot?: { plusThread?: boolean } | null;
+  metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
+}): boolean {
   return !message.threadRootId || alsoInChat(message);
 }
 

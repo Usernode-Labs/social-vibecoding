@@ -111,7 +111,14 @@ const fakeWorker = {
     // result before the recovered tail may propose or start checks.
     if (opts.mode === 'build' && result.ahead > 0 && result.sha && !result.pushOk) {
       try { await fakeWorker.execPushFromWorker(sessionId, opts.branchName); result.pushOk = true; }
-      catch (err) { result.pushFailed = err.code || 'push_failed'; }
+      catch (err) {
+        result.pushFailed = err.code || 'push_failed';
+        // What the real publisher returns (turn-publication.js apply): the
+        // failure's code and whether another try can help (#6267).
+        result.pushFailure = {
+          code: result.pushFailed, permanent: err.permanent === true, message: err.message,
+        };
+      }
     }
     return result;
   },
@@ -379,7 +386,7 @@ test('a restart no longer loses a finished bot build: recovery leaves it to its 
       'the session carries the build that owns it, which server.js reads');
   });
 
-  await t.test('(i) a commit that still cannot be pushed is a push failure, never "no change to propose"', async () => {
+  await t.test('(i) a commit that still cannot be pushed is kept waiting to push, never "no change to propose"', async () => {
     reset();
     pushAnswer = async () => { throw Object.assign(new Error('git push: connection reset'), { code: 'push_failed' }); };
     const journal = writeJournal('push-lost', { ahead: 1, sha: 'd'.repeat(40), pushOk: 0 });
@@ -389,9 +396,14 @@ test('a restart no longer loses a finished bot build: recovery leaves it to its 
     assert.equal(proposed.length, before, 'not proposed');
     assert.equal(dispatches.length, 0, 'a push that did not go through is not nudged');
     assert.equal(out.ok, false);
-    assert.match(out.error, /^couldn't push the build's commit \(push_failed\)/,
+    // #6267: a temporary refusal (not permanent) no longer fails the build.
+    // Its commit and worker are kept, and the run waits to push it later.
+    assert.equal(out.waitingToPush, true, 'the build is kept, waiting for its upload');
+    assert.equal(out.sha, 'd'.repeat(40), 'the commit is the one it built');
+    assert.match(out.error, /^waiting to push: couldn't push the build's commit \(push_failed, temporary\)/,
       'the build\'s commit is in its worker: its push failed, it did not come to nothing');
-    assert.equal((await sessionRow(sessionId)).status, 'archived');
+    const kept = await sessionRow(sessionId);
+    assert.ok(['active', 'paused'].includes(kept.status), 'the session and its worker are kept for the retry');
   });
 
   await t.test('(ii) a journal ending in 143 with the bot\'s own stop saved is the time-out it was', async () => {

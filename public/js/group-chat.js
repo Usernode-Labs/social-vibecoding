@@ -23,6 +23,8 @@ const GroupChat = {
   oldestMessageId: null,
   hasMore: true,
   _historyLoad: null,
+  // #6262: the thread this mount already marked read, so one open posts once.
+  _threadReadSent: null,
   // The general stream's catch-up state (#4177): `_latestLoad` is the
   // catch-up in flight; `_streamLoaded` says its first page has loaded, even
   // an empty one; the rest are `_general`'s, explained in "One rule for every
@@ -1689,6 +1691,9 @@ const GroupChat = {
     GroupChat._threadPlaced = false;
     GroupChat._threadPinned = false;
     GroupChat._attachThreadFollow(GroupChat._threadScrollEl());
+    // #6262: a fresh mount of a thread may mark it read once its first page
+    // is drawn (loadThreadHistory, or below when the cache has it already).
+    GroupChat._threadReadSent = null;
 
     // Full general-chat interaction set on the thread list: tap-to-quote,
     // long-press / hover reactions, quote-jump, reference chips.
@@ -1786,7 +1791,11 @@ const GroupChat = {
     const st = GroupChat._threadState(type, ref);
     if (closed) return;
     if (!st.loaded) GroupChat.loadThreadHistory(type, ref);
-    else if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
+    else {
+      // #6262: a cached first page is drawn now; opening still clears it.
+      GroupChat._noteThreadRead(type, ref);
+      if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
+    }
   },
 
   // #4417: the cards a topic's channel draws by time changed while it is
@@ -1834,6 +1843,28 @@ const GroupChat = {
     GroupChat._threadComposerWiring?.abort();
     GroupChat._threadComposerWiring = new AbortController();
     return GroupChat._threadComposerWiring.signal;
+  },
+
+  // #6262: the Homeroom bot page marks a thread with something new by a dot
+  // (frontend/src/features/ai/). Opening its page clears it, whichever door
+  // was used: its first page is drawn and the document is visible, so the
+  // cursor moves. Once per mount (mountThread resets _threadReadSent); the
+  // cursor only moves forward server-side.
+  _noteThreadRead(type, ref) {
+    if (!['issue', 'session', 'governance'].includes(type)) return;
+    const key = GroupChat.threadKey(type, ref);
+    if (GroupChat._threadReadSent === key) return;
+    if (document.visibilityState === 'hidden') return;
+    const slug = GroupChat.appSlug;
+    if (!slug) return;
+    GroupChat._threadReadSent = key;
+    try {
+      fetch(`/api/apps/${encodeURIComponent(slug)}/threads/read${GroupChat._specDemoQS()}`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ thread_type: type, thread_ref: Number(ref) }),
+      }).then((res) => (res.ok ? res.text() : null)).catch(() => { GroupChat._threadReadSent = null; });
+    } catch (_) { GroupChat._threadReadSent = null; }
   },
 
   async loadThreadHistory(type, ref) {
@@ -1894,6 +1925,7 @@ const GroupChat = {
       }
       st.loaded = true;
       st.failed = false;
+      if (isFirstPage) GroupChat._noteThreadRead(type, ref);
       if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread({ flush: true });
     } catch { /* surfaced below */ } finally {
       if (timeout) clearTimeout(timeout);
