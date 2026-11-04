@@ -1,49 +1,25 @@
 /**
- * The Communities screen's Needs you tab as one feed (#3270), and since #3488
- * THE SAME FEED a project's Needs you page is.
+ * The Needs you feed's rows (#3270, #3488): the adapter between a
+ * GET /api/workshop/needs-feed item and the row the review flow draws.
  *
  * It mixes everything: every decision owed by you across all the projects you
  * are a member of, newest first (GET /api/workshop/needs-feed,
  * src/routes/workshop-overview.js), each item naming the project it belongs
- * to. It used to draw its own cards (a Yes and a No at the foot of each, a
- * link to read the rest), so the two Needs you screens looked and answered
- * differently: the project's had the rail (Vote, Comments, Ask, Try it,
- * More), the vote sheet, the swipe, the keys and the end card, and
- * this one had none of them. Now the rows are adapted here and drawn by the
- * project's own `NeedsFeed` (dev-board/workshop/workshop.tsx), so the two
- * cannot drift apart again.
- *
- * ── What a row can do from here ─────────────────────────────────────────
- *
- * A CHANGE is voted from the vote sheet with the platform's own vote
- * (AppView.castVote), carrying the approval epoch the server checks (#2038),
- * asking for a line on a No the way every vote does, and turning a
- * membership refusal into Join through the fetch wrapper. The caption's
- * "more", Comments and Ask are the project's own, addressed to the row's
- * project.
- * A GROUP DECISION (a rename, a secret, closing a request) is decided on its
- * own page, where its options and consequences are shown: those votes can
- * apply the decision on the spot, and that belongs on the screen that
- * explains it. What the feed cannot do across projects it leaves as the
- * project's page does when it has nothing to offer: Try it opens a preview
- * inside the project's own view, so it is not lit here.
+ * to. `reelRows` builds those rows, and `plainSummary` flattens a change's
+ * markdown summary to the one line a voter reads.
  *
  * ── Island rules ────────────────────────────────────────────────────────
  *
- * Rendered only while the tab shows, from data the controller loads in an
- * effect; nothing here is in the prerendered document.
+ * Pure helpers only: no component, no effect, nothing in the document.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import type { DevWorkshopView } from '../dev-board/card/model';
 import { callAppView } from '../dev-board/card/fold';
-import { NeedsFeed } from '../dev-board/workshop/workshop';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
-import { useMessages } from '../../lib/i18n/react';
 import { listText, t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
-import { filterByVoteType, itemVoteType, voteTallies, VoteTypeChips, type VoteFilter } from './vote-filter';
 
 /**
  * #6019: a ballot's choices (the server's ballotOf): the changes up for a
@@ -310,118 +286,3 @@ function ReelApp(item: FeedRow): ReactNode {
 }
 
 const NO_MODELS: DevWorkshopView['models'] = { list: [], selected: null };
-
-export function NeedsReel({ items, error, capped, onDone, onAnswered, onSettled }: {
-  items: NeedsFeedItem[] | null;
-  error: boolean;
-  /** The read stopped at its bound: there may be more than these. */
-  capped: boolean;
-  /** The end card's way on: back to the list of communities. */
-  onDone: () => void;
-  /**
-   * #4794: a vote the feed has just saved, so the controller can take its
-   * card out of the store's copy at once. Absent on a project's own feed,
-   * whose refresh already drops the row.
-   */
-  onAnswered?: (id: number, epoch: number | null) => void;
-  /**
-   * #6101: a vote refused because the change is not up for a vote any more.
-   * The controller drops it from every copy of the feed, so it cannot come
-   * back with live Yes and No.
-   */
-  onSettled?: (id: number) => void;
-}) {
-  // `t` changes with the language on screen, so the rows' words (reelRows)
-  // are read again when it does.
-  const t = useMessages('communities');
-  // #6199: the vote-type filter. Held here, so it starts on All whenever
-  // Needs you opens (the choice is not remembered), and the chips hide
-  // themselves on a feed with only one kind of vote.
-  const [filter, setFilter] = useState<VoteFilter>('all');
-  const tallies = useMemo(() => voteTallies(items || [], itemVoteType), [items]);
-  const shownItems = useMemo(
-    () => (items ? filterByVoteType(items, filter, itemVoteType) : []),
-    [items, filter],
-  );
-  // `epochs` is each row's source item's epoch, keyed by the row key
-  // NeedsFeed answers by: the vote's third argument, which the answered set
-  // matches on.
-  const { rows, epochs } = useMemo(() => {
-    const built = reelRows(shownItems, (md) => {
-      const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
-      return typeof out === 'string' ? out : '';
-    });
-    const epochs = new Map<string, number | null>();
-    shownItems.forEach((item, i) => epochs.set(built[i].key, item.epoch));
-    return { rows: built, epochs };
-  }, [shownItems, t]);
-  // The ask box's models: the dev session's own list, as on a project page.
-  const models = useMemo(() => {
-    const m = callAppView('_workshopModels') as DevWorkshopView['models'] | undefined;
-    return m && Array.isArray(m.list) ? m : NO_MODELS;
-  }, []);
-  // The ⋯'s delegated handler, which a project page installs when it first
-  // draws; this screen can be the first thing opened.
-  useEffect(() => {
-    callAppView('_attrInit');
-    callAppView('_cardMenuInit');
-  }, []);
-  // ONCE DRAWN, DRAWN (#4794): a vote on the last card empties the store's
-  // feed, and the feed the viewer is inside must not switch to the empty
-  // line over their head — the pin keeps the answered card, and the end card
-  // follows. Reset by the unmount, so reopening a genuinely empty feed still
-  // says so.
-  const drawnRef = useRef(false);
-  useEffect(() => {
-    if (items && items.length) drawnRef.current = true;
-  }, [items]);
-
-  if (error) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
-  }
-  if (!items && !drawnRef.current) {
-    return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
-  }
-  const shown = items || [];
-  if (!shown.length && !drawnRef.current) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">{t('communities:reel.empty')}</p>;
-  }
-  return (
-    <>
-      <div className="workshop-needs-feed" data-needs-reel="">
-        <VoteTypeChips tallies={tallies} pressed={filter} onPress={setFilter} />
-        {/* #6199: `key` is the filter, so a press on a chip remounts the
-            deck: it opens at the first row of the kind picked instead of
-            holding an index into a list that is no longer on screen. */}
-        <NeedsFeed
-          rows={rows}
-          models={models}
-          slug=""
-          canPost
-          onDone={onDone}
-          doneLabel={t('communities:reel.done')}
-          renderApp={ReelApp}
-          onAnswered={onAnswered ? (row) => {
-            // A group decision has no Yes or No in the feed (reelRows sets
-            // both to null), so answer() never reaches here for one; a
-            // proposal's epoch rides along for the answered set.
-            if (row.askAbout && row.askAbout.kind === 'proposal') {
-              onAnswered(row.askAbout.ref as number, epochs.get(row.key) ?? null);
-            }
-          } : undefined}
-          onSettled={onSettled ? (row) => {
-            if (row.askAbout && row.askAbout.kind === 'proposal') {
-              onSettled(row.askAbout.ref as number);
-            }
-          } : undefined}
-          key={filter}
-        />
-      </div>
-      {capped && shown.length ? (
-        <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400" data-needs-capped="">
-          {t('communities:reel.capped', { count: shown.length })}
-        </p>
-      ) : null}
-    </>
-  );
-}

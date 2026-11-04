@@ -1999,12 +1999,11 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
-  // control; a second check pins the item's own order (who and when, then
-  // the title, then the sentence, then the caption) with the same `+`/`~`
-  // direction.
-  assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary"?$/);
+  // The Needs-you deck is the review flow now: one check holds that a
+  // project's own Needs you draws it, and another that its change page is
+  // drawn in place in the pane rather than over the shell.
+  assert.match(byName(/A project's Needs you draws the review flow/).expectSelector, /\[data-rf-project="usernode-2d5619"\] \[data-review-flow\]/);
+  assert.match(byName(/change page in place in the pane/).expectSelector, /body:not\(:has\(> \[data-rf-page\]\)\)[\s\S]*\[data-workshop-pane="needs"\] \[data-rf-page\] \[data-rf-back\]/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

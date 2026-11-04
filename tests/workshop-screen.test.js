@@ -1295,50 +1295,19 @@ test('the Needs you row is drawn only while a vote waits on you', () => {
   mod.workshopStore.set({ open: false, tab: 'status', rows: null, feed: null, feedError: false });
 });
 
-test('#3270, #3488: the Needs you pane is one feed, every project mixed, drawn by a project\'s own feed', () => {
+test('#6276: the Needs you pane draws the review flow instead of the old feed', () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
-  const card = (kind, id, slug, extra = {}) => ({
-    kind, id, title: `Item ${id}`, summary: null, author: 'ada', number: null, epoch: 2,
-    at: null, yes: 1, no: 0, app: { slug, name: slug.toUpperCase(), icon_url: null, icon_emoji: null }, ...extra,
-  });
   mod.workshopStore.set({
     open: true, error: false, tab: 'needs', scopeOpen: false,
-    rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 2 }, { slug: 'swap', name: 'Swap', working: 0, needs: 1 }],
-    feed: [card('proposal', 8, 'garden'), card('governance', 9, 'swap'), card('proposal', 7, 'garden')],
+    rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 2 }],
+    feed: [{ kind: 'proposal', id: 8, title: 'Item 8', app: { slug: 'garden', name: 'GARDEN' } }],
     feedError: false, feedCapped: false,
   });
-  let out = html();
+  const out = html();
   const pane = out.slice(out.indexOf('data-workshop-pane="needs"'));
-  // #3488: the project's own feed, not cards of this screen's own.
-  assert.match(pane, /<div class="workshop-needs-feed" data-needs-reel=""><div class="dev-ws-needs" data-ws-needs="">/);
-  assert.doesNotMatch(pane, /workshop-reel-card|data-needs-answer/, 'the old cards are gone');
-  assert.deepEqual([...pane.matchAll(/data-ws-item="needs:(\w+):(\d+)"[^>]*data-ws-app="([\w-]+)"/g)].map((m) => `${m[3]}:${m[1]}`),
-    ['garden:proposal', 'swap:governance', 'garden:proposal'], 'in the order the server mixed them, not grouped');
-  assert.doesNotMatch(pane, /data-workshop-group=/, 'no list of lists any more');
-  // Each item names its project, and its title opens its page there.
-  assert.match(pane, /<a class="workshop-reel-app" data-ws-item-app="" href="#app\/swap\/workshop">/);
-  assert.match(pane, /<h2 class="dev-ws-item-title"><a href="#app\/garden\/dev\/proposals\/8">Item 8<\/a><\/h2>/);
-  assert.match(pane, /<h2 class="dev-ws-item-title"><a href="#app\/swap\/dev\/governance\/9">Item 9<\/a><\/h2>/);
-  assert.match(pane, /class="dev-ws-eyebrow">Group decision · Waiting for your approval</, 'a group decision says what it is');
-  assert.match(pane, /class="dev-ws-eyebrow">Change · Waiting for your approval</, 'and a change, in its page\'s words');
-  // The rail, as a project's: Vote, Skip, Comments, Ask, Try it, More.
-  assert.deepEqual([...pane.matchAll(/data-ws-rail-btn="(\w+)"/g)].map((m) => m[1]),
-    ['vote', 'skip', 'comments', 'ask', 'try', 'more']);
-  // Each item names its project at the top of its caption, over its by-line.
-  assert.match(pane, /<div class="dev-ws-item-caption"><a class="workshop-reel-app" data-ws-item-app=""[^>]*>[\s\S]*?<\/a><p class="dev-ws-item-by">/);
-  assert.match(pane, /data-ws-rail-btn="more" data-card-menu="" data-card-menu-open="#app\/garden\/dev\/proposals\/8"/,
-    'the ⋯ offers the card\'s page, the one entry that holds across projects');
-  assert.match(pane, /class="dev-ws-needs-of">1 \/ 3</);
-  assert.match(pane, /class="dev-ws-done-cta">Back to your communities</);
-  assert.doesNotMatch(pane, /data-ws-done-hub/, 'the Communities screen has its own way on, and no Hub to go back to');
-
-  mod.workshopStore.set({ feed: [] });
-  out = html();
-  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-needs-empty="">Nothing is waiting on your vote in any of your projects\./);
-  mod.workshopStore.set({ feed: null, feedError: true });
-  out = html();
-  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-needs-error=""/);
+  assert.match(pane, /data-review-flow=""/, 'the review flow draws the feed');
+  assert.doesNotMatch(pane, /data-needs-reel|data-ws-rail-btn|workshop-reel-card/, 'the old deck is gone');
   mod.workshopStore.set({ open: false, tab: 'status', rows: null, feed: null, feedError: false });
 });
 
