@@ -568,7 +568,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
                   {translation.state === 'pending' ? translate('messages:translate.pending') : t('project:topic.request.words.translate')}
                 </button>
               )}
-              note={!canTranslate || translation.state === 'idle' || translation.state === 'pending' ? undefined : <TranslateNote view={translation} className="mt-1" />}
+              note={!canTranslate || translation.state === 'idle' ? undefined : <TranslateNote view={translation} className="mt-1" />}
             />
           )}
           {working && !r.status.closed ? null : (

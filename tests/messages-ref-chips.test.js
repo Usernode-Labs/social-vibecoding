@@ -175,7 +175,7 @@ test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s 
 
 test('the row hands a bot message\'s project to its markdown, and a chip press records where it was opened from', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /<MessageMarkdown content=\{[^}]*message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>/,
+  assert.match(row, /<MessageMarkdown content=\{translation\.state === 'shown' \? translation\.texts\[0\] : message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>/,
     'only the bot\'s own message (botMeta reads it off a bot sender only), whose request numbers wear their tag colour');
   assert.match(read('frontend/src/features/messages/bot-question.tsx'),
     /export function botMeta\(message: ConversationMessage\): HomeroomBotMeta \| null \{\s*if \(!message\.sender\.bot\) return null;/);

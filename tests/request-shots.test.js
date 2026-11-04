@@ -438,6 +438,6 @@ test('the words lift the screenshots for everyone, take the toggle\'s click, and
     'the same wrapper while the string is the same, so a hidden comment stays hidden');
   assert.match(src, /if \(togglePinShot\(event\.target, event\.currentTarget\)\) event\.preventDefault\(\);/);
   assert.match(src, /<div className="dev-request-ask" onClick=\{togglePin\}>/);
-  assert.match(src, /<div className="min-w-0 flex-1" \{\.\.\.images\.scope\}>[\s\S]*<RequestWords\s+html=/,
+  assert.match(src, /<div className="min-w-0 flex-1" \{\.\.\.images\.scope\}>[\s\S]*<RequestWords\s+html=\{bodyHtml\}\s+translate=/,
     'the words are still inside the image viewer\'s scope');
 });

@@ -313,11 +313,15 @@ export const MessageRow = memo(function MessageRow({
   // #6081: someone else's words, in the reader's language. One more item in
   // the same menu, so a chat does not fill up with a button on every message.
   if (!mine && message.content && !message.deleted && !message.moderated) {
-    const label = translation.state === 'shown'
-      ? t('messages:row.menu.showOriginal')
-      : translation.state === 'original'
-        ? t('messages:row.menu.showTranslation')
-        : t('messages:row.menu.translate');
+    // #6081: while it is being translated the words stay as written and the
+    // item says so, rather than offering a second tap that does nothing.
+    const label = translation.state === 'pending'
+      ? t('messages:translate.pending')
+      : translation.state === 'shown'
+        ? t('messages:row.menu.showOriginal')
+        : translation.state === 'original'
+          ? t('messages:row.menu.showTranslation')
+          : t('messages:row.menu.translate');
     items.push({
       key: 'translate', label, icon: GlobeIcon, disabled: translation.state === 'pending',
       onSelect: () => {

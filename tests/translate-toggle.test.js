@@ -74,7 +74,9 @@ test('the request page offers Translate only on someone else’s request, beside
   assert.match(src, /const translation = useTranslate\(sources, \{ enabled: canTranslate \}\);/);
   assert.match(src, /translate=\{!canTranslate \|\| editing \|\| \(translation\.state !== 'idle' && translation\.state !== 'pending'\) \? null : \(/);
   assert.match(src, /className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"/);
-  assert.match(src, /note=\{!canTranslate \|\| translation\.state === 'idle' \|\| translation\.state === 'pending' \? undefined : <TranslateNote view=\{translation\}/);
+  // #6081: the note line is drawn in every state but idle, "Translating…"
+  // included, so the words say what is happening while the model answers.
+  assert.match(src, /note=\{!canTranslate \|\| translation\.state === 'idle' \? undefined : <TranslateNote view=\{translation\}/);
   // The translated title and words replace the originals, in the same places.
   assert.match(src, /const shownTitle = translation\.state === 'shown' && titleAt >= 0 \? translation\.texts\[titleAt\] : r\.title;/);
   assert.match(src, /const shownBody = translation\.state === 'shown' && bodyAt >= 0 \? translation\.texts\[bodyAt\] : null;/);
