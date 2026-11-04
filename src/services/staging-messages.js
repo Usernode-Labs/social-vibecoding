@@ -469,6 +469,8 @@ const BOT_DM_OFFER_KEY = 'staging-hrbot-offer';
 // row stands behind it: the action endpoint answers the demo without one.
 const BOT_DM_DEMO_ACTION_ID = 990001;
 const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
+// #6305: one request offered on several projects, from one card.
+const BOT_DM_FILE_MANY_KEY = 'staging-hrbot-file-many';
 // B6: a first version's plan, waiting for Build it, and a request the bot
 // has two questions about. Fixtures too: the plan's Build it names an action
 // no row stands behind, and nothing is posted on any request.
@@ -559,6 +561,53 @@ async function ensureBotDmFixture(pool, user) {
             { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
             { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
           ],
+        },
+      },
+    });
+  }
+  // #6305: one request offered on several projects, from one card, with a
+  // row for each, a "Did you mean ...?" row, and an app that already does
+  // it. Obviously fake, and a fixture: the demo's card endpoint decides
+  // nothing, so File on all files nothing here.
+  const manySent = await pool.query(
+    `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+    [opened.conversationId, bot.id, BOT_DM_FILE_MANY_KEY]
+  );
+  if (!manySent.rows.length) {
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: 'Here\'s the request for all four. I looked at each app first: Game Corner already does it,'
+        + ' so it\'s unticked. Tick or untick any row, then File on all.\n\n'
+        + '**New request on 4 projects**: Staging demo, work for people who aren\'t signed in',
+      idempotency_key: BOT_DM_FILE_MANY_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'chat',
+          card: {
+            type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id),
+            title: 'Staging demo, work for people who aren\'t signed in',
+            details: 'Visitors without an account can open the app and use it, without being sent to sign up first.',
+            rows: [
+              {
+                named: 'Staging demo app', match: 'exact', slug: 'staging-demo-plants', name: 'Staging demo app',
+                choices: [], done: 'Staging demo app already lets guests look around.', disabled: null, ticked: false,
+              },
+              {
+                named: 'Staging demo board', match: 'guess', slug: null, name: 'Staging demo board',
+                choices: [{ slug: 'staging-demo-plants', name: 'Staging demo plants' }],
+                done: null, disabled: null, ticked: false,
+              },
+              {
+                named: 'Staging demo run club', match: 'exact', slug: 'staging-demo-run-club', name: 'Staging demo run club',
+                choices: [], done: null, disabled: null, ticked: true,
+              },
+              {
+                named: 'Staging demo notes', match: 'exact', slug: 'staging-demo-notes', name: 'Staging demo notes',
+                choices: [], done: null, disabled: null, ticked: true,
+              },
+            ],
+          },
         },
       },
     });

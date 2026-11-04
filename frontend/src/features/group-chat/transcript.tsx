@@ -103,6 +103,7 @@ import {
   type TranscriptView,
 } from './transcript-store';
 import { MergedTopicCard } from '../dev-board/workshop/merged-topic-card';
+import { FileManyRows, picksOf, type FileManyRow } from '../messages/bot-cards/file-many';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
@@ -116,32 +117,52 @@ function controller(): any {
  */
 function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView }) {
   const [busy, setBusy] = useState(false);
+  // #6305: a many-project offer's rows, ticked here and sent with the tap.
+  const rows = (offer.rows || []) as unknown as FileManyRow[];
+  const [ticked, setTicked] = useState<boolean[]>(() => rows.map((r) => r.ticked));
+  const [chosen, setChosen] = useState<Record<number, string>>({});
   if (id == null) return null;
+  const many = offer.kind === 'file_many' && rows.length > 0;
+  const picks = many ? picksOf(rows, ticked, chosen) : [];
   const decide = async (choice: 'yes' | 'no') => {
     if (busy) return;
     setBusy(true);
     try {
-      await controller()?.decideBotOffer?.(id, choice);
+      await controller()?.decideBotOffer?.(id, choice, many ? picks : undefined);
     } finally {
       setBusy(false);
     }
   };
   return (
-    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-offer="">
-      {offer.actions.map((action) => (
-        <Button
-          key={action.id}
-          type="button"
-          onClick={() => { void decide(action.id); }}
-          disabled={busy}
-          variant={action.primary ? 'pillAccent' : 'pillNeutral'}
-          ink={action.primary ? 'solid' : 'neutral'}
-          size="sm"
-          className="font-semibold"
-        >
-          {action.label}
-        </Button>
-      ))}
+    <div className="mt-2 flex flex-col gap-2" data-gc-bot-offer="">
+      {many ? (
+        <FileManyRows
+          data={{ state: 'open', title: '', details: '', rows, forMe: true }}
+          ticked={ticked}
+          chosen={chosen}
+          onToggle={(i) => setTicked((was) => was.map((on, j) => (j === i ? !on : on)))}
+          onChoose={(i, slug) => {
+            setChosen((was) => ({ ...was, [i]: slug }));
+            setTicked((was) => was.map((on, j) => (j === i ? true : on)));
+          }}
+        />
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {offer.actions.map((action) => (
+          <Button
+            key={action.id}
+            type="button"
+            onClick={() => { void decide(action.id); }}
+            disabled={busy || (many && action.id === 'yes' && !picks.length)}
+            variant={action.primary ? 'pillAccent' : 'pillNeutral'}
+            ink={action.primary ? 'solid' : 'neutral'}
+            size="sm"
+            className="font-semibold"
+          >
+            {action.label}
+          </Button>
+        ))}
+      </div>
     </div>
   );
 }

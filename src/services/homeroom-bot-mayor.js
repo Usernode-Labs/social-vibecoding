@@ -561,6 +561,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  message. Use their own words. You never file anything yourself, and never write that something was filed:',
     '  Homeroom says so itself when they tap it. Pass the project\'s name as they wrote it (named): when it is not',
     '  exactly one of theirs, the card asks "Did you mean ...?", so never say it is the closest match and carry on.',
+    '  When they ask for the SAME request on several projects, pass them all in projects, in the order they named',
+    '  them: one card with a row each and one File on all files them all at one tap. Never ask about their names one',
+    '  reply at a time: each name is settled on its own row of that card. When they ask whether you can do them all',
+    '  together, say yes once and say it works by one card and one tap; after that, never explain it again.',
     '  When they answer No, another app, list the few of their projects (my_projects) whose names are closest and',
     '  ask which. When offer_request names similar open requests, say so and offer to add their words to one of',
     '  them (comment_on_request) instead. The draft shows its title, its words and what it carries: say one short',
@@ -838,11 +842,24 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_request',
-      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. One offer per turn.',
+      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. One offer per turn; to file the same request on several projects, pass them all in projects: one card files them all.',
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string', description: 'The project\'s name or short name, from my_projects.' },
+          project: { type: 'string', description: 'The project\'s name or short name, from my_projects. Leave it out when you pass projects.' },
+          projects: {
+            type: 'array', minItems: 2, maxItems: 12,
+            items: {
+              type: 'object',
+              properties: {
+                project: { type: 'string', description: 'The project\'s name or short name, from my_projects.' },
+                named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when it is not the project\'s own name.' },
+              },
+              required: ['project'],
+              additionalProperties: false,
+            },
+            description: 'Several projects for the SAME request, in the order they named them: one card with a row for each files them all at one tap. Names that do not match are settled on that card, never one reply at a time.',
+          },
           named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
           details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
@@ -888,7 +905,7 @@ const TOOLS = [
             description: 'One to three short checks, in their words, of what is true when it is done.',
           },
         },
-        required: ['project', 'title', 'details', 'doneWhen'],
+        required: ['title', 'details', 'doneWhen'],
         additionalProperties: false,
       },
     },
@@ -3299,13 +3316,6 @@ async function runTool(pool, ctx, name, args) {
       case 'report_problem': return await reportProblem(pool, ctx, args);
       case 'offer_request': {
         if (ctx.offer) return { ok: false, error: 'One offer per turn.' };
-        const app = await findApp(pool, args.project);
-        if (!app) return { ok: false, error: 'No such project. Check my_projects.' };
-        ctx.appIds.add(Number(app.id));
-        if (!(await canFile(pool, app, user))) {
-          return { ok: false, error: `They are not a member of ${app.name || app.slug}, so they cannot file requests there. They can join it from its page.` };
-        }
-        // The request's name, on its board and in every message about it.
         const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
         const details = clip(args.details, MAX_DETAILS_CHARS);
         if (title.length < 3) return { ok: false, error: 'The title is too short.' };
@@ -3317,37 +3327,49 @@ async function runTool(pool, ctx, name, args) {
         }
         const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
         if (!pictures.ok) return { ok: false, error: pictures.error };
-        const related = await draftRelated(pool, { app, list: args.related, deps });
-        if (!related.ok) return { ok: false, error: related.error };
-        const context = await draftContext(pool, { app, value: args.context });
-        if (!context.ok) return { ok: false, error: context.error };
         const place = await draftPlace(pool, { ctx });
-        const extras = {
+        const baseExtras = {
           attachmentIds: pictures.ids,
-          related: related.ok,
-          context: { ...context.ok, ...(place.quoted ? { quoted: place.quoted } : {}) },
           doneWhen,
-          // #6307: the draft's Where names its project, a place in the app.
-          project: app.name || app.slug,
           chatHref: place.href,
         };
-        // #4501: a name they wrote that is not exactly this project's is a
-        // guess, and a guess is confirmed on the card before anything files.
-        const guess = guessedProject(args.named, app);
-        ctx.offer = { app, title, details, extras, ...(guess ? { guess } : {}) };
-        // A request already on its board that looks like this one is said,
-        // so their words can go on it instead (request-similarity.js).
-        const similar = await require('./request-similarity').openSimilar(app, title, { github: ctx.deps?.github });
-        return {
-          ok: true,
-          shown: guess
-            ? `The card asks "Did you mean ${app.name || app.slug}?" with Yes, file it, No, another app and Open ${app.name || app.slug}. Nothing is filed until they tap Yes. Never say it is the closest match and carry on.`
-            : 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.',
-          ...(similar.length ? {
-            similarOpen: similar,
-            similarNote: 'These open requests on the same project look like the same thing. Say so, show them as cards, and offer to add their words to one (comment_on_request) instead. The offer stays under your reply for them to decide. Also name any that overlap in related.',
-          } : {}),
-        };
+        // #6305: one request on several projects, filed from one card. Rows
+        // in the order they named them; each named row settled on the card.
+        if (Array.isArray(args.projects) && args.projects.length) {
+          const rows = await resolveRows(pool, { items: args.projects, user });
+          if (rows.length < 2) {
+            // Only one project came out of it: today's single-request card.
+            return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
+          }
+          // Before drafting: read each app's code the way its first read
+          // would, so a row for an app that already does it says so.
+          const exact = rows.filter((r) => r.match === 'exact' && !r.disabled);
+          const already = exact.length
+            ? await require('./homeroom-bot-already-done').alreadyDoes(pool, {
+              user, apps: exact.map((r) => ({ slug: r.slug, name: r.name })), title, details,
+              deps, ctx,
+            })
+            : {};
+          for (const row of exact) {
+            const found = already && already[row.slug];
+            if (found && found.done) {
+              row.done = clip(withoutEmDashes(String(found.sentence || '').trim()), 140) || null;
+              row.ticked = false;
+            }
+          }
+          ctx.card = {
+            type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id), title, details, rows,
+          };
+          ctx.offer = {
+            kind: 'file_many', rows, title, details, extras: baseExtras,
+            projects: rows.filter((r) => r.match === 'exact').map((r) => r.slug),
+          };
+          return {
+            ok: true,
+            shown: `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`,
+          };
+        }
+        return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
       }
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
@@ -4128,6 +4150,152 @@ function guessedProject(named, app) {
   return exact.includes(wrote) ? null : clip(String(named).replace(/\s+/g, ' ').trim(), 80);
 }
 
+/** Pure: a name with case, spaces and punctuation aside, and a slug's own suffix aside. */
+function squashProjectName(value) {
+  const slug = String(value || '');
+  return `${slug} ${slug.replace(/-[0-9a-f]{6}$/, '')}`
+    .toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+/** Pure: the distance between two words, as an edit count. */
+function editDistance(a, b) {
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (!m || !n) return Math.max(m, n);
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= n; j += 1) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/**
+ * Pure (#6305): up to `n` of this person's projects whose names are closest
+ * to the one they wrote, for a row's "Did you mean ...?". Case, spaces and
+ * punctuation aside, and a slug's own suffix aside. `apps` are the projects
+ * they can file on (`{ slug, name }`). [] for nothing close enough.
+ */
+function closestProjects(named, apps, n = 3) {
+  const wrote = squashProjectName(named);
+  if (!wrote || !Array.isArray(apps) || !apps.length) return [];
+  const scored = apps.map((app) => {
+    const name = squashProjectName(app.name || app.slug);
+    const slug = squashProjectName(app.slug);
+    const d = Math.min(editDistance(wrote, name), editDistance(wrote, slug));
+    // A whole name inside theirs, or theirs inside it, is close.
+    const near = name.includes(wrote) || wrote.includes(name) || slug.includes(wrote) || wrote.includes(slug);
+    return { app, score: near ? Math.min(d, 1) : d };
+  }).filter((s) => s.score <= Math.max(3, Math.ceil(Math.max(wrote.length, 3) / 2)));
+  scored.sort((a, b) => a.score - b.score || String(a.app.name || a.app.slug).localeCompare(String(b.app.name || b.app.slug)));
+  return scored.slice(0, n).map((s) => ({ slug: String(s.app.slug), name: String(s.app.name || s.app.slug) }));
+}
+
+/**
+ * #6305: the rows of a many-project offer, in the order the projects were
+ * named. An exact name is a row ready to file; a name that is not exactly a
+ * project's asks "Did you mean ...?" with its closest ones on the same row;
+ * one they cannot file on is disabled. Two names for the same project are
+ * one row, the first. Never throws.
+ */
+async function resolveRows(pool, { items, user }) {
+  const rows = [];
+  const seen = new Set();
+  const wanted = (Array.isArray(items) ? items : []).slice(0, MAX_FILE_MANY_ROWS);
+  for (const item of wanted) {
+    const written = String(item?.named || item?.project || '').replace(/\s+/g, ' ').trim();
+    if (!written) continue;
+    const app = await findApp(pool, item?.project || written);
+    const guess = app ? guessedProject(item?.named || item?.project, app) : null;
+    const exact = !!app && !guess;
+    const key = exact ? `app:${app.slug}` : `name:${squashProjectName(written)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (exact) {
+      const may = await canFile(pool, app, user);
+      rows.push({
+        named: written, match: 'exact', slug: app.slug, name: app.name || app.slug,
+        choices: [], done: null, disabled: may ? null : 'not_member', ticked: may,
+      });
+      continue;
+    }
+    // Only projects this person can file on are offered as choices.
+    const choices = await projectsTheyCanFile(pool, { user, like: written });
+    rows.push({
+      named: written, match: app ? 'guess' : 'none', slug: null, name: written,
+      choices, done: null, disabled: null, ticked: false,
+    });
+  }
+  return rows;
+}
+
+/** Never throws: the projects this person can file on, closest to `like` first. */
+async function projectsTheyCanFile(pool, { user, like }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.slug, a.name FROM apps a
+        WHERE a.repo_url IS NOT NULL
+          AND EXISTS (SELECT 1 FROM community_members cm WHERE cm.community_id = a.community_id AND cm.user_id = $1)
+        ORDER BY LOWER(a.name), a.id LIMIT 40`,
+      [user.id],
+    );
+    return closestProjects(like, rows, 3);
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read the projects a many-project offer could name', { err: err.message });
+    return [];
+  }
+}
+
+const MAX_FILE_MANY_ROWS = 12;
+
+/**
+ * #6305: today's single-project offer, unchanged, and the fallback when a
+ * many-project offer resolves to one project. Sets ctx.offer and resolves
+ * the tool's answer.
+ */
+async function offerSingle(pool, { ctx, user, deps, args, title, details, extras }) {
+  const app = await findApp(pool, args.project);
+  if (!app) return { ok: false, error: 'No such project. Check my_projects.' };
+  ctx.appIds.add(Number(app.id));
+  if (!(await canFile(pool, app, user))) {
+    return { ok: false, error: `They are not a member of ${app.name || app.slug}, so they cannot file requests there. They can join it from its page.` };
+  }
+  const related = await draftRelated(pool, { app, list: args.related, deps });
+  if (!related.ok) return { ok: false, error: related.error };
+  const context = await draftContext(pool, { app, value: args.context });
+  if (!context.ok) return { ok: false, error: context.error };
+  const place = await draftPlace(pool, { ctx });
+  const allExtras = {
+    ...extras,
+    related: related.ok,
+    context: { ...context.ok, ...(place.quoted ? { quoted: place.quoted } : {}) },
+    // #6307: the draft's Where names its project, a place in the app.
+    project: app.name || app.slug,
+    chatHref: place.href,
+  };
+  // #4501: a name they wrote that is not exactly this project's is a
+  // guess, and a guess is confirmed on the card before anything files.
+  const guess = guessedProject(args.named, app);
+  ctx.offer = { app, title, details, extras: allExtras, ...(guess ? { guess } : {}) };
+  // A request already on its board that looks like this one is said,
+  // so their words can go on it instead (request-similarity.js).
+  const similar = await require('./request-similarity').openSimilar(app, title, { github: ctx.deps?.github });
+  return {
+    ok: true,
+    shown: guess
+      ? `The card asks "Did you mean ${app.name || app.slug}?" with Yes, file it, No, another app and Open ${app.name || app.slug}. Nothing is filed until they tap Yes. Never say it is the closest match and carry on.`
+      : 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.',
+    ...(similar.length ? {
+      similarOpen: similar,
+      similarNote: 'These open requests on the same project look like the same thing. Say so, show them as cards, and offer to add their words to one (comment_on_request) instead. The offer stays under your reply for them to decide. Also name any that overlap in related.',
+    } : {}),
+  };
+}
+
 // #4501: the buttons under a request filed on a project whose name was a
 // guess. Yes files it, as File it does; No, another app is said back on the
 // card, so the model asks which project; Open lets them look first.
@@ -4241,6 +4409,37 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
 
 async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps, extra = null }) {
   const dm = dmModule(deps);
+  // #6305: one request on several projects. It has no one project, no
+  // dm_actions row and nothing to settle: its card is the whole offer, and
+  // its File on all is decided by homeroom-bot-cards/file-many.js.
+  if (o.kind === 'file_many') {
+    const count = Array.isArray(o.rows) ? o.rows.length : 0;
+    const body = [
+      text || `Here's the request for all ${count}. I looked at each app first.`,
+      '',
+      `**New request on ${count} projects**: ${o.title}`,
+      ...(o.details ? ['', clip(o.details, 1200)] : []),
+      ...(o.extras && draftExtrasText(o.extras) ? ['', draftExtrasText(o.extras)] : []),
+    ].join('\n');
+    const sent = await dm.sendDm(pool, {
+      bot,
+      userId: user.id,
+      content: body,
+      idempotencyKey: `hrbot-mayor-${message.id}`,
+      replyToId: message.threadRootId || message.thread_root_id ? null : message.id,
+      ...(message.threadRootId || message.thread_root_id ? { threadRootId: message.threadRootId || message.thread_root_id } : {}),
+      metadata: {
+        ...(extra || {}),
+        ...(o.extras ? { draftExtras: o.extras } : {}),
+      },
+    });
+    if (sent?.messageId) {
+      await copyDraftPictures(pool, {
+        ids: o.extras?.attachmentIds, conversationId, messageId: sent.messageId, botId: bot.id,
+      });
+    }
+    return sent;
+  }
   const name = o.app.name || o.app.slug;
   // #11 (WP3): an offer to withdraw one of its proposals is decided the same
   // way, by a tap, and names the proposal (session_id) it is about. #4239:
@@ -6447,6 +6646,10 @@ module.exports = {
   closeOfferText,
   closeOfferMeta,
   guessedProject,
+  closestProjects,
+  resolveRows,
+  MAX_FILE_MANY_ROWS,
+  botKey,
   guessMeta,
   decideTyped,
   typedDecision,

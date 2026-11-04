@@ -6106,5 +6106,65 @@
   "ai.up.retryingPlan": {
     "text": "Homeroom bot is trying the plan again",
     "description": "The AI tab's main view: the tooltip of a one-line row in Waiting whose request is queued to be read again after Homeroom bot could not write its plan."
+  },
+  "botCards.fileMany.label_one": {
+    "text": "New request on {{count}} project",
+    "description": "Small label over the card Homeroom bot puts under its reply when one request is offered on one project of a resolved list."
+  },
+  "botCards.fileMany.label_other": {
+    "text": "New request on {{count}} projects",
+    "description": "Small label over the card Homeroom bot puts under its reply when the same request is offered on several projects at once. {{count}} is how many."
+  },
+  "botCards.fileMany.matches": {
+    "text": "Matches {{name}}",
+    "description": "Line on a row of that card under a project whose name the person wrote exactly. {{name}} is the project's name."
+  },
+  "botCards.fileMany.didYouMean": {
+    "text": "No project is called {{name}}. Did you mean …?",
+    "description": "Line on a row of that card whose written name does not match a project, with the closest projects as buttons under it. {{name}} is what they wrote."
+  },
+  "botCards.fileMany.noMatch": {
+    "text": "No project is called {{name}}.",
+    "description": "Line on a row of that card whose written name does not match a project and there is nothing close to offer. {{name}} is what they wrote."
+  },
+  "botCards.fileMany.alreadyDone": {
+    "text": "{{sentence}} Skipped unless you tick it.",
+    "description": "Line on a row of that card for an app that already does what the request asks, so it starts unticked. {{sentence}} is Homeroom bot's own sentence about the app."
+  },
+  "botCards.fileMany.notMember": {
+    "text": "You're not a member of {{name}}",
+    "description": "Line on a row of that card that cannot be filed on because the person is not a member of that project. {{name}} is the project's name."
+  },
+  "botCards.fileMany.fileOnAll": {
+    "text": "File on all",
+    "description": "The main button on that card: it files the request on every ticked project."
+  },
+  "botCards.fileMany.notNow": {
+    "text": "Not now",
+    "description": "The secondary button on that card: it puts the whole card away and files nothing."
+  },
+  "botCards.fileMany.counts": {
+    "text": "{{ticked}} ticked, {{skipped}} skipped",
+    "description": "Line beside that card's buttons, updating as rows are ticked. {{ticked}} and {{skipped}} are counts of projects."
+  },
+  "botCards.fileMany.filed": {
+    "text": "Filed as #{{number}}",
+    "description": "Link on a row of that card once its request is filed. {{number}} is the request's number."
+  },
+  "botCards.fileMany.filedAll": {
+    "text": "Filed {{count}} requests",
+    "description": "Line under that card once its requests are filed. {{count}} is how many were filed."
+  },
+  "botCards.fileMany.failed": {
+    "text": "Could not file this one",
+    "description": "Line on a row of that card whose request could not be filed."
+  },
+  "botCards.fileMany.busy": {
+    "text": "Could not file them just now",
+    "description": "Error shown on that card when filing failed for a reason other than one project."
+  },
+  "botCards.fileMany.tick": {
+    "text": "Tick {{name}}",
+    "description": "What a screen reader says for the tick on a row of that card. {{name}} is the project's name."
   }
 }

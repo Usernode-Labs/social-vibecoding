@@ -533,7 +533,7 @@ test('the chat draws an offer\'s buttons for the person it is for, and takes the
   assert.match(gc, /\/messages\/\$\{Number\(messageId\)\}\/bot-offer/);
   const tx = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(tx, /msg\.botOffer && msg\.botOffer\.forMe && msg\.botOffer\.status === 'open'/);
-  assert.match(tx, /controller\(\)\?\.decideBotOffer\?\.\(id, choice\)/);
+  assert.match(tx, /controller\(\)\?\.decideBotOffer\?\.\(id, choice, many \? picks : undefined\)/);
 });
 
 test('the voice\'s module and its tables say what they are for', () => {

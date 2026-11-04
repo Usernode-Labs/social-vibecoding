@@ -13,6 +13,7 @@ import { ChecksGreenCard } from './checks-green';
 import { ConfirmCard } from './confirm';
 import { GalleryCard } from './gallery';
 import { InvestigationCard } from './investigation';
+import { FileManyCard } from './file-many';
 
 export const CARD_COMPONENTS: Readonly<Record<string, ComponentType<BotCardProps>>> = Object.freeze({
   options: OptionsCard, // P2
@@ -25,4 +26,5 @@ export const CARD_COMPONENTS: Readonly<Record<string, ComponentType<BotCardProps
   confirm: ConfirmCard, // P7
   gallery: GalleryCard, // P8
   investigation: InvestigationCard, // P9
+  file_many: FileManyCard, // #6305
 });
