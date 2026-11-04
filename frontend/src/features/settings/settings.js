@@ -339,8 +339,10 @@
       // stateful pane; settings.js binds nothing inside it.
       { key: 'contact-privacy', label: 'settings:nav.part.contactPrivacy', group: 'settings:nav.group.account' },
       // #4938: the phones signed in with the Homeroom app, and Unlink for
-      // each. Also about who can use your account, so it sits with Privacy.
-      // A stateful pane; settings.js binds nothing inside it.
+      // each; #5974 adds the browsers signed in on the web, with Sign out,
+      // under the name Linked devices (the key stays `phones`). Also about
+      // who can use your account, so it sits with Privacy. A stateful pane;
+      // settings.js binds nothing inside it.
       { key: 'phones', label: 'settings:nav.part.phones', group: 'settings:nav.group.account' },
       { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 

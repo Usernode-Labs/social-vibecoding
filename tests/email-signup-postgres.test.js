@@ -50,7 +50,10 @@ const DDL = `
     token VARCHAR(64) PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     expires_at TIMESTAMPTZ NOT NULL,
-    native_session_credential_reference VARCHAR(47)
+    native_session_credential_reference VARCHAR(47),
+    -- #5974: what Settings › Linked devices names a browser row by, and when it was last used
+    user_agent_class TEXT,
+    last_seen_at TIMESTAMPTZ
   );
   CREATE TABLE mobile_otp_codes (
     id BIGSERIAL PRIMARY KEY,

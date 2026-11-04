@@ -58,7 +58,10 @@ const DDL = `
     token VARCHAR(64) PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     expires_at TIMESTAMPTZ NOT NULL,
-    native_session_credential_reference VARCHAR(47)
+    native_session_credential_reference VARCHAR(47),
+    -- #5974: what Settings › Linked devices names a browser row by, and when it was last used
+    user_agent_class TEXT,
+    last_seen_at TIMESTAMPTZ
   );
   CREATE TABLE oauth_signup_sessions (
     token_hash  VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),

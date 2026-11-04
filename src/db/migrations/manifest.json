@@ -120,6 +120,11 @@
       "id": "homeroom-bot-run-already-done",
       "sha256": "995da0193b6766f63412fc26716255470fd1b0976225e6dd9bbbff147201bd4e",
       "schemaSha256": "9710077860526a1a6641fc2d7f952f188382e4c869f2dbe9b55608b64e29eecf"
+    },
+    {
+      "id": "sessions-device-class",
+      "sha256": "069df414c37cdc3fa7241e20a7a712b91f355954efc9c3f263d058c220e1c509",
+      "schemaSha256": "ef73406dc8664ab5ffa31577b6c898f7b123291b80f01fe4cab0205097dd843d"
     }
   ]
 }
