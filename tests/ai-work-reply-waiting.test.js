@@ -42,3 +42,23 @@ test('#6228: another viewer\'s facts say Reading the reply as soon as it is stor
     ...facts, handedBack: false, run: { verdict: 'ready', held: false, capSuppressed: null, createdAt: '2026-11-03T15:00:00Z' },
   }).what, 'not_picked_up');
 });
+
+// #6245 (4 Nov 2026): what the bot waits on you for is timed from when it
+// began waiting, never from the change's or its page's last activity (a
+// view bumps that), so the row keeps its place in Needs you.
+test('#6245: a plan or a hand-back is timed from when it began waiting on you', () => {
+  const touched = { ...row, last_activity_at: '2026-11-03T16:59:00Z' };
+  for (const stage of ['plan', 'decide', 'build_stopped']) {
+    assert.deepEqual(standing(touched, 7, NOW, 99, { stage, since: null }, null), {
+      ...(stage === 'plan' ? { group: 'needs', what: 'plan' } : { group: 'needs', what: stage }),
+      at: '2026-11-03T15:00:00.000Z',
+    }, `${stage}: the request's own time, not the activity`);
+  }
+  // Its own waiting time wins where the bot knows it.
+  assert.equal(standing(touched, 7, NOW, 99, { stage: 'plan', since: '2026-11-03T16:30:00Z' }, null).at,
+    '2026-11-03T16:30:00.000Z');
+  // A stage that is not Needs you keeps the activity fallback, so In
+  // progress and Waiting order as they do today.
+  assert.deepEqual(standing(touched, 7, NOW, 99, { stage: 'reading', since: null }, null),
+    { group: 'next', what: 'reading', at: '2026-11-03T16:59:00.000Z' });
+});

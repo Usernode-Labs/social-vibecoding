@@ -203,6 +203,35 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
   return groups;
 }
 
+/**
+ * Pure (#6245): the order a list was drawn in, kept while the person is
+ * using it. Rows still present keep their drawn place; rows that arrived
+ * since follow in their incoming order; rows that left drop out at once.
+ * So a live refresh never slides a row out from under the pointer or the
+ * keyboard, and the list settles into its new order when they move away.
+ */
+export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly string[]): T[] {
+  const seen = new Set(drawn);
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  const kept = drawn.map((key) => byKey.get(key)).filter((row) => row !== undefined) as T[];
+  return [...kept, ...rows.filter((row) => !seen.has(row.key))];
+}
+
+/**
+ * Pure (#6245): a group's rows as it draws them. Folded, the row you are on
+ * is lifted to just below the first few, so where you are is never hidden.
+ * Opened, every row keeps its own place: pressing one past the fold no
+ * longer slides it up under the pointer.
+ */
+export function groupRows<T extends { lit?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
+  const litAt = open ? -1 : items.findIndex((row) => row.lit);
+  const drawn = litAt >= first
+    ? [...items.slice(0, first), items[litAt], ...items.slice(first).filter((row) => !row.lit)]
+    : items;
+  const shown = litAt >= first ? first + 1 : first;
+  return { items: drawn, shown, hidden: Math.max(0, drawn.length - shown) };
+}
+
 /** How many projects the filter shows as chips before its More (./lists.tsx). */
 export const RAIL_PROJECTS = 3;
 

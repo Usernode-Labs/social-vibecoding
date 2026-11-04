@@ -112,7 +112,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
        dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
-       COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) AS sort_at,
+       COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, req.updated_at, t.created_at) AS sort_at,
        -- 1 Nov 2026: their own private thread about its request holds the
        -- bot: it waits for their plan (rules/bot-loop.ts planHoldActiveSql).
        (t.number IS NOT NULL AND EXISTS (
@@ -122,7 +122,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        ROW_NUMBER() OVER (
          PARTITION BY COALESCE(ch.status = 'merged', FALSE)
          ORDER BY mine.own DESC,
-                  COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) DESC
+                  COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, req.updated_at, t.created_at) DESC
        ) AS place
   FROM threads t
   JOIN mine ON mine.thread_id = t.id
@@ -362,9 +362,14 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
     // #6158: a queued or held build also says its place in line.
     const place = facts && said.what === 'queued' ? facts.queuePlace
       : facts && said.what === 'held' ? facts.heldPlace : null;
+    // #6245: what the bot handed you is timed from when it began waiting on
+    // you, not from the last thing that touched the change or its page.
+    const at = iso(said.group === 'needs'
+      ? (bot.since || row.request_at || row.created_at)
+      : (bot.since || row.last_activity_at || row.request_at || row.created_at));
     return {
       ...said,
-      at: iso(bot.since || row.last_activity_at || row.request_at || row.created_at),
+      at,
       ...(said.what === 'held' ? { heldBy: heldBy(bot.capSuppressed) } : {}),
       ...(place ? { place } : {}),
     };
