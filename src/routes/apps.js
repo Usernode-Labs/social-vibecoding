@@ -4422,8 +4422,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           groups: described ? described.groups : [],
           creator,
           approvers: approverNames,
-          // #5816: whether a Yes from the creator or an admin is enough.
-          builder_yes: described ? !!described.builderYes : !!(gov.rules && gov.rules.builderYes),
+          // #5816: whether a Yes from the creator or an admin is enough. Said
+          // only when it is on, so a project that never turned it on answers
+          // exactly what it answered before this switch existed.
+          ...((described ? described.builderYes : gov.rules && gov.rules.builderYes) ? { builder_yes: true } : {}),
         },
         // #4666: who can see it, as the two columns say, for the sheet.
         visibility: { build: app.collab_visibility, view: app.view_visibility },
