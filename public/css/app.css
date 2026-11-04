@@ -20537,10 +20537,15 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    gap). A split figure lists Homeroom over Other projects, each name with
    its number, the number falling under its name where the cell is too
    narrow for both. Colour only for a figure off its target: the attention
-   ink, with its glyph, on the line or on the side that is off. With under
-   560px of room the figures sit two by two, and the bot's grid puts each
-   row's name across its row. Beside a thread it goes where the topic's
-   line goes. */
+   ink, with its glyph, on the value and its line, or on the side that is
+   off. The tiles wrap (#6273): as many at least 170px wide as fit a row,
+   so twelve figures are three rows of readable tiles and never one row of
+   slivers; the card's own fill is the plane colour, and each tile draws
+   the hairline above and before it, so the room a short last row leaves is
+   plain. A value keeps its words whole: it wraps at a space or not at all,
+   never "7 tim / es". With under 560px of room the figures sit two by two,
+   and the bot's grid puts each row's name across its row. Beside a thread
+   it goes where the topic's line goes. */
 .dev-ws-figs { flex: none; margin: 0 0 10px; container-type: inline-size; }
 .dev-ws-figs-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -20551,7 +20556,11 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   border: 1px solid var(--app-sheet-line); border-radius: 20px;
   background: var(--app-sheet-line);
 }
-.dev-ws-figs-tiles { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.dev-ws-figs-tiles {
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0;
+  background: var(--dc-sheet-solid);
+}
+.dev-ws-figs-tiles > .dev-ws-fig { box-shadow: -1px -1px 0 0 var(--app-sheet-line); }
 .dev-ws-fig {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0;
   padding: 12px 16px 14px;
@@ -20570,9 +20579,11 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-fig-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dev-ws-fig-value {
   font-size: 22px; line-height: 28px; font-weight: 650; letter-spacing: -0.01em;
-  color: var(--text-primary); overflow-wrap: anywhere;
+  color: var(--text-primary); white-space: normal; overflow-wrap: normal; word-break: keep-all;
 }
 .dev-ws-fig-value-muted { font-size: 15px; font-weight: 600; letter-spacing: 0; color: var(--text-muted); }
+.dev-ws-fig-value-warn { color: var(--state-attention); }
+.dev-ws-fig-value-warn > .dev-ws-fig-warn { width: 16px; height: 16px; margin: 0 4px 0 0; vertical-align: -1px; }
 .dev-ws-fig-sub { display: inline-flex; align-items: flex-start; gap: 4px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
 .dev-ws-fig-sub-warn { font-weight: 600; color: var(--state-attention); }
 .dev-ws-fig-warn { flex: none; width: 13px; height: 13px; margin-top: 1px; }
@@ -20630,7 +20641,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .gc-channel-empty-about,
 .gc-channel-empty-invite { margin: 0; font-size: 13px; line-height: 18px; }
 @container (max-width: 560px) {
-  .dev-ws-figs-tiles { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dev-ws-figs-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dev-ws-figs-tiles > .dev-ws-fig:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .dev-ws-fig { padding: 10px 12px 12px; }
   .dev-ws-fig-label { font-size: 12px; line-height: 16px; }
