@@ -136,16 +136,36 @@ function realQuestion(text) {
 }
 
 /**
+ * Pure (#6257): whether a first drawing may ask what it is for before it
+ * draws, instead of starting from a made-up screen. True only when the thread
+ * holds no version (`current` null), the person sent no picture in it, none
+ * were added to the design, it is about no request or change (`about` null),
+ * and the bot has not spoken in it yet (`history` holds no assistant row):
+ * so it asks at most once, from nothing at all.
+ */
+function askFirst({ current = null, pictures = [], added = [], about = null, history = [] } = {}) {
+  if (current) return false;
+  if (Array.isArray(pictures) && pictures.length) return false;
+  if (Array.isArray(added) && added.length) return false;
+  if (about) return false;
+  return !(Array.isArray(history) && history.some((m) => m?.role === 'assistant'));
+}
+
+/**
  * Pure: why words that end a design turn are not its end yet, or null.
  * `changed` the turn made a version, `offered` it offered a card,
  * `handoff` Main Chat handed it a screen to draw, `drawnBefore` the thread
  * holds a version already. Filler (isFiller) is 'filler' whatever was asked.
+ * `mayAsk` (#6257): this first drawing may ask what the screen is for, so a
+ * real question back is its answer, not a turn that ended before drawing.
  */
-function notDrawnYet(text, { changed = false, offered = false, handoff = false, drawnBefore = false, mayor } = {}) {
+function notDrawnYet(text, { changed = false, offered = false, handoff = false, drawnBefore = false, mayAsk = false, mayor } = {}) {
   const said = String(text || '').trim();
   if (changed || offered) return null;
   // #6144: no answer at all, whatever was asked.
   if (isFiller(said)) return 'filler';
+  // #6257: asked what it is for, with nothing to draw from yet.
+  if (mayAsk && realQuestion(said)) return null;
   // Said to be drawn or drawing first: it is told to draw, not to go on.
   if (mayor.DRAWING_CLAIM.test(said) || DESIGN_DONE.test(said)) return 'claimed';
   if (mayor.announcesOnly(said)) return 'preamble';
@@ -758,7 +778,7 @@ function sheetWords(surface) {
  */
 function designPrompt({
   username, design = null, surface = null, app = null, version = 0, html = '', brief = null, pictures = [], entry = null, now = new Date(),
-  filed = null,
+  filed = null, askFirst = false,
 }) {
   // B22 (overnight audit, 1 Nov 2026): a drawn first screen dated its week
   // "Mon 9 to Sun 15 June · week 24" in November. Told nothing of today, the
@@ -828,6 +848,14 @@ function designPrompt({
       '- Asked whether it will be built, or when: say Homeroom bot builds it from the plan and where it stands now.',
       '  Never say it cannot be built or that someone else has to start it, unless the line above says a person must decide.');
   }
+  // #6257: with nothing to go on yet, ask what the screen is for before
+  // drawing it, rather than starting from a placeholder.
+  if (askFirst && !design) {
+    lines.push('', 'FIRST SCREEN: Before you draw, check that their words, Main Chat\'s brief or the project\'s own screen say what the'
+      + ' app is for and what this screen should do. If they do not, draw nothing: ask one short question about both, in a'
+      + ' sentence, and reply. Never start from a placeholder or a made-up app (such as a generic to-do list). If they do,'
+      + ' draw it now.');
+  }
   if (brief) lines.push('', `WHAT MAIN CHAT ASKED YOU TO DRAW\n${clip(brief, 600)}`);
   // P8: the pictures they added to the design (a gallery's Add to the design).
   const added = (Array.isArray(pictures) ? pictures : []).filter((p) => p && /^[0-9a-f]{32}$/.test(String(p.id || '')));
@@ -847,6 +875,7 @@ function designPrompt({
   }
   lines.push('');
   if (version && html) lines.push(`THE CURRENT VERSION (version ${version}), its whole HTML:`, html);
+  else if (askFirst) lines.push('THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says.');
   else lines.push('THERE IS NO SCREEN YET: draw it with write_screen.');
   return lines.join('\n');
 }
@@ -1145,6 +1174,8 @@ async function answer(pool, config, {
   let entry;
   const notes = [];
   let replyText = '';
+  // #6257: whether this first drawing may ask what the screen is for.
+  let mayAsk = false;
   // #6151: where the request a filed design became stands (filedOf), and
   // whether Homeroom bot builds it, so words saying it will not go back.
   let filed = null;
@@ -1193,6 +1224,9 @@ async function answer(pool, config, {
     const added = design?.threadId
       ? await (deps.botPictures || require('./bot-pictures')).designPictures(pool, design.threadId).catch(() => [])
       : [];
+    // #6257: with nothing to go on yet, this first drawing may ask what the
+    // screen is for instead of drawing a made-up one.
+    mayAsk = askFirst({ current, pictures, added, about, history });
     // #6151: filed as a request, it is read where that request stands.
     filed = await filedOf(pool, { design, project, settings, mayor, deps });
     builds = filedBuilds(filed);
@@ -1205,7 +1239,7 @@ async function answer(pool, config, {
         content: designPrompt({
           username: user.username, design, surface, app: project, brief,
           version: current?.version || 0, html: current ? collapseSheets(current.html) : '', pictures: added,
-          entry: front ? { path: entry.path, body: front } : null, filed,
+          entry: front ? { path: entry.path, body: front } : null, filed, askFirst: mayAsk,
         }),
       },
       ...(about ? [{ role: 'system', content: about }] : []),
@@ -1236,7 +1270,7 @@ async function answer(pool, config, {
       }
       const changedNow = !!html && html !== (current?.html || '');
       // A card (a comparison, pictures) is an answer in itself, as an offer is.
-      const why = notDrawnYet(said, { changed: changedNow, offered: !!offered || !!card, handoff, drawnBefore: !!current, mayor });
+      const why = notDrawnYet(said, { changed: changedNow, offered: !!offered || !!card, handoff, drawnBefore: !!current, mayAsk, mayor });
       if (!why) return null;
       nudges += 1;
       t.failures.push(`d${rounds}:${why}`);
@@ -1254,7 +1288,7 @@ async function answer(pool, config, {
       // rounds ran out ended on "placeholder". #6142: a first drawing with
       // nothing shown by round DRAW_BY_ROUND draws in it (write_screen),
       // leaving the rounds after it to grow the screen; the last still replies.
-      const drawNow = firstDrawing && !last && rounds === DRAW_BY_ROUND && !shownNow();
+      const drawNow = firstDrawing && !mayAsk && !last && rounds === DRAW_BY_ROUND && !shownNow();
       if (drawNow) t.failures.push(`d${rounds}:draw_forced`);
       const res = await mayor.askModel(t, {
         messages, tools: reading ? TOOLS : ACT_TOOLS, where: `d${rounds}`, maxOutputTokens: DESIGN_OUTPUT_TOKENS,
@@ -1415,7 +1449,7 @@ async function answer(pool, config, {
   const shown = changed || (!error && (!!offered || !!card));
   const forced = rounds === MAX_ROUNDS && !!replyText;
   const unkept = shown || (error && !replyText) ? null
-    : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayor }) || (forced && !realQuestion(replyText) ? 'forced' : null);
+    : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayAsk, mayor }) || (forced && !realQuestion(replyText) ? 'forced' : null);
   if (unkept) t.failures.push(`end:${unkept}`);
   // #6151: still saying a design Homeroom bot builds will not be built, once
   // told: it says that Homeroom bot builds it instead, recorded as `end:not_built`.
@@ -1557,6 +1591,7 @@ module.exports = {
   fillSheets,
   hasEmptySheet,
   screenArgs,
+  askFirst,
   notDrawnYet,
   isFiller,
   fillerNote,

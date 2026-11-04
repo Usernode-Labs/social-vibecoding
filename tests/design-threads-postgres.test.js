@@ -337,7 +337,9 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.equal(seen[0][0].role, 'system');
     assert.match(seen[1][0].content, /This thread has no screen yet\. It is for a screen of the app Seed swap\./);
     assert.match(seen[1][0].content, /WHAT MAIN CHAT ASKED YOU TO DRAW\nThe seeds they can swap, as cards/);
-    assert.match(seen[1][0].content, /THERE IS NO SCREEN YET: draw it with write_screen\.$/);
+    // #6257: the first drawing may ask first, so its last line says so; the
+    // clear brief here still draws in the turn (the next scripted call).
+    assert.match(seen[1][0].content, /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
     const results = seen[2].filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content));
     assert.deepEqual(results[0].files.map((f) => f.path), ['public/index.html', 'public/styles.css', 'public/app.js'], 'secret paths are never listed');
     assert.match(results[1].text, /1: \.seeds \{ color: #166534; \}/);
@@ -413,6 +415,64 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.deepEqual([drawn.kind, drawn.surface, drawn.app, drawn.width, drawn.latest], ['ask', 'new', null, 1280, 1], 'a new project\'s screen, at the desktop size');
     const v1 = await designs.versionOf(pool, { userId: ada.id, rootId: line.id });
     assert.match(v1.html, /<link rel="stylesheet" href="\/usernode-native\/v1\/native\.css">/, 'drawn with the native kit');
+  });
+
+  // #6257: "Can we open a thread to work on a design change together?" drew a
+  // generic to-do list before the person said anything. With nothing to go
+  // on, the designer asks what the app is for and what the screen should do,
+  // and the thread holds no version until they answer.
+  await t.test('#6257: a thin first ask asks what the app is for and draws nothing', async () => {
+    const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
+    const asked = (await conversations.sendMessage(pool, ada, opened.conversationId, {
+      content: 'Can we open a thread to work on a design change together?',
+    })).message;
+    const seen = [];
+    const sent = await mayor.runDmTurn(pool, config, {
+      bot, user: ada, settings: settingsOn, conversationId: opened.conversationId, message: asked,
+      deps: {
+        ...drawDeps, apiKey: 'sk-test',
+        chat: scripted([
+          [['draw_screen', { what: 'A design to work on together', title: 'Design' }]],
+          [['reply', { text: 'What is the app for, and what should this screen do?' }]],
+        ], seen),
+      },
+    });
+    const { rows: [answer] } = await pool.query('SELECT content, thread_root_id, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    const rootId = answer.thread_root_id;
+    assert.ok(rootId, 'the question is in the new thread');
+    assert.equal(answer.content, 'What is the app for, and what should this screen do?', 'the question, with no version line');
+    assert.equal(answer.metadata?.homeroomBot?.designVersion, undefined, 'no version under it');
+    assert.match(seen[1][0].content, /FIRST SCREEN: Before you draw/, 'the designer was told to ask first');
+    assert.equal(seen.length, 2, 'and no forced write_screen came after the question');
+    assert.equal(await designs.designFor(pool, { userId: ada.id, rootId }), null, 'no design row, no version');
+    const { rows: [{ n }] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM design_versions dv JOIN private_threads pt ON pt.id = dv.private_thread_id
+        WHERE pt.root_message_id = $1`, [rootId]);
+    assert.equal(n, 0);
+
+    // They answer: the next turn draws it, with no question first.
+    const reply = (await conversations.sendMessage(pool, ada, opened.conversationId, {
+      content: 'A seed swap app, listing the seeds I can swap with a Swap button on each.',
+      thread_root_id: rootId,
+    })).message;
+    const seen2 = [];
+    const drawn = await mayor.runDmTurn(pool, config, {
+      bot, user: ada, settings: settingsOn, conversationId: opened.conversationId, message: reply,
+      deps: {
+        ...drawDeps, apiKey: 'sk-test', threadRootId: rootId,
+        threadDraft: { kind: 'ask', changeKind: 'design' },
+        chat: scripted([
+          [['draw_screen', { what: 'A seed swap app, listing the seeds I can swap with a Swap button on each', title: 'Swap list' }]],
+          [['write_screen', { title: 'Swap list', size: 'phone', html: SCREEN, note: 'The swap list' }]],
+          [['reply', { text: 'Here is a first go.' }]],
+        ], seen2),
+      },
+    });
+    assert.doesNotMatch(seen2[1][0].content, /FIRST SCREEN/, 'it asks once, then draws from the answer');
+    const held = await designs.designFor(pool, { userId: ada.id, rootId });
+    assert.equal(held.latest, 1, 'the thread now holds version 1');
+    assert.equal((await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [drawn.messageId])).rows[0].content,
+      'Version 1: The swap list.\n\nHere is a first go.');
   });
 
   await t.test('a thread off their own message gets its row with its first version; a picture is described for a text-only model', async () => {
