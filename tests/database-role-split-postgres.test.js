@@ -217,6 +217,36 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
       await ensureRuntimeGrants(c, env);
       await takeWebWorkflowWrites(c, env);
       await c.query('COMMIT');
+      const reconcile = async () => {
+        const statements = [];
+        const observed = { query: (sql, values) => {
+          statements.push(sql); return c.query(sql, values);
+        } };
+        await c.query('BEGIN');
+        try {
+          await ensureRuntimeGrants(observed, env);
+          await takeWebWorkflowWrites(observed, env);
+          await c.query('COMMIT');
+        } catch (err) { await c.query('ROLLBACK'); throw err; }
+        return statements.filter(sql => /^\s*(GRANT|REVOKE|ALTER)\b/.test(sql));
+      };
+      assert.deepEqual(await reconcile(), [], 'unchanged runtime permissions execute no DDL');
+      await c.query(`REVOKE SELECT ON public.apps FROM ${access.identifier(roles.web)};
+        GRANT UPDATE ON public.wf_events TO ${access.identifier(roles.web)};
+        GRANT DELETE ON public.schema_migrations TO ${access.identifier(roles.conductor)};
+        GRANT UPDATE ON public.apps TO ${access.identifier(roles.provisioner)};
+        GRANT CREATE ON SCHEMA public TO ${access.identifier(roles.web)};
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT UPDATE ON TABLES TO ${access.identifier(roles.provisioner)};
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM ${access.identifier(roles.provisioner)}`);
+      assert.ok((await reconcile()).length, 'a missing grant, default grant and excess writes cause repair');
+      const { rows: [fixed] } = await c.query(`SELECT
+        has_table_privilege($1, 'public.apps', 'SELECT') AS reads,
+        has_table_privilege($1, 'public.wf_events', 'UPDATE') AS decides,
+        has_table_privilege($2, 'public.schema_migrations', 'DELETE') AS edits_receipts,
+        has_table_privilege($3, 'public.apps', 'UPDATE') AS reader_writes,
+        has_schema_privilege($1, 'public', 'CREATE') AS creates`, [roles.web, roles.conductor, roles.provisioner]);
+      assert.deepEqual(fixed, { reads: true, decides: false, edits_receipts: false, reader_writes: false, creates: false });
+      assert.deepEqual(await reconcile(), [], 'the repaired policy returns to the no-DDL path');
       // A web process of a build that still writes the kernel's tables keeps
       // them: the grants refuse in their own transaction, changing nothing.
       await c.query("INSERT INTO public.platform_processes (id, role, heartbeat_at) VALUES ('role-probe-earlier', 'web', now())");
@@ -340,6 +370,48 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     const consoleRole = require('../src/services/topochain/db-console-role');
     assert.equal(debug.isAvailable(), true);
     assert.equal(consoleRole.isAvailable(), true);
+    const ddl = [];
+    const originalQuery = Client.prototype.query;
+    Client.prototype.query = function (...args) {
+      const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text;
+      if (/^\s*(GRANT|REVOKE|ALTER|DO)\b/.test(sql || '')) ddl.push(sql);
+      return originalQuery.apply(this, args);
+    };
+    try {
+      await require('../src/services/db-roles').ensureRoles(config);
+      assert.deepEqual(ddl, [], 'unchanged readonly capabilities execute no role or permission DDL');
+      for (const drift of [
+        'REVOKE SELECT ON public.apps FROM topochain_console_ro',
+        'GRANT UPDATE (status) ON public.apps TO topochain_console_ro',
+        'GRANT SELECT (password) ON public.users TO topochain_console_ro',
+        'ALTER ROLE topochain_console_ro SET default_transaction_read_only = off',
+        'GRANT USAGE ON SCHEMA credentials TO topochain_console_ro',
+        `ALTER DEFAULT PRIVILEGES FOR ROLE ${access.identifier(roles.migrator)} IN SCHEMA public GRANT SELECT ON TABLES TO topochain_console_ro`,
+      ]) {
+        await use(at(PRIMARY, platform), c => c.query(drift));
+        ddl.length = 0;
+        await require('../src/services/db-roles').ensureRoles(config);
+        assert.equal(consoleRole.isAvailable(), true, `repair succeeds: ${drift}`);
+        assert.equal(debug.isAvailable(), true);
+        assert.ok(ddl.length, 'incorrect permissions trigger repair');
+        ddl.length = 0;
+        await require('../src/services/db-roles').ensureRoles(config);
+        assert.deepEqual(ddl, [], 'the repaired policy returns to the no-DDL path');
+      }
+      await mainPool.query('CREATE TABLE public.fresh_permission_probe(id int)');
+      await require('../src/services/db-roles').ensureRoles(config);
+      assert.equal(consoleRole.isAvailable(), true, 'new schema objects receive their declared permissions');
+      await use(at(PRIMARY, platform, roles.web, passwords.web), async c => {
+        await c.query('BEGIN READ ONLY');
+        await c.query('SET LOCAL ROLE topochain_console_ro');
+        await c.query('SELECT * FROM public.fresh_permission_probe');
+        await c.query('ROLLBACK');
+      });
+      await mainPool.query('DROP TABLE public.fresh_permission_probe');
+      await use(at(PRIMARY, platform), c => c.query('DROP OWNED BY topochain_console_ro; DROP ROLE topochain_console_ro'));
+      await require('../src/services/db-roles').ensureRoles(config);
+      assert.equal(consoleRole.isAvailable(), true, 'a missing console role is recreated with the current policy');
+    } finally { Client.prototype.query = originalQuery; }
     await debug.closePool();
     await use(at(PRIMARY, platform, roles.web, passwords.web), async c => {
       await c.query('BEGIN READ ONLY');
@@ -354,6 +426,8 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
   await t.test('the provisioner creates and drops a production app database without the platform owner', async () => {
     const target = source + '_new'; dbs.add(target);
     const manager = require('../src/services/db-manager');
+    assert.deepEqual(await manager.existingRoles([sourceOwner, source + '_absent_owner']), new Set([sourceOwner]),
+      'the real bulk catalog lookup distinguishes existing and missing roles');
     const result = await manager.createDatabase(target);
     await use(manager.connectionUrl(target, result.password), c => c.query('CREATE TABLE public.created_by_app(id int)'));
     await manager.dropDatabase(target, { strict: true, server: manager.PRIMARY_SERVER });

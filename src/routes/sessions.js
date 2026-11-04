@@ -3615,6 +3615,32 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // hosted connector's submit_platform_build still takes ownership of a
   // build this way before proposing it, so an external connector token (not
   // a delegated grant) is the one caller left.
+  // #6284: a person lets the Homeroom bot try once more at a change it
+  // stopped fixing on its own. The requester or an admin may; one grant buys
+  // exactly one more round.
+  router.post('/api/apps/:slug/changes/:id/let-it-try-again', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id) return res.status(404).json({ error: 'Change not found' });
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1 AND a.slug = $2`,
+        [id, req.params.slug],
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Change not found' });
+      const out = await require('../services/homeroom-bot-retry-grants')
+        .grant(pool, { sessionId: id, user: req.user });
+      if (!out.ok) {
+        if (out.why === 'not_allowed') return res.status(403).json({ error: 'not_allowed' });
+        return res.status(409).json({ error: out.why });
+      }
+      return res.json({ granted: true });
+    } catch (err) {
+      log.error('sessions', 'Could not let the bot try again', { message: err.message });
+      return res.status(500).json({ error: 'Could not let it try again' });
+    }
+  });
+
   router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     if (!req.connectorClientId || req.mcpDelegation) {
       return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
@@ -3968,7 +3994,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // change page's Testing card (services/homeroom-bot-progress.js
       // changeBotFix); null for any change of a person's.
       if (req.path.endsWith('/details')) {
-        detail.bot_fix = await require('../services/homeroom-bot-progress').changeBotFix(pool, session.id).catch(() => null);
+        detail.bot_fix = await require('../services/homeroom-bot-progress')
+          .changeBotFix(pool, session.id, { viewer: req.user }).catch(() => null);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
@@ -4007,8 +4034,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       const session = rows[0];
       if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      // #6288: what main is already failing, so the sentence does not blame
+      // this change for a test that fails on main through no fault of its
+      // own. The same verdict the change page's Testing card reads.
+      const main = await require('../services/main-watch').mergePause(pool, session.app_id);
       const explanation = await require('../services/checks-explanation')
-        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale) });
+        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale), main });
       return res.set('Cache-Control', 'no-store').json({ explanation, runAt: session.checks_checked_at });
     } catch (err) {
       log.error('sessions', 'Failed to explain failing checks', { message: err.message });

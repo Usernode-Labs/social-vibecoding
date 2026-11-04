@@ -629,6 +629,12 @@ export interface ChecksExplainView {
   /** The run: its checks_checked_at. */
   at: string;
   fallback: string | null;
+  /**
+   * #6288: the Testing card's lead when main is already failing these tests,
+   * so the Checks step says whose they are too (it is drawn above the
+   * failure's own words). Null when main is not failing them.
+   */
+  mainLead?: string | null;
   /** The page the first failing check opened on the preview, when it can be reopened. */
   page?: { path: string; stagingUrl: string } | null;
 }
@@ -666,6 +672,12 @@ export interface ChangeGateView {
   label: string;
   /** The one line under the card, as its sentences. */
   note: string[];
+  /**
+   * #6282: the card asks for no vote while an update to the change is on its
+   * way (AppView._changeVotesView): a yes cast now is cleared when it lands.
+   * Votes only; the card keeps its tally and its note.
+   */
+  hold?: boolean;
   /** Why this status is shown, disclosed beside the note when available. */
   noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */
@@ -674,6 +686,12 @@ export interface ChangeGateView {
   details?: boolean;
   /** Testing only, when its checks failed: what went wrong, in plain words. */
   explain?: ChecksExplainView | null;
+  /**
+   * #6288: while main is already failing this change's tests, the request
+   * main watch filed to fix main. The one thing to read instead of asking
+   * the change's author to fix a failure that is not theirs.
+   */
+  mainFailure?: { href: string; label: string; mixed: boolean } | null;
   /** Testing only, for the change's author: Fix it. */
   fix?: FixChecksView | null;
   /** Testing only, for everybody else: who has to fix it. */
@@ -684,7 +702,7 @@ export interface ChangeGateView {
    * changeBotFix), carried on the card as `data-change-bot-fix`. The words
    * are in `authorNote`.
    */
-  botFix?: 'fixing' | 'queued' | 'handed_off' | null;
+  botFix?: 'fixing' | 'queued' | 'handed_off' | 'stopped' | null;
   /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps

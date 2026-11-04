@@ -87,6 +87,8 @@ test('the ladder: as before off Homeroom, a fix to find or file, a wait while it
     { do: 'person', why: 'fix_failed' });
   assert.deepEqual(flaky.nextStep({ wait: { stage: 'rechecking', started_at: started }, flakes: [{ state: 'merged' }], tests: [t1], now }),
     { do: 'person', why: 'still_fails' }, 'its fix is in and it still fails');
+  assert.deepEqual(flaky.nextStep({ wait: { stage: 'rechecking', started_at: started }, flakes: [{ state: 'merged' }], tests: [t1], cutOff: true, now }),
+    { do: 'fix', tests: [t1] }, 'a check the runner cut off goes back for a fix, not to a person');
   assert.deepEqual(flaky.nextStep({ wait: { stage: 'fixing', started_at: '2026-10-28T11:00:00Z' }, flakes: [{ state: 'building' }], tests: [t1], now }),
     { do: 'person', why: 'too_long' }, `after ${flaky.WAIT_DAYS} days`);
   for (const why of ['no_test', 'too_many', 'still_fails', 'fix_failed', 'fix_closed', 'fix_expired', 'too_long', 'not_live', 'no_board']) {

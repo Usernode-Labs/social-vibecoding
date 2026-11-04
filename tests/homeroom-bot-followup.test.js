@@ -222,6 +222,9 @@ function harness({
         return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
+      // #6284: the reply path counts updates people asked for, apart from
+      // the bot's own rounds.
+      if (/COUNT\(\*\) FILTER \(WHERE NOT asked\)/.test(s)) return { rows: [{ own: 0, asked: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
       // voice.asksWaiting's: only that one (takeAsks's second UPDATE has
       // ORDER BY id LIMIT 10, not LIMIT 1).
@@ -818,9 +821,9 @@ test('a Codex follow-up whose agent failed fails exactly as it did', async (t) =
   assert.equal(insertOf(h).params[18], 'revise: its change could not be pushed', 'the message it always had');
 });
 
-test('after MAX_REVISIONS the turn runs read-only, and can only hand over', async (t) => {
+test('after MAX_ASKED_REVISIONS the turn runs read-only, and can only hand over', async (t) => {
   const h = harness({
-    revisions: followup.MAX_REVISIONS,
+    revisions: followup.MAX_ASKED_REVISIONS,
     comments: [{ author: 'evan', body: 'One more tweak', createdAt: '2026-09-26T11:30:00Z' }],
     result: { lastResultText: '```json\n{"action":"person","reply":"They want another change; a person should take this over."}\n```', pushOk: false, sha: OLD_HEAD },
   });
@@ -832,17 +835,17 @@ test('after MAX_REVISIONS the turn runs read-only, and can only hand over', asyn
   assert.equal(followup.MAX_REVISIONS, 3);
 });
 
-test('a "revise" after MAX_REVISIONS changes nothing, and says a reply would not either', async (t) => {
+test('a "revise" after MAX_ASKED_REVISIONS changes nothing, and says a reply would not either', async (t) => {
   const h = harness({
-    revisions: followup.MAX_REVISIONS,
+    revisions: followup.MAX_ASKED_REVISIONS,
     comments: [{ author: 'evan', body: 'One more tweak', createdAt: '2026-09-26T11:30:00Z' }],
     result: { lastResultText: '```json\n{"action":"revise","reply":"Done."}\n```', pushOk: false, sha: OLD_HEAD },
   });
   const out = await run(t, h);
   assert.equal(out.verdict, 'failed');
   assert.equal(h.calls.posts[0].kind, 'followup_failed');
-  assert.equal(h.calls.posts[0].text, 'Homeroom bot couldn\'t update this change: it has already updated it as many times as it may '
-    + 'on its own, so a person needs to make this one. The change is as it was.');
+  assert.equal(h.calls.posts[0].text, `Homeroom bot couldn't update this change: it has already made ${followup.MAX_ASKED_REVISIONS} updates people `
+    + 'asked for on it, as many as it may. A person can make the next one. The change is as it was.');
   assert.doesNotMatch(h.calls.posts[0].text, /try again/, 'a reply would not get it updated');
   assert.equal(h.calls.posts[0].dm.canRevise, false);
 });

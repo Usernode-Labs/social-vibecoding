@@ -832,6 +832,33 @@ test('a refused promotion is reported with the route\'s own words, and the built
     'left paused, so a person can open the session and propose it');
 });
 
+// #6267: GitHub refused one upload while it was having problems, and a
+// finished build was thrown away (run 4530). A temporary refusal keeps the
+// session and its saved commit and waits to push; only a permanent one fails.
+test('a temporary push refusal keeps the build and waits to push it', async () => {
+  const h = buildHarness({ result: { pushOk: false, ahead: 1, sha: 'b'.repeat(40),
+    pushFailed: 'push_failed', pushFailure: { ok: false, code: 'push_failed', permanent: false } } });
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
+  assert.equal(out.ok, false);
+  assert.equal(out.waitingToPush, true);
+  assert.equal(out.sessionId, 5001);
+  assert.equal(out.branchName, 'homeroom_bot/s5001');
+  assert.equal(out.sha, 'b'.repeat(40));
+  assert.equal(out.error, 'waiting to push: couldn\'t push the build\'s commit (push_failed, temporary)');
+  assert.deepEqual(h.calls.promoted, [], 'nothing is proposed until it lands');
+  assert.deepEqual(h.calls.closed, [], 'its worker and the commit in it are kept');
+});
+
+test('a permanent push refusal is a failed build, as it was', async () => {
+  const h = buildHarness({ result: { pushOk: false, ahead: 1, sha: 'b'.repeat(40),
+    pushFailed: 'non_fast_forward', pushFailure: { ok: false, code: 'non_fast_forward', permanent: true } } });
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
+  assert.equal(out.ok, false);
+  assert.equal(out.waitingToPush, undefined);
+  assert.match(out.error, /couldn't push the build's commit \(non_fast_forward, permanent\)/);
+  assert.deepEqual(h.calls.closed, [{ sessionId: 5001, reason: 'bot-failed' }]);
+});
+
 test('a build is held to the same wall clock as a triage turn', async (t) => {
   const h = buildHarness({ hang: true });
   t.mock.timers.enable({ apis: ['setTimeout'] });

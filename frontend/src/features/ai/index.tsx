@@ -70,7 +70,7 @@ import type { ReactNode } from 'react';
 
 import { LockIcon, MicrophoneIcon } from '@/components/ui/icons';
 
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
 import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
@@ -95,8 +95,8 @@ import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import { closeDetail, detailLayout, openDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
-  heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
-  type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type WorkRow,
+  freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
+  type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
@@ -230,7 +230,6 @@ export function aboutRoute(route: string | null): AboutItem | null {
 
 export function AiScreen(): ReactNode {
   const t = useMessages('messages');
-  const say = (p: Phrase) => t(p.id, p.values);
   const screenRef = useRef<HTMLElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'ai-screen', false);
@@ -426,12 +425,34 @@ export function AiScreen(): ReactNode {
   // #6159: a thread marked done from its row's ⋯ leaves at once; the next
   // read of the lists confirms it.
   const [doneRoots, setDoneRoots] = useState<ReadonlySet<number>>(() => new Set());
-  const allRows = useMemo(() => needsYou(needs, work), [needs, work]);
+  // #6262: opening a thread clears its dot at once, before the next read of
+  // the lists says so. The server keeps the cursor (POST threads/read), so
+  // the next read agrees.
+  const [seenThreads, setSeenThreads] = useState<ReadonlySet<number>>(() => new Set());
+  const markThreadRead = (threadId: number | null | undefined, app: AiApp | null): void => {
+    if (!threadId) return;
+    setSeenThreads((had) => (had.has(threadId) ? had : new Set([...had, threadId])));
+    if (!app?.slug || typeof window === 'undefined') return;
+    void fetch(`/api/apps/${encodeURIComponent(app.slug)}/threads/read${demoQuery()}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ thread_id: threadId }),
+    }).then((res) => (res.ok ? res.text() : null)).catch(() => { /* the next open reads it again */ });
+  };
+  const cleared = <T extends { threadId?: number | null; unread?: number }>(row: T): T => (
+    row.threadId && seenThreads.has(row.threadId) ? { ...row, unread: 0 } : row
+  );
+  const allRows = useMemo(
+    () => needsYou(needs, work).map(cleared),
+    [needs, work, seenThreads], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const rows = useMemo(() => allRows.filter((row) => !row.rootId || !doneRoots.has(row.rootId)), [allRows, doneRoots]);
-  const progress = useMemo(() => inProgress(needs, work), [needs, work]);
-  const waiting = useMemo(() => upNext(needs, work), [needs, work]);
-  const live: AiThread[] = useMemo(() => liveThisWeek(work), [work]);
+  const progress = useMemo(() => inProgress(needs, work).map(cleared), [needs, work, seenThreads]); // eslint-disable-line react-hooks/exhaustive-deps
+  const waiting = useMemo(() => upNext(needs, work).map(cleared), [needs, work, seenThreads]); // eslint-disable-line react-hooks/exhaustive-deps
+  const live: AiThread[] = useMemo(() => liveThisWeek(work).map(cleared), [work, seenThreads]); // eslint-disable-line react-hooks/exhaustive-deps
   const owed = owedCount(rows);
+  const fresh = freshCount(rows);
   const projects = useMemo(
     () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
     [rows, progress, waiting, live],
@@ -500,6 +521,7 @@ export function AiScreen(): ReactNode {
     if (openPublic(href, app, title)) underPanel();
   };
   const openRow = (row: WorkRow) => {
+    markThreadRead(row.threadId, row.app);
     if (row.rootId) {
       openPrivate(row.rootId);
       return;
@@ -507,6 +529,7 @@ export function AiScreen(): ReactNode {
     openPage(row.href, row.app, row.title, aboutRow(row));
   };
   const openThread = (th: AiThread) => {
+    markThreadRead(th.threadId, th.app);
     // #6153: a request filed from a private thread opens that thread, where
     // its design and its story are, rather than the request's page.
     if (th.rootId) {
@@ -607,7 +630,7 @@ export function AiScreen(): ReactNode {
     how.current = 'row';
     if (phone) setLevel(1);
   };
-  const heroLine = work ? heroWords(owed, progress.length) : null;
+  const heroLine = work ? heroWords(owed, progress.length, fresh) : null;
   const hero = (
     <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
       <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
@@ -615,7 +638,11 @@ export function AiScreen(): ReactNode {
         <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
         {heroLine ? (
           <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
-            {say(heroLine)}
+            <RichMessage
+              id={heroLine.id}
+              values={heroLine.values}
+              components={[<strong className="font-semibold text-violet-700 dark:text-violet-300" />]}
+            />
           </span>
         ) : null}
       </span>

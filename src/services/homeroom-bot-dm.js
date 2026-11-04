@@ -442,6 +442,8 @@ const RINGING_MOMENTS = new Set(['needs_you', 'ready', 'stopped', 'on_hold', 'li
 const BUILD_SAID = Object.freeze({
   time: 'build_time', restart: 'build_restart', restarts: 'build_restart', no_change: 'build_no_change',
   unproposed: 'build_not_proposed', no_start: 'build_no_start', other: 'build_other',
+  // #6313: nothing was built; the plan could not be written.
+  plan: 'build_no_plan',
 });
 
 /** Pure: the contract's moment for a message of the bot's, by its kind, or null. */
@@ -1384,10 +1386,22 @@ function buildFailedCause(reason) {
   if (/ran past its time limit/.test(r)) return { cause: 'time' };
   if (/restarted|by a restart/.test(r)) return { cause: 'restart' };
   if (/built but could not be proposed/.test(r)) return { cause: 'unproposed' };
+  if (/couldn't push the build's commit/.test(r)) {
+    // #6267: the upload, not the build, failed. A temporary refusal is being
+    // retried; the other two say how a person can help.
+    if (/gave up/.test(r)) return { cause: 'push_gave_up' };
+    if (/permanent/.test(r)) return { cause: 'push_permanent' };
+    return { cause: 'push' };
+  }
   if (/produced no change/.test(r)) return { cause: 'no_change' };
   if (/could not start|would not start|could not open a session|could not create its branch/.test(r)) {
     return { cause: 'no_start' };
   }
+  // #6313: the plan turn ended before it wrote a plan (homeroom-bot-live.js
+  // buildAndPropose: "no plan could be written (…)", the spec turn's final
+  // message "only part of a spec"). Nothing was built, so it is never said as
+  // something that went wrong "during the build".
+  if (/no plan could be written|only part of a spec/.test(r)) return { cause: 'plan' };
   return { cause: 'other' };
 }
 
@@ -1412,6 +1426,11 @@ const FAILED_SAID = Object.freeze({
     unproposed: (d, it) => `I built ${it}, but I couldn't put it up for approval.`,
     no_change: (d, it) => `I couldn't ${d.verb} ${it}: I ended up with no changes to show you.`,
     no_start: (d, it) => `I couldn't get started on ${d.starting} ${it}.`,
+    push: (d, it) => `I built ${it}, but GitHub refused the upload (GitHub is having problems right now). I'll try again in a few minutes.`,
+    push_permanent: (d, it) => `I built ${it}, but GitHub wouldn't take the upload, and sending it again won't help.`,
+    push_gave_up: (d, it) => `I built ${it}, but GitHub kept refusing the upload, so I've stopped trying for now.`,
+    // #6313: nothing was built, so it says the plan, never "during the build".
+    plan: (d, it) => `I couldn't finish writing the plan for ${it}.`,
     other: (d, it) => `I couldn't ${d.verb} ${it}: something went wrong while I was working on it.`,
   }),
   bot: Object.freeze({
@@ -1421,6 +1440,11 @@ const FAILED_SAID = Object.freeze({
     unproposed: (d, it) => `Homeroom bot built ${it}, but couldn't put it up for approval.`,
     no_change: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: it ended up with no changes to show.`,
     no_start: (d, it) => `Homeroom bot couldn't get started on ${d.starting} ${it}.`,
+    push: (d, it) => `Homeroom bot built ${it}, but GitHub refused the upload (GitHub is having problems right now). It will try again in a few minutes.`,
+    push_permanent: (d, it) => `Homeroom bot built ${it}, but GitHub wouldn't take the upload, and sending it again won't help.`,
+    push_gave_up: (d, it) => `Homeroom bot built ${it}, but GitHub kept refusing the upload, so it has stopped trying for now.`,
+    // #6313: nothing was built, so it says the plan, never "during the build".
+    plan: (d, it) => `Homeroom bot couldn't finish writing the plan for ${it}.`,
     other: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: something went wrong during the ${d.noun}.`,
   }),
 });
@@ -1590,11 +1614,31 @@ function requestNews(kind, dm, context) {
       // again proposes what was built (finishOnTryAgain), so it says it
       // finishes it. Every other cause still starts over.
       if (context.firstVersion) {
-        const finishes = buildFailedCause(dm.reason).cause === 'unproposed';
-        return `${line}\n\n${buildFailedWords(dm.reason, context.appName || it, 'me', { first: true })} `
-          + (finishes ? 'Tap Try again and I\'ll finish it.' : 'Tap Try again and I\'ll start over.');
+        const cause = buildFailedCause(dm.reason).cause;
+        const finishes = cause === 'unproposed';
+        const why = `${line}\n\n${buildFailedWords(dm.reason, context.appName || it, 'me', { first: true })}`;
+        // #6267: the platform retries a temporary refusal itself, so the
+        // maker is not asked to do anything; the others say how a tap helps.
+        if (cause === 'push') return why;
+        // #6313: a retry already queued (or the bot trying again by itself)
+        // is not something a person has to ask for.
+        if (dm.retrying === true) return `${why} I'm trying again.`;
+        if (cause === 'push_gave_up') return `${why} Tap Try again and I'll send it.`;
+        return `${why} ${finishes ? 'Tap Try again and I\'ll finish it.' : 'Tap Try again and I\'ll start over.'}`;
       }
-      return `${line}\n\n${buildFailedWords(dm.reason, it)} Reply here and I'll try again.`;
+      {
+        // #6267: a temporary refusal is being retried, so no "Reply here"
+        // line; a permanent one or one given up on says a reply helps.
+        const cause = buildFailedCause(dm.reason).cause;
+        const words = `${line}\n\n${buildFailedWords(dm.reason, it)}`;
+        if (cause === 'push') return words;
+        // #6313: only ask for a reply when a reply is what restarts it. A
+        // failure the bot is already trying again by itself says so instead
+        // of asking for something that is already happening.
+        if (dm.retrying === true) return `${words} I'm trying again.`;
+        if (cause === 'push_gave_up') return `${words} Reply here and I'll send it again.`;
+        return `${words} Reply here and I'll try again.`;
+      }
     case 'followup_failed': {
       // 5 Oct 2026: an update to their change that did not happen, in plain
       // words (updateFailedWords), never the run's own record, and how to
@@ -1606,8 +1650,11 @@ function requestNews(kind, dm, context) {
       // names the way that does not depend on it.
       const change = context.firstVersion ? 'the first version' : 'your change';
       if (dm.canRevise === false) {
-        return `${line}\n\nI couldn't update ${change}: I've already updated it as many times as I can on my own, `
-          + 'so a person needs to make this one. It\'s as it was.';
+        // #6284: canRevise false is the cap on updates people ASKED for; the
+        // bot's own three are said in the thread and on the change's card.
+        const askedCap = require('./homeroom-bot-followup').MAX_ASKED_REVISIONS;
+        return `${line}\n\nI couldn't update ${change}: I've already made ${askedCap} updates people `
+          + 'asked for on it, as many as I may. A person can make the next one. It\'s as it was.';
       }
       const words = updateFailedWords(dm.reason, change, 'me');
       let next = `To try again, open it on ${context.appName} and tap Change something.`;
@@ -3102,13 +3149,15 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
       bot, requester, app: { id: run.id, slug: run.slug, name: run.name }, issueNumber: Number(run.issue_number),
       sessionId: id, saidIn: told.threadRootId || null,
     });
-    // #6264: the card that just said "ready to try" is also the line a
-    // follow-up asked for, so it keeps that promise and nothing else is said.
-    if (requester?.userId) {
-      await require('./thread-followups').satisfiedBy(pool, {
-        sessionId: id, userId: requester.userId, place: { type: 'dm' }, event: 'vote', messageId: told.messageId,
-      }).catch(() => {});
-    }
+  }
+  // #6264: the card that just said "ready to try" is also the line a
+  // follow-up asked for, so it keeps that promise and nothing else is said.
+  // #6255: this is also true of a first version, whose promise was stored
+  // against the request alone while it was still being built.
+  if (told?.messageId && requester?.userId) {
+    await require('./thread-followups').satisfiedBy(pool, {
+      sessionId: id, userId: requester.userId, place: { type: 'dm' }, event: 'vote', messageId: told.messageId,
+    }).catch(() => {});
   }
   // Nobody else is asked to approve a change part of which does not work:
   // its requester's card says what, and the bot's hand-off said so where
@@ -4521,11 +4570,9 @@ async function voteLineTarget(pool, { sessionId }) {
     const settings = await settingsModule().readSettings(pool);
     if (!require('./homeroom-bot-live').isLiveFor(settings, app)
       || (settings?.pausedApps || []).includes(app.slug)) return null;
-    const { rows: [revisions] } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`,
-      [id],
-    );
-    if ((revisions?.n || 0) >= require('./homeroom-bot-followup').MAX_REVISIONS) return null;
+    // #6284: only updates people asked for count against their own limit.
+    const counts = await require('./homeroom-bot-followup').revisionCounts(pool, id);
+    if (counts.asked >= require('./homeroom-bot-followup').MAX_ASKED_REVISIONS) return null;
     return { app, sessionId: id, issueNumber };
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not read where a No\'s line goes', { sessionId: id, err: err.message });

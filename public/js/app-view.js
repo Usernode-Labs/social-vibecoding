@@ -7646,7 +7646,12 @@ const AppView = {
     const maj = Math.max(1, Number(pill.majority) || 1);
     const roster = AppView._voteRoster[item.id];
     const ready = roster && roster.phase === 'ready' ? roster : null;
+    // #6282 (4 Nov 2026): an update is on its way to this change. A yes cast
+    // now is cleared when it lands, so the card says so and offers no Vote
+    // until then; the tally and who can vote stay as they are.
+    const updateComing = item.status === 'promoted' && !!item.update_coming;
     const note = [];
+    if (updateComing) note.push(PlatformI18n.t('changes:page.votes.note.updateComing'));
     if (item.status === 'merged' || item.status === 'merging') {
       const said = ready && ready.yesNames && ready.yesNames.length
         ? AppView._saidYesLine(ready.yesNames) : null;
@@ -7680,7 +7685,7 @@ const AppView = {
     if (item.first_version === true && item.status === 'promoted') return AppView._firstVersionVotesView(item);
     const waitsOnMember = AppView._awaitingOtherMember(item);
     const reached = yes >= maj && !waitsOnMember;
-    const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted';
+    const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted' && !updateComing;
     let figure;
     let tone;
     if (pill.key === 'reject_countdown') { figure = pill.label; tone = 'bad'; }
@@ -7690,8 +7695,9 @@ const AppView = {
       figure = canVote && item.approval_policy !== 'invited' ? PlatformI18n.t('changes:page.votes.figure.needsYours') : PlatformI18n.t('changes:page.votes.figure.needsAnother');
       tone = canVote ? 'ask' : 'warn';
     } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { yes, needed: maj }); tone = 'done'; }
-    else if (pill.key === 'needs_vote' && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
+    else if (pill.key === 'needs_vote' && !updateComing && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
     else { figure = PlatformI18n.t('changes:page.votes.figure.needsMore', { count: maj - yes }); tone = canVote ? 'ask' : 'muted'; }
+    if (updateComing) tone = 'muted';
     if (reached && ready && ready.yesNames && ready.yesNames.length) {
       note.push(AppView._saidYesLine(ready.yesNames));
     } else if (!reached) {
@@ -7730,6 +7736,9 @@ const AppView = {
       segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
       label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
       note,
+      // #6282: no Vote button while the update is on its way (change-head.tsx
+      // gateActions), so the card never asks for a yes that would be cleared.
+      ...(updateComing ? { hold: true } : {}),
     };
   },
 
@@ -7788,15 +7797,108 @@ const AppView = {
     return Math.round(ms / 60000);
   },
 
+  // #6288 — main's own red, as a change may trust it: main's verdict says
+  // failing, it named every one of its failures, and merges are paused. While
+  // it holds, every change built on that main fails the same tests through no
+  // fault of its own, and the page must not ask its author to fix them.
+  // Anything less (a green main, a partial list, a resumed pause) is null and
+  // the page blames the change as it did before.
+  _mainFailures() {
+    const mc = AppView._proposalsCtx && AppView._proposalsCtx.mainCheck;
+    if (!mc || typeof mc !== 'object' || !mc.paused || mc.state !== 'failing') return null;
+    const d = mc.detail && typeof mc.detail === 'object' ? mc.detail : null;
+    if (!d || d.failingTestsComplete !== true || !Array.isArray(d.failingTests)) return null;
+    const tests = d.failingTests
+      .filter((t) => t && typeof t.test === 'string' && t.test.trim())
+      .map((t) => ({ file: t.file ? String(t.file) : null, test: String(t.test) }));
+    if (!tests.length) return null;
+    const slug = (AppView.appData && AppView.appData.slug)
+      || (typeof App !== 'undefined' ? App.currentApp : null);
+    return {
+      tests,
+      sha: mc.pausedSha || mc.sha || null,
+      requestNumber: Number.isInteger(mc.requestNumber) ? mc.requestNumber : null,
+      slug: slug || null,
+      // Where the request main watch filed lives, when it was filed. The
+      // card offers this as the one thing to read while main is red.
+      href: Number.isInteger(mc.requestNumber) && slug
+        ? `#app/${slug}/dev/issues/${mc.requestNumber}` : null,
+    };
+  },
+
+  // Does this failing test also fail on main? Same test name, and the same
+  // file when both name one. src/services/checks-explanation.js
+  // isMainFailure is the same rule on the server.
+  _isMainFailure(detail, tests) {
+    const test = String((detail && detail.test) || '').trim();
+    if (!test) return false;
+    const file = detail && detail.file ? String(detail.file).trim() : '';
+    return (Array.isArray(tests) ? tests : []).some((t) => {
+      if (!t || String(t.test || '').trim() !== test) return false;
+      const mainFile = t.file ? String(t.file).trim() : '';
+      return !file || !mainFile || file === mainFile;
+    });
+  },
+
+  // The app's own failing tests, split by whose they are: main's, and the
+  // change's own. Null when main has no trusted red, when the unit suite is
+  // not what failed, or when none of its tests fail on main. `mixed` is true
+  // when the change also fails something itself — another of its tests, or a
+  // declared check (which never runs on main).
+  _mainFailureSplit(v) {
+    const main = AppView._mainFailures();
+    if (!main || !v || !Array.isArray(v.failures)) return null;
+    const row = v.failures.find((r) => r && r.unit);
+    if (!row) return null;
+    const details = (Array.isArray(row.details) ? row.details : []).filter((d) => d && d.test);
+    if (!details.length) return null;
+    const onMain = details.filter((d) => AppView._isMainFailure(d, main.tests));
+    if (!onMain.length) return null;
+    const own = details.filter((d) => !AppView._isMainFailure(d, main.tests));
+    const ownChecks = v.failures
+      .filter((r) => r && r !== row && !r.advisory)
+      .map((r) => r.name || r.path || PlatformI18n.t('changes:badge.reason.checksFailing.unnamed'));
+    return {
+      ...main,
+      onMain: onMain.map((d) => d.test),
+      own: own.map((d) => d.test),
+      ownChecks,
+      mixed: own.length > 0 || ownChecks.length > 0,
+    };
+  },
+
+  // The card's door to the request main watch filed for this red: the one
+  // thing worth reading while main is red. Null when no request was filed.
+  _mainFailureLink(v) {
+    const split = AppView._mainFailureSplit(v);
+    if (!split || !split.requestNumber || !split.href) return null;
+    return {
+      href: split.href,
+      label: PlatformI18n.t('changes:page.testing.mainFix.link', { number: split.requestNumber }),
+      mixed: split.mixed,
+    };
+  },
+
   // The Testing card's first sentence on a failed run: how many of the app's
   // tests failed when its own test suite is all that failed, else how many
   // of its checks. Blocking failures are counted; advisory ones only when
-  // nothing else failed.
+  // nothing else failed. While main is red with the same tests (#6288), it
+  // says whose they are instead of blaming the change.
   _failedLead(v) {
     const all = v ? v.failures : [];
     const blocking = all.filter((r) => !r.advisory);
     const rows = blocking.length ? blocking : all;
     if (!rows.length) return PlatformI18n.t('changes:page.testing.note.checkFailed');
+    const split = AppView._mainFailureSplit(v);
+    if (split && !split.mixed) {
+      return PlatformI18n.t('changes:page.testing.lead.mainAll', { count: split.onMain.length });
+    }
+    if (split) {
+      return PlatformI18n.t('changes:page.testing.lead.mainSome', {
+        main: PlatformI18n.listText(split.onMain),
+        own: PlatformI18n.listText(split.own.concat(split.ownChecks)),
+      });
+    }
     if (rows.length === 1 && rows[0].unit) {
       const r = rows[0];
       const n = (r.unitTally && r.unitTally.failed) || (r.details && r.details.length) || 1;
@@ -7855,6 +7957,11 @@ const AppView = {
       id: Number(item.id),
       at: String(item.checks_checked_at),
       fallback: AppView._failureInWords(v),
+      // #6288: whose these tests are, above the failure's own words in the
+      // Checks step, so it does not read as the change's fault either. Left
+      // out entirely when main is not failing them, so the view's shape is
+      // exactly what it was before this change.
+      ...(AppView._mainFailureSplit(v) ? { mainLead: AppView._failedLead(v) } : {}),
       page: path && stagingUrl ? { path, stagingUrl } : null,
     };
   },
@@ -7970,6 +8077,9 @@ const AppView = {
       // offered disabled: running the checks now would restart its fix.
       const botFix = item.bot_fix && typeof item.bot_fix === 'object' && item.bot_fix.state ? item.bot_fix : null;
       const botNote = botFix ? AppView._botFixNote(botFix) : null;
+      // #6288: left out when main is not failing these tests, so the card's
+      // shape is exactly what it was before this change.
+      const mainFailure = AppView._mainFailureLink(v);
       if (botFix && botFix.state === 'fixing') {
         if (rerun) {
           actions.push({
@@ -7983,17 +8093,28 @@ const AppView = {
           label: PlatformI18n.t('changes:page.testing.label.botFixing'),
           note: [AppView._failedLead(v)], actions, details: true,
           explain: AppView._checksExplainView(item, v),
+          ...(mainFailure ? { mainFailure } : {}),
           fix,
           authorNote: rerun ? `${botNote} ${PlatformI18n.t('changes:page.testing.note.botRerun')}` : botNote,
           botFix: 'fixing',
         };
       }
       if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
+      // #6284: the bot stopped at its own limit. The requester or an admin
+      // may let it try once more.
+      if (botFix && botFix.state === 'stopped' && botFix.canTryAgain) {
+        actions.unshift({
+          key: 'tryAgain', cls: 'gc-vote-btn gc-vote-btn-accent',
+          label: PlatformI18n.t('changes:tryAgain.label'),
+          act: { fn: 'letBotTryAgain', args: [item.id] }, passNode: true,
+        });
+      }
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.failing'),
         note: [AppView._failedLead(v)], actions, details: true,
         explain: AppView._checksExplainView(item, v),
+        ...(mainFailure ? { mainFailure } : {}),
         fix,
         authorNote: botNote || (mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes')),
         botFix: botFix ? botFix.state : null,
@@ -19405,6 +19526,13 @@ const AppView = {
     }
     if (botFix.state === 'queued') return PlatformI18n.t('changes:page.testing.note.botQueued');
     if (botFix.state === 'handed_off') return PlatformI18n.t('changes:page.testing.note.botHandedOff');
+    if (botFix.state === 'stopped') {
+      const count = Math.max(1, Number(botFix.tries) || 3);
+      const key = botFix.canTryAgain
+        ? (count === 1 ? 'changes:page.testing.note.botStopped_one' : 'changes:page.testing.note.botStopped_other')
+        : (count === 1 ? 'changes:page.testing.note.botStoppedOthers_one' : 'changes:page.testing.note.botStoppedOthers_other');
+      return PlatformI18n.t(key, { count });
+    }
     return null;
   },
 
@@ -20499,6 +20627,9 @@ const AppView = {
   // server; progress arrives via the checks_ready / staging_ready broadcasts
   // that drive refreshDevData, so we just disable the button transiently.
   _recheckInFlight: new Set(),
+
+  // #6284: one press at a time of Let it try again, as a re-run is.
+  _tryAgainInFlight: new Set(),
   _sessionChecksClose: null,
   openSessionChecks(sessionId) {
     if (AppView._sessionChecksClose) AppView._sessionChecksClose();
@@ -20514,6 +20645,36 @@ const AppView = {
     };
     AppView._sessionChecksClose = close;
     react.mountSessionChecks(host, { sessionId, onClose: close });
+  },
+
+  // #6284: let Homeroom bot try once more at a change it stopped fixing on
+  // its own. One press is one grant, which buys exactly one round.
+  async letBotTryAgain(sessionId, btn) {
+    if (AppView._tryAgainInFlight.has(sessionId)) return;
+    AppView._tryAgainInFlight.add(sessionId);
+    if (btn) { btn.disabled = true; btn.textContent = PlatformI18n.t('changes:tryAgain.asking'); }
+    try {
+      const slug = AppView.appData?.slug || App.currentApp || '';
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${sessionId}/let-it-try-again`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:tryAgain.failedHttp', { status: resp.status }));
+        if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
+        return;
+      }
+      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.done'));
+      AppView.refreshDevData('tryAgain');
+      if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(sessionId) }));
+      return true;
+    } catch (err) {
+      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.failedWith', { error: err.message }));
+      if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
+    } finally {
+      AppView._tryAgainInFlight.delete(sessionId);
+    }
   },
 
   async castRecheck(sessionId, btn) {
@@ -24605,16 +24766,30 @@ const AppView = {
       const failed = Array.isArray(p.test_results)
         ? p.test_results.filter((r) => r && r.status !== 'pass') : [];
       const n = failed.length;
+      // #6288: while main is red with the same tests, the tooltip says so
+      // rather than reading as this change's fault (the same split the
+      // Testing card and Details use).
+      const split = AppView._mainFailureSplit(AppView._checksVerdictView(p));
+      const detail = n
+        ? (split
+          ? (split.mixed
+            ? PlatformI18n.t('changes:badge.reason.checksFailing.mainSomeDetail', {
+              main: PlatformI18n.listText(split.onMain),
+              own: PlatformI18n.listText(split.own.concat(split.ownChecks)),
+            })
+            : PlatformI18n.t('changes:badge.reason.checksFailing.mainDetail', {
+              tests: PlatformI18n.listText(split.onMain),
+            }))
+          : PlatformI18n.t('changes:badge.reason.checksFailing.detailNames', {
+            count: n,
+            tests: PlatformI18n.listText(failed.map((r) => r.name || r.path || PlatformI18n.t('changes:badge.reason.checksFailing.unnamed'))),
+          }))
+        : PlatformI18n.t('changes:badge.reason.checksFailing.detail');
       out.push({
         key: 'checks_failing',
         label: n ? PlatformI18n.t('changes:badge.reason.checksFailing.labelCount', { count: n }) : PlatformI18n.t('changes:badge.reason.checksFailing.label'),
         ...(n ? { name: PlatformI18n.t('changes:badge.reason.checksFailing.label'), sub: String(n), count: n } : {}),
-        detail: n
-          ? PlatformI18n.t('changes:badge.reason.checksFailing.detailNames', {
-            count: n,
-            tests: PlatformI18n.listText(failed.map((r) => r.name || r.path || PlatformI18n.t('changes:badge.reason.checksFailing.unnamed'))),
-          })
-          : PlatformI18n.t('changes:badge.reason.checksFailing.detail'),
+        detail,
       });
     }
     // Behind main is information, not a block: a head that merges cleanly
