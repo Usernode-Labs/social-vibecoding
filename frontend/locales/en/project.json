@@ -3531,9 +3531,9 @@
     "text": "Read the whole plan",
     "description": "On a request's page, a row under the lines of Homeroom bot's plan: opens the whole written plan."
   },
-  "topic.request.botPlan.readLength": {
-    "text": "about {{chars}} characters",
-    "description": "On a request's page, beside \"Read the whole plan\": how long the whole plan is. {{chars}} is a rounded number of characters, already formatted (for example 20,000)."
+  "topic.request.botPlan.readWholeLength": {
+    "text": "Read the whole plan <1>· about {{chars}} characters</1>",
+    "description": "On a request's page, the row under the lines of Homeroom bot's plan: opens the whole written plan, and says how long it is. {{chars}} is a rounded number of characters, already formatted (for example 20,000). The middle dot stands between the two parts."
   },
   "topic.request.botPlan.quote": {
     "text": "Homeroom bot's plan",

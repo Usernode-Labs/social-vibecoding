@@ -7513,12 +7513,16 @@ function planCardOf(specHtmlText, { app = null, issueNumber = null } = {}) {
     const card = require('./spec-html').specCard(specHtmlText);
     if (!card || !card.lines.length) return null;
     if (card.problems.length) {
-      log.info('homeroom-bot', 'A plan\'s card text failed its checks; its card keeps the lines cut from the spec', {
-        app: app?.slug, issueNumber, problems: card.problems.slice(0, 5),
+      // #6269: the log names each problem by kind, so a writer that keeps
+      // missing one shows up; good lines are kept when only the summary
+      // fails, and the older lines are used only when a line itself fails.
+      log.info('homeroom-bot', 'A plan\'s card text failed its checks', {
+        app: app?.slug, issueNumber, problems: card.problems.slice(0, 5), kinds: card.kinds,
+        linesKept: card.lineProblems.length === 0, summaryDropped: card.summaryProblems.length > 0,
       });
-      return null;
     }
-    return { summary: card.summary, lines: card.lines };
+    if (card.lineProblems.length) return null;
+    return { summary: card.summaryProblems.length ? '' : card.summary, lines: card.lines };
   } catch (err) {
     log.warn('homeroom-bot', 'Could not read a plan\'s card text', { err: err.message });
     return null;
@@ -10410,6 +10414,7 @@ module.exports = {
   creatorChoiceNote,
   awaitGo,
   planBeforeBuilding,
+  planCardOf,
   plannedWithRequester,
   approvedSpecHtml,
   buildItOnRequest,

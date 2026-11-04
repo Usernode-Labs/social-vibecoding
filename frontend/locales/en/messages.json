@@ -1623,6 +1623,10 @@
     "text": "Before and after · {{count}} changes",
     "description": "On Homeroom bot's plan card, the row that opens the plan's pictures: one close-up, before and after, for each numbered change. {{count}} is how many changes have one."
   },
+  "bot.plan.crops.summaryPlain": {
+    "text": "Before and after",
+    "description": "On Homeroom bot's plan card, the row that opens the plan's pictures when the lines above it are not the plan's own numbered lines, so a count would name changes that are not showing."
+  },
   "bot.plan.crops.before": {
     "text": "Before",
     "description": "On Homeroom bot's plan card, the small label over the close-up of a change as the screen is today."
