@@ -1776,8 +1776,22 @@ async function annotateDeploymentState(config, pool, app, rows) {
     const at = deploymentOrder(row).at;
     return Number.isFinite(stalledAt) && at > 0 && at <= stalledAt;
   };
+  // #6233: production carrying a build is not the whole answer any more. A
+  // release replaces its servers one at a time, and for Homeroom itself
+  // main_sha moves before the rollout (the migration Job writes it), so a
+  // row the boundary carries is Live only once its rollout finished:
+  // chat_sessions.live_at, which the merge machine stamps when the
+  // platform-rollout job reports the Deployment complete. A rolled-back
+  // release clears it again (merge-followups' RolledBack), so the change
+  // goes back to Going live. Rows merged before live tracking began keep the
+  // reading they always had.
+  const setting = (await pool.query(
+    `SELECT value AS tracked_since FROM platform_settings WHERE key = 'platform_live_tracked_since'`)).rows[0];
+  const trackedSince = setting?.tracked_since ? Date.parse(setting.tracked_since) : NaN;
+  const tracked = (row) => Number.isFinite(trackedSince) && deploymentOrder(row).at >= trackedSince;
   for (const row of prRows) {
-    if (!isAfterDeploymentBoundary(row, boundary)) {
+    const carried = !isAfterDeploymentBoundary(row, boundary);
+    if (carried && (row.live_at || !tracked(row))) {
       row.deployment_state = 'deployed';
     } else if ((stalledSha && normalizedSha(row.merge_commit_sha) === stalledSha) || heldBack(row)) {
       row.deployment_state = 'stalled';

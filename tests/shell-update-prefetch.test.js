@@ -132,7 +132,9 @@ function harness({
     // /api/version, as pull-to-refresh sees it. `serverSha` null means the
     // endpoint is not part of the test and must not be called.
     fetch: async (url) => {
-      assert.equal(url, '/api/version');
+      // #6233: the poll names the build this tab loaded (?have=), so the
+      // answer can say which merge that build contains.
+      assert.ok(url === '/api/version' || /^\/api\/version\?have=[0-9a-f]{40}$/.test(url), `unexpected ${url}`);
       assert.ok(serverSha, 'this harness was not given a server answer');
       return { ok: true, json: async () => ({ sha: serverSha }) };
     },

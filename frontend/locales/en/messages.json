@@ -5279,6 +5279,14 @@
     "text": "#{{number}}",
     "description": "The AI tab's main view, Live this week: the number at the end of a one-line row for a change that went live this week."
   },
+  "ai.live.olderTab": {
+    "text": "This tab is on an older Homeroom.",
+    "description": "The AI tab's main view: one line under Live this week when some of its changes are live but this tab runs the version of Homeroom from before them. A Reload button sits at its end."
+  },
+  "ai.short.reload": {
+    "text": "Reload",
+    "description": "The AI tab's main view: the word at the right end of a Live this week row that the page open in this tab is too old to show, and the button under that list which reloads the page onto the running version."
+  },
   "ai.short.goingLive": {
     "text": "Going live",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: its change is going live."
