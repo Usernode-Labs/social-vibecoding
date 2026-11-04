@@ -2131,6 +2131,7 @@ Write one or two short sentences, at most ${CHECKS_EXPLANATION_MAX - 40} charact
 - When a check expected words or an element on a page and reported what the page showed instead, quote the expected words and the words the page showed, shortened if needed, for example: The sample merge's page should say "…", but it only says "…".
 - A check marked as on a page of sample data opened a demo page with made-up content: say the page shows sample data.
 - For any other failure, keep the check's own reported words.
+- Some failures are marked as also failing on main, the project's shared code, at the commit this change was checked against. Those are not this change's failure: say plainly that main fails them too, and never blame the change for them.
 - No file names, line numbers, test or function names, error codes, stack traces or developer vocabulary (assertion, selector, stack, undefined, npm).
 - Do not say how to fix it, and do not call the check wrong or flaky.
 - Do not open with "The check failed" or "A test failed": the page already says that.

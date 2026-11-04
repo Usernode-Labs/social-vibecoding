@@ -1309,6 +1309,7 @@ function WhatWentWrong({ ex }: { ex?: ChecksExplainView | null }): ReactNode {
   return (
     <div className="dev-ledger-explain" data-checks-explained="">
       <div className="dev-ledger-unit-k">{t('project:topic.checks.explain.title')}</div>
+      {ex.mainLead ? <p className="dev-ledger-explain-text" data-checks-main-lead="">{ex.mainLead}</p> : null}
       <p className="dev-ledger-explain-text">{shown}</p>
       {text ? <div className="dev-ledger-explain-source">{t('project:topic.checks.explain.source')}</div> : null}
     </div>
