@@ -346,6 +346,48 @@ test('Your votes: still open, then decided, each saying your vote as it stands',
   ], 'kudos are not votes');
   assert.equal(view.more, true);
   assert.equal(votesView({ items: [] }).empty, true);
+  assert.equal(votesView(undefined).loaded, false);
+});
+
+// #6102: every vote cast is a row, keyed by the server, with the day it
+// was cast. A vote changed is two rows on the same change, one per side.
+test('Your votes: each cast is its own row, keyed by the server, with its day', () => {
+  const { votesView } = loadTsx(STORE);
+  const change = { app: { slug: 'run-club', name: 'Run Club' }, pr: { sessionId: 31, number: 40, title: 'Weekly distance leaderboard' } };
+  const view = votesView({
+    items: [
+      { ...change, key: 'e:9', type: 'pr_vote', vote: 'no', status: 'promoted', created_at: '2026-09-23T09:00:00Z' },
+      { ...change, key: 'e:8', type: 'pr_vote', vote: 'yes', status: 'promoted', created_at: '2026-09-20T09:00:00Z' },
+      // A request is voted up/down (routes/issues.js): the row says yes/no.
+      { key: 'e:7', type: 'proposal_vote', vote: 'up', status: 'open', created_at: '2026-09-22T09:00:00Z',
+        app: { slug: 'run-club', name: 'Run Club' }, issue: { id: 77, number: null, title: 'Rename to Run Crew', kind: 'rename' } },
+      // A standing vote the log never saw, from the vote table, on a change
+      // decided since: its day, then the outcome.
+      { key: 'pv:3', type: 'pr_vote', vote: 'yes', status: 'merged', created_at: '2026-09-03T09:00:00Z',
+        app: { slug: 'run-club', name: 'Run Club' }, pr: { sessionId: 32, title: 'Route map on the run page' } },
+      // No key from the server, no date: the row still has a key of its own.
+      { type: 'pr_vote', vote: 'no', status: 'archived', app: { slug: 'game-corner', name: 'Game Corner' },
+        pr: { sessionId: 33, title: 'Timer sounds' } },
+    ],
+  }, NOW);
+  assert.deepEqual(view.sections.map((s) => [s.label, s.rows.map((r) => [r.key, r.title, r.meta])]), [
+    ['Still open', [
+      ['e:9', 'Weekly distance leaderboard', `Run Club · you voted no · ${message('profile:date.today')}`],
+      ['e:8', 'Weekly distance leaderboard', `Run Club · you voted yes · ${message('profile:date.daysAgo', { count: 3 })}`],
+      ['e:7', 'Rename to Run Crew', `Run Club · you voted yes · ${message('profile:date.yesterday')}`],
+    ]],
+    ['Decided', [
+      ['pv:3', 'Route map on the run page', 'Run Club · you voted yes · Sep 3 · live'],
+      ['pr_vote:33:4', 'Timer sounds', 'Game Corner · you voted no · closed'],
+    ]],
+  ], 'two rows for the one change, each its own cast, the day after the vote');
+  const keys = view.sections.flatMap((s) => s.rows.map((r) => r.key));
+  assert.equal(new Set(keys).size, keys.length, 'every row has a key of its own');
+  assert.equal(view.sections[0].rows[0].href, view.sections[0].rows[1].href, 'both casts open the same change');
+  // The note under the list says what the list is now.
+  assert.equal(message('profile:work.votes.note'),
+    'Every vote you cast is here, newest first. If you changed a vote or took it back, each one you cast is its own row.');
+  assert.match(read(SCREEN), /t\('profile:work\.votes\.note'\)/);
 });
 
 // ── The screen ─────────────────────────────────────────────────────────

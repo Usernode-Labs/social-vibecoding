@@ -120,8 +120,8 @@
     "description": "Shown on the \"Your votes\" screen when the viewer has never voted."
   },
   "work.votes.note": {
-    "text": "A vote can be changed while it is open, so each row says your vote as it stands.",
-    "description": "Note under the list on the \"Your votes\" screen. \"Open\" means the voting has not ended."
+    "text": "Every vote you cast is here, newest first. If you changed a vote or took it back, each one you cast is its own row.",
+    "description": "Note under the list on the \"Your votes\" screen: the list is every vote the viewer cast, not only the ones still counted, so a vote they changed shows as two rows (one per side)."
   },
   "work.votes.latest": {
     "text": "Latest: {{title}}",
