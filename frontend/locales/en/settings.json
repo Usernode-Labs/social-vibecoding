@@ -4354,5 +4354,25 @@
   "privacy.contact.saveFailed": {
     "text": "Your choice could not be saved. Try again.",
     "description": "Error under the Email & texts switches in Settings > Privacy when saving a change failed; the switch goes back to what it was."
+  },
+  "experimental.interfaceMode.label": {
+    "text": "Advanced mode",
+    "description": "Label of a switch in Settings > Experimental. On selects Advanced; off selects Basic."
+  },
+  "experimental.interfaceMode.advanced": {
+    "text": "Advanced mode is selected. You are using the full Homeroom experience.",
+    "description": "Explanation below the mode switch when Advanced is selected."
+  },
+  "experimental.interfaceMode.basic": {
+    "text": "Basic mode is selected. A simpler experience is coming soon; for now, both modes show the same interface.",
+    "description": "Explanation below the mode switch when Basic is selected."
+  },
+  "experimental.interfaceMode.device": {
+    "text": "Your choice is saved on this device.",
+    "description": "Persistence explanation below the interface mode switch."
+  },
+  "experimental.interfaceMode.saveFailed": {
+    "text": "Your choice could not be saved on this device. Try again.",
+    "description": "Error below the mode switch when browser storage refuses a save."
   }
 }

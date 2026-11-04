@@ -173,6 +173,8 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
     ['reply', 'stay_quiet', 'start_request', 'change_plan', 'offer_close_request', 'request_detail', 'list_source', 'read_source']);
   const prompt = voice.systemPrompt({ app: { slug: 'papote', name: 'Papote' }, place: { type: 'issue', ref: 3 }, tools: planned });
   assert.match(prompt, /Them saying to build it or go ahead is start_request, which builds the plan as they saw it\. Somebody asking for something in the plan to change is change_plan/);
+  assert.match(prompt, /When it gives a link or changeLink, include them as written\./,
+    '#6247: a start\'s reply carries the request\'s (and change\'s) link as given');
   assert.doesNotMatch(voice.systemPrompt({ app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }) }), /change_plan/);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
   assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'offer_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
@@ -498,4 +500,11 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
     assert.match(await facts(p, d), /A run on it is going right now\./, what);
     assert.equal(await ask(p, d), true, what);
   }
+});
+
+test("a request's report names it by its number, linked where a chat can tap it", () => {
+  assert.equal(voice.requestMd('app.test', 'ear-trainer', 15),
+    '[#15](https://app.test/#app/ear-trainer/dev/issues/15)');
+  assert.equal(voice.requestMd('app.test', 'a b/c', '7'),
+    '[#7](https://app.test/#app/a%20b%2Fc/dev/issues/7)', 'the slug is encoded and the number is a number');
 });

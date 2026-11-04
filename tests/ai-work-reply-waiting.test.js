@@ -42,3 +42,28 @@ test('#6228: another viewer\'s facts say Reading the reply as soon as it is stor
     ...facts, handedBack: false, run: { verdict: 'ready', held: false, capSuppressed: null, createdAt: '2026-11-03T15:00:00Z' },
   }).what, 'not_picked_up');
 });
+
+// #6246 (4 Nov 2026): a plan waiting for Build it is Needs you's even when a
+// reply waits to be read beside it. The facts path and the bot's own stage
+// both say plan; a read on a request the bot handed back is unchanged.
+test('#6246: a waiting plan wins over a reply being read', () => {
+  const planFacts = {
+    planWaits: true, planAt: '2026-11-03T16:40:00Z',
+    replyWaits: true, handedBack: false,
+    run: { verdict: 'ready', held: false, capSuppressed: null, createdAt: '2026-11-03T16:30:00Z' },
+    viewerDecides: true,
+  };
+  assert.deepEqual(standing(row, 8, NOW, 99, null, planFacts), {
+    group: 'needs', what: 'plan', at: '2026-11-03T16:40:00.000Z', quietDays: 0,
+  });
+  // The bot's own stage says plan too, when it fits.
+  assert.deepEqual(standing(row, 7, NOW, 99, { stage: 'plan', since: '2026-11-03T16:40:00Z' }, null), {
+    group: 'needs', what: 'plan', at: '2026-11-03T16:40:00.000Z',
+  });
+  // #6228 stays: a read on a request the bot handed back still reads the reply.
+  assert.equal(standing(row, 7, NOW, 99, { stage: 'reading', reply: true, since: '2026-11-03T16:52:00Z' }, null).what,
+    'reading_reply');
+  // Facts without a waiting plan are unchanged.
+  assert.equal(standing(row, 8, NOW, 99, null, { ...planFacts, planWaits: false, replyWaits: false }).what,
+    'not_picked_up');
+});
