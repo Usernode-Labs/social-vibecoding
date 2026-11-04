@@ -189,17 +189,21 @@ test('voteLineTarget and handVoteLine against the full PostgreSQL schema', { tim
     assert.ok(await dm.voteLineTarget(pool, { sessionId: botChange }), 'and back once those are undone');
   });
 
-  await t.test('a change revised MAX_REVISIONS times already takes no more', async () => {
+  // #6284: the bot's own three fixes no longer stop an update people asked
+  // for (a No vote's line is one); asked updates have their own higher cap.
+  await t.test('the bot\'s own revisions never stop a No\'s line; asked updates have their own cap', async () => {
     const revised = await change();
-    const revise = () => pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id)
-       VALUES ($1, 1, 'live', 'revise', $2)`,
-      [plantPal.id, revised],
+    const revise = (asked = false) => pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, asked)
+       VALUES ($1, 1, 'live', 'revise', $2, $3)`,
+      [plantPal.id, revised, asked],
     );
-    for (let i = 1; i < followup.MAX_REVISIONS; i += 1) await revise();
-    assert.ok(await dm.voteLineTarget(pool, { sessionId: revised }), `${followup.MAX_REVISIONS - 1} revisions: one more may follow`);
-    await revise();
-    assert.equal(await dm.voteLineTarget(pool, { sessionId: revised }), null, `${followup.MAX_REVISIONS}: none`);
+    for (let i = 1; i <= followup.MAX_REVISIONS; i += 1) await revise(false);
+    assert.ok(await dm.voteLineTarget(pool, { sessionId: revised }), 'its own three do not stop an ask');
+    for (let i = 1; i < followup.MAX_ASKED_REVISIONS; i += 1) await revise(true);
+    assert.ok(await dm.voteLineTarget(pool, { sessionId: revised }), `${followup.MAX_ASKED_REVISIONS - 1} asked: one more may follow`);
+    await revise(true);
+    assert.equal(await dm.voteLineTarget(pool, { sessionId: revised }), null, `${followup.MAX_ASKED_REVISIONS} asked: none`);
   });
 
   await t.test('handing it over: one post as the voter in the change\'s discussion, and one revision request first in line', async () => {

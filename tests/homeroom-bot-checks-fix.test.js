@@ -491,7 +491,7 @@ test('out of revisions: no turn, and one note hands it to a person', async (t) =
   assert.equal(post.proposalSessionId, 5001, 'on the proposal too');
   assert.match(post.text, /I stopped after 3 tries at getting this change past its checks\. 1 check is still failing\./);
   // Who can let it try once more (#6284), in the same note.
-  assert.match(post.text, /The person who asked for it, an admin or anyone who voted on it can let me try once more\.$/);
+  assert.match(post.text, /The person who asked for it or an admin can let me try once more\.$/);
   assert.match(post.dm.reason, /its checks are failing/, 'the requester hears it in the DM');
   assert.equal(insertOf(h).params[21], HEAD, 'and it is not said again for the same head');
 });

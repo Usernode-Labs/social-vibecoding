@@ -1,5 +1,5 @@
-{"version":1,"about":"Per test file: [seconds, cores]. Written by `npm run test:durations`; read by scripts/test-shard-plan.js.","measured":"2026-11-04, node v22.23.4, 2 CPUs available","defaultSeconds":1.3,"overrides":{"tests/bot-build-crash-postgres.test.js":{"cores":5.5,"why":"Its database server works for it too, which the per-process measurement cannot see: alone in the worker image at 8 CPUs it used 720-800 CPU-s of the container in 130-160 s (16 Oct 2026)."}},
-"files":{
+{"version":1,"about":"Per test file: [seconds, cores]. Written by `npm run test:durations`; read by scripts/test-shard-plan.js.","measured":"2026-11-04, node v22.23.4, 2 CPUs available","defaultSeconds":1.3,"overrides":{
+"tests/bot-build-crash-postgres.test.js":{"cores":5.5,"why":"Its database server works for it too, which the per-process measurement cannot see: alone in the worker image at 8 CPUs it used 720-800 CPU-s of the container in 130-160 s (16 Oct 2026)."}},"files":{
 "tests/about-two-sections.test.js":[2.7,0.3],
 "tests/accessibility-prefs.test.js":[1.9,0.3],
 "tests/account-deletion-postgres.test.js":[27.6,0.2],
@@ -995,6 +995,7 @@
 "tests/homeroom-bot-first-version-hold-postgres.test.js":[6.1,0.2],
 "tests/homeroom-bot-first-version-hold.test.js":[1,0.6],
 "tests/homeroom-bot-first-version-retry.test.js":[2,0.6],
+"tests/homeroom-bot-fixes-stopped-seed-postgres.test.js":[1.3,1],
 "tests/homeroom-bot-followup-pending-stop.test.js":[1,0.4],
 "tests/homeroom-bot-followup-restart-postgres.test.js":[10.8,0.2],
 "tests/homeroom-bot-followup-restart.test.js":[1.8,0.6],
@@ -2377,4 +2378,4 @@
 "tests/ws-validate-thread-merged.test.js":[0.6,0.6],
 "tests/ws-workflow-relay.test.js":[1.4,0.5],
 "tests/x-link.test.js":[0.5,0.5],
-"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/homeroom-bot-lift-suggestions.test.js","tests/homeroom-bot-revision-limit.test.js","tests/main-failure-lead.test.js"]}
+"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/homeroom-bot-fixes-stopped-seed-postgres.test.js","tests/homeroom-bot-lift-suggestions.test.js","tests/homeroom-bot-revision-limit.test.js","tests/main-failure-lead.test.js"]}

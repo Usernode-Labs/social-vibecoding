@@ -898,7 +898,7 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     if (own) {
       lines.push(`You have made ${counts.own} of ${followup.MAX_REVISIONS} fixes on it by yourself, and ${counts.asked} of ${followup.MAX_ASKED_REVISIONS} updates people asked for.`);
       if (counts.own >= followup.MAX_REVISIONS && !counts.openGrant) {
-        lines.push('You stopped at your own limit, so you cannot fix it again until the person who asked for it, an admin or anyone who voted on it lets you try once more (let_try_again).');
+        lines.push('You stopped at your own limit, so you cannot fix it again until the person who asked for it or an admin lets you try once more (let_try_again).');
       }
       lines.push(busy || asks.running
         ? `A run on it is going right now${asks.queued ? `, and ${asks.queued} more ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} behind it` : ''}.`
@@ -1061,7 +1061,7 @@ function toolsFor(place, {
       ...(['chat', 'category', 'message'].includes(place.type)
         ? { change: { type: 'integer', description: 'Which of your changes: its change id from the facts.' } } : {}),
     }, ['description']));
-    tools.push(fn('let_try_again', 'Let yourself try once more at a change you stopped fixing on your own, when the person who asked for it, an admin or anyone who voted on it asks you to try again or continue.', {
+    tools.push(fn('let_try_again', 'Let yourself try once more at a change you stopped fixing on your own, when the person who asked for it or an admin asks you to try again or continue.', {
       ...(['chat', 'category', 'message'].includes(place.type)
         ? { change: { type: 'integer', description: 'Which of your changes: its change id from the facts.' } } : {}),
     }, []));
@@ -1714,8 +1714,7 @@ async function updateChange(pool, ctx, args) {
 /**
  * #6284: somebody asked the bot to try again at a change it stopped fixing
  * on its own. The same grant the Let it try again button makes: the
- * requester, an admin or anybody who voted on it may; one grant is one more
- * round.
+ * requester or an admin may; one grant is one more round.
  */
 async function letTryAgain(pool, ctx, args) {
   const { place, user, deps } = ctx;

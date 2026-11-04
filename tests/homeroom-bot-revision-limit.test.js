@@ -81,21 +81,22 @@ test('the stopped line says how many tries and who can let it try again', () => 
   assert.match(mine, /You can let it try once more/);
   assert.match(mine, /77 of this change's checks failed/);
   const others = followup.stoppedAtLimitText({ failingCount: 77, tries: 4 });
-  assert.match(others, /an admin or anyone who voted on it can let it try again/);
+  assert.match(others, /an admin can let it try again/);
+  assert.doesNotMatch(others, /voted/, 'a voter who is neither sees no button');
   assert.match(followup.stoppedHandOffText({ failingCount: 77, tries: 3 }), /stopped after 3 tries/);
 });
 
-test('the requester, an admin and a voter may grant; a stranger may not', async () => {
+test('the requester and an admin may grant; a voter or a stranger may not', async () => {
   const pool = fakePool({ requesterId: 11, votes: [12] });
   assert.equal(await grants.mayGrant(pool, { sessionId: 5, user: { id: 11 } }), true);
-  assert.equal(await grants.mayGrant(pool, { sessionId: 5, user: { id: 12 } }), true);
+  assert.equal(await grants.mayGrant(pool, { sessionId: 5, user: { id: 12 } }), false, 'a vote alone does not');
   assert.equal(await grants.mayGrant(pool, { sessionId: 5, user: { id: 13 } }), false);
   assert.equal(await grants.mayGrant(pool, { sessionId: 5, user: { id: 13, isAdmin: true } }), true);
   assert.equal(await grants.mayGrant(pool, { sessionId: 5, user: null }), false);
 });
 
 test('a refusal says who can, and that nothing was queued', () => {
-  assert.match(grants.grantRefusalText('not_allowed'), /anyone who voted on it can let me try again/);
+  assert.match(grants.grantRefusalText('not_allowed'), /the person who asked for it or an admin can let me try again/);
   assert.match(grants.grantRefusalText('not_allowed'), /Nothing was queued/);
   assert.match(grants.grantRefusalText('already'), /already waiting/);
 });
@@ -138,6 +139,54 @@ test('a change stopped at its own limit says stopped, with tries and who may gra
   assert.equal(open.state, 'queued', 'a granted round is already waiting');
   const ordinary = await progress.changeBotFix(fixPool({ limitStop: null }), 5, { viewer: { id: 11 } });
   assert.equal(ordinary.state, 'handed_off', 'a hand-off for another reason is not a stop');
+});
+
+// #6284: "one grant buys exactly one round". The partial unique index holds
+// one open grant per change, so pressing again while it waits queues nothing;
+// the round spends it (useGrant), and only then could another be made.
+function grantPool({ requesterId = 11 } = {}) {
+  const state = { open: null, inserted: [] };
+  return {
+    state,
+    query: async (sql) => {
+      const text = String(sql);
+      if (/linked_issues FROM chat_sessions WHERE id = \$1/.test(text)) return { rows: [{ id: 5, app_id: 9, linked_issues: [7] }] };
+      if (/SELECT app_id FROM chat_sessions WHERE id = \$1/.test(text)) return { rows: [{ app_id: 9 }] };
+      if (/FROM homeroom_bot_requesters/.test(text)) return { rows: [{ user_id: requesterId, username: 'evan' }] };
+      if (/FROM chat_sessions cs\s+JOIN users u/.test(text)) {
+        return { rows: [{ app_id: 9, status: 'promoted', check_state: 'failing', reviewed_head_sha: 'a'.repeat(40), linked_issues: [7], username: 'homeroom_bot' }] };
+      }
+      if (/FROM homeroom_bot_queue/.test(text)) return { rows: [] };
+      if (/FROM homeroom_bot_runs\s+WHERE proposal_session_id = \$1 AND LOWER\(checks_head_sha\)/.test(text)) return { rows: [{ id: 1, limit_stop: 'own_revisions' }] };
+      if (/COUNT\(\*\) FILTER \(WHERE NOT asked\)/.test(text)) return { rows: [{ own: 3, asked: 0 }] };
+      if (/MAX\(id\) FILTER \(WHERE used_at IS NULL\)/.test(text)) return { rows: [{ used: 0, open: state.open }] };
+      if (/SELECT id FROM homeroom_bot_revision_grants WHERE session_id = \$1 AND used_at IS NULL/.test(text)) {
+        return { rows: state.open ? [{ id: state.open }] : [] };
+      }
+      if (/INSERT INTO homeroom_bot_revision_grants/.test(text)) {
+        state.open = 7; state.inserted.push(true); return { rows: [{ id: 7 }] };
+      }
+      if (/UPDATE homeroom_bot_revision_grants\s+SET used_at/.test(text)) {
+        if (!state.open) return { rows: [] };
+        const id = state.open; state.open = null; return { rows: [{ id, granted_by: null }] };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
+test('one grant buys exactly one open round, and the round spends it', async () => {
+  const pool = grantPool();
+  const deps = { homeroomBot: { queueChecksFix: async () => ({ queued: true }) } };
+  const user = { id: 11 };
+  assert.equal(await grants.mayGrant(pool, { sessionId: 5, user }), true);
+  assert.deepEqual(await grants.grant(pool, { sessionId: 5, user, deps }), { ok: true, grantId: 7 });
+  assert.equal(pool.state.inserted.length, 1, 'one grant stored');
+  assert.deepEqual(await grants.grant(pool, { sessionId: 5, user, deps }), { ok: false, why: 'already' },
+    'pressed again while it waits: nothing new');
+  assert.equal(pool.state.inserted.length, 1);
+  assert.deepEqual(await grants.useGrant(pool, 5, 1), { id: 7, granted_by: null }, 'the round spends the grant');
+  assert.equal(pool.state.open, null);
 });
 
 test('a grant is refused when the change is not stopped', async () => {

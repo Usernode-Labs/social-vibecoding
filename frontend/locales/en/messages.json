@@ -5009,7 +5009,7 @@
   },
   "ai.pill.letTryAgain": {
     "text": "Try again",
-    "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester, an admin or a voter may let it try once more."
+    "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester or an admin may let it try once more."
   },
   "ai.pill.needsYou": {
     "text": "Needs you",

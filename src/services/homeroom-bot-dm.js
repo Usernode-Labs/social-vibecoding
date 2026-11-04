@@ -1632,8 +1632,11 @@ function requestNews(kind, dm, context) {
       // names the way that does not depend on it.
       const change = context.firstVersion ? 'the first version' : 'your change';
       if (dm.canRevise === false) {
-        return `${line}\n\nI couldn't update ${change}: I've already updated it as many times as I can on my own, `
-          + 'so a person needs to make this one. It\'s as it was.';
+        // #6284: canRevise false is the cap on updates people ASKED for; the
+        // bot's own three are said in the thread and on the change's card.
+        const askedCap = require('./homeroom-bot-followup').MAX_ASKED_REVISIONS;
+        return `${line}\n\nI couldn't update ${change}: I've already made ${askedCap} updates people `
+          + 'asked for on it, as many as I may. A person can make the next one. It\'s as it was.';
       }
       const words = updateFailedWords(dm.reason, change, 'me');
       let next = `To try again, open it on ${context.appName} and tap Change something.`;

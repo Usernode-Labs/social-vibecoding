@@ -516,7 +516,7 @@ async function revisionCounts(pool, sessionId) {
 function stoppedAtLimitText({ failingCount = 0, tries = MAX_REVISIONS, you = false } = {}) {
   const who = you
     ? 'You can let it try once more.'
-    : 'The person who asked for it, an admin or anyone who voted on it can let it try again.';
+    : 'The person who asked for it or an admin can let it try again.';
   const failing = failingCount > 0
     ? `${failingCount} of this change's checks failed on its preview.`
     : 'Its checks are failing on its preview.';
@@ -529,7 +529,7 @@ function stoppedHandOffText({ failingCount = 0, tries = MAX_REVISIONS } = {}) {
     ? ' 1 check is still failing.'
     : failingCount > 1 ? ` ${failingCount} checks are still failing.` : '';
   return `I stopped after ${tries} tries at getting this change past its checks.${failing} `
-    + 'The person who asked for it, an admin or anyone who voted on it can let me try once more.';
+    + 'The person who asked for it or an admin can let me try once more.';
 }
 
 /** #6284: the cap on updates people asked for, said in words. */

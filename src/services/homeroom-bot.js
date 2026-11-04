@@ -2939,7 +2939,7 @@ async function insertRunRow(pool, run) {
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha, charged, payer_user_id, read_reason, asked, asked_by, limit_stop)
+        checks_head_sha, asked, asked_by, limit_stop, charged, payer_user_id, read_reason)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
@@ -2951,15 +2951,15 @@ async function insertRunRow(pool, run) {
       run.budgetStop || null, run.proposalSessionId || null,
       // The failing head a checks follow-up looked at, so it looks once.
       run.checksHeadSha || null,
+      // #6284: a revise run a person asked for (or a granted round), who
+      // asked, and why a run stopped ('own_revisions' on the limit hand-off).
+      run.asked === true, run.askedBy || null, run.limitStop || null,
       // Whose week it counts toward, if anybody's (billingOf): a shadow run
       // never does.
       run.charged ?? run.mode === 'live', run.payerUserId || null,
       // What started this read (readReasonOf), so a request read again and
       // again says why.
-      run.readReason || null,
-      // #6284: a revise run a person asked for (or a granted round), who
-      // asked, and why a run stopped ('own_revisions' on the limit hand-off).
-      run.asked === true, run.askedBy || null, run.limitStop || null],
+      run.readReason || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in

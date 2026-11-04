@@ -8099,8 +8099,8 @@ const AppView = {
         };
       }
       if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
-      // #6284: the bot stopped at its own limit. The requester, an admin or
-      // anybody who voted on the change may let it try once more.
+      // #6284: the bot stopped at its own limit. The requester or an admin
+      // may let it try once more.
       if (botFix && botFix.state === 'stopped' && botFix.canTryAgain) {
         actions.unshift({
           key: 'tryAgain', cls: 'gc-vote-btn gc-vote-btn-accent',

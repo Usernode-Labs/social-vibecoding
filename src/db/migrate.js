@@ -2076,14 +2076,6 @@ async function seedStagingBotUpdateComing(pool) {
   }
 }
 
-// #6264: a request where the bot promised to say when an update was in, and
-// then said it. A fresh staging copy has no such exchange (nothing here runs
-// a model), so the before & after shots get one, obviously fake, on the
-// self-hosted Homeroom project, for the shots' member fixture
-// (usernode-capture) as the person who asked. The messages are ordinary bot
-// bubbles in the request's discussion; none of it is a signal anything
-// reads. Idempotent by request number and by each line's text; a no-op
-// outside staging.
 /**
  * #6284's shots: a change Homeroom bot built for the capture member, its
  * checks failing after the bot stopped at its own limit of three fixes. The
@@ -2091,10 +2083,17 @@ async function seedStagingBotUpdateComing(pool) {
  * and Let it try again, which a fresh staging copy cannot reach on its own
  * because nothing there runs checks or a model. Obviously fake, idempotent,
  * and strictly a no-op outside staging.
+ *
+ * Its id is fixed because the declared start path names the change, and it
+ * is in a range no real session can reach: a preview cloned from production
+ * already holds every id up to production's counter, and an id already taken
+ * silently skipped this fixture once (#6284's own shots could not find it).
  */
 async function seedStagingBotFixesStopped(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
-  const SESSION_ID = 990813;
+  // Nine digits: the client's change address (_changeNumber) reads at most
+  // that many, and no real session counter gets near it.
+  const SESSION_ID = 999_999_999;
   try {
     const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
     const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
@@ -2147,7 +2146,15 @@ async function seedStagingBotFixesStopped(pool) {
         JSON.stringify([{ name: 'The page loads', path: '/', status: 'fail', failureReason: '1 console error on load' }]),
         SESSION_ID],
     );
-    if (!session.rows.length) return;
+    if (!session.rows.length) {
+      // The id was taken by something that is not this fixture: say so,
+      // rather than leaving the shots to find nothing and report a skip.
+      const taken = await pool.query('SELECT branch_name FROM chat_sessions WHERE id = $1', [SESSION_ID]);
+      if (taken.rows[0]?.branch_name !== branch) {
+        log.warn('db', 'Staging Homeroom bot stopped-fix fixture id is taken', { sessionId: SESSION_ID });
+      }
+      return;
+    }
     const sessionId = session.rows[0].id;
     for (const [i, limitStop] of [[1, null], [2, null], [3, null], [4, 'own_revisions']]) {
       const reason = i === 4 ? 'its attempt to fix them changed nothing' : `fix round ${i} (staging demo)`;
@@ -2162,11 +2169,70 @@ async function seedStagingBotFixesStopped(pool) {
         [appId, number, i === 4 ? 'person' : 'revise', sessionId, head, limitStop, reason, i],
       );
     }
+    // The bot's own stop message in the change's discussion, with Let it try
+    // again and Not now under it, as a real stop posts it. The same words
+    // followup.stoppedHandOffText says for one failing check.
+    const stopText = 'I stopped after 3 tries at getting this change past its checks. 1 check is still failing. '
+      + 'The person who asked for it or an admin can let me try once more.';
+    let offer = (await pool.query(
+      `SELECT id FROM homeroom_bot_voice_offers
+        WHERE app_id = $1 AND kind = 'try_again' AND args->>'sessionId' = $2 LIMIT 1`,
+      [appId, String(sessionId)],
+    )).rows[0];
+    if (!offer) {
+      offer = (await pool.query(
+        `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
+         VALUES ($1, 'try_again', $2::jsonb, $3) RETURNING id`,
+        [appId, JSON.stringify({ sessionId: Number(sessionId) }), memberId],
+      )).rows[0];
+    }
+    const actions = [
+      { id: 'yes', label: 'Let it try again', style: 'primary', offerId: Number(offer.id) },
+      { id: 'no', label: 'Not now', style: 'secondary', offerId: Number(offer.id) },
+    ];
+    const metadata = {
+      homeroomBot: {
+        kind: 'voice',
+        offer: { id: Number(offer.id), kind: 'try_again', status: 'open', forUserId: Number(memberId) },
+        actions,
+      },
+    };
+    const posted = await pool.query(
+      `INSERT INTO chat_messages
+         (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       SELECT $1::int, $2::int, $3::text, 'message', $4::jsonb, 'session', $5::int, NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1::int AND thread_type = 'session' AND thread_ref = $5::int
+                             AND user_id = $2::int AND content = $3::text AND deleted_at IS NULL)
+       RETURNING id`,
+      [appId, botId, stopText, JSON.stringify(metadata), sessionId],
+    );
+    const messageId = posted.rows[0]?.id || (await pool.query(
+      `SELECT id FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $2
+          AND user_id = $3 AND content = $4 AND deleted_at IS NULL
+        ORDER BY id LIMIT 1`,
+      [appId, sessionId, botId, stopText],
+    )).rows[0]?.id;
+    if (messageId) {
+      await pool.query(
+        'UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
+        [offer.id, messageId],
+      );
+    }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot stopped-fix seeding failed', { message: err.message });
   }
 }
 
+// #6264: a request where the bot promised to say when an update was in, and
+// then said it. A fresh staging copy has no such exchange (nothing here runs
+// a model), so the before & after shots get one, obviously fake, on the
+// self-hosted Homeroom project, for the shots' member fixture
+// (usernode-capture) as the person who asked. The messages are ordinary bot
+// bubbles in the request's discussion; none of it is a signal anything
+// reads. Idempotent by request number and by each line's text; a no-op
+// outside staging.
 async function seedStagingBotFollowUp(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -17108,6 +17174,9 @@ module.exports = {
   seedStagingProfileCustomization,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
+  // #6284: the stopped-fix change the Testing card and Homeroom bot page
+  // shots need, as its own test seam (the fixtures are staging-only).
+  seedStagingBotFixesStopped,
   seedStagingBotProjectNotification,
   seedStagingBotAllowanceWarning,
   seedStagingDesignThread,

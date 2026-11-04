@@ -3616,8 +3616,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // build this way before proposing it, so an external connector token (not
   // a delegated grant) is the one caller left.
   // #6284: a person lets the Homeroom bot try once more at a change it
-  // stopped fixing on its own. The requester, an admin or anybody who voted
-  // on the change may; one grant buys exactly one more round.
+  // stopped fixing on its own. The requester or an admin may; one grant buys
+  // exactly one more round.
   router.post('/api/apps/:slug/changes/:id/let-it-try-again', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
     if (!id) return res.status(404).json({ error: 'Change not found' });

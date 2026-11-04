@@ -58,6 +58,9 @@ const FIRST_PERSON = Object.freeze([
   [/Homeroom bot updated this change:/, 'I updated this change:'],
   [/Homeroom bot couldn't update this change: it has already updated it as many times as it may on its own,/,
     'I couldn\'t update this change: I\'ve already updated it as many times as I may on my own,'],
+  // #6284: the cap on updates people asked for (followup.revisionFailedText).
+  [/Homeroom bot couldn't update this change: it has already made (\d+) updates people asked for on it, as many as it may\./,
+    'I couldn\'t update this change: I\'ve already made $1 updates people asked for on it, as many as I may.'],
   [/Homeroom bot is working on it…/, 'I\'m working on it…'],
   [/Homeroom bot saw your message, but another update to this change is running right now\. It will answer once that finishes\./,
     'I saw your message, but another update to this change is running right now. I\'ll answer once that finishes.'],

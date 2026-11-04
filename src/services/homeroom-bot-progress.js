@@ -883,7 +883,7 @@ function typicalMinutes(stage, limit = null) {
  *   { state: 'stopped', tries, canTryAgain, head }
  *                                        #6284: it stopped at its own limit of
  *                                        3 fixes, and the requester, an admin
- *                                        or a voter may let it try once more
+ *                                        or an admin may let it try once more
  *   null                                 nothing of the bot's is recorded
  * A read that fails is null: the card keeps its usual words. The queue is
  * keyed by request; the change reaches it through linked_issues.

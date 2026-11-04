@@ -479,7 +479,8 @@ test('the demo rows are obviously fake, and staging-only', () => {
   assert.equal(new Set(rows.filter((r) => feedSlugs.has(r.app.slug)).map((r) => r.app.slug)).size, 2);
   assert.equal(new Set(rows.map((r) => r.app.slug)).size, 6, 'three chips and "3 more"');
   assert.ok(rows.every((r) => /^staging-demo-/.test(r.app.slug)), 'on demo projects only');
-  assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped']);
+  // #6284: the bot stopped at its own limit on a change's checks.
+  assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped', 'fix_stopped']);
   assert.ok(demo.next.some((r) => r.claimedBy === 'staging-demo-partner'), 'a claim');
 });
 

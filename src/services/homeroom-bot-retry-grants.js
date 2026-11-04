@@ -6,15 +6,14 @@
 // page offer Let it try again. One grant buys exactly one round: the round is
 // recorded as asked, and the grant is marked used.
 //
-// Who may grant: the person who asked for the request, an admin, or anybody
-// who voted on the change (their votes are the ones an update clears). The
-// answer chosen when this was planned was "also anyone who voted on the
-// change", which wins over the spec's suggested answer.
+// Who may grant: the person who asked for the request, or an admin. That is
+// the answer the plan carried when it was built, so a voter who is neither
+// sees the line and no button.
 
 const log = require('./logger');
 
 const GRANT_WORDS = Object.freeze({
-  not_allowed: 'Only the person who asked for it, an admin or anyone who voted on it can let me try again. Nothing was queued.',
+  not_allowed: 'Only the person who asked for it or an admin can let me try again. Nothing was queued.',
   not_stopped: 'I am not stopped on this change right now, so there is nothing to let me try again. Nothing was queued.',
   already: 'A try is already waiting for this change. Nothing more was queued.',
 });
@@ -26,8 +25,7 @@ function grantRefusalText(why) {
 
 /**
  * Whether `user` may let the bot try again on `sessionId`: the request's
- * requester, an admin, or anybody with a vote on the change. Never throws
- * (a read that fails answers no).
+ * requester, or an admin. Never throws (a read that fails answers no).
  */
 async function mayGrant(pool, { sessionId, user }) {
   if (!user?.id) return false;
@@ -40,15 +38,10 @@ async function mayGrant(pool, { sessionId, user }) {
     );
     if (!cs) return false;
     const issueNumber = Array.isArray(cs.linked_issues) ? Number(cs.linked_issues[0]) : null;
-    if (Number.isInteger(issueNumber) && issueNumber > 0) {
-      const requester = await require('./homeroom-bot-dm')
-        .requesterOf(pool, cs.app_id, issueNumber).catch(() => null);
-      if (requester && Number(requester.userId) === Number(user.id)) return true;
-    }
-    const { rows } = await pool.query(
-      'SELECT 1 FROM pr_votes WHERE session_id = $1 AND user_id = $2 LIMIT 1', [id, user.id],
-    );
-    return rows.length > 0;
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) return false;
+    const requester = await require('./homeroom-bot-dm')
+      .requesterOf(pool, cs.app_id, issueNumber).catch(() => null);
+    return !!(requester && Number(requester.userId) === Number(user.id));
   } catch (err) {
     log.warn('homeroom-bot', 'Could not read whether a person may let the bot try again', { sessionId: id, err: err.message });
     return false;
