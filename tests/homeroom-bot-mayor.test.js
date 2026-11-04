@@ -403,23 +403,91 @@ test('#4605: a draft promised with no offer behind it is caught, and the second 
     'A File it button will appear under this message.',
     'Tap File it to file it.',
     'You\'ll see File it and Not now below.',
-    'I\'ve drafted the request for Rilo.',
+    'I\'ve drafted the request.',
   ]) assert.deepEqual(await kinds(text), ['drafted'], text);
-  assert.deepEqual(await kinds('I\'ve drafted the request for Rilo.', { offer: { app: {}, title: 'x' } }), [], 'the offer backs it');
-  assert.deepEqual(await kinds('Want me to file that as a request on Rilo?'), [], 'an offer to come is no promise');
+  assert.deepEqual(await kinds('I\'ve drafted the request for Rilo.', { offer: { app: { name: 'Rilo' }, title: 'x' } }), [], 'the offer backs it');
+  assert.deepEqual(await kinds('Want me to file that as a request on Rilo?', { knownProjects: new Set(['rilo']) }), [], 'an offer to come is no promise');
   assert.deepEqual(await kinds('Request #13 is with the group.'), [], 'a filed request is no draft');
   assert.deepEqual(await kinds('Tap File it under my earlier message.'), ['drafted'], 'an open draft from an earlier turn is not this turn\'s');
 
   const note = mayor.checkNote([{ kind: 'drafted', said: 'says a drafted request with File it is under it' }]);
   assert.match(note, /^\[Homeroom check, not from them: your reply says a drafted request with File it is under it\./);
   assert.match(note, /did not call offer_request in this turn, so nothing is under it\. Call offer_request now/);
-  assert.match(note, /If offer_request is refused, say why plainly and do not mention File it\. Then call reply again\.\]$/);
+  assert.match(note, /Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it\. Then reply with one short line about the draft at most/);
+  assert.match(note, /Then call reply again\.\]$/);
   assert.doesNotMatch(note, /—/);
 
   assert.equal(
     mayor.stripClaims('A File it button will appear under this message.', [{ kind: 'drafted' }]),
-    'I haven\'t drafted it yet, so there\'s nothing to tap. Tell me what you want filed and I\'ll draft it for you to confirm.',
+    'I haven\'t drafted it yet, so there\'s nothing to tap.',
   );
+});
+
+test('#6307: a draft claimed and not made is not stacked over words that still promise it', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  // The 15:44:44 reply: the stock line on top of a reply that still promised
+  // the next draft, and that asked again for what they had just listed.
+  const said = 'I haven\'t drafted it yet, so there\'s nothing to tap. Tell me what you want filed and I\'ll draft it for you to confirm.\n\n'
+    + 'The Game Corner one is filed, and it has its own thread here. Here\'s the next one, for The Best Color.';
+  const cut = mayor.stripClaims(said, [{ kind: 'drafted' }]);
+  assert.equal(cut,
+    'I haven\'t drafted it yet, so there\'s nothing to tap.\n\n'
+    + 'The Game Corner one is filed, and it has its own thread here.');
+  assert.doesNotMatch(cut, /Tell me what you want filed/, 'it does not ask again for what they just gave');
+  assert.doesNotMatch(cut, /next one|File it/i, 'nothing is left that promises a draft');
+  // The second pass is told to make the draft, and to keep its words on the card.
+  const note = mayor.checkNote([{ kind: 'drafted', said: 'says a drafted request with File it is under it' }]);
+  assert.match(note, /Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it\./);
+  assert.match(note, /the card under it shows its title and words, so never write them in your reply\./);
+  assert.ok((await mayor.claimProblems(pool, { user: { id: 1 }, appIds: new Set() }, 'A File it button will appear under this message.'))
+    .some((p) => p.kind === 'drafted'));
+});
+
+test('#6307: a paragraph is said once in a reply, whatever its case or spacing', () => {
+  const repeated = 'The Best Color is filed and I\'m reading it now (request #9).\n\n'
+    + 'Which tier list do you want to start with?\n\n'
+    + '  the best color is filed   and I\'m reading it now (request #9).  ';
+  assert.equal(mayor.dropRepeatedParagraphs(repeated),
+    'The Best Color is filed and I\'m reading it now (request #9).\n\nWhich tier list do you want to start with?');
+  assert.equal(mayor.dropRepeatedParagraphs('One.\n\nTwo.'), 'One.\n\nTwo.', 'different paragraphs stay');
+  assert.equal(mayor.dropRepeatedParagraphs('Only one paragraph.'), 'Only one paragraph.');
+});
+
+test('#6307: a reply does not print the draft the card under it already shows', () => {
+  const offer = { app: { name: 'Ear Trainer' }, title: 'Richer synth tones', details: 'A slider from 100 to 800 Hz, with a preview button beside it.' };
+  const text = 'Here is the request I\'d file on Ear Trainer.\n\n'
+    + 'A slider from 100 to 800 Hz, with a preview button beside it.\n\n'
+    + 'Tap File it to file it, or Not now.';
+  assert.equal(mayor.dropDraftEcho(text, offer),
+    'Here is the request I\'d file on Ear Trainer.\n\nTap File it to file it, or Not now.');
+  // The whole body inside one paragraph keeps its one line about the draft.
+  assert.equal(mayor.dropDraftEcho('Here is the draft:\nA slider from 100 to 800 Hz, with a preview button beside it.', offer),
+    'Here is the draft:');
+  assert.equal(mayor.dropDraftEcho('Nothing about it.', offer), 'Nothing about it.');
+  assert.equal(mayor.dropDraftEcho(text, null), text, 'no offer, no card to leave the words to');
+});
+
+test('#6307: a project a reply names must be one this turn\'s tools returned', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const offer = { app: { slug: 'community-tier-lists', name: 'Community Tier Lists' } };
+  const ctx = { user: { id: 1 }, appIds: new Set(), offer };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  assert.deepEqual(mayor.projectMentions('The draft for Community Tier Lists is ready.'), ['Community Tier Lists']);
+  assert.deepEqual(await kinds('The draft for Community Tier Lists is ready.'), [], 'the offer returned it');
+  // The 15:47:01 reply: a name the tools never returned.
+  const garbled = await mayor.claimProblems(pool, ctx, 'Sorry. The draft for Community Components is ready.');
+  assert.deepEqual(garbled.map((p) => p.kind), ['unknown_project']);
+  assert.deepEqual(garbled[0].names, ['Community Components']);
+  // A quoted name where it says which project it is, and names the wrong one.
+  assert.deepEqual(mayor.projectMentions('Next after this is "Block World" and I\'ll check which project that is.'), ['Block World']);
+  const cut = mayor.stripClaims('Sorry. The draft for Community Components is ready. The card is under this reply.',
+    [{ kind: 'unknown_project', names: ['Community Components'] }]);
+  assert.equal(cut, 'Sorry. The card is under this reply.\n\n(I can\'t find a project called "Community Components".)');
+  // The second pass is told, and a tool that returned it clears the claim.
+  const note = mayor.checkNote([{ kind: 'unknown_project', names: ['Community Components'], said: 'x' }]);
+  assert.match(note, /A project you name must be one a tool returned in this turn, spelled exactly as it returned it/);
+  const known = { user: { id: 1 }, appIds: new Set(), knownProjects: new Set(['community tier lists']) };
+  assert.deepEqual(await kinds('The draft for Community Tier Lists is ready.', { offer: null, knownProjects: known.knownProjects }), []);
 });
 
 test('#11 (WP3): a promise to come back later, "the team was told" and "I withdrew it" count only when this turn did it', async () => {
@@ -803,11 +871,16 @@ test('#6251: the draft shows Where, Related and Done when, in the words it says 
   assert.match(text, /^- #6230 One detail column for plans and designs: build together, it is the same column$/m);
   assert.match(text, /^\*\*Done when:\*\*$/m);
   assert.match(text, /^- A plan and a design open in the same side column$/m);
-  // With nothing said about where, it is the message itself.
-  assert.equal(mayor.draftExtrasText({ chatHref: '#homeroom-bot/thread/42' }), '**Where:** your message in this thread');
-  assert.equal(mayor.draftExtrasText({ chatHref: '#homeroom-bot/main' }), '**Where:** your message in Main Chat');
+  // #6307: Where names a place in the app, or is left out. It never quotes the
+  // chat back, and never says "your" to one reader and "their" to the next.
+  assert.equal(mayor.draftExtrasText({ chatHref: '#homeroom-bot/thread/42' }), '');
+  assert.equal(mayor.draftExtrasText({ chatHref: '#homeroom-bot/main' }), '');
+  assert.equal(mayor.draftExtrasText({ project: 'Community Tier Lists', chatHref: '#homeroom-bot/main' }),
+    '**Where:** Community Tier Lists');
   const quoted = mayor.draftExtrasText({ chatHref: '#homeroom-bot/main', context: { quoted: { excerpt: 'a vote on closing request #15 is open' } } });
-  assert.equal(quoted, '**Where:** my message "a vote on closing request #15 is open"');
+  assert.equal(quoted, '');
+  assert.equal(mayor.draftExtrasText({ project: 'Ear Trainer', context: { saw: 'the request page' } }),
+    '**Where:** Ear Trainer · the request page');
   assert.doesNotMatch(text, /—/, 'no em dash');
 });
 
