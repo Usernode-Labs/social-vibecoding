@@ -189,7 +189,26 @@ async function mergePause(pool, appId) {
          FROM apps WHERE id = $1`,
       [appId]
     );
-    return describe(rows[0]);
+    const verdict = describe(rows[0]);
+    // #6288: the request main watch filed for this red, so a change failing
+    // only main's tests can point at the fix that will make it green again.
+    // Nothing to name while main is not red, and none filed yet answers null.
+    const redSha = verdict.paused ? (verdict.pausedSha || verdict.sha) : null;
+    if (redSha) {
+      try {
+        const { rows: filed } = await pool.query(
+          `SELECT issue_number FROM main_red_requests
+            WHERE app_id = $1 AND red_sha = $2 AND issue_number IS NOT NULL
+            LIMIT 1`,
+          [appId, String(redSha).toLowerCase()]
+        );
+        verdict.requestNumber = filed[0] ? Number(filed[0].issue_number) : null;
+      } catch (err) {
+        log.warn('main-watch', 'red request read failed; not naming it', { appId, err: err.message });
+        verdict.requestNumber = null;
+      }
+    }
+    return verdict;
   } catch (err) {
     // An unreadable row must not wedge every merge on the app; the pause is
     // a safety net, and a net that cannot be read is not a net that caught
