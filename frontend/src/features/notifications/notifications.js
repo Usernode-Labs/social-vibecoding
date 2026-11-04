@@ -2683,6 +2683,17 @@ function bellWords(words) {
   return `${(space > 70 ? room.slice(0, space) : room).replace(/[\s.,;:!?-]+$/, '')}…`;
 }
 
+// A message's words as a row's title (#5929 item 3): the markdown stripped,
+// its lines joined, and cut at the last whole word, the way the bot's own
+// replies already read. A bare `slice(0, 140)` put a raw message on the row:
+// "Feedback: This is a strong settings screen. The copy is clear and the…"
+// was the start of a reply, cut mid-word, under a label that said what it
+// was. The label stays the kind ("Mentioned you", "Replied on request #12");
+// the words are what was said, readable.
+function messageWords(content) {
+  return bellWords(plainMarkdown(content));
+}
+
 // The row's words for one of the bot's notifications: { label, subject, meta },
 // or null when the detail is not the bot's. Its answer is what it wrote,
 // under its name.
@@ -2885,7 +2896,7 @@ function rowView(n) {
     // the sender, so it is headed with them.
     const conversation = n.conversationTitle
       || (n.conversationKind === 'direct' && n.sourceUsername ? `@${n.sourceUsername}` : t('notifications:row.conversation.untitled'));
-    const snippet = (n.messageContent || '').slice(0, 140);
+    const snippet = messageWords(n.messageContent);
     // The conversation is the SUBJECT of every one of these, so it leads —
     // and for a plain message the snippet follows it, which is the only part
     // of a message notification anybody reads. The other four say what
@@ -3183,7 +3194,7 @@ function rowView(n) {
       ...base,
       icon: n.detail || '❤️',
       by: n.sourceUsername || null,
-      ...headline(t('notifications:row.reaction.label'), (n.messageContent || '').slice(0, 140)),
+      ...headline(t('notifications:row.reaction.label'), messageWords(n.messageContent)),
     };
   }
 
@@ -3575,7 +3586,7 @@ function rowView(n) {
   if (n.kind === 'channel_message') {
     const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
     const project = n.appName || '';
-    const snippet = (n.messageContent || '').slice(0, 140);
+    const snippet = messageWords(n.messageContent);
     const username = n.sourceUsername || '';
     const asked = count === 1 && n.requestNumber != null;
     // Each line is a whole message, picked by what is known: who wrote, and
@@ -3645,7 +3656,7 @@ function rowView(n) {
           : t('notifications:row.inviteLink.joined'), null)
         : headline(asked ? t('notifications:row.inviteLink.asked')
           : (count > 1 ? t('notifications:row.inviteLink.saidHiWithOthers', { count: count - 1 })
-            : t('notifications:row.inviteLink.saidHi')), (n.messageContent || '').slice(0, 140))),
+            : t('notifications:row.inviteLink.saidHi')), messageWords(n.messageContent))),
     };
   }
 
@@ -3700,7 +3711,7 @@ function rowView(n) {
                   ? t(n.changeOnGithub ? 'notifications:row.chat.changeReplyPr' : 'notifications:row.chat.changeReply', { number: n.detail })
                   : t('notifications:row.chat.decisionReply'))
                 : t('notifications:row.chat.posted'),
-      (n.messageContent || '').slice(0, 140),
+      messageWords(n.messageContent),
     ),
   };
 }
