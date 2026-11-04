@@ -1918,7 +1918,7 @@ async function seedStagingBotFollowUp(pool) {
     const userId = people.rows[0].id;
     const botId = bots.rows[0].id;
     const number = 9107;
-    const title = 'Staging demo: sort the chores list by room';
+    const title = 'Staging demo: a request where the bot kept its word';
     await pool.query(
       `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
        SELECT $1, $2, $3, 'Staging demo: obviously fake. An update was asked for and told.', $4, NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
