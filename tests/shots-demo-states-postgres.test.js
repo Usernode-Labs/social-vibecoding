@@ -603,7 +603,24 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     '**Homeroom** · new request: Week by week tracking in insights',
     '',
     'Show insights week by week, not only as a total.',
+    '',
+    '**Where:** the insights page',
+    '',
+    '**Related:**',
+    '- #6230 One detail column for plans and designs: build together, it is the same column',
+    '',
+    '**Done when:**',
+    '- Insights show week by week, not only as a total',
+    '- The same weeks are counted however the list is sorted',
   ].join('\n'));
+  assert.deepEqual(fileAction.draft_extras.related,
+    [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }]);
+  assert.deepEqual(fileAction.draft_extras.doneWhen,
+    ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted']);
+  // #6251: the picture the draft names is on the draft's own message.
+  const { rows: draftPictures } = await pool.query(
+    "SELECT filename FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'", [fileOffer.id]);
+  assert.deepEqual(draftPictures.map((r) => r.filename), ['insights.png']);
   assert.deepEqual(fileOffer.metadata.homeroomBot,
     mayor.confirmMeta('file_request', {
       app: { slug: SLUG }, name: 'Homeroom', actionId: fileAction.id, question: 'File this as a request on Homeroom?',

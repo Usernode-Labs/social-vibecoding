@@ -763,3 +763,82 @@ test('#4525: offering a vote on closing a request, as the model and the person s
     assert.doesNotMatch(text, /\u2014/, 'no em dash');
   }
 });
+
+test('#6251: offer_request carries pictures, related requests, where it happened and Done when', () => {
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
+  assert.deepEqual(Object.keys(tool.parameters.properties).sort(),
+    ['attachmentIds', 'context', 'details', 'doneWhen', 'named', 'project', 'related', 'title']);
+  assert.ok(tool.parameters.required.includes('doneWhen'), 'a draft always says what done looks like');
+  assert.deepEqual(tool.parameters.properties.related.items.properties.relation.enum,
+    ['same', 'part_of', 'depends_on', 'build_together']);
+  assert.equal(tool.parameters.properties.attachmentIds.maxItems, 3);
+  assert.equal(tool.parameters.properties.related.maxItems, 3);
+  assert.equal(tool.parameters.properties.doneWhen.minItems, 1);
+  assert.equal(tool.parameters.properties.doneWhen.maxItems, 3);
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /Put up to three\n  that overlap in related, each with how \(part_of, depends_on, build_together\)/);
+  assert.match(prompt, /Pass in attachmentIds the ids of their pictures that belong with the\n  request, from the "id \.\.\." in a picture's history line/);
+  assert.match(prompt, /ask which project when a bare number is ambiguous/);
+  assert.match(prompt, /Propose one\n  to three doneWhen checks in their words/);
+  // Its doneWhen is trimmed and de-dashed, and nothing else is accepted.
+  assert.deepEqual(mayor.draftDoneWhen([' A plan opens beside it — in one column ', 'The request stays in view']),
+    ['A plan opens beside it, in one column', 'The request stays in view']);
+  assert.equal(mayor.draftDoneWhen([]), null);
+  assert.equal(mayor.draftDoneWhen(['one', 'two', 'three', 'four']), null);
+  assert.equal(mayor.draftDoneWhen(['one', '  ']), null);
+  assert.equal(mayor.draftDoneWhen('one'), null);
+});
+
+test('#6251: the draft shows Where, Related and Done when, in the words it says them', () => {
+  const extras = {
+    attachmentIds: ['a'.repeat(32)],
+    related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+    context: { request: { slug: 'homeroom', name: 'Homeroom', number: 15 }, saw: 'the request page' },
+    doneWhen: ['A plan and a design open in the same side column', 'The request stays in view beside it'],
+    chatHref: '#homeroom-bot/thread/42',
+  };
+  const text = mayor.draftExtrasText(extras);
+  assert.match(text, /^\*\*Where:\*\* request #15 on Homeroom · the request page$/m);
+  assert.match(text, /^\*\*Related:\*\*$/m);
+  assert.match(text, /^- #6230 One detail column for plans and designs: build together, it is the same column$/m);
+  assert.match(text, /^\*\*Done when:\*\*$/m);
+  assert.match(text, /^- A plan and a design open in the same side column$/m);
+  // With nothing said about where, it is the message itself.
+  assert.equal(mayor.draftExtrasText({ chatHref: '#homeroom-bot/thread/42' }), '**Where:** your message in this thread');
+  assert.equal(mayor.draftExtrasText({ chatHref: '#homeroom-bot/main' }), '**Where:** your message in Main Chat');
+  const quoted = mayor.draftExtrasText({ chatHref: '#homeroom-bot/main', context: { quoted: { excerpt: 'a vote on closing request #15 is open' } } });
+  assert.equal(quoted, '**Where:** my message "a vote on closing request #15 is open"');
+  assert.doesNotMatch(text, /—/, 'no em dash');
+});
+
+test('#6251: the filed body carries the pictures, Done when, Related and Where, and links the chat', () => {
+  const extras = {
+    related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+    context: { request: { slug: 'ear-trainer', name: 'Ear Trainer', number: 15 }, quoted: { excerpt: 'a vote on closing request #15 is open' }, saw: 'the request page' },
+    doneWhen: ['A plan and a design open in the same side column', 'The request stays in view beside it'],
+    chatHref: '#homeroom-bot/main',
+  };
+  const body = mayor.requestBody({
+    details: 'The plan and design open in one column.', username: 'evan', extras, screenshotIds: ['b'.repeat(32)],
+    domain: 'app.test', slug: 'homeroom',
+  });
+  assert.match(body, /^The plan and design open in one column\.\n\n\*\*Screenshot:\*\*\n!\[Screenshot\]\(https:\/\/app\.test\/issue-images\/b{32}\)$/m);
+  assert.match(body, /^\*\*Done when\*\*$/m);
+  assert.match(body, /^- A plan and a design open in the same side column$/m);
+  assert.match(body, /^\*\*Related\*\*$/m);
+  assert.match(body, /^- \[#6230\]\(https:\/\/app\.test\/#app\/homeroom\/dev\/issues\/6230\) One detail column for plans and designs: build together, it is the same column$/m);
+  assert.match(body, /^\*\*Where it happened\*\*$/m);
+  assert.match(body, /^- \[Request #15 on Ear Trainer\]\(https:\/\/app\.test\/#app\/ear-trainer\/dev\/issues\/15\)$/m);
+  assert.match(body, /^- Homeroom bot's message: "a vote on closing request #15 is open"$/m);
+  assert.match(body, /^- the request page$/m);
+  assert.match(body, /\n---\nFiled from evan's \[chat with Homeroom bot\]\(https:\/\/app\.test\/#homeroom-bot\/main\)\.$/);
+  // Without extras, or with a footer the B9 callers give, it is today's body.
+  assert.equal(mayor.requestBody({ details: 'Search notes.', username: 'evan', domain: 'app.test' }),
+    'Search notes.\n\n---\nFiled from evan\'s chat with Homeroom bot.');
+  assert.equal(mayor.requestBody({ details: 'Moved here.', username: 'evan', extras, footer: 'Moved from #3.', domain: 'app.test' }),
+    'Moved here.\n\n---\nMoved from #3.');
+  // The client's words give way first when the body is too long.
+  const long = mayor.requestBody({ details: 'x'.repeat(70000), username: 'evan', extras, domain: 'app.test', slug: 'homeroom' });
+  assert.ok(long.length <= 65536, 'inside GitHub\'s limit');
+  assert.match(long, /^x+…\n\n\*\*Done when\*\*/);
+});

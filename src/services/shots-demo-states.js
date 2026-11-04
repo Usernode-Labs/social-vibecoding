@@ -118,6 +118,14 @@ const ACCESS_APP_REPO_URL = 'https://github.com/staging-demo/shots-demo-member-w
 // The staging mock request the Homeroom bot offers to close (src/routes/
 // issues.js stagingMockIssues), which no other state marks.
 const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark mode toggle resets after refresh' });
+// #6251: the picture the seeded request draft carries, so the shots show the
+// thumbnail the real draft copies from the person's message. An obviously
+// fake screenshot (240x144, grey bars on a card), its own 32-hex id.
+const DRAFT_PICTURE_ID = 'd62510000000000000000000000000a1';
+const DRAFT_PICTURE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAPAAAACQCAIAAAC5w3GfAAABkElEQVR42u3dsQnAIBBAUXcNZGKLDCCkFrR3BpvkOB+8BdRf3mFp7YU0iitA0CBoEDQIGkGDoEHQIGgQNIIGQYOgQdAgaAQNggZBg6BB0AgaBA2CBkGDoEke9BiTw113j2zrLIJG0Aha0Aha0Aha0AgaQQsawtkOutYHviRoBC1oBA2CBkEjaEEjaEEjaBA0CBpBCxpBCxpBg6BB0Aha0Aga0m+sgKBB0CBoBO0WEDQIGgQNgkbQIGgQNMQJ2sdhRxE0ghY0ghY0ghY0gha0oAWNoAWNoAWNoAWNoAUtaEEjaEEjaEEjaEEjaG8saEEjaEEjaEEjaEEjaARt6xsEDYJG0CBoEDQIGgSNoEHQIGgQNAgaQYOgwTw05qEFjaAFjaAFLWhBI2hBI2hBI2hBI2hBC1rQCFrQCFrQCFrQCFrQghY0ghY0ghY0ghY0gkbQgkbQgkbQtr6x9Q2CBkGDoEHQCBoEDYIGQYOgETQIGgQNggbz0GaLBS1oQQsaQQta0Aha0Aha0IIWtKAFjaD/sQBl3hrNhMhZTgAAAABJRU5ErkJggg==',
+  'base64',
+);
 // The free app slots the member and the read-only admin get on the copies:
 // as many projects as a person may make in an hour (routes/apps.js
 // appCreateLimiter), so the allowance is never what stops a make there.
@@ -1493,7 +1501,9 @@ const STATES = [
       conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
         'metadata', 'created_at'],
       homeroom_bot_dm_actions: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
-        'details', 'status', 'created_at'],
+        'details', 'status', 'created_at', 'draft_extras'],
+      conversation_message_attachments: ['id', 'conversation_id', 'message_id', 'user_id', 'kind', 'filename',
+        'content_type', 'size_bytes', 'meta', 'data'],
     },
     free: botChatFree,
     async install(client, ctx) {
@@ -1504,6 +1514,16 @@ const STATES = [
       const name = app.name || app.slug;
       const title = 'Week by week tracking in insights';
       const details = 'Show insights week by week, not only as a total.';
+      // #6251: what a draft carries besides its words, as offer_request
+      // keeps it. It rides on the action (draft_extras) and is drawn under
+      // the details by the same pure function the real draft uses.
+      const extras = {
+        attachmentIds: [DRAFT_PICTURE_ID],
+        related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+        context: { saw: 'the insights page' },
+        doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
+        chatHref: '#homeroom-bot/main',
+      };
       const { rows: [ask] } = await client.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
          VALUES ($1, $2, $3, 'shots-fixture-hrbot-file-ask', '{}'::jsonb, NOW() - INTERVAL '3 minutes')
@@ -1513,10 +1533,10 @@ const STATES = [
       // As offer() writes it: the action, then the message whose buttons name it.
       const { rows: [action] } = await client.query(
         `INSERT INTO homeroom_bot_dm_actions
-           (user_id, conversation_id, app_id, kind, title, details, created_at)
-         VALUES ($1, $2, $3, 'file_request', $4, $5, NOW() - INTERVAL '2 minutes')
+           (user_id, conversation_id, app_id, kind, title, details, draft_extras, created_at)
+         VALUES ($1, $2, $3, 'file_request', $4, $5, $6::jsonb, NOW() - INTERVAL '2 minutes')
          RETURNING id`,
-        [ctx.member.id, chat.conversationId, ctx.appId, title, details]
+        [ctx.member.id, chat.conversationId, ctx.appId, title, details, JSON.stringify(extras)]
       );
       const metadata = mayor.confirmMeta('file_request', {
         app, name, actionId: Number(action.id), question: `File this as a request on ${name}?`,
@@ -1527,6 +1547,8 @@ const STATES = [
         `**${name}** · new request: ${title}`,
         '',
         details,
+        '',
+        mayor.draftExtrasText(extras),
       ].join('\n');
       const { rows: [offer] } = await client.query(
         `INSERT INTO conversation_messages
@@ -1536,6 +1558,14 @@ const STATES = [
         [chat.conversationId, chat.botId, content, ask.id, JSON.stringify({ homeroomBot: metadata })]
       );
       await client.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
+      // The picture the person attached, copied onto the draft by offer().
+      await client.query(
+        `INSERT INTO conversation_message_attachments
+           (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+         VALUES ($1, $2, $3, $4, 'image', 'insights.png', 'image/png', $5, $6)
+         ON CONFLICT DO NOTHING`,
+        [DRAFT_PICTURE_ID, chat.conversationId, offer.id, chat.botId, DRAFT_PICTURE.length, DRAFT_PICTURE]
+      );
       await client.query('UPDATE conversations SET updated_at = NOW() - INTERVAL \'2 minutes\' WHERE id = $1',
         [chat.conversationId]);
       await client.query(
@@ -1544,7 +1574,7 @@ const STATES = [
       );
       return {
         shows: [{
-          state: `Your chat with Homeroom bot, at the bottom: your message asking for a request, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          state: `Your chat with Homeroom bot, at the bottom: your message asking for a request, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, the picture you sent as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
           path: `/#messages/${IDS.botConversation}`,
         }],
       };
