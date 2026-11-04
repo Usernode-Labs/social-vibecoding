@@ -490,6 +490,28 @@ test('GC_MAX_MESSAGE_LEN is 8000', () => {
   assert.equal(GC_MAX_MESSAGE_LEN, 8000);
 });
 
+// ─── (A6) #6308: a link in a chat body is blue ──────────────────────────────
+// The body is `.gc-msg-content`, drawn by the channel and the request thread
+// alike. A markdown / bare-URL anchor used to inherit the body ink, so it was
+// clickable and looked like prose. It now wears the same accent + underline as
+// Messages' markdown; the `#N` / `PR#N` / `#channel` chips are excluded and
+// keep their own inks.
+
+const APP_CSS = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
+
+test('a link in a chat body wears the platform link blue, under a rule that leaves the ref chips alone', () => {
+  assert.match(APP_CSS,
+    /\.gc-msg-content a:not\(\.gc-ref\):not\(\.gc-channel-ref\) \{\s*color: var\(--accent\);\s*text-decoration: underline;\s*\}/);
+  assert.match(APP_CSS,
+    /@media \(hover: hover\) \{\s*\.gc-msg-content a:not\(\.gc-ref\):not\(\.gc-channel-ref\):hover \{ color: var\(--accent-light\); \}\s*\}/);
+});
+
+test('the channel chip still draws itself, not as a body link', () => {
+  assert.match(APP_CSS, /\.gc-channel-ref \{[^}]*color: var\(--accent\);[^}]*text-decoration: none;/);
+  assert.match(APP_CSS, /\.gc-ref-pr \{[^}]*color: rgb\(90, 169, 255\);/);
+  assert.match(APP_CSS, /\.gc-ref-issue \{[^}]*color: rgb\(52, 211, 153\);/);
+});
+
 // ─── (B) backend limit ──────────────────────────────────────────────────────
 // ws.js requires 'ws' + 'jsonwebtoken' at module load (not installed in this
 // hermetic env), so intercept them via Module._load like the other ws suites.
