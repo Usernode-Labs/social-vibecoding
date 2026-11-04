@@ -3939,6 +3939,26 @@
     "text": "Close the preview",
     "description": "The × at the right of a design's preview, the column beside a private thread on the Homeroom bot tab: closes the preview. Its accessible name and tooltip."
   },
+  "draft.pane.label": {
+    "text": "Request draft",
+    "description": "Accessible name of the pane that previews a request Homeroom bot drafted before it is filed, beside the chat on the Homeroom bot tab."
+  },
+  "draft.pane.sub": {
+    "text": "Request draft · {{project}}",
+    "description": "The small grey line under a draft request's title in its preview: what is being read and the project it will be filed on. {{project}} is the project's name."
+  },
+  "draft.pane.nothingFiled": {
+    "text": "Nothing is filed until you press File it under the bot's reply.",
+    "description": "The quiet note at the foot of a request draft's preview, saying that reading it files nothing: the File it button stays on the card in the chat."
+  },
+  "draft.pane.close": {
+    "text": "Close the preview",
+    "description": "The × at the right of a request draft's preview, the column beside the chat on the Homeroom bot tab: closes the preview. Its accessible name and tooltip."
+  },
+  "draft.pane.back": {
+    "text": "Back to the chat",
+    "description": "On a phone, the arrow at the top left of a request draft's preview, which covers the screen: goes back to the chat with Homeroom bot. Its accessible name and tooltip."
+  },
   "design.card.open": {
     "text": "Open preview",
     "description": "Button under the small picture of a design's version, in a private thread with Homeroom bot: opens the design's preview beside the thread, at that version."

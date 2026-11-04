@@ -19,11 +19,30 @@
 
 import { useSyncExternalStore } from 'react';
 
-/** The preview open: the thread whose design it is, and the version to show first (null: the newest). */
+/** What the message says about a draft, shown until the saved row is read. */
+export interface PreviewDraftCopy {
+  title: string;
+  project: string;
+  details: string;
+  appSlug: string | null;
+}
+
+/**
+ * The preview open. A design's: the thread whose design it is, and the
+ * version to show first (null: the newest). A request draft's (#6248): the
+ * offer it draws, in the thread it was said in, or in Main (rootId null).
+ */
 export interface PreviewAt {
   conversationId: number;
-  rootId: number;
+  /** The thread the design or the draft is in; null for a draft said in Main. */
+  rootId: number | null;
   version: number | null;
+  /** What is being previewed: a thread's design, or a request draft waiting to be filed. */
+  kind: 'design' | 'draft';
+  /** A draft's offer (`homeroom_bot_dm_actions.id`); null for a design. */
+  actionId: number | null;
+  /** The message's own copy of a draft, until the pane reads the saved row. */
+  copy: PreviewDraftCopy | null;
   /** Counts each open, so a second press on the same version shows it again. */
   seq: number;
 }
@@ -56,11 +75,41 @@ function valid(id: unknown): id is number {
 export function openPreview(at: { conversationId: number; rootId: number; version?: number | null }): void {
   if (!valid(at?.conversationId) || !valid(at?.rootId)) return;
   seq += 1;
-  open = { conversationId: at.conversationId, rootId: at.rootId, version: valid(at.version) ? at.version : null, seq };
+  open = {
+    conversationId: at.conversationId, rootId: at.rootId, version: valid(at.version) ? at.version : null,
+    kind: 'design', actionId: null, copy: null, seq,
+  };
   notify();
   if (typeof window !== 'undefined' && !/^#homeroom-bot(?:\/|$)/.test(window.location.hash)) {
     window.location.hash = `homeroom-bot/thread/${at.rootId}`;
   }
+}
+
+/**
+ * #6248: open the preview of a request draft the bot offered to file. It is
+ * read only: the card keeps File it and Not now. Off the bot's tab it goes
+ * there first, to the thread the draft was said in (or Main).
+ */
+export function openDraftPreview(at: { conversationId: number; rootId: number | null; actionId: number; copy?: PreviewDraftCopy }): void {
+  if (!valid(at?.conversationId) || !valid(at?.actionId)) return;
+  if (at.rootId !== null && at.rootId !== undefined && !valid(at.rootId)) return;
+  const rootId = valid(at.rootId) ? at.rootId : null;
+  seq += 1;
+  open = { conversationId: at.conversationId, rootId, version: null, kind: 'draft', actionId: at.actionId, copy: at.copy || null, seq };
+  notify();
+  if (typeof window !== 'undefined' && !/^#homeroom-bot(?:\/|$)/.test(window.location.hash)) {
+    window.location.hash = rootId === null ? 'homeroom-bot/main' : `homeroom-bot/thread/${rootId}`;
+  }
+}
+
+/**
+ * Pure: whether this preview stands beside the column's place. A design is
+ * in a thread, so it needs that thread open; a draft said in Main (rootId
+ * null) is shown while Main is the column's, and one in a thread while that
+ * thread is.
+ */
+export function previewBeside(preview: Pick<PreviewAt, 'rootId'> | null, openRoot: number | null | undefined): boolean {
+  return !!preview && preview.rootId === (openRoot ?? null);
 }
 
 /** Close the preview. */

@@ -264,10 +264,11 @@ test('the preview: its own column beside the thread, three where they fit, halve
   assert.equal(preview.THREE_COLUMNS, '(min-width: 1500px)');
   const ai = read('frontend/src/features/ai/index.tsx');
   assert.match(ai, /data-ai-preview=\{previewUp \? layout : undefined\}/);
-  assert.match(ai, /<aside className="ai-preview-pane" data-ai-preview-pane=\{layout\} aria-label=\{t\('messages:design\.pane\.label'\)\}>\n\s+<DesignPane/);
+  assert.match(ai, /<aside\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{preview\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.label'\)\}/,
+    'the design’s preview, or #6248 a request draft’s');
   assert.match(ai, /onClose=\{closePreview\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
-  assert.match(ai, /const previewUp = mounted && !!preview && !!botId && preview\.conversationId === botId && openRoot === preview\.rootId/,
-    'only beside the thread it is the design of');
+  assert.match(ai, /const previewUp = mounted && !!preview && !!botId && preview\.conversationId === botId && previewBeside\(preview, openRoot\)/,
+    'only beside the thread it is the design of (or Main, for a draft said there)');
   assert.match(ai, /if \(preview && openRoot && openRoot !== preview\.rootId\) closePreview\(\);/, 'another thread in the column closes it');
   assert.match(ai, /const back = \(\) => \{ if \(window\.location\.hash === BOT_TAB\) closePreview\(\); \};/, 'the tab brings the list back');
   const css = read('public/css/app.css');

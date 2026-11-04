@@ -4221,6 +4221,32 @@ async function actOnTap(pool, config, { userId, actionId, choice, answers = [], 
 }
 
 /**
+ * #6248: the saved request draft an offer waits on, for the preview beside
+ * the chat. Checked as `decideOfferTap` is: this person's own action, of the
+ * `file_request` kind, still open. Resolves { ok, title, details, status,
+ * app: { slug, name }, footer }, or { ok: false } (the route answers 404).
+ */
+async function readDraft(pool, { user, actionId }) {
+  const id = Number(actionId);
+  if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false };
+  const { rows: [row] } = await pool.query(
+    `SELECT a.title, a.details, a.status, ap.slug, ap.name
+       FROM homeroom_bot_dm_actions a
+       JOIN apps ap ON ap.id = a.app_id
+      WHERE a.id = $1 AND a.user_id = $2 AND a.kind = 'file_request'`,
+    [id, user.id]);
+  if (!row || row.status !== 'open') return { ok: false };
+  return {
+    ok: true,
+    title: row.title,
+    details: row.details || '',
+    status: row.status,
+    app: { slug: row.slug, name: row.name },
+    footer: defaultFooter(user),
+  };
+}
+
+/**
  * #4097: what a second File it on an offer already filed says, as the
  * ack's (content, extra): the request's line, which Messages draws as the
  * card it carries, then that it was filed. Without the project (it is gone)
@@ -4390,6 +4416,14 @@ function askedFor(action) {
 }
 
 /**
+ * The line a filed request's body ends with, as the person who asked sees it
+ * (#6248: shared with `readDraft`, so the preview never drifts from the body).
+ */
+function defaultFooter(user) {
+  return `Filed from ${user.username}'s chat with Homeroom bot.`;
+}
+
+/**
  * File a request on `app` as `user`, the way POST /api/apps/:slug/issues
  * files a general one: its GitHub issue, the platform's row, the people
  * who follow new requests told, and a line in its own thread. It is
@@ -4408,7 +4442,7 @@ async function fileRequest(pool, config, {
     '',
     '---',
     // B9: where it was asked, when not in their chat with the bot.
-    footer || `Filed from ${user.username}'s chat with Homeroom bot.`,
+    footer || defaultFooter(user),
   ].join('\n').trim();
   // `fileKey`: the tap's act it is filed for (workflow work). A retry after
   // a restart finds the request that act filed and files no second one, and
@@ -5786,6 +5820,7 @@ module.exports = {
   decideTyped,
   typedDecision,
   fileRequest,
+  readDraft,
   findApp,
   canFile,
   offerMoveRequest,

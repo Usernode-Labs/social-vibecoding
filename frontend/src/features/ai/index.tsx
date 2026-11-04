@@ -77,6 +77,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
 import { DesignPane } from '../messages/design-pane';
+import { RequestDraftPane } from '../messages/request-draft-pane';
 import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
@@ -93,7 +94,7 @@ import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { publishBotDrawer, registerBotBack } from '../nav-drawer/bot-drawer';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
-import { closePreview, previewLayout, THREE_COLUMNS, usePreview } from './preview';
+import { closePreview, previewBeside, previewLayout, THREE_COLUMNS, usePreview } from './preview';
 import {
   heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type WorkRow,
@@ -101,6 +102,8 @@ import {
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
+/** #6248: a draft preview with no copy of its own (it always carries one). */
+const EMPTY_DRAFT_COPY = { title: '', project: '', details: '', appSlug: null };
 /** This page's address: where a thread opened from it comes back to. */
 const BOT_PAGE = BOT_TAB;
 
@@ -372,7 +375,7 @@ export function AiScreen(): ReactNode {
   const preview = usePreview();
   const three = useWide(THREE_COLUMNS);
   const layout = previewLayout({ phone, three });
-  const previewUp = mounted && !!preview && !!botId && preview.conversationId === botId && openRoot === preview.rootId
+  const previewUp = mounted && !!preview && !!botId && preview.conversationId === botId && previewBeside(preview, openRoot)
     && (phone ? level === 1 : docked && !panel.open);
   // The column shows another thread: its preview goes.
   useEffect(() => {
@@ -682,20 +685,36 @@ export function AiScreen(): ReactNode {
         </aside>
       ) : null}
 
-      {/* The design's preview, the tab's own column (./preview.ts): beside
-          the thread, or the whole screen on a phone. */}
+      {/* The design's or the request draft's preview, the tab's own column
+          (./preview.ts): beside the thread or Main, or the whole screen on a
+          phone. #6248: a draft's is read only, with nothing to press but its
+          close. */}
       {previewUp && preview ? (
-        <aside className="ai-preview-pane" data-ai-preview-pane={layout} aria-label={t('messages:design.pane.label')}>
-          <DesignPane
-            conversationId={preview.conversationId}
-            rootId={preview.rootId}
-            view="preview"
-            onView={() => {}}
-            version={preview.version}
-            seq={preview.seq}
-            onClose={closePreview}
-            closeAs={layout === 'full' ? 'back' : 'close'}
-          />
+        <aside
+          className="ai-preview-pane"
+          data-ai-preview-pane={layout}
+          aria-label={preview.kind === 'draft' ? t('messages:draft.pane.label') : t('messages:design.pane.label')}
+        >
+          {preview.kind === 'draft' && preview.actionId ? (
+            <RequestDraftPane
+              actionId={preview.actionId}
+              copy={preview.copy || EMPTY_DRAFT_COPY}
+              seq={preview.seq}
+              onClose={closePreview}
+              closeAs={layout === 'full' ? 'back' : 'close'}
+            />
+          ) : preview.kind === 'design' && preview.rootId ? (
+            <DesignPane
+              conversationId={preview.conversationId}
+              rootId={preview.rootId}
+              view="preview"
+              onView={() => {}}
+              version={preview.version}
+              seq={preview.seq}
+              onClose={closePreview}
+              closeAs={layout === 'full' ? 'back' : 'close'}
+            />
+          ) : null}
         </aside>
       ) : null}
     </main>

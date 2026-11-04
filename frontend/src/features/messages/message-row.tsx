@@ -23,7 +23,7 @@ import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { alsoInChat, botRequestNames, botThreadLabel, threadsAllowed, type ChangeBlock } from './bot-shared';
 import { openRequestPage, requestPageOf } from './request-page';
-import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
+import { BotHeadWords, botHead, draftPreviewOf, isHeadCard } from './bot-head-card';
 import { DesignVersionCard, designVersionOf } from './design-card';
 import { BotRichCard, botCardOf } from './bot-cards';
 import { BotLookedLine } from './bot-looked';
@@ -366,8 +366,13 @@ export const MessageRow = memo(function MessageRow({
   // #6151: a design filed as a request says what happens to it next, after
   // its line, in the reader's language (./bot-track.tsx filedNextLine).
   const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
+  // #6248: a request draft Homeroom bot offered to file, still waiting, has
+  // its card open a read-only preview beside the chat (./request-draft-pane.tsx).
+  const draft = botChat && kind === 'direct'
+    ? draftPreviewOf(head, botMeta(message), message.threadRootId, message.conversationId || conversationId)
+    : null;
   const words = !message.content ? null : head
-    ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
+    ? <BotHeadWords head={head} objects={message.objects} channels={channels} draft={draft} />
     : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
 
   // #5680: which rows have a side. A DM and a group do; a channel does not
