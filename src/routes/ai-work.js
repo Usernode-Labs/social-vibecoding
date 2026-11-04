@@ -34,6 +34,8 @@ function demoWork() {
     private: [
       { rootId: -9101, title: 'Staging demo idea: a calendar for the garden', kind: 'idea', app: null, at: at(2) },
       { rootId: -9102, title: 'Staging demo draft: sort by date', kind: 'draft_request', app, at: at(5) },
+      // #6271: a private thread marked done this week, which Live this week lists.
+      { rootId: -9103, title: 'Staging demo: a private thread marked done this week', kind: 'idea', app, at: at(6), state: 'done', doneAt: at(6) },
     ],
     needs: [
       { threadId: -9210, number: 9210, kind: 'work', title: 'Staging demo: a reminder email', app, change: null, href: issue(app, 9210), group: 'needs', what: 'plan', at: at(4) },
