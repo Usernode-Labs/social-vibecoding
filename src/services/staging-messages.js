@@ -471,6 +471,7 @@ const BOT_DM_DEMO_ACTION_ID = 990001;
 const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
 // #6305: one request offered on several projects, from one card.
 const BOT_DM_FILE_MANY_KEY = 'staging-hrbot-file-many';
+const BOT_DM_FILE_MANY_FILED_KEY = 'staging-hrbot-file-many-filed';
 // B6: a first version's plan, waiting for Build it, and a request the bot
 // has two questions about. Fixtures too: the plan's Build it names an action
 // no row stands behind, and nothing is posted on any request.
@@ -586,25 +587,69 @@ async function ensureBotDmFixture(pool, user) {
           kind: 'chat',
           card: {
             type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id),
-            title: 'Staging demo, work for people who aren\'t signed in',
+            title: 'Work for people who aren\'t signed in',
             details: 'Visitors without an account can open the app and use it, without being sent to sign up first.',
             rows: [
               {
-                named: 'Staging demo app', match: 'exact', slug: 'staging-demo-plants', name: 'Staging demo app',
-                choices: [], done: 'Staging demo app already lets guests look around.', disabled: null, ticked: false,
+                named: 'Game Corner', match: 'exact', slug: 'game-corner', name: 'Game Corner',
+                choices: [], done: 'Game Corner already lets guests play today\'s board.', disabled: null, ticked: false,
               },
               {
-                named: 'Staging demo board', match: 'guess', slug: null, name: 'Staging demo board',
-                choices: [{ slug: 'staging-demo-plants', name: 'Staging demo plants' }],
+                named: 'Block World', match: 'guess', slug: null, name: 'Block World',
+                choices: [
+                  { slug: 'block-game', name: 'block-game' },
+                  { slug: 'block-party', name: 'Block Party' },
+                  { slug: 'world-map', name: 'World Map' },
+                ],
                 done: null, disabled: null, ticked: false,
               },
               {
-                named: 'Staging demo run club', match: 'exact', slug: 'staging-demo-run-club', name: 'Staging demo run club',
+                named: 'ViaTales', match: 'exact', slug: 'viatales', name: 'ViaTales',
                 choices: [], done: null, disabled: null, ticked: true,
               },
               {
-                named: 'Staging demo notes', match: 'exact', slug: 'staging-demo-notes', name: 'Staging demo notes',
+                named: 'Ear Trainer', match: 'exact', slug: 'ear-trainer', name: 'Ear Trainer',
                 choices: [], done: null, disabled: null, ticked: true,
+              },
+            ],
+          },
+        },
+      },
+    });
+  }
+  // #6305: the same card after its tap, so the filed state and a row that
+  // cannot be filed are seen too. A fixture: the numbers stand for requests
+  // this demo does not have.
+  const manyFiledSent = await pool.query(
+    `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+    [opened.conversationId, bot.id, BOT_DM_FILE_MANY_FILED_KEY]
+  );
+  if (!manyFiledSent.rows.length) {
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: 'Filed as #42 on Game Corner and #43 on ViaTales.',
+      idempotency_key: BOT_DM_FILE_MANY_FILED_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'chat',
+          card: {
+            type: 'file_many', v: 1, state: 'filed', forUserId: Number(user.id),
+            title: 'Work for people who aren\'t signed in',
+            details: 'Visitors without an account can open the app and use it, without being sent to sign up first.',
+            rows: [
+              {
+                named: 'Game Corner', match: 'exact', slug: 'game-corner', name: 'Game Corner',
+                choices: [], done: null, disabled: null, ticked: true, issueNumber: 42,
+              },
+              {
+                named: 'Block World', match: 'guess', slug: null, name: 'Block World',
+                choices: [{ slug: 'block-game', name: 'block-game' }],
+                done: null, disabled: null, ticked: true, issueNumber: 43,
+              },
+              {
+                named: 'World Map', match: 'exact', slug: 'world-map', name: 'World Map',
+                choices: [], done: null, disabled: 'not_member', ticked: true,
               },
             ],
           },
