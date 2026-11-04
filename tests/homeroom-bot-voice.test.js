@@ -162,7 +162,7 @@ const names = (tools) => tools.map((t) => t.function.name);
 
 test('each place gets the tools that fit it, and nothing that acts without a tap', () => {
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: true })),
-    ['reply', 'stay_quiet', 'update_change', 'offer_withdraw', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_withdraw', 'request_detail', 'read_message', 'list_source', 'read_source']);
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
     ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
@@ -177,7 +177,7 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
     '#6247: a start\'s reply carries the request\'s (and change\'s) link as given');
   assert.doesNotMatch(voice.systemPrompt({ app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }) }), /change_plan/);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
-  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
+  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
   assert.ok(chat[2].function.parameters.properties.change, 'in a chat it names which change');
   assert.ok(!names(chat).includes('offer_withdraw'), 'withdrawing is offered where the change is');
   const chatClose = chat.find((t) => t.function.name === 'offer_close_request');
@@ -185,6 +185,48 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   const issueClose = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })
     .find((t) => t.function.name === 'offer_close_request');
   assert.ok(!issueClose.function.parameters.properties.number, 'on the request it is the request itself');
+});
+
+test('get_change gives back the description people vote on, as data, with its version and plan', async () => {
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (/FROM chat_sessions cs WHERE cs\.id/.test(s)) {
+        return { rows: [{
+          id: 7, app_id: 3, user_id: 9, status: 'promoted', is_headless: false,
+          pr_summary_md: 'Adds a dark mode toggle.', pr_body: 'The whole pull request body.',
+          pr_summary_stale: true, pr_summary_input_version: 4,
+        }] };
+      }
+      if (/MAX\(version\)/.test(s)) return { rows: [{ version: 2 }] };
+      return { rows: [] };
+    },
+  };
+  const platform = {
+    async call() {
+      return { isError: false, text: JSON.stringify({ changeId: 7, title: 'A dark mode toggle', status: 'promoted' }) };
+    },
+  };
+  const out = await voice.scopedPlatformCall(pool, platform, { id: 3, slug: 'todo' }, 'get_change', { changeId: 7 });
+  const shaped = JSON.parse(out.result);
+  assert.equal(shaped.description, '<untrusted-content>Adds a dark mode toggle.</untrusted-content>');
+  assert.equal(shaped.pullRequestBody, '<untrusted-content>The whole pull request body.</untrusted-content>');
+  assert.equal(shaped.descriptionStale, true);
+  assert.equal(shaped.descriptionVersion, 4);
+  assert.equal(shaped.planVersion, 2);
+  assert.equal(shaped.title, 'A dark mode toggle', 'the platform read still comes through');
+});
+
+test('#6263: a reply never says what a description contains unless it read it this turn', () => {
+  const said = 'That\'s the earlier wording, from before the update.';
+  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set() }),
+    [{ kind: 'unread_description', said: 'describes what a change\'s description says without reading it in this turn' }]);
+  assert.deepEqual(voice.unreadDescriptionClaims('The description says it adds a toggle.', { readChanges: new Set() }).map((p) => p.kind),
+    ['unread_description']);
+  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set([7]) }), [],
+    'it read the change this turn, so quoting it is allowed');
+  assert.deepEqual(voice.unreadDescriptionClaims('Done: the header is blue now.', { readChanges: new Set() }), []);
+  assert.equal(voice.stripUnreadClaims(`It says a lot. ${said}`, [{ kind: 'unread_description' }]), 'It says a lot.');
 });
 
 test('the prompt says where it is, lists only what it can do, and holds it to what it did', () => {
@@ -196,6 +238,9 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
   assert.match(prompt, /by its number/);
   assert.doesNotMatch(prompt, /update_change|offer_withdraw/);
   assert.match(prompt, /Never say you did something/);
+  assert.match(prompt, /Never say what a change's description, title, plan or any other text says/,
+    '#6263: it never describes text it has not read');
+  assert.match(prompt, /a change's description: get_change/);
   assert.match(prompt, /Credit what was said to the person whose name is on that message\./,
     '#5371: each answer is credited to the person who wrote it, not to whoever filed the request');
   assert.match(prompt, /stay_quiet/);

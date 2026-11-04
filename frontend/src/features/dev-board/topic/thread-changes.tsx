@@ -424,6 +424,9 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
     <>
       <AlsoCloses item={item} request={request} />
       {summary ? <div className="dev-thread-change-summary" data-thread-change-summary={item.id}><RequestWords html={summary} /></div> : null}
+      {view?.body.summaryStale && summary
+        ? <p className="dev-change-stale" role="note" data-thread-change-stale={item.id}>{t('project:topic.change.summaryStale')}</p>
+        : null}
       {plan ? <PlanLine plan={plan} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} s={view.v.shots} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
