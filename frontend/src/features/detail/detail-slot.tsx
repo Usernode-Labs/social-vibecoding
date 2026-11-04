@@ -54,7 +54,9 @@ export interface DetailSlotProps {
 export function DetailSlot({ surface, className, resizerLabel }: DetailSlotProps): ReactNode {
   const layout = useDetailLayout(surface === 'workshop' ? 'workshop' : 'topic');
   const state = useDetailState();
-  const open = !!state.entry && state.entry.kind === 'plan';
+  // Every kind the column can show opens it (a design, a plan, a change's
+  // before and after): the store only holds an entry while one is open.
+  const open = !!state.entry;
   const [width, setWidth] = useState<number | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
