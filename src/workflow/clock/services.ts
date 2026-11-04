@@ -474,9 +474,11 @@ export const JOBS: readonly Job[] = Object.freeze([
     // merge), not when the first Pod boots one. Reads the same rollout the
     // deploy banner does (services/deploy-status.js), under the chart's
     // rollout-reader Role. Production only: staging previews and anything
-    // off Kubernetes have no rollout to wait for. Deployed is idempotent
-    // (requestKey deployed:<sha>), and the rollback check settles merges a
-    // complete build does not carry.
+    // off Kubernetes have no rollout to wait for (one server's boot is the
+    // whole rollout there). Both appends are idempotent
+    // (requestKey deployed:<sha> / rolled-back:<sha>): Deployed makes the
+    // merges the build carries Live, RolledBack takes back the ones a later
+    // complete build no longer carries.
     name: 'platform-rollout', everyMs: 20 * 1000, leaseMs: MIN,
     run: async (_ctx: WorkContext, { config, pool }: JobDeps) => {
       if (process.env.USERNODE_ENV === 'staging' || !process.env.KUBERNETES_SERVICE_HOST) {
@@ -488,16 +490,14 @@ export const JOBS: readonly Job[] = Object.freeze([
       if (!/^[0-9a-f]{40}$/.test(sha)) return { phase: 'complete', sha: null };
       const { rows: [app] } = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id LIMIT 1');
       if (!app) return { phase: 'complete', sha, app: null };
-      const release = legacy('services/platform-release');
-      // The build that finished the rollout now carries its merges.
-      await release.recordRunning(pool, { sha, column: 'platform_live_at' });
-      // The merge machine hears the deploy (Deployed): it verifies the
-      // build carries each merge and marks it Live.
-      await legacy('workflow/platform.ts').productionDeployed(Number(app.id), sha);
-      // A complete rollout that no longer carries a Live merge rolled it
-      // back; one that carries a rolled-back merge makes it Live again.
-      const rolledBack = await legacy('services/release-watch').settleRollback(pool, Number(app.id), sha);
-      return { phase: 'complete', sha, rolledBack };
+      const platform = legacy('workflow/platform.ts');
+      // This rollout's own name: its Progressing transition. A later rollout
+      // of the same build is a new report, while the next look at this one is
+      // deduped by the event's request key.
+      const nonce = deploy.startedAt ? String(deploy.startedAt) : null;
+      await platform.productionDeployed(Number(app.id), sha, nonce);
+      await platform.productionRolledBack(Number(app.id), sha, nonce);
+      return { phase: 'complete', sha };
     },
   },
   {

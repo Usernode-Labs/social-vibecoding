@@ -7653,10 +7653,8 @@ const AppView = {
       // Where the rollout is, in the pill's own states.
       const LIVE = {
         deployed: 'changes:page.votes.note.live', merged: 'changes:page.votes.note.live', deploying: 'changes:page.votes.note.goingLive', merging: 'changes:page.votes.note.goingLive',
-        // #6233: Live, but this tab is older than the build that carries it;
-        // or a later release went back to a build without it.
+        // #6233: Live, but this tab is older than the build that carries it.
         deployed_reload: 'changes:page.votes.note.liveReload', merged_reload: 'changes:page.votes.note.liveReload',
-        rolled_back: 'changes:page.votes.note.rolledBack',
         delivery_pending: 'changes:page.votes.note.goingLive', deployment_stalled: 'changes:page.votes.note.stuck', delivery_failed: 'changes:page.votes.note.failed',
       };
       // A merge of Homeroom itself says when its release comes instead:
@@ -24940,6 +24938,7 @@ const AppView = {
         liveAt: p.live_at || null,
         mergedAt: p.merged_at || p.created_at || null,
         id: p.id,
+        appSlug: AppView.appData && AppView.appData.slug,
         selfHosted: !!(AppView.appData && AppView.appData.self_hosted),
       });
     } catch { return false; }
@@ -25002,11 +25001,6 @@ const AppView = {
         const live = livePill('deployed');
         return { ...base, tier: 0, key: live.key, label: live.label, tone: 'ok', lock: false, advisory: 0, title: live.title };
       }
-      // #6233: a later complete rollout went back to a build without it.
-      if (p.deployment_state === 'rolled_back') {
-        return { ...base, tier: 0, key: 'rolled_back', label: PlatformI18n.t('changes:badge.pill.rolledBack'), tone: 'neutral', lock: false, advisory: 0,
-          title: PlatformI18n.t('changes:badge.pill.rolledBackTitle') };
-      }
       // A merge of Homeroom itself waits for the platform's next release:
       // the pill's title says when (_releaseSentence), where a child app's
       // says only that the app is still on the version before.
@@ -25048,7 +25042,8 @@ const AppView = {
           title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
       const live = livePill('merged');
-      return { ...base, tier: 0, key: live.key, label: live.label, tone: 'ok', lock: false, advisory: 0, title: live.title };
+      return { ...base, tier: 0, key: live.key, label: live.label, tone: 'ok', lock: false, advisory: 0,
+        ...(tabBehind ? { title: live.title } : {}) };
     }
     // 1 — in flight.
     if (p.status === 'merging') {

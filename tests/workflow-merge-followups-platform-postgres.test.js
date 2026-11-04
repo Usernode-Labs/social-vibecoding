@@ -59,7 +59,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     listPullRequestCommitShas: async () => ({ shas: [], complete: true }),
     compareCommitAncestry: async (owner, repo, base, head) => {
       calls.push(['compare', base, head]);
-      return { status: [SHA('c'), SHA('9')].includes(head) ? 'ahead' : 'diverged' };
+      return { status: [SHA('c'), SHA('9'), SHA('8')].includes(head) ? 'ahead' : 'diverged' };
     },
   });
   const realStaging = require('../src/services/staging');
@@ -392,6 +392,21 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       // every serving process carries it, so now it is Live.
       await platform.productionDeployed(own.id, SHA('9'));
       await until(async () => (await state(s)) === 'live', 'live once the rollout finished');
+      assert.ok((await pool.query('SELECT live_at FROM chat_sessions WHERE id = $1', [s.id])).rows[0].live_at);
+      // A later complete rollout goes back to a build before this merge:
+      // the change is no longer carried, so it is not Live any more (#6233).
+      // The machine clears live_at itself (the workflow guard's own writer).
+      await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, merge_commit_sha, merged_at)
+         VALUES ($1, $2, 'merged', $3, 'Earlier change', $4, '2026-01-01T00:00:00Z')`,
+        [own.id, author.id, ++seq, SHA('5')]);
+      await platform.productionRolledBack(own.id, SHA('5'));
+      await until(async () => (await state(s)) === 'delivering', 'a rolled-back change goes back to going live');
+      assert.equal((await pool.query('SELECT live_at FROM chat_sessions WHERE id = $1', [s.id])).rows[0].live_at, null);
+      // A release that carries it again makes it Live again, and does not
+      // announce it a second time.
+      await platform.productionDeployed(own.id, SHA('8'));
+      await until(async () => (await state(s)) === 'live', 'live again with a release that carries it');
       assert.ok((await pool.query('SELECT live_at FROM chat_sessions WHERE id = $1', [s.id])).rows[0].live_at);
     } finally {
       if (wasKube === undefined) delete process.env.KUBERNETES_SERVICE_HOST; else process.env.KUBERNETES_SERVICE_HOST = wasKube;

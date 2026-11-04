@@ -1311,14 +1311,6 @@
     "text": "It’s live.",
     "description": "Line on Homeroom bot's card for a change once the change is in use by everyone."
   },
-  "bot.ready.line.liveReload": {
-    "text": "It’s live. Reload to get it.",
-    "description": "Line on Homeroom bot's card for a change that is live in the app while the page open in this tab runs the version before it. A Reload button follows it."
-  },
-  "bot.track.state.rolled_back": {
-    "text": "Release rolled back",
-    "description": "Where a change stands on Homeroom bot's track card: it was live, and a later release went back to a version without it."
-  },
   "bot.ready.line.goingLive": {
     "text": "It’s approved and going live now.",
     "description": "Line on Homeroom bot's card for a change that has all its approvals and is being put into use, when there is no release estimate to say instead."
@@ -5250,14 +5242,6 @@
   "ai.short.goingLive": {
     "text": "Going live",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: its change is going live."
-  },
-  "ai.short.rolledBack": {
-    "text": "Rolled back",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: the change was live and a later release went back to a version without it."
-  },
-  "ai.next.rolledBack": {
-    "text": "{{project}} · #{{number}}: a later release went back to a version without this change; it goes live again with a release that carries it.",
-    "description": "The AI tab's main view: tooltip of a one-line row in In progress for a change a release rolled back past. {{project}} is the project's name and {{number}} the change's number; the part after the colon is a whole sentence."
   },
   "ai.short.merging": {
     "text": "Merging",

@@ -617,7 +617,6 @@ async function readOutlook(pool, { now, runningSha }) {
          SELECT MAX(COALESCE(cs.merged_at, cs.created_at)) AS newest_at
            FROM chat_sessions cs
           WHERE cs.app_id = a.id AND cs.status = 'merged' AND cs.live_at IS NULL
-            AND cs.live_rolled_back_at IS NULL
        ) p ON TRUE
       WHERE a.self_hosted = TRUE
       ORDER BY a.id
@@ -714,8 +713,7 @@ async function releasesFor(pool, sessionIds, opts = {}) {
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
         WHERE cs.id = ANY($1::int[])
-          AND cs.status = 'merged' AND cs.live_at IS NULL AND cs.live_rolled_back_at IS NULL
-          AND a.self_hosted = TRUE`,
+          AND cs.status = 'merged' AND cs.live_at IS NULL AND a.self_hosted = TRUE`,
       [ids]
     );
     if (!rows.length) return out;
@@ -740,71 +738,11 @@ function demoRelease(now = Date.now()) {
   return estimate({ releasedAt: now - 60 * 1000, newestMergedAt: now - 3 * 60 * 1000 });
 }
 
-/**
- * #6233: a complete rollout that no longer carries a Live merge has rolled
- * it back. `completeSha` is the build every serving process now runs; the
- * merge order of that build is the boundary. Every Live merge after it (a
- * build the deployment no longer serves) goes back to Going live and says
- * "Release rolled back". A merge a later complete build carries again
- * (live_rolled_back_at set, at or before the boundary) is Live again, with no
- * second "It's live" line or notification.
- *
- * A complete commit no merge made (a push straight to main) has no boundary:
- * nothing is compared, and nothing changes. Never throws; resolves the ids
- * whose mark changed.
- */
-async function settleRollback(pool, appId, completeSha) {
-  const boundary = await mergeOrder(pool, appId, completeSha);
-  if (!boundary) return { rolledBack: 0, released: 0 };
-  const at = new Date(boundary.at).toISOString();
-  const order = [at, boundary.id];
-  let rolled = [];
-  let released = [];
-  try {
-    ({ rows: rolled } = await pool.query(
-      `UPDATE chat_sessions
-          SET live_at = NULL, platform_live_at = NULL, live_rolled_back_at = NOW()
-        WHERE app_id = $1 AND status = 'merged' AND live_at IS NOT NULL
-          AND (COALESCE(merged_at, created_at), id) > ($2::timestamptz, $3::int)
-        RETURNING id`,
-      [appId, ...order]
-    ));
-    ({ rows: released } = await pool.query(
-      `UPDATE chat_sessions
-          SET live_at = NOW(), platform_live_at = COALESCE(platform_live_at, NOW()),
-              live_rolled_back_at = NULL
-        WHERE app_id = $1 AND status = 'merged' AND live_at IS NULL
-          AND live_rolled_back_at IS NOT NULL
-          AND (COALESCE(merged_at, created_at), id) <= ($2::timestamptz, $3::int)
-        RETURNING id`,
-      [appId, ...order]
-    ));
-    if (rolled.length) log.warn('release-watch', 'Release rolled back', { appId, sha: String(completeSha).slice(0, 7), merges: rolled.length });
-    if (released.length) log.info('release-watch', 'A rolled-back release carries these again', { appId, sha: String(completeSha).slice(0, 7), merges: released.length });
-    const changed = [...rolled, ...released];
-    if (changed.length) {
-      let slug = null;
-      try {
-        ({ rows: [{ slug }] } = await pool.query('SELECT slug FROM apps WHERE id = $1', [appId]));
-      } catch { slug = null; }
-      const { pushVoteUpdate } = require('./ws');
-      for (const row of changed) {
-        try { pushVoteUpdate({ sessionId: Number(row.id), appId, appSlug: slug, merged: true }); } catch { /* no live socket */ }
-      }
-    }
-    return { rolledBack: rolled.length, released: released.length };
-  } catch (err) {
-    log.warn('release-watch', 'Could not settle a rolled-back release', { appId, err: err.message });
-    return { rolledBack: 0, released: 0 };
-  }
-}
-
 module.exports = {
   observe,
   converged,
   describe,
   mergeOrder,
-  settleRollback,
   readStall,
   carriedBy,
   classify,

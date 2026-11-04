@@ -513,7 +513,6 @@ export function liveThisWeek(work: AiWork | null): AiThread[] {
 /** The words of an In progress or Waiting row's tooltip, by what it waits on. */
 const THREAD_WORDS: Record<string, string> = {
   going_live: 'messages:ai.next.goingLive',
-  rolled_back: 'messages:ai.next.rolledBack',
   merging: 'messages:ai.next.merging',
   fixing: 'messages:ai.next.fixing',
   revising: 'messages:ai.next.revising',
@@ -637,8 +636,6 @@ function nextWordsBase(t: AiThread): Phrase {
 /** The one word on the right of an In progress or Waiting row, by what it waits on. Whole ids, so the inventory finds them. */
 const SHORT_WORDS: Record<string, string> = {
   going_live: 'messages:ai.short.goingLive',
-  // #6233: a release went back to a build without it.
-  rolled_back: 'messages:ai.short.rolledBack',
   merging: 'messages:ai.short.merging',
   fixing: 'messages:ai.short.fixing',
   revising: 'messages:ai.short.revising',

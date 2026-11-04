@@ -1,24 +1,17 @@
 'use strict';
 
-// When a merge into Homeroom itself first served, and when it went live:
-// chat_sessions.platform_first_served_at / platform_live_at.
+// When a merge into Homeroom itself went live: chat_sessions.platform_live_at.
 //
 // A project's merge goes live inside the merge (its deploy is a step of it),
 // but Homeroom's own release is cut from main afterwards and rolled out on
-// its own, so the merge cannot say when production ran it. The build can:
-// every production process boots with the commit it was built from
+// its own, so the merge cannot say when production first ran it. The build
+// can: every production process boots with the commit it was built from
 // (GIT_SHA), and proposals are squash-merged, so main is a line of merges
 // and a build at merge B carries every merge ordered at or before B, the
-// rule release-watch.js's carriedBy already uses.
-//
-// #6233: on Kubernetes a boot is ONE server of a rollout, so it stamps only
-// platform_first_served_at. The platform-rollout clock job stamps
-// platform_live_at once the web Deployment reports the rollout complete:
-// every serving process runs a build containing the merge. (Off Kubernetes
-// one process is the whole rollout, so its boot stamps platform_live_at.)
-// A later process, a restart or a re-release of the same build finds them
-// stamped and changes nothing. A complete rollout that no longer carries a
-// Live merge is release-watch.js's settleRollback.
+// rule release-watch.js's carriedBy already uses. On boot, the first
+// process to serve a build stamps every merge it carries that has no stamp
+// yet; a later process, a restart or a re-release of the same build finds
+// them stamped and changes nothing, and a rollback stamps nothing new.
 //
 // A build whose commit is no merge's (a push straight to main) stamps
 // nothing; the next build that is one stamps the merges it carries, so
@@ -30,18 +23,7 @@
 const os = require('os');
 const log = require('./logger');
 
-// #6233: which mark a serving build writes. `platform_first_served_at` is
-// when the first process to serve a build ran it; `platform_live_at` is when
-// the whole rollout finished (the platform-rollout clock job, on Kubernetes
-// only) — a release replaces its servers one at a time, so the first boot is
-// not production carrying the change everywhere.
-const STAMP_COLUMNS = new Set(['platform_live_at', 'platform_first_served_at']);
-
-function stampSql(column) {
-  const col = STAMP_COLUMNS.has(column) ? column : 'platform_live_at';
-  // Going live clears a rollback mark: a later release carries it again.
-  const clears = col === 'platform_live_at' ? ', live_rolled_back_at = NULL' : '';
-  return `
+const STAMP_SQL = `
   WITH boundary AS (
     SELECT COALESCE(cs.merged_at, cs.created_at) AS at, cs.id
       FROM chat_sessions cs
@@ -54,45 +36,31 @@ function stampSql(column) {
       FROM platform_settings s
      WHERE s.key = 'platform_live_tracked_since'
   )
-  UPDATE chat_sessions cs SET ${col} = NOW()${clears}
+  UPDATE chat_sessions cs SET platform_live_at = NOW()
     FROM boundary b, since t, apps ap
    WHERE ap.id = cs.app_id AND ap.self_hosted = TRUE
-     AND cs.status = 'merged' AND cs.${col} IS NULL
+     AND cs.status = 'merged' AND cs.platform_live_at IS NULL
      AND cs.merged_at >= t.at
      AND (COALESCE(cs.merged_at, cs.created_at), cs.id) <= (b.at, b.id)
   RETURNING cs.id`;
-}
-
-// The column a boot writes when the caller does not say: on Kubernetes the
-// first server to serve the build (the rollout watcher marks Live later);
-// off Kubernetes one process is the whole rollout, so the boot is Live.
-function bootColumn({ column, onKubernetes = !!process.env.KUBERNETES_SERVICE_HOST } = {}) {
-  if (STAMP_COLUMNS.has(column)) return column;
-  return onKubernetes ? 'platform_first_served_at' : 'platform_live_at';
-}
 
 /**
  * Stamp the merges the running build carries. Never throws: a failure is
  * logged and the figure goes without this release.
  * @returns {Promise<number>} how many merges were stamped
  */
-async function recordRunning(pool, {
-  sha = process.env.GIT_SHA, env = process.env.USERNODE_ENV, column, onKubernetes,
-} = {}) {
+async function recordRunning(pool, { sha = process.env.GIT_SHA, env = process.env.USERNODE_ENV } = {}) {
   const commit = String(sha || '').toLowerCase();
   if (env === 'staging' || !/^[0-9a-f]{40}$/.test(commit)) return 0;
-  const col = bootColumn({ column, onKubernetes });
   try {
-    const { rows } = await pool.query(stampSql(col), [commit]);
-    if (rows.length) log.info('platform-release', col === 'platform_live_at' ? 'Merges now live' : 'A build first served', { sha: commit.slice(0, 7), merges: rows.length });
+    const { rows } = await pool.query(STAMP_SQL, [commit]);
+    if (rows.length) log.info('platform-release', 'Merges now live', { sha: commit.slice(0, 7), merges: rows.length });
     return rows.length;
   } catch (err) {
-    log.warn('platform-release', 'Could not record which merges a build carries', { sha: commit.slice(0, 7), err: err.message });
+    log.warn('platform-release', 'Could not record which merges went live', { sha: commit.slice(0, 7), err: err.message });
     return 0;
   }
 }
-
-const STAMP_SQL = stampSql('platform_live_at');
 
 // The role a process was told to run (services/process-role.js), when it
 // was told one: web or conductor once the split is on, all before it. An
@@ -214,4 +182,4 @@ async function recordPodExit(pool, {
   }
 }
 
-module.exports = { recordRunning, recordBoot, recordPodExit, podExitOf, STAMP_SQL, stampSql };
+module.exports = { recordRunning, recordBoot, recordPodExit, podExitOf, STAMP_SQL };

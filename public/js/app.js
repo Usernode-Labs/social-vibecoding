@@ -2565,8 +2565,6 @@ const App = {
         App._shellAutoReloadSha = info.sha;
       }
       App._lastVersionInfo = info;
-      // #6233: the tab-build store behind "Live · reload to get it".
-      try { window.UsernodeReact?.tabBuild?.publish?.(info, App.loadedPlatformSha); } catch { /* no bundle yet */ }
       // The answer names the platform's own slug (`selfAppSlug`), which
       // PlatformTarget.slug() reads; a screen waiting on it hears it here.
       // Guarded and caught on its own, so a listener cannot cost the pill.
@@ -2574,6 +2572,8 @@ const App = {
         const target = typeof PlatformTarget !== 'undefined' ? PlatformTarget : null;
         if (target && target.notifySlug) target.notifySlug();
       } catch {}
+      // #6233: the tab-build store behind "Live · reload to get it".
+      try { window.UsernodeReact?.tabBuild?.publish?.(info, App.loadedPlatformSha); } catch { /* no bundle yet */ }
       // `?shot=platform-updating` / `-ready` pin the row to a state no real
       // answer can produce on demand; a poll landing on top would erase it.
       if (!App._platformUpdateShot) App.renderPlatformVersionPill(info);

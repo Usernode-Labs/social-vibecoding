@@ -1564,19 +1564,72 @@ export async function parentMerged(p: { sessionId: number; appId: number; parent
       requestKey: `parent-merged:${p.sessionId}:${p.parentId}:${Math.floor(Date.now() / 3600000)}` });
 }
 
-// The platform's own app now runs `sha` (its release booting): every merge
-// of it still waiting to go live hears it, and checks whether that build
-// contains it. (A child app's deploys are app-delivery's, which tells the
-// merges waiting on it.)
-export async function productionDeployed(appId: number, sha: string): Promise<void> {
+// The platform's own app now runs `sha` (its whole rollout finished): every
+// merge of it still waiting to go live hears it, and checks whether that
+// build contains it. (A child app's deploys are app-delivery's, which tells
+// the merges waiting on it. Off Kubernetes a single serving process is the
+// whole rollout, so its boot reports this too.)
+export async function productionDeployed(appId: number, sha: string, nonce: string | null = null): Promise<void> {
   if (!runtime || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
+  // `nonce` names this rollout (the Deployment's own transition time): a
+  // second rollout of the same build is a new report, while the job's next
+  // look at the same one is not. Absent (a boot off Kubernetes) it is the
+  // build alone.
+  const key = `deployed:${sha.toLowerCase()}${nonce ? `:${nonce}` : ''}`;
   const { rows } = await kernelPool!.query(
-    `SELECT key FROM wf_instances
-      WHERE machine = $1 AND app_id = $2 AND state IN ('delivering', 'deploy_failed') AND data->>'role' = 'merge'`,
-    [MERGE, appId]);
+    `SELECT w.key FROM wf_instances w
+      WHERE w.machine = $1 AND w.app_id = $2 AND w.state IN ('delivering', 'deploy_failed')
+        AND w.data->>'role' = 'merge'
+        AND NOT EXISTS (SELECT 1 FROM wf_events e
+                         WHERE e.machine = w.machine AND e.key = w.key AND e.request_key = $3
+                           AND (e.status = 'pending' OR e.result <> 'rejected'))`,
+    [MERGE, appId, key]);
   for (const r of rows) {
     await runtime.append(MERGE, r.key, { type: 'Deployed', payload: { sha: sha.toLowerCase() } },
-      { requestKey: `deployed:${sha.toLowerCase()}`, source: { kind: 'system', name: 'deploy' }, appId });
+      { requestKey: key, source: { kind: 'system', name: 'deploy' }, appId });
+  }
+}
+
+// #6233: a complete rollout that no longer carries a Live merge rolled it
+// back. `sha` is the build every serving process now runs; the merges after
+// its merge order (services/release-watch.js mergeOrder) are not in it, and
+// neither are the changes they carried. Each live instance hears RolledBack,
+// and the merge machine clears its live_at: the change says Going live
+// again, rather than staying Live because an earlier release served it.
+// Never throws: the caller logs it.
+export async function productionRolledBack(appId: number, sha: string, nonce: string | null = null): Promise<void> {
+  if (!runtime || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
+  const releaseWatch = legacy('services/release-watch');
+  // A build no merge made has no boundary: nothing can be compared, so
+  // nothing is ruled out (the same reading release-watch takes).
+  const order = await releaseWatch.mergeOrder(kernelPool!, appId, sha);
+  if (!order) return;
+  const key = `rolled-back:${sha.toLowerCase()}${nonce ? `:${nonce}` : ''}`;
+  const { rows } = await kernelPool!.query(
+    `WITH rolled AS (
+       SELECT w.key
+         FROM wf_instances w
+         JOIN chat_sessions cs
+           ON cs.id = NULLIF(substring(w.key from '^session:([0-9]+)$'), '')::int
+        WHERE w.machine = $1 AND w.app_id = $2 AND w.state = 'live'
+          AND (COALESCE(cs.merged_at, cs.created_at), cs.id) > ($3::timestamptz, $4::int)
+     ), candidates AS (
+       SELECT key FROM rolled
+       UNION
+       SELECT w.key
+         FROM wf_instances w
+        WHERE w.machine = $1 AND w.state = 'live'
+          AND NULLIF(w.data->'includedIn'->>'sessionId', '')::int IN (
+            SELECT NULLIF(substring(r.key from '^session:([0-9]+)$'), '')::int FROM rolled r)
+     )
+     SELECT c.key FROM candidates c
+      WHERE NOT EXISTS (SELECT 1 FROM wf_events e
+                         WHERE e.machine = $1 AND e.key = c.key AND e.request_key = $5
+                           AND (e.status = 'pending' OR e.result <> 'rejected'))`,
+    [MERGE, appId, new Date(order.at).toISOString(), order.id, key]);
+  for (const r of rows) {
+    await runtime.append(MERGE, r.key, { type: 'RolledBack', payload: { sha: sha.toLowerCase() } },
+      { requestKey: key, source: { kind: 'system', name: 'deploy' }, appId });
   }
 }
 

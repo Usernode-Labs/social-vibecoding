@@ -88,7 +88,6 @@ test('the words a stale tab shows are catalog entries, and the pill offers Reloa
   const messages = JSON.parse(read('frontend/locales/en/messages.json'));
   for (const [catalog, key, text] of [
     [changes, 'badge.pill.liveReload', '✓ Live · reload to get it'],
-    [changes, 'badge.pill.rolledBack', 'Release rolled back'],
     [changes, 'page.votes.note.liveReload', 'It’s live. Reload to get it in this tab.'],
     [project, 'change.reload', 'Reload'],
     [messages, 'ai.live.olderTab', 'This tab is on an older Homeroom.'],

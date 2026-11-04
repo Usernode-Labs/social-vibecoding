@@ -1,138 +1,79 @@
 'use strict';
 
 // #6233: a change of Homeroom's own app reads Live only once the whole
-// rollout finished (the platform-rollout clock job), and a complete rollout
-// that no longer carries it takes it back to Going live.
+// rollout finished, and a complete rollout that no longer carries it takes
+// it back to Going live.
 //
-// The first boot of a build is recorded, but it is not Live: a release
-// replaces its servers one at a time. `settleRollback` compares a complete
-// build's merge order with the Live merges, and marks those a later build no
-// longer carries (live_rolled_back_at), so deployment_state says
-// `rolled_back` instead of `deployed`.
+// A release replaces its servers one at a time, so one process booting a
+// build says nothing about production carrying the change everywhere
+// (workflow/platform.ts releaseServing). The platform-rollout clock job
+// reads the web Deployment the deploy banner reads, and once it reports
+// complete it tells the merge machine: Deployed for the merges that build
+// carries (Live), RolledBack for the Live ones it no longer carries (Going
+// live again). The machine owns live_at, so a rollback clears it there
+// (merge-followups machine, project) and every surface that reads live_at
+// follows. The rollback itself is exercised end to end in
+// tests/workflow-merge-followups-platform-postgres.test.js.
 //
 // Run with: node --test tests/platform-rollout-live.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { Pool } = require('pg');
 
-const ROOT = path.join(__dirname, '..');
-const SHA = (c) => c.repeat(40).slice(0, 40);
-const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const CLOCK = read('src/workflow/clock/services.ts');
+const PLATFORM = read('src/workflow/platform.ts');
+const MACHINE = read('src/workflow/merge-followups/machine.ts');
 
-test('a Homeroom change is Live only after the whole rollout, and a rollback takes it back', { timeout: 120000 }, async (t) => {
-  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
-  try { await admin.query('SELECT 1'); } catch (err) {
-    await admin.end();
-    if (process.env.TEST_DATABASE_URL) throw err;
-    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
-  }
-  const dbName = 'platform_rollout_live_' + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${dbName}`);
-  const url = new URL(DSN); url.pathname = '/' + dbName;
-  const pool = new Pool({ connectionString: String(url), max: 4 });
-  await pool.query(fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8'));
-  const release = require('../src/services/platform-release');
-  const watch = require('../src/services/release-watch');
-  t.after(async () => {
-    await pool.end();
-    await admin.query(`DROP DATABASE ${dbName}`);
-    await admin.end();
-  });
-
-  const { rows: [author] } = await pool.query(`INSERT INTO users (username, password) VALUES ('rollout-author', 'x') RETURNING id`);
-  const { rows: [app] } = await pool.query(
-    `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url)
-     VALUES ('Homeroom', 'homeroom-rollout', $1, TRUE, 'https://github.com/acme/homeroom') RETURNING id`, [author.id]);
-  await pool.query(
-    `INSERT INTO platform_settings (key, value) VALUES ('platform_live_tracked_since', '2026-01-01T00:00:00Z')
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
-  // A row the MERGE MACHINE made: inserted as merging, moved into merged by
-  // the transition writer, so the insert trigger does not read it as live.
-  const merge = async (n, sha, at) => {
-    const { rows: [row] } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, merge_commit_sha, merged_at)
-       VALUES ($1, $2, 'merging', $3, 'Change', $4, $5) RETURNING id`,
-      [app.id, author.id, n, sha, at]);
-    await pool.query('BEGIN');
-    await pool.query(`SET LOCAL app.wf_writer = 'transition'`);
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = NULL WHERE id = $1`, [row.id]);
-    await pool.query('COMMIT');
-    return row;
-  };
-  // Two merges, in order: one the running build carries (a), a later one (b).
-  const a = await merge(1, SHA('a'), '2026-11-03T10:00:00Z');
-  const b = await merge(2, SHA('b'), '2026-11-03T11:00:00Z');
-  const row = async (id) => (await pool.query(
-    `SELECT live_at, live_rolled_back_at, platform_live_at, platform_first_served_at
-       FROM chat_sessions WHERE id = $1`, [id])).rows[0];
-
-  await t.test('the first server to boot a build is recorded, but it makes nothing Live', async () => {
-    const n = await release.recordRunning(pool, { sha: SHA('b'), env: 'production', column: 'platform_first_served_at' });
-    assert.equal(n, 2, 'both merges the build carries are recorded');
-    const second = await row(b.id);
-    assert.ok(second.platform_first_served_at, 'when production first served it is kept');
-    assert.equal(second.live_at, null, 'a first boot is NOT Live');
-    assert.equal(second.platform_live_at, null);
-  });
-
-  await t.test('off Kubernetes one process is the whole rollout, so its boot is Live', async () => {
-    const c = await merge(3, SHA('c'), '2026-11-03T12:00:00Z');
-    const n = await release.recordRunning(pool, { sha: SHA('c'), env: 'production', onKubernetes: false });
-    assert.ok(n >= 1);
-    assert.ok((await row(c.id)).platform_live_at, 'the local server starting is the rollout');
-  });
-
-  await t.test('a complete rollout carrying the merge makes it Live, and a rolled-back build takes it back', async () => {
-    // The runtime's Deployed transition writes live_at; the clock job's own
-    // writes are platform_live_at (the infra figure) and the boundary.
-    await release.recordRunning(pool, { sha: SHA('b'), env: 'production', column: 'platform_live_at' });
-    await pool.query(`UPDATE chat_sessions SET live_at = NOW() WHERE id = ANY($1::int[])`, [[a.id, b.id]]);
-    assert.ok((await row(b.id)).live_at);
-
-    // Production now serves build a (an older merge): b is no longer carried.
-    const out = await watch.settleRollback(pool, app.id, SHA('a'));
-    assert.equal(out.rolledBack, 1);
-    let second = await row(b.id);
-    assert.equal(second.live_at, null, 'a rolled-back change goes back to Going live');
-    assert.ok(second.live_rolled_back_at, 'and says the release rolled back');
-    assert.equal(second.platform_live_at, null);
-    assert.ok((await row(a.id)).live_at, 'the merge the build still carries is untouched');
-
-    // A later release carries b again: Live again, with no second mark.
-    const again = await watch.settleRollback(pool, app.id, SHA('b'));
-    assert.equal(again.released, 1);
-    second = await row(b.id);
-    assert.ok(second.live_at, 'live again');
-    assert.equal(second.live_rolled_back_at, null, 'the rollback mark is gone');
-    assert.ok(second.platform_live_at);
-  });
-
-  await t.test('a build no merge made has no boundary, and settles nothing', async () => {
-    const out = await watch.settleRollback(pool, app.id, SHA('e'));
-    assert.equal(out.rolledBack, 0);
-    assert.equal(out.released, 0);
-  });
+test('the rollout, not a boot, makes a Homeroom change Live', () => {
+  // A serving process records its boot and the builds it carries, but on
+  // Kubernetes it does not report Deployed: the rollout is not finished.
+  assert.match(PLATFORM, /if \(runtime && !onKubernetes\) await releaseBooted/, 'only off Kubernetes is one boot the rollout');
+  assert.match(PLATFORM, /const onKubernetes = !!process\.env\.KUBERNETES_SERVICE_HOST/);
+  // The merge machine does not turn a boot record into Live on Kubernetes.
+  assert.match(MACHINE, /if \(!app\.onKubernetes\) \{[\s\S]{0,200}toLive/);
+  // The clock job reads the same Deployment the banner does, and acts only
+  // when it reports complete.
+  assert.match(CLOCK, /name: 'platform-rollout'/);
+  assert.match(CLOCK, /legacy\('services\/deploy-status'\)\.read\(config\)/);
+  assert.match(CLOCK, /deploy\.phase !== 'complete'/);
+  assert.match(CLOCK, /productionDeployed\(Number\(app\.id\), sha, nonce\)/);
+  // It runs in production only: staging previews and anything off
+  // Kubernetes have no rollout to wait for.
+  assert.match(CLOCK, /USERNODE_ENV === 'staging' \|\| !process\.env\.KUBERNETES_SERVICE_HOST/);
 });
 
-test('the wiring reads the rollout, not a first boot (#6233)', () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
-  // The clock job exists, runs production only, and feeds the same reads.
-  const clock = read('src/workflow/clock/services.ts');
-  assert.match(clock, /name: 'platform-rollout'/);
-  assert.match(clock, /phase !== 'complete'/);
-  assert.match(clock, /productionDeployed\(Number\(app\.id\), sha\)/);
-  assert.match(clock, /column: 'platform_live_at'/);
-  assert.match(clock, /settleRollback\(pool, Number\(app\.id\), sha\)/);
-  // A serving process records its boot; Live comes from the finished rollout.
-  const platform = read('src/workflow/platform.ts');
-  assert.match(platform, /if \(runtime && !onKubernetes\) await releaseBooted/);
-  // The merge machine does not turn a boot record into Live on Kubernetes.
-  const machine = read('src/workflow/merge-followups/machine.ts');
-  assert.match(machine, /if \(!app\.onKubernetes\) \{[\s\S]{0,200}toLive/);
+test('a complete rollout that no longer carries a Live change takes it back', () => {
+  // The job asks for the rollback after Deployed, from the build's merge
+  // order (release-watch.mergeOrder).
+  assert.match(CLOCK, /productionRolledBack\(Number\(app\.id\), sha, nonce\)/);
+  assert.match(PLATFORM, /export async function productionRolledBack/);
+  assert.match(PLATFORM, /releaseWatch\.mergeOrder\(kernelPool!, appId, sha\)/);
+  assert.match(PLATFORM, /type: 'RolledBack'/);
+  assert.match(PLATFORM, /const key = `rolled-back:\$\{sha\.toLowerCase\(\)\}/);
+  assert.match(CLOCK, /const nonce = deploy\.startedAt \? String\(deploy\.startedAt\) : null/,
+    'this rollout names its reports, so the same build deployed twice is reported twice');
+  // It reaches the merges after the boundary, and the changes they carried.
+  assert.match(PLATFORM, /w\.state = 'live'/);
+  assert.match(PLATFORM, /cs\.merged_at, cs\.created_at\), cs\.id\) > \(\$3::timestamptz, \$4::int\)/);
+  assert.match(PLATFORM, /w\.data->'includedIn'->>'sessionId'/);
+  // The machine goes back to delivering, and clears live_at as its own
+  // write: no second "It's live" when a release carries it again.
+  assert.match(MACHINE, /RolledBack: \(p: any\) => \(\{ sha: sha\(p\?\.sha, 'sha', true\)! \}\)/);
+  assert.match(MACHINE, /RolledBack: rolledBack/);
+  assert.match(MACHINE, /next: \{ name: 'delivering', data: d \}/);
+  assert.match(MACHINE, /UPDATE chat_sessions SET live_at = NULL WHERE id = \$1/);
+  assert.match(MACHINE, /if \(!d\.wasLive\) \{/, 'a change carried again is not announced twice');
+});
+
+test('a release that never finished leaves the change Going live', () => {
+  // Nothing else stamps live_at: the boot path is gated (above), and the job
+  // reports only a complete rollout.
+  const phases = [...CLOCK.matchAll(/phase !== 'complete'/g)];
+  assert.equal(phases.length, 1, 'the one gate on the rollout');
+  // A build no merge made has no boundary, so nothing is compared and no
+  // change is ruled out.
+  assert.match(PLATFORM, /if \(!order\) return;/);
 });

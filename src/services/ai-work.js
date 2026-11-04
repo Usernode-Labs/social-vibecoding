@@ -108,7 +108,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        a.slug, a.name, a.icon_emoji, a.icon_image_id, a.repo_url,
        req.id AS request_id, req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
-       ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.live_rolled_back_at, ch.last_activity_at,
+       ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
        ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
        dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
@@ -136,7 +136,6 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
   ) req ON TRUE
   LEFT JOIN LATERAL (
     SELECT cs.id, cs.pr_number, cs.status, cs.user_id, cs.promoted_at, cs.merged_at, cs.live_at,
-           cs.live_rolled_back_at,
            cs.last_activity_at, cs.check_state,
            COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, '')) AS title,
            EXISTS (SELECT 1 FROM pr_votes v
@@ -341,14 +340,7 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
   // In progress is their own work: asked for, built, or followed.
   const own = row.own === true || theirs;
   if (status === 'merged') {
-    if (!row.live_at) {
-      // #6233: a release that no longer carries it went back to Going live,
-      // and says the release rolled back rather than counting down.
-      if (row.live_rolled_back_at) {
-        return own ? { group: 'next', what: 'rolled_back', at: iso(row.merged_at) } : null;
-      }
-      return own ? { group: 'next', what: 'going_live', at: iso(row.merged_at) } : null;
-    }
+    if (!row.live_at) return own ? { group: 'next', what: 'going_live', at: iso(row.merged_at) } : null;
     if (now - new Date(row.live_at) <= LIVE_DAYS * DAY_MS) {
       // #6233: merged_at and the change's id let the tab compare the change
       // with the build it loaded (the "reload to get it" wording).
@@ -464,7 +456,7 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
 
 // In progress is soonest first: going live, then merging, then a change
 // being fixed or followed up, then made, then a request being read.
-const NEXT_ORDER = { going_live: 0, rolled_back: 0, merging: 1, fixing: 2, revising: 2, building: 3, reading: 4, reading_reply: 4 };
+const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building: 3, reading: 4, reading_reply: 4 };
 // Waiting is the nearest to live first: a vote or a change still waiting for
 // its checks (the oldest has waited longest), a follow-up waiting its turn, a
 // build waiting its turn or held back, a request waiting to be read, then one
@@ -807,8 +799,6 @@ const NEED_SAYS = Object.freeze({
 /** What an In progress or Waiting row says, by what it waits on (the tab's tooltips, model.ts nextWords). */
 const THREAD_SAYS = Object.freeze({
   going_live: 'going live',
-  // #6233: a release went back to a build without it.
-  rolled_back: 'release rolled back; waits for a release that carries it',
   merging: 'merging',
   fixing: 'Homeroom bot is fixing what its tests found',
   revising: 'Homeroom bot is following up on the replies',

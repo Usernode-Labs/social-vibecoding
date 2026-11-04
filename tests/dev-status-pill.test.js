@@ -132,6 +132,22 @@ test('tier 0 — a merged row is settled and reads ✓ Live, in green', () => {
   assert.equal(edgeFor({ key: 'session:1', pill: { state: deployed } }), 'ok');
 });
 
+test('#6233: a Live change this tab is older than says so, and offers the reload', () => {
+  const AppView = makeAppView();
+  AppView.appData = { slug: 'usernode', self_hosted: true };
+  const item = PR({ status: 'merged', deployment_state: 'deployed', live_at: '2026-11-03T10:00:00Z' });
+  const plain = AppView.statusPillState(item);
+  assert.equal(plain.key, 'deployed', 'a tab on the running build reads plain Live');
+  assert.equal(plain.label, '✓ Live');
+  // The tab-build store (frontend/src/lib/tab-build.ts) says this tab's
+  // build is older than the change.
+  AppView.__sandbox.UsernodeReact = { tabBuild: { tabLacks: () => true } };
+  const stale = AppView.statusPillState(item);
+  assert.equal(stale.key, 'deployed_reload');
+  assert.equal(stale.label, '✓ Live · reload to get it');
+  assert.match(stale.title, /reload to get it here/);
+});
+
 test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
   const AppView = makeAppView();
   const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
