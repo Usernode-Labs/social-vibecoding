@@ -1,11 +1,12 @@
 /**
- * `#gc-spec-side-panel` — the shared-spec reader's contents, as the only React
- * writer below that host.
+ * `#gc-spec-side-panel` — the shared-spec reader's contents.
  *
- * The host is created at runtime by `AppView.renderDevChatTab` inside
- * `#app-content`, so this is a portal established by group-chat.js on each
- * render — the same arrangement the transcript has, and torn down by the same
- * `unmountAllLegacyPortals` in `AppView._teardownDevRoots`.
+ * It used to be group-chat.js's body: `_showSpecPanel` built the markup and
+ * published a view model here, and the host's own class was the authoritative
+ * open state. Since #6230 (3 Nov 2026) the open state and the document are
+ * the detail store's (../ai/detail.ts), and this is one of the three things
+ * that store's column draws — beside the thread it came from, in halves, or
+ * whole-screen with a back arrow on a phone.
  *
  * ── Two body kinds, and the distinction is deliberate ─────────────────
  *
@@ -16,23 +17,17 @@
  *
  * ── `Copy markdown` copies the RAW source ─────────────────────────────
  *
- * Not the rendered body — `GroupChat._specPanelRaw` holds the markdown the
- * server sent, and the module clears it on close so a closed panel's document
- * is not still copyable. The button's "Copied!" / "Copy failed" flash is local
- * state here, which is what it was before: a `textContent` write on a node the
- * same closure had created.
+ * Not the rendered body: the store carries the markdown the server sent, and
+ * clears it on close so a closed panel's document is not still copyable.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { ChevronLeftIcon } from '@/components/ui/icons';
+
 import { useMessages } from '../../lib/i18n/react';
 import { useSpecFrames } from '../../lib/spec-html';
-import { useStoreState } from '../../lib/use-store-state';
-import { specPanelStore, type SpecPanelBody, type SpecPanelState } from './spec-panel-store';
-
-function controller(): any {
-  return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
-}
+import { useDetailState, closeDetail, type SpecPanelBody } from '../ai/detail';
 
 function ui(): any {
   return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
@@ -90,7 +85,7 @@ function SpecDocBody({ body }: { body: Extract<SpecPanelBody, { kind: 'spec' }> 
   );
 }
 
-function CopyButton() {
+function CopyButton({ raw }: { raw: string | null }) {
   const t = useMessages('chat');
   // What the button says is state, not text: read in the language on screen.
   const [copied, setCopied] = useState<'copied' | 'failed' | null>(null);
@@ -103,7 +98,7 @@ function CopyButton() {
       aria-label={t('chat:group.spec.copy.title')}
       title={t('chat:group.spec.copy.title')}
       onClick={async () => {
-        const ok = await ui()?.copyText?.(controller()?._specPanelRaw);
+        const ok = await ui()?.copyText?.(raw);
         setCopied(ok ? 'copied' : 'failed');
         if (!ok) ui()?.toast?.(t('chat:group.spec.copy.failedToast'));
         setTimeout(() => setCopied(null), 1500);
@@ -114,24 +109,47 @@ function CopyButton() {
   );
 }
 
-export function SpecPanelView({ open, title, subtitle, canCopy, body }: SpecPanelState) {
+export interface SpecPanelViewProps {
+  open: boolean;
+  title: string;
+  subtitle: string | null;
+  canCopy: boolean;
+  body: SpecPanelBody | null;
+  /** The raw markdown Copy takes; never the rendered body. */
+  raw?: string | null;
+  /** `back` where the column is the whole screen (a phone): a ‹ instead of ×. */
+  closeAs?: 'close' | 'back';
+}
+
+export function SpecPanelView({ open, title, subtitle, canCopy, body, raw = null, closeAs = 'close' }: SpecPanelViewProps) {
   const t = useMessages('chat');
   if (!open) return null;
   return (
     <>
       <div className="gc-spec-panel-header">
+        {closeAs === 'back' ? (
+          <button
+            className="gc-spec-panel-back dc-detail-back"
+            aria-label={t('chat:group.spec.close')}
+            onClick={closeDetail}
+          >
+            <ChevronLeftIcon aria-hidden="true" />
+          </button>
+        ) : null}
         <div className="gc-spec-panel-titlewrap">
           <div className="gc-spec-panel-title">{title}</div>
           {subtitle ? <div className="gc-spec-panel-subtitle">{subtitle}</div> : null}
         </div>
-        {canCopy ? <CopyButton /> : null}
-        <button
-          className="gc-spec-panel-close"
-          aria-label={t('chat:group.spec.close')}
-          onClick={() => controller()?._closeSpecPanel?.()}
-        >
-          ×
-        </button>
+        {canCopy ? <CopyButton raw={raw} /> : null}
+        {closeAs === 'back' ? null : (
+          <button
+            className="gc-spec-panel-close"
+            aria-label={t('chat:group.spec.close')}
+            onClick={closeDetail}
+          >
+            ×
+          </button>
+        )}
       </div>
       {body && body.kind === 'spec' ? <SpecDocBody body={body} /> : null}
       {body && body.kind === 'markdown'
@@ -145,6 +163,17 @@ export function SpecPanelView({ open, title, subtitle, canCopy, body }: SpecPane
   );
 }
 
+/** The reader as the detail column draws it, for a host that only has the store. */
 export function SpecPanel() {
-  return <SpecPanelView {...useStoreState<SpecPanelState>(specPanelStore)} />;
+  const state = useDetailState();
+  return (
+    <SpecPanelView
+      open={!!state.entry}
+      title={state.title}
+      subtitle={state.subtitle}
+      canCopy={state.canCopy}
+      body={state.body}
+      raw={state.raw}
+    />
+  );
 }
