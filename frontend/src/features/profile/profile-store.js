@@ -675,14 +675,25 @@ function voteOutcome(item) {
   return t('profile:votes.outcome.decided');
 }
 
+/** The side a vote took, in the words the row says: a request or group
+ *  decision is voted up/down (routes/issues.js), a change yes/no. */
+function voteSide(vote) {
+  if (vote === 'yes' || vote === 'up') return 'yes';
+  if (vote === 'no' || vote === 'down') return 'no';
+  return null;
+}
+
 /**
  * "Your votes" (UI overhaul; it was a filter of Kudos › My history): the
  * changes and group decisions the viewer voted on, from GET
- * /api/me/history?type=votes. Still open, then Decided. Only the vote
- * standing now is kept (a vote can be changed while it is open), so each
- * row says the vote as it stands.
+ * /api/me/history?type=votes. Still open, then Decided, by where the target
+ * stands now. Every vote CAST is a row (#6102): a vote changed, or cleared
+ * by a new version, is still listed, so one change can have two rows, one
+ * per side, newest first, and each row says the day it was cast. The
+ * server keys each item (`key`); the row's key is that, so two casts on
+ * the same change are told apart.
  */
-export function votesView(data) {
+export function votesView(data, now = Date.now()) {
   const items = data && Array.isArray(data.items) ? data.items : null;
   if (!items) return { loaded: false, sections: [], empty: true, more: false };
   const rows = items
@@ -691,9 +702,11 @@ export function votesView(data) {
       const app = item.app || {};
       const slug = typeof app.slug === 'string' && APP_SLUG.test(app.slug) ? app.slug : null;
       const open = voteOpen(item);
-      const vote = item.vote === 'yes' || item.vote === 'no' ? item.vote : null;
+      const vote = voteSide(item.vote);
       const meta = [app.name || app.slug || t('profile:votes.anApp')];
       if (vote) meta.push(vote === 'yes' ? t('profile:votes.votedYes') : t('profile:votes.votedNo'));
+      const when = mergedAgo(item.created_at, now);
+      if (when) meta.push(when);
       if (!open) meta.push(voteOutcome(item));
       let href = null;
       if (slug && item.type === 'pr_vote' && Number(item.pr && item.pr.sessionId) > 0) {
@@ -702,7 +715,9 @@ export function votesView(data) {
         href = `#app/${encodeURIComponent(slug)}/dev/governance/${Number(item.issue.id)}`;
       }
       return {
-        key: `${item.type}:${(item.pr && item.pr.sessionId) || (item.issue && (item.issue.id || item.issue.number)) || index}`,
+        key: typeof item.key === 'string' && item.key
+          ? item.key
+          : `${item.type}:${(item.pr && item.pr.sessionId) || (item.issue && (item.issue.id || item.issue.number)) || index}:${index}`,
         href,
         title: voteTitle(item),
         meta: factLine(meta),
