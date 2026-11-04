@@ -3242,7 +3242,13 @@ function buildPrompt({
         'This SPEC is the plan the person who asked for the change approved before this build. Build the feature it',
         'describes. The plan is already shown on the request: do not add it to the repository as a document, and do',
         'not make it the change.',
-      ] : []),
+      ] : [
+        // #6209 (4 Nov 2026, evan): a plan asked for first is posted as a
+        // plan card, and the build makes the feature it plans. The plan is
+        // never the change, whatever the plan asked the bot to write.
+        'The plan is already shown on the request: do not add it to the repository as a document, and do not make',
+        'it the change.',
+      ]),
       'Build what the SPEC describes. The plan above is the triage\'s short version of it: where they differ,',
       'the spec wins. The repository\'s own agent instructions still come first.',
     ]

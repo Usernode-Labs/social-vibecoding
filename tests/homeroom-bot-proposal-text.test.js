@@ -392,9 +392,14 @@ test('#6209: a build from an approved plan is told to make the feature, not the 
     seed: 'ISSUE', buildNote: 'Add image models.', spec: '# Image models\n\nx', approvedPlan: true,
   }).replace(/\s+/g, ' ');
   assert.match(approved, /This SPEC is the plan the person who asked for the change approved before this build\. Build the feature it describes\. The plan is already shown on the request: do not add it to the repository as a document, and do not make it the change\./);
+  // #6209 (4 Nov 2026, evan): every build's plan is already a plan card on
+  // the request, so no build commits it as the change. A plan asked for
+  // first that is straightforward builds straight away and is not an
+  // approved plan, so it needs the same rule.
   const ordinary = live.buildPrompt({ seed: 'ISSUE', buildNote: 'Add image models.', spec: '# Image models\n\nx' })
     .replace(/\s+/g, ' ');
-  assert.doesNotMatch(ordinary, /do not add it to the repository as a document/);
+  assert.match(ordinary, /The plan is already shown on the request: do not add it to the repository as a document, and do not make it the change\./);
+  assert.doesNotMatch(ordinary, /This SPEC is the plan the person who asked for the change approved/);
 });
 
 test('#6209: a compare failure or an incomplete list keeps the links, as before', async () => {
