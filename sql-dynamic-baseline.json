@@ -1468,6 +1468,27 @@
     {
       "source": "src/services/homeroom-bot-voice.js",
       "kind": "structural-template",
+      "fingerprint": "19d5901e0bba03592093",
+      "count": 1,
+      "preview": "`SELECT user_id FROM chat_messages WHERE app_id = $1 AND ${scope.sql} AND msg_type = 'message' AND deleted_at IS NULL ${before} ORDER BY id DESC LIMIT 1`"
+    },
+    {
+      "source": "src/services/homeroom-bot-voice.js",
+      "kind": "structural-template",
+      "fingerprint": "2f6e57ebd8b69c2378ea",
+      "count": 1,
+      "preview": "`SELECT m.user_id, m.posted_via, u.is_synthetic FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $1 AND ${placeScope(place, 'm').sql}"
+    },
+    {
+      "source": "src/services/homeroom-bot-voice.js",
+      "kind": "structural-template",
+      "fingerprint": "a41b8ecd8f407af0caec",
+      "count": 1,
+      "preview": "`SELECT created_at FROM chat_messages WHERE app_id = $1 AND ${scope.sql} AND user_id = $${botIdx} AND msg_type = 'message' AND deleted_at IS NULL ${beforeBot} O"
+    },
+    {
+      "source": "src/services/homeroom-bot-voice.js",
+      "kind": "structural-template",
       "fingerprint": "f5edec0605c15fed7729",
       "count": 1,
       "preview": "`SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`"

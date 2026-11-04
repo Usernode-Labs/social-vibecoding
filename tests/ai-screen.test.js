@@ -1080,6 +1080,59 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   assert.deepEqual([bare.state, bare.resultRef], [undefined, undefined], 'a thread with no row says nothing of where it went');
 });
 
+// #6271 (4 Nov 2026): marking a private thread done took it out of every
+// list, so it could not be found again. It stays under Live this week for a
+// week, with its lock and the day it closed, and still opens the thread.
+test('#6271: a private thread marked done this week is Live this week\'s, and only for a week', () => {
+  const { liveThisWeek, needsYou } = loadTsx(MODEL);
+  const now = Date.parse('2026-11-04T12:00:00Z');
+  const done = (rootId, doneAt, extra = {}) => ({
+    rootId, title: `Closed ${rootId}`, kind: 'idea', app, at: null, state: 'done', doneAt, ...extra,
+  });
+  const work = {
+    private: [
+      done(801, '2026-11-03T12:00:00Z'),
+      done(802, '2026-10-25T12:00:00Z'),
+      // Its filed request has a live row: that row stays the one row.
+      done(803, '2026-11-02T12:00:00Z', { resultRef: 21 }),
+      done(804, '2026-11-04T09:00:00Z'),
+      // An open one is not a closed row.
+      { rootId: 805, title: 'Still open', kind: 'idea', app, at: null, state: 'open' },
+    ],
+    needs: [],
+    next: [],
+    waiting: [],
+    live: [thread(21, 21, 'live', { group: 'live', app })],
+  };
+  const rows = liveThisWeek(work, now);
+  const closed = rows.filter((t) => t.what === 'closed');
+  assert.deepEqual(closed.map((t) => [t.rootId, t.at]), [
+    [804, '2026-11-04T09:00:00Z'],
+    [801, '2026-11-03T12:00:00Z'],
+  ], 'the last week\'s closed threads, newest closed first; the older one, the folded one and the open one are not');
+  const row = closed.find((t) => t.rootId === 801);
+  assert.deepEqual([row.threadId, row.number, row.kind, row.group, row.rootId, row.href], [0, null, 'private', 'live', 801, ''],
+    'a live row that opens its thread, with no number');
+  assert.ok(rows.findIndex((t) => t.what === 'live') < rows.findIndex((t) => t.what === 'closed'),
+    'after the project\'s live requests');
+  assert.deepEqual(needsYou([], work).map((r) => r.key), ['private:805'], 'a done thread is never Needs you\'s; the open one still is');
+
+  // The row in the list: the lock, the title, and the hover text, opening the thread.
+  const { renderComponent } = require('./lib/render-tsx');
+  const solo = { rootId: 806, title: 'An app for our garden plot rota', kind: 'idea', app: null, at: null, state: 'done', doneAt: '2026-11-02T12:00:00Z' };
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, lit: 'private:801', ready: true, rows: [], owed: 0,
+    progress: [], waiting: [], live: liveThisWeek({ ...work, private: [...work.private, solo] }, now), openRow() {}, openThread() {},
+  });
+  assert.match(html, /data-ai-line="closed"[^>]*[\s\S]*?M12 15v2m-6 4h12/, 'drawn with the lock glyph');
+  assert.match(html, /Closed 801/);
+  assert.match(html, /Garden club · Private thread · Closed/, 'its project, in front of "Private thread · Closed"');
+  assert.match(html, /Private thread · Closed/);
+  assert.match(html, /data-ai-line="closed" data-ai-lit="" aria-current="true"/, 'lit while its thread is in the column');
+  assert.match(html, /data-ai-group="none"[\s\S]*?An app for our garden plot rota/, 'one with no project is under Only you');
+  assert.ok(html.indexOf('data-ai-line="live"') < html.indexOf('data-ai-line="closed"'), 'under the project after its live row');
+});
+
 test('the column from 768px: Main, or one thread alone under its own head; a page the panel holds puts Main back under it', () => {
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /const WIDE = '\(min-width: 768px\)';/);

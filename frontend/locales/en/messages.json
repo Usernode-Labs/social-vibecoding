@@ -1623,6 +1623,10 @@
     "text": "Before and after · {{count}} changes",
     "description": "On Homeroom bot's plan card, the row that opens the plan's pictures: one close-up, before and after, for each numbered change. {{count}} is how many changes have one."
   },
+  "bot.plan.crops.summaryPlain": {
+    "text": "Before and after",
+    "description": "On Homeroom bot's plan card, the row that opens the plan's pictures when the lines above it are not the plan's own numbered lines, so a count would name changes that are not showing."
+  },
   "bot.plan.crops.before": {
     "text": "Before",
     "description": "On Homeroom bot's plan card, the small label over the close-up of a change as the screen is today."
@@ -5178,6 +5182,14 @@
   "ai.live.row": {
     "text": "{{project}} · #{{number}} · Live",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a one-line row in Live this week: its project and number."
+  },
+  "ai.live.closed": {
+    "text": "{{project}} · Private thread · Closed",
+    "description": "Tooltip of a private thread marked done this week, in Live this week: only the person can see it, which project it is for, and that it is closed. The row's lock says the same."
+  },
+  "ai.live.closedSolo": {
+    "text": "Private thread · Closed",
+    "description": "Tooltip of a private thread marked done this week, in Live this week, that is for no project yet: only the person can see it, and it is closed. The row's lock says the same."
   },
   "ai.drawer.back": {
     "text": "Back to the list",

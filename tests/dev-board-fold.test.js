@@ -1721,7 +1721,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // leaves 128 slots.
   // 752 → 753: +1 (#6029) the Basic/Advanced switch on Experimental,
   // a settings route with no existing declared check to extend.
-  checkCap.assertPinned(DAPP.tests.length, 753);
+  // 753 → 754: +1 (#6271) a private thread marked done this week is listed
+  // under Live this week with its lock and the day it closed. Live this week
+  // had no declared check to extend. 754 leaves 126 slots.
+  checkCap.assertPinned(DAPP.tests.length, 754);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

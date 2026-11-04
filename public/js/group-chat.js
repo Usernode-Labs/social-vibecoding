@@ -1227,6 +1227,10 @@ const GroupChat = {
     // `chat_delete` patches the same fields).
     const deleted = !!msg.deleted;
     const threadType = scopeType;
+    // #2236: 'agent' when the connector posted this on the author's behalf
+    // (`posted_via` on a loaded row, `postedVia` on a live broadcast);
+    // null for a person typing. Only the one value the server writes.
+    const postedVia = (msg.postedVia || msg.posted_via) === 'agent' ? 'agent' : null;
     return {
       id: msg.id == null ? null : Number(msg.id),
       // #6229: a bot note written once on its request's page still says which
@@ -1265,10 +1269,13 @@ const GroupChat = {
       editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
       unread: !!msg.has_unread_notification,
       bookmarked: !!(msg.saved || msg.bookmarked),
-      // #2236: 'agent' when the connector posted this on the author's behalf
-      // (`posted_via` on a loaded row, `postedVia` on a live broadcast);
+      // #2236: 'agent' when the connector posted this on the author's behalf;
       // null for a person typing. Only the one value the server writes.
-      postedVia: (msg.postedVia || msg.posted_via) === 'agent' ? 'agent' : null,
+      postedVia,
+      // #6268: Homeroom bot will not answer this connector message, and the
+      // row says so quietly; the reason was decided when it was posted
+      // (`metadata.homeroomBotSkip` on both loaded and live rows).
+      botSkipped: postedVia === 'agent' && !!(meta && meta.homeroomBotSkip),
       canEdit: msg.userId === App.user?.id || msg.user_id === App.user?.id,
       // The three header controls, gated exactly as the string template gated
       // them: edit is your own message and not read-only (#621), react is not

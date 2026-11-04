@@ -671,6 +671,26 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   const stillLines: Line[] = stillShown.map(waitingLine);
   const tab = useTabBuild();
   const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => {
+    if (th.what === 'closed') {
+      // #6271: a private thread marked done this week: a lock, its title, the
+      // day it closed, and no number. It opens the thread, where Reopen is.
+      return {
+        key: `closed:${th.rootId}`,
+        kind: 'closed',
+        app: th.app,
+        glyph: <LockIcon className={G} />,
+        number: null,
+        title: th.title || '',
+        right: dayOf(th.at, t),
+        tooltip: th.app
+          ? t('messages:ai.live.closed', { project: th.app.name || th.app.slug })
+          : t('messages:ai.live.closedSolo'),
+        why: null,
+        owe: false,
+        lit: !!lit && rowKey(th) === lit,
+        open: () => openThread(th),
+      };
+    }
     // #6233: Live, but this tab runs the build before it: the row asks for
     // the reload rather than a day the reader still cannot see.
     const lacks = tabLacks({ liveAt: th.at, mergedAt: th.mergedAt, id: th.changeId, appSlug: th.app?.slug }, tab);
