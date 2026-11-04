@@ -6,7 +6,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
 import { applyFormat, hasFormatting, type FormatKind } from './composer-format';
 import { waitingFor } from './waiting-for';
-import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
+import { channels, draftAttachmentsFor, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setDraftAttachments, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot, type ComposerScope } from './store';
 import { mirrorsReplies } from './bot-question';
 import { botRequestNames, threadsAllowed } from './bot-shared';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
@@ -89,6 +89,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const conversationId = snap.route.conversationId || 0;
   const active = snap.active;
   const scope = scopeKey(conversationId, threadRootId);
+  // Where a save lands, and whether its chips are the ones on screen: an
+  // upload started here can finish after the person moved to another draft.
+  const scopeRef = useRef<ComposerScope>(scope);
+  scopeRef.current = scope;
   const inThread = !!threadRootId;
   const [value, setValue] = useState('');
   const [dictating, setDictating] = useState(false);
@@ -139,8 +143,20 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const friendIds = useFriendIds();
 
   useEffect(() => {
-    setValue(draftFor(scope)); setAttachments([]); setChip(null, null); setPrompt(null); setError(''); setAskReply(false);
+    // #6249: the attached files come back with the words they were saved with.
+    setValue(draftFor(scope)); setAttachments(draftAttachmentsFor(scope)); setChip(null, null); setPrompt(null); setError(''); setAskReply(false);
   }, [scope]);
+
+  /**
+   * #6249: save a draft's attached files, and draw them when that draft is
+   * the one on screen. `target` is the scope the change belongs to, which is
+   * not always the one open now.
+   */
+  const updateAttachments = (target: ComposerScope, change: (items: MessageAttachment[]) => MessageAttachment[]) => {
+    const next = change(draftAttachmentsFor(target));
+    setDraftAttachments(target, next);
+    if (target === scopeRef.current) setAttachments(next);
+  };
 
   // Reply puts the caret here where there is a hardware keyboard, so the
   // next keystroke is the reply (message-actions/focus.ts).
@@ -483,6 +499,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   }
 
   async function addFiles(files: File[]) {
+    // #6249: an upload that finishes after the person moved on is saved to
+    // the draft it was started in, never drawn in the one they moved to.
+    const startScope = scopeRef.current;
     const room = Math.max(0, MAX_ATTACHMENTS - attachments.length - uploading);
     const selected = files.slice(0, room);
     if (!selected.length) { setError(t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS })); return; }
@@ -500,7 +519,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       setUploading((count) => count + 1); setError(refused);
       try {
         const attachment = await api.uploadAttachment(conversationId, file);
-        setAttachments((items) => [...items, attachment]);
+        updateAttachments(startScope, (items) => [...items, attachment]);
       }
       catch (err) { setError(err instanceof Error ? err.message : t('messages:composer.uploadFailed', { file: file.name })); }
       finally { setUploading((count) => Math.max(0, count - 1)); }
@@ -622,7 +641,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       <div className="messages-composer-card">
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">{reply.sender.unnamed ? (reply.sender.id ? t('messages:composer.replyingToUnknownHandle') : t('messages:composer.replyingToUnknown')) : t('messages:composer.replyingTo', { name: senderName(reply.sender, { bare: active.kind === 'direct' }) })}</span><p className="truncate">{plainText(reply.content) || t('messages:composer.replyAttachment')}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{t('messages:bot.draft.reply')}</p> : null}{planReply ? <p className="messages-bot-note">{planReply.firstVersion ? t('messages:composer.planReplyNote') : t('messages:composer.planReplyNotePublic')}</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label={t('messages:composer.cancelReply')}>×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setChip(null, null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
-      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
+      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => updateAttachments(scope, (items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
       {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.channelsMenu')}>{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
       {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.peopleMenu')}>{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       {emojiOpen && emoji ? (

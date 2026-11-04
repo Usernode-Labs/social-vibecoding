@@ -414,12 +414,34 @@ test('#6212: the composer keeps the list\'s attachment apart from the person\'s 
   // Sending, changing scope and × also forget where the chip came from.
   assert.match(composer, /objectRef\.current = null; objectFrom\.current = null;\s+const input = \{ content: value\.trim\(\)/,
     'sending forgets where the chip came from');
-  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(\[\]\); setChip\(null, null\);/);
+  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(draftAttachmentsFor\(scope\)\); setChip\(null, null\);/);
   assert.match(composer, /onClick=\{\(\) => \{ setChip\(null, null\); setPrompt\(null\); \}\}/);
   // A request page opened from a bot message in Main Chat is the same
   // automatic attach the list itself makes.
   assert.match(read('frontend/src/features/messages/request-page.ts'),
     /issueNumber: page\.issueNumber, title: page\.label, conversationId, source: 'list' \}/);
+});
+
+test('#6249: attached files are kept with the draft they were attached in', () => {
+  assert.match(store, /export function draftAttachmentsFor\(scope: ComposerScope\): MessageAttachment\[\]/);
+  assert.match(store, /export function setDraftAttachments\(scope: ComposerScope, items: MessageAttachment\[\]\): void/);
+  assert.match(store, /`usernode:messages-draft-attachments:\$\{scope\}`/, 'one saved list per composer scope');
+  // A file Homeroom has already cleaned up (24 hours) is never drawn again.
+  assert.match(store, /export const DRAFT_ATTACHMENT_MAX_AGE_MS = 23 \* 60 \* 60 \* 1000;/);
+  assert.match(store, /if \(now - savedAt > DRAFT_ATTACHMENT_MAX_AGE_MS\) continue;/);
+  assert.match(store, /if \(read\.dropped\) writeDraftAttachments\(scope, saved\);/,
+    'the key is rewritten once an entry has aged out');
+  // Sending clears the saved files beside the saved words.
+  assert.match(store, /setDraft\(scope, ''\);\s+setDraftAttachments\(scope, \[\]\);/);
+  // An answer tapped on a bot question does not wipe the person's files.
+  assert.match(store, /const files = draftAttachmentsFor\(scope\);[\s\S]{0,400}if \(files\.length\) setDraftAttachments\(scope, files\);/);
+  // The composer restores them, saves on add against the scope it started in,
+  // and saves on ×.
+  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(draftAttachmentsFor\(scope\)\);/);
+  assert.match(composer, /const startScope = scopeRef\.current;/);
+  assert.match(composer, /updateAttachments\(startScope, \(items\) => \[\.\.\.items, attachment\]\);/);
+  assert.match(composer, /updateAttachments\(scope, \(items\) => items\.filter\(\(candidate\) => candidate\.id !== item\.id\)\)/);
+  assert.match(composer, /setDraftAttachments\(target, next\);/);
 });
 
 test('blocking and access-revocation purge an active direct thread locally', () => {
