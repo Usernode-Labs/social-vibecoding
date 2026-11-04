@@ -224,7 +224,7 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
     const decided = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
     assert.equal(decided.rows[0].status, 'done');
     const ack = await lastAck();
-    assert.match(ack.rows[0].content, /^Done\. I opened a vote on closing request #6 on Ear trainer\. It closes if its group votes for it\.$/);
+    assert.match(ack.rows[0].content, /^Done\. I opened a vote on closing request \[#6\]\(https:\/\/app\.test\/#app\/ear-trainer\/dev\/issues\/6\) on Ear trainer\. It closes if its group votes for it\.$/);
     assert.equal((await tap(action, 'yes')).status, 409, 'decided once');
     assert.equal((await closeVotes()).rows.length, 1, 'no second vote');
   });

@@ -4723,7 +4723,7 @@ async function startRequest(pool, ctx, args) {
   }
   const open = await liveModule(deps).openBotProposal(pool, ctx.bot.id, app.id, n);
   if (open?.status === 'promoted') {
-    return { ok: false, error: 'You already built it: its proposal is up for the group\'s vote. To change it, use revise_proposal. Nothing was started.' };
+    return { ok: false, code: 'already_built', error: 'You already built it: its proposal is up for the group\'s vote. To change it, use revise_proposal. Nothing was started.' };
   }
   const entryFor = async () => {
     const p = await progressOf(pool, { userId: user.id, settings, config: ctx.config, deps });
@@ -5482,7 +5482,7 @@ async function decideClose(pool, { user, action, yes, ack, deps = {} }) {
         : closed);
   }
   return ack(
-    `Done. I opened a vote on closing request #${n} on ${name}. It closes if its group votes for it.`,
+    `Done. I opened a vote on closing request [#${n}](${moveSvc.requestLink(domainOf(deps), app.slug, n)}) on ${name}. It closes if its group votes for it.`,
     {
       objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
       metadata: { kind: 'closing', appSlug: app.slug, appName: name, issueNumber: n, issueTitle: gate.issue.title },

@@ -3,6 +3,8 @@ import { SwitchRow } from '@/components/ui/switch';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 
+import { InterfaceModeControl } from '../interface-mode-control';
+
 import { LocalAgentsList } from '../local-agents-list';
 
 /**
@@ -63,6 +65,7 @@ export function ExperimentalSection() {
         <SectionHeading title={t('settings:experimental.title')}>
           {t('settings:experimental.intro')}
         </SectionHeading>
+        <InterfaceModeControl />
         <SwitchRow id="ai-progress-estimate">
           {t('settings:experimental.progressEstimate.label')}
         </SwitchRow>
