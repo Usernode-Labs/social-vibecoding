@@ -1504,7 +1504,7 @@ const STATES = [
       conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
         'metadata', 'created_at'],
       homeroom_bot_dm_actions: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
-        'details', 'status', 'created_at', 'draft_extras'],
+        'details', 'status', 'created_at'],
       conversation_message_attachments: ['id', 'conversation_id', 'message_id', 'user_id', 'kind', 'filename',
         'content_type', 'size_bytes', 'meta', 'data'],
     },
@@ -1517,16 +1517,24 @@ const STATES = [
       const name = app.name || app.slug;
       const title = 'Week by week tracking in insights';
       const details = 'Show insights week by week, not only as a total.';
+      // #6251: the extras ride on `draft_extras`, a column the after copy has
+      // and the before copy (main) does not. Asking for the column in `needs`
+      // would make the state unfit for the pair and skip it on both sides,
+      // so the state writes them only where the column exists: the before
+      // side keeps today's draft, the after side draws the new lines.
+      const { rows: [{ present: hasExtras }] } = await client.query(
+        `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'homeroom_bot_dm_actions' AND column_name = 'draft_extras') AS present`);
       // #6251: what a draft carries besides its words, as offer_request
       // keeps it. It rides on the action (draft_extras) and is drawn under
       // the details by the same pure function the real draft uses.
-      const extras = {
+      const extras = hasExtras ? {
         attachmentIds: [DRAFT_PICTURE_ID],
         related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
         context: { saw: 'the insights page' },
         doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
         chatHref: '#homeroom-bot/main',
-      };
+      } : null;
       const { rows: [ask] } = await client.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
          VALUES ($1, $2, $3, 'shots-fixture-hrbot-file-ask', '{}'::jsonb, NOW() - INTERVAL '3 minutes')
@@ -1535,11 +1543,18 @@ const STATES = [
       );
       // As offer() writes it: the action, then the message whose buttons name it.
       const { rows: [action] } = await client.query(
-        `INSERT INTO homeroom_bot_dm_actions
-           (user_id, conversation_id, app_id, kind, title, details, draft_extras, created_at)
-         VALUES ($1, $2, $3, 'file_request', $4, $5, $6::jsonb, NOW() - INTERVAL '2 minutes')
-         RETURNING id`,
-        [ctx.member.id, chat.conversationId, ctx.appId, title, details, JSON.stringify(extras)]
+        extras
+          ? `INSERT INTO homeroom_bot_dm_actions
+               (user_id, conversation_id, app_id, kind, title, details, draft_extras, created_at)
+             VALUES ($1, $2, $3, 'file_request', $4, $5, $6::jsonb, NOW() - INTERVAL '2 minutes')
+             RETURNING id`
+          : `INSERT INTO homeroom_bot_dm_actions
+               (user_id, conversation_id, app_id, kind, title, details, created_at)
+             VALUES ($1, $2, $3, 'file_request', $4, $5, NOW() - INTERVAL '2 minutes')
+             RETURNING id`,
+        extras
+          ? [ctx.member.id, chat.conversationId, ctx.appId, title, details, JSON.stringify(extras)]
+          : [ctx.member.id, chat.conversationId, ctx.appId, title, details]
       );
       const metadata = mayor.confirmMeta('file_request', {
         app, name, actionId: Number(action.id), question: `File this as a request on ${name}?`,
@@ -1550,8 +1565,7 @@ const STATES = [
         `**${name}** · new request: ${title}`,
         '',
         details,
-        '',
-        mayor.draftExtrasText(extras),
+        ...(extras && mayor.draftExtrasText(extras) ? ['', mayor.draftExtrasText(extras)] : []),
       ].join('\n');
       const { rows: [offer] } = await client.query(
         `INSERT INTO conversation_messages
@@ -1572,14 +1586,17 @@ const STATES = [
         [DRAFT_PICTURE_ID, chat.conversationId, ask.id, ctx.member.id, DRAFT_PICTURE.length, DRAFT_PICTURE]
       );
       // And the copy offer() writes onto the draft message, so the bot's
-      // reply draws the thumbnail under its text too.
-      await client.query(
-        `INSERT INTO conversation_message_attachments
-           (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
-         VALUES ($1, $2, $3, $4, 'image', 'insights.png', 'image/png', $5, $6)
-         ON CONFLICT DO NOTHING`,
-        [DRAFT_PICTURE_COPY_ID, chat.conversationId, offer.id, chat.botId, DRAFT_PICTURE.length, DRAFT_PICTURE]
-      );
+      // reply draws the thumbnail under its text too. Only where the extras
+      // column exists: on the before side the draft draws today's message.
+      if (extras) {
+        await client.query(
+          `INSERT INTO conversation_message_attachments
+             (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+           VALUES ($1, $2, $3, $4, 'image', 'insights.png', 'image/png', $5, $6)
+           ON CONFLICT DO NOTHING`,
+          [DRAFT_PICTURE_COPY_ID, chat.conversationId, offer.id, chat.botId, DRAFT_PICTURE.length, DRAFT_PICTURE]
+        );
+      }
       await client.query('UPDATE conversations SET updated_at = NOW() - INTERVAL \'2 minutes\' WHERE id = $1',
         [chat.conversationId]);
       await client.query(
