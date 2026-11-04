@@ -8044,7 +8044,9 @@ async function planBeforeBuilding({
   if (!(await runPosted(pool, runId, 'plan'))) await say('plan', live.planCommentText({ spec: drafted.specMd, questions }), {
     threadMessage: shown.spec
       ? live.specCard({
-        sessionId: shown.spec.sessionId, version: shown.spec.version, spec: drafted.specMd, bot, asking: true,
+        // #6280: it is posted because the plan now WAITS for Build it, never
+        // because its build is under way.
+        sessionId: shown.spec.sessionId, version: shown.spec.version, spec: drafted.specMd, bot, waiting: true,
         requester: asker?.username || null,
       })
       : null,
