@@ -150,6 +150,7 @@ test('the demo feed’s shopping-list card is the advisory one', () => {
 const { reelRows } = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
 const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
 const WORKSHOP = fs.readFileSync(path.join(root, 'frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
+const FLOW = fs.readFileSync(path.join(root, 'frontend/src/features/review-flow/review-flow.tsx'), 'utf8');
 
 const noop = () => {};
 const sheetForm = (over = {}) => {
@@ -177,14 +178,13 @@ test('the item’s eyebrow reads the new catalog entry for a marked row', () => 
   assert.match(WORKSHOP, /row\.yes && \(row\.yes\.advisory \|\| row\.yes\.uncounted\)/, 'on a change row whose Yes carries a flag');
 });
 
-// #6199: the feed reopens on the vote that decides, never having skipped
-// past it to the advisory rows below. `firstUnseenIndex` gets a deciding
-// predicate built on the same `rowVoteType` the filter reads.
-test('the resume effect stops at a vote that decides, whatever was passed over', () => {
+// #6199: the run opens at the first change waiting on you, never on a
+// governance row. The reel's unseen-row resume went with the reel (#6276).
+test('the run opens at the first change waiting on you', () => {
   assert.match(
-    WORKSHOP,
-    /firstUnseenIndex\(items, \(r\) => rowSlug\(r, slug\), \(r\) => rowVoteType\(r\) === 'deciding'\)/,
-    'the deciding row stops the scan even when it was already seen',
+    FLOW,
+    /setIndex\(Math\.max\(0, shaped\.findIndex\(\(it\) => it\.kind !== 'governance'\)\)\)/,
+    'the run starts on its first change, never on a governance row',
   );
-  assert.match(WORKSHOP, /import \{[^}]*rowVoteType[^}]*\} from '\.\.\/\.\.\/workshop\/vote-filter';/);
+  assert.doesNotMatch(FLOW, /firstUnseenIndex/, 'the reel’s unseen-row resume is gone with the reel');
 });
