@@ -33,6 +33,17 @@
  * options as drawShell, run in the panel's own document — and takeBase lays
  * it in at the frame's rectangle, beside the app's picture.
  *
+ * ── Designs draw themselves (#6261) ───────────────────────────────────
+ *
+ * A design's frame (../messages/design-pane.tsx, ./design-card.tsx) is
+ * `sandbox="allow-scripts"` with an opaque origin, so the shell cannot draw
+ * into it and it came out a blank box. Each marked frame is asked for its
+ * own picture (../design/frame.ts's helper injects the vendored SnapDOM
+ * source as an inline script), and takeBase lays it into the frame's
+ * rectangle, clipped to its wrapper, on the first picture and the retake.
+ * `drawDocument` runs the same leg in the panel's own document. A frame that
+ * does not answer in three seconds keeps today's empty box.
+ *
  * ── When ───────────────────────────────────────────────────────────────
  *
  * The page is drawn the moment a pin goes down (`takeBase`), so it shows the
@@ -75,6 +86,8 @@
  * into the crop's own fractions, and a pin outside the crop is null — the
  * comment it belongs to goes with the part that was cut away.
  */
+
+import { DESIGN_FRAME_ATTR } from '../design/frame';
 
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
 /** The feedback endpoint's cap (src/routes/feedback.js MAX_SCREENSHOT_BYTES). */
@@ -485,6 +498,166 @@ export function requestPanelPicture(
   });
 }
 
+// ── A design draws its own picture (#6261) ────────────────────────────
+//
+// The two design frames carry `data-design-frame`; see the header. They are
+// another origin, so nothing here looks inside one: it is asked, and what it
+// sends back is drawn in its rectangle only.
+
+/** The viewport the picture is taken of, as its own measurements use it. */
+function viewportSize(): Size {
+  return {
+    width: Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1),
+    height: Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1),
+  };
+}
+
+export interface DesignFrameBox {
+  frame: HTMLIFrameElement;
+  /** The frame's own rectangle, in the document's CSS pixels. */
+  rect: Rect;
+  /** Its wrapper's rectangle, clipped to the viewport: where its picture may draw. */
+  clip: Rect;
+}
+
+/**
+ * The design frames on screen, up to `max`: addressed, laid out, visible,
+ * their rectangle meeting the viewport, and their wrapper's rectangle
+ * keeping some of it. A frame whose wrapper is clipped away entirely is not
+ * drawn, as it would not show on the page either.
+ */
+export function designFrames(max = 8): DesignFrameBox[] {
+  const out: DesignFrameBox[] = [];
+  if (typeof document.querySelectorAll !== 'function') return out;
+  const view = viewportSize();
+  for (const el of Array.from(document.querySelectorAll(`iframe[${DESIGN_FRAME_ATTR}]`))) {
+    const frame = el as HTMLIFrameElement;
+    if (!frame.contentWindow) continue;
+    const r = frame.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    if (typeof frame.checkVisibility === 'function' && !frame.checkVisibility()) continue;
+    if (r.right <= 0 || r.bottom <= 0 || r.left >= view.width || r.top >= view.height) continue;
+    const wrap = frame.parentElement;
+    const w = wrap ? wrap.getBoundingClientRect() : r;
+    const x = Math.max(0, w.left);
+    const y = Math.max(0, w.top);
+    const right = Math.min(view.width, w.right);
+    const bottom = Math.min(view.height, w.bottom);
+    if (right <= x || bottom <= y) continue;
+    out.push({
+      frame,
+      rect: { x: r.left, y: r.top, width: r.width, height: r.height },
+      clip: { x, y, width: right - x, height: bottom - y },
+    });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+let libraryText: Promise<string> | null = null;
+
+/**
+ * The vendored SnapDOM source, read once (same origin, so cached): a design
+ * frame injects it as an inline script and draws its own body with it. ''
+ * when it cannot be read, which skips the design leg.
+ */
+export function loadLibraryText(): Promise<string> {
+  if (libraryText) return libraryText;
+  libraryText = fetch(LIB_SRC)
+    .then((res) => (res.ok ? res.text() : ''))
+    .catch(() => '');
+  return libraryText;
+}
+
+/** A Blob of this window, or one made in the frame's own realm (the `toString` brand crosses origins). */
+function isPictureBlob(value: unknown): value is Blob {
+  return !!value && typeof value === 'object'
+    && (value instanceof Blob || Object.prototype.toString.call(value) === '[object Blob]');
+}
+
+/**
+ * Ask a design frame for its own picture. The frame's origin is opaque, so
+ * the request goes to '*' (as its pin replies do) and an answer is believed
+ * only when it comes from this frame's own window and carries the id it was
+ * given: a design's own script can supply at most its own frame's image.
+ * Null when it says nothing in time, or says something other than a picture.
+ */
+export function requestDesignPicture(
+  frame: HTMLIFrameElement,
+  scale: number,
+  lib: string,
+  timeoutMs = PANEL_PICTURE_TIMEOUT_MS,
+): Promise<Blob | null> {
+  const target = frame.contentWindow;
+  if (!target) return Promise.resolve(null);
+  const id = `design-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (value: Blob | null) => {
+      window.removeEventListener('message', onMessage);
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== target) return;
+      const d = e.data as Record<string, unknown> | null;
+      if (!d || d.__design !== 'picture' || d.id !== id) return;
+      finish(isPictureBlob(d.blob) ? d.blob : null);
+    };
+    window.addEventListener('message', onMessage);
+    timer = setTimeout(() => finish(null), timeoutMs);
+    try {
+      target.postMessage({ __design: 'picture', id, scale, lib }, '*');
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+/**
+ * A design's own picture into its frame's rectangle, clipped to its wrapper
+ * and the viewport. No blob draws nothing: the frame's hidden place stays as
+ * the shell drew it, which is today's empty box, never a wrong claim about
+ * the design. The decode is bounded like the panel's.
+ */
+async function layInDesign(canvas: HTMLCanvasElement, scale: number, rect: Rect, clip: Rect, blob: Blob | null): Promise<void> {
+  if (!blob) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  try {
+    const bitmap = await within(createImageBitmap(blob), PANEL_PICTURE_TIMEOUT_MS, null);
+    if (!bitmap) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(clip.x * scale, clip.y * scale, clip.width * scale, clip.height * scale);
+    ctx.clip();
+    ctx.drawImage(bitmap, rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
+    ctx.restore();
+    bitmap.close?.();
+  } catch { /* the frame's place stays as the shell drew it */ }
+}
+
+/**
+ * Every design frame's own picture, all asked at once. A frame's scale is
+ * the picture's own times the frame's on-screen size over its layout size,
+ * so a card drawn small is not drawn at full size. [] when there are no
+ * frames or the library cannot be read.
+ */
+export function designPictures(scale: number, frames = designFrames()): Promise<Array<DesignFrameBox & { blob: Blob | null }>> {
+  if (!frames.length) return Promise.resolve([]);
+  return loadLibraryText().then((lib) => {
+    if (!lib) return [];
+    return Promise.all(frames.map(async (box) => ({
+      ...box,
+      blob: await requestDesignPicture(
+        box.frame,
+        scale * box.rect.width / Math.max(1, box.frame.clientWidth),
+        lib,
+      ),
+    })));
+  });
+}
+
 /** The element under a point of the shell's own page, in a few words. */
 export function describeElement(el: Element | null): ElementInfo | null {
   if (!el || el === document.documentElement || el === document.body) return null;
@@ -825,6 +998,10 @@ export async function drawDocument(scale: number): Promise<Blob | null> {
       plugins: [FLAT_SCROLLERS],
     });
     const canvas = await capture.toCanvas();
+    // A design shown in this document draws its own picture, as it does in
+    // the shell's (#6261), before the canvas is encoded.
+    const designs = await within(designPictures(scale), PANEL_PICTURE_TIMEOUT_MS, []);
+    for (const design of designs) await layInDesign(canvas, scale, design.rect, design.clip, design.blob);
     return await toBlob(canvas, 'image/png');
   } catch {
     return null;
@@ -868,14 +1045,18 @@ export function takeBase(opts: {
     ? requestAppPicture(frame, { scale, x: pin.x - frameRect.x, y: pin.y - frameRect.y })
     : Promise.resolve(null);
   const shell = within(drawShell(scale, host, false, viewport), SHELL_PICTURE_TIMEOUT_MS, null);
-  return Promise.all([shell, app, panelPicture]).then(async ([canvas, picture, panelBlob]) => {
+  // The design frames draw themselves, bounded like the panel: a design that
+  // misses its bound keeps the empty box it has today.
+  const designs = within(designPictures(scale), PANEL_PICTURE_TIMEOUT_MS, []);
+  return Promise.all([shell, app, panelPicture, designs]).then(async ([canvas, picture, panelBlob, designBlobs]) => {
     if (!canvas) return null;
     // The scale the picture really has, read off it: everything drawn on it
-    // (the app, the panel, the pin, the words) is placed in CSS pixels times
-    // this.
+    // (the app, the panel, the designs, the pin, the words) is placed in CSS
+    // pixels times this.
     const actual = canvas.width / width;
     if (frameRect) await layInApp(canvas, actual, frameRect, picture);
     await layInPanel(canvas, actual, panel?.rect, panelBlob);
+    for (const design of designBlobs) await layInDesign(canvas, actual, design.rect, design.clip, design.blob);
     const checked = await missingUnderPin(canvas, actual, target);
     if (checked) {
       // Two frames, so an island caught mid-render has settled, then one
@@ -888,6 +1069,7 @@ export function takeBase(opts: {
         const retaken = again.width / width;
         if (frameRect) await layInApp(again, retaken, frameRect, picture);
         await layInPanel(again, retaken, panel?.rect, panelBlob);
+        for (const design of designBlobs) await layInDesign(again, retaken, design.rect, design.clip, design.blob);
         return { canvas: again, scale: retaken, app: picture };
       }
     }

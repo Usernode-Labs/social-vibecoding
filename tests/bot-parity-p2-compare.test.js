@@ -69,7 +69,7 @@ test('Pick: one of the card\'s versions, on a design of theirs, patched as the c
 
 test('the designer has compare_versions and make_pictures between its own tools and its offers, and says when to use them', () => {
   const names = designBot.TOOLS.map((t) => t.function.name);
-  assert.deepEqual(names, ['write_screen', 'edit_design', 'list_source', 'read_source', 'reply', 'compare_versions', 'make_pictures', 'close_thread', 'offer_plan', 'offer_project']);
+  assert.deepEqual(names, ['write_screen', 'edit_design', 'list_source', 'read_source', 'reply', 'compare_versions', 'make_pictures', 'close_thread', 'offer_plan', 'offer_project', 'list_requests', 'get_request']);
   const prompt = designBot.designPrompt({
     username: 'ada', design: { surface: 'app', app: { name: 'Garden club' }, title: 'Plots', width: 390, height: 844 }, version: 2, html: '<p>x</p>',
     pictures: [{ id: 'a'.repeat(32), label: 'A · light', width: 1024, height: 1024 }, { id: 'nope', label: 'B' }],

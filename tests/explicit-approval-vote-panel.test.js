@@ -227,29 +227,32 @@ test('MergeStatus.lifecycle: a flagged in-vote row keeps its state + gains the f
 });
 
 // ── Admin-merge affordance ────────────────────────────────────────────
+// #6236: Admin merge is a row of the change's ⋯ menu (_proposalMenuItems)
+// and nowhere else — the chat's inline vote row, whose voteButtonsHtml drew
+// it beside Yes and No, is retired.
 
-test('voteButtonsHtml: a platform admin keeps Admin merge even on a flagged row', () => {
+const menuLabels = (AppView, pr) => AppView._proposalMenuItems(pr, {}).map((i) => i.label);
+
+test('⋯ menu: a platform admin keeps Admin merge even on a flagged row', () => {
   const AppView = makeAppView({ user: { id: 1, isAdmin: true, canAdminWrite: true } });
-  const html = AppView.voteButtonsHtml({ id: 1, status: 'promoted', requires_explicit_approval: true });
-  assert.match(html, /Admin merge/);
+  assert.ok(menuLabels(AppView, { id: 1, status: 'promoted', requires_explicit_approval: true }).includes('Admin merge'));
 });
 
-test('voteButtonsHtml: an app admin gets Admin merge on an ordinary row', () => {
+test('⋯ menu: an app admin gets Admin merge on an ordinary row', () => {
   const AppView = makeAppView({ user: { id: 2 }, ctx: { isAppAdmin: true } });
-  const html = AppView.voteButtonsHtml({ id: 1, status: 'promoted' });
-  assert.match(html, /Admin merge/);
+  assert.ok(menuLabels(AppView, { id: 1, status: 'promoted' }).includes('Admin merge'));
 });
 
-test('voteButtonsHtml: an app admin LOSES Admin merge on a flagged row', () => {
+test('⋯ menu: an app admin LOSES Admin merge on a flagged row', () => {
   const AppView = makeAppView({ user: { id: 2 }, ctx: { isAppAdmin: true } });
-  const html = AppView.voteButtonsHtml({ id: 1, status: 'promoted', requires_explicit_approval: true });
-  assert.doesNotMatch(html, /Admin merge/,
+  assert.ok(!menuLabels(AppView, { id: 1, status: 'promoted', requires_explicit_approval: true }).includes('Admin merge'),
     'an app admin must not be able to unilaterally add another admin');
 });
 
-test('voteButtonsHtml: an ordinary user never gets Admin merge', () => {
+test('⋯ menu: an ordinary user never gets Admin merge, and no chat row draws it', () => {
   const AppView = makeAppView({ user: { id: 3 } });
-  assert.doesNotMatch(AppView.voteButtonsHtml({ id: 1, status: 'promoted' }), /Admin merge/);
+  assert.ok(!menuLabels(AppView, { id: 1, status: 'promoted' }).includes('Admin merge'));
+  assert.equal(typeof AppView.voteButtonsHtml, 'undefined', 'the inline row\'s renderer is gone');
 });
 
 // ── The inline details-block note ─────────────────────────────────────
@@ -407,13 +410,14 @@ test('voteCountPill: the chip tooltip names the reason', () => {
 
 test('Admin merge tooltip names the change instead of saying admins', () => {
   const AppView = makeAppView({ user: { id: 1, isAdmin: true, canAdminWrite: true } });
-  const html = AppView.voteButtonsHtml({
-    id: 1, status: 'promoted', requires_explicit_approval: true, explicit_approval_reason: 'visibility',
-  });
-  assert.match(html, /title="Admin: merge this change to who can see this app right now, without the vote or another member’s Yes"/);
-  assert.doesNotMatch(html, /admins-changing/);
-  const plain = AppView.voteButtonsHtml({ id: 2, status: 'promoted' });
-  assert.match(plain, /bypassing the vote majority/);
+  const flagged = { id: 1, status: 'promoted', requires_explicit_approval: true, explicit_approval_reason: 'visibility' };
+  const title = AppView._adminMergeTitle(flagged);
+  assert.equal(title, 'Admin: merge this change to who can see this app right now, without the vote or another member’s Yes');
+  assert.doesNotMatch(title, /admins-changing/);
+  // The ⋯ row carries it (the chat's inline button, which carried it too, is gone — #6236).
+  const row = AppView._proposalMenuItems(flagged, {}).find((i) => i.label === 'Admin merge');
+  assert.equal(row.title, title);
+  assert.match(AppView._adminMergeTitle({ id: 2, status: 'promoted' }), /bypassing the vote majority/);
 });
 
 test('_votingHelpText: the reason leads the no-timer note, and the floor is a blocker', () => {

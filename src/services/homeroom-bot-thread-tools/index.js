@@ -28,6 +28,7 @@ const MODULES = Object.freeze([
   ['admin', () => require('./admin')], // P7: admin tools behind confirm cards
   ['pictures', () => require('./pictures')], // P8: pictures from an outside image model
   ['investigate', () => require('./investigate')], // P9: investigations that run for days
+  ['follow-up', () => require('./follow-up')], // #6264: tell me when it is done
 ]);
 
 function modules(deps = {}) {

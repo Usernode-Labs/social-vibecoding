@@ -208,6 +208,7 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
       data-done={shown.done ? 'true' : 'false'}
       data-tone={shown.tone}
       data-change-fixing={fixing ? '' : undefined}
+      data-change-bot-fix={shown.botFix || undefined}
       role="group"
       aria-label={shown.name}
     >

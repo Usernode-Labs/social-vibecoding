@@ -162,22 +162,25 @@ const names = (tools) => tools.map((t) => t.function.name);
 
 test('each place gets the tools that fit it, and nothing that acts without a tap', () => {
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: true })),
-    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_withdraw', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
     ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
-    ['reply', 'stay_quiet', 'start_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
   // Papote #3: under its plan waiting for Build it, a change to the plan is asked for here.
   const planned = voice.toolsFor({ type: 'issue', ref: 1 }, { planWaiting: true });
   assert.deepEqual(names(planned),
-    ['reply', 'stay_quiet', 'start_request', 'change_plan', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'change_plan', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+  // #6264: a request's change may not exist yet, and the promise is about
+  // the request then, so it is offered on the request too.
+  assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })).includes('tell_me_when'));
   const prompt = voice.systemPrompt({ app: { slug: 'papote', name: 'Papote' }, place: { type: 'issue', ref: 3 }, tools: planned });
   assert.match(prompt, /Them saying to build it or go ahead is start_request, which builds the plan as they saw it\. Somebody asking for something in the plan to change is change_plan/);
   assert.match(prompt, /When it gives a link or changeLink, include them as written\./,
     '#6247: a start\'s reply carries the request\'s (and change\'s) link as given');
   assert.doesNotMatch(voice.systemPrompt({ app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }) }), /change_plan/);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
-  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
+  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'tell_me_when', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
   assert.ok(chat[2].function.parameters.properties.change, 'in a chat it names which change');
   assert.ok(!names(chat).includes('offer_withdraw'), 'withdrawing is offered where the change is');
   const chatClose = chat.find((t) => t.function.name === 'offer_close_request');
@@ -185,6 +188,19 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   const issueClose = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })
     .find((t) => t.function.name === 'offer_close_request');
   assert.ok(!issueClose.function.parameters.properties.number, 'on the request it is the request itself');
+});
+
+test('#6264: the prompt lets it promise to tell them here when a change is done', () => {
+  const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true });
+  const prompt = voice.systemPrompt({ app: { slug: 'clubs', name: 'Clubs' }, place: { type: 'issue', ref: 1 }, tools });
+  assert.match(prompt, /call tell_me_when with that one moment and say its promise/);
+  assert.match(prompt, /Never tell them you cannot message them later/);
+  assert.match(prompt, /offer to tell them here when it is ready to vote/);
+  assert.match(prompt, /except what tell_me_when stored this turn, whose promise is kept here\./,
+    'the old "nothing brings you back" is narrowed, not dropped');
+  // A place with no promise to make does not tell it about one.
+  const bare = voice.systemPrompt({ app: { slug: 'clubs' }, place: { type: 'session', ref: 1 }, tools: voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false }) });
+  assert.doesNotMatch(bare, /tell_me_when/);
 });
 
 test('get_change gives back the description people vote on, as data, with its version and plan', async () => {

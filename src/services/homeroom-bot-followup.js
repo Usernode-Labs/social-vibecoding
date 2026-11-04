@@ -814,6 +814,38 @@ function checksRetryText({ broken = false, failing = true, skipped = false } = {
 }
 
 /**
+ * #6234: the one line on the change as the bot starts fixing its failing
+ * checks (homeroom-bot.js runChecksFix), so the request's page says it is
+ * being fixed instead of "Its author needs to fix this". What it is fixing,
+ * from what failed, in the people's words: the failing check's name when
+ * there is one that reads as words (plainName), else how many; what its
+ * shots showed not working; the sample data they lacked. The end line
+ * (checksRevisedText, checksRetryText or checksPersonText) follows it.
+ * Pure.
+ */
+function checksFixingText({ failing = [], broken = [], skipped = [] } = {}) {
+  const list = (v) => (Array.isArray(v) ? v : (v ? [{}] : []));
+  const checks = list(failing);
+  const tried = list(broken);
+  const seeded = list(skipped);
+  const end = 'It will say here when it\'s done.';
+  // Only shots that could not reach a change: the change works, it lacks data.
+  if (seeded.length && !tried.length && !checks.length) {
+    return `Homeroom bot is adding the sample data this change's before and after screens need. ${end}`;
+  }
+  const what = [];
+  if (checks.length === 1) {
+    const named = plainName(checks[0] && checks[0].name);
+    what.push(named ? `the failing check "${named}"` : 'the failing check on this change');
+  } else if (checks.length) {
+    what.push(`the ${checks.length} failing checks on this change`);
+  }
+  if (tried.length) what.push('what didn\'t work when Homeroom tried it');
+  if (!what.length) what.push('the failing checks on this change');
+  return `Homeroom bot is fixing ${what.join(' and ')}. ${end}`;
+}
+
+/**
  * A red check the bot found is not its change's doing (the fix turn's
  * `cause` "not_change"): that is the platform's to look at, and admins are
  * told (homeroom-bot.js runChecksFix, a platform incident). The change's own
@@ -859,6 +891,11 @@ function whySentence(why) {
   return `${said.charAt(0).toUpperCase()}${said.slice(1)}.`;
 }
 
+// #6234: who takes a change the bot could not fix from here. It said "A
+// person needs to look at it from here", which named nobody; the request's
+// own people are the requester and the project's members.
+const CHECKS_TAKE_OVER = 'The person who asked for it, or any member of this project, can take it from here.';
+
 function checksPersonText({ why, failingCount = 0, broken = [] }) {
   const said = whySentence(why);
   const tried = Array.isArray(broken) ? broken : [];
@@ -867,12 +904,12 @@ function checksPersonText({ why, failingCount = 0, broken = [] }) {
       ? `"${clipText(tried[0].claim, 200)}" didn't work when Homeroom tried it`
       : `${tried.length} things it says it does didn't work when Homeroom tried them`;
     return `Homeroom bot can't get this change working on its own: ${what}. `
-      + `${said ? `${said} ` : ''}A person needs to look at it from here.`;
+      + `${said ? `${said} ` : ''}${CHECKS_TAKE_OVER}`;
   }
   const checks = failingCount === 1 ? '1 check is' : `${failingCount || 'Some'} checks are`;
   const also = tried.length ? `, and ${tried.length === 1 ? 'one thing it says it does' : `${tried.length} things it says it does`} didn't work when Homeroom tried it` : '';
   return `Homeroom bot can't get this change past its checks on its own: ${checks} still failing${also}. `
-    + `${said ? `${said} ` : ''}A person needs to look at the failing checks from here.`;
+    + `${said ? `${said} ` : ''}${CHECKS_TAKE_OVER}`;
 }
 
 // ── The turn ─────────────────────────────────────────────────────────────
@@ -1094,6 +1131,8 @@ module.exports = {
   checksLookLikeInfra,
   checksFixPrompt,
   checksRevisedText,
+  checksFixingText,
+  CHECKS_TAKE_OVER,
   checksPersonText,
   whySentence,
   checksNotChangeText,
