@@ -183,6 +183,7 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           const refusal = err as { previewDatabaseServerFault?: boolean; policySkew?: boolean };
           const policy = legacy('services/platform-preview-data-policy');
           const rollout = refusal.policySkew === true && await policy.newerBuildServing(pool);
+          if (rollout) policy.markRollout(err);
           const detail = rollout ? policy.ROLLOUT_DETAIL : visuals().summarizeBootFailure(err);
           const infrastructure = rollout || !!legacy('services/deploy-failure').bootFailureIsInfrastructure(err);
           const sync = legacy('services/boot-failure-sync');

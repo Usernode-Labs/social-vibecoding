@@ -36,6 +36,18 @@ function refuse(message, flags = {}) {
 // they look before that. With no newer build the same refusal is immediate.
 const ROLLOUT_DETAIL = 'Homeroom was updating itself while this preview was copied; the checks will run again when it finishes';
 const LIVE_SECONDS = 45;
+// Turn a skew refusal into the rollout fault once a newer build is known to be
+// serving: Homeroom's own fault, so nothing may read it as the app's (no
+// noFallback, which db-manager.cloneDatabase relabels appCaused) and the
+// preview machine's platform-fault retries take it.
+function markRollout(err) {
+  if (!err || typeof err !== 'object') return err;
+  delete err.noFallback;
+  delete err.appCaused;
+  err.platformRollout = true;
+  err.infrastructure = true;
+  return err;
+}
 // The same test the newest-build-only clock jobs use (workflow/clock/services.ts
 // newestBuild): the live process that started serving last, and whether its
 // release is one other than this process's. No recorded process, or a query
@@ -127,4 +139,4 @@ module.exports = { DIGEST, LABEL, RECEIPT_LABEL, APP_ID_LABEL, PLATFORM_SLUG, PL
   BOOT_FILE, bootFileStartsEmpty, startsEmpty,
   isOpaqueDockerPreview, runtimeReceipt, verifyRuntimeReceipt,
   sourceIdentity, runtimeLabels, previewIdentity, previewPersonaId, refuse,
-  ROLLOUT_DETAIL, newerBuildServing };
+  ROLLOUT_DETAIL, newerBuildServing, markRollout };

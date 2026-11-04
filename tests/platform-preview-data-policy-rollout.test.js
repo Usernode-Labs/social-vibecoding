@@ -53,6 +53,20 @@ test('the refusal carries the skew marker only where another build made the data
   assert.equal(plain.noFallback, true);
 });
 
+test('a rollout fault is the platform\'s, not the app\'s: no noFallback to relabel', () => {
+  const skew = policy.refuse('database was made by another policy', { policySkew: true });
+  policy.markRollout(skew);
+  assert.equal(skew.platformRollout, true);
+  assert.equal(skew.infrastructure, true, 'the platform-fault retries take it');
+  assert.equal(skew.noFallback, undefined, 'db-manager.cloneDatabase must not relabel it appCaused');
+  assert.equal(skew.appCaused, undefined);
+  assert.equal(skew.platformPreviewPolicy, true);
+  // Every other refusal keeps the immediate shape it has today.
+  const plain = policy.refuse('invalid preview user identity');
+  assert.equal(plain.noFallback, true);
+  assert.equal(plain.platformRollout, undefined);
+});
+
 test('the rollout sentence is the plain one people see', () => {
   assert.equal(policy.ROLLOUT_DETAIL,
     'Homeroom was updating itself while this preview was copied; the checks will run again when it finishes');

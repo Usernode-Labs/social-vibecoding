@@ -154,9 +154,15 @@ test('a database made by another build while a newer one serves is a platform fa
     assert.equal(rollout.detail, ROLLOUT_DETAIL, 'the raw policy line is never shown for this case');
     assert.equal(rollout.infrastructure, true);
     assert.equal(rollout.platformFault, true, 'the error lane retries it, and a boot retries it again');
+    assert.equal(state.build.platformRollout, true, 'the refusal itself reads as the platform\'s fault');
+    assert.equal(state.build.noFallback, undefined, 'never an appCaused refusal');
     assert.equal(syncs.length, 0, 'no sync with main: Homeroom itself was updating');
 
-    state.newestRelease = '';               // no newer build: an unreviewed change, refuse at once
+    // No newer build: an unreviewed change, refuse at once. A build throws its
+    // own error, so this one is not the rollout-marked object above.
+    state.newestRelease = '';
+    state.build = Object.assign(new Error('Platform preview data policy: database was made by another policy'),
+      { noFallback: true, platformPreviewPolicy: true, policySkew: true });
     const refused = await handlers[WORK.prepare].run(ctx(input));
     assert.equal(refused.platformFault, false);
     assert.notEqual(refused.detail, ROLLOUT_DETAIL);
