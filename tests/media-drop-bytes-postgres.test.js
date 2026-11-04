@@ -179,15 +179,16 @@ test('media column removal refuses incomplete migrations, preserves references, 
   const afterReceipts=await receipts(pool);
   assert.equal(afterReceipts.length,plan.length);
   const afterCatalog=await catalog(pool);
-  // The media contract is about these six tables. A migration later in
-  // history may add tables of its own, so the comparison is scoped to the
-  // tables this migration owns rather than every changed relation.
-  const mediaNames=new Set(expectedTables);
-  assert.deepEqual(afterCatalog.relations
-    .filter(r=>mediaNames.has(r.name))
+  // The media contract is what the media migration itself changes, read
+  // right after it (mediaCatalog): exactly its six tables, and no sequence.
+  // A migration later in history adds tables and sequences of its own, so
+  // the catalog after the whole history is compared only with a fresh
+  // database's (the subtest below), never with the one before the media
+  // migration.
+  assert.deepEqual(mediaCatalog.relations
     .filter(r=>JSON.stringify(r)!==JSON.stringify(beforeCatalog.relations.find(p=>p.name===r.name)))
     .map(r=>r.name).sort(),expectedTables);
-  assert.deepEqual(afterCatalog.sequences,beforeCatalog.sequences);
+  assert.deepEqual(mediaCatalog.sequences,beforeCatalog.sequences);
 
   await t.test('new constraints reject missing keys, wrong hashes and inconsistent originals',async()=>{
     for (const table of TABLES) {
