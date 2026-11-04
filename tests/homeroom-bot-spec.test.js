@@ -143,6 +143,9 @@ test('a spec is written first, read-only, stored as the session\'s spec doc, pos
     costUsd: 0.060000000000000005, specMd: SPEC, specVersion: 3,
     // Each stage's own cost on its model (services/stage-costs.js).
     stageCosts: { spec: { usd: 0.01, model: 'z-ai/glm-5.3-flash' }, build: { usd: 0.05, model: 'z-ai/glm-5.3-flash' } },
+    // #6209: this harness has no GitHub client, so the document check keeps
+    // the links and says so.
+    docOnly: false,
   });
 });
 

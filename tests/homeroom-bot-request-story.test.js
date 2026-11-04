@@ -25,11 +25,11 @@ test('a plan row is the bot\'s sentence: building it now, or waiting for its req
   assert.equal(building.metadata.specShare.botNote, 'building');
   assert.equal(building.metadata.specShare.waitingFor, undefined);
   const asking = live.specCard({ sessionId: 7, version: 1, spec: SPEC, bot: BOT, asking: true, requester: 'sam' });
-  assert.equal(asking.content, '📋 Plan v1: Dark mode. Waiting for @sam to say Build it.');
+  assert.equal(asking.content, '📋 Plan v1: Dark mode. Nothing is built yet. Waiting for @sam to say Build it.');
   assert.equal(asking.metadata.specShare.botNote, 'waiting');
   assert.equal(asking.metadata.specShare.waitingFor, 'sam');
   assert.equal(live.specCard({ sessionId: 7, version: 2, spec: SPEC, bot: BOT, asking: true }).content,
-    '📋 Plan v2: Dark mode. Waiting for the person who asked for it to say Build it.');
+    '📋 Plan v2: Dark mode. Nothing is built yet. Waiting for the person who asked for it to say Build it.');
   // On its change: the plan itself.
   const proposed = live.specCard({ sessionId: 7, version: 1, spec: SPEC, bot: BOT, proposed: true });
   assert.equal(proposed.content, '📋 Plan v1: Dark mode.');

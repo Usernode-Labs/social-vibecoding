@@ -276,13 +276,55 @@ function emptyText({ reason }) {
 // GitHub's copy links the change; Homeroom's names it by its title, and the
 // vote card under the message is the way to it (homeroom-bot.js
 // announceBuilt). No pull request number in either.
-function proposalText({ link }) {
+// #6209: a change that adds only written documents says so, so nobody reads
+// its vote as the request's feature being built.
+function proposalText({ link, docOnly = false }) {
+  if (docOnly) {
+    return `Homeroom bot wrote a plan document for this. It adds a written plan; nothing changes in the app. It's up for a vote: ${link}`;
+  }
   return `Homeroom bot built this. It's up for a vote: ${link}`;
 }
 
-function proposalHomeroomText({ title }) {
+function proposalHomeroomText({ title, docOnly = false }) {
   const name = clipText(title, 200);
+  if (docOnly) {
+    return name
+      ? `This adds a written plan; nothing changes in the app. It's up for a vote: ${name}`
+      : 'This adds a written plan; nothing changes in the app. It\'s up for a vote.';
+  }
   return name ? `I built this. It's up for a vote: ${name}` : 'I built this. It\'s up for a vote.';
+}
+
+// #6209: a change that touches only written documents (a plan under docs/,
+// a Markdown file) is not the request's answer. Pure: true when the list is
+// non-empty and every path is a Markdown file or sits under docs/. An
+// incomplete list is never trusted, so a caller keeps the links then.
+function isDocOnlyChange(files) {
+  const list = (Array.isArray(files) ? files : []).filter((f) => typeof f === 'string' && f.trim());
+  return list.length > 0 && list.every((f) => /\.mdx?$/i.test(f) || f.startsWith('docs/'));
+}
+
+// #6209: the build's own check, before its pull request is opened: does it
+// touch only written documents? If it does, its linked requests are cleared
+// (no PR exists yet), so a merge cannot close one as done.
+// `created_from_issue_number` stays, so the change still shows on its
+// request's page. Anything unreadable, or an incomplete file list, keeps the
+// links as every build had them before. Throws on a read failure, which the
+// caller answers by keeping the links.
+async function unlinkDocOnlyBuild({ pool, github, repo, session }) {
+  const gh = github || require('./github');
+  if (!gh || typeof gh.compareRefs !== 'function' || !repo?.owner || !repo?.repo || !session?.branch_name) {
+    return { docOnly: false };
+  }
+  const baseSha = typeof gh.getBranchSha === 'function'
+    ? await gh.getBranchSha(repo.owner, repo.repo, 'main')
+    : null;
+  const compared = await gh.compareRefs(repo.owner, repo.repo, `${baseSha || 'main'}...${session.branch_name}`);
+  if (!compared?.filesComplete || !isDocOnlyChange(compared.files)) return { docOnly: false };
+  await require('./proposal-update').storeLinkedIssues({
+    pool, session, removeIssues: session.linked_issues,
+  });
+  return { docOnly: true };
 }
 
 // The request's ending (announceLive): its change is live.
@@ -1394,8 +1436,8 @@ const PLAN_REPLY_HINT = 'reply "build it" here when it looks right, or say what 
 function planCommentText({ spec, questions = [] }) {
   const asks = (Array.isArray(questions) ? questions : []).filter((q) => q && q.question);
   return [
-    'Homeroom bot wrote a plan for this request, with its before and after screens, and will build it once the person '
-      + 'who asked for it says Build it. On Homeroom they can '
+    'Homeroom bot wrote a plan for this request, with its before and after screens. Nothing has been built yet. '
+      + 'It will build it once the person who asked for it says Build it. On Homeroom they can '
       + PLAN_REPLY_HINT.replace(/ here /, ' on this request '),
     ...(asks.length ? [
       '',
@@ -1428,7 +1470,7 @@ function specCard({
   const content = proposed
     ? `${head}${revised ? ', updated for this change' : ''}.`
     : asking
-      ? `${head}. Waiting for ${waitingFor ? `@${waitingFor}` : 'the person who asked for it'} to say Build it.`
+      ? `${head}. Nothing is built yet. Waiting for ${waitingFor ? `@${waitingFor}` : 'the person who asked for it'} to say Build it.`
       // #4488: a plan its requester approved was posted when they were
       // asked; its build says so in a note, with no second card.
       : `${head}. I'm building it now.`;
@@ -1479,7 +1521,7 @@ async function notePlanRows(pool, runIds, note, { ws = null } = {}) {
     const { rows } = await pool.query(
       `UPDATE chat_messages m
           SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb($2::text)),
-              content = regexp_replace(m.content, '\\. Waiting for [^\\n]*$', $3)
+              content = regexp_replace(m.content, '\\.(?: Nothing is built yet\\.)? Waiting for [^\\n]*$', $3)
          FROM homeroom_bot_posts p
         WHERE p.run_id = ANY($1::int[]) AND p.kind = 'plan' AND m.id = p.thread_message_id
           AND m.metadata->'specShare'->>'botNote' = 'waiting'
@@ -3158,6 +3200,10 @@ function specForBuild(specMd, startingScreens = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // #6209: the spec is the plan the person who asked for the change approved
+  // before the build (Build it). The build makes the feature it plans; the
+  // plan itself is already on the request and is never committed as a doc.
+  approvedPlan = false,
   // L2: the turn's runner writes the app's check command (buildTurnRunner
   // `checksGate`), so the prompt says how to run it.
   appChecks = false,
@@ -3192,6 +3238,17 @@ function buildPrompt({
       '',
       '==== END SPEC ====',
       '',
+      ...(approvedPlan ? [
+        'This SPEC is the plan the person who asked for the change approved before this build. Build the feature it',
+        'describes. The plan is already shown on the request: do not add it to the repository as a document, and do',
+        'not make it the change.',
+      ] : [
+        // #6209 (4 Nov 2026, evan): a plan asked for first is posted as a
+        // plan card, and the build makes the feature it plans. The plan is
+        // never the change, whatever the plan asked the bot to write.
+        'The plan is already shown on the request: do not add it to the repository as a document, and do not make',
+        'it the change.',
+      ]),
       'Build what the SPEC describes. The plan above is the triage\'s short version of it: where they differ,',
       'the spec wins. The repository\'s own agent instructions still come first.',
     ]
@@ -4741,6 +4798,7 @@ async function buildAndPropose({
   const turnStartedMs = Number(await steps.once('build_clock', async () => Date.now())) || Date.now();
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? specForBuild(spec.specMd, startingScreens) : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
+    approvedPlan: checkedFirst,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
     reviewed: Boolean(review?.reviewer),
     locale,
@@ -5009,6 +5067,29 @@ async function buildAndPropose({
     };
   }
   if (setupReady) return { ...(await fail(setupReady.error)), setupFailed: true, costUsd, ...reviewOut };
+  // #6209: a build that came out as only written documents is unlinked from
+  // its request before the pull request is opened, so merging it cannot
+  // close the request as done. `created_from_issue_number` stays, so the
+  // change still shows on its request's page. Anything unreadable keeps the
+  // links, as every build had them before.
+  //
+  // 4 Nov 2026 (evan on #6209): never for a plan the person approved. After
+  // Build it, the plan stays a plan card and the build is a normal change
+  // that implements the feature it plans: it keeps its link to the request
+  // and its "I built this" wording. The document-only path stays for a build
+  // whose request really is a written document.
+  const docOnlyCheck = checkedFirst ? null : await steps.once('doc_only', async () => {
+    try {
+      return await unlinkDocOnlyBuild({ pool, github: deps.github, repo, session });
+    } catch (err) {
+      durableSteps.rethrowStop(err, 'doc-only check');
+      log.warn('homeroom-bot', 'Could not check whether the build adds only documents (keeping its links)', {
+        sessionId: session.id, err: err.message,
+      });
+      return { docOnly: false };
+    }
+  });
+  const docOnly = docOnlyCheck?.docOnly === true;
   // Named and described first: the route reads both as it opens the pull
   // request (#3518).
   await steps.once('prepared', async () => {
@@ -5059,7 +5140,7 @@ async function buildAndPropose({
   await step('proposed', { prNumber: promoted.body.prNumber || null });
   return {
     ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut,
-    ...costsOut(), ...noChangeOut(), ...partialOut,
+    ...costsOut(), ...noChangeOut(), ...partialOut, docOnly,
   };
 }
 
@@ -5298,6 +5379,69 @@ async function reviewLanded({
   }
 }
 
+// #6209: a bot change that is only documents must not close the request it
+// plans for. Changes promoted before the build's own check are repaired
+// here: each session is read once per process, and one whose files are all
+// documents loses its linked requests and the `Closes` line in its open pull
+// request body. It stays on its request's page through
+// `created_from_issue_number`. A build from a plan its requester approved is
+// left alone (4 Nov 2026): it is the feature the plan describes, not a
+// document. Never throws.
+const docOnlyChecked = new Set();
+async function unlinkDocOnlyProposals(pool, deps = {}) {
+  const gh = deps.github;
+  if (!gh || typeof gh.compareRefs !== 'function') return { unlinked: 0 };
+  let rows = [];
+  try {
+    ({ rows } = await pool.query(
+      `SELECT cs.id, cs.linked_issues, cs.pr_number, cs.branch_name, cs.pr_linked_issues_applied, a.repo_url
+         FROM chat_sessions cs
+         JOIN users u ON u.id = cs.user_id
+         JOIN apps a ON a.id = cs.app_id
+        WHERE u.username = $1 AND u.is_synthetic = TRUE
+          AND cs.status = 'promoted' AND cs.pr_number IS NOT NULL
+          AND cardinality(cs.linked_issues) > 0
+          AND cs.built_from_session_id IS NULL
+        ORDER BY cs.id DESC
+        LIMIT 50`,
+      [BOT_USERNAME],
+    ));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the bot changes to check for documents only', { err: err.message });
+    return { unlinked: 0 };
+  }
+  let unlinked = 0;
+  for (const row of rows) {
+    const id = Number(row.id);
+    if (docOnlyChecked.has(id)) continue;
+    const ref = repoRef.ownerRepo(row.repo_url);
+    if (!ref || !row.branch_name) { docOnlyChecked.add(id); continue; }
+    try {
+      const compared = await gh.compareRefs(ref.owner, ref.repo, `main...${row.branch_name}`);
+      docOnlyChecked.add(id);
+      if (!compared?.filesComplete || !isDocOnlyChange(compared.files)) continue;
+      // The row as updateLinkedIssues reads it; removal wins, and the PR body
+      // is patched from the association it recorded when the PR was opened.
+      const session = {
+        id, linked_issues: row.linked_issues, pr_number: row.pr_number, branch_name: row.branch_name,
+        pr_linked_issues_applied: row.pr_linked_issues_applied,
+      };
+      const out = await require('./proposal-update').updateLinkedIssues({
+        pool, gh, session, owner: ref.owner, repo: ref.repo, removeIssues: row.linked_issues,
+      });
+      if (out?.changed) unlinked += 1;
+      log.info('homeroom-bot', 'A bot change that adds only documents no longer links its request', {
+        sessionId: id, prNumber: row.pr_number, removed: out?.removedIssues || [],
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not check whether a bot change adds only documents (leaving it linked)', {
+        sessionId: id, err: err.message,
+      });
+    }
+  }
+  return { unlinked };
+}
+
 module.exports = {
   BOT_STOP_KEY,
   stopOnClock,
@@ -5457,6 +5601,9 @@ module.exports = {
   specCard,
   planCommentText,
   PLAN_REPLY_HINT,
+  isDocOnlyChange,
+  unlinkDocOnlyBuild,
+  unlinkDocOnlyProposals,
   specBlocked,
   specFromTitle,
   blockedText,
