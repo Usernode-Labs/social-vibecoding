@@ -68,6 +68,7 @@
 "tests/agent-registry.test.js":[0.6,0.4],
 "tests/agent-session-activity.test.js":[2.2,0.3],
 "tests/agent-session-attachments.test.js":[3.4,0.4],
+"tests/agent-session-build-with.test.js":[0.3,1.1],
 "tests/agent-session-composer.test.js":[2.6,0.4],
 "tests/agent-session-controls.test.js":[2.1,0.4],
 "tests/agent-session-dictation.test.js":[1.6,0.4],
