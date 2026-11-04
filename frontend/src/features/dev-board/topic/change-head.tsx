@@ -368,7 +368,10 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
   const submit = all.find((a) => a.key === 'propose-change');
   const preview = all.find((a) => a.preview);
   const openApp = all.find((a) => a.key === 'open-app');
-  const voteAction = yes && no ? <VoteButton yes={yes} no={no} /> : (submit ? <ActionButton a={submit} /> : null);
+  const vote = yes && no ? <VoteButton yes={yes} no={no} /> : (submit ? <ActionButton a={submit} /> : null);
+  // #6282: an update on its way holds the Vote button: a yes cast now is
+  // cleared when it lands (the card's own note says so).
+  const voteAction = v.votes.hold ? null : vote;
   // With Fix it on the card, the re-run sits beside it, under the line; the
   // card's corner keeps Preview.
   const testingActions = (v.testing.actions || []).map((a) => <ActionButton key={a.key} a={a} />);

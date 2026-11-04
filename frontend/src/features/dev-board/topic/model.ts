@@ -664,6 +664,12 @@ export interface ChangeGateView {
   label: string;
   /** The one line under the card, as its sentences. */
   note: string[];
+  /**
+   * #6282: the card asks for no vote while an update to the change is on its
+   * way (AppView._changeVotesView): a yes cast now is cleared when it lands.
+   * Votes only; the card keeps its tally and its note.
+   */
+  hold?: boolean;
   /** Why this status is shown, disclosed beside the note when available. */
   noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */

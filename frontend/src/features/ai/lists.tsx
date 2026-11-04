@@ -122,7 +122,8 @@ function nextGlyph(t: AiThread): ReactNode {
   if (t.what === 'going_live' || t.what === 'merging') return <ArrowUpTrayIcon className={G} />;
   if (t.what === 'reading' || t.what === 'reading_reply') return <EyeIcon className={G} />;
   if (t.what === 'fixing') return <CogIcon className={G} />;
-  if (t.what === 'revising') return <ReplyArrowIcon className={G} />;
+  // #6282: Updating is the bot following up on it, as Revising was.
+  if (t.what === 'revising' || t.what === 'updating') return <ReplyArrowIcon className={G} />;
   return <CodeIcon className={G} />;
 }
 

@@ -452,3 +452,88 @@ test('the demo rows are obviously fake, and staging-only', () => {
   assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped']);
   assert.ok(demo.next.some((r) => r.claimedBy === 'staging-demo-partner'), 'a claim');
 });
+
+test('#6282: a change with an update on its way is Updating, then Update queued', { timeout: 120000 }, async (t) => {
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const crypto = require('node:crypto');
+  const name = `ai_work_update_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 6 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  require('../src/db/pool').getPool = () => pool;
+  const aiWork = require('../src/services/ai-work');
+
+  const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+  const user = (username, synthetic = false) => one(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id, username`, [username, synthetic]);
+  const ada = await user('uw_ada');
+  const bob = await user('uw_bob');
+  const bot = await user('homeroom-bot-uw', true);
+  const app = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Updates', 'uw-updates', 'running', $1, 'public', 'public') RETURNING id, slug`, [bob.id]);
+  for (const u of [ada, bob]) {
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, u.id]);
+  }
+  await pool.query(`INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 1, 'Bigger buttons', $2)`, [app.id, ada.id]);
+  const change = await one(
+    `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number, pr_title, check_state, promoted_at, last_activity_at)
+     VALUES ($1, $2, 'promoted', ARRAY[1]::int[], 12, 'Bigger buttons', 'passing', NOW(), NOW() - INTERVAL '10 minutes')
+     RETURNING id`, [app.id, bob.id]);
+
+  const deps = { bot, liveSvc: { isStaging: () => false }, settings: { mode: 'live' } };
+  const all = async (viewer) => {
+    const work = await aiWork.workFor(pool, { user: { id: viewer.id }, deps });
+    return [...work.needs, ...work.next, ...work.waiting].filter((r) => Number(r.number) === 1);
+  };
+  const what = async (viewer) => (await all(viewer)).map((r) => r.what);
+  const ask = async (status) => one(
+    `INSERT INTO homeroom_bot_change_asks (app_id, session_id, issue_number, instruction, status, taken_at)
+     VALUES ($1, $2, 1, 'drop the second credit line', $3, CASE WHEN $3 = 'taken' THEN NOW() ELSE NULL END)
+     RETURNING id`, [app.id, change.id, status]);
+
+  // ada still owes the vote: none of these lists is where it stands (the
+  // Needs you feed asks for it).
+  assert.deepEqual(await what(ada), []);
+  // An ask waits its turn: Waiting, Update queued, with what was asked.
+  const queued = await ask('queued');
+  assert.deepEqual(await what(ada), ['update_queued']);
+  const [queuedRow] = await all(ada);
+  assert.equal(queuedRow.group, 'waiting');
+  assert.equal(queuedRow.ask, 'drop the second credit line');
+  // Taken: In progress, Updating, the same words.
+  await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'taken', taken_at = NOW() WHERE id = $1`, [queued.id]);
+  assert.deepEqual(await what(ada), ['updating']);
+  assert.equal((await all(ada))[0].group, 'next');
+  // Done: the update landed, and the change is the feed's to ask about.
+  await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [queued.id]);
+  assert.deepEqual(await what(ada), []);
+  // A turn in flight without an ask: Updating the change, with no ask.
+  await pool.query(`UPDATE chat_sessions SET active_turn = '{}'::jsonb WHERE id = $1`, [change.id]);
+  const [running] = await all(ada);
+  assert.equal(running.what, 'updating');
+  assert.equal(running.ask, undefined);
+  await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [change.id]);
+  // Its author sees the update instead of waiting on the vote.
+  assert.deepEqual(await what(bob), ['vote']);
+  const second = await ask('queued');
+  assert.deepEqual(await what(bob), ['update_queued']);
+  await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [second.id]);
+  assert.deepEqual(await what(bob), ['vote']);
+});

@@ -68,8 +68,8 @@ export interface AiThread {
   group: 'needs' | 'next' | 'waiting' | 'live';
   what:
     | 'plan' | 'decide' | 'build_stopped'
-    | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading' | 'reading_reply'
-    | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
+    | 'going_live' | 'merging' | 'fixing' | 'revising' | 'updating' | 'building' | 'reading' | 'reading_reply'
+    | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'update_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
     | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
     | 'live';
   at: string | null;
@@ -85,6 +85,8 @@ export interface AiThread {
   place?: number;
   /** #6158: Homeroom bot's reason, first line only, on a request it left for a person or found nothing to build in. */
   reason?: string | null;
+  /** #6282: what was asked for, on an Updating or Update queued row (one line, 80 characters at most). */
+  ask?: string | null;
   /** Up for a vote (a change's, or a decision's): how you voted, if you have. */
   myVote?: 'yes' | 'no' | null;
   /** Being made: by Homeroom bot, by you, or by someone else. */
@@ -579,6 +581,8 @@ const PR_TWIN: Record<string, string> = {
   'messages:ai.next.merging': 'messages:ai.next.mergingPr',
   'messages:ai.next.fixing': 'messages:ai.next.fixingPr',
   'messages:ai.next.revising': 'messages:ai.next.revisingPr',
+  'messages:ai.next.updating': 'messages:ai.next.updatingPr',
+  'messages:ai.next.updatingBare': 'messages:ai.next.updatingBarePr',
   'messages:ai.next.reading': 'messages:ai.next.readingPr',
   'messages:ai.next.readingReply': 'messages:ai.next.readingReplyPr',
   'messages:ai.next.building': 'messages:ai.next.buildingPr',
@@ -591,6 +595,8 @@ const PR_TWIN: Record<string, string> = {
   'messages:ai.up.voteNo': 'messages:ai.up.voteNoPr',
   'messages:ai.up.fixQueued': 'messages:ai.up.fixQueuedPr',
   'messages:ai.up.followUpQueued': 'messages:ai.up.followUpQueuedPr',
+  'messages:ai.up.updateQueued': 'messages:ai.up.updateQueuedPr',
+  'messages:ai.up.updateQueuedBare': 'messages:ai.up.updateQueuedBarePr',
   'messages:ai.up.buildQueued': 'messages:ai.up.buildQueuedPr',
   'messages:ai.up.held': 'messages:ai.up.heldPr',
   'messages:ai.up.heldTurn': 'messages:ai.up.heldTurnPr',
@@ -655,6 +661,17 @@ function nextWordsBase(t: AiThread): Phrase {
   // #6158: Homeroom bot's own reason, where it gave one.
   if (t.what === 'needs_person' && t.reason) return { id: 'messages:ai.up.needsPersonWhy', values: { ...values, reason: t.reason } };
   if (t.what === 'nothing_to_build' && t.reason) return { id: 'messages:ai.up.nothingToBuildWhy', values: { ...values, reason: t.reason } };
+  // #6282: an update on its way, with what was asked when there is one.
+  if (t.what === 'updating') {
+    return t.ask
+      ? { id: 'messages:ai.next.updating', values: { ...values, ask: t.ask } }
+      : { id: 'messages:ai.next.updatingBare', values };
+  }
+  if (t.what === 'update_queued') {
+    return t.ask
+      ? { id: 'messages:ai.up.updateQueued', values: { ...values, ask: t.ask } }
+      : { id: 'messages:ai.up.updateQueuedBare', values };
+  }
   if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.next.botBuilding', values };
   if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.next.youBuilding', values };
   // Claimed, with no change yet: who has it, not "Nobody is building it yet".
@@ -668,6 +685,9 @@ const SHORT_WORDS: Record<string, string> = {
   merging: 'messages:ai.short.merging',
   fixing: 'messages:ai.short.fixing',
   revising: 'messages:ai.short.revising',
+  // #6282: an update on its way: running, or waiting its turn.
+  updating: 'messages:ai.short.updating',
+  update_queued: 'messages:ai.short.updateQueued',
   reading: 'messages:ai.short.reading',
   reading_reply: 'messages:ai.short.readingReply',
   building: 'messages:ai.short.building',

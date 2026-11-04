@@ -107,6 +107,9 @@ async function migrate(config) {
   // #6263's shots: a bot-built change on a request page whose description is
   // marked out of date, so the note under it has a state to show.
   await seedStagingBotStaleDescription(pool);
+  // #6282's shots: an update queued on that same change, so the AI tab has
+  // "Update queued" to show instead of a Vote, and its Votes card the note.
+  await seedStagingBotUpdateComing(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -1950,6 +1953,35 @@ async function seedStagingBotStaleDescription(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot stale-description seeding failed', { message: err.message });
+  }
+}
+
+// #6282 (4 Nov 2026): an update queued on the change above, so the before &
+// after shots have the state this change is about: the AI tab says Update
+// queued instead of asking for a Vote, and the change's Votes card says an
+// update is coming. Filed by the shots' member fixture
+// (usernode-capture), as an ask on a real change is; obviously fake,
+// idempotent, and strictly a no-op outside staging.
+async function seedStagingBotUpdateComing(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const change = await pool.query(
+      `SELECT id, app_id, linked_issues[1] AS issue_number FROM chat_sessions
+        WHERE branch_name = 'staging-fixture/stale-description' AND status = 'promoted' LIMIT 1`,
+    );
+    const person = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!change.rows.length || !person.rows.length) return;
+    const { id: sessionId, app_id: appId, issue_number: issueNumber } = change.rows[0];
+    await pool.query(
+      `INSERT INTO homeroom_bot_change_asks
+         (app_id, session_id, issue_number, asker_id, instruction, source, status, created_at)
+       SELECT $1, $2, $3, $4, 'Staging demo: drop the second credit line', 'staging-fixture', 'queued', NOW() - INTERVAL '2 minutes'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_change_asks
+                           WHERE session_id = $2 AND source = 'staging-fixture')`,
+      [appId, sessionId, issueNumber, person.rows[0].id],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot update-coming seeding failed', { message: err.message });
   }
 }
 

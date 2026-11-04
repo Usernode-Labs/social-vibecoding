@@ -53,7 +53,7 @@
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
-const { planWaitingSql } = require('./homeroom-bot-progress');
+const { planWaitingSql, updateComingSql, updateAskSql } = require('./homeroom-bot-progress');
 
 const THREADS_MAX = 80;
 const PRIVATE_MAX = 30;
@@ -111,6 +111,8 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
        ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
+       -- #6282: an update on its way holds the vote the change would ask for.
+       ch.update_coming, ch.update_ask,
        dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
        COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, req.updated_at, t.created_at) AS sort_at,
@@ -146,7 +148,11 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
              WHERE v.session_id = cs.id AND v.user_id = $1
                AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch
              LIMIT 1) AS my_vote,
-           (cs.external_agent IS NOT NULL) AS by_agent
+           (cs.external_agent IS NOT NULL) AS by_agent,
+           -- #6282: 'running' while a turn updates it, 'queued' while an
+           -- ask waits its turn, and what was asked, for the row's words.
+           ${updateComingSql('cs')} AS update_coming,
+           ${updateAskSql('cs')} AS update_ask
       FROM chat_sessions cs
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        -- A posted plan is no change (threads.js ITEMS_SQL says the same).
@@ -280,6 +286,14 @@ function firstLine(text, max = 90) {
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
+// #6282: one ask, as the row's one line of words: 80 characters at most,
+// ending in "…" when cut (the way the bot's own lines are shortened,
+// homeroom-bot-voice.js clip). Whitespace folds, so a tooltip stays one line.
+function clip(value, max = 80) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
 const iso = (at) => (at ? new Date(at).toISOString() : null);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -364,6 +378,22 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
   // Handed back, and somebody has taken it up since (a change of theirs, or
   // a claim): that is where it stands now.
   if (said && (said.what === 'decide' || said.what === 'build_stopped') && (status || row.claimed_by)) said = undefined;
+  // #6282 (4 Nov 2026): an update on its way holds the vote. While a turn
+  // runs on the change, or the bot holds an ask it took, the row reads
+  // Updating; while an ask waits its turn, Update queued. It is listed for
+  // the people who would have been asked to vote on it and for its own
+  // people; somebody who already voted and only wrote in it still gets no
+  // row. Any more particular stage of the bot's (fixing, fix_queued,
+  // merging) still wins.
+  const updateHeld = !said || said.what === 'revising' || said.what === 'followup_queued';
+  if (status === 'promoted' && row.update_coming && updateHeld
+      && (own || (!row.voted && (!theirs || row.by_agent)))) {
+    const ask = row.update_ask ? clip(row.update_ask) : null;
+    const at = iso((bot && bot.since) || row.last_activity_at || row.promoted_at);
+    return row.update_coming === 'running'
+      ? { group: 'next', what: 'updating', at, ...(ask ? { ask } : {}) }
+      : { group: 'waiting', what: 'update_queued', at, ...(ask ? { ask } : {}) };
+  }
   if (said) {
     // #6158: a queued or held build also says its place in line.
     const place = facts && said.what === 'queued' ? facts.queuePlace
@@ -465,13 +495,13 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
 
 // In progress is soonest first: going live, then merging, then a change
 // being fixed or followed up, then made, then a request being read.
-const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building: 3, reading: 4, reading_reply: 4 };
+const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, updating: 2, building: 3, reading: 4, reading_reply: 4 };
 // Waiting is the nearest to live first: a vote or a change still waiting for
 // its checks (the oldest has waited longest), a follow-up waiting its turn, a
 // build waiting its turn or held back, a request waiting to be read, then one
 // nobody has picked up.
 const WAITING_ORDER = {
-  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5,
+  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, update_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5,
   not_picked_up: 6, needs_person: 6, nothing_to_build: 6, operator: 6, not_read: 6,
 };
 

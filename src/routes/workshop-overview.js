@@ -83,6 +83,7 @@ const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
+const { updateComingSql } = require('../services/homeroom-bot-progress');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -189,6 +190,18 @@ const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
             AND ${currentVotePredicateSql('pv', 'cs')}
        )
        AND NOT ${firstVersionSql('cs')}
+       -- #6282 (4 Nov 2026): a change with an update on its way asks for no
+       -- vote. A yes cast now is cleared when the update lands and Homeroom
+       -- asks again, so it waits under Updating / Update queued instead
+       -- (services/homeroom-bot-progress.js updateComingSql, which the AI tab
+       -- and the change's own Votes card read too). A ballot goes with it
+       -- while any of its changes has an update coming, so nobody picks a
+       -- change that is about to change.
+       AND ${updateComingSql('cs')} IS NULL
+       AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
+             SELECT 1 FROM chat_sessions ru
+              WHERE ${RIVAL_SQL('cs', 'ru')}
+                AND ${updateComingSql('ru')} IS NOT NULL))
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
              EXISTS (SELECT 1 FROM chat_sessions rv
                       WHERE ${RIVAL_SQL('cs', 'rv')}
