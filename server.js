@@ -1,4 +1,10 @@
-require('dotenv').config();
+// A local .env is a convenience for people running the checkout themselves.
+// Every hosted deployment (staging and production) has its environment
+// injected, and its install (`npm ci --omit=dev`, or the platform's staging
+// runner) decides which modules exist. Loading the file optionally means a
+// deployment without this package still boots on the injected environment
+// instead of dying on a missing module before the first line of the app runs.
+try { require('dotenv').config(); } catch { /* environment is injected here */ }
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
