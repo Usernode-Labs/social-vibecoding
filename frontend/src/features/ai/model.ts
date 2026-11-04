@@ -73,6 +73,13 @@ export interface AiThread {
     | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
     | 'live';
   at: string | null;
+  /**
+   * #6233: on a Live row, when the change merged and its id, so the tab can
+   * tell whether the build it loaded contains it (the "reload to get it"
+   * wording). Absent on an older server.
+   */
+  mergedAt?: string | null;
+  changeId?: number | null;
   quietDays?: number;
   /** #6158: its place in Homeroom bot's line, or among the project's builds held for a slot (1-based). */
   place?: number;

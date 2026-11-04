@@ -133,6 +133,11 @@ test('no process leads: what a leader ran is the workflow\'s, which every color 
     'ws.attach(server, config)',
     'genesisAccounts.start()',
     'statusService.start(config)',
+    // Request-serving processes build the shell's language list up front: the
+    // first call builds the packs from disk and held the event loop for
+    // seconds, so the first page load on a fresh process could miss a
+    // declared check's assertion window. Never fatal (`catch(() => {})`).
+    "require('./src/services/language-cache').live(getPool(config)).catch(() => {})",
   ]) {
     assert.ok(startBody.includes(perInstance), `start() must run per-instance: ${perInstance}`);
   }

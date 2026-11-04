@@ -2547,7 +2547,11 @@ const App = {
     // compare a pushed SHA with, and stands down too.
     if (App.embeddedPanel) return;
     try {
-      const res = await fetch('/api/version');
+      // #6233: name the build this tab loaded, so the answer says which merge
+      // it contains and a Live change it lacks can offer Reload.
+      const have = typeof App.loadedPlatformSha === 'string' && /^[0-9a-f]{40}$/i.test(App.loadedPlatformSha)
+        ? `?have=${encodeURIComponent(App.loadedPlatformSha)}` : '';
+      const res = await fetch('/api/version' + have);
       if (!res.ok) return;
       const info = await res.json();
       const firstVersionAnswer = !App._lastVersionInfo;
@@ -2568,6 +2572,8 @@ const App = {
         const target = typeof PlatformTarget !== 'undefined' ? PlatformTarget : null;
         if (target && target.notifySlug) target.notifySlug();
       } catch {}
+      // #6233: the tab-build store behind "Live · reload to get it".
+      try { window.UsernodeReact?.tabBuild?.publish?.(info, App.loadedPlatformSha); } catch { /* no bundle yet */ }
       // `?shot=platform-updating` / `-ready` pin the row to a state no real
       // answer can produce on demand; a poll landing on top would erase it.
       if (!App._platformUpdateShot) App.renderPlatformVersionPill(info);
