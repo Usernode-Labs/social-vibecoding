@@ -638,7 +638,11 @@ export function AiScreen(): ReactNode {
         <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
         {heroLine ? (
           <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
-            <RichMessage id={heroLine.id} values={heroLine.values} components={[<strong />]} />
+            <RichMessage
+              id={heroLine.id}
+              values={heroLine.values}
+              components={[<strong className="font-semibold text-violet-700 dark:text-violet-300" />]}
+            />
           </span>
         ) : null}
       </span>

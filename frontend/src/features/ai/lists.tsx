@@ -156,7 +156,7 @@ function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; qui
  * #6262: the dot in the row's leading margin, so rows with and without one
  * stay lined up. The accent the page already uses for Vote and Decide.
  */
-const DOT = 'absolute -left-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
+const DOT = 'absolute -left-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-400';
 
 function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   const t = useMessages('messages');
@@ -381,7 +381,7 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
                 {g.app ? <SmallTile app={g.app} size="head" /> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" />}
                 <span className="truncate">{g.app ? g.app.name || g.app.slug : t('messages:ai.short.private')}</span>
                 {freshHere > 0 ? (
-                  <span className="ms-auto shrink-0 rounded-full bg-violet-600/10 px-2 py-0.5 text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-300/15 dark:text-violet-300" data-ai-fresh="">
+                  <span className="ms-auto shrink-0 rounded-full bg-violet-600/10 px-2 py-0.5 text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-300/20 dark:text-violet-300" data-ai-fresh="">
                     {t('messages:ai.work.fresh', { count: freshHere })}
                   </span>
                 ) : null}
@@ -522,7 +522,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
         <SectionHeader className={`px-0 pt-0 pb-0 ${label}`}>
           {head}
           {fresh > 0 ? (
-            <span className="ms-1.5 rounded-full bg-violet-600/10 px-2 py-0.5 align-middle text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-300/15 dark:text-violet-300" data-ai-fresh="">
+            <span className="ms-1.5 rounded-full bg-violet-600/10 px-2 py-0.5 align-middle text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-300/20 dark:text-violet-300" data-ai-fresh="">
               {t('messages:ai.work.fresh', { count: fresh })}
             </span>
           ) : null}
