@@ -370,8 +370,8 @@ test('turns given up on: one problem for the day, with the codes, the recoveries
 
 // ── bot_health ──────────────────────────────────────────────────────────
 
-// The four reads of homeroom-bot-health.js rolloutHealth, by what they ask.
-function healthPool({ proposals = {}, questions = {}, turns = {}, chat = {}, fail = null } = {}) {
+// The five reads of homeroom-bot-health.js rolloutHealth, by what they ask.
+function healthPool({ proposals = {}, questions = {}, turns = {}, chat = {}, cards = {}, fail = null } = {}) {
   const asked = [];
   return {
     asked,
@@ -380,10 +380,11 @@ function healthPool({ proposals = {}, questions = {}, turns = {}, chat = {}, fai
       const which = sql.includes('homeroom_bot_dm_turns') ? 'chat'
         : sql.includes('question_status') ? 'questions'
           : sql.includes('build_ok') ? 'turns'
-            : sql.includes('promoted_at') ? 'proposals' : null;
+            : sql.includes('bot_plan_card') ? 'cards'
+              : sql.includes('promoted_at') ? 'proposals' : null;
       assert.ok(which, `unexpected query: ${sql}`);
       if (fail === which) throw new Error(`${which} read failed`);
-      return { rows: [{ proposals, questions, turns, chat }[which]] };
+      return { rows: [{ proposals, questions, turns, chat, cards }[which]] };
     },
   };
 }
@@ -442,6 +443,26 @@ test('bot health: every watched figure has its words, and the lines follow the t
   for (const item of items) assertFiles(item);
   assert.equal(items[1].evidence.lines[0], 'Over the last 7 days, the median from a request to its proposal was 30 hours.');
   assert.deepEqual(botHealth.healthItems(health.shapeHealth({})), [], 'a quiet week is not a broken one');
+});
+
+test('bot health: plan cards that fell back to the older lines are a problem of their own (#6269)', () => {
+  const health = require('../src/services/homeroom-bot-health');
+  const h = health.shapeHealth({
+    cards: { total: 10, repaired: 6, whole: 3, lines_only: 3, fallback: 4, kinds: { summary_long: 3 } },
+  });
+  const item = botHealth.healthItems(h).find((i) => i.key === 'cardFallbacks');
+  assert.equal(item.title, 'Homeroom bot health: plan cards falling back above 20%');
+  assert.deepEqual(item.evidence.lines, [
+    'Over the last 7 days, 4 of 10 plan cards fell back to the older lines (40%).',
+    'Its line is above 20%, judged from 5 plan cards or more; this is from 10 plan cards.',
+    '6 were fixed by a repair turn, 3 kept their numbered lines without a summary.',
+  ]);
+  const it = assertFiles(item);
+  assert.equal(it.fingerprint, 'bot_health:cardFallbacks');
+  assert.equal(it.fixer, 'person');
+  assert.deepEqual(botHealth.healthItems(health.shapeHealth({
+    cards: { total: 4, repaired: 1, whole: 1, lines_only: 1, fallback: 2 },
+  })), [], 'four cards is too thin to judge');
 });
 
 test('bot health: a read that fails throws, so a figure it could not look at is not cleared', async () => {

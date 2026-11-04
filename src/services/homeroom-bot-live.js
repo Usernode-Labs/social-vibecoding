@@ -70,7 +70,7 @@ const { withoutEmDashes } = require('./em-dashes');
 const repoRef = require('./repo-ref');
 const {
   SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, FIRST_VERSION_SCREENS_BRIEF, getDesignGuidance, specHtmlContract,
-  getConventionSection,
+  cardRepairPrompt, getConventionSection,
 } = require('./prompts');
 const specHtml = require('./spec-html');
 const specVisibleChanges = require('./spec-visible-changes');
@@ -3701,6 +3701,9 @@ async function draftSpec({
   // Newcomer run six: the early first look's screen, to start the main
   // screen from (specPrompt `earlyLook`), or null.
   earlyLook = null,
+  // #6269: whether a card that failed its checks gets one repair turn. Only
+  // a plan built to be shown (buildAndPropose `planOnly`) pays for one.
+  repairCard = false,
 }) {
   const { worker, sessions, agentTurn } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -3726,7 +3729,7 @@ async function draftSpec({
   // A durable build's spec turn is a durable step (services/durable-turn.js):
   // a restart's next attempt follows it instead of writing the plan again.
   const steps = durableSteps.of(deps);
-  const dispatch = (extra = {}) => sessions.runCodexAttemptLoop({
+  const dispatch = (extra = {}, promptText = prompt) => sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
       telemetryComponent,
@@ -3742,7 +3745,7 @@ async function draftSpec({
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
-        prompt,
+        prompt: promptText,
         model,
         commitMsg: '',
         resumeSessionId: null,
@@ -3776,7 +3779,7 @@ async function draftSpec({
   await noteSavedScreens(pool, {
     screens: specHtml.htmlSpecsEnabledFor(config, session.app_slug) ? savedScreens : null, session, startedAt, model, ok: !!(routed && !routed.error), stopped,
   });
-  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  let costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
   // The turn's ledger rows, for its tokens in a cost breakdown (stage-costs.js).
   const turn = routed?.logicalTurnId ? { turnId: routed.logicalTurnId } : {};
   if (stopped) return { ok: false, stopped: true, costUsd, ...turn, error: `the spec ran past its time limit${progress.suffix()}` };
@@ -3792,16 +3795,66 @@ async function draftSpec({
     return { ...read, costUsd, ...turn };
   }
   if (read.joined) log.info('homeroom-bot', 'The spec came in several messages; kept it whole', { sessionId: session.id });
-  const { specMd } = read;
-  const version = await publishSpec({ pool, sessions, session, specMd, specHtml: read.specHtml, model });
+  let { specMd } = read;
+  let specHtmlText = read.specHtml || null;
+  // #6269: a plan whose card text breaks a rule gets ONE repair turn, shown
+  // only the problems and asked for only the failing part; a failed or
+  // stopped repair keeps the spec as it was and never fails the plan.
+  if (repairCard && specHtmlText) {
+    const before = specHtml.specCard(specHtmlText);
+    if (before && before.problems.length) {
+      const repairBudgetMs = Math.max(0, Math.min(2 * 60 * 1000, budgetMs - (Date.now() - startedAt)));
+      let reply = '';
+      if (repairBudgetMs > 0) {
+        try {
+          const repairTurn = await durableTurn.runTurn(steps, 'card_repair', {
+            pool, session, mode: 'scout', budgetMs: repairBudgetMs, deps,
+            stop: () => stopOnClock(pool, worker, session.id),
+            onProgress: teeProgress(progress, watching),
+            dispatch: (extra) => dispatch(extra, cardRepairPrompt({
+              title: specHeading(specMd) || '', summary: before.summary, lines: before.lines, problems: before.problems,
+            })),
+          });
+          const out = repairTurn?.routed;
+          if (Number.isFinite(out?.estimatedCostUsd)) costUsd = (costUsd || 0) + out.estimatedCostUsd;
+          if (out && !out.error && !repairTurn.stopped && !repairTurn.stoppedBy) reply = String(out.result?.lastResultText || '');
+        } catch (err) {
+          durableSteps.rethrowStop(err, 'card repair turn');
+          log.warn('homeroom-bot', 'A plan card\'s repair turn failed; its card keeps what passed', { sessionId: session.id, err: err.message });
+        }
+      }
+      let repaired = false;
+      if (reply.trim()) {
+        const fixed = specHtml.applyCardRepair(specHtmlText, reply);
+        if (fixed.changed) {
+          const rebuilt = specHtml.normalizeSpecOutput(fixed.html);
+          if (rebuilt.html) {
+            const rebuiltMd = withoutEmDashes(specFromTitle(String(rebuilt.markdown || '').trim()));
+            if (rebuiltMd) specMd = rebuiltMd;
+            specHtmlText = withoutEmDashes(rebuilt.html);
+            repaired = true;
+          }
+        }
+      }
+      const after = specHtml.specCard(specHtmlText) || before;
+      const used = !after.problems.length ? 'whole' : after.lineProblems.length ? 'fallback' : 'lines';
+      await events.record(pool, {
+        type: events.EVENT_TYPES.BOT_PLAN_CARD,
+        appId: session.app_id ?? null,
+        sessionId: session.id,
+        metadata: { kinds: before.kinds, repaired, kindsAfter: after.kinds, used, model: model || null },
+      });
+    }
+  }
+  const version = await publishSpec({ pool, sessions, session, specMd, specHtml: specHtmlText, model });
   // How much its drawn screens hold (spec-html.js screenStats): measured,
   // never cut.
-  const screens = read.specHtml ? specHtml.screenStats(read.specHtml) : [];
+  const screens = specHtmlText ? specHtml.screenStats(specHtmlText) : [];
   // #4387: the HTML too, for a first version's first look (buildAndPropose
   // `onFirstLook`); never carried onto a result (specOut).
   return {
     ok: true, specMd, version, costUsd, ...turn, ...(screens.length ? { screens } : {}),
-    ...(read.specHtml ? { specHtml: read.specHtml } : {}),
+    ...(specHtmlText ? { specHtml: specHtmlText } : {}),
   };
 }
 
@@ -4672,6 +4725,7 @@ async function buildAndPropose({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
       locale, onScreen, tweaks: buildTweaks, earlyLook: typeof startingLook === 'string' ? startingLook : null,
+      repairCard: !!planOnly,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
