@@ -74,6 +74,22 @@ const ANSWER_WINDOW_MINUTES = 60;
 // The next message after the bot's own in a reply thread, this soon after
 // it, is to the bot.
 const CONTINUE_MINUTES = 30;
+const MAX_ROUNDS = 8;
+// #6270: a turn that spent every round reading the code answered with a
+// stand-in word. It may look things up this many times, and its last round is
+// told so and can only answer or queue the change.
+const MAX_READS_PER_TURN = 4;
+const READ_TOOLS = Object.freeze([
+  'list_source', 'read_source', 'request_detail', 'read_message', 'get_change', 'get_discussion', 'list_requests',
+]);
+const READING_DONE = 'Your reading for this turn is done. Answer with what you know, or queue the change with update_change.';
+// What the last round offers: a read tool cannot be picked there.
+const LAST_ROUND_TOOLS = Object.freeze(['reply', 'stay_quiet', 'update_change']);
+const LAST_ROUND_NOTE = 'This is your last round. Answer now with what you have, or queue the change they asked for with update_change. You cannot read anything more.';
+const STAND_IN_NOTE = 'That reply is a stand-in, not an answer. Write the real answer to what they said now, or queue the change with update_change.';
+// #6270: words a model writes when it has nothing to say, and text with no
+// letters at all ("...", "???"). A short real answer ("No.", "Yes.") passes.
+const STAND_IN_WORDS = Object.freeze(['placeholder', 'todo', 'tbd', 'text', 'reply']);
 // #6268: a person's coding agent posts for them through the connector
 // (`posted_via = 'agent'`). On these places it is heard as the person's own
 // message; on a channel it is not answered, as before.
@@ -90,7 +106,6 @@ const CONNECTOR_REASONS = Object.freeze(['connector', 'connector_loop', 'connect
 // post_message result says back: a server sentence (not catalogued), word for
 // word in both places.
 const CONNECTOR_NOTE = 'Homeroom bot doesn\'t answer this message; @ it in your own words to ask it.';
-const MAX_ROUNDS = 5;
 // Homeroom bot parity (P1): the voice keeps the chat's old room per request (homeroom-bot-mayor.js
 // raised its own for private conversations), so a public reply stays short and quick.
 const VOICE_OUTPUT_TOKENS = 900;
@@ -966,7 +981,7 @@ const WHERE = Object.freeze({
 function systemPrompt({ app, place, tools, today = new Date(), platformRules = null }) {
   const has = (name) => tools.some((t) => t.function.name === name);
   const can = [
-    has('update_change') ? '- Change one of your own changes that is up for a vote when somebody clearly asks for a change to it (update_change): describe the change in your own words, precisely enough for a coding agent. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so; never say it is done, since it is not made yet. A question about it is not a change: answer it.' : null,
+    has('update_change') ? '- Change one of your own changes that is up for a vote when somebody says how it should behave (update_change), even when they say it partly as a question, such as \'only if X, should it not do Y?\': describe the change in your own words, precisely enough for a coding agent. Queue it first, without reading the code, which is read when the update builds, and answer the question part from what the change already does. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so; never say it is done, since it is not made yet. A question that asks nothing different of the change is not a change: answer it.' : null,
     has('offer_withdraw') ? '- Offer to withdraw your change when the person who asked for its request, or the project\'s owner, wants it dropped (offer_withdraw). Nothing happens until they tap Withdraw it under your reply: say so.' : null,
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that. When it gives a link or changeLink, include them as written.' : null,
     has('change_plan') ? '- Your plan for this request waits for its requester to say Build it. Them saying to build it or go ahead is start_request, which builds the plan as they saw it. Somebody asking for something in the plan to change is change_plan, which plans it again with their words. A question about the plan or where it stands is answered from the facts, and changes nothing.' : null,
@@ -1423,6 +1438,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     // #6263: the changes this turn read (get_change) and whether it already
     // reworded one. What is not read is never described.
     readChanges: new Set(), described: false,
+    // #6270: how many times this turn has looked something up, and its
+    // failures (the turn record's own list), which a stand-in is noted in.
+    reads: 0, failures: record.failures,
   };
   const t = {
     config: cfg, user: speaker, settings, message: { id: last.message.id }, ctx,
@@ -1474,27 +1492,75 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     const ids = new Set();
     let rounds = 0;
     let limit = MAX_ROUNDS;
+    // #6270: each limit is told it is the last one once, a stand-in gets one
+    // more round, and a change queued with nothing said gets one round to say
+    // so (once per turn, whichever pass queued it).
+    let warnedAt = 0;
+    let handledStandIns = 0;
+    let saidQueued = false;
+    const runOneRound = async ({ offered, toolChoice, note = null }) => {
+      if (note) msgs.push({ role: 'user', content: note });
+      rounds += 1;
+      record.rounds = rounds;
+      const res = await mayor.askModel(t, {
+        messages: msgs, tools: offered, where: `v${rounds}`, toolChoice,
+        // Homeroom bot parity (P1): the room a private conversation now has is not the voice's.
+        // Where the group reads, a reply stays short, as before.
+        maxOutputTokens: VOICE_OUTPUT_TOKENS, timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
+      });
+      const calls = mayor.normalizeCalls(res.toolCalls, rounds, ids);
+      if (!calls.length) {
+        const said = String(res.content || '');
+        // An answer it wrote without its reply tool is checked the same way.
+        const standIn = isStandIn(said);
+        return { text: said, standIn, answered: !standIn };
+      }
+      msgs.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
+      for (const call of calls) {
+        const name = call.function.name;
+        record.tools.push(name.slice(0, 40));
+        const args = mayor.parseArgs(call.function.arguments);
+        const result = await runTool(pool, ctx, name, args, { platform });
+        msgs.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), mayor.MAX_TOOL_RESULT_CHARS) });
+      }
+      return {};
+    };
     const runRounds = async () => {
-      while (rounds < limit && !ctx.reply && !ctx.quiet) {
-        rounds += 1;
-        record.rounds = rounds;
-        const res = await mayor.askModel(t, {
-          messages: msgs, tools, where: `v${rounds}`,
-          toolChoice: rounds === limit ? { type: 'function', function: { name: 'reply' } } : 'auto',
-          // Homeroom bot parity (P1): the room a private conversation now has is not the voice's.
-          // Where the group reads, a reply stays short, as before.
-          maxOutputTokens: VOICE_OUTPUT_TOKENS, timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
+      while (rounds < limit && !ctx.reply && !ctx.quiet && !ctx.gaveUp) {
+        const last = rounds + 1 >= limit;
+        const out = await runOneRound({
+          offered: last ? tools.filter((tl) => LAST_ROUND_TOOLS.includes(tl.function.name)) : tools,
+          toolChoice: last ? 'required' : 'auto',
+          note: last && warnedAt !== limit ? LAST_ROUND_NOTE : null,
         });
-        const calls = mayor.normalizeCalls(res.toolCalls, rounds, ids);
-        if (!calls.length) { finalText = res.content || ''; break; }
-        msgs.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
-        for (const call of calls) {
-          const name = call.function.name;
-          record.tools.push(name.slice(0, 40));
-          const args = mayor.parseArgs(call.function.arguments);
-          const result = await runTool(pool, ctx, name, args, { platform });
-          msgs.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), mayor.MAX_TOOL_RESULT_CHARS) });
+        if (last) warnedAt = limit;
+        if (out.standIn) {
+          t.failures.push('stand_in');
+          ctx.standIns = (ctx.standIns || 0) + 1;
+          if (ctx.standIns > 1) { ctx.gaveUp = true; finalText = ''; break; }
+          if (out.text) msgs.push({ role: 'assistant', content: out.text });
+          msgs.push({ role: 'user', content: STAND_IN_NOTE });
+        } else if (out.answered) {
+          finalText = out.text;
+          break;
         }
+        // A stand-in refused by its reply tool is the tool's to say; either
+        // way it gets one more round, even past the last.
+        if (ctx.gaveUp) break;
+        if ((ctx.standIns || 0) > handledStandIns) {
+          handledStandIns = ctx.standIns;
+          limit = Math.max(limit, rounds + 1);
+        }
+      }
+      // A change was queued and nothing was said: one round to say so, so the
+      // person is not left with the fallback line.
+      if (!saidQueued && ctx.revised && !ctx.reply && !ctx.quiet && !ctx.gaveUp) {
+        saidQueued = true;
+        const out = await runOneRound({
+          offered: tools.filter((tl) => tl.function.name === 'reply'),
+          toolChoice: { type: 'function', function: { name: 'reply' } },
+        });
+        if (out.standIn) { t.failures.push('stand_in'); finalText = ''; } else if (out.text) finalText = out.text;
       }
     };
     await runRounds();
@@ -1509,6 +1575,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       ctx.reply = null;
       finalText = '';
       limit = rounds + 2;
+      // The correction gets its own lookups: it may have to read what it
+      // has to describe.
+      ctx.reads = 0;
       try { await runRounds(); } catch { /* the first answer, checked below, still goes */ }
       if (!ctx.reply && !finalText) ctx.reply = { text: said };
       ctx.checkedProblems = await claimsFor(pool, ctx, ctx.reply?.text ?? finalText);
@@ -1563,10 +1632,23 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
   const mayor = mayorModule(ctx.deps);
   const { app, place, user, settings, bot, deps } = ctx;
   try {
+    // #6270: a turn's lookups are spent, a few per turn, so it cannot spend
+    // every round reading and answer with nothing.
+    if (READ_TOOLS.includes(name)) {
+      if (ctx.reads >= MAX_READS_PER_TURN) return { error: READING_DONE };
+      ctx.reads += 1;
+    }
     switch (name) {
       case 'reply': {
         let text = String(args.text || '').trim();
         if (!text) return { error: 'Say something, or call stay_quiet.' };
+        // A stand-in is not an answer: one more round, then the fallback.
+        if (isStandIn(text)) {
+          ctx.failures.push('stand_in');
+          ctx.standIns = (ctx.standIns || 0) + 1;
+          if (ctx.standIns > 1) { ctx.gaveUp = true; return { ok: false }; }
+          return { error: STAND_IN_NOTE };
+        }
         // #6272: a list the model still wrote into its text becomes buttons.
         const lifted = mayor.liftTextSuggestions(text, args.suggestions,
           { app: app.slug, appId: app.id, thread: placeKey(app.id, place) });
@@ -2312,6 +2394,18 @@ function notDoneYet(text) {
 }
 
 /**
+ * Pure: whether a reply is a stand-in rather than an answer (#6270): a dummy
+ * word the model writes when it has nothing ("placeholder", "TODO", "[TBD]",
+ * "text", "reply"), or text with no letter at all ("...", "???", ""). A short
+ * real answer such as "No." or "Yes." is not one.
+ */
+function isStandIn(text) {
+  const raw = String(text ?? '').trim();
+  if (!/\p{L}/u.test(raw)) return true;
+  return STAND_IN_WORDS.includes(raw.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''));
+}
+
+/**
  * Pure: what a follow-up's result must say, whoever words it. One note per
  * update: that its earlier votes were cleared is the platform's line in the
  * change's discussion (routes/votes.js reconcileNativeReviewedHead), so it
@@ -2642,6 +2736,9 @@ module.exports = {
   SETTLE_MS,
   SETTLE_CAP_MS,
   MAX_ASK_TRIES,
+  MAX_ROUNDS,
+  MAX_READS_PER_TURN,
+  isStandIn,
   OFFER_WORDS,
   SORRY_TEXT,
   CONNECTOR_PLACES,

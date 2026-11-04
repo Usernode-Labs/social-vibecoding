@@ -17,17 +17,21 @@
  * draws it in the thread (services/design-bot.js write_screen).
  */
 
-import { useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
 import { Select } from '@/components/ui/select';
-import { PlusIcon, XIcon } from '@/components/ui/icons';
+import { PaperClipIcon, PlusIcon, XIcon } from '@/components/ui/icons';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { communityScopeStore, warmCommunities } from '../workshop/community-scope';
+import { DropOverlay, useFileDrag } from '../attachments/file-drag';
+import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
 import * as api from './api';
 import { closeThread, openThread } from './store';
+import { fileSize } from './format';
+import type { MessageAttachment } from './types';
 import { projectChoices } from './private-thread-bar';
 
 export type ChangeKind = 'any' | 'fix' | 'add' | 'design';
@@ -110,20 +114,65 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const [words, setWords] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #6256: files, the way every other thread takes them — dropped, pasted or
+  // picked from the "+". They upload at once to the bot chat, before the
+  // thread exists; the thread is still made only on the first send, and an
+  // upload never sent is left to the orphan-attachment sweep.
+  const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const addRef = useRef<HTMLDivElement>(null);
   // The kit's keyboard avoidance, as a thread's own scroller has it.
   const scroller = useRef<HTMLDivElement>(null);
   useComposerKeyboard(scroller);
   const projects = projectChoices(scope);
 
+  /** Attach a drop's, a paste's or a pick's files: stage them against the cap, then upload each. */
+  const addFiles = async (files: File[]) => {
+    const { upload, refused } = stageFiles(files, attachments.length + uploading, t);
+    setError(refused || null);
+    for (const file of upload) {
+      setUploading((count) => count + 1);
+      try {
+        const attachment = await api.uploadAttachment(conversationId, file);
+        setAttachments((items) => [...items, attachment]);
+      } catch (err) {
+        setError(err instanceof Error && err.message ? err.message : t('messages:composer.uploadFailed', { file: file.name }));
+      } finally {
+        setUploading((count) => Math.max(0, count - 1));
+      }
+    }
+  };
+
+  // #4065: the same drop zone a reply thread has, in the same shared tracker.
+  const drop = useFileDrag({ onFiles: (files) => { void addFiles(files); } });
+
+  // The "+" menu closes the way every other transient panel in the shell
+  // does: a press outside it, or Escape. Bound only while it is open.
+  useEffect(() => {
+    if (!addOpen) return undefined;
+    const onDown = (event: MouseEvent) => {
+      if (!addRef.current?.contains(event.target as Node)) setAddOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setAddOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [addOpen]);
+
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
     const content = words.trim();
-    if (!content || busy) return;
+    if (busy || uploading || (!content && !attachments.length)) return;
     setBusy(true);
     setError(null);
     try {
       const made = await api.startBotThread({ project: project || null, kind });
-      await api.sendMessage(conversationId, { content, threadRootId: made.rootId, idempotencyKey: key() });
+      await api.sendMessage(conversationId, { content, threadRootId: made.rootId, attachmentIds: attachments.map((item) => item.id), idempotencyKey: key() });
       closeNewThread();
       openThread(made.rootId);
     } catch (err) {
@@ -184,9 +233,39 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
           <p className="text-[12px] text-zinc-500 dark:text-zinc-400">{t('messages:newThread.hint')}</p>
         </div>
       </div>
-      <ChatComposerBar as="form" className="messages-composer messages-composer-thread" onSubmit={(e) => { void send(e); }}>
+      <ChatComposerBar as="form" className={`messages-composer messages-composer-thread${drop.dragging ? ' messages-composer-dragging' : ''}`} onSubmit={(e) => { void send(e); }} {...drop.handlers}>
         {error ? <p className="px-4 pb-1 text-[13px] text-red-600" role="alert">{error}</p> : null}
+        {/* The files staged for the first message, as a reply thread draws
+            them: name, size, and a × that takes it back off. */}
+        {attachments.length || uploading ? (
+          <div className="dc-attach-strip dc-attach-strip-active">
+            {attachments.map((item) => (
+              <div key={item.id} className="dc-attach-item">
+                <div className="min-w-0">
+                  <div className="dc-attach-name">{item.name}</div>
+                  <div className="dc-attach-size">{fileSize(item.size)}</div>
+                </div>
+                <button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button>
+              </div>
+            ))}
+            {uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}
+          </div>
+        ) : null}
         <div className="messages-composer-card flex items-end gap-2">
+          <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
+          {/* The same "+" and menu a reply thread offers. The cap disables the
+              Attach files ROW, never the "+" itself. */}
+          <div className="messages-composer-add" ref={addRef}>
+            <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
+            {addOpen ? (
+              <div className="messages-composer-menu" role="menu" aria-label={t('messages:composer.addToMessage')}>
+                <button type="button" role="menuitem" disabled={attachments.length + uploading >= MAX_ATTACHMENTS} onClick={() => { setAddOpen(false); fileRef.current?.click(); }}>
+                  <PaperClipIcon aria-hidden="true" />
+                  <span>{t('messages:composer.attachFiles')}</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
           <textarea
             className="messages-composer-input"
             value={words}
@@ -195,14 +274,16 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
             placeholder={t('messages:newThread.placeholder')}
             aria-label={t('messages:newThread.placeholder')}
             onChange={(e) => setWords(e.currentTarget.value)}
+            onPaste={(e) => { const files = [...e.clipboardData.files]; if (files.length) { e.preventDefault(); void addFiles(files); } }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
             }}
           />
-          <button type="submit" className="messages-composer-action" onMouseDown={(event) => event.preventDefault()} disabled={busy || !words.trim()} aria-label={t('messages:newThread.send')} data-bot-new-thread-send="">
+          <button type="submit" className="messages-composer-action" onMouseDown={(event) => event.preventDefault()} disabled={busy || uploading > 0 || (!words.trim() && !attachments.length)} aria-label={t('messages:newThread.send')} data-bot-new-thread-send="">
             <span className="text-[13px] font-semibold">{t('messages:newThread.send')}</span>
           </button>
         </div>
+        {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
       </ChatComposerBar>
     </aside>
   );

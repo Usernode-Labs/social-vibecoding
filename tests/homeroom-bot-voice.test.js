@@ -302,6 +302,29 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   assert.deepEqual(voice.OFFER_WORDS.copy_request, { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' });
 });
 
+test('#6270: a stand-in word is not an answer, and a short real one is', () => {
+  for (const text of ['placeholder', 'TODO', '[TBD]', '...', 'text', 'Reply', '  ???  ', '']) {
+    assert.equal(voice.isStandIn(text), true, JSON.stringify(text));
+  }
+  for (const text of ['No.', 'Yes.', 'Yes: a thread you started from Main still links out.', 'Non, ce n\'est pas le cas.', 'いいえ。']) {
+    assert.equal(voice.isStandIn(text), false, JSON.stringify(text));
+  }
+});
+
+test('#6270: the last round is warned and can queue the change, and reading is capped', () => {
+  assert.equal(voice.MAX_ROUNDS, 8);
+  assert.equal(voice.MAX_READS_PER_TURN, 4);
+  const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true });
+  const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 1 }, tools });
+  assert.match(prompt, /even when they say it partly as a question/);
+  assert.match(prompt, /only if X, should it not do Y\?/);
+  assert.match(prompt, /Queue it first, without reading the code/, 'a correction is queued before it reads anything');
+  assert.doesNotMatch(prompt, /A question about it is not a change: answer it\./);
+  assert.match(prompt, /A question that asks nothing different of the change is not a change: answer it\./,
+    'a question that asks nothing different is still only a question');
+  assert.doesNotMatch(prompt, /—/);
+});
+
 test('#6264: the prompt lets it promise to tell them here when a change is done', () => {
   const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true });
   const prompt = voice.systemPrompt({ app: { slug: 'clubs', name: 'Clubs' }, place: { type: 'issue', ref: 1 }, tools });
