@@ -30,6 +30,22 @@ test('the triage sends an approval-rule or visibility change to the sheet, as a 
   assert.doesNotMatch(read('src/prompts/homeroom-bot-triage.md'), /Who can see & change it/);
 });
 
+test('#6252: a go-ahead from the person the note named is decided in the read, and not asked for again', () => {
+  const bot = require('../src/services/homeroom-bot');
+  assert.equal(bot.goAheadNote(null), null);
+  assert.equal(bot.goAheadNote({}), null);
+  const note = bot.goAheadNote({ by: 'evan' });
+  assert.match(note, /^==== A GO-AHEAD FROM THEIR CHAT ====/);
+  assert.match(note, /@evan, who your last note on this request named, said to go ahead in their private chat with you just now\./);
+  assert.match(note, /is decided: judge the rest as usual\. Do not return `person` for it again\./);
+  assert.match(note, /Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`\./);
+  const decider = { requester: 'evan', members: 1, requesterDecides: true };
+  const withGoAhead = bot.triagePromptFor({ seed: 'SEED', issueNumber: 13, decider, goAhead: { by: 'evan' } });
+  assert.ok(withGoAhead.indexOf(note) > withGoAhead.indexOf(bot.deciderNote(decider)), 'after the decider note');
+  assert.equal(bot.triagePromptFor({ seed: 'SEED', issueNumber: 13 }), bot.triagePromptFor({ seed: 'SEED', issueNumber: 13, goAhead: null }),
+    'unchanged without a go-ahead, as the benchmark replays');
+});
+
 test('the DM chat and the thread replies say where those are set, and that it is not built', () => {
   const mayor = require('../src/services/homeroom-bot-mayor').systemPrompt({ username: 'ann' });
   assert.match(mayor, SHEET);
