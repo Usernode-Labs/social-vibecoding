@@ -367,6 +367,36 @@ test('a build that adds only documents is unlinked before it is proposed, and sa
   assert.ok(h.seq.indexOf(cleared) < promoted(h.seq), 'before the pull request is opened');
 });
 
+// #6209 (4 Nov 2026, evan): a plan the person approved is built as the
+// feature it plans. That build is a normal change: it keeps its request and
+// says what it built, never that it added a document.
+test('#6209: a build from a plan the person approved is never document-only', async () => {
+  const github = {
+    async getBranchSha() { return 'b'.repeat(40); },
+    async compareRefs() { return { files: ['docs/plans/image-generation.md'], filesComplete: true }; },
+  };
+  const h = harness({ github });
+  const out = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...ARGS, checkedFirst: true, presetSpec: SPEC,
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.docOnly, false, 'the plan is built as the feature, not as a document');
+  assert.ok(!h.seq.some((q) => /UPDATE chat_sessions SET linked_issues = \$1/.test(q.sql || '')), 'its request stays linked');
+  const meta = JSON.parse(h.seq[completionRow(h.seq)].params[2]);
+  assert.ok(meta.proposalDescription.startsWith(DESCRIPTION), 'the proposal says what the build did');
+  assert.doesNotMatch(meta.proposalDescription, /Feeds update without pressing Refresh/, 'and not what the plan said');
+});
+
+test('#6209: a build from an approved plan is told to make the feature, not the plan document', () => {
+  const approved = live.buildPrompt({
+    seed: 'ISSUE', buildNote: 'Add image models.', spec: '# Image models\n\nx', approvedPlan: true,
+  }).replace(/\s+/g, ' ');
+  assert.match(approved, /This SPEC is the plan the person who asked for the change approved before this build\. Build the feature it describes\. The plan is already shown on the request: do not add it to the repository as a document, and do not make it the change\./);
+  const ordinary = live.buildPrompt({ seed: 'ISSUE', buildNote: 'Add image models.', spec: '# Image models\n\nx' })
+    .replace(/\s+/g, ' ');
+  assert.doesNotMatch(ordinary, /do not add it to the repository as a document/);
+});
+
 test('#6209: a compare failure or an incomplete list keeps the links, as before', async () => {
   for (const compareRefs of [
     async () => { throw new Error('GitHub is down'); },

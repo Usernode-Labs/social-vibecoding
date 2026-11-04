@@ -284,4 +284,32 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     assert.equal(second.unlinked, 0, 'each change is checked once per process');
     assert.equal(updated.length, 1);
   });
+
+  // 4 Nov 2026 (evan): a change built from a plan its person approved is the
+  // feature the plan describes, never a document, so the sweep leaves it
+  // linked even when it happens to touch only documents.
+  await t.test('#6209: the sweep leaves a change built from an approved plan alone', async () => {
+    const id = await buildSession({ spec: SPEC });
+    const n = issue;
+    const body = `The feature the plan described.\n\nCloses [request ${n}](https://app.onhomeroom.com/x/dev/issues/${n})`;
+    await pool.query(
+      `UPDATE chat_sessions
+          SET status = 'promoted', pr_number = $2, branch_name = $3,
+              pr_linked_issues_applied = ARRAY[$4::int], pr_body = $5, built_from_session_id = $6
+        WHERE id = $1`,
+      [id, 9100 + n, `homeroom_bot/from-plan-${n}`, n, body, 1234],
+    );
+    const updated = [];
+    const gh = {
+      async compareRefs() { return { files: ['docs/plans/image-generation.md'], filesComplete: true }; },
+      async getPR() { return { state: 'open', merged: false, body }; },
+      async updatePR() { updated.push(true); },
+    };
+    const out = await live.unlinkDocOnlyProposals(pool, { github: gh });
+    assert.equal(out.unlinked, 0, 'never treated as a document');
+    const row = (await pool.query('SELECT linked_issues, pr_body FROM chat_sessions WHERE id = $1', [id])).rows[0];
+    assert.deepEqual(row.linked_issues, [n], 'its request stays linked, so a merge closes it as built');
+    assert.match(row.pr_body, /Closes \[request/);
+    assert.equal(updated.length, 0, 'its pull request body is left alone');
+  });
 });

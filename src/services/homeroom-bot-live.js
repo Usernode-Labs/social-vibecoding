@@ -3200,6 +3200,10 @@ function specForBuild(specMd, startingScreens = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // #6209: the spec is the plan the person who asked for the change approved
+  // before the build (Build it). The build makes the feature it plans; the
+  // plan itself is already on the request and is never committed as a doc.
+  approvedPlan = false,
   // L2: the turn's runner writes the app's check command (buildTurnRunner
   // `checksGate`), so the prompt says how to run it.
   appChecks = false,
@@ -3234,6 +3238,11 @@ function buildPrompt({
       '',
       '==== END SPEC ====',
       '',
+      ...(approvedPlan ? [
+        'This SPEC is the plan the person who asked for the change approved before this build. Build the feature it',
+        'describes. The plan is already shown on the request: do not add it to the repository as a document, and do',
+        'not make it the change.',
+      ] : []),
       'Build what the SPEC describes. The plan above is the triage\'s short version of it: where they differ,',
       'the spec wins. The repository\'s own agent instructions still come first.',
     ]
@@ -4783,6 +4792,7 @@ async function buildAndPropose({
   const turnStartedMs = Number(await steps.once('build_clock', async () => Date.now())) || Date.now();
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? specForBuild(spec.specMd, startingScreens) : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
+    approvedPlan: checkedFirst,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
     reviewed: Boolean(review?.reviewer),
     locale,
@@ -5056,7 +5066,13 @@ async function buildAndPropose({
   // close the request as done. `created_from_issue_number` stays, so the
   // change still shows on its request's page. Anything unreadable keeps the
   // links, as every build had them before.
-  const docOnlyCheck = await steps.once('doc_only', async () => {
+  //
+  // 4 Nov 2026 (evan on #6209): never for a plan the person approved. After
+  // Build it, the plan stays a plan card and the build is a normal change
+  // that implements the feature it plans: it keeps its link to the request
+  // and its "I built this" wording. The document-only path stays for a build
+  // whose request really is a written document.
+  const docOnlyCheck = checkedFirst ? null : await steps.once('doc_only', async () => {
     try {
       return await unlinkDocOnlyBuild({ pool, github: deps.github, repo, session });
     } catch (err) {
@@ -5362,7 +5378,9 @@ async function reviewLanded({
 // here: each session is read once per process, and one whose files are all
 // documents loses its linked requests and the `Closes` line in its open pull
 // request body. It stays on its request's page through
-// `created_from_issue_number`. Never throws.
+// `created_from_issue_number`. A build from a plan its requester approved is
+// left alone (4 Nov 2026): it is the feature the plan describes, not a
+// document. Never throws.
 const docOnlyChecked = new Set();
 async function unlinkDocOnlyProposals(pool, deps = {}) {
   const gh = deps.github;
@@ -5377,6 +5395,7 @@ async function unlinkDocOnlyProposals(pool, deps = {}) {
         WHERE u.username = $1 AND u.is_synthetic = TRUE
           AND cs.status = 'promoted' AND cs.pr_number IS NOT NULL
           AND cardinality(cs.linked_issues) > 0
+          AND cs.built_from_session_id IS NULL
         ORDER BY cs.id DESC
         LIMIT 50`,
       [BOT_USERNAME],
