@@ -21,6 +21,10 @@
 const DETAIL_PREFIX = 'hrbot2:';
 const LEGACY_RE = /^hrbot:([a-z_]{1,20}):(.*)$/s;
 
+// A project slug, as features/ai/door.ts reads one: the bell opens a request's
+// thread by its project and number, so both must be the shape the address takes.
+const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,254}$/;
+
 // The moments, in the words the bell heads a row with.
 const BELL_LABELS = Object.freeze({
   needs_you: 'Needs you',
@@ -60,7 +64,7 @@ const SAID_BY_MOMENT = Object.freeze({
     'blocked', 'empty', 'done', 'platform']),
   ready: Object.freeze(['ready', 'ready_group', 'ready_first', 'ready_broken']),
   stopped: Object.freeze(['build_time', 'build_restart', 'build_no_change', 'build_not_proposed', 'build_no_start',
-    'build_other', 'update_failed', 'needs_look', 'checks', 'first_failed']),
+    'build_other', 'build_push', 'build_push_permanent', 'build_push_gave_up', 'update_failed', 'needs_look', 'checks', 'first_failed']),
   // 16 Oct 2026: `slots`, a build held because the project's changes waiting
   // for votes are as many as it may have (homeroom-bot.js WAITING_PER_APP),
   // rings once; #6156: `builds`, because its builds are (BUILDS_PER_APP).
@@ -135,6 +139,8 @@ const BUILD_CAUSES = Object.freeze({
   no_change: 'build_no_change', no_changes: 'build_no_change', empty_diff: 'build_no_change',
   not_proposed: 'build_not_proposed', promote_failed: 'build_not_proposed',
   no_start: 'build_no_start', not_started: 'build_no_start',
+  // #6267: the build finished and GitHub refused the upload.
+  push: 'build_push', push_permanent: 'build_push_permanent', push_gave_up: 'build_push_gave_up',
 });
 
 function oneLine(value, max) {
@@ -261,7 +267,14 @@ function botNotificationDetail(metadata) {
   const broken = brokenCount(metadata);
   if (said === 'ready_broken' && broken) out.b = Math.min(broken, 99);
   const issue = positiveInt(metadata.issueNumber);
-  if (issue) out.i = issue;
+  if (issue) {
+    out.i = issue;
+    // 4 Nov 2026 (#6290): the project too, so a notification about a request
+    // opens that request's own thread rather than Main Chat. Only beside a
+    // request number, so no quiet message grows by it.
+    const slug = typeof metadata.appSlug === 'string' ? metadata.appSlug : '';
+    if (APP_SLUG_RE.test(slug)) out.p = slug;
+  }
   const root = positiveInt(metadata.threadRootId);
   if (root) out.r = root;
   return `${DETAIL_PREFIX}${JSON.stringify(out)}`;
@@ -275,7 +288,7 @@ function parseBotDetail(detail) {
     try { raw = JSON.parse(detail.slice(DETAIL_PREFIX.length)); } catch { return null; }
     if (!raw || typeof raw !== 'object') return null;
     const moment = normalizeMoment(raw.m);
-    if (!moment || moment === 'reply') return moment === 'reply' ? { moment, said: 'reply' } : null;
+    if (!moment || moment === 'reply') return moment === 'reply' ? { moment, said: 'reply', appSlug: '' } : null;
     const said = SAID_BY_MOMENT[moment].includes(raw.s) ? raw.s : saidFor(moment, {});
     return {
       moment,
@@ -291,13 +304,14 @@ function parseBotDetail(detail) {
       count: positiveInt(raw.c),
       broken: positiveInt(raw.b),
       issueNumber: positiveInt(raw.i),
+      appSlug: APP_SLUG_RE.test(String(raw.p || '')) ? String(raw.p) : '',
       threadRootId: positiveInt(raw.r),
     };
   }
   const m = LEGACY_RE.exec(detail);
   if (!m || !LEGACY_SAID[m[1]]) return null;
   const [moment, said] = LEGACY_SAID[m[1]];
-  if (moment === 'reply') return { moment, said };
+  if (moment === 'reply') return { moment, said, appSlug: '' };
   const appName = oneLine(m[2], 80);
   return {
     moment,
@@ -312,6 +326,7 @@ function parseBotDetail(detail) {
     count: null,
     broken: null,
     issueNumber: null,
+    appSlug: '',
     threadRootId: null,
     legacy: true,
   };
@@ -356,6 +371,11 @@ function bodyFor(d) {
       ? 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.'
       : 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.';
     case 'build_no_start': return 'Stopped: I couldn\'t get started. Tap Try again.';
+    // #6267: the build finished; the upload to GitHub did not. The platform
+    // retries a temporary refusal itself, so the first needs no tap.
+    case 'build_push': return 'Built, but GitHub refused the upload. I\'ll try again soon.';
+    case 'build_push_permanent': return 'Built, but GitHub wouldn\'t take the upload. Reply to try again.';
+    case 'build_push_gave_up': return 'Built, but GitHub kept refusing the upload. Reply to send it.';
     case 'build_other': return 'Stopped: something went wrong while I was building. Tap Try again.';
     case 'update_failed': return 'Stopped: I couldn\'t update it. It\'s as it was.';
     case 'needs_look': return 'Stopped: it\'s built, but a person needs to look at it before you can try it.';

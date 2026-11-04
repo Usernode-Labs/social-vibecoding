@@ -279,9 +279,9 @@ export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   );
 }
 
-function SectionHead({ children }: { children: ReactNode }): ReactNode {
+function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`data-${string}`, string>): ReactNode {
   return (
-    <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
+    <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500" {...rest}>
       {children}
     </div>
   );
@@ -1589,6 +1589,27 @@ export function NotificationsSheetView() {
       />
     );
   };
+  // #5929 item 1: the groups with something waiting on the reader already
+  // come first (groupUnreadByApp); when the tab holds both kinds, a small
+  // "Needs you" label sits over them and "Everything else" over the rest, so
+  // an approval and a "Voted yes" no longer read with the same weight. One
+  // kind alone needs no label: there is nothing to tell apart. The labels are
+  // siblings of the stacks, never inside one, so the stack checks
+  // ([data-notif-stack] > [data-stack-top], [data-notif-app-group] ~ .notifications-row-slot)
+  // read exactly what they did.
+  const renderAppGroups = (): ReactNode => {
+    const needs = appGroups.filter((group) => group.needsYou);
+    const rest = appGroups.filter((group) => !group.needsYou);
+    if (!needs.length || !rest.length) return appGroups.map(renderAppGroup);
+    return (
+      <>
+        <SectionHead data-notif-groups-head="needs">{t('notifications:sheet.needsYou')}</SectionHead>
+        {needs.map(renderAppGroup)}
+        <SectionHead data-notif-groups-head="rest">{t('notifications:sheet.everythingElse')}</SectionHead>
+        {rest.map(renderAppGroup)}
+      </>
+    );
+  };
   // An older section: its heading, then one card per change. The cards are
   // read, so no Mark read, and a cleared card (an unread plain message)
   // stays where it is. They sit in no stack, so each names its project on
@@ -1849,9 +1870,9 @@ export function NotificationsSheetView() {
           </p>
         )
       ) : null}
-      {!searching && (groupedUnread ? appGroups.map(renderAppGroup) : olderGrouped ? (
+      {!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (
         <>
-          {appGroups.map(renderAppGroup)}
+          {renderAppGroups()}
           {olderSections.map(renderOlderSection)}
         </>
       ) : (

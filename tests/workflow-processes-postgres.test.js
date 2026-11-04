@@ -137,6 +137,21 @@ test('workflow machines in a process of their own, and through its crash', { tim
     `SELECT status FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 ORDER BY created_at DESC LIMIT 1`,
     [machine, key, kind])).rows[0]?.status === 'settled';
 
+  // A governance route (platform.ts voteOnProposal and its kin) waits 3s for
+  // the outcome and answers 202 `pending` with its request key when the
+  // conductor has not applied the event within that wait: accepted, still to
+  // come, not a failure. Asking again under the same key waits again, and the
+  // receipt the first append left replays that one outcome, so a retry never
+  // decides twice. Bounded like procs.until; a conductor that never catches up
+  // leaves the last 202 for the status assertion to report.
+  const decided = async (call) => {
+    const deadline = Date.now() + 20000;
+    for (;;) {
+      const reply = await call();
+      if (reply.status !== 202 || Date.now() > deadline) return reply;
+    }
+  };
+
   // GitHub merged it: merge-followups is created by Merged, here appended
   // as the proposal machine's message would bring it (the merge itself, below).
   const appendMerged = (m) => require('../src/workflow/kernel/index.ts').appendEvent(pool, 'merge-followups', `session:${m.sessionId}`,
@@ -161,7 +176,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const issue = await closeProposal(a, number);
     await platform.fileProposal(issue.id, a.id);
     if (crashAt) await procs.arm(pool, crashAt);
-    const reply = await platform.voteOnProposal({ ...issue, status: 'open' }, await user(), { vote: 'up', reason: null });
+    const voter = await user();
+    const reply = await decided(() => platform.voteOnProposal({ ...issue, status: 'open' }, voter,
+      { vote: 'up', reason: null, requestKey: `vote:${issue.id}:${voter.id}` }));
     assert.equal(reply.status, 200, JSON.stringify(reply.body));
     if (crashAt) {
       await procs.reached(pool, crashAt);
@@ -209,7 +226,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const a = await app();
     const withdrawn = await closeProposal(a, 43);
     await platform.fileProposal(withdrawn.id, a.id);
-    const reply = await platform.withdrawProposal({ ...withdrawn, status: 'open' }, author);
+    const reply = await decided(() => platform.withdrawProposal({ ...withdrawn, status: 'open' }, author));
     assert.equal(reply.status, 200, JSON.stringify(reply.body));
     await procs.until(async () => (await instance('governance-proposal', govKey(withdrawn)))?.state === 'withdrawn', 'withdrawn');
     assert.equal((await pool.query('SELECT status FROM issues WHERE id = $1', [withdrawn.id])).rows[0].status, 'closed');
@@ -217,7 +234,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
       `INSERT INTO users (username, password, is_admin, has_platform_access) VALUES ('proc_admin', 'x', TRUE, TRUE) RETURNING id, username`);
     const forced = await closeProposal(a, 44);
     await platform.fileProposal(forced.id, a.id);
-    const applied = await platform.adminApplyProposal({ ...forced, status: 'open' }, adminUser);
+    const applied = await decided(() => platform.adminApplyProposal({ ...forced, status: 'open' }, adminUser,
+      `admin-apply:${forced.id}:${adminUser.id}`));
     assert.equal(applied.status, 200, JSON.stringify(applied.body));
     // A close proposal applies once its target check answers, then closes the issue on GitHub.
     await procs.until(async () => (await instance('governance-proposal', govKey(forced)))?.data?.followups?.target?.status === 'done',
@@ -811,7 +829,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const a = await app();
     const issue = await closeProposal(a, 77);
     await platform.fileProposal(issue.id, a.id);
-    await platform.voteOnProposal({ ...issue, status: 'open' }, await user(), { vote: 'up', reason: null });
+    const voter = await user();
+    await decided(() => platform.voteOnProposal({ ...issue, status: 'open' }, voter,
+      { vote: 'up', reason: null, requestKey: `vote:${issue.id}:${voter.id}` }));
     const pushed = await procs.until(async () => heard.find((e) => e.k === 'scoped' && e.r?.boardChange === true && e.r.appId === a.id),
       'the board change, on the push the web side relays', 5000);
     assert.equal(pushed.d.type, 'issue_update');
@@ -870,7 +890,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await platform.fileProposal(issue.id, self.id);
     if (crashAt) await procs.arm(pool, crashAt);
     // The web side asks; the workflow process decides and works.
-    const applied = await platform.adminApplyProposal({ ...issue, status: 'open' }, adminUser);
+    const applied = await decided(() => platform.adminApplyProposal({ ...issue, status: 'open' }, adminUser,
+      `admin-apply:${issue.id}:${adminUser.id}`));
     assert.equal(applied.status, 200, JSON.stringify(applied.body));
     const c = await procs.until(async () => (await pool.query('SELECT id FROM maintenance_campaigns WHERE issue_id = $1', [issue.id])).rows[0],
       'the campaign\'s row, inserted by the apply');
