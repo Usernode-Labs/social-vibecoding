@@ -4935,6 +4935,14 @@
     "text": "{{project}} · #{{number}} · Homeroom bot says a person needs to decide",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a request of the person's that Homeroom bot read and handed back, because a person has to decide something before it can be built."
   },
+  "ai.row.alreadyWorks": {
+    "text": "{{project}} · #{{number}} · Already works: {{reason}}",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and found already works, with the bot's one-sentence reason. The row offers Propose to close."
+  },
+  "ai.row.alreadyWorksPlain": {
+    "text": "{{project}} · #{{number}} · Already works",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and found already works, when it wrote no reason. The row offers Propose to close."
+  },
   "ai.row.buildStopped": {
     "text": "{{project}} · #{{number}} · Homeroom bot's build stopped",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a request of the person's whose build by Homeroom bot came to nothing, so nothing happens until somebody asks it to try again."
@@ -5002,6 +5010,10 @@
   "ai.pill.decide": {
     "text": "Decide",
     "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first. Opens the request."
+  },
+  "ai.pill.proposeClose": {
+    "text": "Propose to close",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot found already works. Opens the request, where Propose to close starts its close vote."
   },
   "ai.pill.tryAgain": {
     "text": "Try again",
@@ -5478,6 +5490,14 @@
   "ai.why.decide": {
     "text": "Homeroom bot needs a person to decide",
     "description": "Homeroom bot tab, on a phone: the second line of a Needs you row Homeroom bot handed back for a person to decide."
+  },
+  "ai.why.alreadyWorks": {
+    "text": "Already works: {{reason}}",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a request Homeroom bot found already works, with its one-sentence reason."
+  },
+  "ai.why.alreadyWorksPlain": {
+    "text": "Already works",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a request Homeroom bot found already works, when it wrote no reason."
   },
   "ai.why.buildStopped": {
     "text": "Homeroom bot's build stopped",

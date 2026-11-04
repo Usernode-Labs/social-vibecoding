@@ -94,6 +94,10 @@ async function migrate(config) {
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
+  // #6306's shots: a request the bot read and found already works, so Needs
+  // you says "Already works" with Propose to close and the request's page
+  // says why. Staging has no model, so the bot's note is stored.
+  await seedStagingBotAlreadyWorks(pool);
   // #6271's shots: a private thread with the bot, already marked done this
   // week, so Live this week has a closed thread to show. Staging has no
   // model, so the bot's reply is stored rather than asked for.
@@ -1808,6 +1812,61 @@ async function seedStagingBotWaitingRows(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
+  }
+}
+
+// #6306 (4 Nov 2026): a request Homeroom bot read and found already works.
+// Its run carries `already_done`, so the Homeroom bot tab's Needs you offers
+// "Already works: …" with Propose to close, and its page's note says why.
+// Filed by the shots' member fixture (usernode-capture); the bot's note is
+// stored because staging has no model. Idempotent by request number and a
+// no-op outside staging.
+async function seedStagingBotAlreadyWorks(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!apps.rows.length || !people.rows.length || !bot.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const botId = bot.rows[0].id;
+    const number = 9110;
+    const title = 'Staging demo: a request the bot found already works';
+    const reason = 'Staging demo: visitors can already get in and play without an account.';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, userId, title],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, already_done, created_at)
+       SELECT $1, $2, 'live', 'person', $3, TRUE, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                           WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'person')`,
+      [appId, number, reason],
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       SELECT $1, $2, $3, 'message', 'issue', $4, $5, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                             AND metadata->>'stagingDemo' = 'already-works-note')`,
+      [
+        appId, botId,
+        `Already works: ${reason} Anyone in the project can Propose to close it, or reply here if something is missing.`,
+        number,
+        JSON.stringify({ stagingDemo: 'already-works-note', homeroomBot: { kind: 'note' } }),
+      ],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
   }
 }
 

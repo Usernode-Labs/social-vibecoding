@@ -2039,6 +2039,8 @@ async function relayIssuePost({
       actions: [{ id: 'open_change', label: 'Open the change', style: 'primary', type: 'open', target: changeHrefOf(app.slug, dm.sessionId) }],
       status: 'open',
     } : {}),
+    // #6306: why an already-done verdict says so, in its own sentence.
+    ...(dm.done && dm.reason ? { reason: clip(dm.reason, 400) } : {}),
     // Which words the moment says (contract 2.1), from what the verdict carried.
     said: saidOf(kind, {
       ...dm, firstVersion: context.firstVersion, group: context.group,

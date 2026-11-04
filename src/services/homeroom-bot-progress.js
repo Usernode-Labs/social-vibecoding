@@ -792,16 +792,19 @@ function firstVersionStopped(row) {
  * the person, from its row (requestRows) while nothing about it is in
  * progress (stageOf answered null), or null. 'decide' when its newest look
  * left it for a person to decide (verdict 'person', the Go ahead its DM
- * offers); 'build_stopped' when the build came to nothing as
- * firstVersionStopped tells it, which reads no first-version field (the Try
- * again its DM offers). Only on a request still open with no change of it
- * up or merged. Nothing moves on either until somebody does something, so
- * the Homeroom bot tab lists them under Needs you (services/ai-work.js
- * botStages), where they read "Nobody is building it yet" before.
+ * offers); 'already_works' when that look found the ask already there (its
+ * `done` tag, #6306), which only waits to be closed; 'build_stopped' when
+ * the build came to nothing as firstVersionStopped tells it, which reads no
+ * first-version field (the Try again its DM offers). Only on a request still
+ * open with no change of it up or merged. Nothing moves on either until
+ * somebody does something, so the Homeroom bot tab lists them under Needs
+ * you (services/ai-work.js botStages), where they read "Nobody is building
+ * it yet" before.
  */
 function handedBack(row) {
   if (!row || row.mode !== 'live' || row.request_closed === true) return null;
   if (['promoted', 'merging', 'merged'].includes(row.proposal_status)) return null;
+  if ((row.verdict === 'person' || row.verdict === 'empty') && row.run_already_done === true) return 'already_works';
   if (row.verdict === 'person') return 'decide';
   return firstVersionStopped(row) ? 'build_stopped' : null;
 }
@@ -1031,6 +1034,7 @@ async function requestRows(pool, userId) {
        LEFT JOIN LATERAL (
          SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
                 proposal_session_id, live_build_waiting_at, awaiting_go_at,
+                reason AS run_reason, already_done AS run_already_done,
                 review->>'state' AS review_state, review->>'startedAt' AS review_started_at,
                 jsonb_array_length(COALESCE(review->'rounds', '[]'::jsonb)) AS review_round,
                 (review->'reviewer'->>'maxRounds')::int AS review_max_rounds,

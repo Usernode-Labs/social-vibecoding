@@ -110,6 +110,11 @@
       "id": "bot-revision-grants",
       "sha256": "f58d9406fdbb616b0f25b4775a4919805a0eb249bb68d2c6d38644e8c9c1101e",
       "schemaSha256": "0c0ddb653e3e27fa9c83a79f266b770de3b3961d7c34752fbea557772302ff6f"
+    },
+    {
+      "id": "homeroom-bot-run-already-done",
+      "sha256": "995da0193b6766f63412fc26716255470fd1b0976225e6dd9bbbff147201bd4e",
+      "schemaSha256": "71dc799afdfbac7c5cc2871126dee0ca5d7c6d05460660477ea1114a7b6a305b"
     }
   ]
 }
