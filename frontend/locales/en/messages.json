@@ -5151,6 +5151,14 @@
     "text": "{{project}} · #{{number}} · Live",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a one-line row in Live this week: its project and number."
   },
+  "ai.live.closed": {
+    "text": "{{project}} · Private thread · Closed",
+    "description": "Tooltip of a private thread marked done this week, in Live this week: only the person can see it, which project it is for, and that it is closed. The row's lock says the same."
+  },
+  "ai.live.closedSolo": {
+    "text": "Private thread · Closed",
+    "description": "Tooltip of a private thread marked done this week, in Live this week, that is for no project yet: only the person can see it, and it is closed. The row's lock says the same."
+  },
   "ai.drawer.back": {
     "text": "Back to the list",
     "description": "The AI tab on a phone: the back arrow over what is open beside the list (Main Chat, the chat with Homeroom bot, or one of its threads), which slides the list back in. Its accessible name and tooltip."
