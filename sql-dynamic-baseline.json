@@ -1886,6 +1886,13 @@
       "preview": "`SELECT cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'ru"
     },
     {
+      "source": "src/services/thread-reads.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 1,
+      "preview": "sql"
+    },
+    {
       "source": "src/services/threads.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "3e276e9485da30387b4b",

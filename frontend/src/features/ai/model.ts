@@ -103,6 +103,13 @@ export interface AiThread {
    * New request), which the row opens: the design and its story are there.
    */
   rootId?: number | null;
+  /**
+   * #6262: how many messages in the thread are new to the viewer (another
+   * person's or Homeroom bot's, since they last opened it). Above zero, its
+   * row gets a blue dot and a bold title. Absent from an older server, which
+   * reads as 0.
+   */
+  unread?: number;
 }
 
 export interface AiWork {
@@ -134,6 +141,9 @@ export interface NeedItem {
    * Approve, as its card and the project's own Needs you do; Vote elsewhere.
    */
   approve?: boolean;
+  /** #6262: the thread its page is, and how many messages in it are new. */
+  threadId?: number | null;
+  unread?: number;
 }
 
 /** Homeroom bot's account: its changes up for a vote hold a project's build slots. */
@@ -188,6 +198,14 @@ export interface WorkRow {
   /** Where the row goes: a page, or a private thread of Main. */
   href: string | null;
   rootId: number | null;
+  /**
+   * #6262: the thread whose page the row opens, where it has one (a private
+   * thread has none: Main Chat's own "N new" covers it), and how many
+   * messages in it are new. Above zero, the row draws a blue dot and a bold
+   * title.
+   */
+  threadId: number | null;
+  unread: number;
 }
 
 /**
@@ -229,14 +247,51 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  * is lifted to just below the first few, so where you are is never hidden.
  * Opened, every row keeps its own place: pressing one past the fold no
  * longer slides it up under the pointer.
+ *
+ * #6262: a row with something new is never folded either. Show more is for
+ * what you have already seen; hiding a new row behind it is what the dot was
+ * meant to stop.
  */
-export function groupRows<T extends { lit?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
-  const drawn = litAt >= first
-    ? [...items.slice(0, first), items[litAt], ...items.slice(first).filter((row) => !row.lit)]
-    : items;
-  const shown = litAt >= first ? first + 1 : first;
+  // Which rows past the first few must still be shown: the fresh ones and
+  // the one you are on. They keep their order; the rest folds away.
+  const lifted = new Set<number>();
+  if (!open) {
+    if (litAt >= first) lifted.add(litAt);
+    items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
+  }
+  const rest = items.slice(first);
+  const drawn = open
+    ? items
+    : [...items.slice(0, first), ...rest.filter((_, k) => lifted.has(first + k)), ...rest.filter((_, k) => !lifted.has(first + k))];
+  const shown = open ? first : first + lifted.size;
   return { items: drawn, shown, hidden: Math.max(0, drawn.length - shown) };
+}
+
+// ── #6262: what is new in a thread ───────────────────────────────────────
+
+/** Pure: rows with something new, for a heading's or the hero's count. */
+export function freshCount(rows: { unread?: number }[]): number {
+  return (rows || []).filter((row) => (Number(row.unread) || 0) > 0).length;
+}
+
+/** Pure: how many new rows each project has, by slug, for its chip. */
+export function freshByProject(rows: { app: AiApp | null; unread?: number }[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of rows || []) {
+    if (!row.app || (Number(row.unread) || 0) <= 0) continue;
+    counts[row.app.slug] = (counts[row.app.slug] || 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * Pure: a group's rows with the new ones first (a stable sort: equally new
+ * rows keep the order they came in), so Needs you opens on what changed.
+ */
+export function freshFirst<T extends { fresh?: boolean }>(lines: T[]): T[] {
+  return [...(lines || [])].sort((a, b) => Number(!!b.fresh) - Number(!!a.fresh));
 }
 
 /** How many projects the filter shows as chips before its More (./lists.tsx). */
@@ -422,6 +477,9 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
         : { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
       rootId: null,
+      // #6262: a feed item's thread, and what is new in it.
+      threadId: item.threadId ?? null,
+      unread: Math.max(0, Number(item.unread) || 0),
     });
   }
   for (const t of work?.needs || []) {
@@ -444,6 +502,8 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
       href: t.href,
       rootId: null,
+      threadId: t.threadId,
+      unread: Math.max(0, Number(t.unread) || 0),
     });
   }
   for (const p of work?.private || []) {
@@ -472,6 +532,9 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       pill: null,
       href: null,
       rootId: p.rootId,
+      // A private thread is not a `threads` row: Main Chat's "N new" counts it.
+      threadId: null,
+      unread: 0,
     });
   }
   return rows;
@@ -722,8 +785,13 @@ export function shortWords(t: AiThread): Phrase {
  * Pure: the hero's line under the bot's name: what needs you, what is in
  * progress. A zero says nothing (Y03, audit 2 Nov 2026): each half is said
  * only above zero, and with neither there is no line ("In progress: 0" was).
+ * #6262: `fresh` is how many of those threads have something new, said
+ * between the two, and only when there is any.
  */
-export function heroWords(needs: number, next: number): Phrase | null {
+export function heroWords(needs: number, next: number, fresh = 0): Phrase | null {
+  const anyFresh = fresh > 0;
+  if (needs > 0 && anyFresh && next > 0) return { id: 'messages:ai.hero.bothFresh', values: { needs, fresh, next, count: fresh } };
+  if (needs > 0 && anyFresh) return { id: 'messages:ai.hero.needsFresh', values: { needs, fresh, count: fresh } };
   if (needs > 0 && next > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
   if (needs > 0) return { id: 'messages:ai.hero.needs', values: { needs } };
   if (next > 0) return { id: 'messages:ai.hero.next', values: { next } };
