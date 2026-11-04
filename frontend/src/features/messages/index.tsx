@@ -49,6 +49,8 @@ import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledR
 import { isPlusThreadOpener, isRequestNews, requestKey } from './bot-request';
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
+import { dropOnComposer, useComposerDropReady } from './pane-drop';
+import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
 import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
@@ -91,11 +93,13 @@ import {
   setListCollapsed,
   setSectionFolded,
   FOLDABLE,
+  scopeKey,
   syncChrome,
   followPlatformSlug,
   typingUsers,
   useChannelHandles,
   useMessagesSnapshot,
+  type ComposerScope,
 } from './store';
 import { typingLine } from './typing-line';
 import { BotWorkingCard, typingBesides, workingBot } from './bot-working';
@@ -161,6 +165,17 @@ import type { ConversationDetail, ConversationMessage, ConversationSummary, Disc
 
 function openDialog(name: 'messagesCreate' | 'messagesMembers' | 'messagesShare', payload?: unknown) {
   window.UsernodeReact?.dialogs?.[name]?.open(payload);
+}
+
+/**
+ * #6254: the whole thread pane takes a dropped file, not only the box at its
+ * foot. The composer for this pane's scope owns the upload (./pane-drop), so
+ * the pane asks whether one is drawn — an awaiting or cannot-send thread
+ * shows no outline and drops nothing — and hands the files over.
+ */
+function usePaneDrop(scope: ComposerScope) {
+  const ready = useComposerDropReady(scope);
+  return useFileDrag({ disabled: !ready, onFiles: (files) => { dropOnComposer(scope, files); } });
 }
 
 function conversationPeer(conversation: ConversationSummary) {
@@ -1872,6 +1887,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // Whether this conversation was last drawn as a linked window (#2387).
   const wasWindow = useRef(false);
   const conversationId = snap.route.conversationId;
+  // #6254: a file dropped anywhere on this pane goes to this conversation's
+  // own box, so the header, the transcript and the box are one drop zone.
+  const drop = usePaneDrop(scopeKey(conversationId || 0, null));
   // 1 Nov 2026: the bot's typing is its working card, where its answer will
   // appear (./bot-working.tsx); the status line keeps people's names, and
   // the bot's too while the transcript is a window part-way back.
@@ -2320,7 +2338,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   }
   flushRun();
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined}>
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined} {...drop.handlers}>
       {embedded ? null : <ThreadHeader />}
       {/* One request, one story: "Your requests", pinned under the bot's header. */}
       {botDm && !embedded ? <BotStrip /> : null}
@@ -2405,6 +2423,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       </TranscriptOverlay>
       <ChatStatusLine className="messages-typing">{typingLine(t, typing)}</ChatStatusLine>
       <MessageComposer />
+      {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </section>
   );
 }
@@ -2537,6 +2556,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const channels = useChannelHandles();
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
+  // #6254: this thread is its own drop area — a file dropped on the reply box
+  // or on the replies around it never goes to the chat beside it.
+  const drop = usePaneDrop(scopeKey(conversationId || 0, rootId));
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
   // 1 Nov 2026: the bot answering here is its working card (./bot-working.tsx).
   const threadTypists = conversationId && rootId ? typingUsers(conversationId, rootId) : [];
@@ -2831,6 +2853,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   return (
     <aside
       ref={paneRef}
+      {...drop.handlers}
       className="messages-reply-pane platform-kb-column dc-lift dc-lift-session"
       style={replyWidth != null ? { '--messages-reply-width': `${replyWidth}px` } as CSSProperties : undefined}
       aria-label={t('messages:replies.paneName')}
@@ -2985,6 +3008,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
           chat (1 Nov 2026). */}
       <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
       <MessageComposer threadRootId={rootId} />
+      {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </aside>
   );
 }

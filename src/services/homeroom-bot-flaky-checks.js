@@ -22,6 +22,10 @@
 //      slots (exemptFromAppCap, read by homeroom-bot.js simulateCaps), since
 //      it unblocks other work. One fix per test, never two; at most
 //      MAX_IN_FLIGHT across the platform, the rest waiting their turn.
+//      A check the test runner itself cut off at its per-test timeout (a
+//      `cancelled` run, "test timed out after Nms") is one of these too: even
+//      when a fix is already in, it goes back for a request rather than to a
+//      person, since the load that cut it off is what has to be answered.
 //   3. once that fix merges (homeroom-bot.js noteRequestMerged, and the sweep
 //      for a fix somebody else merged), every change waiting on it is brought
 //      up to date with main again, which runs its checks again, or has its
@@ -83,6 +87,33 @@ const DASH = String.fromCharCode(0x2014);
 const SKIP_LINE_RE = new RegExp(`^(${DASH}|---|\\.\\.\\.|at\\s|duration_ms|location:|stack:|type:|Failing subtests|failureType:\\s*'?subtestsFailed)`);
 const ERROR_LINE_RE = /(Error\b|error:|AssertionError|expected|Expected|assert|timed out|Timeout|not ok|failed|ECONN|ENOENT|TypeError|ReferenceError)/;
 
+// A check the test runner itself cut off at its per-test timeout: node's
+// runner writes "test timed out after Nms" with failureType
+// 'testTimeoutFailure' and counts it under TAP's `cancelled`, not `fail`.
+// That is the machine's load, never anything the change did, and exactly
+// what a "Flaky check:" request is for.
+const CUT_OFF_RE = /test timed out after \d+\s*ms|failureType:\s*['"]?testTimeoutFailure/i;
+
+/**
+ * Pure: whether any of a stored run's failing checks was cut off at the test
+ * runner's own timeout (the unit suite's `# cancelled` counter, or a
+ * per-test excerpt naming the timeout). `testResults` is the array, or its
+ * JSON text.
+ */
+function runnerCutOff(testResults) {
+  let rows = testResults;
+  if (typeof rows === 'string') {
+    try { rows = JSON.parse(rows); } catch { return false; }
+  }
+  if (!Array.isArray(rows)) return false;
+  return rows.some((row) => {
+    if (!row || typeof row !== 'object' || row.status === 'pass' || row.advisory) return false;
+    if (row.summary && Number(row.summary.cancelled) > 0) return true;
+    const texts = [row.failureReason, ...(Array.isArray(row.failureDetails) ? row.failureDetails.map((d) => d && d.excerpt) : [])];
+    return texts.some((t) => CUT_OFF_RE.test(String(t || '')));
+  });
+}
+
 /**
  * Pure: the line of a test's output that says what went wrong, clipped. An
  * excerpt's own headings (a subtest's name between dashes, "Failing subtests (2): …") and its
@@ -132,6 +163,13 @@ function identifyTests(testResults, failing = []) {
       } else {
         const named = unit.unitSuiteFailures([row], { max: MAX_TESTS + 1 });
         for (const f of named?.first || []) add({ name: f.test, file: f.file, error: '' });
+        // A run the runner cut off counts under `cancelled`, not `fail`, and
+        // its log can lose the `not ok` line that names the test. The suite's
+        // own check is then the only name there is, and a request against it
+        // is still how the flake gets fixed.
+        if (!(named?.first || []).length && Number(row.summary?.cancelled) > 0) {
+          add({ name: row.name || unit.UNIT_CHECK_NAME, file: row.path || null, error: '' });
+        }
       }
       continue;
     }
@@ -157,14 +195,18 @@ function sameTests(now, before) {
  *   { do: 'person', why }     the ladder ran out: a person takes it
  *   { do: 'wait' }            its fixes are under way: nothing more to do now
  *   { do: 'fix', tests }      find or file a fix for each test
+ *
+ * `cutOff` says a failing check was cut off at the test runner's own timeout:
+ * the fix already in did not make it the change's, so it goes back for a fix
+ * (found or filed) rather than to a person as a still-failing check.
  */
-function nextStep({ platform = true, ownFix = false, wait = null, tests = [], flakes = [], now = Date.now() } = {}) {
+function nextStep({ platform = true, ownFix = false, wait = null, tests = [], flakes = [], cutOff = false, now = Date.now() } = {}) {
   if (!platform) return { do: 'as_today', why: 'not_platform' };
   if (ownFix) return { do: 'as_today', why: 'own_fix' };
   if (wait && !wait.ended_at && wait.started_at && now - new Date(wait.started_at).getTime() > WAIT_MS) {
     return { do: 'person', why: 'too_long' };
   }
-  if (wait?.stage === 'rechecking') return { do: 'person', why: 'still_fails' };
+  if (wait?.stage === 'rechecking' && !cutOff) return { do: 'person', why: 'still_fails' };
   const bad = flakes.find((f) => ENDED_BAD.includes(f.state));
   if (bad) return { do: 'person', why: `fix_${bad.state}` };
   if (wait?.stage === 'fixing' && flakes.length && flakes.every((f) => OPEN_FLAKE_STATES.includes(f.state) || f.state === 'merged')) {
@@ -640,6 +682,61 @@ async function fixFor(pool, { board, test, bot, deps = {} }) {
   return { flake: raced, fresh: false };
 }
 
+/** The board, and whether the bot builds on it: a fix needs both. */
+async function fixLane(pool, deps) {
+  const board = await platformBoard(pool, deps);
+  const settings = await botModule(deps).readSettings(pool).catch(() => null);
+  const live = !!(board && settings && settings.mode !== 'off' && liveModule(deps).isLiveFor(settings, board));
+  return { board, live, why: board ? 'not_live' : 'no_board' };
+}
+
+/**
+ * Step 2: find or file a fix for each test on Homeroom's board, move the
+ * change's wait to `fixing` with them, and put them in the build lane while
+ * there is room. Shared by the hand-off and the sweep, which sends a change
+ * cut off at the runner's timeout back for a new fix rather than to a person.
+ * Resolves { acted, fresh, saved }.
+ */
+async function findAndStartFixes(pool, {
+  change, tests, board, bot, syncWhy = null, synced = false, head = null, runId = null, deps = {},
+}) {
+  const issueNumber = Array.isArray(change.linked_issues) ? Number(change.linked_issues[0]) || null : null;
+  const fixes = [];
+  for (const test of tests) {
+    // eslint-disable-next-line no-await-in-loop
+    const got = await fixFor(pool, { board, test, bot, deps });
+    if (got.flake) fixes.push({ ...got, test });
+  }
+  const saved = await saveWait(pool, {
+    sessionId: change.id, appId: change.app_id, issueNumber, stage: 'fixing', synced,
+    flakeIds: fixes.map((f) => f.flake.id), tests, head,
+  });
+  for (const f of fixes) {
+    // eslint-disable-next-line no-await-in-loop
+    await recordStep(pool, {
+      appId: change.app_id, sessionId: change.id, outcome: f.fresh ? (f.flake.filed ? 'filed' : 'found') : 'joined',
+      runId, issueNumber: f.flake.issue_number, test: f.test.name,
+    });
+  }
+  // Into the build lane while there is room, else waiting its turn.
+  let room = MAX_IN_FLIGHT - await inFlight(pool);
+  for (const f of fixes) {
+    if (f.flake.state !== 'waiting' || room <= 0) continue;
+    // eslint-disable-next-line no-await-in-loop
+    f.flake = await startBuilding(pool, f.flake, { deps });
+    room -= 1;
+    // eslint-disable-next-line no-await-in-loop
+    await recordStep(pool, { appId: change.app_id, sessionId: change.id, outcome: 'building', runId, issueNumber: f.flake.issue_number });
+  }
+  await showCard(pool, { wait: saved, change, syncWhy, deps });
+  const fresh = await flakesOf(pool, saved.flake_ids);
+  await noteOnChange(pool, { change, kind: 'checks_flake', text: fixingText({ flakes: fresh }), runId, deps });
+  log.info('homeroom-bot-flaky', 'A change waits on a fix for a check that is not its own', {
+    sessionId: change.id, fixes: fresh.map((f) => Number(f.issue_number)),
+  });
+  return { acted: fixes.some((f) => f.fresh && f.flake.filed) ? 'checks_flake_filed' : 'checks_flake_found', fresh, saved };
+}
+
 // ── The ladder's entry points (homeroom-bot.js runChecksFix) ──────────────
 
 /**
@@ -717,7 +814,8 @@ async function onNotChange(pool, config, { app, session, head, failing = [], run
     const live = wait && !wait.ended_at ? wait : null;
     const flakes = live ? await flakesOf(pool, live.flake_ids) : [];
     const tests = change ? identifyTests(change.test_results, failing) : [];
-    const decided = nextStep({ platform, ownFix: !!ownFix, wait: live, tests, flakes });
+    const cutOff = change ? runnerCutOff(change.test_results) : false;
+    const decided = nextStep({ platform, ownFix: !!ownFix, wait: live, tests, flakes, cutOff });
     if (decided.do === 'as_today') return null;
     const issueNumber = Array.isArray(change.linked_issues) ? Number(change.linked_issues[0]) || null : null;
     if (decided.do === 'wait') {
@@ -735,52 +833,19 @@ async function onNotChange(pool, config, { app, session, head, failing = [], run
     // Step 2: a fix for each test, found or filed on Homeroom's board, which
     // the bot must be building on: else nobody would fix it, and a person
     // takes it now, as before.
-    const board = await platformBoard(pool, deps);
-    const settings = await botModule(deps).readSettings(pool).catch(() => null);
-    const notLive = !board || !settings || settings.mode === 'off' || !liveModule(deps).isLiveFor(settings, board);
-    if (notLive) {
+    const lane = await fixLane(pool, deps);
+    if (!lane.live) {
       const base = await saveWait(pool, {
         sessionId: change.id, appId: change.app_id, issueNumber, stage: 'fixing', synced: !!live?.synced, flakeIds: [], tests, head,
       });
-      const why = board ? 'not_live' : 'no_board';
-      const text = await toPerson(pool, { change, wait: base, why, runId, failingCount: failing.length, fromHandOff: true, deps });
-      return { person: true, text, why };
+      const text = await toPerson(pool, { change, wait: base, why: lane.why, runId, failingCount: failing.length, fromHandOff: true, deps });
+      return { person: true, text, why: lane.why };
     }
     const bot = deps.bot || await dmModule(deps).botAccount(pool);
-    const fixes = [];
-    for (const test of decided.tests) {
-      // eslint-disable-next-line no-await-in-loop
-      const got = await fixFor(pool, { board, test, bot, deps });
-      if (got.flake) fixes.push({ ...got, test });
-    }
-    const saved = await saveWait(pool, {
-      sessionId: change.id, appId: change.app_id, issueNumber, stage: 'fixing', synced: !!live?.synced,
-      flakeIds: fixes.map((f) => f.flake.id), tests, head,
+    const started = await findAndStartFixes(pool, {
+      change, tests: decided.tests, board: lane.board, bot, syncWhy, synced: !!live?.synced, head, runId, deps,
     });
-    for (const f of fixes) {
-      // eslint-disable-next-line no-await-in-loop
-      await recordStep(pool, {
-        appId: change.app_id, sessionId: change.id, outcome: f.fresh ? (f.flake.filed ? 'filed' : 'found') : 'joined',
-        runId, issueNumber: f.flake.issue_number, test: f.test.name,
-      });
-    }
-    // Into the build lane while there is room, else waiting its turn.
-    let room = MAX_IN_FLIGHT - await inFlight(pool);
-    for (const f of fixes) {
-      if (f.flake.state !== 'waiting' || room <= 0) continue;
-      // eslint-disable-next-line no-await-in-loop
-      f.flake = await startBuilding(pool, f.flake, { deps });
-      room -= 1;
-      // eslint-disable-next-line no-await-in-loop
-      await recordStep(pool, { appId: change.app_id, sessionId: change.id, outcome: 'building', runId, issueNumber: f.flake.issue_number });
-    }
-    await showCard(pool, { wait: saved, change, syncWhy, deps });
-    const fresh = await flakesOf(pool, saved.flake_ids);
-    await noteOnChange(pool, { change, kind: 'checks_flake', text: fixingText({ flakes: fresh }), runId, deps });
-    log.info('homeroom-bot-flaky', 'A change waits on a fix for a check that is not its own', {
-      sessionId: change.id, fixes: fresh.map((f) => Number(f.issue_number)),
-    });
-    return { carriedOn: true, acted: fixes.some((f) => f.fresh && f.flake.filed) ? 'checks_flake_filed' : 'checks_flake_found' };
+    return { carriedOn: true, acted: started.acted };
   } catch (err) {
     log.warn('homeroom-bot-flaky', 'Could not work past a check that is not the change\'s; handing over as before', {
       sessionId: session?.id, err: err.message,
@@ -946,7 +1011,7 @@ const SWEEP_FLAKES_SQL = `
  * went quiet. Resolves counts. Never throws.
  */
 async function sweep(pool, config, { deps = {} } = {}) {
-  const out = { merged: 0, ended: 0, started: 0, green: 0, person: 0 };
+  const out = { merged: 0, ended: 0, started: 0, green: 0, person: 0, reopened: 0 };
   try {
     const { rows: flakes } = await pool.query(SWEEP_FLAKES_SQL, [WAIT_DAYS]);
     for (const f of flakes) {
@@ -974,6 +1039,7 @@ async function sweep(pool, config, { deps = {} } = {}) {
     // The changes still on the ladder.
     const { rows: waits } = await pool.query(
       `SELECT w.*, cs.status AS change_status, cs.check_state, cs.checks_commit_sha, cs.checks_checked_at, cs.reviewed_head_sha,
+              cs.test_results,
               w.started_at < NOW() - make_interval(days => $1) AS too_old,
               EXISTS (SELECT 1 FROM homeroom_bot_flake_fixes f
                        WHERE f.id = ANY(w.flake_ids) AND f.state IN ('failed', 'closed', 'expired')) AS fix_ended_badly,
@@ -1013,8 +1079,27 @@ async function sweep(pool, config, { deps = {} } = {}) {
           && new Date(w.checks_checked_at) > new Date(w.rechecked_at)
           && String(w.checks_commit_sha || '').toLowerCase() === String(w.head_sha || '').toLowerCase()) {
           // Run again on the same head (no sync), and still red: the bot will
-          // not look at that head again, so it is said here.
-          why = 'still_fails';
+          // not look at that head again, so it is said here. A check the test
+          // runner cut off at its own timeout is not the change's either, and
+          // the fix that ran before it did not make it so: it goes back for a
+          // new fix (found or filed), never to a person as still failing.
+          const change = await changeRow(pool, w.session_id);
+          const tests = change ? identifyTests(change.test_results) : [];
+          if (change && tests.length && runnerCutOff(w.test_results)) {
+            const lane = await fixLane(pool, deps);
+            if (lane.live) {
+              const bot = deps.bot || await dmModule(deps).botAccount(pool);
+              // eslint-disable-next-line no-await-in-loop
+              await findAndStartFixes(pool, {
+                change, tests, board: lane.board, bot, synced: !!w.synced, head: w.head_sha, deps,
+              });
+              out.reopened += 1;
+              continue;
+            }
+            why = lane.why;
+          } else {
+            why = 'still_fails';
+          }
         }
         if (why) {
           // eslint-disable-next-line no-await-in-loop
@@ -1030,7 +1115,7 @@ async function sweep(pool, config, { deps = {} } = {}) {
   } catch (err) {
     log.warn('homeroom-bot-flaky', 'The flaky-check sweep failed', { err: err.message });
   }
-  return out.merged || out.ended || out.started || out.green || out.person ? out : null;
+  return out.merged || out.ended || out.started || out.green || out.person || out.reopened ? out : null;
 }
 
 module.exports = {
@@ -1043,6 +1128,7 @@ module.exports = {
   testKey,
   errorLine,
   identifyTests,
+  runnerCutOff,
   sameTests,
   nextStep,
   personWhy,

@@ -266,3 +266,62 @@ test('a card that passes its checks costs no repair turn', async () => {
   assert.equal(prompts.length, 1);
   assert.equal(calls.filter((c) => /INSERT INTO events/.test(c.sql)).length, 0);
 });
+
+// 4 Nov 2026: #6276 gave draftSpec's dispatch a second parameter, the prompt,
+// for the repair turn. A durable step calls dispatch(extra, { budgetMs })
+// (durable-turn.js), so on every production build the clock went out as the
+// prompt and the plan writer was sent "[object Object]". The tests above run
+// the inert context, which passes one argument, so they stayed green. This
+// one runs the same plan on a durable context too.
+test('on a durable build the spec turn and the repair turn are each sent their own prompt, never the clock', async () => {
+  const live = require('../src/services/homeroom-bot-live');
+  const durableSteps = require('../src/services/durable-steps');
+  const long = `Plan rows open their request&#39;s page. ${'Main Chat is unchanged. '.repeat(15)}`;
+  const specText = spec(
+    '<li data-change="1" data-area="0 60 360 120">A ▷ Build it row opens its request\'s page beside the list.</li>'
+    + '<li data-change="2">That page shows this plan, with Build it and Change something.</li>',
+    long,
+  );
+  const draft = async (durable) => {
+    const prompts = [];
+    const deps = {
+      worker: {
+        async execInWorker(_id, { prompt }) {
+          prompts.push(prompt);
+          if (typeof prompt === 'string' && prompt.includes('fixing only the card text')) {
+            return { lastResultText: '<p>A short summary. It stays the same.</p>' };
+          }
+          return { lastResultText: specText };
+        },
+        async stopTurn() {},
+        async finishTurn() { return true; },
+      },
+      sessions: {
+        async runCodexAttemptLoop({ dispatchOnce }) { return { result: await dispatchOnce({}), estimatedCostUsd: 0.4 }; },
+        async persistScoutPublication() { return { specVersion: 1 }; },
+      },
+      agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
+      ...(durable ? { durable } : {}),
+    };
+    const pool = { async query() { return { rows: [] }; } };
+    const out = await live.draftSpec({
+      pool, config: {}, bot: { id: 1 }, session: { id: 9, app_id: 9, app_slug: 'club-votes', branch_name: 'b' },
+      containerName: 'w-9', seed: 's', buildNote: 'n', turnBudgetMs: 60000, model: 'm', deps, repairCard: true,
+    });
+    return { out, prompts };
+  };
+  const inert = await draft(null);
+  const saves = [];
+  const durable = durableSteps.durable({
+    resumeFrom: null, signal: new AbortController().signal, checkpoint: async (v) => { saves.push(v); },
+  });
+  assert.equal(durableSteps.of({ durable }).active, true, 'this build runs on a durable context');
+  const kept = await draft(durable);
+  assert.equal(kept.out.ok, true, kept.out.error);
+  assert.equal(kept.prompts.length, 2, 'one spec turn and one repair turn');
+  for (const p of kept.prompts) assert.equal(typeof p, 'string', 'a prompt is text, never the step\'s options');
+  assert.equal(kept.prompts[0], inert.prompts[0], 'the spec turn is sent the plan prompt, as on the inert context');
+  assert.match(kept.prompts[1], /fixing only the card text/);
+  assert.equal(kept.prompts[1], inert.prompts[1]);
+  assert.ok(saves.length > 0, 'the turns ran as durable steps');
+});

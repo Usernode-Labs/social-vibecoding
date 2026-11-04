@@ -840,6 +840,16 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   assert.match(drawing, /data-bot-working="drawing"/);
   assert.match(drawing, />Drawing the screen</);
 
+  // 4 Nov 2026 (#6302): the answer so far is drawn under the doing line,
+  // whatever the doing kind is, so it no longer vanishes between rounds.
+  const held = renderToHtml(createElement(card.BotWorkingCard, {
+    typist: { ...bot, doing: { kind: 'drawing' }, draft: 'The answer so far.' },
+  }));
+  assert.match(held, /data-bot-working="drawing"/);
+  assert.match(held, />Drawing the screen</);
+  assert.match(held, /data-bot-working-draft=""/);
+  assert.match(held, /The answer so far\./);
+
   const t = catalog;
   assert.equal(card.botDoingLine(t, null), 'Thinking');
   assert.equal(card.botDoingLine(t, { kind: 'progress' }), 'Checking how your work is going');
