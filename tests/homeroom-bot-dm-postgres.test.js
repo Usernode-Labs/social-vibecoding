@@ -700,7 +700,9 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       // staging-seed-postgres.test.js). #6250: the first of the four is filed
       // as a request, and Main Chat leaves every opener out (conversations.js
       // PLUS_THREAD_OPENER); dmStream reads the stream as written.
-      assert.equal(messages.length, 20, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a complicated change\'s plan, four private threads, a stuck build, a first version live, a ready card and two cards, then a story\'s card and its question, not one per visit');
+      // #6305: after the offer, the same request offered on four projects
+      // from one card, open and then filed, as the demo fixture writes them.
+      assert.equal(messages.length, 22, 'one question, one ask, one offer, the same request on four projects from one card, open and filed, a built plan and its card, a plan and its card, two questions, a complicated change\'s plan, four private threads, a stuck build, a first version live, a ready card and two cards, then a story\'s card and its question, not one per visit');
       const sorted = [...messages].sort((a, b) => a.id - b.id);
       const [storyCard, storyQuestion] = sorted.slice(-2);
       assert.equal(storyCard.metadata.homeroomBot.kind, 'activity');
@@ -710,7 +712,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       const storyThread = await conversations.listThread(pool, viewer, first, storyCard.id, {});
       assert.deepEqual(storyThread.messages.slice(0, 2).map((m) => m.content),
         ['You suggested this on Staging demo app\'s page. It\'s request #18.', 'Reading it.']);
-      const [question, ask, offer, built, building, planCard, plan, two, complicated, ...afterPlan] = sorted.slice(0, -2);
+      const [question, ask, offer, fileMany, fileManyFiled, built, building, planCard, plan, two, complicated, ...afterPlan] = sorted.slice(0, -2);
       const threads = afterPlan.slice(0, 4);
       const [stuck, firstLive, ready, ...cards] = afterPlan.slice(4);
       assert.deepEqual(threads.map((m) => [m.content, m.metadata.homeroomBot.kind, m.thread?.replyCount]),
@@ -759,6 +761,20 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       assert.match(offer.content, /Staging demo, add a dark mode/);
       assert.equal(offer.reply.id, ask.id, 'the offer quotes the ask it answers');
       assert.equal(offer.reply.content, ask.content);
+      assert.deepEqual([fileMany.metadata.homeroomBot.kind, fileMany.metadata.homeroomBot.card.type,
+        fileMany.metadata.homeroomBot.card.state], ['chat', 'file_many', 'open'],
+      '#6305: one request offered on four projects from one card');
+      assert.deepEqual(fileMany.metadata.homeroomBot.card.rows.map((r) => [r.name, r.match, r.done, r.ticked]), [
+        ['Game Corner', 'exact', 'Game Corner already lets guests play today\'s board.', false],
+        ['Block World', 'guess', null, false],
+        ['ViaTales', 'exact', null, true],
+        ['Ear Trainer', 'exact', null, true],
+      ], 'a row per project, with the unclear name and the app that already does it');
+      assert.deepEqual([fileManyFiled.metadata.homeroomBot.kind, fileManyFiled.metadata.homeroomBot.card.state],
+        ['chat', 'filed'], '#6305: and the same card after its one tap');
+      assert.deepEqual(fileManyFiled.metadata.homeroomBot.card.rows.map((r) => [r.name, r.issueNumber || null, r.disabled || null]), [
+        ['Game Corner', 42, null], ['Block World', 43, null], ['World Map', null, 'not_member'],
+      ]);
       const { rows } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1', [viewer.id]);
       assert.equal(rows.length, 0, 'never a question the bot waits on: nothing is posted anywhere');
     } finally {
