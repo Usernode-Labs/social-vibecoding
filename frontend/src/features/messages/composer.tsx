@@ -142,8 +142,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // #2386: friends lead the @ list (features/friends/store.ts).
   const friendIds = useFriendIds();
 
+  // #6249: the attached files come back with the words they were saved with.
+  // A scope change is still the one place the composer reads a draft back.
   useEffect(() => {
-    // #6249: the attached files come back with the words they were saved with.
     setValue(draftFor(scope)); setAttachments(draftAttachmentsFor(scope)); setChip(null, null); setPrompt(null); setError(''); setAskReply(false);
   }, [scope]);
 
