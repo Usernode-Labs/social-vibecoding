@@ -67,7 +67,7 @@ test('words a DM or a chat passed on are not answered twice', () => {
 // ── The gate, on a pool that answers what it asks ────────────────────────
 
 function gatePool({ quoteOf = null, change = null, posts = [], asks = [], before = null, open = null,
-  lastBot = null, previous = null, run = [] } = {}) {
+  lastBot = null, previous = null, run = [], follows = null, requested = false } = {}) {
   const asked = [];
   return {
     asked,
@@ -76,6 +76,7 @@ function gatePool({ quoteOf = null, change = null, posts = [], asks = [], before
       asked.push(s);
       if (/SELECT user_id FROM chat_messages WHERE id = \$1/.test(s)) return { rows: quoteOf == null ? [] : [{ user_id: quoteOf }] };
       if (/SELECT created_at FROM chat_messages/.test(s)) return { rows: lastBot ? [{ created_at: lastBot }] : [] };
+      if (/SELECT m\.user_id, m\.created_at FROM chat_messages m[\s\S]*m\.thread_type = 'issue'/.test(s)) return { rows: follows ? [follows] : [] };
       if (/SELECT user_id FROM chat_messages\s+WHERE app_id/.test(s)) return { rows: previous ? [{ user_id: previous }] : [] };
       if (/m\.posted_via, u\.is_synthetic/.test(s)) return { rows: run };
       if (/FROM homeroom_bot_change_asks WHERE message_id/.test(s)) return { rows: asks.includes(Number(params[0])) ? [{ '?column?': 1 }] : [] };
@@ -83,6 +84,9 @@ function gatePool({ quoteOf = null, change = null, posts = [], asks = [], before
       if (/FROM homeroom_bot_posts/.test(s)) return { rows: posts };
       if (/m\.thread_type = 'message' AND m\.thread_ref = \$2 AND m\.id < \$3/.test(s)) return { rows: before ? [before] : [] };
       if (/FROM chat_sessions/.test(s) && /linked_issues/.test(s) && open) return { rows: [open] };
+      // #6311: asksForRequest's three reads.
+      if (/FROM homeroom_bot_requesters WHERE app_id/.test(s)) return { rows: requested ? [{ '?column?': 1 }] : [] };
+      if (/FROM issues WHERE app_id = \$1 AND github_issue_number/.test(s)) return { rows: [] };
       return { rows: [] };
     },
   };
@@ -242,6 +246,24 @@ test('the gate in a reply thread: the next message after the bot\'s own, soon af
   assert.deepEqual(await g({ user_id: 3, created_at: new Date() }), { speak: false, why: 'not_addressed' });
 });
 
+test('#6311: the requester or an admin writing after the bot\'s post in a request is answered', async () => {
+  const place = { type: 'issue', ref: 9 };
+  const recent = { user_id: BOT.id, created_at: new Date(Date.now() - 5 * 60 * 1000) };
+  const g = (pool) => voice.gate(pool, { app: APP, place, row: msg(), bot: BOT, settings: LIVE, speaker: EVAN, deps: deps() });
+  assert.deepEqual(await g(gatePool({ follows: recent, requested: true })), { speak: true, why: 'followed' });
+  // Somebody else's message, or the bot's own post too long ago, is not for it.
+  assert.deepEqual(await g(gatePool({ follows: recent, requested: false })), { speak: false, why: 'not_addressed' });
+  assert.deepEqual(await g(gatePool({ follows: { ...recent, created_at: new Date(Date.now() - 31 * 60 * 1000) }, requested: true })),
+    { speak: false, why: 'not_addressed' });
+  // The message before this one is not the bot's.
+  assert.deepEqual(await g(gatePool({ follows: { user_id: 5, created_at: new Date() }, requested: true })),
+    { speak: false, why: 'not_addressed' });
+  // A message after a question the bot asked is still the build's answer.
+  const question = { kind: 'question', created_at: new Date(Date.now() - 10 * 60 * 1000) };
+  assert.deepEqual(await g(gatePool({ follows: recent, requested: true, posts: [question] })),
+    { speak: false, why: 'answers_question' });
+});
+
 // ── Tools, prompt, words ─────────────────────────────────────────────────
 
 const names = (tools) => tools.map((t) => t.function.name);
@@ -252,11 +274,11 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
     ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
-    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
   // Papote #3: under its plan waiting for Build it, a change to the plan is asked for here.
   const planned = voice.toolsFor({ type: 'issue', ref: 1 }, { planWaiting: true });
   assert.deepEqual(names(planned),
-    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'change_plan', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'change_plan', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
   // #6264: a request's change may not exist yet, and the promise is about
   // the request then, so it is offered on the request too.
   assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })).includes('tell_me_when'));
@@ -274,6 +296,10 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   const issueClose = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })
     .find((t) => t.function.name === 'offer_close_request');
   assert.ok(!issueClose.function.parameters.properties.number, 'on the request it is the request itself');
+  // #6311: the copy is offered where the request is, and nowhere else.
+  assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })).includes('offer_copy_request'));
+  assert.ok(!names(voice.toolsFor({ type: 'chat', ref: null }, {})).includes('offer_copy_request'));
+  assert.deepEqual(voice.OFFER_WORDS.copy_request, { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' });
 });
 
 test('#6264: the prompt lets it promise to tell them here when a change is done', () => {

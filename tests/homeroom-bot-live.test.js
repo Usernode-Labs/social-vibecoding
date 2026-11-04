@@ -259,7 +259,7 @@ function postHarness({ claimed = true, githubFails = false } = {}) {
 test('a post goes to both surfaces, scoped to the issue, and is recorded', async () => {
   const h = postHarness();
   const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
-  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true });
+  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
   assert.deepEqual(h.calls.comments, [{ owner: 'usernode-bot', repo: 'rss-reader', n: 12, body: 'Which feed?' }]);
   assert.deepEqual(h.calls.messages[0].thread, { type: 'issue', ref: 12 });
   assert.equal(h.calls.messages[0].msgType, 'system');
@@ -438,7 +438,7 @@ test('a post that names the poster: @handle in the thread only, and one mention 
     ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900,
     text: 'Which feed? @alice said the sports one.', mention: 'evan', senderId: 77, notifications,
   });
-  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true });
+  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
   assert.equal(h.calls.messages[0].content, '@evan Which feed? @alice said the sports one.', 'named in the thread');
   assert.equal(h.calls.comments[0].body, 'Which feed? @alice said the sports one.',
     'never on GitHub: a platform username there would notify whoever owns it (#723)');
@@ -551,9 +551,10 @@ test('what it says: the question, notes that never close, a linked proposal', ()
   assert.match(two, /^Homeroom bot has two questions before it can build this:\n\n1\. What time\?\n2\. How\?\n\n/);
   assert.match(q, /Reply here \(or on the GitHub issue\) and it will look again\./);
   assert.match(live.personText({ reason: 'It changes who can see feeds.' }), /a person needs to decide this one: It changes who can see feeds\./);
-  // #4239: about Homeroom itself, the note says so, and who can move it.
+  // #4239, #6311: about Homeroom itself, the note says so, and who can move
+  // it or file it there too, in plain words.
   const platform = live.personText({ reason: 'The header is drawn by Homeroom.', platform: true, project: 'RSS Reader' });
-  assert.match(platform, /^Homeroom bot thinks this is about Homeroom itself, not RSS Reader: The header is drawn by Homeroom\.\n\nWhoever asked for it, or RSS Reader's creator or admins, can have Homeroom bot move it to Homeroom's own board\.$/);
+  assert.match(platform, /^Homeroom bot thinks this is about Homeroom itself, not RSS Reader: The header is drawn by Homeroom\.\n\nWhoever asked for it, or RSS Reader's creator or admins, can have it filed on Homeroom's own board too, or moved there\.$/);
   assert.doesNotMatch(platform, /\u2014/);
   const empty = live.emptyText({ reason: 'The body is a placeholder.' });
   assert.match(empty, /couldn't find anything to build/);

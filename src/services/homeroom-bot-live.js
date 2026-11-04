@@ -60,7 +60,7 @@
 // constructs nothing but routes, and dispatches the request into it. There
 // stays exactly one implementation of "put a change up for a vote".
 
-const { firstPerson } = require('./homeroom-bot-words');
+const { firstPerson, plainWords } = require('./homeroom-bot-words');
 const { FIX_COMMIT_MESSAGES, buildCommitMessage } = require('./homeroom-commits');
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
@@ -179,12 +179,12 @@ function questionText({ question, plan = null }) {
     ? [
       'Homeroom bot has two questions before it can build this:',
       '',
-      ...two.map((q, i) => `${i + 1}. ${clipText(q.question, 500)}`),
+      ...two.map((q, i) => `${i + 1}. ${clipText(plainWords(q.question), 500)}`),
     ]
     : [
       'Homeroom bot has a question before it can build this:',
       '',
-      clipText(question) || '(no question text)',
+      clipText(plainWords(question)) || '(no question text)',
     ];
   lines.push('', REPLY_HINT);
   return lines.join('\n');
@@ -192,7 +192,7 @@ function questionText({ question, plan = null }) {
 
 // A reason the model wrote, as a whole sentence: it ends with a full stop.
 function reasonSentence(reason) {
-  const text = clipText(reason);
+  const text = clipText(plainWords(reason));
   if (!text) return 'No reason given.';
   return /[.!?…)"']$/.test(text) ? text : `${text}.`;
 }
@@ -213,7 +213,7 @@ function personText({ reason, platform = false, project = null }) {
   const name = project ? clipText(project, 80) : 'this project';
   if (platform) {
     return `Homeroom bot thinks this is about Homeroom itself, not ${name}: ${reasonSentence(reason)}\n\n`
-      + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have Homeroom bot move it to Homeroom's own board.`;
+      + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have it filed on Homeroom's own board too, or moved there.`;
   }
   // GitHub never carries a platform username (#723): its copy names nobody.
   // Homeroom's names who can say Go ahead (personHomeroomText).
@@ -227,10 +227,16 @@ function personText({ reason, platform = false, project = null }) {
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
 function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [] }) {
-  if (platform) return firstPerson(personText({ reason, platform, project }));
+  // #4239, #6311: about Homeroom itself. The requester is offered the copy
+  // in the thread and the move in their DM. Plain words, in the first
+  // person: no checkout, no head commit, no build agent.
+  if (platform) {
+    return firstPerson(`I think this is about Homeroom itself, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
+      + 'I can put it on Homeroom\'s own board too and keep this request open here.');
+  }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';
-  return `I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`;
+  return firstPerson(`I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`);
 }
 
 // The note's fixed replies, beside its own sentence: words the bot offers for
@@ -267,7 +273,7 @@ function personSuggestions({ firstStep = null, platform = false, done = false } 
 
 function emptyText({ reason }) {
   return [
-    `Homeroom bot couldn't find anything to build in this request: ${clipText(reason) || 'no reason given.'}`,
+    `Homeroom bot couldn't find anything to build in this request: ${clipText(plainWords(reason)) || 'no reason given.'}`,
     '',
     'If there is more to it, add the details here (or on the GitHub issue) and it will look again.',
   ].join('\n');
@@ -2274,7 +2280,12 @@ async function post({
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
-  return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!(message || proposalMessage) };
+  return {
+    postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!(message || proposalMessage),
+    // #6311: the note's message in the request's thread, for an offer that
+    // was written before it (a platform verdict's copy offer).
+    messageId: (message || (proposalOnly ? proposalMessage : null))?.id ?? null,
+  };
 }
 
 /**

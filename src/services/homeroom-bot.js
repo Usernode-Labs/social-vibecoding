@@ -7327,6 +7327,14 @@ async function actOnVerdict({
       voiceAnswers, answerers,
     })
     : { speak: true };
+  // #6311: a re-read whose note would say the same thing as the last one it
+  // posted (same kind, same reason) says nothing. Only a look somebody asked
+  // for, or one the request's own changes started, can repeat.
+  const unchangedNote = async (kind, text) => {
+    if (!gated) return false;
+    const prev = await addressedMod().lastNoteText(pool, { appId: app.id, issueNumber });
+    return !!prev && prev.kind === kind && addressedMod().sameNote(prev.text, text);
+  };
   if (!gate.speak) {
     log.info('homeroom-bot', 'Live note not repeated: nobody addressed the bot', {
       app: app.slug, issueNumber, verdict: parsed.verdict,
@@ -7351,14 +7359,22 @@ async function actOnVerdict({
   } else if (parsed.verdict === 'question') {
     // #3624: `dm` carries the question to the requester's DM too, with the
     // answers they can tap (homeroom-bot-dm.js).
-    await say('question', live.questionText(parsed), {
-      dm: {
-        question: parsed.question, answers: parsed.questionAnswers || [],
-        // B6: a read that asks two questions asks both at once.
-        ...(parsed.plan?.questions?.length > 1 ? { questions: parsed.plan.questions } : {}),
-        ...quiet,
-      },
-    });
+    const noteText = require('./homeroom-bot-words').firstPerson(live.questionText(parsed));
+    if (await unchangedNote('question', noteText)) {
+      acted = 'unchanged';
+      log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
+        app: app.slug, issueNumber, verdict: parsed.verdict,
+      });
+    } else {
+      await say('question', live.questionText(parsed), {
+        dm: {
+          question: parsed.question, answers: parsed.questionAnswers || [],
+          // B6: a read that asks two questions asks both at once.
+          ...(parsed.plan?.questions?.length > 1 ? { questions: parsed.plan.questions } : {}),
+          ...quiet,
+        },
+      });
+    }
   } else if (parsed.verdict === 'person') {
     // #4239: about Homeroom itself, the requester's DM offers to move it to
     // Homeroom's own board (homeroom-bot-dm.js relayIssuePost). A requester
@@ -7368,9 +7384,10 @@ async function actOnVerdict({
       ? decider.deciders.map((d) => d?.username).filter(Boolean)
       : [];
     // Homeroom's copy names who can say Go ahead: the people who decide, or
-    // the person who asked for it.
-    const asker = deciders.length || parsed.platform ? null
-      : await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+    // the person who asked for it. #6311: the requester is read either way,
+    // because a platform note's copy offer goes to them.
+    const requester = await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+    const asker = deciders.length ? null : requester;
     const project = app.name || app.slug;
     // 3 Nov 2026: the note offers the person it names Go ahead, a smaller
     // first step and Not now, to send as their own reply. Only they see
@@ -7381,19 +7398,52 @@ async function actOnVerdict({
     const suggestActions = live.personSuggestions({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
     });
-    await say('person', live.personText({ ...parsed, project }), {
-      homeroomText: live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders }),
-      ...(suggestActions.length && suggestFor.length
-        ? { metadata: { homeroomBot: { kind: 'note', suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions } } }
-        : {}),
-      dm: {
-        reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
-        ...(parsed.done ? { done: true } : {}),
-        ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
-      },
-    });
+    const noteText = live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
+    if (await unchangedNote('person', noteText)) {
+      acted = 'unchanged';
+      log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
+        app: app.slug, issueNumber, verdict: parsed.verdict,
+      });
+      // A note about Homeroom itself held so offers no move: the run says why.
+      if (parsed.platform) await require('./homeroom-bot-move').noteMoveOffer(pool, runId, 'repeat_held');
+    } else {
+      // #6311: a platform note carries the copy offer in the thread, for the
+      // person who asked for the request. Its own Move offer in their DM is
+      // unchanged.
+      const copyOffer = parsed.platform && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0
+        ? await voiceModule(deps).threadOffer(pool, {
+          app, kind: 'copy_request', forUserId: Number(requester.userId), args: { issueNumber },
+        }).catch(() => null)
+        : null;
+      const noteMeta = copyOffer?.metadata
+        ? { kind: 'voice', ...copyOffer.metadata }
+        : (suggestActions.length && suggestFor.length
+          ? { kind: 'note', suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions }
+          : null);
+      const posted = await say('person', live.personText({ ...parsed, project }), {
+        homeroomText: noteText,
+        ...(noteMeta ? { metadata: { homeroomBot: noteMeta } } : {}),
+        dm: {
+          reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
+          ...(parsed.done ? { done: true } : {}),
+          ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
+        },
+      });
+      if (copyOffer) {
+        if (posted?.messageId) await voiceModule(deps).tieThreadOffer(pool, copyOffer.id, posted.messageId);
+        else await voiceModule(deps).dropThreadOffer(pool, copyOffer.id);
+      }
+    }
   } else if (parsed.verdict === 'empty') {
-    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet } });
+    const noteText = require('./homeroom-bot-words').firstPerson(live.emptyText(parsed));
+    if (await unchangedNote('empty', noteText)) {
+      acted = 'unchanged';
+      log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
+        app: app.slug, issueNumber, verdict: parsed.verdict,
+      });
+    } else {
+      await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet } });
+    }
   } else if (parsed.verdict === 'ready') {
     // C2.3: a plan a person posted on the request (usePersonPlan).
     let ownPlan = null;

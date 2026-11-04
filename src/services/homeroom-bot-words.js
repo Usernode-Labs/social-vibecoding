@@ -34,6 +34,9 @@ const FIRST_PERSON = Object.freeze([
   [/Homeroom bot thinks a person should take this one from here:/, 'I think a person should take this one from here:'],
   [/Homeroom bot thinks this is about Homeroom itself, not /, 'I think this is about Homeroom itself, not '],
   [/can have Homeroom bot move it to Homeroom's own board\./, 'can have me move it to Homeroom\'s own board.'],
+  // #6311: the bot never speaks of itself in the third person, even about
+  // what it confirmed or found.
+  [/\bHomeroom bot (confirmed|checked|found|tested)\b/g, 'I $1'],
   [/can say Go ahead in a chat with Homeroom bot, or reply here\./, 'can say Go ahead in a chat with me, or reply here.'],
   [/Homeroom bot couldn't find anything to build in this request:/, 'I couldn\'t find anything to build in this request:'],
   [/Homeroom bot built this\. It's up for a vote:/, 'I built this. It\'s up for a vote:'],
@@ -111,6 +114,31 @@ const FIRST_PERSON = Object.freeze([
   [/and it will (look again|try again)\./g, 'and I\'ll $1.'],
 ]);
 
+// #6311: the words the bot picked up from its own instructions and then said
+// to a member ("in this checkout", "the live head commit", "this build
+// agent", "per the platform conventions"). A note's reason is rewritten
+// before it is posted, so a model that slips says the plain thing.
+const INTERNAL_WORDS = Object.freeze([
+  [/\bin this checkout\b/gi, 'in the project\'s code'],
+  [/\bthe live head commit\b/gi, 'the live version'],
+  [/\bthe head commit\b/gi, 'the live version'],
+  [/\bthis build agent\b/gi, 'I'],
+  [/\bper the platform conventions,?\s*/gi, ''],
+  [/\ba person must authorize\/route\b/gi, 'a person needs to decide'],
+]);
+
+/**
+ * Pure: a reason, question or first step said in words a member understands.
+ * The bot's own instructions are not its vocabulary. Anything else passes
+ * through.
+ */
+function plainWords(text) {
+  if (typeof text !== 'string' || !text) return text;
+  let out = text;
+  for (const [re, to] of INTERNAL_WORDS) out = out.replace(re, to);
+  return out.trim();
+}
+
 /** Pure: a note's Homeroom copy, in the bot's own voice. Anything else passes through. */
 function firstPerson(text) {
   if (typeof text !== 'string' || !text) return text;
@@ -119,4 +147,4 @@ function firstPerson(text) {
   return out;
 }
 
-module.exports = { firstPerson, FIRST_PERSON };
+module.exports = { firstPerson, FIRST_PERSON, plainWords, INTERNAL_WORDS };

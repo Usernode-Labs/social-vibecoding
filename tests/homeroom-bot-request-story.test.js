@@ -321,7 +321,8 @@ test('decide: who can say Go ahead is named in Homeroom, and nobody on GitHub', 
   assert.doesNotMatch(live.personText({ reason: 'x' }), /@/);
   assert.equal(firstPerson(live.personText({ reason: 'It is a platform setting', platform: true, project: 'Plant Pal' })),
     'I think this is about Homeroom itself, not Plant Pal: It is a platform setting.\n\n'
-    + 'Whoever asked for it, or Plant Pal\'s creator or admins, can have me move it to Homeroom\'s own board.');
+    // #6311: the copy is an option too, and the original stays open.
+    + 'Whoever asked for it, or Plant Pal\'s creator or admins, can have it filed on Homeroom\'s own board too, or moved there.');
 });
 
 test('the checks hand-off says why in whole sentences, in the first person', () => {

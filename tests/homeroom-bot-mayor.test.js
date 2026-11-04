@@ -89,7 +89,7 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
 test('the tools: sixteen lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
-      'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_close_request', 'withdraw_proposal',
+      'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_copy_request', 'offer_close_request', 'withdraw_proposal',
       'draw_screen', 'close_thread', 'report_problem', 'start_project_thread', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
@@ -565,6 +565,8 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.deepEqual(mayor.OFFER_ANSWERS, {
     file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'],
     move_request: ['Move it to Homeroom', 'Keep it here'],
+    // #6311: a copy on Homeroom's own board too; the original stays open.
+    copy_request: ['Put it on Homeroom\'s board', 'Keep it here only'],
     close_request: ['Propose to close', 'Keep it open'],
     // #6019: words from this private chat, waiting to go public as theirs.
     post_reply: ['Post it', 'Keep it private'],
