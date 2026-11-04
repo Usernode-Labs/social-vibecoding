@@ -2445,12 +2445,12 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.match(draft.content, /\*\*Where:\*\* request #6151 on Note board · the request page/);
     assert.match(draft.content, /#6230 One detail column for plans and designs: build together, it is the same column/);
     assert.match(draft.content, /\*\*Done when:\*\*\n- A plan and a design open in the same side column/);
-    // The extras are kept on the action, and the picture is shown on the draft.
-    const { rows: [action] } = await pool.query('SELECT draft_extras FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
-    assert.deepEqual(action.draft_extras.attachmentIds, [shot.id]);
-    assert.deepEqual(action.draft_extras.related, [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }]);
-    assert.deepEqual(action.draft_extras.doneWhen, ['A plan and a design open in the same side column', 'The request stays in view beside it']);
-    assert.deepEqual(action.draft_extras.context.request, { slug: 'note-board', name: 'Note board', number: 6151 });
+    // The extras are kept on the draft message, and the picture is shown on the draft.
+    const draftExtras = (await read(offered)).metadata.homeroomBot.draftExtras;
+    assert.deepEqual(draftExtras.attachmentIds, [shot.id]);
+    assert.deepEqual(draftExtras.related, [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }]);
+    assert.deepEqual(draftExtras.doneWhen, ['A plan and a design open in the same side column', 'The request stays in view beside it']);
+    assert.deepEqual(draftExtras.context.request, { slug: 'note-board', name: 'Note board', number: 6151 });
     const { rows: drafted } = await pool.query(
       "SELECT kind, filename FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'", [offered.messageId],
     );

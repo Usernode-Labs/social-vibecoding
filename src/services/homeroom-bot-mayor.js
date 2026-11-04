@@ -4007,12 +4007,11 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   const kind = withdraw || move || close || post ? o.kind : 'file_request';
   const { rows: [action] } = await pool.query(
     `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number,
-                                          target_message_id, draft_extras)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+                                          target_message_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
     [user.id, conversationId, o.app.id, kind, o.title, o.details || null,
       withdraw || (post && o.sessionId) ? o.sessionId : null,
-      move || close || post ? o.issueNumber : null, post && o.targetMessageId ? Number(o.targetMessageId) : null,
-      !withdraw && !move && !close && !post && o.extras ? JSON.stringify(o.extras) : null],
+      move || close || post ? o.issueNumber : null, post && o.targetMessageId ? Number(o.targetMessageId) : null],
   );
   const moveSvc = require('./homeroom-bot-move');
   const body = post
@@ -4076,6 +4075,10 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
         })),
       // 2 Nov 2026: the turn's "Looked at" line and a thread tool's card (answer()).
       ...(extra || {}),
+      // #6251: what the draft showed besides its words (pictures, related
+      // requests, where, Done when), kept on the message it was said in, so
+      // File it can file the same. Read back by settleOffer.
+      ...(o.extras ? { draftExtras: o.extras } : {}),
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -4113,6 +4116,25 @@ async function copyDraftPictures(pool, { ids, conversationId, messageId, botId }
     );
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not put the pictures on a draft', { messageId, err: err.message });
+  }
+}
+
+/**
+ * #6251: the extras the draft showed, as offer() kept them on the draft's
+ * own message. Null for an offer made before that, or one whose message is
+ * gone. Never throws: a filing without them is still a filing.
+ */
+async function draftExtrasOf(pool, messageId) {
+  if (!messageId) return null;
+  try {
+    const { rows: [row] } = await pool.query(
+      'SELECT metadata FROM conversation_messages WHERE id = $1', [Number(messageId)],
+    );
+    const extras = row?.metadata?.homeroomBot?.draftExtras;
+    return extras && typeof extras === 'object' && !Array.isArray(extras) ? extras : null;
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read a draft\'s extras back', { messageId, err: err.message });
+    return null;
   }
 }
 
@@ -4591,10 +4613,12 @@ async function settleOffer(pool, config, {
   try {
     // B4: what they asked for: the request as it is filed (askedFor).
     const askedText = askedFor(action);
+    // #6251: the pictures, related requests, where and Done when the draft
+    // showed, read back from the draft message it was said in.
+    const extras = await draftExtrasOf(pool, action.message_id);
     const filed = await fileRequest(pool, config, {
       user, app, title: action.title, details: action.details, settings, deps, askedText, fileKey: `dm-action:${action.id}`,
-      // #6251: the pictures, related requests, where and Done when the draft showed.
-      extras: action.draft_extras || null, conversationId: action.conversation_id,
+      extras, conversationId: action.conversation_id,
     });
     await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
     await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'filed', ref: filed.issueNumber });
