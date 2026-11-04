@@ -236,7 +236,9 @@ test('agent session: the tray counts every file it refused', () => {
 });
 
 test('Messages: files past the room are counted, not dropped without a word', () => {
-  const src = read('frontend/src/features/messages/composer.tsx');
+  // #6256: the cut and the summary are shared with the blank thread's
+  // composer now, so they are pinned where they live.
+  const src = read('frontend/src/features/attachments/limits.ts');
   assert.match(src, /const cut = files\.length - selected\.length;/);
   assert.match(src, /refusalSummary\(firstReason, tooLarge\.length \+ cut - 1\)/);
 });

@@ -19,6 +19,7 @@ const api = read('frontend/src/features/messages/api.ts');
 const store = read('frontend/src/features/messages/store.ts');
 const screen = read('frontend/src/features/messages/index.tsx');
 const composer = read('frontend/src/features/messages/composer.tsx');
+const attachmentLimits = read('frontend/src/features/attachments/limits.ts');
 const row = read('frontend/src/features/messages/message-row.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
@@ -360,7 +361,10 @@ test('attachment ids remain opaque hex and a denied preview stays null', () => {
 });
 
 test('composer and moderation payloads match the backend contracts', () => {
-  assert.match(composer, /const MAX_ATTACHMENTS = 4/);
+  // #6256: the cap and the per-type ceiling live once, in the module both the
+  // conversation composer and the blank thread's composer read.
+  assert.match(attachmentLimits, /const MAX_ATTACHMENTS = 4/);
+  assert.match(composer, /import \{ MAX_ATTACHMENTS, stageFiles \} from '\.\.\/attachments\/limits'/);
   assert.match(composer, /slice\(0, 8000\)/);
   const shareHandler = composer.slice(composer.indexOf('const onShare ='),
     composer.indexOf("window.addEventListener('usernode:messages-object-selected'"));
