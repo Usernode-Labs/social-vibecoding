@@ -36,6 +36,13 @@ import type { BotDoing, Typist } from './store';
  * card shows those words under "Writing", growing, drawn as the message's
  * own words are. It is a preview: the message the bot sends, checked, takes
  * the card's place as before.
+ *
+ * 4 Nov 2026 (#6302): and the words stay under whatever the card says next.
+ * The server names a new doing as each step starts ("Reading request #436")
+ * and none while it thinks, which used to drop the answer so far and draw it
+ * again as the next round streamed: the card flashed between output and
+ * thinking. The store now holds the draft on the bot's Typist
+ * (store.ts `botTypist`) and this draws it whatever the doing kind is.
  */
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;
@@ -79,7 +86,10 @@ export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): 
 
 export function BotWorkingCard({ typist }: { typist: Typist }) {
   const t = useMessages('messages');
-  const draft = botDraftText(typist.doing);
+  // 4 Nov 2026 (#6302): the words already written, held by the store across
+  // the steps that follow (a read, a wordless "thinking"), so they never
+  // vanish and come back between rounds.
+  const draft = typist.draft || botDraftText(typist.doing);
   return (
     <div className="flex items-start gap-3 px-4 py-1" data-bot-working={typist.doing?.kind || 'thinking'}>
       <UserAvatar user={{ id: 0, username: typist.name, bot: true }} size="md" shape="square" />
