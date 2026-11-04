@@ -83,6 +83,7 @@ const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
+const { updateComingSql } = require('../services/homeroom-bot-progress');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -189,6 +190,18 @@ const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
             AND ${currentVotePredicateSql('pv', 'cs')}
        )
        AND NOT ${firstVersionSql('cs')}
+       -- #6282 (4 Nov 2026): a change with an update on its way asks for no
+       -- vote. A yes cast now is cleared when the update lands and Homeroom
+       -- asks again, so it waits under Updating / Update queued instead
+       -- (services/homeroom-bot-progress.js updateComingSql, which the AI tab
+       -- and the change's own Votes card read too). A ballot goes with it
+       -- while any of its changes has an update coming, so nobody picks a
+       -- change that is about to change.
+       AND ${updateComingSql('cs')} IS NULL
+       AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
+             SELECT 1 FROM chat_sessions ru
+              WHERE ${RIVAL_SQL('cs', 'ru')}
+                AND ${updateComingSql('ru')} IS NOT NULL))
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
              EXISTS (SELECT 1 FROM chat_sessions rv
                       WHERE ${RIVAL_SQL('cs', 'rv')}
@@ -519,7 +532,12 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
            NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
            NULL::text, NULL::jsonb,
-           NULL::boolean, NULL::text, NULL::text, NULL::bigint, NULL::int[]
+           NULL::boolean, NULL::text, NULL::text,
+           -- #6262: the bot's question belongs to its request's thread, so
+           -- the Homeroom bot page can count what is new there.
+           (SELECT r.thread_id FROM requests r
+             WHERE r.app_id = q.app_id AND r.number = q.issue_number),
+           NULL::int[]
       FROM ${OWED_QUESTIONS_FROM}
       LEFT JOIN users qu ON qu.id = qm.sender_id
      WHERE ${OWED_QUESTIONS_WHERE}
@@ -903,7 +921,7 @@ function requestOf(row) {
 
 const FEED_KINDS = new Set(['proposal', 'governance', 'question']);
 
-function shapeNeedsFeed(rows) {
+function shapeNeedsFeed(rows, { inThreads = false } = {}) {
   return rows.map((row) => {
     const ballot = row.kind === 'proposal' ? ballotOf(row) : null;
     return {
@@ -932,6 +950,10 @@ function shapeNeedsFeed(rows) {
     ...(row.kind === 'proposal' ? { staging_url: feedStagingUrl(row) } : {}),
     // #4490: the card's picture, the same as a project's Needs you draws.
     ...pictureFields(row),
+    // #6262: the thread its page is, for the Homeroom bot page's unread
+    // count (needsFeedFor adds how many are new). Absent from the full feed,
+    // which is not that page's.
+    ...(inThreads && row.thread_id != null ? { threadId: Number(row.thread_id) } : {}),
     app: {
       slug: row.slug,
       name: row.name || row.slug,
@@ -955,7 +977,12 @@ async function needsFeedFor(pool, { user, showSelfHosted = false, inThreads = fa
   await withCodeMissing(pool, rows);
   await withPictures(pool, rows, { shotsPresent, viewer: user });
   await withViewerDecides(pool, rows, user.id);
-  return decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows)));
+  const items = decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows), { inThreads }));
+  if (!inThreads) return items;
+  // #6262: how many messages in each item's thread are new to the viewer.
+  const unread = await require('../services/thread-reads')
+    .unreadFor(pool, user.id, items.map((item) => item.threadId));
+  return items.map((item) => ({ ...item, unread: unread.get(item.threadId) || 0 }));
 }
 
 /**
@@ -1001,6 +1028,8 @@ const DEMO_NEEDS_FEED = [
     kind: 'proposal', id: -103, title: 'Sort recipes by rating',
     summary: 'Adds a Rating option to the sort menu, highest first, and remembers the choice per person.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-24T12:00:00Z', yes: 2, no: 0,
+    // #6262: a demo item with something new, so ?demo=1 shows its dot.
+    threadId: -103, unread: 1,
     // The request it closes, which the Homeroom bot tab names it by (requestOf).
     request: { number: 9213, title: 'Staging demo: sort by rating' },
     // No preview: the demo project has no container (stagingMockProposals
@@ -1022,6 +1051,7 @@ const DEMO_NEEDS_FEED = [
     summary: 'A shared list on the app\'s home screen that any member can add to and tick off.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-22T10:00:00Z', yes: 1, no: 1,
     staging_url: null,
+    threadId: -104, unread: 1,
     // #5365: the demo card for an advisory vote, so the feed's label and the
     // deciding-first order can be seen on ?demo=1 without a governed project.
     advisory: true,

@@ -35,6 +35,17 @@ const unitFailing = (tests) => [
   },
 ];
 
+// The unit suite's row when node's test runner cut a file off at its own
+// timeout: it reports `# fail 0` and `# cancelled 1` (the file's `not ok`
+// line may still be there, or the log may have lost it). `named` says the
+// grouped reason kept the file's name; without it only the cancelled count
+// is left.
+const cutOffRow = (file, { named = true } = {}) => ({
+  index: -3, name: UNIT_CHECK_NAME, path: UNIT_CHECK_PATH, status: 'fail', advisory: false,
+  failureReason: `${named ? `${file} (1): ${file} | ` : ''}# tests 100 | # pass 99 | # fail 0 | # cancelled 1`,
+  summary: { tests: 100, pass: 99, fail: 0, cancelled: 1 },
+});
+
 test('flaky checks: filed once, built outside the slots, and the waiting changes run their checks again once fixed', { timeout: 180000 }, async (t) => {
   const root = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await root.query('SELECT 1'); } catch (err) {
@@ -70,12 +81,13 @@ test('flaky checks: filed once, built outside the slots, and the waiting changes
     await pool.query('INSERT INTO requests (app_id, number, title, body, state) VALUES ($1, $2, $3, $4, $5)', [where.id, number, title, body, state]);
     return number;
   };
-  const change = async (issue, tests, where = app) => {
+  const change = async (issue, tests, where = app, rows = null) => {
     const { rows: [s] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, linked_issues, check_state, checks_commit_sha,
                                   reviewed_head_sha, test_results, pr_number, promoted_at)
        VALUES ($1, $2, $3, 'promoted', $4::int[], 'failing', $5, $5, $6::jsonb, $7, NOW()) RETURNING id`,
-      [where.id, bot.id, `dev/homeroom_bot-${crypto.randomBytes(3).toString('hex')}`, [issue], HEAD, JSON.stringify(unitFailing(tests)), issue + 1000]);
+      [where.id, bot.id, `dev/homeroom_bot-${crypto.randomBytes(3).toString('hex')}`, [issue], HEAD,
+        JSON.stringify(rows || unitFailing(tests)), issue + 1000]);
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, $4)
        ON CONFLICT (app_id, issue_number) DO NOTHING`, [where.id, issue, ada.id, `Request ${issue}`]);
@@ -305,5 +317,68 @@ test('flaky checks: filed once, built outside the slots, and the waiting changes
     });
     assert.ok(out.withdrawn.includes(plain.id), 'a plain stale red change still goes');
     assert.ok(!out.withdrawn.includes(waiting.id), 'one waiting on its check\'s fix stays');
+  });
+
+  await t.test('a run cut off at the runner\'s timeout names its test, even when the log lost the line', async () => {
+    const CUT = 'tests/bot-build-crash-postgres.test.js';
+    assert.equal(flaky.runnerCutOff([cutOffRow(CUT)]), true);
+    assert.equal(flaky.runnerCutOff([{ name: 'Home loads', path: '/', status: 'pass' }]), false);
+    assert.deepEqual(flaky.identifyTests([cutOffRow(CUT)]),
+      [{ name: CUT, file: CUT, error: '' }], 'the grouped reason keeps the file');
+    assert.deepEqual(flaky.identifyTests([cutOffRow(CUT, { named: false })]),
+      [{ name: UNIT_CHECK_NAME, file: UNIT_CHECK_PATH, error: '' }],
+      'with no name left, the suite\'s own check is what a request can be filed against');
+    const c = await change(70, null, app, [cutOffRow(CUT)]);
+    const out = await notChange(c);
+    assert.deepEqual(out, { carriedOn: true, acted: 'checks_flake_filed' });
+    assert.equal(filed.at(-1).title, `Flaky check: ${CUT}`);
+    assert.equal((await waitOf(c.id)).stage, 'fixing');
+  });
+
+  let cutOffFix;
+  await t.test('cut off at the runner\'s timeout with a fix already in: a new fix, never a person', async () => {
+    const CUT = 'tests/cut-off-recheck.test.js';
+    const c = await change(71, null, app, [cutOffRow(CUT)]);
+    const { rows: [old] } = await pool.query(
+      `INSERT INTO homeroom_bot_flake_fixes (test_key, test_name, app_id, issue_number, filed, state, ended_at)
+       VALUES ('cut-off-before', 'an earlier flake', $1, 6097, TRUE, 'merged', NOW()) RETURNING id`, [app.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_flake_waits (session_id, app_id, issue_number, stage, synced, flake_ids, tests, head_sha, rechecked_at)
+       VALUES ($1, $2, $3, 'rechecking', TRUE, $4::int[], $5::jsonb, $6, NOW())`,
+      [c.id, app.id, 71, [old.id], JSON.stringify([{ name: CUT, file: CUT }]), HEAD]);
+    const before = filed.length;
+    const out = await notChange(c);
+    assert.equal(out?.carriedOn, true, JSON.stringify(out));
+    assert.equal(filed.length, before + 1, 'the timeout gets a request of its own');
+    assert.equal(filed.at(-1).title, `Flaky check: ${CUT}`);
+    const wait = await waitOf(c.id);
+    assert.equal(wait.stage, 'fixing', 'back on the ladder, not handed to a person');
+    assert.notEqual(wait.stage, 'person');
+    cutOffFix = (await pool.query(
+      "SELECT * FROM homeroom_bot_flake_fixes WHERE test_name = $1 AND ended_at IS NULL", [CUT])).rows[0];
+    assert.ok(cutOffFix);
+    assert.deepEqual(wait.flake_ids, [cutOffFix.id]);
+  });
+
+  await t.test('a recheck still cut off at the runner\'s timeout files a new fix from the sweep too', async () => {
+    const CUT = 'tests/cut-off-sweep.test.js';
+    const c = await change(72, null, app, [cutOffRow(CUT)]);
+    const { rows: [old] } = await pool.query(
+      `INSERT INTO homeroom_bot_flake_fixes (test_key, test_name, app_id, issue_number, filed, state, ended_at)
+       VALUES ('cut-off-sweep-before', 'an earlier flake', $1, 6096, TRUE, 'merged', NOW()) RETURNING id`, [app.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_flake_waits (session_id, app_id, issue_number, stage, synced, flake_ids, tests, head_sha, started_at, rechecked_at)
+       VALUES ($1, $2, $3, 'rechecking', TRUE, $4::int[], $5::jsonb, $6, NOW(), NOW() - INTERVAL '1 second')`,
+      [c.id, app.id, 72, [old.id], JSON.stringify([{ name: CUT, file: CUT }]), HEAD]);
+    await pool.query('UPDATE chat_sessions SET checks_checked_at = NOW() WHERE id = $1', [c.id]);
+    const before = filed.length;
+    const out = await flaky.sweep(pool, {}, { deps });
+    assert.ok(out && out.reopened >= 1, JSON.stringify(out));
+    assert.equal(filed.length, before + 1, 'the sweep files a fix instead of handing over');
+    assert.equal(filed.at(-1).title, `Flaky check: ${CUT}`);
+    const wait = await waitOf(c.id);
+    assert.equal(wait.stage, 'fixing', 'still on the ladder');
+    assert.ok((await pool.query(
+      "SELECT 1 FROM homeroom_bot_flake_fixes WHERE test_name = $1 AND ended_at IS NULL", [CUT])).rows.length);
   });
 });

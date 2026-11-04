@@ -87,3 +87,25 @@ test('#6246: a waiting plan wins over a reply being read', () => {
   assert.equal(standing(row, 8, NOW, 99, null, { ...planFacts, planWaits: false, replyWaits: false }).what,
     'not_picked_up');
 });
+
+// #6313 (4 Nov 2026): a request queued for another read after Homeroom bot
+// could not write its plan says it is retrying the plan, not that it waits
+// for a free builder. The word is the same in the tab (shortWords) and in
+// the bot's answer (THREAD_SAYS, listsOf); once a read starts, the plain
+// reading line returns.
+test('#6313: a read queued after a plan that could not be written is retrying the plan', () => {
+  const queued = { stage: 'queued', retry: 'plan', since: '2026-11-03T16:58:00Z' };
+  assert.deepEqual(standing(row, 7, NOW, 99, queued, null), {
+    group: 'waiting', what: 'retrying_plan', at: '2026-11-03T16:58:00.000Z',
+  });
+  // A queued read after some other failure is the plain queue.
+  assert.equal(standing(row, 7, NOW, 99, { stage: 'queued', since: '2026-11-03T16:58:00Z' }, null).what, 'queued');
+  // A read under way is reading the request, whatever failed before.
+  assert.equal(standing(row, 7, NOW, 99, { stage: 'reading', retry: 'plan', since: '2026-11-03T16:59:00Z' }, null).what, 'reading');
+  // The bot's own answer names it, and orders it with the queue.
+  const lists = require('../src/services/ai-work').listsOf([], {
+    private: [], needs: [], live: [],
+    waiting: [{ ...standing(row, 7, NOW, 99, queued, null), app: { slug: 'homeroom' }, number: 6209, title: 'T', threadId: 5 }],
+  }, { botUsername: 'homeroom-bot' });
+  assert.match(lists.waiting[0].says, /trying the plan again/);
+});

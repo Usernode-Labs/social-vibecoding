@@ -76,7 +76,7 @@ test('the blank thread reads nothing and saves nothing in its first render, and 
 
 test('the thread is made on the first send, through a same-origin door, and the message goes into it', () => {
   const src = read(NEW_THREAD);
-  assert.match(src, /const made = await api\.startBotThread\(\{ project: project \|\| null, kind \}\);\n\s+await api\.sendMessage\(conversationId, \{ content, threadRootId: made\.rootId, idempotencyKey: key\(\) \}\);\n\s+closeNewThread\(\);\n\s+openThread\(made\.rootId\);/);
+  assert.match(src, /const made = await api\.startBotThread\(\{ project: project \|\| null, kind \}\);\n\s+await api\.sendMessage\(conversationId, \{ content, threadRootId: made\.rootId, attachmentIds: attachments\.map\(\(item\) => item\.id\), idempotencyKey: key\(\) \}\);\n\s+closeNewThread\(\);\n\s+openThread\(made\.rootId\);/);
   assert.match(read('frontend/src/features/messages/api.ts'), /request<unknown>\('\/api\/conversations\/homeroom-bot\/new-thread', \{ method: 'POST'/);
   assert.match(read('src/routes/conversations.js'), /router\.post\('\/api\/conversations\/homeroom-bot\/new-thread', conversationActionLimiter, sameOriginBrowserOnly,/);
 });
@@ -95,7 +95,32 @@ test('a started thread is headed by what it is for, never as a request, and take
   assert.match(css, /\.messages-layout-embedded\.messages-has-blank-thread > \.messages-reply-pane \{ flex: 1 1 auto; margin-inline-start: 0; \}/);
   // On a phone its composer keeps clear of the tab bar, as a thread's does.
   // The chat foot's bar, as a form (1 November 2026), which brings the class.
-  assert.match(read(NEW_THREAD), /<ChatComposerBar as="form" className="messages-composer messages-composer-thread"/);
+  assert.match(read(NEW_THREAD), /<ChatComposerBar as="form" className=\{`messages-composer messages-composer-thread\$\{drop\.dragging \? ' messages-composer-dragging' : ''\}`\}/);
+});
+
+test('files are dropped, pasted or picked in a blank thread, and ride its first message', () => {
+  // The way every other thread takes them (#6256), and the same shared rules
+  // (../attachments/limits) so the cap cannot drift between the two boxes.
+  const src = read(NEW_THREAD);
+  assert.match(src, /import \{ DropOverlay, useFileDrag \} from '\.\.\/attachments\/file-drag';/);
+  assert.match(src, /import \{ MAX_ATTACHMENTS, stageFiles \} from '\.\.\/attachments\/limits';/);
+  assert.match(src, /const drop = useFileDrag\(\{ onFiles: \(files\) => \{ void addFiles\(files\); \} \}\);/);
+  assert.match(src, /\.\.\.drop\.handlers/, 'a drop on the bar lands in attachFiles');
+  assert.match(src, /\{drop\.dragging \? <DropOverlay className="messages-drop-overlay" \/> : null\}/);
+  assert.match(src, /api\.uploadAttachment\(conversationId, file\)/, 'before the thread exists, the bot chat is where a file goes');
+  assert.match(src, /onPaste=\{\(e\) => \{ const files = \[\.\.\.e\.clipboardData\.files\]; if \(files\.length\) \{ e\.preventDefault\(\); void addFiles\(files\); \} \}\}/);
+  assert.match(src, /aria-haspopup="menu"/);
+  assert.match(src, /role="menuitem" disabled=\{attachments\.length \+ uploading >= MAX_ATTACHMENTS\}/, 'the row greys out at four, the "+" does not');
+  assert.equal(message('messages:composer.attachFiles'), 'Attach files');
+  assert.match(src, /setAddOpen\(false\); fileRef\.current\?\.click\(\)/);
+  for (const id of ['messages:composer.removeAttachment', 'messages:composer.uploading', 'messages:composer.addToMessage', 'messages:composer.attachFiles']) {
+    assert.ok(src.includes(`t('${id}'`), `${id} is the words the rest of Messages uses`);
+  }
+  assert.doesNotMatch(src, /messages:newThread\.(attach|drop|upload)/, 'no new catalog text');
+  // Send is enabled by files alone, and held while an upload runs.
+  assert.match(src, /disabled=\{busy \|\| uploading > 0 \|\| \(!words\.trim\(\) && !attachments\.length\)\}/);
+  assert.match(src, /if \(busy \|\| uploading \|\| \(!content && !attachments\.length\)\) return;/);
+  assert.match(src, /attachmentIds: attachments\.map\(\(item\) => item\.id\)/);
 });
 
 test('Design a screen says to describe it, and Homeroom bot draws it: no screen to pick', () => {

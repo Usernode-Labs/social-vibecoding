@@ -440,13 +440,63 @@ test('standalone server pages never fall back to the SPA shell', () => {
 // a logged-out recipient, turning a deliberately unauthenticated link
 // into an auth wall. They must bypass the worker entirely.
 test('report share links never fall back to the SPA shell', () => {
-  assert.deepEqual(NO_FALLBACK_PREFIXES, ['/reports/', '/embed/']);
+  assert.deepEqual(NO_FALLBACK_PREFIXES, [
+    '/reports/', '/embed/', '/__access/', '/invite/', '/mail/',
+  ]);
   assert.equal(
     classify('GET', `/reports/${'a'.repeat(32)}`, 'text/html', 'navigate'),
     'bypass'
   );
   // Malformed tokens 404 server-side; the worker still stays out of the way.
   assert.equal(classify('GET', '/reports/not-a-token', 'text/html', 'navigate'), 'bypass');
+});
+
+// #6310: signed out, a hub's "Try it" on a guest-ready project opens the
+// app's own address, whose gate answers /__access/authorize with a 302 to a
+// one-time guest pass. The cached shell answering that navigation stranded
+// the visitor on Homeroom's welcome screen, so the access routes must reach
+// the server. The invite link and the email links are the same shape: a
+// redirect or the server's own response, never a cached document.
+test('an app access redirect, an invite link and an email link never get the cached shell', () => {
+  const navigations = [
+    '/__access/authorize?host=the-best-color-f989c5.onhomeroom.com&next=%2F',
+    '/__access/authorize?host=notes&next=%2Fapp',
+    `/invite/${'b'.repeat(32)}`,
+    '/mail/c/abc123/0?s=sig',
+    '/mail/unsubscribe?u=7&t=abc',
+  ];
+  for (const path of navigations) {
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'bypass', path);
+  }
+  // Only navigations are named here; a subresource fetch under the same
+  // prefixes (an email's open-tracking pixel) stays out of the worker too.
+  assert.equal(classify('GET', '/mail/o/abc123.gif', 'image/gif'), 'bypass');
+  // The SPA's own addresses still fall back to the cached shell.
+  assert.equal(classify('GET', '/app/the-best-color-f989c5/dev/hub', 'text/html', 'navigate'), 'navigate');
+});
+
+test('the installed worker leaves an app access redirect to the browser (#6310)', () => {
+  const handlers = {};
+  const intercepted = [];
+  let fetches = 0;
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
+    fetch: () => { fetches++; return new Promise(() => {}); },
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  handlers.fetch({
+    request: {
+      method: 'GET',
+      url: `${ORIGIN}/__access/authorize?host=the-best-color-f989c5.onhomeroom.com&next=%2F`,
+      headers: new Headers({ accept: 'text/html' }), mode: 'navigate',
+    },
+    respondWith: (response) => intercepted.push(response),
+    waitUntil: () => {},
+  });
+  assert.equal(intercepted.length, 0, 'the browser follows the server\'s redirect, not a cached document');
+  assert.equal(fetches, 0);
 });
 
 // The same for a public project inside a post on X (/embed/<slug>,

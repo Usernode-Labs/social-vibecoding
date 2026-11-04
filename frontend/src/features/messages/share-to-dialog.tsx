@@ -38,6 +38,8 @@ import { useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
+
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useMessages } from '../../lib/i18n/react';
@@ -68,6 +70,9 @@ export interface ShareDestination {
   detail: string;
   conversation?: ConversationSummary;
   slug?: string;
+  /** A discussion's app icon (#6112): the inbox's own tile, never one grey "#" for every app. */
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
 }
 
 /** What an item is called alone, and with its number: message ids. */
@@ -155,6 +160,7 @@ export function shareDestinations(
     rows.push({
       key: `d:${discussion.slug}`, kind: 'discussion', slug: discussion.slug,
       label: discussion.name, detail: translate('messages:shareTo.detail.discussion', { channel: discussion.channel || discussion.slug }),
+      iconUrl: discussion.iconUrl || null, iconEmoji: discussion.iconEmoji || null,
     });
   }
   return rows;
@@ -185,6 +191,21 @@ function DestinationTile({ row }: { row: ShareDestination }) {
     return <UserAvatar user={peer} title={row.label.replace(/^@/, '')} size="sm" shape="square" />;
   }
   if (row.kind === 'group') return <UserAvatar title={row.label} size="sm" shape="square" />;
+  // #6112: a discussion is a project, so its tile is the project's own icon
+  // (the picture, the emoji, or its initial), the way the Messages inbox draws
+  // it. Every app wearing the same grey "#" made the list a wall of lookalikes.
+  if (row.kind === 'discussion') {
+    const record = { icon_url: row.iconUrl || null, icon_emoji: row.iconEmoji || null, name: row.label };
+    return (
+      <span
+        aria-hidden="true"
+        data-icon={appIconKind(record as never)}
+        className="app-icon-tile w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center shrink-0 text-xs font-bold"
+      >
+        <AppIconContent app={record as never} />
+      </span>
+    );
+  }
   return (
     <span aria-hidden="true" className="w-7 h-7 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 text-xs font-bold flex items-center justify-center shrink-0">#</span>
   );

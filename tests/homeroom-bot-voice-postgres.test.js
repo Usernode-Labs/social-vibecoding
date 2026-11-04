@@ -869,6 +869,71 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     const payload = await require('../src/services/homeroom-bot').adminPayload(pool, {}, {});
     assert.equal(payload.voice.turns, summary.turns);
   });
+
+  // #6268: a person's coding agent posts for them through the connector
+  // (`posted_via = 'agent'`). On a request it is their own message: an @
+  // mention is answered. A run of connector messages with no person's own
+  // message between them stops the bot, and the turn records why.
+  await t.test('#6268: a connector message is the person on a request; a run of them stops the bot', async () => {
+    sent.length = 0;
+    const place = { type: 'issue', ref: 13 };
+    const agentSay = async (content, metadata = {}) => (await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via)
+       VALUES ($1, $2, $3, 'message', $4, 'issue', 13, 'agent') RETURNING id, created_at`,
+      [app.id, evan.id, content, JSON.stringify(metadata)],
+    )).rows[0];
+    const skipAt = (content, over = {}) => voice.connectorSkip(pool, {
+      appId: app.id, appSlug: app.slug, thread: place, content, metadata: {},
+      settings: { mode: 'live', voiceSession: true, voiceIssue: true, voiceChat: true, pausedApps: [] }, botId: homeroomBot.id, ...over,
+    });
+
+    // An ordinary agent post is not skipped and says nothing.
+    const ordinary = await agentSay('Here is the first fix.');
+    assert.equal(await skipAt('Here is the second fix.'), null);
+
+    // Two connector messages in a row, then the third is the one that stops.
+    await agentSay('And the second fix.');
+    assert.deepEqual(await skipAt('@Homeroom bot, one more thing.'), { why: 'connector_run' });
+    // A person's own message between them resets the run.
+    await say(sam, 'Nice, thanks.', place);
+    assert.equal(await skipAt('@Homeroom bot, one more thing.'), null);
+
+    // Now a run with no person between: the store writes the reason on the
+    // row, so a reader is told and the turn records it.
+    await agentSay('Here it is again, in full.');
+    await agentSay('And with the second part.');
+    const third = await agentSay('@Homeroom bot, did you see those?');
+    const skip = await skipAt('@Homeroom bot, are you looking at this?');
+    assert.deepEqual(skip, { why: 'connector_run' });
+    await pool.query('UPDATE chat_messages SET metadata = $2 WHERE id = $1',
+      [third.id, JSON.stringify({ homeroomBotSkip: { why: skip.why } })]);
+
+    // A turn over them answers nobody, and says why it stayed quiet.
+    const quiet = await turn(place, scripted([{ text: 'should not be asked' }]), { through: ordinary.id });
+    assert.equal(quiet.outcome, 'quiet');
+    assert.equal(sent.length, 0);
+    const { rows: [record] } = await pool.query(
+      'SELECT outcome, error FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1',
+    );
+    assert.deepEqual(record, { outcome: 'quiet', error: 'connector_run' });
+    const summary = await voice.voiceSummary(pool);
+    assert.ok(summary.recentFailures.some((f) => f.place === 'issue' && f.ref === 13 && f.error === 'connector_run'),
+      'the admin summary lists the skipped connector message');
+
+    // And an @ mention from an agent is answered as the person's own. A
+    // person writes first, so what comes before is not a run of connectors.
+    await say(evan, 'Here is where we are.', place);
+    const asked = await agentSay('@Homeroom bot, please confirm the deployment step.');
+    const answered = await turn(place, scripted([{ tool: 'reply', args: { text: 'Got it: the deployment step stays as it is.' } }]),
+      { through: asked.id - 1, key: 'connector-answered' });
+    assert.equal(answered.outcome, 'replied');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].thread.ref, 13);
+    const { rows: [replied] } = await pool.query(
+      'SELECT outcome, error FROM homeroom_bot_voice_turns WHERE turn_key = $1', ['connector-answered'],
+    );
+    assert.deepEqual(replied, { outcome: 'replied', error: null });
+  });
 });
 
 // 3 Nov 2026 (#6213): one live set of suggested replies per thread. A newer

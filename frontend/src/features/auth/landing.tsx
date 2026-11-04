@@ -1769,7 +1769,7 @@ export function LandingScreen() {
             size="none"
             ink="solid"
             data-landing-sign-up=""
-            className={guestTop ? 'un-touch-target -my-2 min-h-11 px-3.5 text-[15px] font-semibold' : 'un-touch-target hidden md:inline-flex -my-2 min-h-11 px-3.5 text-[15px] font-semibold'}
+            className={guestTop ? 'un-touch-target items-center justify-center -my-2 min-h-11 px-3.5 text-[15px] font-semibold' : 'un-touch-target items-center justify-center hidden md:inline-flex -my-2 min-h-11 px-3.5 text-[15px] font-semibold'}
             onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
             {t('auth:guest.header.signUp')}

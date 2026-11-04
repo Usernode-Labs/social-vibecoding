@@ -92,10 +92,14 @@ test('a private thread is done, comes back, and finishes with its request', { ti
     assert.ok(changed.includes(evan.id), 'the bot page reads its lists again');
   });
 
-  await t.test('a done thread leaves the lists, and writing in it brings it back', async () => {
-    const listed = async () => (await pool.query(aiWork.PRIVATE_SQL || '', [evan.id, bot.id, 50]).catch(() => ({ rows: null }))).rows;
+  await t.test('a done thread stays findable for a week (#6271), and writing in it brings it back', async () => {
+    const listed = async () => (await pool.query(aiWork.PRIVATE_SQL || '', [evan.id, bot.id, 50, aiWork.LIVE_DAYS]).catch(() => ({ rows: null }))).rows;
     const rows = await listed();
-    if (rows) assert.ok(!rows.some((r) => Number(r.root_id) === ideaRoot), 'a done thread is not listed');
+    const done = rows && rows.find((r) => Number(r.root_id) === ideaRoot);
+    if (rows) {
+      assert.deepEqual([done && done.state, !!(done && done.done_at)], ['done', true],
+        'a done thread is still read, with the day it closed, so Live this week can show it');
+    }
     const reply = await say(evan, 'One more idea', ideaRoot);
     assert.equal(await privateThreads.reopenOnReply(pool, { userId: evan.id, message: { id: reply, thread_root_id: ideaRoot } }), true);
     assert.equal((await privateThreads.stateOf(pool, { user: evan, rootId: ideaRoot, deps })).state, 'open', 'back where it was');

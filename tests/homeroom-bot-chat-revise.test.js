@@ -451,9 +451,12 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
   });
 
   await t.test('a fix a gate refuses is said to her, and nothing is filed, posted or recorded', async () => {
-    for (let i = 0; i < 3; i += 1) {
+    // #6284: the cap that refuses an ask counts updates people asked for;
+    // the bot's own three fixes no longer stop one.
+    const { MAX_ASKED_REVISIONS } = require('../src/services/homeroom-bot-followup');
+    for (let i = 0; i < MAX_ASKED_REVISIONS; i += 1) {
       await pool.query(
-        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, 1, 'live', 'revise', $2)`,
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, asked) VALUES ($1, 1, 'live', 'revise', $2, TRUE)`,
         [app.id, first.id],
       );
     }

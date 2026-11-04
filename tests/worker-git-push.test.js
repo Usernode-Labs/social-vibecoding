@@ -76,7 +76,14 @@ test('a worker cannot rewind an advanced canonical branch', async (t) => {
   const f = fixture(t); commit(f.ws, 'first'); await publish(f);
   commit(f.ws, 'newer'); await publish(f);
   git(f.ws, 'reset', '--hard', 'HEAD^');
-  await assert.rejects(publish(f));
+  // #6267 (run 4536): a non-fast-forward rejection cannot be fixed by
+  // retrying, and every later turn must not re-push the same stale commit.
+  await assert.rejects(publish(f), (e) => {
+    assert.equal(e.code, 'non_fast_forward');
+    assert.equal(e.permanent, true);
+    assert.match(e.userMessage, /newer work/);
+    return true;
+  });
 });
 
 test('malformed export records are rejected before Git import', () => {
