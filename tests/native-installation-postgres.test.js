@@ -372,7 +372,10 @@ test('Social negotiates walletless issuance and exact replay with the existing p
       CREATE TABLE sessions (
         token TEXT PRIMARY KEY, user_id BIGINT NOT NULL,
         native_session_incarnation_id VARCHAR(47), expires_at TIMESTAMPTZ NOT NULL,
-        native_session_credential_reference VARCHAR(47)
+        native_session_credential_reference VARCHAR(47),
+        -- #5974: what Settings › Linked devices names a browser row by, and when it was last used
+        user_agent_class TEXT,
+        last_seen_at TIMESTAMPTZ
       );
       CREATE TABLE seasons (
         id BIGINT PRIMARY KEY, internal BOOLEAN, is_active BOOLEAN,
