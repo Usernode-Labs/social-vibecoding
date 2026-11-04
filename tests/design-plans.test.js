@@ -19,8 +19,8 @@ const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 test('the design bot offers a plan and a project as cards, its tools last, and never posts itself', () => {
   const designBot = require('../src/services/design-bot');
   const names = designBot.TOOLS.map((t) => t.function.name);
-  assert.deepEqual(names.slice(-2), ['offer_plan', 'offer_project'], 'a separate block at the end');
-  for (const tool of designBot.TOOLS.slice(-2)) {
+  assert.deepEqual(names.slice(-4, -2), ['offer_plan', 'offer_project'], 'a separate block, before #6260\'s board readers');
+  for (const tool of designBot.TOOLS.slice(-4, -2)) {
     assert.equal(tool.function.parameters.additionalProperties, false);
     assert.doesNotMatch(tool.function.description, /—/);
   }
