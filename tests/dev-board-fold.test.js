@@ -1721,7 +1721,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // leaves 128 slots.
   // 752 → 753: +1 (#6029) the Basic/Advanced switch on Experimental,
   // a settings route with no existing declared check to extend.
-  checkCap.assertPinned(DAPP.tests.length, 753);
+  // 753 → 751: −2 (#6276) the old Needs-you reel's four declared checks
+  // become the review flow's two: a project's Needs you draws it, and its
+  // change page is drawn in place in the pane. 751 leaves 129 slots.
+  checkCap.assertPinned(DAPP.tests.length, 751);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1808,14 +1811,15 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');
-  // Two dialogs since the reel redesign: the vote, and the one sheet whose
-  // two tabs are Comments and Ask.
-  for (const kind of ['vote', 'talk']) {
-    assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
-      `the ${kind} dialog carries the deck’s base class`);
-  }
+  // The reel's vote and talk dialogs left with the reel (#6276): the review
+  // flow that replaced it draws its own sheet (`rf-*`), so no Workshop
+  // component wears the deck's full-screen class any more. The geometry
+  // rule stays keyed on that name, so only a sheet that means it can pick
+  // it up.
+  assert.ok(!/className="dev-ws-sheet-modal/.test(WORKSHOP),
+    'no Workshop component carries the deck’s full-screen class');
   assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
-    'and neither carries the fold’s');
+    'and nothing carries the fold’s name as a dialog');
   // The open card keeps the bare name, because two declared checks select it
   // that way — which is also why the deck is the side that moved.
   assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
