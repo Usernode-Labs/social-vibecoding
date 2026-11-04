@@ -7645,7 +7645,12 @@ const AppView = {
     const maj = Math.max(1, Number(pill.majority) || 1);
     const roster = AppView._voteRoster[item.id];
     const ready = roster && roster.phase === 'ready' ? roster : null;
+    // #6282 (4 Nov 2026): an update is on its way to this change. A yes cast
+    // now is cleared when it lands, so the card says so and offers no Vote
+    // until then; the tally and who can vote stay as they are.
+    const updateComing = item.status === 'promoted' && !!item.update_coming;
     const note = [];
+    if (updateComing) note.push(PlatformI18n.t('changes:page.votes.note.updateComing'));
     if (item.status === 'merged' || item.status === 'merging') {
       const said = ready && ready.yesNames && ready.yesNames.length
         ? AppView._saidYesLine(ready.yesNames) : null;
@@ -7679,7 +7684,7 @@ const AppView = {
     if (item.first_version === true && item.status === 'promoted') return AppView._firstVersionVotesView(item);
     const waitsOnMember = AppView._awaitingOtherMember(item);
     const reached = yes >= maj && !waitsOnMember;
-    const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted';
+    const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted' && !updateComing;
     let figure;
     let tone;
     if (pill.key === 'reject_countdown') { figure = pill.label; tone = 'bad'; }
@@ -7689,8 +7694,9 @@ const AppView = {
       figure = canVote && item.approval_policy !== 'invited' ? PlatformI18n.t('changes:page.votes.figure.needsYours') : PlatformI18n.t('changes:page.votes.figure.needsAnother');
       tone = canVote ? 'ask' : 'warn';
     } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { yes, needed: maj }); tone = 'done'; }
-    else if (pill.key === 'needs_vote' && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
+    else if (pill.key === 'needs_vote' && !updateComing && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
     else { figure = PlatformI18n.t('changes:page.votes.figure.needsMore', { count: maj - yes }); tone = canVote ? 'ask' : 'muted'; }
+    if (updateComing) tone = 'muted';
     if (reached && ready && ready.yesNames && ready.yesNames.length) {
       note.push(AppView._saidYesLine(ready.yesNames));
     } else if (!reached) {
@@ -7729,6 +7735,9 @@ const AppView = {
       segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
       label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
       note,
+      // #6282: no Vote button while the update is on its way (change-head.tsx
+      // gateActions), so the card never asks for a yes that would be cleared.
+      ...(updateComing ? { hold: true } : {}),
     };
   },
 

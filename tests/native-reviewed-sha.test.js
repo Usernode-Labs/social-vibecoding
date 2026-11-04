@@ -704,3 +704,112 @@ test('a person\'s push, or a fix message somebody else committed, is said and tr
     assert.equal(claimOf(pool).fixOnly, false, 'a follow-up changes what it does');
   } finally { restore(); r.cleanup(); }
 });
+
+// #6287: a catch-up with main changes nothing the change does, so it keeps
+// the description exactly as a fix round does. PR 6277's history was a build,
+// a merge of main with no commit of its own, then a fix round; the merge
+// marked the description "Written for an earlier version of this change."
+test('a catch-up with main leaves the description as it stands', async () => {
+  for (const kind of ['mechanical', 'resolved']) {
+    let r;
+    if (kind === 'mechanical') {
+      r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+    } else {
+      r = repo().moveMain('a.txt', 'MAIN\nl2\nl3\n');
+      assert.equal(r.syncIntoFeature().conflicted, true, 'precondition: the merge really does conflict');
+      fs.writeFileSync(path.join(r.dir, 'a.txt'), 'PROPOSAL AND MAIN\nl2\nl3\n');
+      git(r.dir, 'add', '-A'); git(r.dir, 'commit', '-qm', 'resolved');
+      git(r.dir, 'checkout', '-q', 'main');
+    }
+    const { votes, restore } = load(r);
+    const summary = 'The description as written.';
+    const pool = makePool({ epoch: 0, summary });
+    try {
+      const out = await votes.reconcileNativeReviewedHead({
+        config: {}, pool, session: session(r, { pr_summary_md: summary }), notify: false,
+      });
+      assert.equal(out.kind, kind);
+      assert.equal(claimOf(pool).fixOnly, true, `${kind}: a move that adds no commit of the change's own keeps the description`);
+      assert.equal(pool.row.pr_summary_stale, false, `${kind}: the description stays fresh`);
+    } finally { restore(); r.cleanup(); }
+  }
+});
+
+test('PR 6277\'s shape: catch-up then fix round keeps a fresh description fresh', async () => {
+  const { FIX_COMMIT_MESSAGES } = require('../src/services/homeroom-commits');
+  const r = repo().moveMain('a.txt', 'MAIN\nl2\nl3\n');
+  assert.equal(r.syncIntoFeature().conflicted, true, 'precondition: the merge really does conflict');
+  fs.writeFileSync(path.join(r.dir, 'a.txt'), 'PROPOSAL AND MAIN\nl2\nl3\n');
+  git(r.dir, 'add', '-A'); git(r.dir, 'commit', '-qm', 'resolved');
+  git(r.dir, 'checkout', '-q', 'main');
+  const { votes, restore } = load(r);
+  const summary = 'The description as written.';
+  const pool = makePool({ epoch: 0, summary });
+  const revised = session(r, { pr_summary_md: summary });
+  try {
+    const first = await votes.reconcileNativeReviewedHead({ config: {}, pool, session: revised, notify: false });
+    assert.equal(first.kind, 'resolved', 'the catch-up itself');
+    assert.equal(claimOf(pool).fixOnly, true);
+
+    // Then the fix round lands on top of the catch-up.
+    commitOnFeature(r, 'a.txt', 'PROPOSAL AND MAIN\nl2\nFIXED\n', FIX_COMMIT_MESSAGES.checks(6271));
+
+    const second = await votes.reconcileNativeReviewedHead({ config: {}, pool, session: revised, notify: false });
+    assert.equal(second.updated, true, 'the fix round moved the head');
+    assert.equal(pool.moves[1].fixOnly, true, 'a recognised fix round still keeps the description');
+    assert.equal(pool.row.pr_summary_stale, false, 'fresh stays fresh through both moves');
+  } finally { restore(); r.cleanup(); }
+});
+
+test('a catch-up that adds its own commit, or a move that clears votes, still stales', async () => {
+  const mirror = require('../src/services/repo-mirror');
+  const realCommitsBetween = mirror.commitsBetween;
+  try {
+    // A mechanical move whose commits include a person's own commit is not a
+    // catch-up: something the change does changed.
+    const synced = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+    let loaded = load(synced);
+    try {
+      mirror.commitsBetween = async () => [{ committer: 'ada@example.com', subject: 'Tweak the poll colours' }];
+      const pool = makePool({ epoch: 0, summary: 'The description as written.' });
+      await loaded.votes.reconcileNativeReviewedHead({
+        config: {}, pool, session: session(synced, { pr_summary_md: 'The description as written.' }), notify: false,
+      });
+      assert.equal(pool.moves[0].reason, 'mechanical');
+      assert.equal(claimOf(pool).fixOnly, false, 'a person\'s commit is not a catch-up');
+      assert.equal(pool.row.pr_summary_stale, true);
+    } finally { loaded.restore(); synced.cleanup(); }
+
+    // An authored move with no commits of its own still clears the votes, so
+    // the description stales: it is not a catch-up.
+    const pushed = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+    loaded = load(pushed);
+    try {
+      mirror.commitsBetween = async () => [];
+      const pool = makePool({ epoch: 0, summary: 'The description as written.' });
+      await loaded.votes.reconcileNativeReviewedHead({
+        config: {}, pool, session: session(pushed, { pr_summary_md: 'The description as written.' }), notify: false,
+      });
+      assert.equal(pool.moves[0].reason, 'authored');
+      assert.equal(claimOf(pool).fixOnly, false, 'a move that is not a catch-up still stales');
+      assert.equal(pool.row.pr_summary_stale, true);
+    } finally { loaded.restore(); pushed.cleanup(); }
+
+    // An unreadable list is not evidence of a catch-up.
+    const again = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+    loaded = load(again);
+    try {
+      mirror.commitsBetween = async () => null;
+      const pool = makePool({ epoch: 0, summary: 'The description as written.' });
+      await loaded.votes.reconcileNativeReviewedHead({
+        config: {}, pool, session: session(again, { pr_summary_md: 'The description as written.' }), notify: false,
+      });
+      assert.equal(pool.moves[0].reason, 'mechanical');
+      assert.equal(claimOf(pool).fixOnly, false, 'null says neither, so not a catch-up');
+      assert.equal(pool.row.pr_summary_stale, true);
+    } finally { loaded.restore(); again.cleanup(); }
+  } finally {
+    mirror.commitsBetween = realCommitsBetween;
+  }
+});
+

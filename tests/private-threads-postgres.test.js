@@ -197,17 +197,18 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     const listed = rows.find((r) => Number(r.root_id) === made.rootId);
     assert.equal(listed.kind, 'ask');
     assert.equal(listed.first_own, 'The swap button does nothing on my phone');
-    // Posted, a draft is a public thread now, listed there; one holding a
-    // design stays private and is still worked on, so it stays listed here.
+    // #6250 (4 Nov 2026): a posted, filed or put-away draft stays listed; only
+    // a done thread leaves the lists, until it is reopened.
     const listedNow = async () => (await pool.query(aiWork.PRIVATE_SQL, [ada.id, bot.id, aiWork.PRIVATE_MAX, aiWork.LIVE_DAYS])).rows
       .some((r) => Number(r.root_id) === made.rootId);
     await pool.query(`UPDATE private_threads SET state = 'posted', result_ref = 41 WHERE root_message_id = $1`, [made.rootId]);
-    assert.equal(await listedNow(), false, 'a posted draft');
-    await pool.query(
-      `INSERT INTO design_threads (private_thread_id, title, surface, width, height)
-       SELECT id, 'Swap button', 'app', 390, 844 FROM private_threads WHERE root_message_id = $1`, [made.rootId]);
-    assert.equal(await listedNow(), true, 'a posted design');
-    await pool.query('DELETE FROM design_threads WHERE private_thread_id = (SELECT id FROM private_threads WHERE root_message_id = $1)', [made.rootId]);
+    assert.equal(await listedNow(), true, 'a posted draft stays listed');
+    await pool.query(`UPDATE private_threads SET state = 'filed', result_ref = 41 WHERE root_message_id = $1`, [made.rootId]);
+    assert.equal(await listedNow(), true, 'a filed draft stays listed');
+    await pool.query(`UPDATE private_threads SET state = 'dropped', result_ref = NULL WHERE root_message_id = $1`, [made.rootId]);
+    assert.equal(await listedNow(), true, 'a put-away draft stays listed');
+    await pool.query(`UPDATE private_threads SET state = 'done' WHERE root_message_id = $1`, [made.rootId]);
+    assert.equal(await listedNow(), false, 'a done thread leaves');
     await pool.query(`UPDATE private_threads SET state = 'open', result_ref = NULL WHERE root_message_id = $1`, [made.rootId]);
 
     // Any project, any kind; a project she cannot see is no project; nobody synthetic starts one.

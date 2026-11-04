@@ -112,6 +112,12 @@ test('the staging preview\'s private threads with Homeroom bot, with their new c
   const { rows: [viewer] } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access) VALUES ('parity-viewer', 'x', TRUE) RETURNING id, username`,
   );
+  // #6250: the filed thread names this demo project, which the preview's
+  // boot seed creates.
+  await pool.query(
+    `INSERT INTO apps (slug, name, repo_url) VALUES ('staging-demo-app', 'Staging demo app', 'https://github.com/staging/demo')
+     ON CONFLICT DO NOTHING`,
+  );
 
   const conversationId = await staging.ensureBotDmFixture(pool, viewer);
   assert.ok(conversationId, 'the demo DM is there');
@@ -121,16 +127,24 @@ test('the staging preview\'s private threads with Homeroom bot, with their new c
   assert.equal(after.rows[0].n, before.rows[0].n, 'a second opening sends nothing');
 
   const { rows: threads } = await pool.query(
-    `SELECT p.root_message_id, p.kind, p.state, m.metadata->'homeroomBot'->>'kind' AS root_kind,
+    `SELECT p.root_message_id, p.kind, p.state, p.app_id, p.result_ref,
+            m.metadata->'homeroomBot'->>'kind' AS root_kind,
             (SELECT f.content FROM conversation_messages f
               WHERE f.thread_root_id = p.root_message_id AND f.sender_id = $1 ORDER BY f.id LIMIT 1) AS first_own
        FROM private_threads p JOIN conversation_messages m ON m.id = p.root_message_id
       WHERE p.user_id = $1 ORDER BY p.root_message_id`,
     [viewer.id],
   );
-  assert.equal(threads.length, 3, 'three private threads');
+  // #6250: the fourth is filed as a request, so the list keeps its row and
+  // says where it went; the other three are open.
+  assert.equal(threads.length, 4, 'four private threads');
+  const filed = threads.find((th) => th.state === 'filed');
+  assert.ok(filed, 'one of them is filed');
+  assert.deepEqual([filed.result_ref, filed.app_id != null], [404, true], 'and names the demo project and a request');
   for (const thread of threads) {
-    assert.deepEqual([thread.kind, thread.state, thread.root_kind], ['ask', 'open', 'opened_thread']);
+    assert.equal(thread.kind, 'ask');
+    assert.equal(thread.root_kind, 'opened_thread');
+    if (thread !== filed) assert.equal(thread.state, 'open');
     assert.match(thread.first_own, /^Staging demo: /, 'named by the viewer\'s own first words, obviously fake');
   }
 

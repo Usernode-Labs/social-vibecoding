@@ -215,6 +215,14 @@
     "text": "All",
     "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
   },
+  "sheet.needsYou": {
+    "text": "Needs you",
+    "description": "Small label over the project groups on the notifications sheet's Unread tab that hold something waiting on the reader (an approval, a decision, a friend request), shown only when other groups follow under \"Everything else\"."
+  },
+  "sheet.everythingElse": {
+    "text": "Everything else",
+    "description": "Small label over the remaining project groups on the notifications sheet's Unread tab, under the \"Needs you\" groups: the rows that only tell the reader what happened."
+  },
   "sheet.today": {
     "text": "Today",
     "description": "Heading over the notifications that arrived today, in the notifications sheet."

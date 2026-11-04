@@ -197,6 +197,15 @@ test('Share to… lists where the sharer can write, and posts a discussion share
     ['c:3', 'channel', '#general', 'Everyone on Homeroom'],
     ['d:recipes', 'discussion', 'Recipes', '#recipes · Discussion'],
   ], 'no invitation, no request waiting on acceptance, nothing archived, and Homeroom’s own room is #general');
+  // #6112: a discussion row carries its project's icon for the picker's
+  // tile, so every app is not the same grey "#".
+  const iconed = dialog.shareDestinations([], [
+    { slug: 'recipes', name: 'Recipes', channel: 'recipes', iconUrl: '/app-icons/abc', iconEmoji: null },
+    { slug: 'notes', name: 'Notes', channel: 'notes', iconUrl: null, iconEmoji: '📝' },
+    { slug: 'plain', name: 'Plain', channel: 'plain' },
+  ], { me: 3, platform: 'homeroom' });
+  assert.deepEqual(iconed.map((row) => [row.key, row.iconUrl, row.iconEmoji]),
+    [['d:recipes', '/app-icons/abc', null], ['d:notes', null, '📝'], ['d:plain', null, null]]);
 
   // The link a discussion share posts is one the discussion draws as the
   // same card.
@@ -222,6 +231,10 @@ test('Share to… lists where the sharer can write, and posts a discussion share
 
 test('Share to… is wired: the dialog, its sends, and the card menus that open it', () => {
   const source = read('frontend/src/features/messages/share-to-dialog.tsx');
+  // #6112: the picker draws a discussion's tile with the app's own icon (the
+  // inbox's AppIconContent, its kind on data-icon), never a fixed "#" for it.
+  assert.match(source, /if \(row\.kind === 'discussion'\) \{[\s\S]*?data-icon=\{appIconKind\(record as never\)\}[\s\S]*?<AppIconContent app=\{record as never\} \/>/);
+  assert.match(source, /import \{ AppIconContent, appIconKind \} from '\.\.\/apps\/app-card-view';/);
   assert.match(source, /useDialog<ShareToPayload>\('shareTo'/);
   assert.match(source, /<DialogRoot id="share-to-dialog" layout="scroll"/);
   assert.match(source, /await shareToConversation\(choice\.conversation\.id, reference, note\)/,

@@ -261,3 +261,67 @@ test('a later change that stopped keeps its words', async () => {
   assert.equal(dm.updateFailedWords(FIRST_CAUSES[0][0], 'the first version'),
     'I couldn\'t update the first version: something went wrong while I was working on it.');
 });
+
+// #6267 (run 4530, 4 Nov 2026): the build finished and GitHub refused the
+// upload. The bot knew it was the push, and whether retrying could help, but
+// said "something went wrong during the build". A temporary refusal is being
+// retried by the platform, so nobody is asked to reply; the other two say how
+// a reply helps. The same words in the DM, on the request, in the bell and in
+// the push.
+const PUSH_TEMPORARY = 'waiting to push: couldn\'t push the build\'s commit (push_failed, temporary)';
+const PUSH_PERMANENT = 'couldn\'t push the build\'s commit (non_fast_forward, permanent)';
+const PUSH_GAVE_UP = 'couldn\'t push the build\'s commit (push_failed, gave up after 6 hours)';
+const PUSH_SAID = {
+  me: {
+    [PUSH_TEMPORARY]: 'I built this, but GitHub refused the upload (GitHub is having problems right now). I\'ll try again in a few minutes.',
+    [PUSH_PERMANENT]: 'I built this, but GitHub wouldn\'t take the upload, and sending it again won\'t help.',
+    [PUSH_GAVE_UP]: 'I built this, but GitHub kept refusing the upload, so I\'ve stopped trying for now.',
+  },
+  bot: {
+    [PUSH_TEMPORARY]: 'Homeroom bot built this, but GitHub refused the upload (GitHub is having problems right now). It will try again in a few minutes.',
+    [PUSH_PERMANENT]: 'Homeroom bot built this, but GitHub wouldn\'t take the upload, and sending it again won\'t help.',
+    [PUSH_GAVE_UP]: 'Homeroom bot built this, but GitHub kept refusing the upload, so it has stopped trying for now.',
+  },
+};
+
+test('a refused upload is said as that, in both voices, with the retry or a reply', async () => {
+  const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
+  for (const reason of [PUSH_TEMPORARY, PUSH_PERMANENT, PUSH_GAVE_UP]) {
+    assert.equal(dm.buildFailedWords(reason), PUSH_SAID.me[reason], `DM: ${reason}`);
+    assert.equal(dm.buildFailedWords(reason, 'this', 'bot'), PUSH_SAID.bot[reason], `post: ${reason}`);
+    for (const text of [dm.buildFailedWords(reason), live.buildFailedText(reason)]) {
+      assert.doesNotMatch(text, /something went wrong|pick it up/, reason);
+      assert.doesNotMatch(text, DASH);
+    }
+  }
+  // A temporary refusal is being retried, so there is nothing to reply to.
+  assert.equal(live.buildFailedText(PUSH_TEMPORARY), PUSH_SAID.bot[PUSH_TEMPORARY]);
+  assert.doesNotMatch(live.buildFailedText(PUSH_TEMPORARY), /Reply here/);
+  assert.equal(dm.dmText('build_failed', { reason: PUSH_TEMPORARY },
+    { appName: 'Book Club', issueNumber: 4, issueTitle: 'Dark mode', firstVersion: false, threaded: true }),
+  PUSH_SAID.me[PUSH_TEMPORARY]);
+  assert.doesNotMatch(dm.dmText('build_failed', { reason: PUSH_TEMPORARY },
+    { appName: 'Book Club', issueNumber: 4, issueTitle: 'Dark mode', firstVersion: false, threaded: true }), /Reply here/);
+  // The two that a reply can help say so.
+  assert.match(live.buildFailedText(PUSH_PERMANENT), /Reply here \(or on the GitHub issue\) and it will try again\.$/);
+  assert.match(live.buildFailedText(PUSH_GAVE_UP), /Reply here \(or on the GitHub issue\) and it will send it again\.$/);
+  assert.match(dm.dmText('build_failed', { reason: PUSH_GAVE_UP },
+    { appName: 'Book Club', issueNumber: 4, issueTitle: 'Dark mode', firstVersion: false, threaded: true }),
+  /Reply here and I'll send it again\.$/);
+
+  // The push and the bell row, from the DM message's own reason.
+  const pool = { async query() { return { rows: [] }; } };
+  const expected = {
+    [PUSH_TEMPORARY]: ['build_push', 'Built, but GitHub refused the upload. I\'ll try again soon.'],
+    [PUSH_PERMANENT]: ['build_push_permanent', 'Built, but GitHub wouldn\'t take the upload. Reply to try again.'],
+    [PUSH_GAVE_UP]: ['build_push_gave_up', 'Built, but GitHub kept refusing the upload. Reply to send it.'],
+  };
+  for (const [reason, [said, body]] of Object.entries(expected)) {
+    const detail = await dm.notificationDetail(pool, 'stopped',
+      { kind: 'build_failed', appName: 'Book Club', requestTitle: 'Dark mode', reason, cause: dm.buildFailedCause(reason).cause });
+    assert.equal(notifyCopy.parseBotDetail(detail).said, said, reason);
+    assert.equal(notifyCopy.botMomentCopy(detail).body, body, reason);
+    const metadata = { moment: 'stopped', kind: 'build_failed', appName: 'Book Club', requestTitle: 'Dark mode', cause: dm.buildFailedCause(reason).cause };
+    assert.equal(notifyCopy.parseBotDetail(notifyCopy.botNotificationDetail(metadata)).said, said, reason);
+  }
+});
