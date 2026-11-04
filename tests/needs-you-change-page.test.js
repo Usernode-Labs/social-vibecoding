@@ -610,6 +610,39 @@ test('a unit suite that stopped before any test ran says what it reported', () =
   assert.ok(text.includes(`<p class="dev-ledger-explain-text">${said}</p>`));
 });
 
+// #6234: a change Homeroom bot built, whose checks it is fixing itself: the
+// card says so where "Its author needs to fix this" was, reads "Fixing",
+// carries the state, and its re-run is there but disabled.
+test('#6234: the card of a change the bot is fixing says so, and its re-run is disabled', () => {
+  const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const botChange = (bot_fix) => ({ ...FAILED, user_id: 77, username: 'homeroom_bot', agent_session_id: null, bot_fix });
+  // An admin, who could press Re-run checks.
+  const admin = context({ id: 42, username: 'ada', canAdminWrite: true });
+  const card = plain(admin._changeTestingView(botChange({ state: 'fixing', since, reason: null })));
+  assert.deepEqual([card.figure, card.tone, card.botFix], ['Fixing', 'muted', 'fixing']);
+  const page = unescape(render(admin, botChange({ state: 'fixing', since, reason: null })).page);
+  const testing = page.slice(page.indexOf('data-change-gate="testing"'));
+  assert.match(testing, /^data-change-gate="testing" data-done="false" data-tone="muted" data-change-bot-fix="fixing"/);
+  assert.match(testing, /<span class="dev-change-gate-figure">Fixing<\/span>/);
+  assert.match(testing, /<button class="gc-vote-btn gc-vote-btn-accent" disabled="" title="Homeroom bot is fixing this\. Re-running now would restart its fix\.">Re-run checks<\/button>/);
+  assert.match(testing, /<p class="dev-change-gate-note">Homeroom bot is fixing this, started 10 min ago\. Re-running the checks now would restart its fix\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.doesNotMatch(testing, /Its author needs to fix this/);
+  // Given up: who takes it from here, on the red card, with a live re-run.
+  const handed = unescape(render(admin, botChange({ state: 'handed_off', since: null, reason: null })).page);
+  const handedCard = handed.slice(handed.indexOf('data-change-gate="testing"'));
+  assert.match(handedCard, /^data-change-gate="testing" data-done="false" data-tone="bad" data-change-bot-fix="handed_off"/);
+  assert.match(handedCard, /<p class="dev-change-gate-note">Homeroom bot couldn’t fix this on its own\. The person who asked for it, or any member of this project, can take it from here\. <button/);
+  assert.match(handedCard, /<button class="gc-vote-btn gc-vote-btn-accent" title="[^"]*" data-act="castRecheck">Re-run checks<\/button>/);
+  // A member, who could not: the same line without the re-run's sentence, and no button.
+  const member = unescape(render(context(), botChange({ state: 'fixing', since, reason: null })).page);
+  const memberCard = member.slice(member.indexOf('data-change-gate="testing"'));
+  assert.match(memberCard, /<p class="dev-change-gate-note">Homeroom bot is fixing this, started 10 min ago\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.doesNotMatch(memberCard, /Re-run checks/);
+  // A person's failed change, and the bot's with nothing recorded: as before.
+  assert.doesNotMatch(unescape(render(admin, FAILED).page), /data-change-bot-fix/);
+  assert.doesNotMatch(unescape(render(admin, botChange(null)).page), /data-change-bot-fix/);
+});
+
 test('a failed run, read by anybody else: the same words, who has to fix it, and no buttons', () => {
   const av = context();
   const card = plain(av._changeTestingView(FAILED));
