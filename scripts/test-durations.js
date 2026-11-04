@@ -12,16 +12,22 @@
 // old still balances well. Run it where the suite runs, for numbers that
 // mean the same thing: the worker image with 8 CPUs (one shard's Job), with
 // PostgreSQL up on 127.0.0.1:5432, or the *-postgres suites skip and look
-// free. It runs the whole suite once, as one `node --test` with the `test`
-// script's flags, and records for each file its wall time and the CPU of
-// its process and every process it started (tests/lib/test-timing.js).
+// free. A run on another machine (fewer than 8 CPUs, or no PostgreSQL) writes
+// nothing and says why; --force "<reason>" overrides the refusal and records
+// the reason in the baseline's measured line. `--add` is exempt: it writes no
+// measurements, so it works anywhere. It runs the whole suite once, as one
+// `node --test` with the `test` script's flags, and records for each file its
+// wall time and the CPU of its process and every process it started
+// (tests/lib/test-timing.js).
 //
 //   node scripts/test-durations.js            run the suite, then write the baseline
 //   node scripts/test-durations.js --from F   write it from an earlier run's records
 //   node scripts/test-durations.js --add a,b  add entries for new test files, at the default
 //   node scripts/test-durations.js --add      add an entry for every test file missing one
+//   node scripts/test-durations.js --force "why"   write even on the wrong machine
 
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -29,6 +35,56 @@ const { testCommand } = require('./test-changed');
 const shardPlan = require('./test-shard-plan');
 
 const ROOT = path.join(__dirname, '..');
+// The machine the numbers must describe: the worker image one shard's Job
+// runs, with the tests' PostgreSQL up. Measured anywhere else they are not
+// comparable, and the shard plan balances on them (a 2-CPU measurement once
+// put defaultSeconds at 1.3 s against 0.4 s, and a 33 s file at 131 s).
+const REQUIRED_CPUS = 8;
+
+/** `{ host, port }` of the tests' PostgreSQL, from the test DSN, else the local default. */
+function databaseTarget(env = process.env) {
+  const raw = env.TEST_DATABASE_URL || env.DATABASE_URL || '';
+  try {
+    const url = new URL(raw);
+    if (url.hostname) return { host: url.hostname, port: Number(url.port) || 5432 };
+  } catch { /* not a connection URL: the local default below */ }
+  return { host: '127.0.0.1', port: 5432 };
+}
+
+/** Whether something accepts a TCP connection at `{ host, port }` within `timeoutMs`. */
+function postgresReachable({ host, port }, timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    const done = (ok) => { socket.destroy(); resolve(ok); };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
+}
+
+/**
+ * Why this machine's numbers would not mean what the worker image's do, or
+ * null when they would. `cpus` and `postgres` are probes so a test can answer
+ * for a machine it does not run on; the database target comes from the test DSN.
+ */
+async function measurementMachineProblem({ cpus = os.availableParallelism(), postgres = postgresReachable, target = databaseTarget() } = {}) {
+  const problems = [];
+  if (!(cpus >= REQUIRED_CPUS)) problems.push(`only ${cpus} of the ${REQUIRED_CPUS} CPUs the worker image has are available`);
+  if (!(await postgres(target))) problems.push(`PostgreSQL is not reachable at ${target.host}:${target.port}`);
+  if (!problems.length) return null;
+  return `refusing to write the durations baseline: ${problems.join(', and ')}. `
+    + `It is measured where the suite runs, the worker image with ${REQUIRED_CPUS} CPUs (one shard's Job) and PostgreSQL up. `
+    + 'Nothing was written. Run it there, or pass --force "<why these numbers still describe that machine>" to write it anyway.';
+}
+
+/** `--force <reason>` out of the arguments: `{ argv, reason }`. */
+function parseForce(argv) {
+  const at = argv.indexOf('--force');
+  if (at === -1) return { argv, reason: null };
+  const reason = String(argv[at + 1] || '').trim();
+  if (!reason) throw new Error('--force needs a reason: --force "why these numbers still describe the worker image"');
+  return { argv: argv.filter((_, i) => i !== at && i !== at + 1), reason };
+}
 
 /** `{ file: [seconds, cores] }` from the preload's records (each process's last line wins). */
 function summarise(text) {
@@ -131,13 +187,24 @@ function addToBaseline(names) {
   return 0;
 }
 
-function main(argv = process.argv.slice(2)) {
+async function main(argv = process.argv.slice(2), probes = {}) {
   let records;
-  if (argv[0] === '--add') {
-    return addToBaseline(argv.slice(1).flatMap((arg) => arg.split(',')).map((s) => s.trim()).filter(Boolean));
+  const forced = parseForce(argv);
+  if (forced.argv[0] === '--add') {
+    // No measurement is written, so any machine may add an entry.
+    return addToBaseline(forced.argv.slice(1).flatMap((arg) => arg.split(',')).map((s) => s.trim()).filter(Boolean));
   }
-  if (argv[0] === '--from') {
-    records = fs.readFileSync(argv[1], 'utf8');
+  // A full run and --from both write measurements: they must describe the
+  // machine the shard plan is made for.
+  if (!forced.reason) {
+    const problem = await measurementMachineProblem(probes);
+    if (problem) {
+      process.stderr.write(`test:durations: ${problem}\n`);
+      return 1;
+    }
+  }
+  if (forced.argv[0] === '--from') {
+    records = fs.readFileSync(forced.argv[1], 'utf8');
   } else {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-durations-'));
     const out = path.join(dir, 'timing.jsonl');
@@ -154,17 +221,21 @@ function main(argv = process.argv.slice(2)) {
   const files = summarise(records);
   let overrides = {};
   try { overrides = JSON.parse(fs.readFileSync(shardPlan.DURATIONS_FILE, 'utf8')).overrides || {}; } catch { /* a first baseline */ }
-  const note = `${new Date().toISOString().slice(0, 10)}, node ${process.version}, ${os.availableParallelism()} CPUs available`;
+  const note = `${new Date().toISOString().slice(0, 10)}, node ${process.version}, ${os.availableParallelism()} CPUs available`
+    + (forced.reason ? `, forced: ${forced.reason}` : '');
   writeBaseline(baseline(files, note, overrides));
   process.stdout.write(`test:durations: ${Object.keys(files).length} files written to ${path.relative(ROOT, shardPlan.DURATIONS_FILE)}\n`);
   return 0;
 }
 
 if (require.main === module) {
-  try { process.exitCode = main(); } catch (err) {
+  main().then((code) => { process.exitCode = code; }, (err) => {
     process.stderr.write(`test:durations: ${err.message}\n`);
     process.exitCode = 1;
-  }
+  });
 }
 
-module.exports = { summarise, baseline, addEntries, writeBaseline };
+module.exports = {
+  summarise, baseline, addEntries, writeBaseline,
+  databaseTarget, postgresReachable, measurementMachineProblem, parseForce, main,
+};
