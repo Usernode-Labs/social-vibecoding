@@ -51,8 +51,6 @@ import {
 import { GENERAL_FOLLOW_PX, GeneralChat, type GeneralChatProps } from './general-chat';
 import { ReactionBar, type ReactionBarProps } from './reaction-bar';
 import { reactionBarStore, type ReactionBarState } from './reaction-bar-store';
-import { SpecPanel } from './spec-panel';
-import { specPanelStore, type SpecPanelState } from './spec-panel-store';
 import { ThreadShell, type ThreadShellProps } from './thread-shell';
 import { Transcript } from './transcript';
 import {
@@ -234,15 +232,6 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
 autocompleteStore.setFlush(flushSync);
 
 /**
- * The spec panel's store gets the same flush, for the same shape of reason:
- * `_renderSpecPanel` publishes and then immediately calls
- * `_applySavedSpecPanelWidth()` and adds the open class, and the resizer's
- * drag measures the panel. All of those read a panel the publish is supposed
- * to have filled.
- */
-specPanelStore.setFlush(flushSync);
-
-/**
  * And the reaction bar's, for the third instance of the same sentence:
  * `_openReactionBar` publishes `{ gridOpen: false, editable }` and then reads
  * `bar.offsetWidth` / `bar.offsetHeight` to decide whether the bar fits above
@@ -335,33 +324,6 @@ export const completedEmojiShortcode = completedShortcodeAt;
 export function mountThreadShell(host: Element | null, props: ThreadShellProps): void {
   if (!host) return;
   mountLegacyPortal(host, createElement(ThreadShell, props));
-}
-
-// ── The shared-spec reader ────────────────────────────────────────────
-//
-// `#gc-spec-side-panel` is written into `#app-content` by
-// `AppView.renderDevChatTab`, so — like the transcript — it is a runtime host
-// that has to be (re)mounted rather than rendered from the tree, and it is
-// torn down by the same `unmountAllLegacyPortals` in
-// `AppView._teardownDevRoots`.
-
-/** Establish the panel's contents. Idempotent per host. */
-export function mountSpecPanel(host: Element | null): void {
-  if (!host) return;
-  mountLegacyPortal(host, createElement(SpecPanel));
-}
-
-/**
- * Open the panel with a document, or close it.
- *
- * Closing publishes `open: false` rather than clearing the host: the host is
- * React's subtree now, and an `innerHTML = ''` behind its back is exactly the
- * write the ownership rule forbids. The host's own
- * `gc-spec-side-panel-open` class stays group-chat.js's — it is what the
- * resizer and the width restore read.
- */
-export function publishSpecPanel(next: SpecPanelState): void {
-  specPanelStore.set(next);
 }
 
 // ── The two composers ─────────────────────────────────────────────────
@@ -470,8 +432,6 @@ if (typeof window !== 'undefined') {
     emojiShortcodeToken,
     matchEmojiShortcodes,
     completedEmojiShortcode,
-    mountSpecPanel,
-    publishSpecPanel,
     mountThreadShell,
     mountReactionBar,
     publishReactionBar,

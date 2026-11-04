@@ -7,7 +7,8 @@
 //
 //   D1. The change's section carries what its page had: its status pill and
 //       its own ⋯ (its view's `detail:` rows), its summary, a small before
-//       and after whose Expand opens its page's viewer, and the sheets its ⋯
+//       and after whose Expand opens in the detail column beside the thread,
+//       and the sheets its ⋯
 //       and Testing card open. Its title is no door: this is its page.
 //   D2. Its addresses land on the request's page at it, in place, with its
 //       Votes card in view; a change with no request keeps its page.
@@ -136,7 +137,12 @@ test('D1: a change\'s line has its pill and its own ⋯, and its title is no doo
   assert.doesNotMatch(src, /data-thread-earlier/, 'the fold of its earlier replies is gone: they are in the discussion');
   // Its summary, its before and after, and its sheets.
   assert.match(src, /<RequestWords html=\{summary\} \/>/);
-  assert.match(src, /viewer\?\.showPopover\?\.\(\)/, 'Expand opens its page\'s own viewer');
+  // #6230 (3 Nov 2026): Expand opens the change's before and after in the
+  // detail column beside the thread, as a design's preview and a plan do,
+  // instead of popping the viewer over the page; the request asked for it.
+  assert.match(src, /UsernodeReact\?\.detail\?\.open\(\{\s*kind: 'shots',\s*ref: \{ changeId: id \},/,
+    'Expand opens the change\'s before and after in the detail column');
+  assert.doesNotMatch(src, /showPopover/, 'the viewer no longer pops over the page');
   assert.match(src, /<ChangeSheets id=\{item\.id\} row=\{view\.row\} body=\{view\.body\} \/>/);
   const head = read(`${TOPIC}/topic-head.tsx`);
   const sheets = head.slice(head.indexOf('export function ChangeSheets('), head.indexOf('/** The same card on the owner session'));

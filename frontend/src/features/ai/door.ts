@@ -115,10 +115,37 @@ export function botItemAddress(item: Partial<BotItem> | null | undefined): strin
  * `#ai/…` spelling too), or null for anything else.
  */
 export function botItemAt(hash: string | null | undefined): BotItem | null {
-  const match = /^(?:homeroom-bot|ai)\/(request|change|decision)\/([a-z0-9][a-z0-9-]{0,254})\/(\d{1,10})\/?$/
+  const match = /^(?:homeroom-bot|ai)\/(request|change|decision)\/([a-z0-9][a-z0-9-]{0,254})\/(\d{1,10})(?:\/(?:plan|shots|design)(?:\/\d{1,10}){0,2})?\/?$/
     .exec(String(hash || '').replace(/^#/, '').split('?')[0]);
   if (!match) return null;
   return cleanItem({ kind: match[1] as BotItemKind, slug: match[2], number: Number(match[3]) });
+}
+
+// ── The detail beside the column (#6230) ────────────────────────────────
+
+/** What is open beside the thread, as the address names it. */
+export type BotDetail =
+  | { kind: 'plan'; sessionId: number; version: number | null }
+  | { kind: 'design'; version: number | null }
+  | { kind: 'shots'; changeId: number };
+
+const num = (s: string | undefined): number | null => (/^\d{1,10}$/.test(s || '') ? Number(s) : null);
+
+/**
+ * Pure: the detail a `#homeroom-bot/…` address carries after its place, or
+ * null for a plain place. A design names its thread; a plan its session and
+ * (when there is one) its version; a change its viewer.
+ */
+export function botDetailAt(hash: string | null | undefined): BotDetail | null {
+  const path = String(hash || '').replace(/^#/, '').split('?')[0].replace(/\/+$/, '');
+  if (!/^(?:homeroom-bot|ai)\//.test(path)) return null;
+  const design = /\/design(?:\/(\d{1,10}))?$/.exec(path);
+  if (design) return { kind: 'design', version: num(design[1]) };
+  const shots = /\/shots\/(\d{1,10})$/.exec(path);
+  if (shots) return { kind: 'shots', changeId: Number(shots[1]) };
+  const plan = /\/plan\/(\d{1,10})(?:\/(\d{1,10}))?$/.exec(path);
+  if (plan) return { kind: 'plan', sessionId: Number(plan[1]), version: num(plan[2]) };
+  return null;
 }
 
 /**

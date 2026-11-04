@@ -25,20 +25,15 @@
  * second page mounted over the first one's portal (the NotFoundError
  * `_renderTopicHead`'s header describes).
  *
- * ── The plan reader has a slot here too (#4875) ───────────────────────
+ * ── The detail column has a slot here too (#4875, #6230) ──────────────
  *
- * A request's page shows its plan card, and its Read (like "View full
- * spec" on a spec card in the thread, and an attached file) opens
- * `GroupChat._showSpecPanel`, which fills `#gc-spec-side-panel` and does
- * nothing at all when that slot is not in the document. The full page's
- * frame has one (../topic-frame.tsx, #3495); this panel had none, so Read
- * here did nothing. The slot sits over the page, inside the panel: the
- * panel is too narrow to dock the reader beside it, so it takes the
- * reader's narrow-window layout, filling the panel below its bar until ✕
- * closes it. The topic frame is never up while this panel is, so the id
- * stays unique. Escape closes the reader before the panel, and the panel
- * closes the reader on its way out, so a plan read here is not left open
- * for the next screen to restore.
+ * A request's page shows its plan card, and its Read opens the one detail
+ * column beside the page (../../detail/detail-slot.tsx). In the panel's
+ * width the page and the plan share it in halves, instead of the plan
+ * covering the page. The topic frame is never up while this panel is, so
+ * the id stays unique. Escape closes the detail before the panel, and the
+ * panel closes the detail on its way out, so a plan read here is not left
+ * open for the next screen to restore.
  */
 
 import { useEffect, useLayoutEffect, type ReactNode } from 'react';
@@ -48,6 +43,7 @@ import { ArrowRightIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { callAppView } from '../card/fold';
+import { DetailSlot } from '../../detail/detail-slot';
 import type { TopicRef } from './work-row';
 
 export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () => void }): ReactNode {
@@ -74,19 +70,17 @@ export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () 
   // in the document: `_closeSpecPanel` finds the host by id, and a passive
   // cleanup runs after the panel has already left.
   useLayoutEffect(() => () => {
-    const gc = (window as any).GroupChat;
-    if (gc && gc._specPanelRaw != null) gc._closeSpecPanel?.();
+    (window as any).UsernodeReact?.detail?.close?.();
   }, [item.kind, item.id]);
-  // Escape closes it, as it closes a sheet: but a plan open over the page
-  // goes first. Listened for in the capture phase, ahead of group-chat.js's
-  // own Escape on `document`, which closes the reader, so the panel can see
-  // the reader was open and stay.
+  // Escape closes it, as it closes a sheet: but a detail open beside the
+  // page goes first. The detail column's own capture listener (#6230,
+  // ../../ai/detail.ts) closes it and calls preventDefault, so this one
+  // sees that and stays.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
       if (target && target.closest('input, textarea, [contenteditable="true"]')) return;
-      if (document.querySelector('.dev-ws-side .gc-spec-side-panel-open')) return;
       onClose();
     };
     window.addEventListener('keydown', onKey, true);
@@ -112,10 +106,10 @@ export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () 
       </div>
       <div className="dev-ws-side-body">
         <div key={`${item.kind}:${item.id}`} id="dev-topic-thread" className="dev-ws-side-page" />
-        {/* #4875: the plan reader's slot, over the page. An empty leaf, keyed
-            like the page's host: its contents are the reader's portal
-            (../../group-chat/spec-panel.tsx), its open class group-chat.js's. */}
-        <div key={`spec:${item.kind}:${item.id}`} id="gc-spec-side-panel" className="gc-spec-side-panel" />
+        {/* #4875, #6230: the detail column's slot. In halves the page and
+            the plan share the panel; from 1760px all three stand side by
+            side. React owns it (../../detail/detail-slot.tsx). */}
+        <DetailSlot key={`spec:${item.kind}:${item.id}`} surface="workshop" resizerLabel={t('project:topic.frame.resizeSpecPanel')} />
       </div>
     </aside>
   ), document.body);
