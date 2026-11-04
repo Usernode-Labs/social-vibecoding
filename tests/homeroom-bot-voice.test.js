@@ -248,7 +248,7 @@ const names = (tools) => tools.map((t) => t.function.name);
 
 test('each place gets the tools that fit it, and nothing that acts without a tap', () => {
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: true })),
-    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
     ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
@@ -266,7 +266,7 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
     '#6247: a start\'s reply carries the request\'s (and change\'s) link as given');
   assert.doesNotMatch(voice.systemPrompt({ app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }) }), /change_plan/);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
-  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'tell_me_when', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
+  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'tell_me_when', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
   assert.ok(chat[2].function.parameters.properties.change, 'in a chat it names which change');
   assert.ok(!names(chat).includes('offer_withdraw'), 'withdrawing is offered where the change is');
   const chatClose = chat.find((t) => t.function.name === 'offer_close_request');

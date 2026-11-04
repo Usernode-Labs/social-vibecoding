@@ -700,7 +700,7 @@ export interface ChangeGateView {
    * changeBotFix), carried on the card as `data-change-bot-fix`. The words
    * are in `authorNote`.
    */
-  botFix?: 'fixing' | 'queued' | 'handed_off' | null;
+  botFix?: 'fixing' | 'queued' | 'handed_off' | 'stopped' | null;
   /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps

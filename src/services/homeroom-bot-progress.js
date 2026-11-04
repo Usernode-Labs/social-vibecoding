@@ -629,6 +629,11 @@ function stageOf(input, { now = new Date() } = {}) {
         : { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
     const waiting = first ? 'it goes live without a vote once its tests pass' : 'it\'s waiting for approval';
+    // #6284: the bot stopped at its own limit on failing checks. Needs you
+    // says so, with Let it try again, rather than reading as still checking.
+    if (row.fix_stopped === true && (row.check_state === 'failing' || row.check_state === 'error' || row.check_state === 'unknown')) {
+      return { stage: 'fix_stopped', since: row.checks_at || row.proposal_at, doing: 'its checks are failing, and Homeroom bot stopped fixing them', waitingOn: 'them' };
+    }
     if (row.check_state === 'failing' || row.check_state === 'error' || row.check_state === 'unknown') {
       return { stage: 'checks_failed', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests ${checks}` };
     }
@@ -888,11 +893,15 @@ function typicalMinutes(stage, limit = null) {
  *   { state: 'handed_off' }              its newest run on this head gave it
  *                                        to a person (verdict person or
  *                                        failed)
+ *   { state: 'stopped', tries, canTryAgain, head }
+ *                                        #6284: it stopped at its own limit of
+ *                                        3 fixes, and the requester, an admin
+ *                                        or an admin may let it try once more
  *   null                                 nothing of the bot's is recorded
  * A read that fails is null: the card keeps its usual words. The queue is
  * keyed by request; the change reaches it through linked_issues.
  */
-async function changeBotFix(pool, sessionId) {
+async function changeBotFix(pool, sessionId, { viewer = null } = {}) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return null;
   try {
@@ -924,13 +933,27 @@ async function changeBotFix(pool, sessionId) {
     const head = String(cs.reviewed_head_sha || '').toLowerCase();
     if (!head) return null;
     const runs = await pool.query(
-      `SELECT id FROM homeroom_bot_runs
+      `SELECT id, limit_stop FROM homeroom_bot_runs
         WHERE proposal_session_id = $1 AND LOWER(checks_head_sha) = $2 AND verdict IN ('person', 'failed')
         ORDER BY id DESC
         LIMIT 1`,
       [id, head],
     );
-    return runs.rows.length ? { state: 'handed_off', since: null, reason: null } : null;
+    if (!runs.rows.length) return null;
+    const run = runs.rows[0];
+    if (run.limit_stop !== 'own_revisions') return { state: 'handed_off', since: null, reason: null };
+    // #6284: stopped at its own limit. An open grant means a round is
+    // already waiting or running for this stop.
+    const counts = await require('./homeroom-bot-followup').revisionCounts(pool, id);
+    if (counts.openGrant) return { state: 'queued', since: null, reason: null };
+    const canTryAgain = viewer
+      ? await require('./homeroom-bot-retry-grants').mayGrant(pool, { sessionId: id, user: viewer }).catch(() => false)
+      : false;
+    return {
+      state: 'stopped', since: null, reason: null, head,
+      tries: counts.own + counts.grants,
+      canTryAgain,
+    };
   } catch {
     return null;
   }
@@ -986,6 +1009,21 @@ async function requestRows(pool, userId) {
                 OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
                             WHERE cr.app_id = m.app_id AND cr.issue_number = m.issue_number AND cr.closed_at IS NOT NULL)) AS request_closed,
             oq.created_at AS question_at,
+            -- #6284: it stopped at its own limit on this change, with no
+            -- grant open: Needs you reads that, not "checking".
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_runs lr
+               WHERE lr.proposal_session_id = prop.proposal_session_id
+                 AND lr.limit_stop = 'own_revisions'
+                 AND lr.id = (
+                   SELECT MAX(lr2.id) FROM homeroom_bot_runs lr2
+                    WHERE lr2.proposal_session_id = prop.proposal_session_id
+                      AND lr2.verdict IN ('person', 'failed')
+                      AND LOWER(lr2.checks_head_sha) = LOWER(cs.reviewed_head_sha))
+                 AND NOT EXISTS (
+                   SELECT 1 FROM homeroom_bot_revision_grants g
+                    WHERE g.session_id = prop.proposal_session_id AND g.used_at IS NULL)
+            ) AS fix_stopped,
             reply.reply_id, reply.reply_at, reply.reply_user_id
        FROM mine m
        JOIN apps a ON a.id = m.app_id

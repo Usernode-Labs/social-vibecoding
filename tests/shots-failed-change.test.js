@@ -357,7 +357,9 @@ test('#6234: while Homeroom bot fixes its change\'s checks, the Testing card say
   // The card carries the state for a check to select on.
   const card = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.match(card, /data-change-bot-fix=\{shown\.botFix \|\| undefined\}/);
-  assert.match(read('frontend/src/features/dev-board/topic/model.ts'), /botFix\?: 'fixing' \| 'queued' \| 'handed_off' \| null;/);
+  // #6284 adds the stopped state a change enters once the bot has used its
+  // own fix rounds, so the union now carries it too.
+  assert.match(read('frontend/src/features/dev-board/topic/model.ts'), /botFix\?: 'fixing' \| 'queued' \| 'handed_off' \| 'stopped' \| null;/);
 });
 
 test('the before & after card marks a failed change as not working, with what happened', () => {

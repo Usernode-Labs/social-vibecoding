@@ -116,6 +116,7 @@ function needGlyph(row: WorkRow): ReactNode {
   if (kind === 'plan') return <PlayIcon className={G} />;
   if (kind === 'decide') return <HandRaisedIcon className={G} />;
   if (kind === 'stopped') return <ArrowPathIcon className={G} />;
+  if (kind === 'fix_stopped') return <ArrowPathIcon className={G} />;
   if (kind === 'private') return <LockIcon className={G} />;
   return <BallotIcon className={G} />;
 }

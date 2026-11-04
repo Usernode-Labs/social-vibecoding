@@ -49,6 +49,9 @@ function demoWork() {
       { threadId: -9210, number: 9210, kind: 'work', title: 'Staging demo: a reminder email', app, change: null, href: issue(app, 9210), group: 'needs', what: 'plan', at: at(4), unread: 1 },
       { threadId: -9214, number: 9214, kind: 'work', title: 'Staging demo: a points table for the season', app, change: null, href: issue(app, 9214), group: 'needs', what: 'decide', at: at(7) },
       { threadId: -9215, number: 9215, kind: 'work', title: 'Staging demo: a high score board', app: game, change: null, href: issue(game, 9215), group: 'needs', what: 'build_stopped', at: at(9) },
+      // #6284: the bot stopped at its own limit on a change's failing checks.
+      // The row's own words and Try again pill are what its shots show.
+      { threadId: -9219, number: 9219, kind: 'work', title: 'Staging demo: a change the bot stopped fixing', app, change: { id: -9219, number: 9219 }, href: issue(app, 9219), group: 'needs', what: 'fix_stopped', at: at(10) },
     ],
     next: [
       { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: issue(app, 9201), group: 'next', what: 'going_live', at: at(1), unread: 1 },

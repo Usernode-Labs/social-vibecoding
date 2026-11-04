@@ -1650,8 +1650,11 @@ function requestNews(kind, dm, context) {
       // names the way that does not depend on it.
       const change = context.firstVersion ? 'the first version' : 'your change';
       if (dm.canRevise === false) {
-        return `${line}\n\nI couldn't update ${change}: I've already updated it as many times as I can on my own, `
-          + 'so a person needs to make this one. It\'s as it was.';
+        // #6284: canRevise false is the cap on updates people ASKED for; the
+        // bot's own three are said in the thread and on the change's card.
+        const askedCap = require('./homeroom-bot-followup').MAX_ASKED_REVISIONS;
+        return `${line}\n\nI couldn't update ${change}: I've already made ${askedCap} updates people `
+          + 'asked for on it, as many as I may. A person can make the next one. It\'s as it was.';
       }
       const words = updateFailedWords(dm.reason, change, 'me');
       let next = `To try again, open it on ${context.appName} and tap Change something.`;
@@ -4567,11 +4570,9 @@ async function voteLineTarget(pool, { sessionId }) {
     const settings = await settingsModule().readSettings(pool);
     if (!require('./homeroom-bot-live').isLiveFor(settings, app)
       || (settings?.pausedApps || []).includes(app.slug)) return null;
-    const { rows: [revisions] } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`,
-      [id],
-    );
-    if ((revisions?.n || 0) >= require('./homeroom-bot-followup').MAX_REVISIONS) return null;
+    // #6284: only updates people asked for count against their own limit.
+    const counts = await require('./homeroom-bot-followup').revisionCounts(pool, id);
+    if (counts.asked >= require('./homeroom-bot-followup').MAX_ASKED_REVISIONS) return null;
     return { app, sessionId: id, issueNumber };
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not read where a No\'s line goes', { sessionId: id, err: err.message });

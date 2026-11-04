@@ -5574,14 +5574,13 @@ async function reviseProposal(pool, ctx, args) {
     return { ok: false, error: 'You cannot act for them: one of you has blocked the other. Nothing was sent.' };
   }
   const followup = require('./homeroom-bot-followup');
-  const { rows: [revisions] } = await pool.query(
-    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`,
-    [session.id],
-  );
-  if ((revisions?.n || 0) >= followup.MAX_REVISIONS) {
+  // #6284: only updates people asked for count against their own, higher
+  // limit; the bot's own three never stop an ask.
+  const counts = await followup.revisionCounts(pool, session.id);
+  if (counts.asked >= followup.MAX_ASKED_REVISIONS) {
     return {
       ok: false,
-      error: `You have already changed this proposal ${revisions.n} times, as many as you may on your own, so you cannot change it again. Nothing was sent or queued. A person can make the change, or they can say what they want in the proposal's discussion for the group.`,
+      error: followup.askedLimitText(),
     };
   }
   // Whoever asks pays: the change is made on this person's building time.
