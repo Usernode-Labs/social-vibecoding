@@ -145,20 +145,6 @@ test('a storage that refuses is a count that is not lowered for long, never an e
 
 // ── The feed marks, the page counts ────────────────────────────────────
 
-test('the feed marks the vote you move on from, forward and unanswered only', () => {
-  const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const land = /const landOn = \(idx: number\) => \{([\s\S]*?)\n {2}\};/.exec(WORKSHOP);
-  assert.ok(land, 'landOn, where a swipe, a key and an arrow all arrive');
-  assert.match(land[1], /if \(c > i && row && !answered\[row\.key\] && !sendingRef\.current\.has\(row\.key\)\) \{\s*markNeedsSeen\(rowSlug\(row, slug\), needsRowKey\(row\)\);\s*\}/,
-    'the row you were on, going forward, not answered here and no vote of yours on its way');
-  // The band's count and the one the Communities tab works out are the
-  // unseen votes, from the same keys.
-  assert.match(WORKSHOP, /const owed = unseenNeeds\(v\.slug \|\| '', owedRows\.length, owedKeys\);/);
-  assert.match(WORKSHOP, /describeCommunity\(v\.slug, \{\s*owedCount: owedRows\.length,\s*owed: owedKeys,/);
-  assert.match(WORKSHOP, /<ForYouCard\s+slug=\{slug\}[\s\S]{0,80}queue=\{v\.queue\}/);
-  // Nothing else in the feed moves: the order stays the one published.
-  assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/);
-});
 
 test('the hub\'s Needs you counts what you have not seen, and stays a door to the rest', () => {
   fakeWindow(7);
@@ -270,22 +256,6 @@ test('the Communities reel: each row is checked against its own project', () => 
     'the garden vote is seen, the swap one is not, though they share an id');
 });
 
-test('NeedsFeed opens on the first unseen item, and only when no other open is owed (#4753)', () => {
-  const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  // The record is read in an effect, not the render (the island rule): the
-  // seed stays the end card's count or 0.
-  assert.match(WORKSHOP, /const \[at, setAt\] = useState\(\(\) => \(endOnOpen \? rows\.filter\(\(r\) => r\.t === 'card'\)\.length : 0\)\);/,
-    'the seed never reads the record');
-  assert.match(WORKSHOP, /const resumeRef = useRef<boolean>\(!endOnOpen && !approveOpenRef\.current && !openOn\);/,
-    'resume only when no other open is owed: no end card, no shot target, no New for you row');
-  const resume = /useLayoutEffect\(\(\) => \{\s*const el = scrollRef\.current;\s*if \(!resumeRef\.current \|\| !el \|\| !el\.clientHeight \|\| !items\.length\) return;\s*resumeRef\.current = false;\s*const idx = firstUnseenIndex\(items, \(r\) => rowSlug\(r, slug\), \(r\) => rowVoteType\(r\) === 'deciding'\);([\s\S]*?)\n {2}\}, \[items\]\);/.exec(WORKSHOP);
-  assert.ok(resume, 'the resume open: once, on the first publish that has rows and a laid-out scroller');
-  assert.match(resume[1], /if \(idx <= 0\) return;/, 'the first unseen item is the first item: nothing to move for');
-  assert.match(resume[1], /curKeyRef\.current = items\[idx\]\.key;\s*setAt\(idx\);\s*el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
-    'instantly, the way the opens above land, and the re-sync then follows the row by key');
-  assert.doesNotMatch(resume[1], /landOn|markNeedsSeen/, 'the jump passes nothing new over: the rows were already seen');
-  assert.match(WORKSHOP, /import \{ firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen \} from '\.\.\/\.\.\/workshop\/needs-seen';/);
-});
 
 // ── The Communities tab, its switcher and its list ─────────────────────
 

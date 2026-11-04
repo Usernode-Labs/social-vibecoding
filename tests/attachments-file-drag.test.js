@@ -128,9 +128,9 @@ test('the dev chat’s card draws the zone from its model', () => {
 
 test('the agent session, the improvement form and Messages each wire the shared zone', () => {
   const session = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(session, /useFileDrag\(\{ disabled: archived, onFiles:/);
-  assert.match(session, /className="platform-safe-bar shrink-0 px-3 pt-1" \{\.\.\.drop\.handlers\}/,
-    'the bar, not only the card, so a drop beside the card does not open the file');
+  assert.match(session, /useFileDrag\(\{\s*disabled: snapshot\.session\?\.status === 'archived' \|\| !snapshot\.session,/);
+  assert.match(session, /className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat \{\.\.\.drop\.handlers\}/,
+    'the chat column, not only the box, so a drop on the transcript does not open the file');
   assert.match(session, /\{drop\.dragging \? <DropOverlay \/> : null\}/);
 
   const feedback = read('frontend/src/features/dialogs/feedback.tsx');
@@ -139,9 +139,22 @@ test('the agent session, the improvement form and Messages each wire the shared 
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'),
     /feedbackForm\.addEventListener\('drop'/, 'the controller still does the attaching');
 
-  const messages = read('frontend/src/features/messages/composer.tsx');
-  assert.match(messages, /useFileDrag\(\{ onFiles:/);
+  // #6254: the pane takes the drop and frames the whole thread; the box it
+  // forwards to no longer has a zone of its own.
+  const messages = read('frontend/src/features/messages/index.tsx');
+  assert.match(messages, /useFileDrag\(\{ disabled: !ready, onFiles:/);
+  assert.match(messages, /data-opening=\{[^}]*\} \{\.\.\.drop\.handlers\}/, 'the conversation pane takes the drop');
   assert.match(messages, /<DropOverlay className="messages-drop-overlay" \/>/);
+  const composer = read('frontend/src/features/messages/composer.tsx');
+  assert.doesNotMatch(composer, /useFileDrag/, 'the box no longer owns the drop');
+  assert.match(composer, /<ComposerDropTarget scope=\{scope\} onFiles=/);
+});
+
+test('the thread outline frames the whole pane', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-thread-pane \{[^}]*position: relative;/);
+  assert.match(css, /\.messages-thread-pane > \.messages-drop-overlay,\s*\.messages-reply-pane > \.messages-drop-overlay \{ inset: 8px; \}/);
+  assert.doesNotMatch(css, /messages-composer-dragging/, 'the box no longer draws an outline of its own');
 });
 
 // ── One line for every file left out ─────────────────────────────────
@@ -236,7 +249,9 @@ test('agent session: the tray counts every file it refused', () => {
 });
 
 test('Messages: files past the room are counted, not dropped without a word', () => {
-  const src = read('frontend/src/features/messages/composer.tsx');
+  // #6256: the cut and the summary are shared with the blank thread's
+  // composer now, so they are pinned where they live.
+  const src = read('frontend/src/features/attachments/limits.ts');
   assert.match(src, /const cut = files\.length - selected\.length;/);
   assert.match(src, /refusalSummary\(firstReason, tooLarge\.length \+ cut - 1\)/);
 });

@@ -13,8 +13,8 @@ import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjec
 import { fileSize, MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
-import { DropOverlay, useFileDrag } from '../attachments/file-drag';
-import { refusalSummary } from '../attachments/refusal-summary';
+import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
+import { registerComposerDrop } from './pane-drop';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
 import { wantsKeyboardFocus } from '../message-actions/focus';
@@ -23,7 +23,6 @@ import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShort
 import { SpeakButton } from '../dictation/speak-button';
 import { NotifyAsk } from '../notify-ask/notify-ask';
 
-const MAX_ATTACHMENTS = 4;
 // People asked for per `@` prefix in a channel (#3361).
 const CHANNEL_MENTION_LIMIT = 8;
 
@@ -37,14 +36,6 @@ const FORMAT_BUTTONS: Array<{ kind: FormatKind; label: string; Icon: typeof Bold
   { kind: 'quote', label: 'messages:composer.format.quote', Icon: QuoteIcon },
   { kind: 'bullet', label: 'messages:composer.format.bullets', Icon: ListBulletIcon },
 ];
-
-function attachmentLimit(file: File): number {
-  const name = file.name.toLowerCase();
-  if (file.type.startsWith('image/')) return 4 * 1024 * 1024;
-  if (/\.(txt|md|markdown|json|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|html?|py|rb|rs|go|java|kt|swift|dart|sh|sql|diff|patch)$/i.test(name) || file.type.startsWith('text/')) return 200 * 1024;
-  if (name.endsWith('.zip') || file.type === 'application/zip') return 20 * 1024 * 1024;
-  return 10 * 1024 * 1024;
-}
 
 /** The reference alone, as the server takes it: the staged title stays here. */
 function referenceOf(object: StagedObject): SharedObjectReference {
@@ -74,6 +65,19 @@ function useStagedCard(object: StagedObject | null): SharedObjectCard | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return key && read.key === key ? read.card : null;
+}
+
+/**
+ * #6254: the composer's half of the thread's drop zone. It renders nothing;
+ * it tells ./pane-drop that a box which can take files is drawn for this
+ * scope, so the pane around it lights and hands over what is dropped. A ref
+ * carries the latest `addFiles`, which closes over the upload it belongs to.
+ */
+function ComposerDropTarget({ scope, onFiles }: { scope: ComposerScope; onFiles: (files: File[]) => void }) {
+  const latest = useRef(onFiles);
+  latest.current = onFiles;
+  useEffect(() => registerComposerDrop(scope, (files) => latest.current(files)), [scope]);
+  return null;
 }
 
 /**
@@ -122,11 +126,6 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // whose own news rings as it is): the notification ask, "Hear when they
   // answer?" (../notify-ask/notify-ask.tsx), over the box.
   const [askReply, setAskReply] = useState(false);
-  // #4065: the shared drop zone (features/attachments/file-drag.tsx). Its
-  // depth count keeps the outline steady while the pointer crosses the card's
-  // own controls, where a leave from any child used to clear it.
-  const drop = useFileDrag({ onFiles: (files) => { void addFiles(files); } });
-  const dragging = drop.dragging;
   // #1955: the paperclip and the share tray were two adjacent icons that both
   // answered "put something in this message", and neither said which was
   // which — two guesses at a 40px target, on the narrowest row in the app.
@@ -503,20 +502,11 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     // #6249: an upload that finishes after the person moved on is saved to
     // the draft it was started in, never drawn in the one they moved to.
     const startScope = scopeRef.current;
-    const room = Math.max(0, MAX_ATTACHMENTS - attachments.length - uploading);
-    const selected = files.slice(0, room);
-    if (!selected.length) { setError(t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS })); return; }
-    // #4065: one line for every file left out — the first reason, and how
-    // many more went with it. The files past the room used to go silently.
-    const tooLarge = selected.filter((file) => file.size > attachmentLimit(file));
-    const cut = files.length - selected.length;
-    const firstReason = tooLarge.length
-      ? t('messages:composer.fileTooLarge', { file: tooLarge[0].name })
-      : (cut ? t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS }) : '');
-    const refused = refusalSummary(firstReason, tooLarge.length + cut - 1);
+    // #6256: the cap, the per-type ceiling and the line naming what was left
+    // out are shared with the blank thread's composer (../attachments/limits).
+    const { upload, refused } = stageFiles(files, attachments.length + uploading, t);
     setError(refused);
-    for (const file of selected) {
-      if (tooLarge.includes(file)) continue;
+    for (const file of upload) {
       setUploading((count) => count + 1); setError(refused);
       try {
         const attachment = await api.uploadAttachment(conversationId, file);
@@ -630,7 +620,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const preview = isChannel && hasFormatting(value) && plainText(value).length > 0 ? value.trim() : null;
 
   return (
-    <ChatComposerBar className={`messages-composer ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} {...drop.handlers}>
+    <ChatComposerBar className={`messages-composer ${inThread ? 'messages-composer-thread' : ''}`}>
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
           will be — so the composer turning into a notice after it is no
           surprise. */}
@@ -640,6 +630,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
+      {/* #6254: a file dropped anywhere on the thread reaches this box's
+          upload. The pane draws the outline and calls this. */}
+      <ComposerDropTarget scope={scope} onFiles={(files) => { void addFiles(files); }} />
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">{reply.sender.unnamed ? (reply.sender.id ? t('messages:composer.replyingToUnknownHandle') : t('messages:composer.replyingToUnknown')) : t('messages:composer.replyingTo', { name: senderName(reply.sender, { bare: active.kind === 'direct' }) })}</span><p className="truncate">{plainText(reply.content) || t('messages:composer.replyAttachment')}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{t('messages:bot.draft.reply')}</p> : null}{planReply ? <p className="messages-bot-note">{planReply.firstVersion ? t('messages:composer.planReplyNote') : t('messages:composer.planReplyNotePublic')}</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label={t('messages:composer.cancelReply')}>×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setChip(null, null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => updateAttachments(scope, (items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
@@ -708,7 +701,6 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           keystroke does not push the composer up by a line. */}
       <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
-      {dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </ChatComposerBar>
   );
 }

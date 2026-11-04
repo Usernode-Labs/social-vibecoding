@@ -432,6 +432,9 @@ function stubbedDebugAccess() {
   const origLoad = Module._load;
   const state = { attempts: 0, failTimes: 0 };
   Module._load = function (req) {
+    if (req === './readonly-role-state') return {
+      readOnlyRoleCurrent: async () => true, repairReadOnlyDrift: async () => {},
+    };
     if (req === './debug-role-policy') return { verifyDebugRole: async () => ({ columns: 1, durationMs: 0 }) };
     if (req === '../db/pool') {
       return { getPool: () => ({

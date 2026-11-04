@@ -206,7 +206,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null }) {
+function personText({ reason, platform = false, project = null, done = false }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -214,6 +214,12 @@ function personText({ reason, platform = false, project = null }) {
   if (platform) {
     return `Homeroom bot thinks this is about Homeroom itself, not ${name}: ${reasonSentence(reason)}\n\n`
       + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have Homeroom bot move it to Homeroom's own board.`;
+  }
+  // #6306: the ask is already there, so there is nothing to build and no
+  // decision to make: it only waits to be closed.
+  if (done) {
+    return `Homeroom bot found this already works: ${reasonSentence(reason)}\n\n`
+      + 'Anyone in the project can propose to close it, or reply here if something is missing.';
   }
   // GitHub never carries a platform username (#723): its copy names nobody.
   // Homeroom's names who can say Go ahead (personHomeroomText).
@@ -226,8 +232,12 @@ function personText({ reason, platform = false, project = null }) {
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [] }) {
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false }) {
   if (platform) return firstPerson(personText({ reason, platform, project }));
+  // #6306: already there: no Go ahead, only a close vote.
+  if (done) {
+    return `Already works: ${reasonSentence(reason)} Anyone in the project can Propose to close it, or reply here if something is missing.`;
+  }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';
   return `I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`;
@@ -357,10 +367,19 @@ function liveHomeroomText({ title, project }) {
 // reply here does not do (it reads the request again and starts over): its
 // maker's Try again in their chat with the bot proposes what was built
 // (homeroom-bot.js finishBuiltFirstVersion).
-function buildFailedText(reason, { firstVersion = false } = {}) {
+function buildFailedText(reason, { firstVersion = false, retrying = false } = {}) {
   const dm = require('./homeroom-bot-dm');
+  const read = dm.buildFailedCause(reason);
   const words = dm.buildFailedWords(reason, 'this', 'bot', { first: firstVersion });
-  if (firstVersion && dm.buildFailedCause(reason).cause === 'unproposed') {
+  // #6267: a temporary refusal is being retried by the platform, so there is
+  // nothing for a person to do; the other two push causes say how to help.
+  if (read.cause === 'push') return words;
+  // #6313: a failure the bot is already trying again by itself says so, and
+  // asks nobody for a reply that is already on its way.
+  if (retrying) return `${words} It is trying again.`;
+  if (read.cause === 'push_permanent') return `${words} Reply here (or on the GitHub issue) and it will try again.`;
+  if (read.cause === 'push_gave_up') return `${words} Reply here (or on the GitHub issue) and it will send it again.`;
+  if (firstVersion && read.cause === 'unproposed') {
     return `${words} Whoever asked for it can tap Try again in their chat with Homeroom bot, and it will finish it.`;
   }
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
@@ -405,6 +424,62 @@ async function lastPostKind(pool, appId, issueNumber) {
     [appId, issueNumber],
   );
   return rows[0]?.kind || null;
+}
+
+// #6313: "I couldn't finish building this: something went wrong during the
+// build. Reply here and I'll try again." was posted five times in 28 minutes
+// on one request (#6306). A failure line the bot's last post in the request's
+// thread already says is not said again: that post is updated with how many
+// tries it has been, and nobody is told again (no new post, no GitHub
+// comment, no DM, no mention notification). The same words mean the same
+// failure; different words (a different cause) are news and go out normally.
+const FAILURE_TRIES_MARK = /\s*\(Tried \d+ times\.\)$/;
+
+async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, content }) {
+  const want = String(content || '').trim();
+  if (!want) return null;
+  const { rows } = await pool.query(
+    `SELECT p.id AS post_id, m.id AS message_id, m.content, m.metadata,
+            m.thread_type, m.thread_ref
+       FROM homeroom_bot_posts p
+       JOIN chat_messages m ON m.id = p.thread_message_id
+      WHERE p.app_id = $1 AND p.issue_number = $2 AND p.kind = 'build_failed'
+        AND m.deleted_at IS NULL
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT 1`, [appId, issueNumber]);
+  const last = rows[0];
+  if (!last) return null;
+  // Who the post tagged is not part of the failure: the handles are put on
+  // the same text, and a different tagger does not make it new news.
+  const said = String(last.content || '')
+    .replace(/^(?:@[A-Za-z0-9_.-]+\s+)+/, '')
+    .replace(FAILURE_TRIES_MARK, '')
+    .trim();
+  if (said !== want) return null;
+  const metadata = last.metadata && typeof last.metadata === 'object' && !Array.isArray(last.metadata) ? last.metadata : {};
+  const bot = metadata.homeroomBot && typeof metadata.homeroomBot === 'object' ? metadata.homeroomBot : {};
+  const tries = (Number(bot.tries) || 1) + 1;
+  const next = `${want} (Tried ${tries} times.)`;
+  const nextMeta = { ...metadata, homeroomBot: { ...bot, tries } };
+  await pool.query(
+    'UPDATE chat_messages SET content = $2, metadata = $3, edited_at = NOW() WHERE id = $1',
+    [Number(last.message_id), next, JSON.stringify(nextMeta)],
+  );
+  try {
+    if (ws && typeof ws.broadcast === 'function') {
+      ws.broadcast(Number(appId), {
+        type: 'chat_edit',
+        messageId: Number(last.message_id),
+        content: next,
+        editedAt: new Date().toISOString(),
+        thread: { type: last.thread_type || 'issue', ref: Number(last.thread_ref || issueNumber) },
+      });
+    }
+  } catch { /* the next read draws it */ }
+  log.info('homeroom-bot', 'A repeated build failure updated its one post instead of saying it again', {
+    appId, issueNumber, messageId: Number(last.message_id), tries,
+  });
+  return { repeated: true, id: Number(last.post_id), threadMessageId: Number(last.message_id) };
 }
 
 // #4367: by its pull request's number once it has one.
@@ -1458,23 +1533,27 @@ function planCommentText({ spec, questions = [] }) {
  * posts (metadata.specShare), opening the version the build worked from.
  */
 function specCard({
-  sessionId, version, spec, bot, proposed = false, revised = false, asking = false, requester = null,
+  sessionId, version, spec, bot, proposed = false, revised = false, asking = false, waiting = false, requester = null,
 }) {
+  // #6280 (4 Nov 2026): a plan that waits for Build it is posted in the
+  // waiting form, and the building form only once its build has started.
+  // `waiting` says so by the plan's own state; `asking` is the older name.
+  const waits = asking || waiting;
   const title = specTitle(spec);
   // One sentence, as the request page draws the row (transcript.tsx
   // RequestEvent): "Plan v1: {title}. I'm building it now." The page reads
   // `botNote` (and `waitingFor`) off the metadata; the content is the same
   // words for anything that draws the message itself.
   const head = `📋 Plan v${Number(version)}${title ? `: ${title.replace(/[.!?]+$/, '')}` : ''}`;
-  const waitingFor = asking && requester ? String(requester) : null;
+  const waitingFor = waits && requester ? String(requester) : null;
   const content = proposed
     ? `${head}${revised ? ', updated for this change' : ''}.`
-    : asking
+    : waits
       ? `${head}. Nothing is built yet. Waiting for ${waitingFor ? `@${waitingFor}` : 'the person who asked for it'} to say Build it.`
       // #4488: a plan its requester approved was posted when they were
       // asked; its build says so in a note, with no second card.
       : `${head}. I'm building it now.`;
-  const botNote = proposed ? null : asking ? 'waiting' : 'building';
+  const botNote = proposed ? null : waits ? 'waiting' : 'building';
   return {
     content,
     msgType: 'spec_share',
@@ -2029,6 +2108,19 @@ async function post({
       WHERE app_id = $1 AND issue_number = $2 AND kind = $3 AND run_id IS NULL AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
     [app.id, issueNumber, kind],
   )).rows[0] || null : null;
+  // #6313: the same failure, already said as the bot's last post in the
+  // request's thread, updates that post and tells nobody again.
+  if (!had && kind === 'build_failed' && !noIssueThread) {
+    const repeated = await updateRepeatedBuildFailure(pool, ws, {
+      appId: app.id, issueNumber, content: homeroomText || firstPerson(text),
+    }).catch((err) => {
+      log.warn('homeroom-bot', 'Could not check the request\'s last failure line (posting again)', {
+        app: app.slug, issueNumber, err: err.message,
+      });
+      return null;
+    });
+    if (repeated) return repeated;
+  }
   let postId = had ? had.id : null;
   if (!postId) {
     const { rows } = await pool.query(
@@ -3723,7 +3815,12 @@ async function draftSpec({
   // A durable build's spec turn is a durable step (services/durable-turn.js):
   // a restart's next attempt follows it instead of writing the plan again.
   const steps = durableSteps.of(deps);
-  const dispatch = (extra = {}, promptText = prompt) => sessions.runCodexAttemptLoop({
+  // One dispatcher per prompt, bound here. A durable step calls its dispatch
+  // as dispatch(extra, { budgetMs }) (durable-turn.js), so a second parameter
+  // is the clock, never a prompt: taking it as one sent every production
+  // spec turn "[object Object]" on 4 Nov 2026 while the inert context, which
+  // passes one argument, kept the tests green.
+  const dispatchWith = (promptText) => (extra = {}) => sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
       telemetryComponent,
@@ -3761,7 +3858,7 @@ async function draftSpec({
       pool, session, mode: 'scout', budgetMs, deps,
       stop: () => stopOnClock(pool, worker, session.id),
       onProgress: teeProgress(progress, watching),
-      dispatch,
+      dispatch: dispatchWith(prompt),
     });
     routed = turn.routed;
     stopped = turn.stopped || !!turn.stoppedBy;
@@ -3805,7 +3902,7 @@ async function draftSpec({
             pool, session, mode: 'scout', budgetMs: repairBudgetMs, deps,
             stop: () => stopOnClock(pool, worker, session.id),
             onProgress: teeProgress(progress, watching),
-            dispatch: (extra) => dispatch(extra, cardRepairPrompt({
+            dispatch: dispatchWith(cardRepairPrompt({
               title: specHeading(specMd) || '', summary: before.summary, lines: before.lines, problems: before.problems,
             })),
           });
@@ -5028,9 +5125,28 @@ async function buildAndPropose({
     // not land (worker.js unpushedCommit: ahead > 0, push_ok=0). It was
     // recorded as "no change", which said the build had done nothing.
     const unpushed = result.pushOk === false && Number(result.ahead) > 0;
+    const pushFailure = result.pushFailure && typeof result.pushFailure === 'object' ? result.pushFailure : null;
+    const pushCode = result.pushFailed || pushFailure?.code || 'push_failed';
+    // #6267: a temporary refusal is not a failed build. Keep the session and
+    // its worker volume (the commit is recorded in session_workers), leave
+    // it paused, and wait to push: homeroom-bot.js finishWaitingPush sends
+    // this exact commit later, or a person's reply does, without building
+    // it again.
+    if (unpushed && pushFailure && pushFailure.permanent !== true) {
+      log.warn('homeroom-bot', 'A finished build waits for its upload', {
+        app: app.slug, issueNumber, sessionId: session.id, code: pushCode, sha: (result.sha || '').slice(0, 8),
+      });
+      steps.fence();
+      return {
+        ok: false, waitingToPush: true, sessionId: session.id,
+        branchName: session.branch_name || null, sha: result.sha || null,
+        error: `waiting to push: couldn't push the build's commit (${pushCode}, temporary)`,
+        ...specOut(), ...costsOut(),
+      };
+    }
     return {
-      ...(await fail(result.pushFailed
-        ? `couldn't push the build's commit (${result.pushFailed})`
+      ...(await fail(pushFailure
+        ? `couldn't push the build's commit (${pushCode}${pushFailure.permanent === true ? ', permanent' : ''})`
         : unpushed ? 'couldn\'t push the build\'s commit'
           : 'the build produced no change to propose')),
       costUsd,
@@ -5535,6 +5651,7 @@ module.exports = {
   heldText,
   heldKind,
   lastPostKind,
+  _updateRepeatedBuildFailure: updateRepeatedBuildFailure,
   proposalLink,
   tagsPoster,
   issuePoster,

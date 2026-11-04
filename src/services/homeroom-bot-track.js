@@ -30,7 +30,7 @@
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
-const { replyLateralSql } = require('./homeroom-bot-progress');
+const { requestClosedSql, requestRecordJoinsSql } = require('./homeroom-bot-progress');
 
 const STATES = Object.freeze([
   'queued', 'planning', 'waiting', 'building', 'checks', 'vote', 'going_live', 'live',
@@ -216,6 +216,11 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
   // #6228: a read after somebody's reply says so, in the existing planning
   // state's line, rather than "Reading the request".
   if (base?.why === 'reading' && job.reply) base = { ...base, why: 'reply' };
+  // #6313: a read queued again after a plan that could not be written says
+  // it is retrying the plan, not only that it waits its turn.
+  if (base?.state === 'queued' && (entry?.retry === 'plan' || job.retry === 'plan')) {
+    base = { ...base, why: 'plan_retry' };
+  }
   // #6156: held, it waits at the limit its run was held by, as an ended
   // hold reads it (fromOutcome): the bot's turn, or votes on its changes.
   if (base?.state === 'held' && stage === 'held' && CAP_LIMITS[lead?.cap_suppressed]) {
@@ -505,46 +510,12 @@ const REQUEST_ROWS_SQL = `
          cs.checks_commit_sha AS checks_sha, cs.reviewed_head_sha, cs.imported_pr_head_sha,
          cs.source AS proposal_source,
          COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
-         (COALESCE((SELECT ri.status = 'closed' FROM issues ri
-                      WHERE ri.app_id = a.id AND ri.github_issue_number = w.n
-                      ORDER BY ri.id DESC LIMIT 1), FALSE)
-             OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
-                         WHERE cr.app_id = a.id AND cr.issue_number = w.n AND cr.closed_at IS NOT NULL)) AS request_closed,
+         ${requestClosedSql({ appId: 'a.id', issueNumber: 'w.n' })} AS request_closed,
          oq.created_at AS question_at,
          reply.reply_id, reply.reply_at, reply.reply_user_id
     FROM UNNEST($2::int[]) AS w(n)
     JOIN apps a ON a.id = $1
-    LEFT JOIN homeroom_bot_queue q ON q.app_id = a.id AND q.issue_number = w.n
-    LEFT JOIN LATERAL (
-      SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
-             proposal_session_id, live_build_waiting_at, awaiting_go_at,
-             review->>'state' AS review_state, review->>'startedAt' AS review_started_at,
-             jsonb_array_length(COALESCE(review->'rounds', '[]'::jsonb)) AS review_round,
-             (review->'reviewer'->>'maxRounds')::int AS review_max_rounds,
-             (review->'reviewer'->>'budgetMinutes')::int AS review_minutes,
-             build_no_change->'turns'->-1->>'said' AS no_change_said
-        FROM homeroom_bot_runs
-       WHERE app_id = a.id AND issue_number = w.n AND mode = 'live'
-       ORDER BY id DESC LIMIT 1
-         ) run ON TRUE
-    ${replyLateralSql({ appId: 'a.id', issueNumber: 'w.n', runAt: 'run.created_at' })}
-    LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
-    LEFT JOIN LATERAL (
-      SELECT created_at FROM homeroom_bot_posts
-       WHERE run_id = run.id AND kind = 'spec'
-       ORDER BY id DESC LIMIT 1
-    ) spec ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT proposal_session_id FROM homeroom_bot_runs
-       WHERE app_id = a.id AND issue_number = w.n AND proposal_session_id IS NOT NULL
-       ORDER BY id DESC LIMIT 1
-    ) prop ON TRUE
-    LEFT JOIN chat_sessions cs ON cs.id = prop.proposal_session_id
-    LEFT JOIN LATERAL (
-      SELECT created_at FROM homeroom_bot_dm_messages
-       WHERE app_id = a.id AND issue_number = w.n AND question_status = 'open'
-       ORDER BY created_at DESC LIMIT 1
-    ) oq ON TRUE`;
+    ${requestRecordJoinsSql({ appId: 'a.id', issueNumber: 'w.n' })}`;
 
 // Every live run of those requests, newest first, for their tries.
 const REQUEST_RUNS_SQL = `
@@ -583,6 +554,8 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null }
     stage: state ? state.stage : null,
     // #6228: the read is of somebody's newest reply.
     reply: state?.reply === true,
+    // #6313: the queued read is retrying a plan that could not be written.
+    retry: state?.retry || null,
     since: state ? iso(state.since) : null,
     at: iso(row.run_at),
     outcome,

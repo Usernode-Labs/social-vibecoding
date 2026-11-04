@@ -509,6 +509,58 @@ function checksOnHead(row) {
 // follow-up waiting its turn or running changes the change.
 const FOLLOW_UP_STAGES = new Set(['followup_queued', 'revising']);
 
+// #6282 (4 Nov 2026): a change with an update on its way asks for no vote: a
+// yes cast now is cleared when the update lands, and Homeroom asks again.
+// These two windows are the ones the bot's own records already use, so an
+// ask that has stopped holding the bot (homeroom-bot-voice.js takeAsks puts a
+// taken ask older than STALE_ASK_HOURS back to queued) stops holding the
+// vote too, and a queued ask past the sweep's week is not an update any more.
+const UPDATE_TAKEN_HOURS = 3; // = homeroom-bot-voice.js STALE_ASK_HOURS
+const UPDATE_QUEUED_DAYS = 7; // = homeroom-bot.js sweepStrandedAsks' window
+
+/**
+ * #6282: whether an update to a change (`cs`, a chat_sessions alias) is on
+ * its way, as `$`-free SQL: 'running' while a turn is in flight on it, or the
+ * bot holds a fresh taken ask; 'queued' while an ask waits its turn; NULL
+ * when no update is coming. It reads the bot's own records
+ * (homeroom_bot_change_asks) and the durable turn marker
+ * (chat_sessions.active_turn), so nothing new is stored.
+ *
+ * Read by the Needs you feed (routes/workshop-overview.js
+ * OWED_PROPOSALS_WHERE), the AI tab (ai-work.js THREADS_SQL) and the
+ * change's own proposal row (routes/votes.js), so all three agree.
+ */
+function updateComingSql(cs) {
+  return `(CASE
+    WHEN ${cs}.active_turn IS NOT NULL
+      OR EXISTS (SELECT 1 FROM homeroom_bot_change_asks uk
+                  WHERE uk.session_id = ${cs}.id AND uk.status = 'taken'
+                    AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS}))
+      THEN 'running'
+    WHEN EXISTS (SELECT 1 FROM homeroom_bot_change_asks uk
+                  WHERE uk.session_id = ${cs}.id AND uk.status = 'queued'
+                    AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS}))
+      THEN 'queued' END)`;
+}
+
+/**
+ * #6282: what the update on its way changes, for "Updating: …": the newest
+ * fresh taken ask's instruction, else the newest queued one's, or NULL when
+ * the turn has nobody's ask behind it. `$`-free SQL; `cs` is a chat_sessions
+ * alias, as updateComingSql's is.
+ */
+function updateAskSql(cs) {
+  return `(SELECT uk.instruction
+             FROM homeroom_bot_change_asks uk
+            WHERE uk.session_id = ${cs}.id
+              AND ((uk.status = 'taken'
+                    AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS}))
+                OR (uk.status = 'queued'
+                    AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS})))
+            ORDER BY CASE uk.status WHEN 'taken' THEN 0 ELSE 1 END, uk.id DESC
+            LIMIT 1)`;
+}
+
 /**
  * Pure (N5): the stage a first version's App tab is drawn at, from its
  * stage (stageOf) and whether it is ready to try (`ready`:
@@ -577,6 +629,11 @@ function stageOf(input, { now = new Date() } = {}) {
         : { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
     const waiting = first ? 'it goes live without a vote once its tests pass' : 'it\'s waiting for approval';
+    // #6284: the bot stopped at its own limit on failing checks. Needs you
+    // says so, with Let it try again, rather than reading as still checking.
+    if (row.fix_stopped === true && (row.check_state === 'failing' || row.check_state === 'error' || row.check_state === 'unknown')) {
+      return { stage: 'fix_stopped', since: row.checks_at || row.proposal_at, doing: 'its checks are failing, and Homeroom bot stopped fixing them', waitingOn: 'them' };
+    }
     if (row.check_state === 'failing' || row.check_state === 'error' || row.check_state === 'unknown') {
       return { stage: 'checks_failed', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests ${checks}` };
     }
@@ -690,7 +747,8 @@ function stageOf(input, { now = new Date() } = {}) {
     if (replyWaits(row, { now })) {
       return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
     }
-    return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder' };
+    return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder',
+      ...(planFailed(row) ? { retry: 'plan' } : {}) };
   }
   // #6228: a reply nobody has queued a read for yet still reads as one
   // coming, for REPLY_WAIT_MS: the bot's refresh sees it and queues it.
@@ -699,6 +757,18 @@ function stageOf(input, { now = new Date() } = {}) {
   }
   return null;
 }
+
+/**
+ * Pure (#6313): whether a request's newest look could not write its plan
+ * (homeroom-bot-live.js buildAndPropose: "no plan could be written (…)", the
+ * spec turn's final message "only part of a spec"). Nothing was built; the
+ * request is queued for another read, which is a retry of the plan.
+ */
+function planFailed(row) {
+  return row?.build_ok === false
+    && /no plan could be written|only part of a spec/.test(String(row.build_error || ''));
+}
+
 /**
  * Pure (14 Oct 2026, newcomer run eight): whether a first version's build
  * stopped, from its request row (requestRows) while nothing about it is in
@@ -722,16 +792,19 @@ function firstVersionStopped(row) {
  * the person, from its row (requestRows) while nothing about it is in
  * progress (stageOf answered null), or null. 'decide' when its newest look
  * left it for a person to decide (verdict 'person', the Go ahead its DM
- * offers); 'build_stopped' when the build came to nothing as
- * firstVersionStopped tells it, which reads no first-version field (the Try
- * again its DM offers). Only on a request still open with no change of it
- * up or merged. Nothing moves on either until somebody does something, so
- * the Homeroom bot tab lists them under Needs you (services/ai-work.js
- * botStages), where they read "Nobody is building it yet" before.
+ * offers); 'already_works' when that look found the ask already there (its
+ * `done` tag, #6306), which only waits to be closed; 'build_stopped' when
+ * the build came to nothing as firstVersionStopped tells it, which reads no
+ * first-version field (the Try again its DM offers). Only on a request still
+ * open with no change of it up or merged. Nothing moves on either until
+ * somebody does something, so the Homeroom bot tab lists them under Needs
+ * you (services/ai-work.js botStages), where they read "Nobody is building
+ * it yet" before.
  */
 function handedBack(row) {
   if (!row || row.mode !== 'live' || row.request_closed === true) return null;
   if (['promoted', 'merging', 'merged'].includes(row.proposal_status)) return null;
+  if ((row.verdict === 'person' || row.verdict === 'empty') && row.run_already_done === true) return 'already_works';
   if (row.verdict === 'person') return 'decide';
   return firstVersionStopped(row) ? 'build_stopped' : null;
 }
@@ -823,11 +896,15 @@ function typicalMinutes(stage, limit = null) {
  *   { state: 'handed_off' }              its newest run on this head gave it
  *                                        to a person (verdict person or
  *                                        failed)
+ *   { state: 'stopped', tries, canTryAgain, head }
+ *                                        #6284: it stopped at its own limit of
+ *                                        3 fixes, and the requester, an admin
+ *                                        or an admin may let it try once more
  *   null                                 nothing of the bot's is recorded
  * A read that fails is null: the card keeps its usual words. The queue is
  * keyed by request; the change reaches it through linked_issues.
  */
-async function changeBotFix(pool, sessionId) {
+async function changeBotFix(pool, sessionId, { viewer = null } = {}) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return null;
   try {
@@ -859,43 +936,104 @@ async function changeBotFix(pool, sessionId) {
     const head = String(cs.reviewed_head_sha || '').toLowerCase();
     if (!head) return null;
     const runs = await pool.query(
-      `SELECT id FROM homeroom_bot_runs
+      `SELECT id, limit_stop FROM homeroom_bot_runs
         WHERE proposal_session_id = $1 AND LOWER(checks_head_sha) = $2 AND verdict IN ('person', 'failed')
         ORDER BY id DESC
         LIMIT 1`,
       [id, head],
     );
-    return runs.rows.length ? { state: 'handed_off', since: null, reason: null } : null;
+    if (!runs.rows.length) return null;
+    const run = runs.rows[0];
+    if (run.limit_stop !== 'own_revisions') return { state: 'handed_off', since: null, reason: null };
+    // #6284: stopped at its own limit. An open grant means a round is
+    // already waiting or running for this stop.
+    const counts = await require('./homeroom-bot-followup').revisionCounts(pool, id);
+    if (counts.openGrant) return { state: 'queued', since: null, reason: null };
+    const canTryAgain = viewer
+      ? await require('./homeroom-bot-retry-grants').mayGrant(pool, { sessionId: id, user: viewer }).catch(() => false)
+      : false;
+    return {
+      state: 'stopped', since: null, reason: null, head,
+      tries: counts.own + counts.grants,
+      canTryAgain,
+    };
   } catch {
     return null;
   }
 }
 
 /**
- * Every request recorded as the person's (homeroom_bot_requesters), and
- * anything of theirs waiting in the bot's queue, with each record the steps
- * above read. Newest first.
+ * #6280 (4 Nov 2026): whether a request is closed, as `$`-free SQL the
+ * caller's aliases name. The newest issue row by id (issues is not unique on
+ * (app_id, github_issue_number), so a join could duplicate rows); null: no
+ * mirrored issue, or a first version before its request is filed. Null reads
+ * as not closed, unless the bot recorded its close (a request with no row of
+ * ours: homeroom-bot-closed-requests.js recordClosed). The bot page's rows
+ * and a request's track read it one way.
  */
-async function requestRows(pool, userId) {
-  const { rows } = await pool.query(
-    `WITH mine AS (
-       SELECT r.app_id, r.issue_number, r.issue_title, r.first_version
-         FROM homeroom_bot_requesters r WHERE r.user_id = $1
-       UNION
-       SELECT q.app_id, q.issue_number, i.title, FALSE
-         FROM homeroom_bot_queue q
-         JOIN issues i ON i.app_id = q.app_id AND i.github_issue_number = q.issue_number
-        WHERE i.created_by = $1
-          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters r2
-                           WHERE r2.app_id = q.app_id AND r2.issue_number = q.issue_number)
-     )
-     SELECT m.app_id, a.slug, a.name, a.repo_url, m.issue_number, m.issue_title, m.first_version,
-            q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until,
+function requestClosedSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
+  return `(COALESCE((SELECT ri.status = 'closed' FROM issues ri
+                      WHERE ri.app_id = ${appId} AND ri.github_issue_number = ${issueNumber}
+                      ORDER BY ri.id DESC LIMIT 1), FALSE)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
+                         WHERE cr.app_id = ${appId} AND cr.issue_number = ${issueNumber} AND cr.closed_at IS NOT NULL))`;
+}
+
+/**
+ * #6280 (4 Nov 2026): the records one request's row is read from, as
+ * `$`-free SQL the caller's aliases name: its queue row, its newest LIVE run
+ * (the one stageOf reads: a shadow build's newer run is not this request's
+ * stage), the build session that run started, its newest plan post, its
+ * newest proposal and change, the newest reply after that run, and an open
+ * question about it. The bot page (requestRows below) and a request's own
+ * track (homeroom-bot-track.js REQUEST_ROWS_SQL) read one source, so their
+ * stages cannot disagree. `userIdSql` narrows the open question to one
+ * person's (the bot page's); left out, any open question counts (a track).
+ */
+function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_number', userIdSql = null } = {}) {
+  return `LEFT JOIN homeroom_bot_queue q ON q.app_id = ${appId} AND q.issue_number = ${issueNumber}
+       LEFT JOIN LATERAL (
+         SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
+                proposal_session_id, live_build_waiting_at, awaiting_go_at,
+                reason AS run_reason, already_done AS run_already_done,
+                review->>'state' AS review_state, review->>'startedAt' AS review_started_at,
+                jsonb_array_length(COALESCE(review->'rounds', '[]'::jsonb)) AS review_round,
+                (review->'reviewer'->>'maxRounds')::int AS review_max_rounds,
+                (review->'reviewer'->>'budgetMinutes')::int AS review_minutes,
+                build_no_change->'turns'->-1->>'said' AS no_change_said
+           FROM homeroom_bot_runs
+          WHERE app_id = ${appId} AND issue_number = ${issueNumber} AND mode = 'live'
+          ORDER BY id DESC LIMIT 1
+       ) run ON TRUE
+       ${replyLateralSql({ appId, issueNumber, runAt: 'run.created_at' })}
+       LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
+       LEFT JOIN LATERAL (
+         SELECT created_at FROM homeroom_bot_posts
+          WHERE run_id = run.id AND kind = 'spec'
+          ORDER BY id DESC LIMIT 1
+       ) spec ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT proposal_session_id FROM homeroom_bot_runs
+          WHERE app_id = ${appId} AND issue_number = ${issueNumber} AND proposal_session_id IS NOT NULL
+          ORDER BY id DESC LIMIT 1
+       ) prop ON TRUE
+       LEFT JOIN chat_sessions cs ON cs.id = prop.proposal_session_id
+       LEFT JOIN LATERAL (
+         SELECT created_at FROM homeroom_bot_dm_messages
+          WHERE app_id = ${appId} AND issue_number = ${issueNumber} AND question_status = 'open'
+            ${userIdSql ? `AND user_id = ${userIdSql}` : ''}
+          ORDER BY created_at DESC LIMIT 1
+       ) oq ON TRUE`;
+}
+
+/** The columns requestRecordJoinsSql provides, as both readers select them. */
+const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until,
             run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
             run.cap_suppressed,
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
             run.live_build_waiting_at AS build_waiting_at, run.awaiting_go_at AS plan_waiting_at,
             run.review_state, run.review_started_at, run.review_round, run.review_max_rounds, run.review_minutes,
+            run.no_change_said, run.run_reason, run.run_already_done,
             bs.status AS build_status, bs.created_at AS build_started_at, bs.last_activity_at AS build_last_activity,
             bs.active_turn->>'mode' AS build_turn_mode, bs.active_turn->>'startedAt' AS build_turn_at,
             spec.created_at AS spec_at,
@@ -909,54 +1047,84 @@ async function requestRows(pool, userId) {
             cs.checks_commit_sha AS checks_sha, cs.reviewed_head_sha, cs.imported_pr_head_sha,
             cs.source AS proposal_source,
             COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
-            -- #4539: the request's own state, newest row by id (issues is not
-            -- unique on (app_id, github_issue_number), so a join could
-            -- duplicate rows). Null: no mirrored issue, or a first version
-            -- before its request is filed. Null reads as not closed, unless
-            -- the bot recorded its close (a request with no row of ours:
-            -- homeroom-bot-closed-requests.js recordClosed).
-            (COALESCE((SELECT ri.status = 'closed' FROM issues ri
-                         WHERE ri.app_id = m.app_id AND ri.github_issue_number = m.issue_number
-                         ORDER BY ri.id DESC LIMIT 1), FALSE)
-                OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
-                            WHERE cr.app_id = m.app_id AND cr.issue_number = m.issue_number AND cr.closed_at IS NOT NULL)) AS request_closed,
             oq.created_at AS question_at,
-            reply.reply_id, reply.reply_at, reply.reply_user_id
+            -- #6284: it stopped at its own limit on this change, with no
+            -- grant open: Needs you reads that, not "checking".
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_runs lr
+               WHERE lr.proposal_session_id = prop.proposal_session_id
+                 AND lr.limit_stop = 'own_revisions'
+                 AND lr.id = (
+                   SELECT MAX(lr2.id) FROM homeroom_bot_runs lr2
+                    WHERE lr2.proposal_session_id = prop.proposal_session_id
+                      AND lr2.verdict IN ('person', 'failed')
+                      AND LOWER(lr2.checks_head_sha) = LOWER(cs.reviewed_head_sha))
+                 AND NOT EXISTS (
+                   SELECT 1 FROM homeroom_bot_revision_grants g
+                    WHERE g.session_id = prop.proposal_session_id AND g.used_at IS NULL)
+            ) AS fix_stopped,
+            reply.reply_id, reply.reply_at, reply.reply_user_id`;
+
+// #6280: a row beyond the newest MAX_REQUESTS whose record looks live, so
+// requestStates can read its stage before applying the cap to finished work.
+// Generous on purpose: a row it picks that stageOf reads as finished is
+// dropped below.
+const REQUEST_RECORD_LIVE_SQL = `(queue_id IS NOT NULL
+             OR question_at IS NOT NULL
+             OR proposal_status IN ('promoted', 'merging')
+             -- ready with nothing finished from it: plan waiting, build
+             -- queued or under way, reviewing, and a build handed back.
+             OR (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL)
+             OR (mode = 'live' AND verdict IN ('person', 'failed'))
+             OR (mode = 'live' AND verdict = 'ready' AND build_ok = FALSE
+                 AND build_error NOT LIKE 'skipped:%' AND build_error NOT LIKE 'blocked:%')
+             -- a reply nobody has queued a read for yet, while it counts.
+             OR (reply_at IS NOT NULL
+                 AND reply_at > NOW() - make_interval(secs => ${Math.round(REPLY_WAIT_MS / 1000)})))`;
+
+/**
+ * Every request recorded as the person's (homeroom_bot_requesters), and
+ * anything of theirs waiting in the bot's queue, with each record the steps
+ * above read. Newest first.
+ *
+ * #6280 (4 Nov 2026, #6251): MAX_REQUESTS is a cap on the requests FINISHED
+ * work is read from, never on work under way. A request being built, fixed,
+ * reviewed or handed back, a plan waiting for Build it, and an open question
+ * drop out of a plain 25-row window on a busy day (the platform's requester
+ * had more than 25 newer runs), and the bot page then said "Nobody on it"
+ * while the request's own page said Building. So every row whose record
+ * looks live is read too, whatever its age; requestStates drops the ones
+ * stageOf reads as finished, and only the newest MAX_REQUESTS of those stay.
+ */
+async function requestRows(pool, userId) {
+  const { rows } = await pool.query(
+    `WITH mine AS (
+       SELECT r.app_id, r.issue_number, r.issue_title, r.first_version
+         FROM homeroom_bot_requesters r WHERE r.user_id = $1
+       UNION
+       SELECT q.app_id, q.issue_number, i.title, FALSE
+         FROM homeroom_bot_queue q
+         JOIN issues i ON i.app_id = q.app_id AND i.github_issue_number = q.issue_number
+        WHERE i.created_by = $1
+          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters r2
+                           WHERE r2.app_id = q.app_id AND r2.issue_number = q.issue_number)
+     ), recs AS (
+       SELECT m.app_id, a.slug, a.name, a.repo_url, m.issue_number, m.issue_title, m.first_version,
+            ${REQUEST_RECORD_COLUMNS},
+            -- #4539: the request's own state (requestClosedSql).
+            ${requestClosedSql({ appId: 'm.app_id', issueNumber: 'm.issue_number' })} AS request_closed,
+            ROW_NUMBER() OVER (
+              ORDER BY GREATEST(COALESCE(run.created_at, 'epoch'::timestamptz),
+                                COALESCE(q.enqueued_at, 'epoch'::timestamptz),
+                                COALESCE(q.started_at, 'epoch'::timestamptz)) DESC
+            ) AS record_rank
        FROM mine m
        JOIN apps a ON a.id = m.app_id
-       LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
-       LEFT JOIN LATERAL (
-         SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
-                proposal_session_id, live_build_waiting_at, awaiting_go_at,
-                review->>'state' AS review_state, review->>'startedAt' AS review_started_at,
-                jsonb_array_length(COALESCE(review->'rounds', '[]'::jsonb)) AS review_round,
-                (review->'reviewer'->>'maxRounds')::int AS review_max_rounds,
-                (review->'reviewer'->>'budgetMinutes')::int AS review_minutes
-           FROM homeroom_bot_runs
-          WHERE app_id = m.app_id AND issue_number = m.issue_number
-          ORDER BY id DESC LIMIT 1
-       ) run ON TRUE
-       ${replyLateralSql({ appId: 'm.app_id', issueNumber: 'm.issue_number', runAt: 'run.created_at' })}
-       LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
-       LEFT JOIN LATERAL (
-         SELECT created_at FROM homeroom_bot_posts
-          WHERE run_id = run.id AND kind = 'spec'
-          ORDER BY id DESC LIMIT 1
-       ) spec ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT proposal_session_id FROM homeroom_bot_runs
-          WHERE app_id = m.app_id AND issue_number = m.issue_number AND proposal_session_id IS NOT NULL
-          ORDER BY id DESC LIMIT 1
-       ) prop ON TRUE
-       LEFT JOIN chat_sessions cs ON cs.id = prop.proposal_session_id
-       LEFT JOIN LATERAL (
-         SELECT created_at FROM homeroom_bot_dm_messages
-          WHERE user_id = $1 AND app_id = m.app_id AND issue_number = m.issue_number AND question_status = 'open'
-          ORDER BY created_at DESC LIMIT 1
-       ) oq ON TRUE
-      ORDER BY GREATEST(COALESCE(run.created_at, 'epoch'::timestamptz), COALESCE(q.enqueued_at, 'epoch'::timestamptz),
-                        COALESCE(q.started_at, 'epoch'::timestamptz)) DESC
-      LIMIT ${MAX_REQUESTS}`,
+       ${requestRecordJoinsSql({ appId: 'm.app_id', issueNumber: 'm.issue_number', userIdSql: '$1' })}
+     )
+     SELECT * FROM recs
+      WHERE record_rank <= ${MAX_REQUESTS} OR ${REQUEST_RECORD_LIVE_SQL}
+      ORDER BY record_rank`,
     [userId],
   );
   return rows;
@@ -1474,6 +1642,8 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     ...(typical ? { typicalMinutes: typical } : {}),
     ...(state.waitingOn ? { waitingOn: state.waitingOn } : {}),
     ...(state.waitingFor ? { waitingFor: state.waitingFor } : {}),
+    // #6313: a queued read after a plan that could not be written says so.
+    ...(state.retry ? { retry: state.retry } : {}),
     ...(proposal ? { proposal } : {}),
     // WP1 (#10): the request's other builds, beside the one described.
     ...(row.also_building ? { alsoBuilding: row.also_building } : {}),
@@ -1501,10 +1671,13 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
   }));
   await attachAttempts(pool, rows);
   const position = await queuePositions(pool, rows, settings);
+  // #6280: a row read past MAX_REQUESTS only because its record looked live
+  // is kept when it really is: a stage, or a request handed back to them. A
+  // finished one is dropped, so the cap still applies to finished work.
   const staged = rows.map((row) => {
     const queuePosition = row.queue_id ? position.get(Number(row.queue_id)) || null : null;
     return { row, state: stageOf({ ...row, queue_position: queuePosition }, { now }), queuePosition };
-  });
+  }).filter((s) => s.row.record_rank == null || Number(s.row.record_rank) <= MAX_REQUESTS || s.state || handedBack(s.row));
   // #3771: what a request still in the queue waits for, in words. `working`
   // is the work already under way that does not come from these requests.
   const busyCount = working
@@ -1652,9 +1825,18 @@ module.exports = {
   REPLY_WAIT_MS,
   replyWaits,
   replyLateralSql,
+  // #6280: one record read for the bot page's rows and a request's track.
+  requestClosedSql,
+  requestRecordJoinsSql,
+  REQUEST_RECORD_COLUMNS,
   // #6246: a plan waiting for Build it, read by the bot page and the Workshop.
   planWaits,
   planWaitingSql,
+  // #6282: an update on its way holds the vote it would otherwise ask for.
+  UPDATE_TAKEN_HOURS,
+  UPDATE_QUEUED_DAYS,
+  updateComingSql,
+  updateAskSql,
   inFlight,
   stageOf,
   // #6234: the bot's own fix of a change's failing checks, for its page.

@@ -53,7 +53,7 @@
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
-const { planWaitingSql } = require('./homeroom-bot-progress');
+const { planWaitingSql, updateComingSql, updateAskSql } = require('./homeroom-bot-progress');
 
 const THREADS_MAX = 80;
 const PRIVATE_MAX = 30;
@@ -111,6 +111,8 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
        ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
+       -- #6282: an update on its way holds the vote the change would ask for.
+       ch.update_coming, ch.update_ask,
        dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
        COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, req.updated_at, t.created_at) AS sort_at,
@@ -146,7 +148,11 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
              WHERE v.session_id = cs.id AND v.user_id = $1
                AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch
              LIMIT 1) AS my_vote,
-           (cs.external_agent IS NOT NULL) AS by_agent
+           (cs.external_agent IS NOT NULL) AS by_agent,
+           -- #6282: 'running' while a turn updates it, 'queued' while an
+           -- ask waits its turn, and what was asked, for the row's words.
+           ${updateComingSql('cs')} AS update_coming,
+           ${updateAskSql('cs')} AS update_ask
       FROM chat_sessions cs
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        -- A posted plan is no change (threads.js ITEMS_SQL says the same).
@@ -203,13 +209,13 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
 // $1 viewer, $2 the bot, $3 the most rows, $4 days a done thread stays
 // listed. A thread they started is one of their own messages in the chat
 // with the bot that has replies; a draft the bot opened is a row of
-// private_threads. Only those still open: a filed or posted one is a public
-// thread now, and listed there. 1 Nov 2026: except one holding a design,
-// which stays private and is still worked on (its next post is the plan's
-// next version): it stays listed. #6153: with where it went (its state and
-// the request's number), so the tab draws it as that request's row rather
-// than a second one (model.ts needsYou). #6271: a done thread stays listed
-// for $4 days after it was closed, where Live this week shows it.
+// private_threads. Every private thread is listed except a done one (#6250,
+// 4 Nov 2026: a filed, posted or dropped thread stays, so the way in is
+// always the list, never Main Chat). #6153: with where it went (its state and
+// the request's number), so the tab draws a filed or posted thread as that
+// request's row rather than a second one when a row names it (model.ts
+// needsYou). #6271: a done thread stays listed for $4 days after it was
+// closed, where Live this week shows it.
 const PRIVATE_SQL = `
 SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, p.done_at, a.slug, a.name,
        a.icon_emoji, a.icon_image_id, a.repo_url,
@@ -241,12 +247,11 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
    AND (p.id IS NOT NULL
         OR (m.sender_id = $1 AND EXISTS (SELECT 1 FROM conversation_messages r
                                           WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL)))
-   AND (COALESCE(p.state, 'open') = 'open'
-        OR (p.state IN ('posted', 'filed')
-            AND EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id))
-        -- #6271: a done thread is finished, but stays findable for $4 days
-        -- under Live this week (unless reopened).
-        OR (p.state = 'done' AND p.done_at >= NOW() - make_interval(days => $4)))
+   -- #6250: filed, posted and dropped threads stay listed. #6271: a done
+   -- thread is finished, but stays findable for $4 days under Live this week
+   -- (unless reopened).
+   AND (COALESCE(p.state, 'open') <> 'done'
+        OR p.done_at >= NOW() - make_interval(days => $4))
  ORDER BY COALESCE((SELECT MAX(r.created_at) FROM conversation_messages r
                      WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL), m.created_at) DESC
  LIMIT $3`;
@@ -283,6 +288,22 @@ function firstLine(text, max = 90) {
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
+// #6306: the bot's first whole sentence, cut at `max` with "…" when it does
+// not fit. The row says what it found in one sentence; the page keeps all.
+function firstSentence(text, max = 140) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  const sentence = (flat.match(/^.+?[.!?](?=\s|$)/) || [flat])[0];
+  return sentence.length > max ? `${sentence.slice(0, max - 1).trimEnd()}…` : sentence;
+}
+
+// #6282: one ask, as the row's one line of words: 80 characters at most,
+// ending in "…" when cut (the way the bot's own lines are shortened,
+// homeroom-bot-voice.js clip). Whitespace folds, so a tooltip stays one line.
+function clip(value, max = 80) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
 const iso = (at) => (at ? new Date(at).toISOString() : null);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -298,7 +319,13 @@ const BOT_STANDING = Object.freeze({
   // Handed back to them (homeroom-bot-progress.js handedBack): nothing moves
   // until somebody decides, or asks it to try the build again.
   decide: { group: 'needs', what: 'decide' },
+  // #6306: the ask is already there, so nothing is left to build: the row
+  // offers Propose to close, never reads as a decision.
+  already_works: { group: 'needs', what: 'already_works' },
   build_stopped: { group: 'needs', what: 'build_stopped' },
+  // #6284: the bot stopped at its own limit on failing checks; somebody may
+  // let it try once more.
+  fix_stopped: { group: 'needs', what: 'fix_stopped' },
   reading: { group: 'next', what: 'reading' },
   starting: { group: 'next', what: 'building', by: 'bot' },
   planning: { group: 'next', what: 'building', by: 'bot' },
@@ -358,6 +385,9 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
   // #6228: a read the bot started after somebody replied is reading that
   // reply, not the request again.
   if (said && bot.stage === 'reading' && bot.reply === true) said = { group: 'next', what: 'reading_reply' };
+  // #6313: a read queued again after a plan that could not be written is
+  // retrying the plan, not waiting for a free builder as if nothing happened.
+  if (said && said.what === 'queued' && bot.retry === 'plan') said = { group: 'waiting', what: 'retrying_plan' };
   // 1 Nov 2026: Homeroom bot waits for their plan, which nothing it is
   // queued for overtakes: Waiting for your plan, until a change is up.
   if (row.awaiting_plan === true && !status && row.request_state === 'open' && (!said || said.group === 'waiting')) {
@@ -366,7 +396,24 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
   if (said === null) return null;
   // Handed back, and somebody has taken it up since (a change of theirs, or
   // a claim): that is where it stands now.
-  if (said && (said.what === 'decide' || said.what === 'build_stopped') && (status || row.claimed_by)) said = undefined;
+  if (said && (said.what === 'decide' || said.what === 'already_works' || said.what === 'build_stopped')
+      && (status || row.claimed_by)) said = undefined;
+  // #6282 (4 Nov 2026): an update on its way holds the vote. While a turn
+  // runs on the change, or the bot holds an ask it took, the row reads
+  // Updating; while an ask waits its turn, Update queued. It is listed for
+  // the people who would have been asked to vote on it and for its own
+  // people; somebody who already voted and only wrote in it still gets no
+  // row. Any more particular stage of the bot's (fixing, fix_queued,
+  // merging) still wins.
+  const updateHeld = !said || said.what === 'revising' || said.what === 'followup_queued';
+  if (status === 'promoted' && row.update_coming && updateHeld
+      && (own || (!row.voted && (!theirs || row.by_agent)))) {
+    const ask = row.update_ask ? clip(row.update_ask) : null;
+    const at = iso((bot && bot.since) || row.last_activity_at || row.promoted_at);
+    return row.update_coming === 'running'
+      ? { group: 'next', what: 'updating', at, ...(ask ? { ask } : {}) }
+      : { group: 'waiting', what: 'update_queued', at, ...(ask ? { ask } : {}) };
+  }
   if (said) {
     // #6158: a queued or held build also says its place in line.
     const place = facts && said.what === 'queued' ? facts.queuePlace
@@ -381,6 +428,8 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
       at,
       ...(said.what === 'held' ? { heldBy: heldBy(bot.capSuppressed) } : {}),
       ...(place ? { place } : {}),
+      // #6306: an already-done hand-back says why in the bot's own sentence.
+      ...(said.what === 'already_works' && bot.reason ? { reason: bot.reason } : {}),
     };
   }
   if (status === 'merging') return own ? { group: 'next', what: 'merging', at: iso(row.merged_at || row.promoted_at) } : null;
@@ -444,6 +493,14 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
         return { group: 'waiting', what: 'held', ...base, heldBy: heldBy(f.run.capSuppressed), ...(f.heldPlace ? { place: f.heldPlace } : {}) };
       }
       const reason = f.run ? firstLine(f.run.reason, 140) || null : null;
+      // #6306: already there. The requester (and the project's deciders) are
+      // offered to close it; anyone else waits on that, and it never reads
+      // as a decision.
+      if (f.run && (f.run.verdict === 'person' || f.run.verdict === 'empty') && f.run.alreadyDone) {
+        return f.viewerDecides
+          ? { group: 'needs', what: 'already_works', ...base, ...(reason ? { reason } : {}) }
+          : { group: 'waiting', what: 'needs_person', ...base, ...(reason ? { reason } : {}) };
+      }
       // Handed back: the requester's (and the project's deciders') to
       // decide, anyone else's to wait on.
       if (f.run && f.run.verdict === 'person') {
@@ -468,13 +525,13 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
 
 // In progress is soonest first: going live, then merging, then a change
 // being fixed or followed up, then made, then a request being read.
-const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building: 3, reading: 4, reading_reply: 4 };
+const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, updating: 2, building: 3, reading: 4, reading_reply: 4 };
 // Waiting is the nearest to live first: a vote or a change still waiting for
 // its checks (the oldest has waited longest), a follow-up waiting its turn, a
 // build waiting its turn or held back, a request waiting to be read, then one
 // nobody has picked up.
 const WAITING_ORDER = {
-  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5,
+  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, update_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, retrying_plan: 4, on_hold: 5,
   not_picked_up: 6, needs_person: 6, nothing_to_build: 6, operator: 6, not_read: 6,
 };
 
@@ -562,6 +619,12 @@ async function botStages(pool, user, deps = {}) {
         // #6228: only a read of a reply says so; every other stage keeps the
         // shape it had.
         ...(state && state.reply === true ? { reply: true } : {}),
+        // #6313: and only a read queued after a plan that could not be
+        // written says it is retrying the plan.
+        ...(state && state.retry ? { retry: state.retry } : {}),
+        // #6306: a request found already done brings the bot's reason with
+        // it, so the row and the page say "Already works: …".
+        ...(stage === 'already_works' ? { reason: firstSentence(row.run_reason, 140) || null } : {}),
       });
     }
   } catch (err) {
@@ -584,7 +647,7 @@ WITH wanted AS (
 ),
 live_run AS (
   SELECT DISTINCT ON (r.app_id, r.issue_number)
-         r.app_id, r.issue_number, r.verdict, r.reason, r.cap_suppressed, r.created_at,
+         r.app_id, r.issue_number, r.verdict, r.reason, r.already_done, r.cap_suppressed, r.created_at,
          r.build_ok, r.build_error, r.proposal_session_id,
          (r.created_at > NOW() - make_interval(days => $4)) AS fresh
     FROM homeroom_bot_runs r
@@ -607,7 +670,8 @@ queue AS (
    WHERE q.started_at IS NULL AND q.app_id = ANY($2::int[])
 )
 SELECT w.app_id, w.number, a.slug, rq.title, rq.labels,
-       lr.verdict AS run_verdict, lr.reason AS run_reason, lr.cap_suppressed AS run_cap,
+       lr.verdict AS run_verdict, lr.reason AS run_reason, lr.already_done AS run_already_done,
+       lr.cap_suppressed AS run_cap,
        lr.created_at AS run_at, lr.fresh AS run_fresh,
        lr.build_ok AS run_build_ok, lr.build_error AS run_build_error, lr.proposal_session_id AS run_proposal,
        -- #6228: the newest person's reply on the request after that run, and
@@ -679,6 +743,7 @@ async function requestFacts(pool, rows, viewerId, deps = {}) {
       const run = f.run_verdict == null ? null : {
         verdict: f.run_verdict,
         reason: f.run_reason || null,
+        alreadyDone: f.run_already_done === true,
         capSuppressed: f.run_cap || null,
         createdAt: f.run_at || null,
         buildOk: f.run_build_ok,
@@ -793,9 +858,17 @@ async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
     botStages(pool, user, deps),
   ]);
   const facts = await requestFacts(pool, threadRows, user.id, deps);
+  const lists = arrange(threadRows, user.id, new Date(), bot ? bot.id : null, bots, facts);
+  // #6262: how many messages in each listed thread are new to the viewer.
+  // Private threads are not `threads` rows and keep no cursor here: Main
+  // Chat's own "N new" covers them.
+  const listed = [...lists.needs, ...lists.next, ...lists.waiting, ...lists.live];
+  const unread = await (deps.threadReads || require('./thread-reads'))
+    .unreadFor(pool, user.id, listed.map((t) => t.threadId));
+  for (const t of listed) t.unread = unread.get(t.threadId) || 0;
   return {
     private: privateRows.map(shapePrivate),
-    ...arrange(threadRows, user.id, new Date(), bot ? bot.id : null, bots, facts),
+    ...lists,
   };
 }
 
@@ -820,7 +893,10 @@ const NEED_SAYS = Object.freeze({
   bot_question: 'waits for their answer',
   plan: 'its plan waits for their Build it',
   decide: 'Homeroom bot handed it back: a person needs to decide',
+  // #6306: nothing left to build; it only waits to be closed.
+  already_works: 'already works, so Homeroom bot offered to close it (Propose to close)',
   build_stopped: 'Homeroom bot\'s build of it stopped: it waits for them to ask it to try again',
+  fix_stopped: 'its checks are failing, and Homeroom bot stopped fixing them: it waits for them to let it try again',
 });
 
 /** What an In progress or Waiting row says, by what it waits on (the tab's tooltips, model.ts nextWords). */
@@ -831,6 +907,8 @@ const THREAD_SAYS = Object.freeze({
   revising: 'Homeroom bot is following up on the replies',
   reading: 'Homeroom bot is reading it',
   reading_reply: 'Homeroom bot is reading the newest reply',
+  // #6313: queued again after a plan that could not be written.
+  retrying_plan: 'Homeroom bot is trying the plan again',
   building: 'being built',
   vote: 'waiting for votes',
   decision: 'waiting for votes',
@@ -867,6 +945,19 @@ function threadSays(t, slotVotes = 0) {
   if (t.what === 'queued' && t.place) return `#${t.place} in line; ${says}`;
   if (t.what === 'held' && t.place) return `#${t.place} ${t.heldBy === 'turn' ? 'in line' : 'for a slot'}; ${says}`;
   return says;
+}
+
+/**
+ * Pure (#6250): what Homeroom bot's answer says of a private thread, by where
+ * it went. A filed or posted one names the request; a put-away draft says so;
+ * an open one is not posted yet.
+ */
+function privateSays(p) {
+  const n = Number(p?.resultRef);
+  if (p?.state === 'filed' && n > 0) return `their private thread with Homeroom bot, filed as #${n}`;
+  if (p?.state === 'posted' && n > 0) return `their private thread with Homeroom bot, posted on #${n}`;
+  if (p?.state === 'dropped') return 'their private thread with Homeroom bot, put away';
+  return 'their private thread with Homeroom bot, not posted yet';
 }
 
 /**
@@ -913,8 +1004,11 @@ function listsOf(needs, work, { botUsername = null } = {}) {
     needsYou: [
       ...items.map((item) => row(item.app, shownNumber(item), (item.kind === 'ballot' && item.ballot?.title) || item.title,
         NEED_SAYS[item.kind] || 'waits for them')),
-      ...(work?.needs || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, NEED_SAYS[t.what] || 'waits for them')),
-      ...privates.map((p) => row(p.app, null, p.title, 'their private thread with Homeroom bot, not posted yet')),
+      ...(work?.needs || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title,
+        t.what === 'already_works' && t.reason
+          ? `${NEED_SAYS.already_works}: ${t.reason}`
+          : (NEED_SAYS[t.what] || 'waits for them'))),
+      ...privates.map((p) => row(p.app, null, p.title, privateSays(p))),
     ],
     inProgress: (work?.next || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t))),
     waiting: (work?.waiting || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t, slotVotes(t)))),

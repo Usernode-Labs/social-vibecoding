@@ -202,6 +202,27 @@ test('what counts as saying a screen is being drawn', () => {
   assert.equal(cut, 'I haven\'t drawn it yet. Ask me to draw it and I\'ll start on it.\n\nIt will match the rest of the app closely.');
 });
 
+test('#6307: a second pass replaces the first pass\'s words, so one reply is sent', async () => {
+  // 4 Nov 2026: the first pass wrote its answer beside a tool call and then
+  // claimed a draft it never made; the second pass's reply was joined under
+  // the first pass's paragraphs, which repeated them.
+  const firstPass = 'Here is where all ten stand, in the order you gave them. The Game Corner has its own thread now, '
+    + 'and the rest follow it one by one, each with its own card and its own place in the queue you can open from '
+    + 'the list on the left of this screen. A File it button will appear under this message for The Best Color, so '
+    + 'tap it whenever you are ready, and the one after it gets its own card under the reply I send you next.';
+  assert.ok(firstPass.length > 300, 'long enough to be kept as the answer\'s start');
+  const turn = mayorTurn([
+    { content: firstPass, calls: [call('my_projects', {})] },
+    'A File it button will appear under this message.',
+    { calls: [call('reply', { text: 'I have not drafted it, so there is nothing to tap.' })] },
+  ]);
+  await turn.run;
+  assert.equal(turn.seen.length, 3, 'the claim check asked it again');
+  assert.equal(turn.sent.length, 1);
+  assert.equal(turn.sent[0].content, 'I have not drafted it, so there is nothing to tap.');
+  assert.doesNotMatch(turn.sent[0].content, /Here is where all ten stand/, 'the first pass\'s words are not sent too');
+});
+
 // ── 3. The designer ──────────────────────────────────────────────────────
 
 // `files`: the project's code on main, for a design of an app (surface
@@ -839,6 +860,16 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   const drawing = renderToHtml(createElement(card.BotWorkingCard, { typist: { ...bot, doing: { kind: 'drawing' } } }));
   assert.match(drawing, /data-bot-working="drawing"/);
   assert.match(drawing, />Drawing the screen</);
+
+  // 4 Nov 2026 (#6302): the answer so far is drawn under the doing line,
+  // whatever the doing kind is, so it no longer vanishes between rounds.
+  const held = renderToHtml(createElement(card.BotWorkingCard, {
+    typist: { ...bot, doing: { kind: 'drawing' }, draft: 'The answer so far.' },
+  }));
+  assert.match(held, /data-bot-working="drawing"/);
+  assert.match(held, />Drawing the screen</);
+  assert.match(held, /data-bot-working-draft=""/);
+  assert.match(held, /The answer so far\./);
 
   const t = catalog;
   assert.equal(card.botDoingLine(t, null), 'Thinking');

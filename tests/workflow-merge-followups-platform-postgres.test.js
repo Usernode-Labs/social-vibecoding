@@ -105,8 +105,13 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     noteProposalMerged: async (p, s) => { calls.push(['dm', s.id]); return null; },
   });
 
+  // The fixture's apps are inserted `running` but have no runtime, so the
+  // app-health sweep would find them down and redeploy them with the stub's
+  // default build, moving main_sha under the merge this checks (the same
+  // reason the apps are inserted `running` rather than `creating`).
   const config = {
     databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2,
+    appHealIntervalMs: 0,
   };
   const platform = require('../src/workflow/platform.ts');
   t.after(async () => {
@@ -419,6 +424,12 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url, main_sha)
        VALUES ('Homeroom', 'homeroom-self', $1, TRUE, 'https://github.com/acme/homeroom', $2) RETURNING id`,
       [author.id, SHA('7')]);
+    // The Kubernetes subtest's loops runtime is still up. Settle and stop it
+    // first, as the restart subtests above do, so the first boot starts its
+    // own runtime under its own GIT_SHA instead of reusing this one (and so
+    // that stopWorkflow does not cut off work still in flight).
+    await quiet();
+    await platform.stopWorkflow();
     const was = process.env.GIT_SHA;
     const boot = async (sha) => {
       process.env.GIT_SHA = sha;

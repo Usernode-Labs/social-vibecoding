@@ -180,6 +180,27 @@ test('returns the merged-shaped row under { proposal }', async () => {
   assert.deepEqual(q.params, [1, 1, 4242], 'app_id, userId, id bound');
 });
 
+// #6287: the page's Vote button asks "Still yes?" from the row it reads. The
+// single-change read must carry the viewer's vote on an earlier version,
+// exactly as the /promoted list already does; the "Your yes was on an earlier
+// version" line comes from a different read, so without this the card knew
+// about the earlier yes while its button offered a fresh "Vote".
+test('#6287: the row carries the viewer\'s vote on an earlier version', async () => {
+  const row = { id: 4242, pr_number: 88, status: 'promoted', my_vote: null, my_prior_vote: 'yes' };
+  const { routes, captured } = loadVotes({ row });
+  const { payload, statusCode } = await callById(routes, { id: 4242, user: { id: 7 } });
+  assert.equal(statusCode, 200);
+  assert.equal(payload.proposal.my_prior_vote, 'yes', 'the change page can ask "Still yes?"');
+  assert.equal(payload.proposal.my_vote, null);
+  const q = captured.calls.find((c) => /cs\.id = \$3/.test(c.sql));
+  assert.ok(q, 'by-id query issued');
+  assert.match(q.sql, /NOT COALESCE\(\(pv\.approval_epoch = cs\.approval_epoch\), FALSE\)\) as my_prior_vote/,
+    'the earlier vote is outside the current epoch');
+  assert.match(q.sql, /WHERE pv\.session_id = cs\.id AND pv\.user_id = \$2/,
+    'read for the viewer bound at \$2');
+  assert.deepEqual(q.params, [1, 7, 4242], 'app_id, userId, id bound');
+});
+
 test('unknown id 404s', async () => {
   const { routes } = loadVotes({ row: null });
   const { payload, statusCode } = await callById(routes, { id: 999999 });

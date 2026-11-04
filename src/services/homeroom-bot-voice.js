@@ -74,6 +74,22 @@ const ANSWER_WINDOW_MINUTES = 60;
 // The next message after the bot's own in a reply thread, this soon after
 // it, is to the bot.
 const CONTINUE_MINUTES = 30;
+const MAX_ROUNDS = 8;
+// #6270: a turn that spent every round reading the code answered with a
+// stand-in word. It may look things up this many times, and its last round is
+// told so and can only answer or queue the change.
+const MAX_READS_PER_TURN = 4;
+const READ_TOOLS = Object.freeze([
+  'list_source', 'read_source', 'request_detail', 'read_message', 'get_change', 'get_discussion', 'list_requests',
+]);
+const READING_DONE = 'Your reading for this turn is done. Answer with what you know, or queue the change with update_change.';
+// What the last round offers: a read tool cannot be picked there.
+const LAST_ROUND_TOOLS = Object.freeze(['reply', 'stay_quiet', 'update_change']);
+const LAST_ROUND_NOTE = 'This is your last round. Answer now with what you have, or queue the change they asked for with update_change. You cannot read anything more.';
+const STAND_IN_NOTE = 'That reply is a stand-in, not an answer. Write the real answer to what they said now, or queue the change with update_change.';
+// #6270: words a model writes when it has nothing to say, and text with no
+// letters at all ("...", "???"). A short real answer ("No.", "Yes.") passes.
+const STAND_IN_WORDS = Object.freeze(['placeholder', 'todo', 'tbd', 'text', 'reply']);
 // #6268: a person's coding agent posts for them through the connector
 // (`posted_via = 'agent'`). On these places it is heard as the person's own
 // message; on a channel it is not answered, as before.
@@ -90,7 +106,6 @@ const CONNECTOR_REASONS = Object.freeze(['connector', 'connector_loop', 'connect
 // post_message result says back: a server sentence (not catalogued), word for
 // word in both places.
 const CONNECTOR_NOTE = 'Homeroom bot doesn\'t answer this message; @ it in your own words to ask it.';
-const MAX_ROUNDS = 5;
 // Homeroom bot parity (P1): the voice keeps the chat's old room per request (homeroom-bot-mayor.js
 // raised its own for private conversations), so a public reply stays short and quick.
 const VOICE_OUTPUT_TOKENS = 900;
@@ -119,6 +134,7 @@ const OFFER_WORDS = Object.freeze({
   file_request: { yes: 'File it', no: 'Not now' },
   withdraw_change: { yes: 'Withdraw it', no: 'Keep it' },
   close_request: { yes: 'Propose to close', no: 'Keep it open' },
+  try_again: { yes: 'Let it try again', no: 'Not now' },
 });
 
 let sharedConfig = null;
@@ -886,9 +902,7 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
   if (change && Number(change.app_id) === Number(app.id)) {
     const own = Number(change.user_id) === Number(bot.id) && !change.is_headless;
     const request = Array.isArray(change.linked_issues) && change.linked_issues.length ? Number(change.linked_issues[0]) : null;
-    const { rows: [rev] } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`, [change.id],
-    );
+    const counts = await followup.revisionCounts(pool, change.id);
     const asks = await askState(pool, change.id);
     const busy = await changeBusy(pool, change.id);
     lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR ${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${own ? 'built by you' : 'built by somebody else'}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
@@ -897,7 +911,10 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     if (repoRef.isGithub(app.repo_url)) lines.push('On this project a change is written as PR N, from GitHub\'s own counter; #N is only ever a request.');
     if (change.check_state) lines.push(`Its checks: ${change.check_state}.`);
     if (own) {
-      lines.push(`You have updated it ${rev?.n || 0} of ${followup.MAX_REVISIONS} times you may on your own.`);
+      lines.push(`You have made ${counts.own} of ${followup.MAX_REVISIONS} fixes on it by yourself, and ${counts.asked} of ${followup.MAX_ASKED_REVISIONS} updates people asked for.`);
+      if (counts.own >= followup.MAX_REVISIONS && !counts.openGrant) {
+        lines.push('You stopped at your own limit, so you cannot fix it again until the person who asked for it or an admin lets you try once more (let_try_again).');
+      }
       lines.push(busy || asks.running
         ? `A run on it is going right now${asks.queued ? `, and ${asks.queued} more ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} behind it` : ''}.`
         : asks.queued ? `${asks.queued} ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} for its next update.` : 'Nothing is running on it now.');
@@ -935,7 +952,7 @@ const WHERE = Object.freeze({
 function systemPrompt({ app, place, tools, today = new Date(), platformRules = null }) {
   const has = (name) => tools.some((t) => t.function.name === name);
   const can = [
-    has('update_change') ? '- Change one of your own changes that is up for a vote when somebody clearly asks for a change to it (update_change): describe the change in your own words, precisely enough for a coding agent. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so; never say it is done, since it is not made yet. A question about it is not a change: answer it.' : null,
+    has('update_change') ? '- Change one of your own changes that is up for a vote when somebody says how it should behave (update_change), even when they say it partly as a question, such as \'only if X, should it not do Y?\': describe the change in your own words, precisely enough for a coding agent. Queue it first, without reading the code, which is read when the update builds, and answer the question part from what the change already does. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so; never say it is done, since it is not made yet. A question that asks nothing different of the change is not a change: answer it.' : null,
     has('offer_withdraw') ? '- Offer to withdraw your change when the person who asked for its request, or the project\'s owner, wants it dropped (offer_withdraw). Nothing happens until they tap Withdraw it under your reply: say so.' : null,
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that. When it gives a link or changeLink, include them as written.' : null,
     has('change_plan') ? '- Your plan for this request waits for its requester to say Build it. Them saying to build it or go ahead is start_request, which builds the plan as they saw it. Somebody asking for something in the plan to change is change_plan, which plans it again with their words. A question about the plan or where it stands is answered from the facts, and changes nothing.' : null,
@@ -1059,6 +1076,10 @@ function toolsFor(place, {
       ...(['chat', 'category', 'message'].includes(place.type)
         ? { change: { type: 'integer', description: 'Which of your changes: its change id from the facts.' } } : {}),
     }, ['description']));
+    tools.push(fn('let_try_again', 'Let yourself try once more at a change you stopped fixing on your own, when the person who asked for it or an admin asks you to try again or continue.', {
+      ...(['chat', 'category', 'message'].includes(place.type)
+        ? { change: { type: 'integer', description: 'Which of your changes: its change id from the facts.' } } : {}),
+    }, []));
     if (place.type !== 'chat' && place.type !== 'category' && place.type !== 'message') {
       tools.push(fn('offer_withdraw', 'Offer to withdraw your change: its requester or the project\'s owner taps Withdraw it.', {
         why: { type: 'string', description: 'Why, in their words.' },
@@ -1153,11 +1174,11 @@ async function changeGate(pool, { app, change, speaker, settings, bot, deps = {}
   if (await require('./conversations').blockedEitherWay(pool, bot.id, speaker.id)) {
     return refused('You cannot act for them: one of you has blocked the other. Nothing was queued.');
   }
-  const { rows: [rev] } = await pool.query(
-    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`, [change.id],
-  );
-  if ((rev?.n || 0) >= followup.MAX_REVISIONS) {
-    return refused(`You have already updated this change ${rev.n} times, as many as you may on your own. Nothing was queued. A person can make the change.`);
+  // #6284: updates people asked for have their own, higher limit; the bot's
+  // own three never stop an ask.
+  const counts = await followup.revisionCounts(pool, change.id);
+  if (counts.asked >= followup.MAX_ASKED_REVISIONS) {
+    return refused(followup.askedLimitText());
   }
   if (await dm.overWeeklyAllowance(pool, settings, speaker.id)) {
     return refused('Their building time for this week is used up, so the change cannot be made this week. Nothing was queued. It resets on Monday.');
@@ -1383,6 +1404,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     // #6263: the changes this turn read (get_change) and whether it already
     // reworded one. What is not read is never described.
     readChanges: new Set(), described: false,
+    // #6270: how many times this turn has looked something up, and its
+    // failures (the turn record's own list), which a stand-in is noted in.
+    reads: 0, failures: record.failures,
   };
   const t = {
     config: cfg, user: speaker, settings, message: { id: last.message.id }, ctx,
@@ -1434,27 +1458,75 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     const ids = new Set();
     let rounds = 0;
     let limit = MAX_ROUNDS;
+    // #6270: each limit is told it is the last one once, a stand-in gets one
+    // more round, and a change queued with nothing said gets one round to say
+    // so (once per turn, whichever pass queued it).
+    let warnedAt = 0;
+    let handledStandIns = 0;
+    let saidQueued = false;
+    const runOneRound = async ({ offered, toolChoice, note = null }) => {
+      if (note) msgs.push({ role: 'user', content: note });
+      rounds += 1;
+      record.rounds = rounds;
+      const res = await mayor.askModel(t, {
+        messages: msgs, tools: offered, where: `v${rounds}`, toolChoice,
+        // Homeroom bot parity (P1): the room a private conversation now has is not the voice's.
+        // Where the group reads, a reply stays short, as before.
+        maxOutputTokens: VOICE_OUTPUT_TOKENS, timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
+      });
+      const calls = mayor.normalizeCalls(res.toolCalls, rounds, ids);
+      if (!calls.length) {
+        const said = String(res.content || '');
+        // An answer it wrote without its reply tool is checked the same way.
+        const standIn = isStandIn(said);
+        return { text: said, standIn, answered: !standIn };
+      }
+      msgs.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
+      for (const call of calls) {
+        const name = call.function.name;
+        record.tools.push(name.slice(0, 40));
+        const args = mayor.parseArgs(call.function.arguments);
+        const result = await runTool(pool, ctx, name, args, { platform });
+        msgs.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), mayor.MAX_TOOL_RESULT_CHARS) });
+      }
+      return {};
+    };
     const runRounds = async () => {
-      while (rounds < limit && !ctx.reply && !ctx.quiet) {
-        rounds += 1;
-        record.rounds = rounds;
-        const res = await mayor.askModel(t, {
-          messages: msgs, tools, where: `v${rounds}`,
-          toolChoice: rounds === limit ? { type: 'function', function: { name: 'reply' } } : 'auto',
-          // Homeroom bot parity (P1): the room a private conversation now has is not the voice's.
-          // Where the group reads, a reply stays short, as before.
-          maxOutputTokens: VOICE_OUTPUT_TOKENS, timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
+      while (rounds < limit && !ctx.reply && !ctx.quiet && !ctx.gaveUp) {
+        const last = rounds + 1 >= limit;
+        const out = await runOneRound({
+          offered: last ? tools.filter((tl) => LAST_ROUND_TOOLS.includes(tl.function.name)) : tools,
+          toolChoice: last ? 'required' : 'auto',
+          note: last && warnedAt !== limit ? LAST_ROUND_NOTE : null,
         });
-        const calls = mayor.normalizeCalls(res.toolCalls, rounds, ids);
-        if (!calls.length) { finalText = res.content || ''; break; }
-        msgs.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
-        for (const call of calls) {
-          const name = call.function.name;
-          record.tools.push(name.slice(0, 40));
-          const args = mayor.parseArgs(call.function.arguments);
-          const result = await runTool(pool, ctx, name, args, { platform });
-          msgs.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), mayor.MAX_TOOL_RESULT_CHARS) });
+        if (last) warnedAt = limit;
+        if (out.standIn) {
+          t.failures.push('stand_in');
+          ctx.standIns = (ctx.standIns || 0) + 1;
+          if (ctx.standIns > 1) { ctx.gaveUp = true; finalText = ''; break; }
+          if (out.text) msgs.push({ role: 'assistant', content: out.text });
+          msgs.push({ role: 'user', content: STAND_IN_NOTE });
+        } else if (out.answered) {
+          finalText = out.text;
+          break;
         }
+        // A stand-in refused by its reply tool is the tool's to say; either
+        // way it gets one more round, even past the last.
+        if (ctx.gaveUp) break;
+        if ((ctx.standIns || 0) > handledStandIns) {
+          handledStandIns = ctx.standIns;
+          limit = Math.max(limit, rounds + 1);
+        }
+      }
+      // A change was queued and nothing was said: one round to say so, so the
+      // person is not left with the fallback line.
+      if (!saidQueued && ctx.revised && !ctx.reply && !ctx.quiet && !ctx.gaveUp) {
+        saidQueued = true;
+        const out = await runOneRound({
+          offered: tools.filter((tl) => tl.function.name === 'reply'),
+          toolChoice: { type: 'function', function: { name: 'reply' } },
+        });
+        if (out.standIn) { t.failures.push('stand_in'); finalText = ''; } else if (out.text) finalText = out.text;
       }
     };
     await runRounds();
@@ -1469,6 +1541,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       ctx.reply = null;
       finalText = '';
       limit = rounds + 2;
+      // The correction gets its own lookups: it may have to read what it
+      // has to describe.
+      ctx.reads = 0;
       try { await runRounds(); } catch { /* the first answer, checked below, still goes */ }
       if (!ctx.reply && !finalText) ctx.reply = { text: said };
       ctx.checkedProblems = await claimsFor(pool, ctx, ctx.reply?.text ?? finalText);
@@ -1523,10 +1598,23 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
   const mayor = mayorModule(ctx.deps);
   const { app, place, user, settings, bot, deps } = ctx;
   try {
+    // #6270: a turn's lookups are spent, a few per turn, so it cannot spend
+    // every round reading and answer with nothing.
+    if (READ_TOOLS.includes(name)) {
+      if (ctx.reads >= MAX_READS_PER_TURN) return { error: READING_DONE };
+      ctx.reads += 1;
+    }
     switch (name) {
       case 'reply': {
         let text = String(args.text || '').trim();
         if (!text) return { error: 'Say something, or call stay_quiet.' };
+        // A stand-in is not an answer: one more round, then the fallback.
+        if (isStandIn(text)) {
+          ctx.failures.push('stand_in');
+          ctx.standIns = (ctx.standIns || 0) + 1;
+          if (ctx.standIns > 1) { ctx.gaveUp = true; return { ok: false }; }
+          return { error: STAND_IN_NOTE };
+        }
         // #6272: a list the model still wrote into its text becomes buttons.
         const lifted = mayor.liftTextSuggestions(text, args.suggestions,
           { app: app.slug, appId: app.id, thread: placeKey(app.id, place) });
@@ -1576,6 +1664,8 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         return await updateChange(pool, ctx, args);
       case 'update_change_description':
         return await updateChangeDescription(pool, ctx, args);
+      case 'let_try_again':
+        return await letTryAgain(pool, ctx, args);
       case 'offer_withdraw':
         return await offerWithdraw(pool, ctx, args);
       case 'tell_me_when':
@@ -1669,6 +1759,21 @@ async function updateChange(pool, ctx, args) {
   }
   const gate = await changeGate(pool, { app, change, speaker: user, settings, bot, deps });
   if (!gate.ok) return gate;
+  // #6284: a plain "try again" to the bot on a stopped change counts the
+  // same as pressing Let it try again: one grant, one more round.
+  if (/^(?:please\s+|can you\s+|could you\s+)?(?:try again|try once more|keep trying|continue)\b/i.test(instruction)) {
+    const retry = require('./homeroom-bot-retry-grants');
+    const out = await retry.grant(pool, { sessionId: change.id, user, deps });
+    if (out.ok) {
+      ctx.revised = true;
+      return {
+        ok: true,
+        said: 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.',
+      };
+    }
+    if (out.why === 'not_allowed') return { ok: false, error: retry.grantRefusalText(out.why) };
+    // Not stopped (or a try is already waiting): their words are an ask.
+  }
   const asked = await recordAsk(pool, {
     appId: app.id, sessionId: change.id, issueNumber: gate.issueNumber, askerId: user.id, instruction,
     source: place.type === 'session' ? 'thread' : place.type, place, messageId: ctx.triggerMessage.id,
@@ -1685,6 +1790,27 @@ async function updateChange(pool, ctx, args) {
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
     next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed. You may also offer to tell them here when it is ready to vote (tell_me_when), if they would like that.',
+  };
+}
+
+/**
+ * #6284: somebody asked the bot to try again at a change it stopped fixing
+ * on its own. The same grant the Let it try again button makes: the
+ * requester or an admin may; one grant is one more round.
+ */
+async function letTryAgain(pool, ctx, args) {
+  const { place, user, deps } = ctx;
+  if (ctx.offer) return { error: 'One offer per reply.' };
+  const sessionId = place.type === 'session' ? place.ref
+    : ctx.requestChange?.id || Number(args.change) || (ctx.open.length === 1 ? ctx.open[0].change : null);
+  if (!sessionId) return { ok: false, error: 'Which change: ask which one, or name it. Nothing was queued.' };
+  const out = await require('./homeroom-bot-retry-grants').grant(pool, {
+    sessionId: Number(sessionId), user, deps,
+  });
+  if (!out.ok) return { ok: false, error: require('./homeroom-bot-retry-grants').grantRefusalText(out.why) };
+  return {
+    ok: true,
+    said: 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.',
   };
 }
 
@@ -2031,6 +2157,16 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp =
       ? `Filed as request ${requestMd(domainOf(deps), full.slug, n)}${here.builds ? '. I\'ll start on it, and the chip on the message shows how it goes.' : ', for the group.'}`
       : 'Filed.');
   }
+  if (offer.kind === 'try_again') {
+    // #6284: the same grant the change's Testing card makes.
+    const out = await require('./homeroom-bot-retry-grants').grant(pool, {
+      sessionId: Number(args.sessionId), user, deps,
+    });
+    if (!out.ok) {
+      return settle('failed', { error: out.why }, require('./homeroom-bot-retry-grants').grantRefusalText(out.why));
+    }
+    return settle('done', { sessionId: Number(args.sessionId) }, 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.');
+  }
   return settle('failed', { error: 'unknown_kind' }, null);
 }
 
@@ -2155,6 +2291,18 @@ function notDoneYet(text) {
   const rest = String(text).slice(m[0].length);
   if (!rest) return 'Got it.';
   return `Got it${/[.!]/.test(m[1]) ? '. ' : ', '}${rest}`;
+}
+
+/**
+ * Pure: whether a reply is a stand-in rather than an answer (#6270): a dummy
+ * word the model writes when it has nothing ("placeholder", "TODO", "[TBD]",
+ * "text", "reply"), or text with no letter at all ("...", "???", ""). A short
+ * real answer such as "No." or "Yes." is not one.
+ */
+function isStandIn(text) {
+  const raw = String(text ?? '').trim();
+  if (!/\p{L}/u.test(raw)) return true;
+  return STAND_IN_WORDS.includes(raw.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''));
 }
 
 /**
@@ -2488,6 +2636,9 @@ module.exports = {
   SETTLE_MS,
   SETTLE_CAP_MS,
   MAX_ASK_TRIES,
+  MAX_ROUNDS,
+  MAX_READS_PER_TURN,
+  isStandIn,
   OFFER_WORDS,
   SORRY_TEXT,
   CONNECTOR_PLACES,

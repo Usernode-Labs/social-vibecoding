@@ -102,9 +102,29 @@
       "schemaSha256": "3856a83adab04787544d6fabeb2f13edf90d579807a85eab22ef19880aafa4e6"
     },
     {
+      "id": "thread-reads",
+      "sha256": "e050b014130d789510952071e7cf5f6109043babb2d180eded3ba1a7bd991db6",
+      "schemaSha256": "338645fbf8c97d50854fd8dee8f891693a90c337e3f6e5b59bb7cbcbb49a0d22"
+    },
+    {
+      "id": "bot-revision-grants",
+      "sha256": "f58d9406fdbb616b0f25b4775a4919805a0eb249bb68d2c6d38644e8c9c1101e",
+      "schemaSha256": "0c0ddb653e3e27fa9c83a79f266b770de3b3961d7c34752fbea557772302ff6f"
+    },
+    {
+      "id": "user-content-translations",
+      "sha256": "91f4a28ba6d8dfb0e33768dd0f0ae3da3ed6c3db5819d217d8daa139e2ec9efa",
+      "schemaSha256": "2cc3815976fedc3273f251b6859216f97e9eb37ef41a2a6943cdea3c73ece1b0"
+    },
+    {
+      "id": "homeroom-bot-run-already-done",
+      "sha256": "995da0193b6766f63412fc26716255470fd1b0976225e6dd9bbbff147201bd4e",
+      "schemaSha256": "9710077860526a1a6641fc2d7f952f188382e4c869f2dbe9b55608b64e29eecf"
+    },
+    {
       "id": "sessions-device-class",
       "sha256": "069df414c37cdc3fa7241e20a7a712b91f355954efc9c3f263d058c220e1c509",
-      "schemaSha256": "33243665c9170496f595709d88a915c22194958ddec64cf84fa3e3fcf9d987d2"
+      "schemaSha256": "ef73406dc8664ab5ffa31577b6c898f7b123291b80f01fe4cab0205097dd843d"
     }
   ]
 }

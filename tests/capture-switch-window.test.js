@@ -59,6 +59,17 @@ function collect() {
 function makePage({ renderOnHash = false, renderAfterMs = 0, coldRenderMs = 0, errorAfterMs = null } = {}) {
   const handlers = new Map();
   const timers = [];
+  // A switch's late error is handed to the listeners by the page's own clock,
+  // inside the presence probe, never by a timer of its own. A separate timer
+  // races the probe once the event loop stalls: the poll timer (due every
+  // ASSERT_POLL_MS) can be delivered before the error's timer although the
+  // error's due time came first, so the probe reads a clock already past the
+  // render, answers "present", and the runner freezes the console before the
+  // error lands. The check then passes clean on the very error it exists to
+  // hear (seen under parallel test load). Emitting here keeps the page's own
+  // order — error, then presence — however the event loop is scheduled.
+  let errorAt = null;
+  let errorText = '';
   const page = {
     gotos: [], hashes: [], loaded: '', readyAt: 0,
     on(ev, fn) {
@@ -81,13 +92,20 @@ function makePage({ renderOnHash = false, renderAfterMs = 0, coldRenderMs = 0, e
     },
     async waitForNetworkIdle() {},
     async $(sel) {
+      if (errorAt != null && performance.now() >= errorAt) {
+        errorAt = null;
+        page.emitError(errorText);
+      }
       return sel === `#at-${page.loaded}` && performance.now() >= page.readyAt ? {} : null;
     },
     async evaluate(fn, arg) {
       if (typeof fn === 'function' && /location\.hash/.test(String(fn))) {
         page.hashes.push(arg);
         if (renderOnHash) { page.loaded = arg; page.readyAt = performance.now() + renderAfterMs; }
-        if (errorAfterMs != null) page.later(() => page.emitError(`late error on ${arg}`), errorAfterMs);
+        if (errorAfterMs != null) {
+          errorAt = performance.now() + errorAfterMs;
+          errorText = `late error on ${arg}`;
+        }
         return undefined;
       }
       return true;
@@ -121,10 +139,11 @@ test('a route that renders late after a switch still passes on that switch, with
 
 test('a route that renders and then logs an error late after a switch still fails on that error', async () => {
   const read = collect();
-  // Rendered at 0.42s and the error at 0.45s: the presence poll sees the
-  // screen, and the console is frozen only after it, so the switch is judged
-  // with the error in it. A window cut short before 0.42s threw the
-  // document away and passed the check clean on a cold load.
+  // The error is at 0.40s and the screen at 0.42s: the presence poll reaches
+  // the screen only after the page has handed the error over, and the console
+  // is frozen only after the poll, so the switch is judged with the error in
+  // it. A window cut short before 0.42s threw the document away and passed the
+  // check clean on a cold load.
   const page = makePage({ renderOnHash: true, renderAfterMs: 420, errorAfterMs: 400 });
   try {
     await runTestGroup({ newPage: async () => page }, GROUP, { ...FAST, assertMaxMs: 1000 });

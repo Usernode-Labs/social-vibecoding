@@ -1347,14 +1347,6 @@
     "text": "Adds <0>Your computer · Homeroom session</0> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.",
     "description": "Explanation under the Session bridge switch in Settings > Experimental. The tagged part is the name of an option in another list, shown in a monospace font; translate it as that option is translated. CLI is the command-line tool; Claude is a product name; a \"turn\" is one request and answer of the coding agent."
   },
-  "experimental.reviewFlow.label": {
-    "text": "New Needs you",
-    "description": "Label of a switch in Settings, Experimental. When on, the Needs you list on the Communities tab becomes a calm list of changes, each opening into its own page with a before and after slider and a vote sheet."
-  },
-  "experimental.reviewFlow.description": {
-    "text": "Try a calmer way through what's waiting on you: one change at a time, with its before and after side by side. On for your account on every device.",
-    "description": "Explanation under the New Needs you switch in Settings, Experimental."
-  },
   "experimental.newLook.label": {
     "text": "New look",
     "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: a warmer background, a new typeface and calmer colours."

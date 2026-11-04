@@ -122,9 +122,8 @@ import { takeCounts, votesWaiting } from './community-scope';
 // What the last read of your communities knew, for the list's skeleton
 // (expectNeedsDoor): its own line, beside the tab's one definition above.
 import { communityScopeStore } from './community-scope';
-import { NeedsReel, type NeedsFeedItem } from './needs-reel';
+import type { NeedsFeedItem } from './needs-reel';
 import { ReviewFlow } from '../review-flow/review-flow';
-import { useReviewFlowEnabled } from '../review-flow/settings';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import { matchRows, orderRows, SECTIONS, type Audience } from './sections';
 import { workshopStore } from './workshop-store.js';
@@ -683,8 +682,7 @@ export function WorkshopScreen() {
     tab: TabKey;
     feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
-  // The new Needs you, when this device has it switched on (an experiment).
-  const reviewFlow = useReviewFlowEnabled();
+  // The Needs you pane draws the review flow, one change at a time.
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
   // THE LIST HAS A SEARCH at its head, at every width (#5296; D put it there
@@ -977,7 +975,7 @@ export function WorkshopScreen() {
           <div data-workshop-pane="needs">
             {/* The way back to the list, and the page's name: the project
                 page's own page head (app.css .dev-ws-pagehead). */}
-            <div className="px-4 pb-2">
+            <div className="px-4 pb-2" data-workshop-needs-head="">
               <div className="dev-ws-pagehead">
                 <button
                   type="button"
@@ -997,12 +995,9 @@ export function WorkshopScreen() {
             </div>
             {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
                 across your projects, one per screen, newest first, drawn by
-                a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
-            {state.error ? null : reviewFlow ? (
-              // EXPERIMENTAL (Settings, Experimental, "New Needs you"; off by
-              // default, kept on the device): the same feed as a list of
-              // title shots, each opening into its own page with a
-              // before/after slider and a vote sheet. ../review-flow/.
+                the review flow: a page per change with a before/after
+                picture and a vote bar. ../review-flow/. */}
+            {state.error ? null : (
               <ReviewFlow
                 items={state.feed}
                 error={state.feedError}
@@ -1010,15 +1005,6 @@ export function WorkshopScreen() {
                 onDone={() => workshopController.setTab('status')}
                 onAnswered={(id, epoch) => workshopController.answered(id, epoch)}
                 onRetracted={(id) => workshopController.retracted(id)}
-                onSettled={(id) => workshopController.settled(id)}
-              />
-            ) : (
-              <NeedsReel
-                items={state.feed}
-                error={state.feedError}
-                capped={state.feedCapped}
-                onDone={() => workshopController.setTab('status')}
-                onAnswered={(id, epoch) => workshopController.answered(id, epoch)}
                 onSettled={(id) => workshopController.settled(id)}
               />
             )}

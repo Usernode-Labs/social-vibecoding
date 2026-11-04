@@ -425,6 +425,18 @@ async function mainStreamCards(db, membership) {
   return membership.kind === 'direct' && (await threadsAllowed(db, membership)) ? (row) => !isBotNewsRow(row) : null;
 }
 
+/**
+ * #6250: whether a reply's thread root is a private thread started from the
+ * bot's "+" (metadata kind `opened_thread` with no quoted message), which
+ * Main Chat never lists. Read from the root's own columns in MESSAGE_SELECT;
+ * the SQL test is PLUS_THREAD_REPLY.
+ */
+function plusThreadRoot(row) {
+  const meta = row.thread_root_metadata && typeof row.thread_root_metadata === 'object'
+    ? row.thread_root_metadata[BOT_METADATA_KEY] : null;
+  return !!meta && typeof meta === 'object' && meta.kind === 'opened_thread' && row.thread_root_reply_to_id == null;
+}
+
 // `cards`, when given, says which rows get their cards filled; the others
 // are sent with none (`mainStreamCards`).
 async function hydrateMessages(db, user, rows, { cards = null } = {}) {
@@ -528,6 +540,10 @@ async function hydrateMessages(db, user, rows, { cards = null } = {}) {
         senderUsername: row.thread_root_sender_username || 'Deleted user',
         content: row.thread_root_deleted_at ? '' : snippet(row.thread_root_content),
         deleted: !!row.thread_root_deleted_at,
+        // #6250: a thread from the bot's "+" stays out of Main Chat, and the
+        // client reads the same origin from its root (bot-shared.ts). The
+        // server's test is PLUS_THREAD_REPLY.
+        ...(plusThreadRoot(row) ? { plusThread: true } : {}),
       },
     };
   });
@@ -554,6 +570,7 @@ const MESSAGE_SELECT = `
          ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id,
          ru.is_synthetic AS reply_sender_is_synthetic, ru.display_name AS reply_sender_display_name,
          tr.content AS thread_root_content, tr.deleted_at AS thread_root_deleted_at,
+         tr.reply_to_id AS thread_root_reply_to_id, tr.metadata AS thread_root_metadata,
          tru.username AS thread_root_sender_username
     FROM conversation_messages m
     LEFT JOIN users su ON su.id = m.sender_id
@@ -611,15 +628,35 @@ const REQUEST_NEWS = `COALESCE(m.metadata->'homeroomBot' IS NOT NULL
           AND COALESCE(m.metadata->'homeroomBot'->>'kind', '') NOT IN (${[...BOT_CONVERSATION_KINDS].map((k) => `'${k}'`).join(', ')})
           AND (COALESCE(m.metadata->'homeroomBot'->>'issueNumber', '') ~ '^[1-9][0-9]{0,9}$'
                OR m.metadata->'homeroomBot'->>'kind' = 'activity'), FALSE)`;
+// #6250 (4 Nov 2026): a private thread's ORIGIN decides whether Main Chat
+// shows it (Evan, 4 Nov). One started from the bot's "+" (private-threads.js
+// startThread) stays out of Main altogether: its opener line and its replies
+// are the thread's own, and the Homeroom bot page's list is the only way in.
+// One the bot opened from Main, answering what the person said there (a
+// draft, a new project, a screen asked for: opened_draft, opened_thread with
+// changeKind project or design) quotes that message, so `reply_to_id` is
+// set; it stays in Main, as the way to its row in the list. A thread opened
+// from a request's page or a captured screen carries its own kind
+// (`opened_about`, `opened_design`) and stays too. Nothing is deleted, so a
+// link still opens the thread. Kind, not LIKE: `_` would be a wildcard.
+const PLUS_THREAD_OPENER = `COALESCE(m.metadata->'homeroomBot'->>'kind' = 'opened_thread'
+          AND m.reply_to_id IS NULL, FALSE)`;
+// A reply in a thread started from the bot's "+": its root is that opener.
+// Main Chat leaves it out as well, so such a thread lives only in the list.
+const PLUS_THREAD_REPLY = `EXISTS (SELECT 1 FROM conversation_messages plus_root
+          WHERE plus_root.id = m.thread_root_id
+            AND plus_root.metadata->'homeroomBot'->>'kind' = 'opened_thread'
+            AND plus_root.reply_to_id IS NULL)`;
 const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
           m.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden_root
                             JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.sender_id
                            WHERE hidden_root.id = m.thread_root_id AND hb.blocker_id = $2)
-          AND (${ALSO_IN_CHAT}
+          AND ((${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY})
                OR NOT EXISTS (SELECT 1 FROM conversations dc
                                WHERE dc.id = m.conversation_id AND dc.kind = 'direct'))))
-        AND NOT ${REQUEST_NEWS}`;
+        AND NOT ${REQUEST_NEWS}
+        AND NOT ${PLUS_THREAD_OPENER}`;
 async function mainStreamBefore(db, user, conversationId, before, count) {
   if (before) {
     return (await db.query(
@@ -1014,10 +1051,12 @@ async function conversationRow(db, user, conversationId) {
        LEFT JOIN LATERAL (
          -- #2387: the list's latest message is the main stream's latest
          -- message anyone still has: thread replies and deletions skip,
-         -- apart from a bot moment shown in the main chat too.
+         -- apart from a bot moment shown in the main chat too (never one in
+         -- a thread from the bot's "+", #6250).
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id
-            AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+            AND (m.thread_root_id IS NULL OR (${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY})) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+            AND NOT ${PLUS_THREAD_OPENER}
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -1040,7 +1079,8 @@ async function countUnread(db, conversationId, userId, cursor) {
   const result = await db.query(
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
-        AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+        AND (m.thread_root_id IS NULL OR (${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY})) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+        AND NOT ${PLUS_THREAD_OPENER}
         AND (m.metadata->'homeroomBot'->>'quiet') IS DISTINCT FROM 'true'
         AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3
@@ -2555,6 +2595,8 @@ module.exports = {
   BOT_CONVERSATION_KINDS,
   ALSO_IN_CHAT,
   REQUEST_NEWS,
+  PLUS_THREAD_OPENER,
+  PLUS_THREAD_REPLY,
   BOT_METADATA_KEY,
   updateTitle,
   respond,

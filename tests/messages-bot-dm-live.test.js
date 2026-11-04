@@ -232,6 +232,42 @@ test('#4220: a stop with no new message on its way clears the line at once', asy
   assert.deepEqual(h.state().typing[42], []);
 });
 
+// 4 Nov 2026 (#6302): the answer so far was drawn only while the newest
+// doing was 'writing'. Every later step the bot named (a read, a wordless
+// "thinking") rebuilt the entry without it, so the words disappeared and came
+// back as the next round streamed: the working card flashed. The store holds
+// the last draft on the bot's Typist now, and it leaves with the card.
+test('the answer so far stays on the card while the bot reads or thinks, and leaves with it', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  Object.assign(globalThis.window, { setTimeout: () => 1, clearTimeout: () => {} });
+  const dm = {
+    ...DM,
+    members: [{ ...ME, status: 'member' }, { ...BOT, status: 'member' }],
+    peer: { id: BOT.id, bot: true, displayName: 'Homeroom bot' },
+  };
+  h.api.getConversation = async () => dm;
+  await openDm(h);
+  const typing = (doing) => h.store.messagesController.handleEvent({
+    type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: true, ...(doing ? { doing } : {}),
+  });
+
+  typing({ kind: 'writing', text: 'A couple of the names you gave' });
+  assert.equal(h.store.typingUsers(42)[0].draft, 'A couple of the names you gave');
+  typing({ kind: 'request', number: 436 });
+  assert.deepEqual(h.store.typingUsers(42)[0], {
+    name: 'Homeroom bot', unnamed: false, bot: true,
+    doing: { kind: 'request', number: 436 },
+    draft: 'A couple of the names you gave',
+  }, 'held while it reads the request');
+  typing();
+  assert.deepEqual(h.store.typingUsers(42)[0].doing, null, 'wordless: thinking');
+  assert.equal(h.store.typingUsers(42)[0].draft, 'A couple of the names you gave', 'not hidden while it thinks');
+  typing({ kind: 'writing', text: 'So I checked: the list is right' });
+  assert.equal(h.store.typingUsers(42)[0].draft, 'So I checked: the list is right', 'the newer answer replaces it');
+  h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: false });
+  assert.deepEqual(h.store.typingUsers(42), [], 'the card and its words go when typing stops');
+});
+
 test('31 Oct 2026: typing in a thread is that thread\'s line, and never the conversation\'s', async () => {
   const h = harness([serverMessage(1, BOT, 'Hello.')]);
   Object.assign(globalThis.window, { setTimeout: () => 1, clearTimeout: () => {} });

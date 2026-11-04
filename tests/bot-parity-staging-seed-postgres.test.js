@@ -112,6 +112,12 @@ test('the staging preview\'s private threads with Homeroom bot, with their new c
   const { rows: [viewer] } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access) VALUES ('parity-viewer', 'x', TRUE) RETURNING id, username`,
   );
+  // #6250: the filed thread names this demo project, which the preview's
+  // boot seed creates.
+  await pool.query(
+    `INSERT INTO apps (slug, name, repo_url) VALUES ('staging-demo-app', 'Staging demo app', 'https://github.com/staging/demo')
+     ON CONFLICT DO NOTHING`,
+  );
 
   const conversationId = await staging.ensureBotDmFixture(pool, viewer);
   assert.ok(conversationId, 'the demo DM is there');
@@ -121,16 +127,24 @@ test('the staging preview\'s private threads with Homeroom bot, with their new c
   assert.equal(after.rows[0].n, before.rows[0].n, 'a second opening sends nothing');
 
   const { rows: threads } = await pool.query(
-    `SELECT p.root_message_id, p.kind, p.state, m.metadata->'homeroomBot'->>'kind' AS root_kind,
+    `SELECT p.root_message_id, p.kind, p.state, p.app_id, p.result_ref,
+            m.metadata->'homeroomBot'->>'kind' AS root_kind,
             (SELECT f.content FROM conversation_messages f
               WHERE f.thread_root_id = p.root_message_id AND f.sender_id = $1 ORDER BY f.id LIMIT 1) AS first_own
        FROM private_threads p JOIN conversation_messages m ON m.id = p.root_message_id
       WHERE p.user_id = $1 ORDER BY p.root_message_id`,
     [viewer.id],
   );
-  assert.equal(threads.length, 3, 'three private threads');
+  // #6250: the fourth is filed as a request, so the list keeps its row and
+  // says where it went; the other three are open.
+  assert.equal(threads.length, 4, 'four private threads');
+  const filed = threads.find((th) => th.state === 'filed');
+  assert.ok(filed, 'one of them is filed');
+  assert.deepEqual([filed.result_ref, filed.app_id != null], [404, true], 'and names the demo project and a request');
   for (const thread of threads) {
-    assert.deepEqual([thread.kind, thread.state, thread.root_kind], ['ask', 'open', 'opened_thread']);
+    assert.equal(thread.kind, 'ask');
+    assert.equal(thread.root_kind, 'opened_thread');
+    if (thread !== filed) assert.equal(thread.state, 'open');
     assert.match(thread.first_own, /^Staging demo: /, 'named by the viewer\'s own first words, obviously fake');
   }
 
@@ -167,4 +181,66 @@ test('the staging preview\'s private threads with Homeroom bot, with their new c
       const page = await dmStream(pool, viewer, conversationId);
   const main = [...(page.messages || page)].sort((a, b) => a.id - b.id);
   assert.equal(main.at(-1).metadata?.homeroomBot?.issueNumber, 18, 'the DM still ends with the demo\'s story card');
+});
+
+// #6306: the already-works request's staging fixture (src/db/migrate.js
+// seedStagingBotAlreadyWorks). The review asked for the request's bell row
+// too, which the first version did not seed, so the shots had nothing to
+// capture. Against a real database, seeded twice: one request, one run
+// carrying already_done, one stored note, and one notification whose detail
+// words it "Already works" with the bot's own sentence and links the request.
+test('the staging already-works request carries its note and its bell row', { timeout: 60000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+
+  const app = (await pool.query(
+    `INSERT INTO apps (name, slug, self_hosted) VALUES ('Homeroom', 'usernode-seed-test', TRUE) RETURNING id`,
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('usernode-capture', 'not-a-login', FALSE),
+       ('homeroom_bot', 'not-a-login', TRUE)`,
+  );
+
+  const { seedStagingBotAlreadyWorks } = require('../src/db/migrate');
+  const previous = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  try {
+    await seedStagingBotAlreadyWorks(pool);
+    await seedStagingBotAlreadyWorks(pool);
+  } finally {
+    if (previous === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previous;
+  }
+
+  const runs = await pool.query(
+    'SELECT verdict, already_done, reason FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 9110',
+    [app.id],
+  );
+  assert.deepEqual(runs.rows, [{
+    verdict: 'person',
+    already_done: true,
+    reason: 'Staging demo: visitors can already get in and play without an account.',
+  }], 'one already-done run, not two');
+
+  const notes = await pool.query(
+    `SELECT content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9110`,
+    [app.id],
+  );
+  assert.equal(notes.rows.length, 1, 'one stored note, not two');
+  assert.match(notes.rows[0].content, /^Already works: /);
+
+  const rings = await pool.query(
+    `SELECT n.kind, n.detail FROM notifications n WHERE n.app_id = $1 AND n.kind = 'build_needs_you'`,
+    [app.id],
+  );
+  assert.equal(rings.rows.length, 1, 'one bell row, not two');
+  const { parseBotDetail, botMomentCopy } = require('../src/services/homeroom-bot-notify-copy');
+  const parsed = parseBotDetail(rings.rows[0].detail);
+  assert.equal(parsed.moment, 'needs_you');
+  assert.equal(parsed.said, 'done');
+  assert.equal(parsed.issueNumber, 9110);
+  assert.equal(parsed.reason, 'Staging demo: visitors can already get in and play without an account.');
+  const copy = botMomentCopy(rings.rows[0].detail);
+  assert.equal(copy.bellLabel, 'Already works');
+  assert.match(copy.body, /^Already works: .* Propose to close it\?$/);
 });

@@ -10,8 +10,8 @@
 // by one runner: an older build still up during a rollout never grants
 // this release's new tables, and two bootstraps never race the same catalog
 // rows (#891). What a role's setup made is recorded in platform_db_roles,
-// which every process reads (a role's password rotated by the next release
-// is read again on Postgres's refusal).
+// which every process reads. Unchanged roles keep their verified credential
+// and grants; a repair's new password is read again on Postgres's refusal.
 //
 // A staging preview sets up neither (config.runsClusterMaintenance): its
 // rows are a copy of production's. A capability's own setup failure leaves

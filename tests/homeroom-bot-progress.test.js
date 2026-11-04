@@ -536,8 +536,11 @@ test('#6228: the reply read is one SQL definition, shared with the track', () =>
   assert.match(sql, /ru\.is_synthetic IS NOT TRUE/);
   assert.match(sql, /cm\.created_at > run\.created_at/);
   assert.match(progress.replyLateralSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.app_id = a\.id/);
+  // #6280: the track reads the same record fragment the bot page does, and
+  // the reply lateral is in it, so the two cannot read a reply differently.
   const trackSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-track.js'), 'utf8');
-  assert.match(trackSrc, /replyLateralSql\(\{ appId: 'a\.id', issueNumber: 'w\.n', runAt: 'run\.created_at' \}\)/);
+  assert.match(trackSrc, /requestRecordJoinsSql\(\{ appId: 'a\.id', issueNumber: 'w\.n' \}\)/);
+  assert.match(progress.requestRecordJoinsSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.created_at > run\.created_at/);
 });
 
 // ── #6234: the bot's own fix of a change's failing checks, for its page ───
@@ -617,8 +620,8 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   const fs = require('node:fs');
   const path = require('node:path');
   const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
-  assert.match(read('src/routes/sessions.js'), /detail\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\.changeBotFix\(pool, session\.id\)\.catch\(\(\) => null\);/);
-  assert.match(read('src/routes/votes.js'), /proposal\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\.changeBotFix\(pool, proposal\.id\)\.catch\(\(\) => null\);/);
+  assert.match(read('src/routes/sessions.js'), /detail\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\s*\.changeBotFix\(pool, session\.id, \{ viewer: req\.user \}\)\.catch\(\(\) => null\);/);
+  assert.match(read('src/routes/votes.js'), /proposal\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\s*\.changeBotFix\(pool, proposal\.id, \{ viewer: req\.user \}\)\.catch\(\(\) => null\);/);
   // The Homeroom bot page's own stage for it (ai-work.js BOT_STANDING), as
   // stageOf reads a started checks_failing row.
   const open = { proposal_status: 'promoted', proposal_at: ago(20), check_state: 'failing', checks_sha: 'a'.repeat(40), reviewed_head_sha: 'a'.repeat(40) };

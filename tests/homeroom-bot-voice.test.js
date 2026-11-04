@@ -248,7 +248,7 @@ const names = (tools) => tools.map((t) => t.function.name);
 
 test('each place gets the tools that fit it, and nothing that acts without a tap', () => {
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: true })),
-    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
     ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
@@ -266,7 +266,7 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
     '#6247: a start\'s reply carries the request\'s (and change\'s) link as given');
   assert.doesNotMatch(voice.systemPrompt({ app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }) }), /change_plan/);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
-  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'tell_me_when', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
+  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'tell_me_when', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
   assert.ok(chat[2].function.parameters.properties.change, 'in a chat it names which change');
   assert.ok(!names(chat).includes('offer_withdraw'), 'withdrawing is offered where the change is');
   const chatClose = chat.find((t) => t.function.name === 'offer_close_request');
@@ -274,6 +274,29 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   const issueClose = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })
     .find((t) => t.function.name === 'offer_close_request');
   assert.ok(!issueClose.function.parameters.properties.number, 'on the request it is the request itself');
+});
+
+test('#6270: a stand-in word is not an answer, and a short real one is', () => {
+  for (const text of ['placeholder', 'TODO', '[TBD]', '...', 'text', 'Reply', '  ???  ', '']) {
+    assert.equal(voice.isStandIn(text), true, JSON.stringify(text));
+  }
+  for (const text of ['No.', 'Yes.', 'Yes: a thread you started from Main still links out.', 'Non, ce n\'est pas le cas.', 'いいえ。']) {
+    assert.equal(voice.isStandIn(text), false, JSON.stringify(text));
+  }
+});
+
+test('#6270: the last round is warned and can queue the change, and reading is capped', () => {
+  assert.equal(voice.MAX_ROUNDS, 8);
+  assert.equal(voice.MAX_READS_PER_TURN, 4);
+  const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true });
+  const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 1 }, tools });
+  assert.match(prompt, /even when they say it partly as a question/);
+  assert.match(prompt, /only if X, should it not do Y\?/);
+  assert.match(prompt, /Queue it first, without reading the code/, 'a correction is queued before it reads anything');
+  assert.doesNotMatch(prompt, /A question about it is not a change: answer it\./);
+  assert.match(prompt, /A question that asks nothing different of the change is not a change: answer it\./,
+    'a question that asks nothing different is still only a question');
+  assert.doesNotMatch(prompt, /—/);
 });
 
 test('#6264: the prompt lets it promise to tell them here when a change is done', () => {

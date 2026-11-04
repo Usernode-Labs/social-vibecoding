@@ -143,6 +143,8 @@ interface Shared {
   state: DetailState;
   seq: number;
   listeners: Set<() => void>;
+  /** A change's before and after whose page had no column to draw it (#6315). */
+  shotsArrival?: { id: number; at: number };
 }
 const holder: Shared = ((globalThis as any).__usernodeDetail ||= {
   state: CLOSED,
@@ -261,11 +263,76 @@ async function fetchPlan(entry: DetailEntry): Promise<void> {
 function topStore(): any {
   if (typeof window === 'undefined' || window.top === window.self) return null;
   try {
+    // #6315: ONLY the bot page draws every kind of detail in its own column
+    // (./index.tsx). Every other page's column is a DetailSlot, which lives in
+    // the frame's own document — so an open there stays in the frame's store
+    // instead of being sent to a top document that draws nothing.
+    if (!/^#homeroom-bot(?:\/|$)/.test(String((window.top as any).location?.hash || ''))) return null;
     const detail = (window.top as any).UsernodeReact?.detail;
     return detail && typeof detail.open === 'function' ? detail : null;
   } catch {
     return null;
   }
+}
+
+/** Whether `doc` draws the column right now: the slot open, or the bot pane shown. */
+function drawnIn(doc: Document | undefined): boolean {
+  if (!doc) return false;
+  try {
+    const slot = doc.getElementById('gc-spec-side-panel');
+    if (slot && slot.classList.contains('gc-spec-side-panel-open')) return true;
+    const pane = doc.querySelector('[data-ai-preview-pane]');
+    return !!pane
+      && typeof pane.getClientRects === 'function'
+      && pane.getClientRects().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the detail is actually on screen: the slot is open, or the bot
+ * page's preview pane is shown. #6315: an open that lands nowhere looks like
+ * a dead button, so the caller asks before it gives up.
+ *
+ * With no `doc`, it answers for wherever the open went — this document, or
+ * the top document when the side panel's frame forwarded it to the bot page's
+ * column (topStore). A named `doc` is answered alone.
+ */
+export function detailDrawn(doc?: Document): boolean {
+  const own = doc ?? (typeof document === 'undefined' ? undefined : document);
+  if (drawnIn(own)) return true;
+  if (doc) return false;
+  try {
+    if (typeof window === 'undefined' || window.top === window.self) return false;
+    if (!/^#homeroom-bot(?:\/|$)/.test(String((window.top as any).location?.hash || ''))) return false;
+    return drawnIn((window.top as any).document);
+  } catch {
+    return false;
+  }
+}
+
+// ── A before and after whose page had no column (#6315) ────────────────
+
+/** How long an arrival waits for its page: a door that opened nothing is forgotten. */
+export const SHOTS_ARRIVAL_TTL_MS = 30_000;
+
+/**
+ * The press had no column to open in, so the person was sent to the change's
+ * page: its before and after open there as soon as the change is drawn.
+ */
+export function markShotsArrival(changeId: unknown, now: number = Date.now()): void {
+  const id = Number(changeId);
+  holder.shotsArrival = Number.isInteger(id) && id > 0 ? { id, at: now } : undefined;
+}
+
+/** The page the arrival names: whether it was asked for, recently. Answers once. */
+export function takeShotsArrival(changeId: unknown, now: number = Date.now()): boolean {
+  const id = Number(changeId);
+  const arrival = holder.shotsArrival;
+  if (!arrival || arrival.id !== id) return false;
+  holder.shotsArrival = undefined;
+  return now - arrival.at <= SHOTS_ARRIVAL_TTL_MS;
 }
 
 /**
@@ -317,8 +384,22 @@ export function openDetail(input: {
       });
     }
   }
-  if (kind === 'design' && typeof window !== 'undefined' && !/^#homeroom-bot(?:\/|$)/.test(window.location.hash)) {
-    window.location.hash = `homeroom-bot/thread/${ref.rootId}`;
+  // #6315: a design drawn in this page's own column needs no jump. Wait two
+  // frames for that column to open; only where nothing draws it does the
+  // person go to the bot page's thread, as before.
+  if (kind === 'design' && typeof window !== 'undefined') {
+    const doc = typeof document === 'undefined' ? undefined : document;
+    const rootId = ref.rootId;
+    const go = () => {
+      if (!rootId || detailDrawn(doc)) return;
+      if (/^#homeroom-bot(?:\/|$)/.test(window.location.hash)) return;
+      window.location.hash = `homeroom-bot/thread/${rootId}`;
+    };
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(go));
+    } else {
+      window.setTimeout(go, 32);
+    }
   }
 }
 
