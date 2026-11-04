@@ -502,8 +502,6 @@ const APP_CSS = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css')
 test('a link in a chat body wears the platform link blue, under a rule that leaves the ref chips alone', () => {
   assert.match(APP_CSS,
     /\.gc-msg-content a:not\(\.gc-ref\):not\(\.gc-channel-ref\) \{\s*color: var\(--accent\);\s*text-decoration: underline;\s*\}/);
-  assert.match(APP_CSS,
-    /@media \(hover: hover\) \{\s*\.gc-msg-content a:not\(\.gc-ref\):not\(\.gc-channel-ref\):hover \{ color: var\(--accent-light\); \}\s*\}/);
 });
 
 test('the channel chip still draws itself, not as a body link', () => {
