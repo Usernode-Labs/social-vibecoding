@@ -400,17 +400,32 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   // primitive, which is a fix as well as a consolidation — the hand-written
   // `px-3` did not line up with ListRow's `px-4` text column.
   const headingClass = 'md:col-span-full';
+  // One line under each tier label saying how its rows were picked (#5928
+  // item 2: "Recommended for you has no explanation"). The heading stays an
+  // <h2> with the label as its only child; this is a sibling <p> in the
+  // subtitle's 13px muted, spanning the grid like the heading does. It is
+  // words, not a legend: "Picked by Homeroom's staff" over Featured, and the
+  // order the rest is in over More apps.
+  const whyClass = 'md:col-span-full px-4 -mt-1 pb-2 text-[13px] leading-5 text-zinc-500 dark:text-zinc-400';
   return (
     <>
       {siteRow}
       {grouped ? (
         <>
-          {picked.length ? <SectionHeader className={headingClass}>{t('discover:list.heading.recommended')}</SectionHeader> : null}
+          {picked.length ? (
+            <>
+              <SectionHeader className={headingClass}>{t('discover:list.heading.recommended')}</SectionHeader>
+              <p className={whyClass}>{t('discover:list.why.recommended')}</p>
+            </>
+          ) : null}
           {renderRows(picked)}
           {rest.length ? (
-            <SectionHeader className={headingClass}>
-              {picked.length ? t('discover:list.heading.moreApps') : t('discover:list.heading.allApps')}
-            </SectionHeader>
+            <>
+              <SectionHeader className={headingClass}>
+                {picked.length ? t('discover:list.heading.moreApps') : t('discover:list.heading.allApps')}
+              </SectionHeader>
+              <p className={whyClass}>{t('discover:list.why.rest')}</p>
+            </>
           ) : null}
           {renderRows(rest)}
         </>
