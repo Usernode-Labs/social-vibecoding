@@ -172,6 +172,42 @@ test('the bot\'s follow-ups against the full PostgreSQL schema', { timeout: 1200
     assert.equal(Number(row.message_id), 77);
   });
 
+  // #6255: asked in the bot's chat while the request's first version was
+  // still being built, so the row names the request and no session. The
+  // change that links the request keeps it, and the ready card is the only
+  // line: a later fire(vote) says nothing.
+  await t.test('a promise about a request still being built is kept by the ready card', async () => {
+    await clear();
+    const asked = await followups.register(pool, {
+      user: evan, app, issueNumber, event: 'vote', place: { type: 'dm', ref: null }, deps,
+    });
+    assert.equal(asked.ok, true);
+    assert.equal(asked.promise, "I'll tell you here when it's ready to vote.");
+    const done = await followups.satisfiedBy(pool, {
+      sessionId: change.id, userId: evan.id, place: { type: 'dm' }, event: 'vote', messageId: 77,
+    });
+    assert.equal(done, 1);
+    assert.equal(await followups.fire(pool, { sessionId: change.id, event: 'vote', deps }), 0);
+    const [row] = await rows();
+    assert.equal(row.state, 'fired');
+    assert.equal(Number(row.message_id), 77);
+    assert.equal(Number(row.session_id), Number(change.id), 'the request\'s promise now names the change that kept it');
+    assert.equal(sent.length, 0);
+  });
+
+  await t.test('without the card keeping it, a vote fires exactly one line in the chat', async () => {
+    await clear();
+    await followups.register(pool, {
+      user: evan, app, issueNumber, event: 'vote', place: { type: 'dm', ref: null }, deps,
+    });
+    assert.equal(await followups.fire(pool, { sessionId: change.id, event: 'vote', deps }), 1);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].place, 'dm');
+    assert.match(sent[0].content, /@evan, PR 4249 is ready to vote on\./);
+    assert.equal(await followups.fire(pool, { sessionId: change.id, event: 'vote', deps }), 0);
+    assert.equal(sent.length, 1, 'said once');
+  });
+
   await t.test('a promise about a change that never came expires after 30 days, quietly', async () => {
     await clear();
     await ask();
