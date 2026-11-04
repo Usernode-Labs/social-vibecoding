@@ -2961,6 +2961,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             text={privateThreadWords(root, replies, meId)}
             where={privateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
+            working={!!threadWorking}
           />
         ) : null}
       </div>
