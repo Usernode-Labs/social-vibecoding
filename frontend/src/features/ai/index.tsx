@@ -33,11 +33,11 @@
  * screen. From 768px the column beside the list holds one thing at a time:
  * Main Chat, or one private thread, alone under its own head (its name and
  * "Only you can see this thread"; ReplyThreadPanel `inMain`), and the row
- * of whichever it is is drawn lit. Main Chat is a row, so a thread has no
- * way back to it of its own. On a phone the list and the column are one
- * drawer, as Messages' list and a conversation are (./phone-drawer.tsx):
- * the column peeks at the list's right, a row or the Ask bar slides it in,
- * and a thread's back arrow slides the list back.
+ * of whichever it is is drawn lit. Main Chat is a row, and a thread in its
+ * place leads with a back arrow to Main Chat. On a phone the list and the
+ * column are one drawer, as Messages' list and a conversation are
+ * (./phone-drawer.tsx): the column peeks at the list's right, a row or the
+ * Ask bar slides it in, and a thread's back arrow slides the list back.
  *
  * A REQUEST, A CHANGE OR A DECISION OPENS HERE TOO. On a wide window in the
  * column beside the list, in Main's place: the side panel, drawn as this
@@ -76,7 +76,6 @@ import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
-import { DesignPane } from '../messages/design-pane';
 import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
@@ -84,16 +83,17 @@ import { closeThread, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
 import { AI_MAIN_WIDTH_KEY } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
-import { attachmentFor, columnAddress, columnKey, routeOf, type Column, type ColumnHow } from './column';
+import { attachmentFor, columnAddress, columnKey, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
 import {
-  BOT_TAB, botItemFromRoute, botItemRoute, botTabAddress, knownBotConversation, noteBotConversation, useBotTabAsk,
+  BOT_TAB, botDetailAt, botItemFromRoute, botItemRoute, botTabAddress, botTabAt, knownBotConversation, noteBotConversation, useBotTabAsk,
   type BotAt, type BotItem,
 } from './door';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { publishBotDrawer, registerBotBack } from '../nav-drawer/bot-drawer';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
-import { closePreview, previewLayout, THREE_COLUMNS, usePreview } from './preview';
+import { closeDetail, detailLayout, openDetail, useDetail, THREE_COLUMNS } from './detail';
+import { DetailPane } from '../detail/detail-pane';
 import {
   heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type WorkRow,
@@ -367,25 +367,59 @@ export function AiScreen(): ReactNode {
     : { at: 'main' };
   const shown = columnKey(column);
   const lit = shown === 'new' ? null : shown;
-  // 1 Nov 2026 (C1): a design's preview beside the thread it is in, while
-  // that thread is the column's (./preview.ts).
-  const preview = usePreview();
+  // 1 Nov 2026 (C1), one store since #6230: what a thread opened to read
+  // beside it — a design's preview, a plan, or a change's before and after
+  // (./detail.ts). A design belongs to the thread it is in; a plan or a
+  // change belongs to the page the column shows.
+  const detail = useDetail();
   const three = useWide(THREE_COLUMNS);
-  const layout = previewLayout({ phone, three });
-  const previewUp = mounted && !!preview && !!botId && preview.conversationId === botId && openRoot === preview.rootId
-    && (phone ? level === 1 : docked && !panel.open);
-  // The column shows another thread: its preview goes.
+  const layout = detailLayout('bot', { phone, wide: three });
+  const detailHere = !!detail && !!botId && (detail.kind === 'design'
+    ? detail.ref.conversationId === botId && openRoot === detail.ref.rootId
+      && (phone ? level === 1 : docked && !panel.open)
+    : !!column && (column.at === 'page' || column.at === 'thread'));
+  const detailSlot: ColumnDetail | undefined = !detailHere || !detail ? undefined
+    : detail.kind === 'design' ? { kind: 'design', version: detail.version }
+      : detail.kind === 'plan' && detail.ref.sessionId ? { kind: 'plan', sessionId: detail.ref.sessionId, version: detail.version }
+        : detail.kind === 'shots' && detail.ref.changeId ? { kind: 'shots', changeId: detail.ref.changeId }
+          : undefined;
+  const columnShown: Column = column && detailSlot ? { ...column, detail: detailSlot } as Column : column;
+  // The column shows another thread: its detail goes — unless it was opened
+  // from that very page (the forwarded plan on a request).
+  // Only while this page is the one on screen: the AI screen stays mounted
+  // (hidden) behind every other page, and its rule must not close a plan
+  // opened beside a request's own page or in the Workshop.
   useEffect(() => {
-    if (preview && openRoot && openRoot !== preview.rootId) closePreview();
-  }, [preview, openRoot]);
+    if (!visible || !botId || !detail) return;
+    if (detail.kind === 'design' && openRoot && openRoot !== detail.ref.rootId) closeDetail();
+    if (detail.kind !== 'design' && !detailHere) closeDetail();
+  }, [visible, botId, detail, openRoot, detailHere]);
   // The tab pressed (the page's own address, from a thread's): the list
-  // comes back, and the preview goes.
+  // comes back, and the detail goes.
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const back = () => { if (window.location.hash === BOT_TAB) closePreview(); };
+    const back = () => { if (window.location.hash === BOT_TAB) closeDetail(); };
     window.addEventListener('hashchange', back);
     return () => window.removeEventListener('hashchange', back);
   }, []);
+  // A reload or a copied link reopens the detail the address names (#6230).
+  const restored = useRef<string | null>(null);
+  useEffect(() => {
+    if (!mounted || !botId || typeof window === 'undefined') return;
+    const hash = window.location.hash;
+    if (restored.current === hash) return;
+    restored.current = hash;
+    const at = botDetailAt(hash);
+    if (!at) return;
+    if (at.kind === 'plan') openDetail({ kind: 'plan', ref: { sessionId: at.sessionId }, version: at.version });
+    else if (at.kind === 'shots') openDetail({ kind: 'shots', ref: { changeId: at.changeId }, version: null });
+    else {
+      const where = botTabAt(hash);
+      if (where?.threadRootId) {
+        openDetail({ kind: 'design', ref: { conversationId: botId, rootId: where.threadRootId }, version: at.version });
+      }
+    }
+  }, [mounted, botId]);
   const botRow = mounted ? snap.conversations.find((item) => item.homeroomBot && item.kind !== 'channel') : null;
   const unread = Math.max(0, Number(botRow?.unreadCount) || 0);
 
@@ -416,7 +450,9 @@ export function AiScreen(): ReactNode {
   const showAt = (next: BotAt) => {
     sidePanel()?.close?.();
     closeNewThread();
-    if (!next.threadRootId || next.threadRootId !== preview?.rootId) closePreview();
+    if (!detail || detail.kind === 'design') {
+      if (!next.threadRootId || next.threadRootId !== detail?.ref.rootId) closeDetail();
+    }
     if (!next.threadRootId && openRoot) closeThread();
     setAt({ ...next });
     if (phone) setLevel(1);
@@ -511,10 +547,12 @@ export function AiScreen(): ReactNode {
   useEffect(() => {
     if (!mounted || !visible || !botId) return;
     const before = addressed.current;
-    addressed.current = shown;
-    if (before === undefined || before === shown) return;
-    showAddress(columnAddress(column));
-  }, [mounted, visible, botId, shown]); // eslint-disable-line react-hooks/exhaustive-deps
+    const now = `${shown}|${detailSlot ? JSON.stringify(detailSlot) : ''}`;
+    addressed.current = now;
+    if (before === undefined) return;
+    if (before === now) return;
+    showAddress(columnAddress(columnShown));
+  }, [mounted, visible, botId, shown, detailSlot]); // eslint-disable-line react-hooks/exhaustive-deps
   // MAIN'S ATTACHMENT FOLLOWS THE COLUMN (#6212, ./column.ts attachmentFor):
   // a page opened from the list is what a question is about; ‹ Main Chat back
   // from it keeps it; any other way into Main, or a thread, takes the list's
@@ -541,8 +579,8 @@ export function AiScreen(): ReactNode {
       window.dispatchEvent(new CustomEvent('usernode:messages-object-cleared', { detail: { conversationId: botId } }));
     }
   }, [shown, botId]); // eslint-disable-line react-hooks/exhaustive-deps
-  // A page the side panel takes is the column's: no preview beside it.
-  useEffect(() => { if (panel.open) closePreview(); }, [panel.open]);
+  // A page the side panel takes is the column's: no design preview beside it.
+  useEffect(() => { if (panel.open && detail?.kind === 'design') closeDetail(); }, [panel.open, detail]);
   // On a phone the column slides back to the list; the address is the page's.
   const toList = () => {
     setLevel(0);
@@ -565,7 +603,7 @@ export function AiScreen(): ReactNode {
   // column (../messages/new-thread.tsx), slid in on a phone.
   const openBlank = () => {
     sidePanel()?.close?.();
-    closePreview();
+    closeDetail();
     how.current = 'row';
     if (phone) setLevel(1);
   };
@@ -636,7 +674,7 @@ export function AiScreen(): ReactNode {
       data-page-bounce=""
       data-ai-docked={docked ? '' : undefined}
       data-ai-drawer={phone ? level : undefined}
-      data-ai-preview={previewUp ? layout : undefined}
+      data-ai-preview={detailHere ? layout : undefined}
       style={{ position: 'relative' }}
     >
       {phone ? (
@@ -682,20 +720,12 @@ export function AiScreen(): ReactNode {
         </aside>
       ) : null}
 
-      {/* The design's preview, the tab's own column (./preview.ts): beside
-          the thread, or the whole screen on a phone. */}
-      {previewUp && preview ? (
+      {/* THE DETAIL COLUMN (./detail.ts, #6230): what the thread opened to
+          read beside it — a design's preview, a plan, or a change's before
+          and after. Three side by side, halves, or the whole screen. */}
+      {detailHere && detail ? (
         <aside className="ai-preview-pane" data-ai-preview-pane={layout} aria-label={t('messages:design.pane.label')}>
-          <DesignPane
-            conversationId={preview.conversationId}
-            rootId={preview.rootId}
-            view="preview"
-            onView={() => {}}
-            version={preview.version}
-            seq={preview.seq}
-            onClose={closePreview}
-            closeAs={layout === 'full' ? 'back' : 'close'}
-          />
+          <DetailPane layout={layout} />
         </aside>
       ) : null}
     </main>

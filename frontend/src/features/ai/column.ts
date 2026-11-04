@@ -25,12 +25,19 @@
  */
 
 import { BOT_TAB, botItemAddress, botItemFromRoute, botTabAddress } from './door';
+import { detailAddress, type DetailKind } from './detail';
+
+/** What is open beside the thread, as the address names it (#6230). */
+export type ColumnDetail =
+  | { kind: 'plan'; sessionId: number; version: number | null }
+  | { kind: 'design'; version: number | null }
+  | { kind: 'shots'; changeId: number };
 
 export type Column =
-  | { at: 'main' }
-  | { at: 'thread'; rootId: number }
-  | { at: 'page'; route: string }
-  | { at: 'new' }
+  | { at: 'main'; detail?: ColumnDetail }
+  | { at: 'thread'; rootId: number; detail?: ColumnDetail }
+  | { at: 'page'; route: string; detail?: ColumnDetail }
+  | { at: 'new'; detail?: ColumnDetail }
   | null;
 
 /** Pure: a panel route as the column holds it, with no leading '#' or '/'. */
@@ -66,6 +73,20 @@ export function rowKey(row: { rootId?: number | null; href?: string | null }): s
  * other page, a blank thread and nothing are the tab itself.
  */
 export function columnAddress(column: Column): string {
+  if (!column) return BOT_TAB;
+  const base = columnAddressBase(column);
+  const detail = column.detail;
+  if (!detail) return base;
+  const suffix = detailAddress(
+    detail.kind as DetailKind,
+    detail.kind === 'plan' ? { sessionId: detail.sessionId } : detail.kind === 'shots' ? { changeId: detail.changeId } : {},
+    detail.kind === 'plan' || detail.kind === 'design' ? detail.version : null,
+  );
+  return suffix ? `${base}${suffix}` : base;
+}
+
+/** Pure: the tab's address for the column's place alone, with no detail suffix. */
+function columnAddressBase(column: Column): string {
   if (!column) return BOT_TAB;
   if (column.at === 'main') return botTabAddress(null);
   if (column.at === 'thread') return botTabAddress({ threadRootId: column.rootId });

@@ -457,7 +457,11 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
            u.username::text AS author,
            cs.pr_number AS number,
            cs.approval_epoch AS epoch,
-           cs.last_activity_at AS at,
+           -- #6245: when its vote opened, never the latest activity (a page
+           -- read or a preview waking touched that), so a row keeps its
+           -- place in Needs you while it waits. Old rows with no
+           -- promoted_at fall back to when the change was made.
+           COALESCE(cs.promoted_at, cs.created_at) AS at,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                AND ${countedVotePredicateSql('pv', 'cs')})::int AS yes,

@@ -376,13 +376,16 @@ const times = (n, step) => Array.from({ length: n }, () => step);
 const reply = (text) => ({ calls: [call('reply', { text })] });
 const edit = (find, replace, note) => ({ calls: [call('edit_design', { edits: [{ find, replace }], ...(note ? { note } : {}) })] });
 const TOOL_NAMES = designBot.TOOLS.map((tool) => tool.function.name);
-const ACT_NAMES = TOOL_NAMES.filter((name) => name !== 'list_source' && name !== 'read_source');
+const ACT_NAMES = TOOL_NAMES.filter((name) => !['list_source', 'read_source', 'list_requests', 'get_request'].includes(name));
 
 // An edit: a message in a thread that holds version 2 already.
 const CURRENT = { version: 2, html: '<main>Keys</main>' };
 const DESIGNED = { rootId: 500, threadId: 7, state: 'open', latest: 2, title: 'Main screen', surface: 'new' };
 const editTurn = (steps, extra = {}) => designTurn(steps, { handoff: false, design: DESIGNED, current: CURRENT, ...extra });
 const HOME = 'Keys<nav>Intervals · Chords · Progressions</nav></main>';
+// A bot row already in the thread: the designer has spoken, so this first
+// drawing is not the ask-first case (#6257) and the forced draw still applies.
+const SPOKEN = [{ id: 70, sender_id: 2, content: 'Here is a first go.' }];
 
 test('#6144: every design turn has 12 rounds, reads in the first 7, and a first drawing draws by round 8', () => {
   assert.equal(designBot.MAX_ROUNDS, 12);
@@ -395,7 +398,7 @@ test('#6144: every design turn has 12 rounds, reads in the first 7, and a first 
 });
 
 test('#6141: handed a screen, a turn that only read never posts its last words as the answer', async () => {
-  const turn = designTurn([...times(11, READ), reply('placeholder')]);
+  const turn = designTurn([...times(11, READ), reply('placeholder')], { thread: SPOKEN });
   await turn.run;
   assert.equal(turn.seen.length, designBot.MAX_ROUNDS);
   assert.deepEqual(turn.choices, [...times(7, 'auto'), FORCED('write_screen'), ...times(3, 'auto'), FORCED('reply')],
@@ -410,7 +413,7 @@ test('#6141: handed a screen, a turn that only read never posts its last words a
   // The forced draw came back with an error: told to draw twice, then the
   // same honest line.
   const broken = designTurn([...times(7, READ), { calls: [call('write_screen', { title: 'Main screen', html: '' })] },
-    reply('Here it is, in the app\'s own style.')]);
+    reply('Here it is, in the app\'s own style.')], { thread: SPOKEN });
   await broken.run;
   assert.equal(broken.sent[0].content, designBot.NOT_DRAWN_TEXT);
   assert.deepEqual(broken.recorded[0].failures, ['d8:draw_forced', 'd9:handoff', 'd10:handoff', 'end:handoff']);
@@ -420,7 +423,7 @@ test('#6142: a first drawing that reads long is made to draw in round 8, and gro
   const turn = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] },
     edit('Keys</main>', 'Keys<p class="score">Score 0</p></main>'), edit('Score 0', 'Score 3'),
     edit('<main class="keys">', '<main class="keys"><h1>Ear Trainer</h1>'),
-    reply('Here it is, with the score.')]);
+    reply('Here it is, with the score.')], { thread: SPOKEN });
   await turn.run;
   assert.deepEqual(turn.choices, [...times(7, 'auto'), FORCED('write_screen'), ...times(3, 'auto'), FORCED('reply')]);
   assert.equal(turn.sent.length, 1);
@@ -432,7 +435,7 @@ test('#6142: a first drawing that reads long is made to draw in round 8, and gro
   assert.deepEqual(turn.recorded[0].failures, ['d8:draw_forced'], 'it drew: no end failure');
   assert.equal(turn.recorded[0].fallback, null);
 
-  const short = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] }, reply('Here it is.')]);
+  const short = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] }, reply('Here it is.')], { thread: SPOKEN });
   await short.run;
   assert.deepEqual(short.choices, [...times(7, 'auto'), FORCED('write_screen'), 'auto']);
   assert.equal(short.sent[0].content, 'Version 1 · The main screen\n\nHere it is.');
@@ -514,7 +517,7 @@ test('#6144: filler is never an answer: sent back while rounds are left, and nev
 
 test('#6141, #6144: a real question back from the last round still goes out; asking leave to start does not', async () => {
   const handedQuestion = 'Which screen, the quiz or the results?';
-  const asks = designTurn([...times(11, READ), reply(handedQuestion)]);
+  const asks = designTurn([...times(11, READ), reply(handedQuestion)], { thread: SPOKEN });
   await asks.run;
   assert.equal(asks.sent[0].content, handedQuestion);
   assert.deepEqual(asks.recorded[0].failures, ['d8:draw_forced']);

@@ -515,7 +515,8 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.equal((await pool.query('SELECT result FROM wf_events WHERE id = $1', [id])).rows[0].result, 'accepted');
     i = await inst(s);
     assert.equal(i.data.notes['ready:1'].status, 'retried');
-    assert.equal(Object.values(i.data.notes).filter((n) => n.status === 'done').length, 1);
+    // The ready card, and the two follow-up moments it decided (#6264).
+    assert.equal(Object.values(i.data.notes).filter((n) => n.status === 'done').length, 3);
   });
 
   // A vote is told to the change's machine in the vote's own statement
@@ -549,6 +550,34 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     const other = await change({ owner: asker.id, run: false });
     await recordVote({ pool, session: { id: other.id }, userId: voter.id, vote: 'yes', headSha: other.head, revisionEnforced: false, voter: voter.username });
     assert.equal((await pool.query(`SELECT COUNT(*)::int AS n FROM wf_events WHERE type = 'Voted' AND key = $1`, [sessionKey(other.id)])).rows[0].n, 0);
+  });
+
+  // #6264: the promises people asked for are kept by the change's own
+  // moments, each asked once under its own key.
+  await t.test('B-followups: each moment asks bot.tellFollowups once', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    assert.ok(calls(WORK.followups).some((c) => c.input.event === 'checks' && c.input.head === s.head),
+      'the checks finishing is told');
+    assert.ok(calls(WORK.followups).some((c) => c.key === 'followups:vote:1' && c.input.event === 'vote'),
+      'ready to vote is told once at this epoch');
+    await tell(s, 'Look');
+    assert.equal(calls(WORK.followups).filter((c) => c.key === 'followups:vote:1').length, 1, 'asked once');
+    await tell(s, 'Merged');
+    assert.ok(calls(WORK.followups).some((c) => c.key === 'followups:merged'), 'merged is told');
+    await tell(s, 'Live');
+    assert.ok(calls(WORK.followups).some((c) => c.key === 'followups:live'), 'live is told');
+
+    reset();
+    const closed = await change();
+    await tell(closed, 'Proposed');
+    const out = await tell(closed, 'Closed', { reason: 'withdrawn' });
+    assert.ok(['ok', 'accepted'].includes(out.result), 'the close is applied');
+    assert.deepEqual(calls(WORK.followups).map((c) => [c.key, c.input.event]), [['followups:closed', 'closed']],
+      'a close asks once, to call off what is still waiting');
   });
 
   await t.test('kernel: no notifier, and nothing a transition returns runs after COMMIT', async () => {

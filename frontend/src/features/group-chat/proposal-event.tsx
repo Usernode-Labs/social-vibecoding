@@ -254,7 +254,8 @@ export const EventRow = memo(function EventRow({ msg }: { msg: TranscriptMessage
       data-msg-id={msg.id ?? ''}
       data-event={ev.type}
       // What refreshVoteControls reads back to resolve the row against the
-      // vote snapshot — the same pair the thread's vote-controls host carries.
+      // vote snapshot — the same pair a thread's row about a change carries
+      // as data-vote-session / data-vote-pr (transcript.tsx).
       data-session-id={ev.sessionId}
       data-pr-number={ev.prNumber}
       {...(open ? { 'data-open': '1' } : {})}

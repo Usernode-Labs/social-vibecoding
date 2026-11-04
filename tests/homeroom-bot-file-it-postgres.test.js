@@ -171,7 +171,7 @@ test('the File it promise is kept, or not promised at all', { timeout: 180000 },
     const seen = [];
     const sent = await turn(drea, 'Can you file a request on Rilo for week by week tracking in insights?', scripted([
       [['reply', { text: 'I\'ve drafted the request. A File it button will appear under this message.' }]],
-      [['offer_request', { project: 'Rilo', title: 'Week by week tracking in insights', details: 'Show insights week by week, not only as a total.' }]],
+      [['offer_request', { project: 'Rilo', title: 'Week by week tracking in insights', details: 'Show insights week by week, not only as a total.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Here it is.' }]],
     ], seen));
     // The second request carries the check note, and it names offer_request.
@@ -202,7 +202,7 @@ test('the File it promise is kept, or not promised at all', { timeout: 180000 },
   await t.test('B: a refused offer leaves no promise in what is sent', async () => {
     const sent = await turn(ola, 'Can you file a request on Rilo for week by week tracking in insights?', scripted([
       [['reply', { text: 'I\'ve drafted the request for Rilo.' }]],
-      [['offer_request', { project: 'Rilo', title: 'Week by week tracking in insights', details: 'Show insights week by week, not only as a total.' }]],
+      [['offer_request', { project: 'Rilo', title: 'Week by week tracking in insights', details: 'Show insights week by week, not only as a total.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Tap File it below.' }]],
     ]));
     const { content, metadata } = await messageOf(sent.messageId);
@@ -215,7 +215,7 @@ test('the File it promise is kept, or not promised at all', { timeout: 180000 },
 
   await t.test('C: a turn that drafted the request and then failed its reply round still sends the card', async () => {
     const sent = await turn(tess, 'File a request on Rilo: the insights should show week by week.', draftThenFail([
-      ['offer_request', { project: 'Rilo', title: 'Week by week tracking in insights', details: 'Show insights week by week, not only as a total.' }],
+      ['offer_request', { project: 'Rilo', title: 'Week by week tracking in insights', details: 'Show insights week by week, not only as a total.', doneWhen: ['It does what was asked.'] }],
     ]));
     const { content, metadata } = await messageOf(sent.messageId);
     const card = metadata.homeroomBot;

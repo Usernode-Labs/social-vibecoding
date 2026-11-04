@@ -63,13 +63,34 @@ test('#5229: a back and forth with the bot is not waiting on the viewer, whoever
   assert.equal(waiting.BOT_HOLD_DAYS, undefined);
 });
 
-test('the plan is the request\'s NEWEST run waiting for Build it, on a request recorded as the viewer\'s', () => {
-  const sql = waiting.PLANS_SQL;
-  assert.match(sql, /FROM homeroom_bot_requesters q/);
-  assert.match(sql, /WHERE q\.app_id = \$1 AND q\.user_id = \$2/);
-  assert.match(sql, /ORDER BY id DESC LIMIT 1\s*\) run ON TRUE/, 'the newest run decides');
-  assert.match(sql, /run\.awaiting_go_at IS NOT NULL AND run\.build_ok IS NULL/);
-  assert.match(sql, /run\.build_session_id IS NULL AND run\.proposal_session_id IS NULL/);
+test('the plan is the request\'s NEWEST run waiting for Build it, from one shared definition', () => {
+  const progress = require('../src/services/homeroom-bot-progress');
+  const fragment = progress.planWaitingSql({ appId: 'q.app_id', issueNumber: 'q.issue_number' });
+  assert.ok(waiting.PLANS_SQL.includes(fragment), 'the Workshop reads the shared fragment');
+  assert.match(waiting.PLANS_SQL, /FROM homeroom_bot_requesters q/);
+  assert.match(waiting.PLANS_SQL, /WHERE q\.app_id = \$1 AND q\.user_id = \$2/);
+  assert.match(waiting.PLANS_SQL, /WHERE p\.at IS NOT NULL/);
+  assert.match(waiting.PLANS_SQL, /ORDER BY p\.at DESC/);
+  assert.match(waiting.PLANS_SQL, /LIMIT \$3/);
+  // The newest run (any mode) waits for Build it, nothing built from it, no
+  // limit holding it, on a request still open (homeroom-bot-progress.js).
+  assert.match(fragment, /run\.mode = 'live' AND run\.verdict = 'ready'/);
+  assert.match(fragment, /run\.awaiting_go_at IS NOT NULL/);
+  assert.match(fragment, /run\.live_build_waiting_at IS NULL/);
+  assert.match(fragment, /run\.build_ok IS NULL/);
+  assert.match(fragment, /run\.build_session_id IS NULL/);
+  assert.match(fragment, /run\.proposal_session_id IS NULL/);
+  assert.match(fragment, /run\.cap_suppressed IS NULL/);
+  assert.match(fragment, /ORDER BY run\.id DESC LIMIT 1/);
+  assert.match(fragment, /github_issue_number = q\.issue_number/);
+  assert.match(fragment, /homeroom_bot_closed_requests/);
+  // One definition: both sources call it, and the bot page reads the same one.
+  assert.ok(read('src/services/workshop-waiting.js')
+    .includes("planWaitingSql({ appId: 'q.app_id', issueNumber: 'q.issue_number' })"));
+  const aiWork = require('../src/services/ai-work');
+  assert.ok(aiWork.FACTS_SQL.includes(progress.planWaitingSql({ appId: 'w.app_id', issueNumber: 'w.number' })),
+    'the bot page reads the same fragment');
+  assert.ok(read('src/services/ai-work.js').includes("planWaitingSql({ appId: 'w.app_id', issueNumber: 'w.number' })"));
 });
 
 test('a question is one asked of the viewer that is still open', () => {

@@ -134,8 +134,11 @@ test('each section groups its rows by project, and a project shows its first few
   assert.deepEqual({ ...GROUP_FIRST }, { needs: 5, busy: 3, live: 3 }, 'Needs you shows the most: it is what you came for');
   const lists = read('frontend/src/features/ai/lists.tsx');
   // 1 Nov 2026: the row whose chat is in the column is never folded away:
-  // past the first rows, it joins them.
-  assert.match(lists, /const shown = litAt >= first \? first \+ 1 : first;\s+const hidden = Math\.max\(0, items\.length - shown\);/);
+  // past the first rows, it joins them. #6245: only while the group is
+  // folded (open ? -1): an opened group keeps every row's own place.
+  assert.match(read(MODEL), /const litAt = open \? -1 : items\.findIndex\(\(row\) => row\.lit\);/);
+  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open\);/,
+    'the group draws through the pure order rule');
   assert.match(lists, /\{\(hidden \? items\.slice\(0, shown\) : items\)\.map\(/);
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
   assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
@@ -144,6 +147,67 @@ test('each section groups its rows by project, and a project shows its first few
     'B07: a private idea under that heading does not say Only you again on its row');
   // One project picked: its chip names it, so its name is not said again.
   assert.match(lists, /const heads = picked\.length !== 1;/);
+});
+
+// #6245 (4 Nov 2026, Evan): pressing a row past a project's first five slid
+// it up to sixth place while its page opened, because the group lifted the
+// row you are on even when Show more had opened every row.
+test('#6245: a row pressed in an opened group keeps its place, and a live refresh cannot slide it', () => {
+  const { groupRows, holdOrder, GROUP_FIRST } = loadTsx(MODEL);
+  // Eight rows, the seventh is where you are.
+  const rows = Array.from({ length: 8 }, (_, i) => ({ key: `need:proposal:${i + 1}`, lit: i === 6 }));
+  // Folded: the row you are on still joins the first five (where you are is
+  // never hidden), and the rest folds under Show more.
+  const folded = groupRows(rows, GROUP_FIRST.needs, false);
+  assert.deepEqual(folded.items.map((r) => r.key), [
+    'need:proposal:1', 'need:proposal:2', 'need:proposal:3', 'need:proposal:4', 'need:proposal:5',
+    'need:proposal:7', 'need:proposal:6', 'need:proposal:8',
+  ], 'folded, the row you are on joins the first five');
+  assert.deepEqual([folded.shown, folded.hidden], [6, 2]);
+  // Opened: every row keeps its own place, so the pressed row stays seventh.
+  const open = groupRows(rows, GROUP_FIRST.needs, true);
+  assert.deepEqual(open.items.map((r) => r.key), rows.map((r) => r.key), 'opened, the pressed row stays where it was');
+  assert.deepEqual([open.shown, open.hidden], [5, 3]);
+
+  // The drawn order holds while the person is on the list: existing rows
+  // keep their place, a new one joins below them, and one that left drops.
+  const drawn = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(
+    holdOrder([{ key: 'c' }, { key: 'x' }, { key: 'a' }, { key: 'd' }, { key: 'b' }], drawn).map((r) => r.key),
+    ['a', 'b', 'c', 'd', 'x'],
+    'the drawn order, then what arrived, in its own order');
+  assert.deepEqual(holdOrder([{ key: 'a' }, { key: 'c' }], drawn).map((r) => r.key), ['a', 'c'],
+    'a row that no longer needs you goes at once');
+  assert.deepEqual(holdOrder([], drawn), [], 'an emptied list holds nothing');
+
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(lines, drawn\.current\) : lines;/,
+    'only Needs you holds its order, only while held');
+  assert.match(lists, /onPointerEnter=\{startHold\}\s+onPointerLeave=\{endHold\}/, 'the pointer over the list holds it');
+  assert.match(lists, /onFocus=\{\(e\) => \{ if \(!within\(e\.relatedTarget\)\) startHold\(\); \}\}/,
+    'a row with keyboard focus holds it too');
+  assert.match(lists, /<GroupList lines=\{held\}/, 'and it draws the held order');
+
+  // Rendered folded, the lit row is still the sixth drawn: today's rule.
+  const { renderComponent } = require('./lib/render-tsx');
+  const eight = Array.from({ length: 8 }, (_, i) => ({
+    key: `need:proposal:${i + 1}`,
+    title: `Row ${i + 1}`,
+    app,
+    who: 'all',
+    sub: { id: 'messages:ai.row.where', values: { project: 'Garden club', number: i + 1 } },
+    pill: { id: 'messages:ai.pill.vote' },
+    href: `#app/garden/dev/changes/${i + 1}`,
+    rootId: null,
+  }));
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 8,
+    rows: eight, lit: 'page:app/garden/dev/changes/7', progress: [], waiting: [], live: [],
+    openRow() {}, openThread() {},
+  });
+  const shown = html.slice(0, html.indexOf('data-ai-group-rest'));
+  assert.ok(shown.indexOf('Row 7') > shown.indexOf('Row 5'), 'folded, the row you are on joins the first five');
+  assert.ok(!shown.includes('Row 6') && !shown.includes('Row 8'), 'and the rows below it fold away');
 });
 
 test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {
@@ -948,7 +1012,7 @@ test('the column from 768px: Main, or one thread alone under its own head; a pag
   assert.match(src, /data-ai-column=\{threadUp \? 'thread' : 'main'\}/);
   // A place in the chat: the panel gives the column back, a blank thread goes, Main closes a thread.
   // 1 Nov 2026 (C1): and a design's preview goes, unless it is that thread's.
-  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!next\.threadRootId \|\| next\.threadRootId !== preview\?\.rootId\) closePreview\(\);\s+if \(!next\.threadRootId && openRoot\) closeThread\(\);\s+setAt\(\{ \.\.\.next \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
+  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!detail \|\| detail\.kind === 'design'\) \{\s+if \(!next\.threadRootId \|\| next\.threadRootId !== detail\?\.ref\.rootId\) closeDetail\(\);\s+\}\s+if \(!next\.threadRootId && openRoot\) closeThread\(\);\s+setAt\(\{ \.\.\.next \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
   assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);/);
   assert.match(src, /if \(openPublic\(href, app, title\)\) underPanel\(\);/);
   // 3 Nov 2026: the address is the column's, written by one effect (#6215).
@@ -1355,7 +1419,7 @@ test('one column state: where each row goes, the row it lights, its address and 
   // The page reads it once; nothing else keeps a copy.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /: panelRoute \? \{ at: 'page', route: panelRoute \}/);
-  assert.match(src, /showAddress\(columnAddress\(column\)\);/);
+  assert.match(src, /showAddress\(columnAddress\(columnShown\)\);/);
   assert.equal((src.match(/showAddress\(/g) || []).length, 2, 'one writer of the address, besides its definition');
   assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(row\) === lit,/);
   assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(th\) === lit,/);

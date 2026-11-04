@@ -67,10 +67,11 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  GROUP_FIRST, NOT_MOVING, byProject, changeOnGithub, nextWords, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf,
+  GROUP_FIRST, NOT_MOVING, byProject, changeOnGithub, groupRows, holdOrder, nextWords, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
+import { reload as reloadTab, tabLacks, useTabBuild } from '../../lib/tab-build';
 import { rowKey } from './column';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
@@ -305,12 +306,10 @@ function GroupList({ lines, quiet = false, heads, first }: { lines: Line[]; quie
       {byProject(lines).map((g) => {
         const key = g.app?.slug || 'none';
         const open = !!opened[key];
-        const litAt = g.items.findIndex((l) => l.lit);
-        const items = litAt >= first
-          ? [...g.items.slice(0, first), g.items[litAt], ...g.items.slice(first).filter((l) => !l.lit)]
-          : g.items;
-        const shown = litAt >= first ? first + 1 : first;
-        const hidden = Math.max(0, items.length - shown);
+        // #6245: only a folded group lifts the row you are on. Once its Show
+        // more has opened every row, they keep their own order, so pressing
+        // one does not slide it up under the pointer.
+        const { items, shown, hidden } = groupRows(g.items, first, open);
         return (
           <div key={key} data-ai-group={key}>
             {heads ? (
@@ -370,6 +369,27 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   heads: boolean;
 }): ReactNode {
   const [stillOpen, setStillOpen] = useState(false);
+  // #6245: while the pointer is over Needs you or a row in it has keyboard
+  // focus, keep the order it was drawn in, so a live refresh cannot slide a
+  // row out from under the one being pressed. Rows that arrived meanwhile
+  // follow the drawn ones; anything that left drops out at once. On release
+  // the list settles into the incoming order.
+  const holdRef = useRef<HTMLElement | null>(null);
+  const drawn = useRef<string[] | null>(null);
+  const [holding, setHolding] = useState(false);
+  const hold = list === 'work';
+  const held = hold && holding && drawn.current ? holdOrder(lines, drawn.current) : lines;
+  const startHold = () => {
+    if (!hold) return;
+    if (!drawn.current) drawn.current = lines.map((line) => line.key);
+    setHolding(true);
+  };
+  const endHold = () => {
+    if (!hold) return;
+    drawn.current = null;
+    setHolding(false);
+  };
+  const within = (node: EventTarget | null) => !!holdRef.current && node instanceof Node && holdRef.current.contains(node);
   if (!lines.length && !still?.lines.length && !empty && !note && !keep) return null;
   const label = owe ? 'text-violet-700 dark:text-violet-300' : '';
   // A row in the folded part that is where you are opens it.
@@ -378,7 +398,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
     <>
       {note}
       {!lines.length ? empty : null}
-      <GroupList lines={lines} quiet={quiet} heads={heads} first={first} />
+      <GroupList lines={held} quiet={quiet} heads={heads} first={first} />
       {still && still.lines.length ? (
         <div data-ai-still-part="">
           <button
@@ -406,7 +426,15 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
     </>
   );
   return (
-    <section className="pb-1" data-ai-list={list}>
+    <section
+      ref={holdRef}
+      className="pb-1"
+      data-ai-list={list}
+      onPointerEnter={startHold}
+      onPointerLeave={endHold}
+      onFocus={(e) => { if (!within(e.relatedTarget)) startHold(); }}
+      onBlur={(e) => { if (!within(e.relatedTarget)) endHold(); }}
+    >
       <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
         <SectionHeader className={`px-0 pt-0 pb-0 ${label}`}>{head}</SectionHeader>
       </div>
@@ -541,11 +569,19 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     ...movingShown.map(waitingLine),
   ];
   const stillLines: Line[] = stillShown.map(waitingLine);
-  const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => ({
-    ...threadLine(() => <CheckIcon className={G} />)(th),
-    right: dayOf(th.at, t),
-    tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
-  }));
+  const tab = useTabBuild();
+  const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => {
+    // #6233: Live, but this tab runs the build before it: the row asks for
+    // the reload rather than a day the reader still cannot see.
+    const lacks = tabLacks({ liveAt: th.at, mergedAt: th.mergedAt, id: th.changeId, appSlug: th.app?.slug }, tab);
+    return {
+      ...threadLine(() => <CheckIcon className={G} />)(th),
+      right: lacks ? t('messages:ai.short.reload') : dayOf(th.at, t),
+      owe: lacks,
+      tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
+    };
+  });
+  const liveBehind = liveLines.some((line) => line.owe);
   const owedShown = picked.length ? needLines.filter((line) => line.owe).length : owed;
   // One project picked: its chip names it, so its name is not said again over every section.
   const heads = picked.length !== 1;
@@ -642,6 +678,21 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
       {liveLines.length ? (
         <div className={`${PLANE} pb-2`} data-ai-sheet="live">
           <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={GROUP_FIRST.live} heads={heads} />
+          {liveBehind ? (
+            // #6233: one Reload under the list, for every row this tab is
+            // older than.
+            <div className="flex items-center gap-2 border-t border-zinc-900/[0.07] px-4 pt-2 pb-1 dark:border-white/[0.08]" data-ai-older-tab="">
+              <span className="min-w-0 flex-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.live.olderTab')}</span>
+              <button
+                type="button"
+                className="shrink-0 text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                onClick={() => reloadTab()}
+                data-ai-older-tab-reload=""
+              >
+                {t('messages:ai.short.reload')}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

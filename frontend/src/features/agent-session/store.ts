@@ -1695,11 +1695,76 @@ export async function archiveCurrentSession() {
   if (!ok || state.id !== id) return;
   try {
     const session = await api.archiveSession(id);
+    pushArchiveUndo({ id, title: session.title || state.session?.title || t('agent:session.newSessionTitle') });
     if (state.id !== id) return;
     publish((current) => ({ session, sessions: current.sessions.filter((s) => s.id !== id) }));
     void loadAgentSessions();
   } catch (error) {
     if (state.id === id) publish({ error: errorText(error, t('agent:session.error.archiveFailed')) });
+  }
+}
+
+// ── Undo for archiving, several in a row (#6132) ───────────────────────
+//
+// Every conversation archived from Messages goes on this stack (newest
+// last, 20 at most) and shows a priority toast with Undo; each press brings
+// back the newest one and re-toasts while entries remain. The stack lasts
+// while the page is open; after a reload, the list's "Show archived" is the
+// way back. It is Messages' own: the project board keeps a separate one
+// (AppView._archiveUndo).
+
+export const ARCHIVE_UNDO_MAX = 20;
+const archiveUndo: { id: number; title: string }[] = [];
+let archiveUndoBusy = false;
+
+/** The entries that can be undone, newest last (read by tests). */
+export function archiveUndoEntries(): ReadonlyArray<{ id: number; title: string }> {
+  return archiveUndo.slice();
+}
+
+function pushArchiveUndo(entry: { id: number; title: string }) {
+  archiveUndo.push(entry);
+  while (archiveUndo.length > ARCHIVE_UNDO_MAX) archiveUndo.shift();
+  undoToast(t('agent:session.archiveUndo.archived', { title: entry.title, count: archiveUndo.length }), true);
+}
+
+/** The platform's bottom notice, held for ~8s as a priority toast, with Undo when `withUndo`. */
+function undoToast(message: string, withUndo: boolean) {
+  const options: { priority: boolean; duration: number; action?: { label: string; handler: () => void } } = { priority: true, duration: 8000 };
+  if (withUndo) options.action = { label: t('agent:session.archiveUndo.undo'), handler: () => { void undoLastArchive(); } };
+  try { window.PlatformUI?.toast?.(message, options); } catch { /* the list keeps its rows */ }
+}
+
+/**
+ * Undo's handler: bring back the newest archived conversation. The open
+ * conversation, if it is the one, leaves its read-only state; the lists are
+ * read again. A failure puts the entry back on top with Undo still attached,
+ * so Undo retries it; a 404 (not archived any more) drops it and the rest
+ * stay in line.
+ */
+export async function undoLastArchive() {
+  if (archiveUndoBusy) return;
+  const entry = archiveUndo.pop();
+  if (!entry) return;
+  archiveUndoBusy = true;
+  try {
+    const session = await api.unarchiveSession(entry.id);
+    if (state.id === entry.id) publish({ session });
+    void loadAgentSessions();
+    const left = archiveUndo.length;
+    undoToast(left
+      ? t('agent:session.archiveUndo.restored', { title: entry.title, count: left })
+      : t('agent:session.archiveUndo.restoredLast', { title: entry.title }), left > 0);
+  } catch (error) {
+    if ((error as { status?: number }).status === 404) {
+      const top = archiveUndo[archiveUndo.length - 1];
+      if (top) undoToast(t('agent:session.archiveUndo.archived', { title: top.title, count: archiveUndo.length }), true);
+      return;
+    }
+    archiveUndo.push(entry);
+    undoToast(errorText(error, t('agent:session.error.unarchiveFailed')), true);
+  } finally {
+    archiveUndoBusy = false;
   }
 }
 

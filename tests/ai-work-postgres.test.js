@@ -289,6 +289,33 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.deepEqual(page.liveThisWeek.map((r) => r.title), ['Badges']);
   assert.equal(page.counts.inProgress, page.inProgress.length);
 
+  // #6245 (4 Nov 2026): opening a change's page, or its preview waking,
+  // writes chat_sessions.last_activity_at. No list's sort reads it any more,
+  // so neither a row's place nor its sort key moves.
+  const threadRows = async () => (await pool.query(
+    aiWork.THREADS_SQL, [ada.id, false, false, aiWork.THREADS_MAX, aiWork.LIVE_DAYS])).rows;
+  const beforeView = await threadRows();
+  await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE app_id = $1', [app.id]);
+  const afterView = await threadRows();
+  assert.deepEqual(afterView.map((r) => r.id), beforeView.map((r) => r.id), 'looking at something moves no row');
+  assert.deepEqual(afterView.map((r) => r.sort_at), beforeView.map((r) => r.sort_at), 'and changes no sort key');
+
+  // #6245: Needs you is ordered by when each item began needing you, newest
+  // first. A change promoted earlier but touched more recently stays below
+  // the one promoted later, and each card is timed from when its vote opened.
+  await request(app, 40, ada, 'Gallery A');
+  const earlier = await change(app, 41, bob, 40, 'promoted', { promotedAt: new Date(Date.now() - 7200000), checkState: 'passing' });
+  await request(app, 42, ada, 'Gallery B');
+  const later = await change(app, 43, bob, 42, 'promoted', { promotedAt: new Date(Date.now() - 3600000), checkState: 'passing' });
+  await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [earlier.id]);
+  const workshop = require('../src/routes/workshop-overview');
+  const feed = await workshop.needsFeedFor(pool, { user: { id: ada.id }, inThreads: true });
+  const pair = feed.filter((item) => item.kind === 'proposal' && [41, 43].includes(item.number));
+  assert.deepEqual(pair.map((item) => item.number), [43, 41], 'the vote that opened later comes first');
+  const promotedAt = async (id) => (await one('SELECT promoted_at FROM chat_sessions WHERE id = $1', [id])).promoted_at.toISOString();
+  assert.equal(pair[0].at, await promotedAt(later.id), 'timed from when its vote opened, not its last activity');
+  assert.equal(pair[1].at, await promotedAt(earlier.id));
+
   // Private threads: her own message with replies, and the bot's draft for her.
   const convo = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);
   await pool.query(
@@ -338,6 +365,69 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.ok(Array.isArray(body.private) && Array.isArray(body.needs) && Array.isArray(body.next) && Array.isArray(body.waiting) && Array.isArray(body.live));
+});
+
+test('#6246: a waiting plan stays in Needs you past the 25-request window and a reply', { timeout: 120000 }, async (t) => {
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const name = `ai_plan_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 4 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  const aiWork = require('../src/services/ai-work');
+
+  const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+  const user = (username, synthetic = false) => one(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id, username`,
+    [username, synthetic]);
+  const ada = await user('ap_ada');
+  const bot = await user('homeroom_bot', true);
+  const app = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Previews', 'ap-previews', 'running', $1, 'public', 'public') RETURNING id, slug`, [ada.id]);
+  await one(
+    `INSERT INTO requests (app_id, number, title, created_by)
+     VALUES ($1, 1, 'Previews: a schema change rolling out', $2) RETURNING id`, [app.id, ada.id]);
+  await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 1, $2)', [app.id, ada.id]);
+  await one(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at, created_at)
+     VALUES ($1, 1, 'live', 'ready', NOW() - INTERVAL '50 minutes', NOW() - INTERVAL '1 hour') RETURNING id`, [app.id]);
+
+  const deps = { bot, liveSvc: { isStaging: () => false }, settings: { mode: 'live' } };
+  const needs = async () => (await aiWork.workFor(pool, { user: { id: ada.id }, deps }))
+    .needs.filter((r) => r.number === 1).map((r) => r.what);
+  assert.deepEqual(await needs(), ['plan'], 'the plan waits for her Build it');
+  // A person's reply newer than the plan does not hide it.
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
+     VALUES ($1, $2, 'looks good', 'issue', 1, NOW() - INTERVAL '5 minutes')`, [app.id, ada.id]);
+  assert.deepEqual(await needs(), ['plan'], 'a reply does not hide the plan');
+  // 26 newer requests with runs push #1 out of the bot's 25-row window. The
+  // facts path must still list it (the bug #6246 fixes).
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id)
+     SELECT $1, n, $2 FROM generate_series(2, 27) n`, [app.id, ada.id]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, created_at)
+     SELECT $1, n, 'live', 'empty', NOW() - make_interval(mins => n) FROM generate_series(2, 27) n`, [app.id]);
+  assert.deepEqual(await needs(), ['plan'], 'past the 25-request window');
+  // Build it tapped: the build waits its turn, not a plan.
+  await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NOW() WHERE app_id = $1 AND issue_number = 1', [app.id]);
+  assert.deepEqual(await needs(), [], 'a queued build is not a waiting plan');
 });
 
 test('the demo rows are obviously fake, and staging-only', () => {

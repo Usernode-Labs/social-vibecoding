@@ -90,6 +90,47 @@ function replyLateralSql({
 }
 
 /**
+ * #6246 (4 Nov 2026): a plan waiting for Build it, as `$`-free SQL that
+ * returns the newest run's `awaiting_go_at` when the request's newest run
+ * (newest by id, any mode) waits: live, ready, nothing built from it, not
+ * held by a limit, on a request still open. Null otherwise. The aliases are
+ * the caller's, as replyLateralSql's are, so the bot page (ai-work.js
+ * FACTS_SQL) and the Workshop (workshop-waiting.js PLANS_SQL) ask the same
+ * question one way. planWaits below mirrors it field by field.
+ */
+function planWaitingSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
+  return `(SELECT CASE WHEN run.mode = 'live' AND run.verdict = 'ready'
+                    AND run.awaiting_go_at IS NOT NULL
+                    AND run.live_build_waiting_at IS NULL
+                    AND run.build_ok IS NULL
+                    AND run.build_session_id IS NULL
+                    AND run.proposal_session_id IS NULL
+                    AND run.cap_suppressed IS NULL
+                    AND NOT (COALESCE((SELECT ri.status = 'closed' FROM issues ri
+                                        WHERE ri.app_id = ${appId} AND ri.github_issue_number = ${issueNumber}
+                                        ORDER BY ri.id DESC LIMIT 1), FALSE)
+                             OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
+                                         WHERE cr.app_id = ${appId} AND cr.issue_number = ${issueNumber}
+                                           AND cr.closed_at IS NOT NULL))
+                   THEN run.awaiting_go_at END
+              FROM homeroom_bot_runs run
+             WHERE run.app_id = ${appId} AND run.issue_number = ${issueNumber}
+             ORDER BY run.id DESC LIMIT 1)`;
+}
+
+/**
+ * Pure (#6246): whether a requestRows row is a plan waiting for Build it:
+ * its newest run is live and ready with nothing built from it, the plan still
+ * waits (plan_waiting_at), no build is queued or under way, no limit held it,
+ * and the request is not closed. planWaitingSql is the same test in SQL.
+ */
+function planWaits(row) {
+  return !!row && row.mode === 'live' && row.verdict === 'ready' && row.build_ok == null
+    && !row.run_proposal && !!row.plan_waiting_at && !row.build_waiting_at
+    && !row.build_session_id && !row.cap_suppressed && row.request_closed !== true;
+}
+
+/**
  * Pure (#6228): whether a person's reply on a request is newer than the
  * bot's last look and still waiting to be read, from a requestRows row (with
  * the `reply` lateral). A read that has started, or a queue row not on hold,
@@ -541,6 +582,22 @@ function stageOf(input, { now = new Date() } = {}) {
     }
     return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests are ${checks}` };
   }
+  // #6246 (4 Nov 2026): a plan waiting for Build it is what the person acts
+  // on now, so it stays the plan whatever sits beside it: a reply the bot is
+  // reading, a queue row on hold, or a question left open from before the
+  // look that made it (#6219: asked before that run started, like a note
+  // from a pass the day's limit held). A question the plan's own look asked
+  // still wins. The Workshop reads the same wait (planWaitingSql).
+  if (planWaits(row)) {
+    const olderQuestion = !!row.question_at && !!row.run_at && new Date(row.question_at) < new Date(row.run_at);
+    if (row.question_at && !olderQuestion) {
+      return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
+    }
+    return {
+      stage: 'plan', since: row.plan_waiting_at, waitingOn: 'them',
+      doing: 'the plan is ready and waits for Build it',
+    };
+  }
   if (row.started_at) {
     // #6228: a read under way after a person replied is reading that reply.
     if (replyWaits(row, { now })) {
@@ -548,14 +605,7 @@ function stageOf(input, { now = new Date() } = {}) {
     }
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
-  // #6219 (3 Nov 2026): a plan waiting for Build it is what the person acts
-  // on now, so a question left open from before the look that made the plan
-  // (asked before that run started, like a note from a pass the day's limit
-  // held) does not hide it. A question the plan's own look asked still wins.
-  const planWaits = row.mode === 'live' && row.verdict === 'ready' && row.build_ok == null && !row.run_proposal
-    && !!row.plan_waiting_at && !row.build_waiting_at && !row.build_session_id && !row.cap_suppressed;
-  const olderQuestion = planWaits && !!row.question_at && !!row.run_at && new Date(row.question_at) < new Date(row.run_at);
-  if (row.question_at && !closed && !olderQuestion) {
+  if (row.question_at && !closed) {
     return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
   }
   // The newest look decided to build it, and nothing has finished it yet.
@@ -756,6 +806,69 @@ function typicalMinutes(stage, limit = null) {
   if (!range) return null;
   const to = Number.isFinite(limit) && limit > 0 ? Math.min(range[1], limit) : range[1];
   return { from: Math.min(range[0], to), to };
+}
+
+/**
+ * #6234: where Homeroom bot's own fix of a change's failing checks stands,
+ * for the change's Testing card (AppView._changeTestingView), which said
+ * "Its author needs to fix this" while the author, the bot, was fixing it.
+ * Null unless the change is the bot's, up for a vote and failing its checks
+ * now; then, in order:
+ *   { state: 'fixing', since, reason }   its request's checks_failing queue
+ *                                        row has started (reason 'retry'
+ *                                        when this head's fix ran out of
+ *                                        time once, homeroom-bot.js
+ *                                        checksRetried; else null)
+ *   { state: 'queued', since }           that row waits its turn
+ *   { state: 'handed_off' }              its newest run on this head gave it
+ *                                        to a person (verdict person or
+ *                                        failed)
+ *   null                                 nothing of the bot's is recorded
+ * A read that fails is null: the card keeps its usual words. The queue is
+ * keyed by request; the change reaches it through linked_issues.
+ */
+async function changeBotFix(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.app_id, cs.status, cs.check_state, cs.reviewed_head_sha, cs.linked_issues, u.username
+         FROM chat_sessions cs
+         JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1`,
+      [id],
+    );
+    const cs = rows[0];
+    if (!cs || cs.username !== BOT_USERNAME || cs.status !== 'promoted' || cs.check_state !== 'failing') return null;
+    const issues = (Array.isArray(cs.linked_issues) ? cs.linked_issues : []).map(Number).filter(Number.isInteger);
+    if (issues.length) {
+      const queued = await pool.query(
+        `SELECT started_at, enqueued_at FROM homeroom_bot_queue
+          WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND reason = $3
+          ORDER BY started_at DESC NULLS LAST, enqueued_at ASC
+          LIMIT 1`,
+        [cs.app_id, issues, 'checks_failing'],
+      );
+      const row = queued.rows[0];
+      if (row && row.started_at) {
+        const retried = await require('./homeroom-bot').checksRetried(pool, id, cs.reviewed_head_sha);
+        return { state: 'fixing', since: row.started_at, reason: retried ? 'retry' : null };
+      }
+      if (row) return { state: 'queued', since: row.enqueued_at, reason: null };
+    }
+    const head = String(cs.reviewed_head_sha || '').toLowerCase();
+    if (!head) return null;
+    const runs = await pool.query(
+      `SELECT id FROM homeroom_bot_runs
+        WHERE proposal_session_id = $1 AND LOWER(checks_head_sha) = $2 AND verdict IN ('person', 'failed')
+        ORDER BY id DESC
+        LIMIT 1`,
+      [id, head],
+    );
+    return runs.rows.length ? { state: 'handed_off', since: null, reason: null } : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1539,8 +1652,13 @@ module.exports = {
   REPLY_WAIT_MS,
   replyWaits,
   replyLateralSql,
+  // #6246: a plan waiting for Build it, read by the bot page and the Workshop.
+  planWaits,
+  planWaitingSql,
   inFlight,
   stageOf,
+  // #6234: the bot's own fix of a change's failing checks, for its page.
+  changeBotFix,
   checksOnHead,
   firstVersionStage,
   firstVersionStopped,

@@ -230,9 +230,9 @@
        ok         — done and good: merged, checks passing, passed —
                     merging shortly, a Yes tally. Green. ("✓ Checks
                     passing" used to inherit the violet Merged colour.)
-       admin      — an admin bypass. Same amber family as attention
-                    but distinguished by an OUTLINE (see
-                    .gc-vote-btn-admin) so hue alone isn't the signal.
+       admin      — an admin bypass. Same amber family as attention,
+                    kept apart by shape where it is drawn so hue alone
+                    isn't the signal.
 
      `-bg` companions are the faint fills; `-fill` the stronger
      proportional-fill wash used inside the tally pill. */
@@ -8283,22 +8283,9 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    same kind of control as the card's, not as a second neutral chip. */
 .gc-vote-btn-accent { background: var(--accent-tint); border-color: transparent; color: var(--accent); font-weight: 600; }
 .gc-vote-btn-accent:hover { background: var(--accent-tint); border-color: var(--accent-light); color: var(--accent); }
-/* Admin force-merge / force-undo buttons. Amber instead of red so
- * they don't visually dominate the Yes/No pair, but distinct enough
- * from the regular vote buttons that an admin clicking through the
- * row can tell at a glance which one bypasses voting. The
- * ConfirmModal in castAdminMerge/castAdminUndo is the actual
- * misclick guard; the colour is just the affordance hint. */
-.gc-vote-btn-admin {
-  color: var(--state-admin);
-  background: var(--state-admin-bg);
-  border-color: var(--state-admin);
-  /* Distinguished by SHAPE as well as hue: a dashed outline, so an
-     admin bypass never reads as just-another-amber-warning. */
-  border-style: dashed;
-  border-width: 1.5px;
-}
-.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--state-admin); color: var(--state-admin); }
+/* `.gc-vote-btn-admin` — the dashed amber Admin merge button of the chat's
+   vote row — went with that row (#6236): Admin merge is a row of the
+   change's ⋯ menu alone, where the ConfirmModal is the misclick guard. */
 /* The viewer's cast vote: stronger tint + bolder text (color comes from
  * the -yes/-no variant it sits on). */
 /* #1688: the kudos slot spelled out on a fresh proposal — "Thank evan for
@@ -8316,23 +8303,6 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
 .gc-vote-btn-yes.gc-vote-active { background: rgba(34, 197, 94, 0.22); }
 .gc-vote-btn-no.gc-vote-active { background: rgba(239, 68, 68, 0.22); }
-/* Read-only "You voted X" box shown in place of the buttons once the viewer
-   has cast a vote. Tinted by their choice (green = yes, red = no). */
-.gc-vote-voted-box {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  /* Theme-following. This rule used to hard-code an opaque white with
-     no `.dark` counterpart anywhere in the file, so on a dark card it
-     painted a white slab. */
-  background: var(--bg-primary);
-  border: 1.5px solid currentColor;
-}
-.gc-vote-voted-box-yes { color: var(--state-ok); }
-.gc-vote-voted-box-no { color: var(--state-blocked); }
 
 /* #404: a card's action row. Every issue / proposal / governance / merged
  * card routes its buttons through this one container so they all line up the
@@ -8622,46 +8592,58 @@ span.gc-vote-btn-icon { cursor: default; }
 .dev-detail-reason-hard .dev-detail-reason-label { color: var(--state-blocked); }
 .dev-detail-reason-soft .dev-detail-reason-label { color: var(--state-attention); }
 
-/* Inline vote buttons rendered on a "promoted / voted" group-chat
- * activity row. Sits right after the row text; wraps onto its own line
- * on narrow screens. Empty (no buttons) once the PR leaves the votable
- * set, in which case it collapses to nothing. */
-.gc-vote-inline {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  margin-inline-start: 8px;
-  vertical-align: middle;
-}
-.gc-vote-inline:empty { display: none; }
-/* #3288: the same card under a message bubble (the Homeroom bot's proposal
-   post), on its own line below the text rather than trailing it. */
-.gc-vote-inline.gc-vote-inline-block {
+/* #6236: what a chat line about a change offers (features/group-chat/
+   vote-card.tsx), in place of the inline row of old-style vote buttons
+   (`.gc-vote-inline`: tally · Preview · Yes · No · Admin merge) that used to
+   trail a vote row and hang under Homeroom bot's "It's up for a vote" post.
+
+   The CARD, anywhere the change's own section is not on the page: the
+   plane colour, 20px, one hairline, as every card on the shell is drawn
+   (@/components/ui/grouped-list.tsx); 15 over 13 inside it, as a row is;
+   its two pills are the shell's. Under a centred system line it sits
+   centred too, its words starting left. */
+.gc-vote-card {
   display: flex;
-  margin-inline-start: 0;
-  margin-top: 6px;
-}
-.gc-vote-inline.gc-vote-inline-block:empty { display: none; }
-/* V03 (audit, 2 Nov 2026): ONE ACCENT ON THE ROW. Under the bot's "It's up
-   for a vote" message the row was four hues: a purple tally outline, the
-   blue Preview, a green Yes and a red No. Yes and No are the shell's plain
-   filled pills here (the accent on hover, as every .gc-vote-btn), and a
-   tally still short of its threshold is outlined in the muted ink; green
-   stays for a tally that reached it, which is the good news (the pending
-   tally's rule is beside the tally pill's own tones, below). */
-.gc-vote-inline .gc-vote-btn-yes,
-.gc-vote-inline .gc-vote-btn-no {
+  flex-direction: column;
+  gap: 6px;
+  max-width: 480px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: 20px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  text-align: start;
   color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border-color: transparent;
 }
-.gc-vote-inline .gc-vote-btn-yes:hover,
-.gc-vote-inline .gc-vote-btn-no:hover {
-  background: var(--accent-tint);
-  border-color: var(--accent-light);
-  color: var(--accent);
+.gc-msg-system .gc-vote-card { margin-inline: auto; }
+.gc-vote-card-name {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
+.gc-vote-card-facts {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+.gc-vote-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+/* The LINE, on a request's page, where the change's section with its
+   Votes card is below: the change's name and See the vote, in the stream's
+   own small type (.dev-request-event-link is the Try it / Read link). */
+.gc-vote-line {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+.gc-vote-line-name { font-weight: 600; color: var(--text-primary); }
+.gc-msg-system .gc-vote-line { display: block; }
 /* ── The status band, full width ───────────────────────────
    The state bar, the 💬 count, the Closes-#N pills and the metadata chips
    (priority / assignee / category). These used to ride on the title's own
@@ -8739,8 +8721,7 @@ span.gc-vote-btn-icon { cursor: default; }
    On a card the pill is a BAR rather than a capsule: a proportional tally
    reads as a progress bar, where wedged between chips at thumbnail width it
    read as noise. The capsule form (.gc-vote-count without -block) is kept
-   for the detail head and for the group-chat / home surfaces that still call
-   voteCountPill.
+   for the detail head.
 
    It leads the status band and FLEXES instead of taking the whole width, so
    the chips that used to sit on a row of their own can share that row: it
@@ -8808,9 +8789,6 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-count-attention { color: var(--state-attention); }
 .gc-vote-count-blocked { color: var(--state-blocked); }
 .gc-vote-count-ok { color: var(--state-ok); }
-/* V03: in the chat's vote row a tally short of its threshold is the muted
-   ink, not the purple progress tone (see .gc-vote-inline above). */
-.gc-vote-inline .gc-vote-count-pending { color: var(--text-muted); }
 /* Proportional fill bars: Yes grows from the LEFT, No from the RIGHT, both
    the pill's full height, so the gap between them is what is still
    undecided. They used to be half-height lanes stacked one above the other
@@ -9007,17 +8985,6 @@ span.gc-vote-btn-icon { cursor: default; }
   font-size: 11px;
   font-weight: 600;
   color: var(--state-blocked);
-  white-space: nowrap;
-}
-/* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
-   PR lands so the row's voting info stays put. */
-.gc-merged-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--state-ok);
   white-space: nowrap;
 }
 /* "✓ Checks passing" — its own class rather than borrowing
@@ -14846,8 +14813,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-weight: 500;
   color: var(--text-muted);
 }
-/* One line under "Your vote" (VotePicker) and beside the legacy vote rows
-   (AppView._uncountedVoteNoteHtml): a test account's vote on an app a real
+/* One line under "Your vote" (VotePicker): a test account's vote on an app a real
    person made is recorded but not counted, and — #4747 — a viewer outside
    the people who decide on a project that only some decide has an advisory
    vote: recorded and shown, but it does not decide the change. */
@@ -14858,12 +14824,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   color: var(--text-muted);
 }
 .dev-vote-sheet .dev-vote-uncounted { padding: 0 4px 8px; font-size: 14px; }
-.gc-vote-uncounted {
-  display: inline-block;
-  margin-inline-start: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
 .dev-vote-switch {
   display: flex;
   gap: 2px;
@@ -18563,7 +18523,7 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    a word a line. The thread covers the chat, as it does on a phone, and
    lies flat as the chat does. 1 Nov 2026: it is alone in the column, under
    its own head (ReplyThreadPanel `inMain`), with no bar of Main Chat's over
-   it and no way back to it: Main Chat is a row of the list. The phone's
+   it. 4 Nov 2026: it leads with a back arrow to Main Chat. The phone's
    drawer holds the column the same way. */
 .messages-layout[data-main-chat].messages-has-reply-thread > .messages-thread-pane { display: none; }
 .messages-layout[data-main-chat] > .messages-reply-pane {
@@ -26285,14 +26245,11 @@ body {
 .dev-ws-side-close { width: 30px; padding: 0; justify-content: center; }
 .dev-ws-side-full { margin-inline-start: auto; }
 .dev-ws-side-page { flex: 1 1 auto; min-height: 0; overflow: auto; }
-/* #4875: the page and, over it, the plan reader's slot. The panel is too
-   narrow to dock the reader beside the page, so the reader takes its
-   narrow-window layout here at every width: it fills the panel below the bar. */
+/* #4875, #6230: the page and, beside it, the detail column. The page and
+   the plan share the panel in halves (app.css's detail-column section at the
+   foot of this file); below 1180px there is no panel, so a row opens the
+   request's own page instead. */
 .dev-ws-side-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.dev-ws-side .gc-spec-side-panel.gc-spec-side-panel-open {
-  position: absolute; inset: 0; z-index: 2;
-  width: auto !important; min-width: 0; max-width: none; border-inline-start: none;
-}
 
 /* ── The row's card parts, on every row (#4486) ──────────────────────
    The Workshop's row carries the card's own pieces now: on live work the
@@ -26831,6 +26788,91 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .suggest-pick-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; cursor: pointer; }
 .suggest-pick-box { width: 18px; height: 18px; margin-top: 1px; flex: none; accent-color: var(--accent); }
 .suggest-pick-title { min-width: 0; font-size: 14px; font-weight: 600; line-height: 19px; color: var(--text-primary); overflow-wrap: anywhere; }
+
+/* ── The detail column, one per thread (#6230, 3 Nov 2026) ─────────────
+   A design's preview, a plan and a change's before and after are one
+   column now (features/detail/), and the column has the same three
+   layouts on every surface: three side by side where they fit, halves
+   where they do not, the whole screen on a phone. The slot's own
+   `data-detail` says which, and `:has()` lets a frame that has always
+   been one flex row split by it. */
+
+/* The shots viewer used to be a popover over the page; in the column it
+   is simply its contents, scrolling under the reader's header. */
+.gc-detail-shots {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: auto;
+  padding: 0 4px 12px;
+}
+.gc-detail-shots :is(.shots-viewer, [popover]) {
+  display: block !important;
+  position: static !important;
+  inset: auto !important;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+.gc-detail-back {
+  width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--text-primary, #18181b);
+}
+.gc-detail-back:hover { background: var(--state-neutral-bg, rgba(24,24,27,.06)); }
+.gc-detail-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gc-detail-back svg { width: 18px; height: 18px; }
+
+/* A request's own page, and the general chat: between a phone and the
+   1024px dock the page and the detail share the room in halves instead
+   of the detail covering the page. */
+@media (max-width: 1023px) and (min-width: 768px) {
+  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #dev-topic-thread,
+  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-chat-pane,
+  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
+    position: static;
+    inset: auto;
+    flex: 1 1 50%;
+    width: auto !important;
+    min-width: 0;
+    max-width: none;
+    border-inline-start: 1px solid var(--border, rgba(255,255,255,0.12));
+  }
+  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
+    border-inline-start: 1px solid var(--border, rgba(255,255,255,0.12));
+  }
+}
+
+/* The Workshop's request panel: Read opens the plan in the panel's right
+   half, the request's page in its left. From 1760px the list stays beside
+   them; below that the panel widens over the list. */
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]),
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) {
+  flex-direction: row;
+}
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #dev-topic-thread,
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) > #dev-topic-thread {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open,
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
+  position: static;
+  inset: auto;
+  flex: 1 1 50%;
+  width: auto !important;
+  min-width: 0;
+  max-width: none;
+  border-inline-start: 1px solid var(--app-sheet-line);
+  z-index: auto;
+}
+@media (max-width: 1759px) {
+  #dev-workshop:has(> .dev-ws[data-ws-side-open]) { margin-inline-start: 0; max-width: none; }
+  .dev-ws-side { inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px); }
+}
 
 /* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──
    Every rule here is scoped to html[data-skin="brand"], which the head's

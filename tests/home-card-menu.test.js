@@ -2136,7 +2136,7 @@ test('app menus use an anchored popover even on touch', () => {
   const anchor = { getBoundingClientRect: () => ({ left: 20, top: 20, right: 76, bottom: 76 }) };
   Home.openCardMenu('demo-app', anchor);
   assert.equal(options.anchorEl, anchor);
-  assert.equal(options.headerEl.className, 'card-menu-header');
+  assert.equal(options.headerEl.className, 'card-menu-header interface-mode-advanced');
   assert.ok(options.items.length > 0);
 });
 
@@ -2414,4 +2414,16 @@ test('grid tile: Retry sits beside "Error" and the card is not greyed', () => {
   const other = render({ ...app, showRetry: false });
   assert.match(other.match(/class="(app-card [^"]*)"/)[1], /cursor-not-allowed grayscale-\[0\.75\]/);
   assert.doesNotMatch(other, /retry-btn/);
+});
+
+test('Basic Home header hides identifiers and vote/issue counts while shared actions remain available', () => {
+  const { Home, sandbox } = makeHomeEnv({ canAdminWrite: true });
+  sandbox.window.localStorage = { getItem: () => 'basic' };
+  const app = { slug: 'example-project', name: 'Example', open_prs: 11, open_issues: 49, status: 'running', repo_url: 'https://github.com/example/project' };
+  const basic = Home.renderMenuHeaderHtml(app);
+  assert.doesNotMatch(basic, /card-menu-slug|card-menu-version|11 to vote|49 issues/);
+  assert.match(basic, /Example/);
+  assert.ok(Home.menuItemsFor(app).some(item => item.key === 'github'));
+  sandbox.window.localStorage.getItem = () => 'advanced';
+  assert.match(Home.renderMenuHeaderHtml(app), /card-menu-slug/);
 });

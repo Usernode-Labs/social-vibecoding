@@ -182,7 +182,9 @@ test('handleVoteUpdate still does the per-proposal refresh work it owns', () => 
 
 test('loadVersion still records the boot SHA and paints the drawer row', () => {
   const fn = sliceMethod(appJs, 'async loadVersion() {', '  ');
-  assert.match(fn, /fetch\('\/api\/version'\)/);
+  // #6233: the poll carries the build this tab loaded (?have=), so a change
+  // this tab is older than can say so; it still asks /api/version.
+  assert.match(fn, /fetch\('\/api\/version' \+ have\)/);
   assert.match(fn, /App\.loadedPlatformSha = info\.sha;/,
     'the boot baseline is still captured — platformMovedOn compares against it');
   assert.match(fn, /App\.renderPlatformVersionPill\(info\)/,

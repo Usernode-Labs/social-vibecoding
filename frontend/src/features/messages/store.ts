@@ -22,6 +22,7 @@ import type {
   ConversationMessage,
   ConversationSummary,
   HomeroomBotAction,
+  MessageAttachment,
   MessageReaction,
   MessagesAgentThread,
   MessagesSnapshot,
@@ -1877,6 +1878,108 @@ export function setDraft(scope: ComposerScope, value: string): void {
   // on a phone made typing in a long chat visibly lag.
 }
 
+/*
+ * ATTACHED FILES ARE KEPT WITH THE DRAFT (#6249). The composer used to drop
+ * its chips whenever its scope changed, so a screenshot attached and then
+ * left behind had to be uploaded again. They follow the words: one saved
+ * list per composer scope, on this device, holding what the server answered
+ * when each file was uploaded — so coming back re-shows the same chips
+ * without uploading anything.
+ *
+ * THEY AGE OUT ON READ. Homeroom deletes an upload no message took after a
+ * day (src/services/upload-retention.js), so an entry older than
+ * DRAFT_ATTACHMENT_MAX_AGE_MS is dropped rather than drawn as a chip whose
+ * send could only fail.
+ */
+interface SavedDraftAttachment {
+  attachment: MessageAttachment;
+  savedAt: number;
+}
+
+/** A little under the 24-hour cleanup in src/services/upload-retention.js. */
+export const DRAFT_ATTACHMENT_MAX_AGE_MS = 23 * 60 * 60 * 1000;
+
+const draftAttachments = new Map<ComposerScope, SavedDraftAttachment[]>();
+
+function draftAttachmentsKey(scope: ComposerScope): string {
+  return `usernode:messages-draft-attachments:${scope}`;
+}
+
+/** Pure: the saved files a stored value names, and whether any entry was dropped. */
+function readSavedAttachments(raw: string | null): { kept: SavedDraftAttachment[]; dropped: boolean } {
+  if (!raw) return { kept: [], dropped: false };
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return { kept: [], dropped: false }; }
+  if (!Array.isArray(parsed)) return { kept: [], dropped: false };
+  const now = Date.now();
+  const kept: SavedDraftAttachment[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    const item = record.attachment;
+    const savedAt = record.savedAt;
+    if (!item || typeof item !== 'object') continue;
+    const file = item as Record<string, unknown>;
+    if (typeof file.id !== 'string' || !file.id) continue;
+    if (typeof file.name !== 'string' || typeof file.url !== 'string') continue;
+    if (typeof savedAt !== 'number' || !Number.isFinite(savedAt)) continue;
+    if (now - savedAt > DRAFT_ATTACHMENT_MAX_AGE_MS) continue;
+    kept.push({
+      attachment: {
+        id: file.id,
+        name: file.name,
+        size: Number(file.size) || 0,
+        contentType: typeof file.contentType === 'string' ? file.contentType : '',
+        kind: typeof file.kind === 'string' ? file.kind : null,
+        url: file.url,
+        viewUrl: typeof file.viewUrl === 'string' ? file.viewUrl : null,
+      },
+      savedAt,
+    });
+  }
+  return { kept, dropped: kept.length !== parsed.length };
+}
+
+function writeDraftAttachments(scope: ComposerScope, saved: SavedDraftAttachment[]): void {
+  try {
+    if (saved.length) localStorage.setItem(draftAttachmentsKey(scope), JSON.stringify(saved));
+    else localStorage.removeItem(draftAttachmentsKey(scope));
+  } catch { /* storage unavailable */ }
+}
+
+function savedAttachmentsFor(scope: ComposerScope): SavedDraftAttachment[] {
+  const known = draftAttachments.get(scope);
+  if (known) return known;
+  let saved: SavedDraftAttachment[] = [];
+  try {
+    const raw = localStorage.getItem(draftAttachmentsKey(scope));
+    const read = readSavedAttachments(raw);
+    saved = read.kept;
+    // The key is rewritten now, so an entry that has aged out is not read
+    // again by the next open or another tab.
+    if (read.dropped) writeDraftAttachments(scope, saved);
+  } catch { return []; }
+  draftAttachments.set(scope, saved);
+  return saved;
+}
+
+export function draftAttachmentsFor(scope: ComposerScope): MessageAttachment[] {
+  return savedAttachmentsFor(scope).map((entry) => entry.attachment);
+}
+
+/**
+ * Save a composer's attached files. An attachment already saved keeps the
+ * time it was first saved, so a re-save does not give it another day.
+ * NOT published, for the reason setDraft is not.
+ */
+export function setDraftAttachments(scope: ComposerScope, items: MessageAttachment[]): void {
+  const previous = new Map(savedAttachmentsFor(scope).map((entry) => [entry.attachment.id, entry.savedAt]));
+  const now = Date.now();
+  const saved = items.map((attachment) => ({ attachment, savedAt: previous.get(attachment.id) ?? now }));
+  draftAttachments.set(scope, saved);
+  writeDraftAttachments(scope, saved);
+}
+
 export function replyFor(scope: ComposerScope): ConversationMessage | null {
   return replyTargets.get(scope) || null;
 }
@@ -1941,10 +2044,12 @@ export async function answerBotQuestion(question: ConversationMessage, answer: s
   const rootId = botThreadOf(question);
   const scope = scopeKey(conversationId, rootId);
   const draft = draftFor(scope);
+  const files = draftAttachmentsFor(scope);
   const staged = replyFor(scope);
   replyTargets.set(scope, question);
   const sending = send({ content: answer, threadRootId: rootId, anyThread: true });
   if (draft) setDraft(scope, draft);
+  if (files.length) setDraftAttachments(scope, files);
   if (staged && staged.id !== question.id) setReply(scope, staged);
   await sending;
 }
@@ -2113,6 +2218,7 @@ export async function send(input: {
   });
   keepOnDevice(pending.idempotencyKey);
   setDraft(scope, '');
+  setDraftAttachments(scope, []);
   setReply(scope, null);
   if (threadRootId && open && state.thread) {
     publish({ thread: { ...state.thread, messages: [...state.thread.messages, optimistic], error: null } });

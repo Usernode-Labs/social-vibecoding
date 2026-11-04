@@ -141,14 +141,29 @@ export function eventText(m: TranscriptMessage): string {
   return claimed ? t('project:topic.request.stream.claimedPlain', { member: claimed[1] }) : text;
 }
 
-/** Open a spec card's Read in the spec reader beside the page. */
+/**
+ * Open a spec card's Read in the detail column beside the thread (#6230).
+ * A shared spec is fetched by its session and version; a plan that exists
+ * only in the card carries its own words.
+ */
 export function openRequestSpec(card: RequestSpecCard): Promise<void> | void {
-  const gc = typeof window !== 'undefined' ? (window as any).GroupChat : null;
-  if (!gc) return;
+  const detail = typeof window !== 'undefined' ? (window as any).UsernodeReact?.detail : null;
+  if (!detail) return;
   if (card.read.kind === 'shared') {
-    return gc.openSharedSpec?.(card.read.sessionId, card.read.version, card.read.previewTitle);
+    detail.open({
+      kind: 'plan',
+      ref: { sessionId: card.read.sessionId },
+      version: card.read.version,
+      payload: { title: card.read.previewTitle },
+    });
+    return;
   }
-  gc._showSpecPanel?.({ title: card.read.title, version: null, content: card.read.markdown, html: card.read.html });
+  detail.open({
+    kind: 'plan',
+    ref: {},
+    version: null,
+    payload: { title: card.read.title, markdown: card.read.markdown, html: card.read.html },
+  });
 }
 
 /** Where a request is: the stepper's four stops. */
@@ -208,14 +223,25 @@ export function publishRequestThread(number: number, rows: TranscriptMessage[]):
 export interface RequestChangesState {
   number: number | null;
   numbers: Record<number, number | null>;
+  /**
+   * #6236: each change's title, by session id, for the line under the
+   * bot's "It's up for a vote" post that names the change and offers See
+   * the vote (../../group-chat/vote-card.tsx VoteLine).
+   */
+  titles: Record<number, string | null>;
 }
 
-export const requestChangesStore = createStore<RequestChangesState>({ number: null, numbers: {} });
+export const requestChangesStore = createStore<RequestChangesState>({ number: null, numbers: {}, titles: {} });
 
-export function publishRequestChanges(number: number, changes: readonly { id: number; number: number | null }[]): void {
+export function publishRequestChanges(number: number, changes: readonly { id: number; number: number | null; title?: string | null }[]): void {
   const numbers: Record<number, number | null> = {};
-  for (const c of changes) numbers[Number(c.id)] = c.number == null ? null : Number(c.number);
+  const titles: Record<number, string | null> = {};
+  for (const c of changes) {
+    numbers[Number(c.id)] = c.number == null ? null : Number(c.number);
+    titles[Number(c.id)] = c.title ? String(c.title) : null;
+  }
   const prev = requestChangesStore.get();
-  if (prev.number === number && JSON.stringify(prev.numbers) === JSON.stringify(numbers)) return;
-  requestChangesStore.set({ number, numbers });
+  if (prev.number === number && JSON.stringify(prev.numbers) === JSON.stringify(numbers)
+    && JSON.stringify(prev.titles) === JSON.stringify(titles)) return;
+  requestChangesStore.set({ number, numbers, titles });
 }

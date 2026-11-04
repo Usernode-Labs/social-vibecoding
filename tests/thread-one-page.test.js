@@ -7,7 +7,8 @@
 //
 //   D1. The change's section carries what its page had: its status pill and
 //       its own ⋯ (its view's `detail:` rows), its summary, a small before
-//       and after whose Expand opens its page's viewer, and the sheets its ⋯
+//       and after whose Expand opens in the detail column beside the thread,
+//       and the sheets its ⋯
 //       and Testing card open. Its title is no door: this is its page.
 //   D2. Its addresses land on the request's page at it, in place, with its
 //       Votes card in view; a change with no request keeps its page.
@@ -63,13 +64,17 @@ test('D3: the stream tags a change\'s rows with it, and keeps a reply on it apar
   const rows = src.slice(src.indexOf('export function RequestRows('), src.indexOf('#4455: something that happened to a change'));
   assert.match(rows, /foldRepeats\(view\.messages\)\.filter\(\(m\) => !m\.changeOf \|\| keptOnRequest\(m\)\)/);
   assert.match(rows, /<ChangeEvent key=\{key\} msg=\{msg\} changeId=\{msg\.changeOf\.sessionId\} tag=\{tagOf\(msg\)\} \/>/);
-  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{tagOf\(msg\)\} \/>/);
+  // #6236: a post about one of the request's changes also gets the See the
+  // vote line (seeVote) instead of the vote card.
+  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} \/>/);
   assert.match(rows, /\(previous\.changeOf\?\.sessionId \?\? null\) === \(msg\.changeOf\?\.sessionId \?\? null\)/);
   assert.equal(message('project:topic.request.stream.onChange', { number: 6063 }), 'on Change #6063');
   assert.equal(message('project:topic.request.stream.onChangeUnnumbered'), 'on a change');
   const { publishRequestChanges, requestChangesStore } = loadTsx(`${TOPIC}/request-model.ts`);
-  publishRequestChanges(10, [{ id: 91, number: 6063 }, { id: 92, number: null }]);
-  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get())), { number: 10, numbers: { 91: 6063, 92: null } });
+  publishRequestChanges(10, [{ id: 91, number: 6063, title: 'Dark mode' }, { id: 92, number: null }]);
+  // #6236: each change's title rides along, for the line under the bot's
+  // "It's up for a vote" post that names the change (vote-card.tsx VoteLine).
+  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get())), { number: 10, numbers: { 91: 6063, 92: null }, titles: { 91: 'Dark mode', 92: null } });
   const head = read(`${TOPIC}/request-head.tsx`);
   assert.match(head, /publishRequestChanges\(r\.number, layout\.changes\);/);
   assert.match(head, /GroupChat\?\.setThreadMembers\?\.\('issue', r\.number, layout\.changes\.map\(\(c\) => c\.id\)\)/);
@@ -136,7 +141,16 @@ test('D1: a change\'s line has its pill and its own ⋯, and its title is no doo
   assert.doesNotMatch(src, /data-thread-earlier/, 'the fold of its earlier replies is gone: they are in the discussion');
   // Its summary, its before and after, and its sheets.
   assert.match(src, /<RequestWords html=\{summary\} \/>/);
-  assert.match(src, /viewer\?\.showPopover\?\.\(\)/, 'Expand opens its page\'s own viewer');
+  // #6263: an out-of-date description says so here, as on a change's own
+  // page, with that page's own words.
+  assert.match(src, /\{view\?\.body\.summaryStale && summary\s*\?\s*<p className="dev-change-stale" role="note" data-thread-change-stale=\{item\.id\}>\{t\('project:topic\.change\.summaryStale'\)\}<\/p>/,
+    'the stale note renders under the summary, in the catalog entry change-head.tsx uses');
+  // #6230 (3 Nov 2026): Expand opens the change's before and after in the
+  // detail column beside the thread, as a design's preview and a plan do,
+  // instead of popping the viewer over the page; the request asked for it.
+  assert.match(src, /UsernodeReact\?\.detail\?\.open\(\{\s*kind: 'shots',\s*ref: \{ changeId: id \},/,
+    'Expand opens the change\'s before and after in the detail column');
+  assert.doesNotMatch(src, /showPopover/, 'the viewer no longer pops over the page');
   assert.match(src, /<ChangeSheets id=\{item\.id\} row=\{view\.row\} body=\{view\.body\} \/>/);
   const head = read(`${TOPIC}/topic-head.tsx`);
   const sheets = head.slice(head.indexOf('export function ChangeSheets('), head.indexOf('/** The same card on the owner session'));

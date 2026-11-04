@@ -1,3 +1,4 @@
+import { readInterfaceMode } from '../settings/interface-mode';
 // The home screen's launcher grid: loads the viewer's apps, lays them out on
 // the (column, row) canvas HomeLayout models, renders the tiles, and owns the
 // drag-to-rearrange gesture.
@@ -4194,11 +4195,11 @@ const Home = {
     // The app's FULL pill set (missing secrets / to vote / in dev /
     // issues / privacy) — the card face carries no chips at all, so
     // this header is the one place they render.
-    const pillsHtml = Home.renderAppPillsHtml(app);
+    const basic = readInterfaceMode() === 'basic';
+    const pillsHtml = Home.renderAppPillsHtml(basic ? { ...app, open_issues: 0, open_prs: 0 } : app);
     return `
       <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
-      <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
-      <div class="card-menu-version">${pillHtml}</div>
+${basic ? '' : `<div class="card-menu-slug">${escapeHtml(app.slug)}</div><div class="card-menu-version">${pillHtml}</div>`}
       ${updatedRel ? `<div class="card-menu-updated">${htmlText('home:menu.updated', { when: updatedRel })}</div>` : ''}
       ${pillsHtml ? `<div class="card-menu-pills">${pillsHtml}</div>` : ''}`;
   },
@@ -4210,7 +4211,8 @@ const Home = {
     Home.closeCardMenu();
     const app = (Home._apps || []).find((a) => a.slug === slug);
     if (!app) return;
-    const items = Home.menuItemsFor(app);
+    const basic = readInterfaceMode() === 'basic';
+    const items = Home.menuItemsFor(app).filter(item => !basic || !['github', 'code', 'notifications', 'check-updates', 'lock'].includes(item.key));
     if (!items.length) return;
     const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
     const anchorEl = anchorIsEl && anchor.nodeType === 1 ? anchor : null;
@@ -4218,7 +4220,7 @@ const Home = {
     // the way a phone's home screen menu does. Only there: menuItemsFor also
     // fills the app's own page, search results and demo tiles carry no
     // data-yours, and while edit mode is on there is nothing to start.
-    if (!Home._editing && anchorEl && typeof anchorEl.closest === 'function'
+    if (!basic && !Home._editing && anchorEl && typeof anchorEl.closest === 'function'
         && anchorEl.closest('.app-card[data-yours]:not([data-demo])')) {
       items.push({
         key: 'edit-my-apps',
@@ -4232,7 +4234,7 @@ const Home = {
     // The kit owns clamping/flipping, dismissal, focus and menu navigation;
     // keeping the popover on touch also preserves metadata and disabled rows.
     const headerEl = document.createElement('div');
-    headerEl.className = 'card-menu-header';
+    headerEl.className = basic ? 'card-menu-header interface-mode-basic' : 'card-menu-header interface-mode-advanced';
     headerEl.innerHTML = Home.renderMenuHeaderHtml(app);
     const menu = PlatformUI.popover({
       anchorEl: anchorIsEl ? anchor : undefined,

@@ -53,7 +53,10 @@ export interface Candidate {
   // back-off after a broken sync.
   state: string;
   busy: boolean;
-  refused: { head: string | null; main: string | null; kind: string } | null;
+  // GitHub's last refusal of this head. `retryAt` is when the queue may try
+  // it again (a busy answer, or a plain refusal nobody has to act on), or
+  // null for one that stays held until the head or main moves.
+  refused: { head: string | null; main: string | null; kind: string; retryAt: string | null } | null;
   gaveUp: { head: string | null; main: string | null } | null;
   backoffUntil: number;
   // Rule C's one resolution before the vote: spent on this epoch already.
@@ -141,7 +144,10 @@ export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candid
       unmergeable,
       state: r.wf_state || 'in_review',
       busy: !!d.attempt || !!d.sync,
-      refused: d.refused || null,
+      refused: d.refused ? {
+        head: d.refused.head ?? null, main: d.refused.main ?? null, kind: d.refused.kind,
+        retryAt: d.refused.retryAt ?? null,
+      } : null,
       gaveUp: d.gaveUp || null,
       backoffUntil: d.backoff?.until ? ms(d.backoff.until) : 0,
       resolutionSpent: r.integration_resolved_epoch != null && Number(r.integration_resolved_epoch) === (Number(r.approval_epoch) || 0),
