@@ -65,17 +65,40 @@ function CropSide({ crop, side, label }: { crop: SpecChangeCrop; side: 'before' 
   );
 }
 
-/** The fold-out, from the plan's HTML; nothing when it drew no numbered change. */
-export function PlanCrops({ html }: { html: string | null }): ReactNode {
+/**
+ * #6269, pure: whether the lines above the fold-out are the crops' own
+ * numbered changes. Only then does the fold-out count them; beside the
+ * older unnumbered lines a count would name changes that are not showing.
+ */
+export function planCropsNumbered(crops: Array<{ n: number }>, lines: Array<{ n: number | null }>): boolean {
+  return lines.length === crops.length
+    && lines.every((line) => Number.isInteger(line.n))
+    && crops.every((crop) => lines.some((line) => line.n === crop.n));
+}
+
+/**
+ * The fold-out, from the plan's HTML; nothing when it drew no numbered
+ * change. #6269: "Before and after · N changes" only when the card's lines
+ * are the changes' own numbered lines; beside anything else (the older
+ * unnumbered lines) it says "Before and after" with no count, so the count
+ * never names lines that are not showing.
+ */
+export function PlanCrops({ html, lines = [] }: {
+  html: string | null;
+  lines?: Array<{ n: number | null }>;
+}): ReactNode {
   const t = useMessages('messages');
   // Parsed after mount: the first render (a prerender's, a hydration's) has none.
   const [crops, setCrops] = useState<SpecChangeCrop[]>([]);
   useEffect(() => { setCrops(html ? specChangeCrops(html) : []); }, [html]);
   if (!crops.length) return null;
+  const numbered = planCropsNumbered(crops, lines);
   return (
     <details className="mt-1 shadow-[inset_0_1px_0_var(--app-sheet-line)]" data-plan-crops={crops.length}>
       <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between text-[0.9375rem] font-semibold text-violet-700 dark:text-violet-300 [&::-webkit-details-marker]:hidden">
-        <span>{t('messages:bot.plan.crops.summary', { count: crops.length })}</span>
+        <span>{numbered
+          ? t('messages:bot.plan.crops.summary', { count: crops.length })
+          : t('messages:bot.plan.crops.summaryPlain')}</span>
         <ChevronDownIcon className="h-4 w-4" aria-hidden="true" />
       </summary>
       <ol className="mb-2 flex flex-col">

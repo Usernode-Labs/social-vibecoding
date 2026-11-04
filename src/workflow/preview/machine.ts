@@ -936,8 +936,13 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   // Exit (archive, merge, included, app deletion) is terminal; idle and
   // pressure free the preview and the instance waits for the next revision.
   // Those two never retire a preview someone is working on.
+  // A leftover inventory can predate an unarchive: recheck the session's
+  // closed state here, under the transition's row lock, before retiring it.
+  const reopenedLeftover = (e: Event<any>, f: Facts) => e.payload.reason === 'leftover'
+    && f.session != null && !['merged', 'archived'].includes(f.session.status);
   const retire: Entry = {
     guard: (s, e, f) => {
+      if (reopenedLeftover(e, f)) return reject('session_open');
       if (e.payload.terminal) return ok();
       if (s.name === 'preparing' || s.name === 'checking') return reject('busy');
       if (f.session && ['promoted', 'merging'].includes(f.session.status)) return reject('under_review');
@@ -959,6 +964,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   };
   const retireAdopting: Entry = {
     guard: (s, e, f, ctx) => {
+      if (reopenedLeftover(e, f)) return reject('session_open');
       const c = adopting(e, f, ctx);
       if (c !== true || e.payload.terminal) return c;
       if (['promoted', 'merging'].includes(f.session!.status)) return reject('under_review');
@@ -1115,7 +1121,8 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: notHere('not_serving'),
-      RetireRequested: { guard: (s, e) => (e.payload.terminal ? ok() : reject('already_idle')), to: retire.to },
+      RetireRequested: { guard: (s, e, f) => (reopenedLeftover(e, f) ? reject('session_open')
+        : e.payload.terminal ? ok() : reject('already_idle')), to: retire.to },
       AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: notHere('not_waiting'),
       ...house('idle'),
@@ -1213,7 +1220,8 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksCleared: notHere('retiring'),
       PreviewLost: notHere('retiring'),
       RetireRequested: {
-        guard: (s, e) => (e.payload.terminal && !s.data.exit.terminal ? ok() : reject('already_retiring')),
+        guard: (s, e, f) => (reopenedLeftover(e, f) ? reject('session_open')
+          : e.payload.terminal && !s.data.exit.terminal ? ok() : reject('already_retiring')),
         to: (s, e) => step({ name: 'retiring', data: { ...s.data, exit: { ...s.data.exit, reason: e.payload.reason, terminal: true }, pending: null },
           messages: [toShots(s.data, 'Closed', { reason: e.payload.reason })] }),
       },

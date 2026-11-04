@@ -200,16 +200,18 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
  WHERE place <= $4
  ORDER BY sort_at DESC`;
 
-// $1 viewer, $2 the bot, $3 the most rows. A thread they started is one of
-// their own messages in the chat with the bot that has replies; a draft the
-// bot opened is a row of private_threads. Only those still open: a filed or
-// posted one is a public thread now, and listed there. 1 Nov 2026: except
-// one holding a design, which stays private and is still worked on (its
-// next post is the plan's next version): it stays listed. #6153: with where
-// it went (its state and the request's number), so the tab draws it as that
-// request's row rather than a second one (model.ts needsYou).
+// $1 viewer, $2 the bot, $3 the most rows, $4 days a done thread stays
+// listed. A thread they started is one of their own messages in the chat
+// with the bot that has replies; a draft the bot opened is a row of
+// private_threads. Only those still open: a filed or posted one is a public
+// thread now, and listed there. 1 Nov 2026: except one holding a design,
+// which stays private and is still worked on (its next post is the plan's
+// next version): it stays listed. #6153: with where it went (its state and
+// the request's number), so the tab draws it as that request's row rather
+// than a second one (model.ts needsYou). #6271: a done thread stays listed
+// for $4 days after it was closed, where Live this week shows it.
 const PRIVATE_SQL = `
-SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, a.slug, a.name,
+SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, p.done_at, a.slug, a.name,
        a.icon_emoji, a.icon_image_id, a.repo_url,
        -- A thread started from the bot's "+" is named by their first words in it.
        (SELECT f.content FROM conversation_messages f
@@ -241,9 +243,10 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
                                           WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL)))
    AND (COALESCE(p.state, 'open') = 'open'
         OR (p.state IN ('posted', 'filed')
-            AND EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id)))
-   -- #6159: a done thread is finished; it leaves the lists until it is reopened.
-   AND COALESCE(p.state, 'open') <> 'done'
+            AND EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id))
+        -- #6271: a done thread is finished, but stays findable for $4 days
+        -- under Live this week (unless reopened).
+        OR (p.state = 'done' AND p.done_at >= NOW() - make_interval(days => $4)))
  ORDER BY COALESCE((SELECT MAX(r.created_at) FROM conversation_messages r
                      WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL), m.created_at) DESC
  LIMIT $3`;
@@ -744,6 +747,8 @@ function shapePrivate(row) {
     // plan, and that request's number: its row is the request's.
     ...(row.state ? { state: row.state } : {}),
     ...(Number(row.result_ref) > 0 ? { resultRef: Number(row.result_ref) } : {}),
+    // #6271: the day it was closed, for Live this week.
+    ...(row.done_at ? { doneAt: iso(row.done_at) } : {}),
   };
 }
 
@@ -766,6 +771,8 @@ function filedKey(p) {
 function unfiledPrivate(privates, listed) {
   const folded = new Set();
   return (privates || []).filter((p) => {
+    // #6271: a done thread is closed; it is not Needs you's, but Live's.
+    if (p.state === 'done') return false;
     const key = filedKey(p);
     if (!key || folded.has(key)) return true;
     folded.add(key);
@@ -782,7 +789,7 @@ async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
   const bot = deps.bot || await dm.botAccount(pool);
   const [{ rows: threadRows }, privateRows, bots] = await Promise.all([
     pool.query(THREADS_SQL, [user.id, !!showSelfHosted, !!user.isAdmin, THREADS_MAX, LIVE_DAYS]),
-    bot ? pool.query(PRIVATE_SQL, [user.id, bot.id, PRIVATE_MAX]).then((r) => r.rows) : Promise.resolve([]),
+    bot ? pool.query(PRIVATE_SQL, [user.id, bot.id, PRIVATE_MAX, LIVE_DAYS]).then((r) => r.rows) : Promise.resolve([]),
     botStages(pool, user, deps),
   ]);
   const facts = await requestFacts(pool, threadRows, user.id, deps);
@@ -897,6 +904,11 @@ function listsOf(needs, work, { botUsername = null } = {}) {
     if (t.app && t.number) listed.add(`${t.app.slug}#${t.number}`);
   }
   const privates = unfiledPrivate(work?.private, listed);
+  // #6271: a private thread marked done this week is Live this week's, under
+  // its project (Only you when it has none), unless its filed request
+  // already has a row of its own: that row stays the one row.
+  const closed = (work?.private || []).filter((p) => p.state === 'done'
+    && !(p.app && Number(p.resultRef) > 0 && listed.has(`${p.app.slug}#${Number(p.resultRef)}`)));
   const lists = {
     needsYou: [
       ...items.map((item) => row(item.app, shownNumber(item), (item.kind === 'ballot' && item.ballot?.title) || item.title,
@@ -906,7 +918,10 @@ function listsOf(needs, work, { botUsername = null } = {}) {
     ],
     inProgress: (work?.next || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t))),
     waiting: (work?.waiting || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t, slotVotes(t)))),
-    liveThisWeek: (work?.live || []).map((t) => row(t.app, t.number, t.title, 'live')),
+    liveThisWeek: [
+      ...(work?.live || []).map((t) => row(t.app, t.number, t.title, 'live')),
+      ...closed.map((p) => row(p.app, null, p.title, 'closed: their private thread, marked done')),
+    ],
   };
   // The tab's headings count Needs you's rows that ask something (a private
   // thread asks nothing), and every row of the others.
