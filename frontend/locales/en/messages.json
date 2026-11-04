@@ -4968,7 +4968,7 @@
     "description": "The AI tab's main view, Needs you: the pill on a request whose build by Homeroom bot stopped. Opens the request, where Homeroom bot can be asked to build it again."
   },
   "ai.pill.letTryAgain": {
-    "text": "Let it try again",
+    "text": "Try again",
     "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester, an admin or a voter may let it try once more."
   },
   "ai.pill.needsYou": {
