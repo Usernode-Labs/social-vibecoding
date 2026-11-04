@@ -32,8 +32,14 @@ test('the rollout, not a boot, makes a Homeroom change Live', () => {
   // Kubernetes it does not report Deployed: the rollout is not finished.
   assert.match(PLATFORM, /if \(runtime && !onKubernetes\) await releaseBooted/, 'only off Kubernetes is one boot the rollout');
   assert.match(PLATFORM, /const onKubernetes = !!process\.env\.KUBERNETES_SERVICE_HOST/);
-  // The merge machine does not turn a boot record into Live on Kubernetes.
-  assert.match(MACHINE, /if \(!app\.onKubernetes\) \{[\s\S]{0,200}toLive/);
+  // Each boot entry says whether that boot was the whole rollout, so the
+  // merge machine decides from the record it reads, not from the
+  // environment the check runner happens to have.
+  assert.match(PLATFORM, /jsonb_build_object\('sha', \$1::text, 'at', now\(\), 'rollout_complete', \$2::boolean\)/);
+  assert.match(PLATFORM, /const whole = !process\.env\.KUBERNETES_SERVICE_HOST/);
+  assert.match(MACHINE, /b\.rolloutComplete && Date\.parse\(b\.at\) >= since/,
+    'one Pod booting is not the whole rollout on Kubernetes');
+  assert.match(MACHINE, /if \(exact\) return andTeardown\(toLive/);
   // The clock job reads the same Deployment the banner does, and acts only
   // when it reports complete.
   assert.match(CLOCK, /name: 'platform-rollout'/);

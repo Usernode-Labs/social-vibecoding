@@ -124,18 +124,29 @@ export async function syncSettings(pool: Pool): Promise<void> {
 // statement: the row lock serialises two processes booting at once. Every
 // serving process records it (releaseServing): a merge recovery records late
 // reads it.
+//
+// #6233: each entry also says whether that boot was the WHOLE rollout
+// (`rollout_complete`). Off Kubernetes one server serves, so it is. On
+// Kubernetes a release replaces its servers one at a time and this boot is
+// one of them: production carries the change everywhere only when the
+// Deployment reports the rollout complete (the platform-rollout clock job),
+// so the build alone is not Live there. Reading it off the entry rather than
+// this process's own environment keeps the merge machine's decision in the
+// record it reads, which a test can write.
 async function recordBooted(pool: Pool): Promise<void> {
   const sha = String(process.env.GIT_SHA || '').toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(sha)) return;
+  const whole = !process.env.KUBERNETES_SERVICE_HOST;
   await pool.query(
     `UPDATE apps a SET booted_shas = (
        SELECT COALESCE(jsonb_agg(y.e ORDER BY y.at DESC), '[]'::jsonb) FROM (
          SELECT x.e, x.at FROM (
            SELECT DISTINCT ON (e->>'sha') e, (e->>'at')::timestamptz AS at
-             FROM jsonb_array_elements(jsonb_build_array(jsonb_build_object('sha', $1::text, 'at', now())) || a.booted_shas) e
+             FROM jsonb_array_elements(jsonb_build_array(
+                    jsonb_build_object('sha', $1::text, 'at', now(), 'rollout_complete', $2::boolean)) || a.booted_shas) e
             ORDER BY e->>'sha', (e->>'at')::timestamptz DESC) x
           ORDER BY x.at DESC LIMIT 10) y)
-      WHERE a.self_hosted = TRUE`, [sha]);
+      WHERE a.self_hosted = TRUE`, [sha, whole]);
 }
 
 // What browsers should hear, published on the WebSocket bus's channel in

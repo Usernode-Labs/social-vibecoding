@@ -49,12 +49,12 @@ export interface App {
   // The platform's own app: the builds platform processes booted with,
   // newest first (apps.booted_shas, written by those processes; not
   // main_sha, which the migration Job writes from the incoming release
-  // before the rollout).
-  booted: { sha: string; at: string }[];
-  // #6233: on Kubernetes one process booting is one server of a rollout,
-  // not production carrying the change. Live comes from the platform-rollout
-  // job's Deployed once the whole rollout finished.
-  onKubernetes: boolean;
+  // before the rollout). `rolloutComplete` is #6233's: that boot was the
+  // whole rollout, so production carries its build everywhere. On
+  // Kubernetes each boot is one server of a rollout and says false; an
+  // entry written before the field (or by a single-server install) says
+  // nothing against it and counts as the whole rollout.
+  booted: { sha: string; at: string; rolloutComplete: boolean }[];
 }
 
 export interface Facts { session: Session | null; app: App | null }
@@ -208,8 +208,8 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
       selfHosted: !!a.self_hosted, demoMode: !!a.demo_mode,
       booted: (Array.isArray(a.booted_shas) ? a.booted_shas : [])
         .filter((b: any) => /^[0-9a-f]{40}$/i.test(String(b?.sha || '')) && !Number.isNaN(Date.parse(b?.at)))
-        .map((b: any) => ({ sha: String(b.sha).toLowerCase(), at: new Date(b.at).toISOString() })),
-      onKubernetes: !!process.env.KUBERNETES_SERVICE_HOST,
+        .map((b: any) => ({ sha: String(b.sha).toLowerCase(), at: new Date(b.at).toISOString(),
+          rolloutComplete: b.rollout_complete !== false })),
     } : null,
   };
 }

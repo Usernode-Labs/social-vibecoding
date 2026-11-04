@@ -416,17 +416,18 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // recorded at once, checks nothing here.
   if (app.selfHosted && d.mergeSha) {
     const since = Date.parse(d.mergedAt) - BOOT_CLOCK_MARGIN_MS;
-    const after = app.booted.filter((b) => Date.parse(b.at) >= since);
-    // #6233: on Kubernetes a boot is one server of a rollout, and neither
-    // an exact match nor a verify against it means production carries the
-    // change everywhere. Live waits for the platform-rollout job's Deployed
-    // once the whole rollout finished. Off Kubernetes one boot is the whole
-    // rollout, so an exact match is still Live at once.
-    if (!app.onKubernetes) {
-      const exact = after.find((b) => b.sha === d.mergeSha);
-      if (exact) return andTeardown(toLive(e, d, exact.sha, ctx, x));
-      if (d.repo) for (const b of after) work.push(verifyWork(d, b.sha));
-    }
+    // Only a boot that was the WHOLE rollout counts. #6233: on Kubernetes a
+    // release replaces its servers one at a time, and one of them booting
+    // says nothing about the rest, so neither an exact match nor a verify
+    // against it means production carries the change everywhere. Those
+    // boots are marked incomplete in apps.booted_shas, and Live waits for
+    // the platform-rollout job's Deployed once the Deployment reports the
+    // rollout complete. Off Kubernetes one boot is the whole rollout, so an
+    // exact match is still Live at once.
+    const whole = app.booted.filter((b) => b.rolloutComplete && Date.parse(b.at) >= since);
+    const exact = whole.find((b) => b.sha === d.mergeSha);
+    if (exact) return andTeardown(toLive(e, d, exact.sha, ctx, x));
+    if (d.repo) for (const b of whole) work.push(verifyWork(d, b.sha));
   }
   // The platform's own app has no deploy here to wait for, and a deploy
   // that builds its own image does not need the preview: either way it goes
