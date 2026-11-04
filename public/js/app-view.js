@@ -7959,15 +7959,41 @@ const AppView = {
       const v = AppView._checksVerdictView(item);
       const fix = AppView._fixChecksView(item);
       const rerun = recheck();
-      if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
       const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
+      // #6234: a change Homeroom bot built, whose checks it is fixing itself
+      // (`bot_fix`, services/homeroom-bot-progress.js changeBotFix): the
+      // card says so in place of "Its author needs to fix this". While the
+      // fix runs the card reads "Fixing", still moving, and the re-run is
+      // offered disabled: running the checks now would restart its fix.
+      const botFix = item.bot_fix && typeof item.bot_fix === 'object' && item.bot_fix.state ? item.bot_fix : null;
+      const botNote = botFix ? AppView._botFixNote(botFix) : null;
+      if (botFix && botFix.state === 'fixing') {
+        if (rerun) {
+          actions.push({
+            key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: PlatformI18n.t('changes:recheck.label'),
+            disabled: true, title: PlatformI18n.t('changes:recheck.botFixing'),
+          });
+        }
+        return {
+          name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.botFixing'), tone: 'muted', done: false,
+          segments: [{ weight: 1, pct: 100, state: 'moving' }],
+          label: PlatformI18n.t('changes:page.testing.label.botFixing'),
+          note: [AppView._failedLead(v)], actions, details: true,
+          explain: AppView._checksExplainView(item, v),
+          fix,
+          authorNote: rerun ? `${botNote} ${PlatformI18n.t('changes:page.testing.note.botRerun')}` : botNote,
+          botFix: 'fixing',
+        };
+      }
+      if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.failing'),
         note: [AppView._failedLead(v)], actions, details: true,
         explain: AppView._checksExplainView(item, v),
         fix,
-        authorNote: mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes'),
+        authorNote: botNote || (mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes')),
+        botFix: botFix ? botFix.state : null,
       };
     }
     if (cs && cs !== 'pending') {
@@ -19250,6 +19276,26 @@ const AppView = {
       heading: PlatformI18n.t('changes:consoleNote.heading'),
       rows,
     };
+  },
+
+  // #6234: where Homeroom bot's own fix of a change's failing checks stands,
+  // as the Testing card's line under the figure (the server's `bot_fix`,
+  // services/homeroom-bot-progress.js changeBotFix): fixing since when (in
+  // minutes, "just now" under one), and once more after running out of
+  // time; waiting its turn; or handed to the people who can take it on.
+  _botFixNote(botFix) {
+    if (!botFix || typeof botFix !== 'object') return null;
+    if (botFix.state === 'fixing') {
+      const at = botFix.since ? new Date(botFix.since).getTime() : NaN;
+      const minutes = Number.isFinite(at) ? Math.max(0, Math.round((Date.now() - at) / 60000)) : 0;
+      const started = minutes
+        ? PlatformI18n.t('changes:page.testing.note.botFixing', { count: minutes })
+        : PlatformI18n.t('changes:page.testing.note.botFixingNow');
+      return botFix.reason === 'retry' ? `${started} ${PlatformI18n.t('changes:page.testing.note.botRetry')}` : started;
+    }
+    if (botFix.state === 'queued') return PlatformI18n.t('changes:page.testing.note.botQueued');
+    if (botFix.state === 'handed_off') return PlatformI18n.t('changes:page.testing.note.botHandedOff');
+    return null;
   },
 
   // "Re-run checks", when the viewer may ask for one. Returns null when the

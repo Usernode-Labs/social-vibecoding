@@ -5078,6 +5078,10 @@ function voteRoutes(config) {
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
+        // #6234: Homeroom bot fixing its own change's failing checks, for the
+        // Testing card (services/homeroom-bot-progress.js changeBotFix);
+        // null for any change of a person's.
+        proposal.bot_fix = await require('../services/homeroom-bot-progress').changeBotFix(pool, proposal.id).catch(() => null);
         // #4479: the plan it was built from, for the page's plan card.
         proposal.plan = await require('./sessions')
           .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);

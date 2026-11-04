@@ -759,6 +759,69 @@ function typicalMinutes(stage, limit = null) {
 }
 
 /**
+ * #6234: where Homeroom bot's own fix of a change's failing checks stands,
+ * for the change's Testing card (AppView._changeTestingView), which said
+ * "Its author needs to fix this" while the author, the bot, was fixing it.
+ * Null unless the change is the bot's, up for a vote and failing its checks
+ * now; then, in order:
+ *   { state: 'fixing', since, reason }   its request's checks_failing queue
+ *                                        row has started (reason 'retry'
+ *                                        when this head's fix ran out of
+ *                                        time once, homeroom-bot.js
+ *                                        checksRetried; else null)
+ *   { state: 'queued', since }           that row waits its turn
+ *   { state: 'handed_off' }              its newest run on this head gave it
+ *                                        to a person (verdict person or
+ *                                        failed)
+ *   null                                 nothing of the bot's is recorded
+ * A read that fails is null: the card keeps its usual words. The queue is
+ * keyed by request; the change reaches it through linked_issues.
+ */
+async function changeBotFix(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.app_id, cs.status, cs.check_state, cs.reviewed_head_sha, cs.linked_issues, u.username
+         FROM chat_sessions cs
+         JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1`,
+      [id],
+    );
+    const cs = rows[0];
+    if (!cs || cs.username !== BOT_USERNAME || cs.status !== 'promoted' || cs.check_state !== 'failing') return null;
+    const issues = (Array.isArray(cs.linked_issues) ? cs.linked_issues : []).map(Number).filter(Number.isInteger);
+    if (issues.length) {
+      const queued = await pool.query(
+        `SELECT started_at, enqueued_at FROM homeroom_bot_queue
+          WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND reason = $3
+          ORDER BY started_at DESC NULLS LAST, enqueued_at ASC
+          LIMIT 1`,
+        [cs.app_id, issues, 'checks_failing'],
+      );
+      const row = queued.rows[0];
+      if (row && row.started_at) {
+        const retried = await require('./homeroom-bot').checksRetried(pool, id, cs.reviewed_head_sha);
+        return { state: 'fixing', since: row.started_at, reason: retried ? 'retry' : null };
+      }
+      if (row) return { state: 'queued', since: row.enqueued_at, reason: null };
+    }
+    const head = String(cs.reviewed_head_sha || '').toLowerCase();
+    if (!head) return null;
+    const runs = await pool.query(
+      `SELECT id FROM homeroom_bot_runs
+        WHERE proposal_session_id = $1 AND LOWER(checks_head_sha) = $2 AND verdict IN ('person', 'failed')
+        ORDER BY id DESC
+        LIMIT 1`,
+      [id, head],
+    );
+    return runs.rows.length ? { state: 'handed_off', since: null, reason: null } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Every request recorded as the person's (homeroom_bot_requesters), and
  * anything of theirs waiting in the bot's queue, with each record the steps
  * above read. Newest first.
@@ -1541,6 +1604,8 @@ module.exports = {
   replyLateralSql,
   inFlight,
   stageOf,
+  // #6234: the bot's own fix of a change's failing checks, for its page.
+  changeBotFix,
   checksOnHead,
   firstVersionStage,
   firstVersionStopped,

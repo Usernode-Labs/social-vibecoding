@@ -6091,6 +6091,19 @@ async function runChecksFix(pool, config, {
     });
   }
 
+  // #6234: one line on the change as its fix starts, so the request's page
+  // hears the bot is on it (its Testing card reads the queue row; the
+  // thread hears it here). Once across the look's attempts (`note` is
+  // look.once), so a look resumed after a restart does not say it twice,
+  // and not on the second try after running out of time: checks_retry said
+  // so. The end line (checks_revise, checks_retry, the hand-off) follows.
+  // Not for a round only its shots asked for (onlyShots): its checks pass,
+  // nothing said a person had to fix it, and a seed that adds nothing ends
+  // in silence, which would leave a start line with no end.
+  if (!onlyShots && !await look.once('retriedAtStart', () => checksRetried(pool, session.id, head))) {
+    await note('checks_fixing', { runId: null, text: followup.checksFixingText({ failing, broken, skipped }) });
+  }
+
   let turn = null;
   const seed = sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, issueThread?.messages || []);
   const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
@@ -10375,6 +10388,9 @@ module.exports = {
   NOT_FOLLOW_UP,
   checksToFix,
   runChecksFix,
+  // #6234: whether a fix of a head ran out of time once, for the change
+  // page's "trying once more" (homeroom-bot-progress.js changeBotFix).
+  checksRetried,
   queueWait,
   queueSnapshot,
   recordReviewState,
