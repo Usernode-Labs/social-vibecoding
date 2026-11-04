@@ -4,7 +4,15 @@
 // runner) decides which modules exist. Loading the file optionally means a
 // deployment without this package still boots on the injected environment
 // instead of dying on a missing module before the first line of the app runs.
-try { require('dotenv').config(); } catch { /* environment is injected here */ }
+// Only a missing package is ignorable: any other failure is real, and it is
+// said out loud rather than leaving the app running on a half-read .env.
+try {
+  require('dotenv').config();
+} catch (err) {
+  if (!err || err.code !== 'MODULE_NOT_FOUND') {
+    console.warn('[startup] could not read the local .env:', err && err.message ? err.message : err);
+  }
+}
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
