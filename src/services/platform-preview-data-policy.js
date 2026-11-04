@@ -25,8 +25,45 @@ const DIGEST = crypto.createHash('sha256').update(fs.readFileSync(__filename))
 // platform signs their tokens with these, and a preview's own seeds make
 // them there (services/preview-personas.js).
 const { PREVIEW_PERSONA_IDS, previewPersonaId } = require('./preview-personas');
-function refuse(message) {
-  return Object.assign(new Error(`Platform preview data policy: ${message}`), { noFallback: true, platformPreviewPolicy: true });
+function refuse(message, flags = {}) {
+  return Object.assign(new Error(`Platform preview data policy: ${message}`), { noFallback: true, platformPreviewPolicy: true }, flags);
+}
+// #6149: a preview whose database or runtime was stamped by another build of
+// this policy is Homeroom updating itself, not the change's fault, while a
+// newer build is serving. Its checks take the platform-fault retries
+// (workflow/preview/services.ts, platform.ts retryPlatformFaults), which run
+// them again when the release finishes; this is the sentence people see if
+// they look before that. With no newer build the same refusal is immediate.
+const ROLLOUT_DETAIL = 'Homeroom was updating itself while this preview was copied; the checks will run again when it finishes';
+const LIVE_SECONDS = 45;
+// Turn a skew refusal into the rollout fault once a newer build is known to be
+// serving: Homeroom's own fault, so nothing may read it as the app's (no
+// noFallback, which db-manager.cloneDatabase relabels appCaused) and the
+// preview machine's platform-fault retries take it.
+function markRollout(err) {
+  if (!err || typeof err !== 'object') return err;
+  delete err.noFallback;
+  delete err.appCaused;
+  err.platformRollout = true;
+  err.infrastructure = true;
+  return err;
+}
+// The same test the newest-build-only clock jobs use (workflow/clock/services.ts
+// newestBuild): the live process that started serving last, and whether its
+// release is one other than this process's. No recorded process, or a query
+// that cannot run, means no rollout is known and the refusal stands.
+async function newerBuildServing(pool) {
+  const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT CASE WHEN to_regclass('public.platform_processes') IS NULL THEN '' ELSE COALESCE((
+         SELECT release FROM platform_processes
+          WHERE state = 'serving' AND role <> 'web'
+            AND heartbeat_at > now() - make_interval(secs => $1)
+          ORDER BY started_at DESC LIMIT 1), '') END AS release`, [LIVE_SECONDS]);
+    const newest = row?.release ?? '';
+    return newest !== '' && newest !== own;
+  } catch { return false; }
 }
 function sourceIdentity(name) {
   // Templates and frozen sources keep the full source prefix. Also cover a
@@ -95,10 +132,11 @@ function verifyRuntimeReceipt(config, inputs, receipt) {
 }
 function runtimeLabels(result) {
   if (!result?.platformPreviewPolicy) return {};
-  if (result.platformPreviewPolicy !== DIGEST) throw refuse('database was made by another policy');
+  if (result.platformPreviewPolicy !== DIGEST) throw refuse('database was made by another policy', { policySkew: true });
   return { [LABEL]: DIGEST };
 }
 module.exports = { DIGEST, LABEL, RECEIPT_LABEL, APP_ID_LABEL, PLATFORM_SLUG, PLATFORM_DATABASE, PREVIEW_PERSONA_IDS, NEEDS_UPDATE,
   BOOT_FILE, bootFileStartsEmpty, startsEmpty,
   isOpaqueDockerPreview, runtimeReceipt, verifyRuntimeReceipt,
-  sourceIdentity, runtimeLabels, previewIdentity, previewPersonaId, refuse };
+  sourceIdentity, runtimeLabels, previewIdentity, previewPersonaId, refuse,
+  ROLLOUT_DETAIL, newerBuildServing, markRollout };

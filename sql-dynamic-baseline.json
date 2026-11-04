@@ -1025,6 +1025,13 @@
       "preview": "THREADS_SQL"
     },
     {
+      "source": "src/services/ai-work.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a3d9bd6f2e3b8315d3af",
+      "count": 1,
+      "preview": "FACTS_SQL"
+    },
+    {
       "source": "src/services/app-access.js",
       "kind": "structural-template",
       "fingerprint": "6561e538add1baf3f707",
@@ -2192,6 +2199,13 @@
       "fingerprint": "64f5704bd705d843a9c5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
+    },
+    {
+      "source": "src/services/workshop-waiting.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "036c23143ca2ff1e820d",
+      "count": 1,
+      "preview": "PLANS_SQL"
     },
     {
       "source": "src/services/ws-delivery.js",

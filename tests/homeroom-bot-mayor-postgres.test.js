@@ -1853,6 +1853,40 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await forgetRequests(notes.id, 6);
   });
 
+  await t.test('#6252: a start after a chat go-ahead does not ask for it again', async () => {
+    await forgetRequests(notes.id, 6);
+    const ctx = (who, extra = {}) => ({ bot, user: who, settings, config: CONFIG, deps: { domain: 'app.test' }, cards: [], appIds: new Set(), ...extra });
+    // The bot's last look left request #6 for Ada, the person its note named.
+    const { rows: [personRun] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason)
+       VALUES ($1, 6, 'live', 'person', 'it adds a new kind of reminder') RETURNING id`,
+      [notes.id],
+    );
+    const hers = await mayor.startRequest(pool, ctx(ada), { project: 'note-board', number: 6 });
+    assert.equal(hers.ok, true, hers.error);
+    assert.equal(hers.lastLook, undefined, 'the go-ahead is decided, so it is not asked for again');
+    assert.match(hers.goAhead, /Their go-ahead is recorded on this look/);
+    const { rows: [q] } = await pool.query(
+      'SELECT priority, reason, requested_by FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
+    );
+    assert.deepEqual(q, { priority: 0, reason: 'dm_go_ahead', requested_by: ada.id });
+
+    // Somebody the note did not name gets today's answer: it still waits on Ada.
+    await forgetRequests(notes.id, 6);
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [notes.community_id, sam.id]);
+    const his = await mayor.startRequest(pool, ctx({ ...sam, isAdmin: false }), { project: 'note-board', number: 6 });
+    assert.equal(his.ok, true, his.error);
+    assert.equal(his.goAhead, undefined);
+    assert.match(his.lastLook, /Your last look left it for a person to decide/);
+    const { rows: [sq] } = await pool.query(
+      'SELECT priority, reason, requested_by FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
+    );
+    assert.deepEqual(sq, { priority: 0, reason: 'dm_start', requested_by: sam.id });
+    await pool.query('DELETE FROM community_members WHERE community_id = $1 AND user_id = $2', [notes.community_id, sam.id]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [personRun.id]);
+    await forgetRequests(notes.id, 6);
+  });
+
   await t.test('B2: whoever asks pays: a member can start her held request on his own building time', async () => {
     await forgetRequests(notes.id, 6);
     // Ada's week is used up, and her request waits for Monday.

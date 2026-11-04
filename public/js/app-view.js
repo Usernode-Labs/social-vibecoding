@@ -9295,6 +9295,9 @@ const AppView = {
   // (1 Nov 2026: a change's address landing on its request's page).
   openTopic(kind, id, options) {
     if (!kind || !id) return;
+    // #6230: the detail column belongs to the page that is on screen; another
+    // page (or another request) opens with nothing beside it.
+    window.UsernodeReact?.detail?.close?.();
     // Drop any on-demand proposal cached for a previous topic so its row
     // can never be mistaken for the one being opened now.
     AppView._topicProposal = null;
@@ -9328,6 +9331,8 @@ const AppView = {
   _devTopicInPanel: false,
   async openTopicInPanel(kind, id) {
     if (!kind || !id) return;
+    // #6230: the detail opened beside the previous item's page closes with it.
+    window.UsernodeReact?.detail?.close?.();
     // 1 Nov 2026 (one page per thread): a change built for a request opens
     // as its request's page, at it, as its address does (_renderTopicSubView).
     if (kind === 'proposal' || kind === 'session') {

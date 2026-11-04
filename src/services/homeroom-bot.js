@@ -386,7 +386,12 @@ const SETTLE_REASONS = new Set(['thread', 'proposal_thread']);
 // request gets a card in its requester's chat with the bot, however it was
 // asked (homeroom-bot-activity.js startCard); `inDm` says only that its
 // thread starts "Filed from our chat."
-const DM_REASONS = new Set(['dm_request', 'dm_start', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change']);
+const DM_REASONS = new Set(['dm_request', 'dm_start', 'dm_go_ahead', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change']);
+// #6252: a start the person the bot's last note named asked for in their
+// chat, said in answer to that note. It is charged as `dm_start` is, but its
+// look reads the request knowing that what the note left for a person is
+// decided, so the note is not posted again.
+const GO_AHEAD_REASON = 'dm_go_ahead';
 
 // Eligibility windows. A human claim counts while it is younger than the
 // board's own claim TTL; a paused human session counts while it is inside
@@ -2432,6 +2437,9 @@ ${VERDICT_FORMAT}`;
  */
 function triagePromptFor({
   seed, issueNumber, firstVersion = false, readsImages = false, decider = null, planChange = null, members = null,
+  // #6252: the person the last note named said to go ahead in their chat with
+  // the bot ({ by: username }), so what that note left for them is decided.
+  goAhead = null,
   // The App bench studio's pack guidance (services/bench/packs.js). The
   // live bot never passes any, and then the prompt is what it always was.
   guidance = null,
@@ -2454,6 +2462,7 @@ function triagePromptFor({
     firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
     deciderNote(decider),
+    goAheadNote(goAhead),
     live.guidanceLines(guidance).join('\n').trim() || null,
     triageReference({ readsImages }), triageClosing(issueNumber),
   ].filter(Boolean).join('\n\n');
@@ -2637,6 +2646,24 @@ function deciderNote(decider) {
 }
 
 /**
+ * #6252: the person the bot's last note named said to go ahead in their chat
+ * with it, and that go-ahead is recorded on this look. The note asked for it,
+ * so it is a decision already made: the read must not answer `person` for it
+ * again, in this read or the next. Their words are not in the discussion.
+ * `{ by }` with the username; null without one, and then there is nothing to
+ * say (the prompt is what it always was). Pure.
+ */
+function goAheadNote(goAhead) {
+  const by = typeof goAhead?.by === 'string' ? goAhead.by.trim() : '';
+  if (!by) return null;
+  return [
+    '==== A GO-AHEAD FROM THEIR CHAT ====',
+    '',
+    `@${by}, who your last note on this request named, said to go ahead in their private chat with you just now. Their words are not in the discussion below. What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still \`person\`.`,
+  ].join('\n');
+}
+
+/**
  * #4666: how a project's changes are approved, and who can see it, are set
  * in its Who can see & change it sheet by whoever may manage it, as one
  * proposal; a request to change them is never built (Homeroom Maps #30 was
@@ -2740,6 +2767,30 @@ async function answerersOf(pool, app, requester, decider = null) {
     // The requester still answers when the deciders cannot be read.
     log.warn('homeroom-bot', 'Could not read who decides on a request\'s note', { app: app?.slug, err: err.message });
     return [own];
+  }
+}
+
+/**
+ * #6252: whether `userId` is a person the bot's "a person needs to decide"
+ * note names, so a go-ahead from them in their chat with the bot decides what
+ * the note left for a person. The note names a project's deciders when the
+ * requester does not decide there (`decider` when the caller already read
+ * it), and the requester otherwise (personHomeroomText). Never throws: false
+ * on error.
+ */
+async function goAheadCounts(pool, app, requester, userId, decider = null) {
+  try {
+    const id = Number(userId);
+    if (!Number.isSafeInteger(id) || id <= 0) return false;
+    const d = decider || await whoDecides(pool, app, requester);
+    const names = d && !d.requesterDecides && Array.isArray(d.deciders)
+      ? d.deciders.map((x) => x?.username).filter(Boolean)
+      : [];
+    if (!names.length) return Number(requester?.userId) === id;
+    return (await idsOfUsernames(pool, names)).includes(id);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read whether a go-ahead counts', { app: app?.slug, err: err.message });
+    return false;
   }
 }
 
@@ -4063,6 +4114,23 @@ async function runTriage(pool, config, {
       return null;
     })
     : null;
+  // #6252: a go-ahead said in the person's chat with the bot, recorded on the
+  // look the Mayor queued (startRequest). It is checked again here, because
+  // the debt could be merged or the deciders could have changed since the
+  // tap, and then the read knows what the last note left for a person is
+  // decided rather than asking for it again.
+  let goAhead = null;
+  if (liveMode && item.reason === GO_AHEAD_REASON && item.requested_by) {
+    if (await goAheadCounts(pool, app, requester, item.requested_by, decider)) {
+      const { rows: [who] = [] } = await pool.query(
+        'SELECT username FROM users WHERE id = $1', [Number(item.requested_by)],
+      ).catch((err) => {
+        log.warn('homeroom-bot', 'Could not read who said go ahead', { app: app.slug, issueNumber, err: err.message });
+        return { rows: [] };
+      });
+      if (who?.username) goAhead = { by: who.username };
+    }
+  }
   // 2026-10-04: and who is in its project, so the plan is about its real
   // people rather than the sketch's sample ones.
   const members = liveMode && requester?.firstVersion
@@ -4113,6 +4181,8 @@ async function runTriage(pool, config, {
     ...(triageGuidance ? { guidance: triageGuidance } : {}),
     ...(planChange ? { planChange: { ...planChange, requester: requester.username } } : {}),
     ...(signal ? { signal } : {}),
+    // #6252: a go-ahead said in the person's chat, when this look carries one.
+    goAhead,
   };
   // The prompt as it stands before the turn resolves its model. The one sent
   // is rendered at dispatch, for what that model can see, and replaces this
@@ -4138,6 +4208,8 @@ async function runTriage(pool, config, {
       ...(starter ? { starter } : {}),
     },
   };
+  // #6252: and the go-ahead, so the benchmark replays the prompt it read.
+  snapshot.extra.goAhead = goAhead;
 
   let session;
   try {
@@ -4219,7 +4291,7 @@ async function runTriage(pool, config, {
   // Reading a request again continues the conversation that read it last
   // (KEY_CONTINUE_READS), unless this read is a different job: a first
   // version's plan, or its creator's changes to one.
-  const previous = settings?.continueReads !== false && !requester?.firstVersion && !planChange
+  const previous = settings?.continueReads !== false && !requester?.firstVersion && !planChange && !goAhead
     ? previousReadOf(look.lastRead, { model })
     : null;
   // Whether the turn that answered was sent only what changed.
@@ -4531,6 +4603,12 @@ async function runTriage(pool, config, {
   const decided = await look.once('verdict', async () => {
     let v = parsed;
     if (v.complicated && requester?.firstVersion) v = { ...v, complicated: false };
+    // #6209 (4 Nov 2026, evan): a request that asks for a plan before
+    // building is still built straight away when the change is
+    // straightforward: its spec is posted as a plan card and the build goes
+    // on. Only a complicated change, or one that says not to build yet
+    // (which the triage labels complicated), is planned first and waits for
+    // Build it. Nothing here forces that path for every plan-first request.
     if (liveMode && v.verdict === 'ready' && !v.complicated && !requester?.firstVersion
       && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
       v = { ...v, complicated: true };
@@ -5587,6 +5665,42 @@ async function runFollowUp(pool, config, {
     }
   }
 
+  // #6263: a revision that changed what the change does also rewrites the
+  // description people vote on, through the same edit seam its author uses.
+  // When it cannot be written, the summary is marked stale so the page says
+  // so and the reply says the description is out of date.
+  let descriptionStale = false;
+  if (moved && (parsed?.title || parsed?.planChanged)) {
+    descriptionStale = await look.once('description', async () => {
+      const raw = followup.descriptionOut(result.lastResultText).description;
+      if (raw) {
+        try {
+          const edit = require('./proposal-description-edit');
+          const askedBy = await live.askerOf(pool, session.id);
+          const text = live.creditedDescription(withoutEmDashes(raw), askedBy);
+          const editable = await edit.readEditable(pool, session.id, bot.id);
+          if (editable) {
+            const out = await edit.edit({
+              pool, sessionId: session.id, userId: bot.id,
+              input: { description: text, expectedVersion: edit.snapshot(editable).version },
+              ...(github ? { gh: github } : {}),
+            });
+            if (out?.status === 200) return false;
+            log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+              app: app.slug, issueNumber, sessionId: session.id, status: out?.status || null,
+            });
+          }
+        } catch (err) {
+          log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+            app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+          });
+        }
+      }
+      await pool.query('UPDATE chat_sessions SET pr_summary_stale = TRUE WHERE id = $1 AND pr_summary_md IS NOT NULL', [session.id]);
+      return true;
+    });
+  }
+
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     ...billingOf(item, runMode),
@@ -5609,7 +5723,7 @@ async function runFollowUp(pool, config, {
   const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
-      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl,
+      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl, descriptionStale,
     })
     : action === 'ask' ? followup.askText({ reply, prNumber })
       : action === 'person' ? followup.personText({ reply, prNumber })
@@ -5637,7 +5751,7 @@ async function runFollowUp(pool, config, {
     // places' own work, it survives a restart, and is said once.
     await voice.reportFollowUp(pool, config, {
       app, session, asks, runTag, deps: voiceDeps,
-      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion },
+      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion, descriptionStale },
       finish: (db) => voice.finishAsks(db, { runTag, runId }),
     }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
   }
@@ -6441,8 +6555,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
          FROM chat_sessions WHERE id = $1`,
       [built.sessionId],
     ).catch(() => ({ rows: [] }));
-    await say('proposal', live.proposalText({ link }), {
-      homeroomText: live.proposalHomeroomText({ title: named?.title || null }),
+    await say('proposal', live.proposalText({ link, docOnly: built.docOnly === true }), {
+      homeroomText: live.proposalHomeroomText({ title: named?.title || null, docOnly: built.docOnly === true }),
       msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
       dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },
     });
@@ -10152,6 +10266,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('unproposedLooked', () => (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null }));
   await each('strandedAsks', () => sweepStrandedAsks(pool, bot, settings, deps));
   await each('buildsOwed', () => sweepWaitingBuilds(pool, deps));
+  // #6209: bot changes that add only documents stop linking the requests
+  // they plan for, so a merge cannot close one as done.
+  await each('docOnlyUnlinked', () => live.unlinkDocOnlyProposals(pool, { github: deps.github || require('./github') }));
   // Homeroom bot parity (P4, P5): batches' roll-ups, and notes whose build ended first.
   await each('batches', () => require('./homeroom-bot-batches').sweep(pool, deps));
   await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));
@@ -10255,7 +10372,9 @@ module.exports = {
   firstVersionNote,
   starterOfApp,
   deciderNote,
+  goAheadNote,
   whoDecides,
+  goAheadCounts,
   answerersOf,
   membersNote,
   projectMembers,

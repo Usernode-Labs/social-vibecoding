@@ -5,10 +5,12 @@
 //
 //   - plans: the bot's plan for a request of theirs (homeroom_bot_requesters)
 //     that waits for their Build it: the request's newest run has
-//     awaiting_go_at set and nothing built from it yet, the same reading
-//     homeroom-bot-progress.js stageOf calls the 'plan' stage. A plan nobody
-//     taps for a week stops waiting (homeroom-bot.js settleStalePlans), and
-//     then it is not listed.
+//     awaiting_go_at set and nothing built from it yet, not held by a limit,
+//     on a request still open. That is the one definition
+//     homeroom-bot-progress.js planWaitingSql carries, which the bot page's
+//     Needs you also reads (ai-work.js FACTS_SQL), so the two agree. A plan
+//     nobody taps for a week stops waiting (homeroom-bot.js settleStalePlans),
+//     and then it is not listed.
 //   - questions: a question the bot asked them in their DM about a request
 //     that is still open (homeroom_bot_dm_messages.question_status). A
 //     question on the request's own discussion rides the request list as
@@ -24,23 +26,19 @@
 // waiting, never a failed board.
 
 const log = require('./logger');
+const { planWaitingSql } = require('./homeroom-bot-progress');
 
 /** The most of each kind one answer carries. */
 const MAX_EACH = 10;
 
 const PLANS_SQL = `
-  SELECT q.issue_number, run.awaiting_go_at AS at
-    FROM homeroom_bot_requesters q
-    JOIN LATERAL (
-      SELECT awaiting_go_at, build_ok, build_session_id, proposal_session_id
-        FROM homeroom_bot_runs
-       WHERE app_id = q.app_id AND issue_number = q.issue_number
-       ORDER BY id DESC LIMIT 1
-    ) run ON TRUE
-   WHERE q.app_id = $1 AND q.user_id = $2
-     AND run.awaiting_go_at IS NOT NULL AND run.build_ok IS NULL
-     AND run.build_session_id IS NULL AND run.proposal_session_id IS NULL
-   ORDER BY run.awaiting_go_at DESC
+  SELECT * FROM (
+    SELECT q.issue_number, ${planWaitingSql({ appId: 'q.app_id', issueNumber: 'q.issue_number' })} AS at
+      FROM homeroom_bot_requesters q
+     WHERE q.app_id = $1 AND q.user_id = $2
+  ) p
+   WHERE p.at IS NOT NULL
+   ORDER BY p.at DESC
    LIMIT $3`;
 
 const QUESTIONS_SQL = `

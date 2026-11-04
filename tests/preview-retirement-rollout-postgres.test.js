@@ -49,7 +49,7 @@ stub('../src/db/pool', { ...require('../src/db/pool'), getPool: () => db.pool })
 
 const startup = require('../src/services/platform-preview-startup');
 const retirement = require('../src/services/platform-preview-retirement');
-const { PLATFORM_SLUG } = require('../src/services/platform-preview-data-policy');
+const { PLATFORM_SLUG, newerBuildServing } = require('../src/services/platform-preview-data-policy');
 const { createRuntime, defineMachine, NONE, ok } = require('../src/workflow/kernel/index.ts');
 const { JOBS, clockServices, newestBuild } = require('../src/workflow/clock/services.ts');
 const { previewServices } = require('../src/workflow/preview/services.ts');
@@ -179,6 +179,9 @@ test('across a release the old build leaves the platform\'s previews to the new 
   // A newer conductor is booting. The old build's clock looks at nothing, so
   // nothing the newer build made (or will make) is retired by the old policy...
   await started('new-conductor', NEW, 'conductor');
+  // #6149: the same roster answer, read through the policy module, tells a
+  // refused preview that Homeroom is updating itself.
+  assert.equal(await newerBuildServing(pool), true, 'a newer release is rolling out');
   assert.deepEqual(await tick(), { skipped: 'older_build' });
   assert.equal(scans, 2, 'the old build retires nothing once a newer one has started');
   // ...and a build asked for now is not the old build's to make.
@@ -192,6 +195,7 @@ test('across a release the old build leaves the platform\'s previews to the new 
 
   // The newer build claims and makes it.
   process.env.GIT_SHA = NEW;
+  assert.equal(await newerBuildServing(pool), false, 'this build is the newest: no rollout to wait for');
   const fresh = runtimeOf(NEW);
   assert.equal(await fresh.runServices(), 1);
   await fresh.drain();
