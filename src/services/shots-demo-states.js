@@ -122,6 +122,9 @@ const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark 
 // thumbnail the real draft copies from the person's message. An obviously
 // fake screenshot (240x144, grey bars on a card), its own 32-hex id.
 const DRAFT_PICTURE_ID = 'd62510000000000000000000000000a1';
+// The draft's own copy of it, as offer() copies the person's picture onto
+// the message the draft is drawn in.
+const DRAFT_PICTURE_COPY_ID = 'd62510000000000000000000000000a2';
 const DRAFT_PICTURE = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAPAAAACQCAIAAAC5w3GfAAABkElEQVR42u3dsQnAIBBAUXcNZGKLDCCkFrR3BpvkOB+8BdRf3mFp7YU0iitA0CBoEDQIGkGDoEHQIGgQNIIGQYOgQdAgaAQNggZBg6BB0AgaBA2CBkGDoEke9BiTw113j2zrLIJG0Aha0Aha0Aha0AgaQQsawtkOutYHviRoBC1oBA2CBkEjaEEjaEEjaBA0CBpBCxpBCxpBg6BB0Aha0Aga0m+sgKBB0CBoBO0WEDQIGgQNgkbQIGgQNMQJ2sdhRxE0ghY0ghY0ghY0gha0oAWNoAWNoAWNoAWNoAUtaEEjaEEjaEEjaEEjaG8saEEjaEEjaEEjaEEjaARt6xsEDYJG0CBoEDQIGgSNoEHQIGgQNAgaQYOgwTw05qEFjaAFjaAFLWhBI2hBI2hBI2hBI2hBC1rQCFrQCFrQCFrQCFrQghY0ghY0ghY0ghY0gkbQgkbQgkbQtr6x9Q2CBkGDoEHQCBoEDYIGQYOgETQIGgQNggbz0GaLBS1oQQsaQQta0Aha0Aha0IIWtKAFjaD/sQBl3hrNhMhZTgAAAABJRU5ErkJggg==',
   'base64',
@@ -1558,13 +1561,24 @@ const STATES = [
         [chat.conversationId, chat.botId, content, ask.id, JSON.stringify({ homeroomBot: metadata })]
       );
       await client.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
-      // The picture the person attached, copied onto the draft by offer().
+      // The picture the person attached to their own message, as the real
+      // turn keeps it: their row in the chat, which offer_request names in
+      // attachmentIds and files copies into the request's own store.
       await client.query(
         `INSERT INTO conversation_message_attachments
            (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
          VALUES ($1, $2, $3, $4, 'image', 'insights.png', 'image/png', $5, $6)
          ON CONFLICT DO NOTHING`,
-        [DRAFT_PICTURE_ID, chat.conversationId, offer.id, chat.botId, DRAFT_PICTURE.length, DRAFT_PICTURE]
+        [DRAFT_PICTURE_ID, chat.conversationId, ask.id, ctx.member.id, DRAFT_PICTURE.length, DRAFT_PICTURE]
+      );
+      // And the copy offer() writes onto the draft message, so the bot's
+      // reply draws the thumbnail under its text too.
+      await client.query(
+        `INSERT INTO conversation_message_attachments
+           (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+         VALUES ($1, $2, $3, $4, 'image', 'insights.png', 'image/png', $5, $6)
+         ON CONFLICT DO NOTHING`,
+        [DRAFT_PICTURE_COPY_ID, chat.conversationId, offer.id, chat.botId, DRAFT_PICTURE.length, DRAFT_PICTURE]
       );
       await client.query('UPDATE conversations SET updated_at = NOW() - INTERVAL \'2 minutes\' WHERE id = $1',
         [chat.conversationId]);
@@ -1574,7 +1588,7 @@ const STATES = [
       );
       return {
         shows: [{
-          state: `Your chat with Homeroom bot, at the bottom: your message asking for a request, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, the picture you sent as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          state: `Your chat with Homeroom bot, at the bottom: your message asking for a request with the screenshot you attached under it, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
           path: `/#messages/${IDS.botConversation}`,
         }],
       };

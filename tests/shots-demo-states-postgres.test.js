@@ -621,6 +621,14 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   const { rows: draftPictures } = await pool.query(
     "SELECT filename FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'", [fileOffer.id]);
   assert.deepEqual(draftPictures.map((r) => r.filename), ['insights.png']);
+  // And on the person's own message, as the attachment offer_request names.
+  const { rows: askPictures } = await pool.query(
+    "SELECT filename, user_id FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'",
+    [fileAsk.id]);
+  assert.deepEqual(askPictures, [{ filename: 'insights.png', user_id: member }]);
+  assert.deepEqual(fileAction.draft_extras.attachmentIds,
+    (await pool.query("SELECT id FROM conversation_message_attachments WHERE message_id = $1", [fileAsk.id]))
+      .rows.map((r) => r.id));
   assert.deepEqual(fileOffer.metadata.homeroomBot,
     mayor.confirmMeta('file_request', {
       app: { slug: SLUG }, name: 'Homeroom', actionId: fileAction.id, question: 'File this as a request on Homeroom?',
