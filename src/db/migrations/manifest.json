@@ -97,9 +97,14 @@
       "schemaSha256": "a6eeb9cbaf64abb0dab1fb773d8dcbf45136cb20a843adb866b4488f32a954fc"
     },
     {
+      "id": "check-explanations-main-sha",
+      "sha256": "3ebbf775aa2755df08d99b44873755415d9413fef730f1ae51e580a2af3ca6f7",
+      "schemaSha256": "3856a83adab04787544d6fabeb2f13edf90d579807a85eab22ef19880aafa4e6"
+    },
+    {
       "id": "sessions-device-class",
       "sha256": "069df414c37cdc3fa7241e20a7a712b91f355954efc9c3f263d058c220e1c509",
-      "schemaSha256": "b21a5faef8e0a63f21656d6a0e9589ee5d04a9de09c2c0d663fc82c10c05913e"
+      "schemaSha256": "33243665c9170496f595709d88a915c22194958ddec64cf84fa3e3fcf9d987d2"
     }
   ]
 }
