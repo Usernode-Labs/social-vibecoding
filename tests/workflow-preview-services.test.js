@@ -17,7 +17,7 @@ const stub = (path, exports) => {
 };
 
 const calls = [];
-const state = { build: null, present: [], exists: new Set(), serving: new Set() };
+const state = { build: null, present: [], exists: new Set(), serving: new Set(), newestRelease: '' };
 const realStaging = require('../src/services/staging');
 stub('../src/services/staging', {
   ...realStaging,
@@ -111,6 +111,7 @@ const pool = { async query(text) {
   if (/FROM check_runs WHERE session_id/.test(text)) return { rows: runs.rows };
   if (/FROM chat_sessions cs JOIN apps/.test(text)) return { rows: [{ id: 5, app_id: 2, app_slug: 'shop', repo_url: '' }] };
   if (/FROM apps WHERE id/.test(text)) return { rows: [{ id: 2, slug: 'shop', repo_url: 'https://github.com/acme/shop' }] };
+  if (/FROM platform_processes/.test(text)) return { rows: state.newestRelease ? [{ release: state.newestRelease }] : [] };
   return { rows: [] };
 } };
 const handlers = previewServices({ config: { captureRuntime: 'kubernetes', kubernetes: {} }, pool });
@@ -136,6 +137,36 @@ test('a built attempt returns its receipt; a failed one returns why, for the mac
   assert.equal(failed.ok, false);
   assert.equal(typeof failed.detail, 'string');
   assert.equal(failed.aboutMain, 'Main changed the schema.');
+});
+
+test('a database made by another build while a newer one serves is a platform fault, in plain words (#6149)', async () => {
+  const { ROLLOUT_DETAIL } = require('../src/services/platform-preview-data-policy');
+  const saved = process.env.GIT_SHA;
+  process.env.GIT_SHA = 'a'.repeat(40);
+  const input = { sessionId: 5, appId: 2, n: 6, head, db: 'app_shop_staging_s5_666666' };
+  state.build = Object.assign(new Error('Platform preview data policy: database was made by another policy'),
+    { noFallback: true, platformPreviewPolicy: true, policySkew: true });
+  try {
+    state.newestRelease = 'b'.repeat(40);   // newer than this build: the release window
+    syncs.length = 0;
+    const rollout = await handlers[WORK.prepare].run(ctx(input));
+    assert.equal(rollout.ok, false);
+    assert.equal(rollout.detail, ROLLOUT_DETAIL, 'the raw policy line is never shown for this case');
+    assert.equal(rollout.infrastructure, true);
+    assert.equal(rollout.platformFault, true, 'the error lane retries it, and a boot retries it again');
+    assert.equal(syncs.length, 0, 'no sync with main: Homeroom itself was updating');
+
+    state.newestRelease = '';               // no newer build: an unreviewed change, refuse at once
+    const refused = await handlers[WORK.prepare].run(ctx(input));
+    assert.equal(refused.platformFault, false);
+    assert.notEqual(refused.detail, ROLLOUT_DETAIL);
+    assert.match(refused.detail, /another policy/);
+    assert.equal(syncs.length, 1);
+  } finally {
+    state.newestRelease = '';
+    state.build = null;
+    if (saved === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = saved;
+  }
 });
 
 test('a build failure seen by a claim that is no longer live sets nothing off (no sync with main, no report)', async () => {

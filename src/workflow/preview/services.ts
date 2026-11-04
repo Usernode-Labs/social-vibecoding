@@ -175,14 +175,22 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           // lease ran out, or the machine cancelled it) reports nothing and
           // sets nothing off: checkpoint throws for it.
           await ctx.checkpoint({ step: 'failed', db });
-          const detail = visuals().summarizeBootFailure(err);
-          const infrastructure = !!legacy('services/deploy-failure').bootFailureIsInfrastructure(err);
+          // #6149: a database or runtime stamped by another build of the
+          // platform is the release window, not the change's fault, while a
+          // newer build is serving: retry it as a platform fault, and say so
+          // in words. With no newer build it stays the immediate refusal it
+          // is (an unreviewed change, or this build is the newest).
+          const refusal = err as { previewDatabaseServerFault?: boolean; policySkew?: boolean };
+          const policy = legacy('services/platform-preview-data-policy');
+          const rollout = refusal.policySkew === true && await policy.newerBuildServing(pool);
+          const detail = rollout ? policy.ROLLOUT_DETAIL : visuals().summarizeBootFailure(err);
+          const infrastructure = rollout || !!legacy('services/deploy-failure').bootFailureIsInfrastructure(err);
           const sync = legacy('services/boot-failure-sync');
           const catchUp = infrastructure ? null
             : await sync.afterBootFailure({ config, pool, session: row, commitHash: input.head, err }).catch(() => null);
           return {
             ok: false, detail, infrastructure, aboutMain: sync.explain(catchUp) || null, sync: !!catchUp?.sync,
-            platformFault: (err as { previewDatabaseServerFault?: boolean }).previewDatabaseServerFault === true,
+            platformFault: rollout || refusal.previewDatabaseServerFault === true,
             servingRemoved: !!(err as { servingRemoved?: boolean }).servingRemoved,
           };
         }
