@@ -554,6 +554,8 @@ function triagePrompt(snapshot, seed, readsImages = false, guidance = null) {
     seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion, readsImages,
     // #3772: who decided on the project when the original look ran.
     decider: snapshot.extra?.decider || null,
+    // #6252: a go-ahead said in the person's chat, recorded on that look.
+    goAhead: snapshot.extra?.goAhead || null,
     // A first version's people when the original look ran (membersNote).
     members: snapshot.extra?.members || null,
     // The game starter its first version builds on (firstVersionNote).

@@ -121,6 +121,23 @@ function wsModule(deps) { return deps.ws || require('./ws'); }
 function chatModule(deps) { return deps.chatSvc || require('./homeroom-bot-chat'); }
 function workflowModule(deps) { return deps.replies || require('../workflow/platform.ts'); }
 
+// Where links point: the platform's own domain, as the mayor's own posts use it.
+function domainOf(deps) {
+  return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
+}
+
+/** Pure: a request named by its number, as a markdown link a chat renders tappable. */
+function requestMd(domain, appSlug, issueNumber) {
+  const link = require('./homeroom-bot-move').requestLink(domain, appSlug, issueNumber);
+  return `[#${Number(issueNumber)}](${link})`;
+}
+
+/** A change's page, as a markdown link: the one that lands on its request when it has one. */
+function changeMd(domain, appSlug, row) {
+  const link = require('./change-destination').changeLink(`https://${domain}`, appSlug, row.id, row.pr_number);
+  return `[change](${link})`;
+}
+
 function clip(value, max) {
   const text = String(value ?? '').trim();
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
@@ -733,7 +750,7 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
   const can = [
     has('update_change') ? '- Change one of your own changes that is up for a vote when somebody clearly asks for a change to it (update_change): describe the change in your own words, precisely enough for a coding agent. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so; never say it is done, since it is not made yet. A question about it is not a change: answer it.' : null,
     has('offer_withdraw') ? '- Offer to withdraw your change when the person who asked for its request, or the project\'s owner, wants it dropped (offer_withdraw). Nothing happens until they tap Withdraw it under your reply: say so.' : null,
-    has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that.' : null,
+    has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that. When it gives a link or changeLink, include them as written.' : null,
     has('change_plan') ? '- Your plan for this request waits for its requester to say Build it. Them saying to build it or go ahead is start_request, which builds the plan as they saw it. Somebody asking for something in the plan to change is change_plan, which plans it again with their words. A question about the plan or where it stands is answered from the facts, and changes nothing.' : null,
     has('offer_close_request') ? (place.type === 'issue'
       ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.'
@@ -1263,6 +1280,20 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
       case 'start_request': {
         if (place.type !== 'issue') return { error: 'Not here.' };
         const out = await mayor.startRequest(pool, ctx, { project: app.slug, number: place.ref });
+        const domain = domainOf(deps);
+        if (out.ok) {
+          const open = await liveModule(deps).openBotProposal(pool, bot.id, app.id, place.ref).catch(() => null);
+          return {
+            ...out,
+            link: requestMd(domain, app.slug, place.ref),
+            ...(open ? { changeLink: changeMd(domain, app.slug, open) } : {}),
+          };
+        }
+        // Built already, up for a vote: the change is the thing to open.
+        if (out.code === 'already_built') {
+          const open = await liveModule(deps).openBotProposal(pool, bot.id, app.id, place.ref).catch(() => null);
+          if (open) return { ...out, changeLink: changeMd(domain, app.slug, open) };
+        }
         return out;
       }
       case 'change_plan':
@@ -1577,7 +1608,7 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp =
       app: full, user, issueNumber: args.issueNumber, issueTitle: gate.issue.title, reason: args.why, deps,
     });
     if (!proposed.ok) return settle('failed', { error: proposed.code }, 'I couldn\'t propose closing it just now.');
-    return settle('done', { closeIssueId: proposed.id || null }, `Done: a vote on closing request #${Number(args.issueNumber)} is open. It closes if the group votes for it.`);
+    return settle('done', { closeIssueId: proposed.id || null }, `Done: a vote on closing request ${requestMd(domainOf(deps), app.slug, args.issueNumber)} is open. It closes if the group votes for it.`);
   }
   if (offer.kind === 'file_request') {
     const chat = chatModule(deps);
@@ -1601,7 +1632,7 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp =
     chat.pushCard(person.id, app.slug, card, deps);
     const n = card?.issueNumber ? Number(card.issueNumber) : null;
     return settle('done', { issueNumber: n }, n
-      ? `Filed as request #${n}${here.builds ? '. I\'ll start on it, and the chip on the message shows how it goes.' : ', for the group.'}`
+      ? `Filed as request ${requestMd(domainOf(deps), full.slug, n)}${here.builds ? '. I\'ll start on it, and the chip on the message shows how it goes.' : ', for the group.'}`
       : 'Filed.');
   }
   return settle('failed', { error: 'unknown_kind' }, null);
@@ -2064,6 +2095,7 @@ module.exports = {
   replyOf,
   transcriptLine,
   systemPrompt,
+  requestMd,
   toolsFor,
   changeGate,
   factsFor,

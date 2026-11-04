@@ -427,6 +427,78 @@ test('#6219: a plan waiting for Build it wins over a question left open from bef
   assert.deepEqual(BOT_STANDING.plan, { group: 'needs', what: 'plan' });
 });
 
+// #6246 (4 Nov 2026): #6149's and #6081's plans waited for Build it but
+// vanished from the Homeroom bot page's Needs you, while the Workshop still
+// listed them. A plan waiting for Build it is what the person acts on now,
+// whatever sits beside it: an older open question (#6219), a person's newer
+// reply, a message from the bot, a queue row on hold, or a read under way.
+test('#6246: a plan waiting for Build it stays the plan beside a reply or a queue row', () => {
+  const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(40) };
+  const plan = {
+    stage: 'plan', since: ago(40), waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
+  };
+  // (a) A question left open from before the plan's look does not hide it.
+  assert.deepEqual(stage({ ...waiting, question_at: ago(90) }), plan);
+  // (b) A person's newer reply, with no queue row yet.
+  assert.deepEqual(stage({ ...waiting, reply_at: ago(5), reply_user_id: 7 }), plan);
+  // (c) A newer reply whose read has started (a claimed queue row).
+  assert.deepEqual(stage({ ...waiting, reply_at: ago(5), started_at: ago(4) }), plan);
+  // (d) A queue row waiting its turn, not yet started and not held.
+  assert.deepEqual(stage({ ...waiting, queue_id: 8, enqueued_at: ago(3), reply_at: ago(5) }), plan);
+  // (e) A queue row on hold until Monday.
+  const heldUntil = new Date(NOW.getTime() + 60 * 60 * 1000).toISOString();
+  assert.deepEqual(stage({ ...waiting, queue_id: 8, enqueued_at: ago(600), held_until: heldUntil, reply_at: ago(5) }), plan);
+  // The plan's own look asked the question: that still wins.
+  assert.equal(stage({ ...waiting, question_at: ago(45) }).stage, 'question');
+  // planWaits says the same on each of the rows above.
+  for (const row of [
+    { ...waiting, question_at: ago(90) },
+    { ...waiting, reply_at: ago(5), reply_user_id: 7 },
+    { ...waiting, reply_at: ago(5), started_at: ago(4) },
+    { ...waiting, queue_id: 8, enqueued_at: ago(3), reply_at: ago(5) },
+    { ...waiting, queue_id: 8, enqueued_at: ago(600), held_until: heldUntil, reply_at: ago(5) },
+  ]) {
+    assert.equal(progress.planWaits(row), true);
+    assert.equal(stage(row).stage, 'plan');
+  }
+});
+
+test('#6246: built, held, replaced or closed, a plan is no longer waiting', () => {
+  const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(40) };
+  assert.equal(progress.planWaits(waiting), true);
+  const notWaiting = {
+    'built and waiting its turn': { build_waiting_at: ago(30) },
+    'a build under way': { build_session_id: 7 },
+    'the build stopped': { build_ok: false },
+    'held by a limit': { cap_suppressed: 'proposals_per_app' },
+    'the request closed': { request_closed: true },
+    'replaced by a proposal': { run_proposal: 9 },
+    'a shadow look': { mode: 'shadow' },
+    'handed back to a person': { verdict: 'person' },
+  };
+  for (const [name, extra] of Object.entries(notWaiting)) {
+    assert.equal(progress.planWaits({ ...waiting, ...extra }), false, name);
+    assert.notEqual(stage({ ...waiting, ...extra })?.stage, 'plan', name);
+  }
+});
+
+test('#6246: one SQL definition of a waiting plan, shared by the page and the Workshop', () => {
+  const sql = progress.planWaitingSql();
+  assert.match(sql, /run\.mode = 'live' AND run\.verdict = 'ready'/);
+  assert.match(sql, /run\.awaiting_go_at IS NOT NULL/);
+  assert.match(sql, /run\.live_build_waiting_at IS NULL/);
+  assert.match(sql, /run\.build_ok IS NULL/);
+  assert.match(sql, /run\.build_session_id IS NULL/);
+  assert.match(sql, /run\.proposal_session_id IS NULL/);
+  assert.match(sql, /run\.cap_suppressed IS NULL/);
+  assert.match(sql, /ORDER BY run\.id DESC LIMIT 1/, 'the newest run, any mode, decides');
+  assert.match(sql, /github_issue_number = m\.issue_number/);
+  assert.match(sql, /homeroom_bot_closed_requests/);
+  assert.doesNotMatch(sql, /\$\d/, 'no parameters of its own');
+  assert.match(progress.planWaitingSql({ appId: 'q.app_id', issueNumber: 'q.issue_number' }),
+    /run\.app_id = q\.app_id AND run\.issue_number = q\.issue_number/);
+});
+
 // #6228 (3 Nov 2026): a person's reply on a request the bot handed back is
 // the bot's to read, so the request leaves Decide at once: it reads as
 // 'reading' with `reply`, waiting until the bot's turn starts. The window

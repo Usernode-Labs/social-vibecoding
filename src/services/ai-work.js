@@ -53,6 +53,7 @@
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
+const { planWaitingSql } = require('./homeroom-bot-progress');
 
 const THREADS_MAX = 80;
 const PRIVATE_MAX = 30;
@@ -112,7 +113,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
        dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
-       COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) AS sort_at,
+       COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, req.updated_at, t.created_at) AS sort_at,
        -- 1 Nov 2026: their own private thread about its request holds the
        -- bot: it waits for their plan (rules/bot-loop.ts planHoldActiveSql).
        (t.number IS NOT NULL AND EXISTS (
@@ -122,7 +123,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        ROW_NUMBER() OVER (
          PARTITION BY COALESCE(ch.status = 'merged', FALSE)
          ORDER BY mine.own DESC,
-                  COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) DESC
+                  COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, req.updated_at, t.created_at) DESC
        ) AS place
   FROM threads t
   JOIN mine ON mine.thread_id = t.id
@@ -362,9 +363,14 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
     // #6158: a queued or held build also says its place in line.
     const place = facts && said.what === 'queued' ? facts.queuePlace
       : facts && said.what === 'held' ? facts.heldPlace : null;
+    // #6245: what the bot handed you is timed from when it began waiting on
+    // you, not from the last thing that touched the change or its page.
+    const at = iso(said.group === 'needs'
+      ? (bot.since || row.request_at || row.created_at)
+      : (bot.since || row.last_activity_at || row.request_at || row.created_at));
     return {
       ...said,
-      at: iso(bot.since || row.last_activity_at || row.request_at || row.created_at),
+      at,
       ...(said.what === 'held' ? { heldBy: heldBy(bot.capSuppressed) } : {}),
       ...(place ? { place } : {}),
     };
@@ -416,6 +422,9 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
     const f = facts && row.number != null ? facts : null;
     if (f) {
       const base = { at: iso(at), quietDays };
+      // #6246: a plan waiting for Build it is Needs you's, whatever else the
+      // request has beside it: a reply, a held queue row or an older question.
+      if (f.planWaits) return { group: 'needs', what: 'plan', at: iso(f.planAt), quietDays };
       // #6228: a person replied on a request the bot handed back, and the
       // bot has it to read: it leaves Needs you at once, not when the read
       // starts.
@@ -600,6 +609,12 @@ SELECT w.app_id, w.number, a.slug, rq.title, rq.labels,
            AND cm.msg_type = 'message' AND cm.deleted_at IS NULL AND ru.is_synthetic IS NOT TRUE
            AND lr.created_at IS NOT NULL AND cm.created_at > lr.created_at) AS reply_at,
        qa.started_at AS queue_started, qa.held_until AS queue_held_until,
+       -- #6246: a plan of theirs waiting for Build it, from the one fragment
+       -- the Workshop reads too (homeroom-bot-progress.js planWaitingSql).
+       ${planWaitingSql({ appId: 'w.app_id', issueNumber: 'w.number' })} AS plan_waiting_at,
+       EXISTS (SELECT 1 FROM homeroom_bot_requesters br
+                WHERE br.app_id = w.app_id AND br.issue_number = w.number
+                  AND br.user_id = $1) AS plan_mine,
        EXISTS (SELECT 1 FROM homeroom_bot_runs ar
                 WHERE ar.app_id = w.app_id AND ar.issue_number = w.number) AS any_run,
        q.id AS queue_id, q.place AS queue_place, h.place AS held_place,
@@ -676,9 +691,14 @@ async function requestFacts(pool, rows, viewerId, deps = {}) {
         held_until: f.queue_held_until,
       });
       const scoped = inScope(f.slug);
+      const planAt = f.plan_waiting_at || null;
       facts.set(botKey(f.slug, f.number), {
         run,
         anyRun: f.any_run === true,
+        // #6246: a plan of theirs waits for Build it (planWaitingSql), the
+        // one wait this page and the Workshop read alike.
+        planWaits: planAt != null && f.plan_mine === true,
+        planAt,
         // #6228: a reply waiting to be read, and whether the run handed the
         // request back (the two sides of the same wait).
         replyWaits: waits,
@@ -915,6 +935,7 @@ async function pageLists(pool, { user, showSelfHosted = false, deps = {} }) {
 module.exports = {
   THREADS_SQL,
   PRIVATE_SQL,
+  FACTS_SQL,
   threadsInSql,
   THREADS_MAX,
   PRIVATE_MAX,
