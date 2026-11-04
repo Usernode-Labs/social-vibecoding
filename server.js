@@ -1322,6 +1322,13 @@ async function start() {
     // to wait 1-2s on `docker stats`. Subsequent loads are served from
     // cache via stale-while-revalidate (see services/status.js).
     statusService.start(config);
+    // Warm the language list every shell asks for on boot: the first call
+    // builds the packs from disk, and on a freshly started process that
+    // held the event loop for seconds, so the first page load (and a
+    // declared check run against it) could time out. The build is memoized
+    // (services/language-cache.js), so warming it here leaves the first
+    // request reading memory.
+    require('./src/services/language-cache').live(getPool(config)).catch(() => {});
   }
   // Every process writes its own server-error counts to the database once a
   // minute (services/server-error-counts.js), on an unref'd timer; a minute
