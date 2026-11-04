@@ -171,7 +171,9 @@ is killed:
 Run 193's shape (a fix turn still running when the next process attaches),
 a refused push re-sent from the worker, and two restarts in a row have
 points of their own. Under `npm test` the suite stops starting points after
-150 s; `BOT_BUILD_CRASH_BUDGET_MS` runs them all (367, about three and a
+120 s (plus 10 s of grace for a build still going), leaving 30 s or more of
+the runner's 180 s per-file timeout as margin after its teardown;
+`BOT_BUILD_CRASH_BUDGET_MS` runs them all (367, about three and a
 half minutes on four lanes). `tests/durable-steps.test.js`,
 `tests/durable-turn.test.js`, `tests/build-runs.test.js` and
 `tests/workflow-bot-build-platform-postgres.test.js` cover the pieces.
