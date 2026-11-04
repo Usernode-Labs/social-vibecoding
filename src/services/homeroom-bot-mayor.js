@@ -1812,12 +1812,29 @@ async function knownProjectNames(pool, ctx) {
   return known;
 }
 
+/**
+ * Pure: does `name`, as a reply wrote it, name a project a tool returned?
+ * The mention stops at the first lowercase word ("on Note board request #6"
+ * gives "Note"), so a known name that begins with it at a word boundary is
+ * the same project said short, never a garbled one ("Community Components"
+ * does not begin Community Tier Lists).
+ */
+function namesReturnedProject(known, name) {
+  const key = squashWords(name);
+  if (!key) return true;
+  if (known.has(key)) return true;
+  for (const candidate of known) {
+    if (candidate.startsWith(`${key} `)) return true;
+  }
+  return false;
+}
+
 /** The project names among `names` that no tool returned this turn. */
 async function unknownProjects(pool, ctx, text) {
   const names = projectMentions(text);
   if (!names.length) return [];
   const known = await knownProjectNames(pool, ctx);
-  return names.filter((name) => !known.has(squashWords(name)));
+  return names.filter((name) => !namesReturnedProject(known, name));
 }
 
 /**
@@ -1900,11 +1917,14 @@ function stripClaims(text, problems) {
   if (!problems?.length) return text;
   const kinds = new Set(problems.map((p) => p.kind));
   const res = CLAIMS.filter((c) => kinds.has(c.kind));
-  const unknownProjectNames = new Set((problems.find((p) => p.kind === 'unknown_project')?.names || []).map((n) => squashWords(n)));
+  const unknownProjectNames = (problems.find((p) => p.kind === 'unknown_project')?.names || []).map((n) => squashWords(n)).filter(Boolean);
   const keeps = (sentence) => {
     if (res.some((c) => c.re.test(sentence))) return false;
     if (kinds.has('drafted') && DRAFT_PROMISE_RE.test(sentence)) return false;
-    if (unknownProjectNames.size && projectMentions(sentence).some((n) => unknownProjectNames.has(squashWords(n)))) return false;
+    if (unknownProjectNames.length && projectMentions(sentence).some((n) => {
+      const key = squashWords(n);
+      return key && unknownProjectNames.some((u) => u === key || u.startsWith(`${key} `) || key.startsWith(`${u} `));
+    })) return false;
     return true;
   };
   const kept = String(text || '').split('\n').map((line) => line

@@ -488,6 +488,11 @@ test('#6307: a project a reply names must be one this turn\'s tools returned', a
   assert.match(note, /A project you name must be one a tool returned in this turn, spelled exactly as it returned it/);
   const known = { user: { id: 1 }, appIds: new Set(), knownProjects: new Set(['community tier lists']) };
   assert.deepEqual(await kinds('The draft for Community Tier Lists is ready.', { offer: null, knownProjects: known.knownProjects }), []);
+  // A name caught only at its first word ("on Note board request #6" gives
+  // "Note") is the project a tool returned, said short: not a garble, and the
+  // sentence is not cut.
+  assert.deepEqual(mayor.projectMentions('The draft for Note board is ready.'), ['Note']);
+  assert.deepEqual(await kinds('The draft for Note board is ready.', { offer: null, knownProjects: new Set(['note board']) }), []);
 });
 
 test('#11 (WP3): a promise to come back later, "the team was told" and "I withdrew it" count only when this turn did it', async () => {
