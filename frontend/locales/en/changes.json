@@ -1807,6 +1807,38 @@
     "text": "Archive failed: {{error}}",
     "description": "Toast shown when archiving an agent session could not be sent. {{error}} is the technical error message."
   },
+  "archiveUndo.archived_one": {
+    "text": "Archived “{{title}}”",
+    "description": "Bottom notice shown right after a person archives one of their agent sessions on a project's board, with an Undo button beside it. {{title}} is the session's title. {{count}} (1 here) is how many archives can be undone in a row, newest first."
+  },
+  "archiveUndo.archived_other": {
+    "text": "Archived “{{title}}”. {{count}} to undo",
+    "description": "Bottom notice shown right after a person archives an agent session when earlier archives can still be undone too, with an Undo button beside it. {{title}} is the session's title; {{count}} is how many can be undone in a row, newest first, this one included."
+  },
+  "archiveUndo.withdrawn_one": {
+    "text": "Withdrew “{{title}}”",
+    "description": "Bottom notice shown right after a person withdraws their own proposal from the vote, with an Undo button beside it. {{title}} is the proposal's title. {{count}} (1 here) is how many withdrawals or archives can be undone in a row, newest first."
+  },
+  "archiveUndo.withdrawn_other": {
+    "text": "Withdrew “{{title}}”. {{count}} to undo",
+    "description": "Bottom notice shown right after a person withdraws their own proposal when earlier archives or withdrawals can still be undone too, with an Undo button beside it. {{title}} is the proposal's title; {{count}} is how many can be undone in a row, newest first, this one included."
+  },
+  "archiveUndo.restored_one": {
+    "text": "Brought back “{{title}}”. {{count}} more to undo",
+    "description": "Bottom notice shown after Undo brought an archived or withdrawn session back, while earlier ones can still be undone; an Undo button stays beside it. {{title}} is the session's title; {{count}} is how many more can be undone."
+  },
+  "archiveUndo.restored_other": {
+    "text": "Brought back “{{title}}”. {{count}} more to undo",
+    "description": "Bottom notice shown after Undo brought an archived or withdrawn session back, while earlier ones can still be undone; an Undo button stays beside it. {{title}} is the session's title; {{count}} is how many more can be undone."
+  },
+  "archiveUndo.restoredLast": {
+    "text": "Brought back “{{title}}”",
+    "description": "Bottom notice shown after Undo brought the last archived or withdrawn session back, with nothing left to undo and no button. {{title}} is the session's title."
+  },
+  "archiveUndo.undo": {
+    "text": "Undo",
+    "description": "Button on the bottom notice shown after archiving or withdrawing an agent session: brings the most recent one back. A verb."
+  },
   "transcript.readSession": {
     "text": "Read the agent session",
     "description": "Label of the section on a change's page that expands to show the conversation between the author and the coding agent, which the author chose to share."

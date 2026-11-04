@@ -16625,7 +16625,106 @@ const AppView = {
       PlatformUI.toast(PlatformI18n.t('changes:session.archive.failedWith', { error: err.message }));
       return false;
     }
+    AppView._pushArchiveUndo({ id: sessionId, title: name, verb: 'archived' });
     return true;
+  },
+
+  // #6132: Undo for archive and withdraw, several in a row, newest first.
+  // Each successful archive POST pushes its session here (newest last) and
+  // shows a priority toast with Undo; each press of Undo brings back the
+  // newest one and re-toasts while entries remain. The stack lasts while the
+  // page is open and belongs to the open project: an entry for another
+  // project's slug, pushed or undone, clears it first. After a reload, Show
+  // archived's Unarchive is the way back. Entries: { id, title, verb:
+  // 'archived' | 'withdrawn', slug }.
+  _archiveUndo: [],
+  _archiveUndoBusy: false,
+  ARCHIVE_UNDO_MAX: 20,
+
+  _archiveUndoSlug() {
+    return (AppView.appData && AppView.appData.slug) || '';
+  },
+
+  // What the toast says for `entry` while `count` entries (this one
+  // included) can be undone.
+  _archiveUndoMessage(entry, count) {
+    return PlatformI18n.t(entry.verb === 'withdrawn' ? 'changes:archiveUndo.withdrawn' : 'changes:archiveUndo.archived',
+      { title: entry.title, count });
+  },
+
+  _pushArchiveUndo(entry) {
+    const slug = entry.slug != null ? entry.slug : AppView._archiveUndoSlug();
+    const stack = AppView._archiveUndo;
+    if (stack.some((e) => e.slug !== slug)) stack.length = 0;
+    stack.push({ id: entry.id, title: entry.title, verb: entry.verb || 'archived', slug });
+    while (stack.length > AppView.ARCHIVE_UNDO_MAX) stack.shift();
+    AppView._showArchiveUndoToast(AppView._archiveUndoMessage(stack[stack.length - 1], stack.length), true);
+  },
+
+  // The platform's bottom notice, held as a priority toast (an ordinary
+  // toast queues behind it instead of displacing it) for ~8s, with Undo
+  // when `withUndo`. A new archive replaces the visible notice.
+  _showArchiveUndoToast(message, withUndo) {
+    if (typeof PlatformUI === 'undefined' || !PlatformUI.toast) return;
+    const opts = { priority: true, duration: 8000 };
+    if (withUndo) {
+      opts.action = { label: PlatformI18n.t('changes:archiveUndo.undo'), handler: () => { AppView._undoLastArchive(); } };
+    }
+    PlatformUI.toast(message, opts);
+  },
+
+  // Undo's handler: bring back the newest archived or withdrawn session.
+  // Success repaints the board the way Show archived's Unarchive does
+  // (feed reload, and the opened topic's head), then says what came back
+  // and how many remain. A failure (still being closed, network) puts the
+  // entry back on top with Undo still attached, so Undo retries it; a 404
+  // (not archived any more) drops it and the rest stay in line.
+  async _undoLastArchive() {
+    if (AppView._archiveUndoBusy) return;
+    const stack = AppView._archiveUndo;
+    if (!stack.length) return;
+    if (stack[stack.length - 1].slug !== AppView._archiveUndoSlug()) { stack.length = 0; return; }
+    const entry = stack.pop();
+    AppView._archiveUndoBusy = true;
+    try {
+      let resp;
+      let body = {};
+      try {
+        resp = await fetch(`/api/sessions/${entry.id}/unarchive`, { method: 'POST' });
+        body = await resp.json().catch(() => ({}));
+      } catch (err) {
+        stack.push(entry);
+        AppView._showArchiveUndoToast(PlatformI18n.t('changes:session.unarchive.failedWith', { error: err.message }), true);
+        return;
+      }
+      if (resp.status === 404) {
+        if (stack.length) AppView._showArchiveUndoToast(AppView._archiveUndoMessage(stack[stack.length - 1], stack.length), true);
+        return;
+      }
+      if (!resp.ok) {
+        stack.push(entry);
+        AppView._showArchiveUndoToast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.unarchive.failed'), true);
+        return;
+      }
+      if (body.ccPurged) {
+        PlatformUI.alert({ title: PlatformI18n.t('changes:session.unarchive.restoredTitle'), message: PlatformI18n.t('changes:session.unarchive.restoredMessage') });
+      }
+      await AppView._loadDevFeed();
+      // _loadDevFeed's repaint no-ops in the opened-topic view (as
+      // withdrawProposal notes): repaint the topic head there.
+      if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+          && document.getElementById('gc-thread-head')) {
+        AppView._renderTopicHead();
+      }
+      const left = stack.length;
+      if (left) {
+        AppView._showArchiveUndoToast(PlatformI18n.t('changes:archiveUndo.restored', { title: entry.title, count: left }), true);
+      } else {
+        AppView._showArchiveUndoToast(PlatformI18n.t('changes:archiveUndo.restoredLast', { title: entry.title }), false);
+      }
+    } finally {
+      AppView._archiveUndoBusy = false;
+    }
   },
 
   // Refresh the session cards' busy indicators on a slow tick while the
@@ -21257,6 +21356,12 @@ const AppView = {
       PlatformUI.toast(PlatformI18n.t('changes:proposal.withdraw.failedWith', { error: err.message }));
       return;
     }
+    // #6132: withdrawing archives the session, so Undo brings it back.
+    AppView._pushArchiveUndo({
+      id: sessionId,
+      title: (pr && pr.pr_title) || PlatformI18n.t('changes:session.prFallbackTitle', { number: prNum }),
+      verb: 'withdrawn',
+    });
     await AppView._loadDevFeed();
     // _loadDevFeed's repaint no-ops in the opened-topic view (#dev-body is
     // absent), so the withdrawn proposal card would stay stale there. Repaint
