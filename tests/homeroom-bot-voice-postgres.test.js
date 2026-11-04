@@ -297,6 +297,67 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(sent.length, before);
   });
 
+  await t.test('a long message to the bot on a request reaches the model whole, with no cut marker', async () => {
+    sent.length = 0;
+    const place = { type: 'issue', ref: 13 };
+    const text = `A correction to the behaviour, then two fixes for PR 31: ${'detail '.repeat(350)}FIX THREE CHECKS.`;
+    assert.ok(text.length > 2207);
+    await say(evan, `@Homeroom bot ${text}`, place);
+    const model = scripted([{ tool: 'reply', args: { text: 'Got it: the correction and both fixes, as one update.' } }]);
+    const out = await turn(place, model, { key: 'long-1' });
+    assert.equal(out.outcome, 'replied');
+    const prompt = model.seen[0].messages.find((m) => m.role === 'user').content;
+    assert.ok(prompt.includes(text), 'the whole message, ending included');
+    assert.doesNotMatch(prompt, /cut at 700 of/);
+  });
+
+  await t.test('a cut line says so, and read_message reads it whole, from this thread only', async () => {
+    sent.length = 0;
+    const root = await say(sam, '@Homeroom bot what did I write before?');
+    const thread = { type: 'message', ref: root };
+    const oldText = `The older note, in full. ${'Every word matters. '.repeat(100)}THE END.`;
+    assert.ok(oldText.length > 1500);
+    const old = await say(sam, oldText, thread);
+    await say(sam, '@Homeroom bot read my older note and summarize it', thread);
+    const elsewhere = await say(sam, 'a message in the chat, not this thread');
+    const model = scripted([
+      { tool: 'read_message', args: { id: old } },
+      { tool: 'read_message', args: { id: elsewhere } },
+      { tool: 'reply', args: { text: 'You asked me to read the older note.' } },
+    ]);
+    const out = await turn({ type: 'message', ref: root }, model, { through: Number(old), key: 'read-1' });
+    assert.equal(out.outcome, 'replied');
+    const prompt = model.seen[0].messages.find((m) => m.role === 'user').content;
+    assert.ok(prompt.includes(`[cut at 700 of ${oldText.length.toLocaleString('en-US')} characters; read_message #${old} for the rest]`));
+    // The turn's requests share one messages array, so the tool results are
+    // read in the order they came back.
+    const results = model.seen[0].messages.filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content));
+    assert.equal(results[0].id, old);
+    assert.equal(results[0].text, oldText);
+    assert.equal(results[0].textComplete, true);
+    assert.match(results[1].error, /There is no message/);
+  });
+
+  await t.test('a long ask keeps the whole instruction for the follow-up', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const instruction = `Rewrite the description and fix three checks. ${'Keep every detail. '.repeat(200)}THE LAST FIX.`;
+    assert.ok(instruction.length > 3000);
+    const id = await say(evan, `@Homeroom bot ${instruction}`, place);
+    const model = scripted([
+      { tool: 'update_change', args: { instruction } },
+      { tool: 'reply', args: { text: 'Got it: I queued both fixes and the new description.' } },
+    ]);
+    const out = await turn(place, model, { key: 'ask-long-1' });
+    assert.equal(out.outcome, 'replied');
+    const { rows: [ask] } = await pool.query(
+      'SELECT instruction, message_id FROM homeroom_bot_change_asks WHERE session_id = $1 ORDER BY id DESC LIMIT 1', [change.id]);
+    assert.equal(ask.instruction, instruction);
+    assert.equal(Number(ask.message_id), Number(id));
+    // Put back the asks the later tests count on: this one is checked, not left waiting.
+    await pool.query('DELETE FROM homeroom_bot_change_asks WHERE session_id = $1 AND message_id = $2', [change.id, id]);
+  });
+
   await t.test('mentioned in the project\'s chat, it answers in a reply thread and offers to file it', async () => {
     sent.length = 0;
     broadcasts.length = 0;
