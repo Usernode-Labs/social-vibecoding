@@ -347,6 +347,12 @@ export interface TranscriptMessage {
    */
   postedVia?: 'agent' | null;
   /**
+   * #6268: Homeroom bot will not answer this connector message, and the row
+   * says so in one quiet line. Decided by the server when the message was
+   * posted (`metadata.homeroomBotSkip`), so the line never changes later.
+   */
+  botSkipped?: boolean;
+  /**
    * The 1.5s highlight a jump-to-original lands on. On the MODEL because the
    * row is React's: `_handleQuotedClick` used to `classList.add` it, which the
    * next repaint would have swept away mid-animation.

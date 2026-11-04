@@ -887,6 +887,10 @@
     "text": "Posted {{count}} times in a row; this is the latest",
     "description": "Tooltip of the ×N mark after an automatic line that was posted several times running and is shown once, in a chat and among the replies on a request's or a change's page. {{count}} is how many times. Posted is a verb form."
   },
+  "group.row.botSkipped": {
+    "text": "Homeroom bot doesn't answer this message; @ it in your own words to ask it.",
+    "description": "Small grey line under a message a person's coding agent posted for them on a request's, a change's or a reply thread's discussion, when Homeroom bot will not answer it (so an agent and the bot cannot talk to each other forever, or its voice is off there). One line, no icon, not a button."
+  },
   "group.row.unreadMention": {
     "text": "Unread mention",
     "description": "Accessible name of the dot before the author of a chat message that mentions the person and that they have not read yet."

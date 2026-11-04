@@ -74,6 +74,22 @@ const ANSWER_WINDOW_MINUTES = 60;
 // The next message after the bot's own in a reply thread, this soon after
 // it, is to the bot.
 const CONTINUE_MINUTES = 30;
+// #6268: a person's coding agent posts for them through the connector
+// (`posted_via = 'agent'`). On these places it is heard as the person's own
+// message; on a channel it is not answered, as before.
+const CONNECTOR_PLACES = Object.freeze(['issue', 'session', 'message']);
+// An agent and the bot must not answer each other forever: a connector
+// message replying to the bot this soon after the bot's last one, or this
+// many connector messages in a row with no person's own message between,
+// is not answered.
+const CONNECTOR_LOOP_SECONDS = 10;
+const MAX_CONNECTOR_RUN = 2;
+// The reasons a connector message is not answered, kept for admins.
+const CONNECTOR_REASONS = Object.freeze(['connector', 'connector_loop', 'connector_run', 'switched_off']);
+// What the thread says under such a message, and what the connector's
+// post_message result says back: a server sentence (not catalogued), word for
+// word in both places.
+const CONNECTOR_NOTE = 'Homeroom bot doesn\'t answer this message; @ it in your own words to ask it.';
 const MAX_ROUNDS = 5;
 // Homeroom bot parity (P1): the voice keeps the chat's old room per request (homeroom-bot-mayor.js
 // raised its own for private conversations), so a public reply stays short and quick.
@@ -260,6 +276,110 @@ async function quotesBot(pool, row, botId) {
   return !!rows[0] && Number(rows[0].user_id) === Number(botId);
 }
 
+/**
+ * The SQL that names a place's thread in chat_messages, and the params it
+ * needs after `$1` (the app id).
+ */
+function placeScope(place, alias = '') {
+  const thread = threadOf(place);
+  const p = alias ? `${alias}.` : '';
+  return thread
+    ? { sql: `${p}thread_type = $2 AND ${p}thread_ref = $3`, params: [thread.type, Number(thread.ref)] }
+    : { sql: `${p}thread_type IS NULL`, params: [] };
+}
+
+/**
+ * #6268: whether a connector message (`posted_via = 'agent'`) must not start
+ * a turn, so that an agent and the bot never answer each other forever.
+ * Resolves 'connector_loop', 'connector_run' or null.
+ *
+ * `beforeId` is the row's own id when it is stored (the gate reads it), or
+ * null at post time, when the newest message in the place is the one before
+ * it. `at` is when it was written.
+ */
+async function connectorGuard(pool, { appId, place, botId, quote, beforeId, at }) {
+  if (!place || !botId) return null;
+  const scope = placeScope(place);
+  const rowId = Number(beforeId) > 0 ? Number(beforeId) : null;
+  const params = [Number(appId), ...scope.params];
+  const before = rowId ? `AND id < $${params.length + 1}` : '';
+  if (rowId) params.push(rowId);
+  const when = at ? new Date(at) : new Date();
+
+  // Is this message a reply to the bot? It quotes one, or it is the next
+  // message in a reply thread after the bot's own.
+  let replyToBot = await quotesBot(pool, { metadata: { quote } }, botId);
+  if (!replyToBot && place.type === 'message') {
+    const { rows: [last] } = await pool.query(
+      `SELECT user_id FROM chat_messages
+        WHERE app_id = $1 AND ${scope.sql} AND msg_type = 'message' AND deleted_at IS NULL ${before}
+        ORDER BY id DESC LIMIT 1`,
+      params,
+    );
+    replyToBot = !!last && Number(last.user_id) === Number(botId);
+  }
+  if (replyToBot) {
+    const lastParams = [Number(appId), ...scope.params, Number(botId)];
+    const botIdx = lastParams.length;
+    const beforeBot = rowId ? `AND id < $${botIdx + 1}` : '';
+    if (rowId) lastParams.push(rowId);
+    const { rows: [said] } = await pool.query(
+      `SELECT created_at FROM chat_messages
+        WHERE app_id = $1 AND ${scope.sql} AND user_id = $${botIdx}
+          AND msg_type = 'message' AND deleted_at IS NULL ${beforeBot}
+        ORDER BY id DESC LIMIT 1`,
+      lastParams,
+    );
+    const delta = said ? when.getTime() - new Date(said.created_at).getTime() : Infinity;
+    if (delta >= 0 && delta < CONNECTOR_LOOP_SECONDS * 1000) return 'connector_loop';
+  }
+
+  // How many connector messages in a row, with no person's own message
+  // between them, come just before this one (the bot's replies skipped, so
+  // they neither count nor reset the run).
+  const runParams = [Number(appId), ...scope.params];
+  const beforeRun = rowId ? `AND m.id < $${runParams.length + 1}` : '';
+  if (rowId) runParams.push(rowId);
+  const { rows: walk } = await pool.query(
+    `SELECT m.user_id, m.posted_via, u.is_synthetic
+       FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND ${placeScope(place, 'm').sql}
+        AND m.msg_type = 'message' AND m.deleted_at IS NULL ${beforeRun}
+      ORDER BY m.id DESC LIMIT 20`,
+    runParams,
+  );
+  let run = 0;
+  for (const r of walk) {
+    if (Number(r.user_id) === Number(botId)) continue;
+    if (r.is_synthetic) continue;
+    if (r.posted_via === 'agent') { run += 1; continue; }
+    break;
+  }
+  if (run >= MAX_CONNECTOR_RUN) return 'connector_run';
+  return null;
+}
+
+/**
+ * #6268: whether a connector message being posted now is one the bot will
+ * not answer, decided when it is posted so that the thread and the
+ * connector's tool result can say so straight away. Resolves { why } or
+ * null.
+ */
+async function connectorSkip(pool, { appId, appSlug, thread, content, metadata, settings, botId }) {
+  const place = placeOf(thread);
+  if (!place) return null;
+  const addressed = mentionsBot(content) || await quotesBot(pool, { metadata: metadata || {} }, botId);
+  let guard = null;
+  try {
+    guard = await connectorGuard(pool, { appId, place, botId, quote: metadata?.quote, beforeId: null, at: new Date() });
+  } catch { guard = null; }
+  if (!addressed) return guard ? { why: guard } : null;
+  if (!voiceOn(settings, place)) return { why: 'switched_off' };
+  if ((settings?.pausedApps || []).includes(appSlug)) return { why: 'paused' };
+  if (!CONNECTOR_PLACES.includes(place.type)) return { why: 'connector' };
+  return guard ? { why: guard } : null;
+}
+
 /** Whether message `messageId` was passed on to one of the bot's changes as an ask. */
 async function queuedAsAsk(pool, messageId) {
   const { rows } = await pool.query(
@@ -310,9 +430,18 @@ async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }
   if ((settings.pausedApps || []).includes(app.slug)) return no('paused');
   if (!speaker || speaker.isSynthetic || Number(speaker.id) === Number(bot.id)) return no('not_a_person');
   if (row.msg_type !== 'message' || row.deleted_at) return no('not_a_message');
-  if (row.posted_via === 'agent') return no('connector');
+  // #6268: a person's agent posting for them is heard as the person is on a
+  // request, a change and a reply thread; a channel keeps today's rule. The
+  // loop guard decides before the place's own rules get to speak.
+  if (row.posted_via === 'agent' && !CONNECTOR_PLACES.includes(place.type)) return no('connector');
   if (isRelay(row.content)) return no('relayed');
   if (!dmModule(deps).hasBot(settings, speaker)) return no('not_let_in');
+  if (row.posted_via === 'agent') {
+    const looped = await connectorGuard(pool, {
+      appId: app.id, place, botId: bot.id, quote: row.metadata?.quote, beforeId: row.id, at: row.created_at,
+    });
+    if (looped) return no(looped);
+  }
   const mentioned = mentionsBot(row.content);
   const replied = mentioned ? false : await quotesBot(pool, row, bot.id);
   const addressed = mentioned ? 'mentioned' : replied ? 'replied' : null;
@@ -581,10 +710,6 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     return finishWith('replied');
   }
   const chatPlace = place.type === 'chat' || place.type === 'category';
-  if (!voiceOn(settings, place) && !chatPlace) {
-    record.throughId = (await newestIn(pool, { app, place })) || through;
-    return finishWith('quiet');
-  }
   // What the place has answered: the machine's `through`, or (an instance
   // new since an older release answered here) what that release recorded.
   // Never the bot's own last message: a report or an offer's line says
@@ -601,14 +726,20 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   if (!fresh.length) return finishWith('quiet');
   // Which of them were to the bot (the gate, for each): the newest of those
   // is who it answers. (With the voice off in a chat, nobody: the chat's
-  // older ask has them, below.)
+  // older ask has them, below. With it off elsewhere, a connector's message
+  // is still read, so that a skip is recorded for admins.)
   const addressed = [];
-  for (const m of voiceOn(settings, place) ? fresh : []) {
+  let connectorWhy = null;
+  const toGate = voiceOn(settings, place)
+    ? fresh
+    : fresh.filter((m) => m.posted_via === 'agent' && !chatPlace);
+  for (const m of toGate) {
     const speaker = await personRow(pool, m.user_id);
     const decided = await gate(pool, {
       app, place, row: { ...m, deleted_at: null, thread_type: place.type === 'chat' ? null : place.type }, bot, settings, speaker, deps,
     });
     if (decided.speak) addressed.push({ message: m, speaker, why: decided.why });
+    else if (!connectorWhy && m.posted_via === 'agent' && CONNECTOR_REASONS.includes(decided.why)) connectorWhy = decided.why;
   }
   // What the project's chat does with what nobody said to the bot (a
   // newcomer's idea, offered to be suggested; the older ask with the voice
@@ -620,6 +751,9 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     : null);
   if (!addressed.length) {
     await restOfChat();
+    // #6268: a connector message nobody answers is recorded with its reason,
+    // so the admin summary shows it beside the turns that failed.
+    if (connectorWhy) record.error = connectorWhy;
     return finishWith('quiet');
   }
   const last = addressed[addressed.length - 1];
@@ -2278,6 +2412,10 @@ module.exports = {
   MAX_ASK_TRIES,
   OFFER_WORDS,
   SORRY_TEXT,
+  CONNECTOR_PLACES,
+  CONNECTOR_LOOP_SECONDS,
+  MAX_CONNECTOR_RUN,
+  CONNECTOR_NOTE,
   setConfig,
   placeOf,
   placeKey,
@@ -2287,6 +2425,8 @@ module.exports = {
   enabledFor,
   mentionsBot,
   isRelay,
+  connectorGuard,
+  connectorSkip,
   gate,
   runTurn,
   replyOf,
