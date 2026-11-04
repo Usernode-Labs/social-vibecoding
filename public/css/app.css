@@ -26829,6 +26829,91 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .suggest-pick-box { width: 18px; height: 18px; margin-top: 1px; flex: none; accent-color: var(--accent); }
 .suggest-pick-title { min-width: 0; font-size: 14px; font-weight: 600; line-height: 19px; color: var(--text-primary); overflow-wrap: anywhere; }
 
+/* ── The detail column, one per thread (#6230, 3 Nov 2026) ─────────────
+   A design's preview, a plan and a change's before and after are one
+   column now (features/detail/), and the column has the same three
+   layouts on every surface: three side by side where they fit, halves
+   where they do not, the whole screen on a phone. The slot's own
+   `data-detail` says which, and `:has()` lets a frame that has always
+   been one flex row split by it. */
+
+/* The shots viewer used to be a popover over the page; in the column it
+   is simply its contents, scrolling under the reader's header. */
+.gc-detail-shots {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: auto;
+  padding: 0 4px 12px;
+}
+.gc-detail-shots :is(.shots-viewer, [popover]) {
+  display: block !important;
+  position: static !important;
+  inset: auto !important;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+.gc-detail-back {
+  width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--text-primary, #18181b);
+}
+.gc-detail-back:hover { background: var(--state-neutral-bg, rgba(24,24,27,.06)); }
+.gc-detail-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gc-detail-back svg { width: 18px; height: 18px; }
+
+/* A request's own page, and the general chat: between a phone and the
+   1024px dock the page and the detail share the room in halves instead
+   of the detail covering the page. */
+@media (max-width: 1023px) and (min-width: 768px) {
+  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #dev-topic-thread,
+  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-chat-pane,
+  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
+    position: static;
+    inset: auto;
+    flex: 1 1 50%;
+    width: auto !important;
+    min-width: 0;
+    max-width: none;
+    border-inline-start: 1px solid var(--border, rgba(255,255,255,0.12));
+  }
+  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
+    border-inline-start: 1px solid var(--border, rgba(255,255,255,0.12));
+  }
+}
+
+/* The Workshop's request panel: Read opens the plan in the panel's right
+   half, the request's page in its left. From 1760px the list stays beside
+   them; below that the panel widens over the list. */
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]),
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) {
+  flex-direction: row;
+}
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #dev-topic-thread,
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) > #dev-topic-thread {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open,
+.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
+  position: static;
+  inset: auto;
+  flex: 1 1 50%;
+  width: auto !important;
+  min-width: 0;
+  max-width: none;
+  border-inline-start: 1px solid var(--app-sheet-line);
+  z-index: auto;
+}
+@media (max-width: 1759px) {
+  #dev-workshop:has(> .dev-ws[data-ws-side-open]) { margin-inline-start: 0; max-width: none; }
+  .dev-ws-side { inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px); }
+}
+
 /* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──
    Every rule here is scoped to html[data-skin="brand"], which the head's
    window.Skin sets from the device's stored choice before this sheet
@@ -26975,89 +27060,4 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[dat
   border-color: #111111;
   color: #111111;
   box-shadow: none;
-}
-
-/* ── The detail column, one per thread (#6230, 3 Nov 2026) ─────────────
-   A design's preview, a plan and a change's before and after are one
-   column now (features/detail/), and the column has the same three
-   layouts on every surface: three side by side where they fit, halves
-   where they do not, the whole screen on a phone. The slot's own
-   `data-detail` says which, and `:has()` lets a frame that has always
-   been one flex row split by it. */
-
-/* The shots viewer used to be a popover over the page; in the column it
-   is simply its contents, scrolling under the reader's header. */
-.gc-detail-shots {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: auto;
-  overflow: auto;
-  padding: 0 4px 12px;
-}
-.gc-detail-shots :is(.shots-viewer, [popover]) {
-  display: block !important;
-  position: static !important;
-  inset: auto !important;
-  width: auto;
-  max-width: none;
-  margin: 0;
-  border: 0;
-  padding: 0;
-}
-.gc-detail-back {
-  width: 32px; height: 32px; padding: 0; flex-shrink: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: none; border-radius: 999px; cursor: pointer;
-  background: transparent; color: var(--text-primary, #18181b);
-}
-.gc-detail-back:hover { background: var(--state-neutral-bg, rgba(24,24,27,.06)); }
-.gc-detail-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.gc-detail-back svg { width: 18px; height: 18px; }
-
-/* A request's own page, and the general chat: between a phone and the
-   1024px dock the page and the detail share the room in halves instead
-   of the detail covering the page. */
-@media (max-width: 1023px) and (min-width: 768px) {
-  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #dev-topic-thread,
-  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-chat-pane,
-  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
-    position: static;
-    inset: auto;
-    flex: 1 1 50%;
-    width: auto !important;
-    min-width: 0;
-    max-width: none;
-    border-inline-start: 1px solid var(--border, rgba(255,255,255,0.12));
-  }
-  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
-    border-inline-start: 1px solid var(--border, rgba(255,255,255,0.12));
-  }
-}
-
-/* The Workshop's request panel: Read opens the plan in the panel's right
-   half, the request's page in its left. From 1760px the list stays beside
-   them; below that the panel widens over the list. */
-.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]),
-.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) {
-  flex-direction: row;
-}
-.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #dev-topic-thread,
-.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) > #dev-topic-thread {
-  flex: 1 1 50%;
-  min-width: 0;
-}
-.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open,
-.dev-ws-side-body:has(> #gc-spec-side-panel[data-detail="three"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
-  position: static;
-  inset: auto;
-  flex: 1 1 50%;
-  width: auto !important;
-  min-width: 0;
-  max-width: none;
-  border-inline-start: 1px solid var(--app-sheet-line);
-  z-index: auto;
-}
-@media (max-width: 1759px) {
-  #dev-workshop:has(> .dev-ws[data-ws-side-open]) { margin-inline-start: 0; max-width: none; }
-  .dev-ws-side { inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px); }
 }
