@@ -18,6 +18,7 @@ const rows = (over = {}) => ({
   questions: { asked: 6, answered: 2, closed: 0, waiting_of_asked: 4, median_answer_secs: 1800, waiting: 5, oldest_waiting_at: '2026-10-01T00:00:00Z', ...over.questions },
   turns: { runs: 40, failed: 3, builds: 10, builds_failed: 3, ...over.turns },
   chat: { turns: 30, failed: 4, broken: 1, recovered: 2, claims: 1, ...over.chat },
+  cards: over.cards,
 });
 
 test('each figure says when it is past its line', () => {
@@ -35,7 +36,9 @@ test('each figure says when it is past its line', () => {
     questionsWaiting: true, // 4 of 6 still waiting
     turnFailures: true, // 6 of 50
     chatFailures: true, // 4 of 30
+    cardFallbacks: null, // no plan card failed
   });
+  assert.deepEqual(h.cards, { total: 0, repaired: 0, whole: 0, lines: 0, fallback: 0, kinds: {} });
   assert.equal(h.thresholds, health.THRESHOLDS);
 });
 
@@ -46,7 +49,7 @@ test('on the line, or under it, is not past it', () => {
     turns: { runs: 10, failed: 1, builds: 0, builds_failed: 0 },
     chat: { turns: 10, failed: 1 },
   }));
-  assert.deepEqual(h.watch, { mergeRate: false, hoursToProposal: false, questionsWaiting: false, turnFailures: false, chatFailures: false });
+  assert.deepEqual(h.watch, { mergeRate: false, hoursToProposal: false, questionsWaiting: false, turnFailures: false, chatFailures: false, cardFallbacks: null });
 });
 
 test('too little behind a figure is no verdict, so a quiet week does not read as a broken one', () => {
@@ -56,7 +59,7 @@ test('too little behind a figure is no verdict, so a quiet week does not read as
     turns: { runs: 5, failed: 5, builds: 4, builds_failed: 4 },
     chat: { turns: 9, failed: 9 },
   }));
-  assert.deepEqual(h.watch, { mergeRate: null, hoursToProposal: null, questionsWaiting: null, turnFailures: null, chatFailures: null });
+  assert.deepEqual(h.watch, { mergeRate: null, hoursToProposal: null, questionsWaiting: null, turnFailures: null, chatFailures: null, cardFallbacks: null });
   const empty = health.shapeHealth({});
   assert.equal(empty.proposals.mergeRate, null);
   assert.equal(empty.proposals.medianHoursToProposal, null);
@@ -124,6 +127,8 @@ test('the panel says each figure, flags only what is past its line, and lists th
   assert.equal(byKey.turns.value, '6 of 50');
   assert.equal(byKey.chat.value, '1 of 9');
   assert.equal(byKey.chat.note, 'Too few DM answers to judge yet.');
+  assert.equal(byKey.cards.value, '0 of 0');
+  assert.equal(byKey.cards.note, 'Too few plan cards to judge yet.');
   for (const r of Object.values(byKey)) {
     assert.ok(!/—/.test(`${r.label}${r.detail}${r.note}`), r.key);
   }
@@ -133,7 +138,7 @@ test('the panel says each figure, flags only what is past its line, and lists th
   const html = renderToHtml(createElement(RolloutHealth, { health: h, failures }));
   assert.match(html, /id="admin-homeroom-bot-rollout"/);
   assert.match(html, /id="admin-homeroom-bot-rollout-summary">4 figures worth a look</);
-  assert.equal((html.match(/data-rollout="/g) || []).length, 5);
+  assert.equal((html.match(/data-rollout="/g) || []).length, 6);
   assert.match(html, /data-rollout="chat" data-watch="unknown"/);
   assert.match(html, /data-rollout="proposals" data-watch="true"/);
   assert.equal((html.match(/>Worth a look</g) || []).length, 4, 'a badge only where a figure is past its line');
@@ -144,6 +149,24 @@ test('the panel says each figure, flags only what is past its line, and lists th
   assert.match(loading, /Loading…/);
   assert.doesNotMatch(loading, /data-rollout=/);
   assert.match(loading, /No DM answer failed in the last 7 days/);
+});
+
+test('plan cards: how many were fixed, kept their lines, fell back, and which rule broke most', () => {
+  const { healthRows } = loadPanel();
+  const h = health.shapeHealth(rows({
+    cards: { total: 10, repaired: 6, whole: 3, lines_only: 3, fallback: 4, kinds: { summary_long: 7, line_long: 3, line_not_sentence: 1 } },
+  }));
+  assert.deepEqual(h.cards, {
+    total: 10, repaired: 6, whole: 3, lines: 3, fallback: 4,
+    kinds: { summary_long: 7, line_long: 3, line_not_sentence: 1 },
+  });
+  assert.equal(h.watch.cardFallbacks, true, '4 of 10 fell back, more than 1 in 5');
+  const row = healthRows(h).find((r) => r.key === 'cards');
+  assert.equal(row.label, 'Plan cards that fell back');
+  assert.equal(row.value, '4 of 10');
+  assert.equal(row.detail, '6 fixed by a repair turn, 3 kept their numbered lines without a summary, 4 fell back to the older lines. Most often: summary too long (7).');
+  assert.match(row.note, /More than 1 in 5 of its plan cards fell back/);
+  assert.equal(health.shapeHealth(rows({ cards: { total: 4, fallback: 3 } })).watch.cardFallbacks, null, 'too few to judge');
 });
 
 test('the Overview tab shows it under the bot\'s card, and the declared check selects on it', () => {

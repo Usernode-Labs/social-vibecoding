@@ -39,14 +39,45 @@ test('the plan holds every test file of this repository exactly once, at every s
   }
 });
 
-test('the baseline is well formed and knows almost every test file', () => {
+test('the baseline is well formed and every test file has an entry in it', (t) => {
   const raw = JSON.parse(fs.readFileSync(shardPlan.DURATIONS_FILE, 'utf8'));
   assert.equal(raw.version, 1);
   assert.ok(raw.defaultSeconds > 0);
-  const unknown = files.filter((f) => !durations.files.has(f));
-  // New files are planned with the default; refresh the baseline
-  // (npm run test:durations) once many have piled up.
-  assert.ok(unknown.length <= files.length * 0.2, `${unknown.length} of ${files.length} test files are not in the baseline`);
+  const gaps = shardPlan.baselineGaps(files, raw);
+  // Every test file is planned from its own entry, never left to the
+  // default: a change that adds a test file adds its entry, so main stays
+  // complete and a merge cannot tip it over. Add missing entries with:
+  assert.deepEqual(gaps.missing, [],
+    `${gaps.missing.length} of ${files.length} test files have no entry in the baseline; add them with:\n`
+    + `  npm run test:durations -- --add ${gaps.missing.join(',')}`);
+  // Placeholder entries are a balance question, never a failure. A full
+  // refresh (npm run test:durations) replaces them with measured times.
+  if (gaps.advisory) t.diagnostic(gaps.advisory);
+});
+
+test('baselineGaps: a missing entry is reported, placeholders only advise, a complete baseline passes', () => {
+  const list = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js', 'tests/d.test.js', 'tests/e.test.js', 'tests/f.test.js'];
+  const entries = Object.fromEntries(list.map((file) => [file, [1, 1]]));
+  const full = shardPlan.baselineGaps(list, { files: entries });
+  assert.deepEqual(full, { missing: [], unmeasured: [], advisory: null }, 'every file measured: nothing to say');
+
+  const { 'tests/a.test.js': _gone, ...withoutA } = entries;
+  const oneMissing = shardPlan.baselineGaps(list, { files: withoutA });
+  assert.deepEqual(oneMissing, { missing: ['tests/a.test.js'], unmeasured: [], advisory: null });
+
+  const placeholders = shardPlan.baselineGaps(list, { files: entries, unmeasured: ['tests/b.test.js', 'tests/a.test.js'] });
+  assert.deepEqual(placeholders.missing, []);
+  assert.deepEqual(placeholders.unmeasured, ['tests/a.test.js', 'tests/b.test.js']);
+  assert.match(placeholders.advisory, /^2 of 6 test files have placeholder durations/);
+  assert.match(placeholders.advisory, /npm run test:durations/);
+
+  // More than a fifth, not a fifth: 1 of 5 is a pass.
+  const five = list.slice(0, 5);
+  assert.equal(shardPlan.baselineGaps(five, { files: entries, unmeasured: [five[0]] }).advisory, null);
+  assert.match(shardPlan.baselineGaps(five, { files: entries, unmeasured: five.slice(0, 2) }).advisory, /^2 of 5 /);
+
+  // A name for a file that is no longer a test file is ignored.
+  assert.deepEqual(shardPlan.baselineGaps(list, { files: entries, unmeasured: ['tests/gone.test.js'] }).unmeasured, []);
 });
 
 test('verifyPartition refuses a plan that drops, repeats or invents a file', () => {
@@ -102,6 +133,10 @@ test('loadDurations refuses what is not a version 1 baseline', () => {
     assert.throws(() => shardPlan.loadDurations(f), /no defaultSeconds/);
     fs.writeFileSync(f, JSON.stringify({ version: 1, defaultSeconds: 1, files: { 'tests/a.test.js': ['x', 1] } }));
     assert.throws(() => shardPlan.loadDurations(f), /bad durations entry/);
+    fs.writeFileSync(f, JSON.stringify({ version: 1, defaultSeconds: 1, files: {}, unmeasured: 'tests/a.test.js' }));
+    assert.throws(() => shardPlan.loadDurations(f), /unmeasured list that is not an array of paths/);
+    fs.writeFileSync(f, JSON.stringify({ version: 1, defaultSeconds: 1, files: {}, unmeasured: [1] }));
+    assert.throws(() => shardPlan.loadDurations(f), /unmeasured list that is not an array of paths/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -139,6 +174,47 @@ test('a refresh charges a file with its child processes, keeps each process\'s l
   assert.equal(b.version, 1);
   assert.deepEqual(b.overrides, { 'tests/a.test.js': { cores: 5, why: 'x' } });
   assert.equal(b.defaultSeconds, 4, 'the median');
+  assert.equal('unmeasured' in b, false, 'a full run measures every entry, so writes no placeholder list');
+});
+
+test('--add writes a default entry for a new file, lists it as unmeasured, and leaves known entries alone', () => {
+  const td = require('../scripts/test-durations');
+  const raw = {
+    version: 1,
+    defaultSeconds: 0.4,
+    files: { 'tests/b.test.js': [2, 1], 'tests/a.test.js': [1, 1] },
+  };
+  const { raw: next, added } = td.addEntries(raw, ['tests/c.test.js', 'tests/a.test.js', 'tests/c.test.js']);
+  assert.deepEqual(added, ['tests/c.test.js']);
+  assert.deepEqual(next.files, {
+    'tests/a.test.js': [1, 1], 'tests/b.test.js': [2, 1], 'tests/c.test.js': [0.4, 1],
+  }, 'the known entry is untouched, the new one gets the default, keys are sorted');
+  assert.deepEqual(next.unmeasured, ['tests/c.test.js']);
+  assert.equal(raw.files['tests/c.test.js'], undefined, 'pure: the input is not changed');
+});
+
+test('writeBaseline keeps the one-line-per-entry layout and parses back through loadDurations', () => {
+  const td = require('../scripts/test-durations');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'durations-'));
+  try {
+    const f = path.join(dir, 'd.json');
+    td.writeBaseline({
+      version: 1, defaultSeconds: 0.5,
+      files: { 'tests/b.test.js': [2, 1], 'tests/a.test.js': [1, 1] },
+      unmeasured: ['tests/b.test.js', 'tests/a.test.js', 'tests/b.test.js'],
+    }, f);
+    const text = fs.readFileSync(f, 'utf8');
+    assert.match(text, /"files":\{\n"tests\/b\.test\.js":\[2,1\],\n"tests\/a\.test\.js":\[1,1\]\}/, 'one entry per line');
+    assert.deepEqual(JSON.parse(text).unmeasured, ['tests/a.test.js', 'tests/b.test.js'], 'sorted and deduplicated');
+    const loaded = shardPlan.loadDurations(f);
+    assert.deepEqual(loaded.files.get('tests/a.test.js'), { seconds: 1, cores: 1 });
+
+    // A full refresh writes no placeholder list.
+    td.writeBaseline({ version: 1, defaultSeconds: 0.5, files: { 'tests/a.test.js': [1, 1] } }, f);
+    assert.equal('unmeasured' in JSON.parse(fs.readFileSync(f, 'utf8')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('parseShard reads k/n and refuses anything else', () => {
