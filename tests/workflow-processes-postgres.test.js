@@ -232,9 +232,14 @@ test('workflow machines in a process of their own, and through its crash', { tim
   // the merges waiting for it hear it (platform.ts releaseServing).
   const releaseBoots = async (sha) => {
     const was = process.env.GIT_SHA;
+    // #6233: off Kubernetes one server is the whole rollout, so its boot is
+    // Live. The runner may itself be a Pod, so say it rather than assume it.
+    const wasKube = process.env.KUBERNETES_SERVICE_HOST;
+    delete process.env.KUBERNETES_SERVICE_HOST;
     process.env.GIT_SHA = sha;
     try { await platform.releaseServing(pool); } finally {
       if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
+      if (wasKube === undefined) delete process.env.KUBERNETES_SERVICE_HOST; else process.env.KUBERNETES_SERVICE_HOST = wasKube;
     }
   };
   async function mergeGoesLive({ crashAt } = {}) {

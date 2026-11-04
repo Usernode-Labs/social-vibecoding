@@ -2947,6 +2947,10 @@
     "text": "A change",
     "description": "What one row of the list is, in its grey line, for a change that has no number yet. A change is a proposed edit to the project that people vote on."
   },
+  "change.reload": {
+    "text": "Reload",
+    "description": "Button beside a live change's status pill when the page open in this tab runs a version of Homeroom from before the change. Pressing it reloads the page onto the running version."
+  },
   "topic.thread.item.close": {
     "text": "Vote to close",
     "description": "What one row of the list is, in its grey line: a vote on closing the request without building it."

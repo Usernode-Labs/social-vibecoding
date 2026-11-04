@@ -317,7 +317,13 @@ export async function releaseServing(pool: Pool): Promise<void> {
   const warn = (what: string) => (err: Error) =>
     (log ?? legacy('services/logger')).warn('workflow', what, { message: err.message });
   await recordBooted(pool).catch(warn('Could not record the booted build'));
-  if (runtime) await releaseBooted(pool).catch(warn('Could not report the running release'));
+  // #6233: on Kubernetes a release replaces its servers one at a time, so
+  // one process booting says nothing about production carrying the change
+  // everywhere. The platform-rollout job marks merges Live once the web
+  // Deployment reports the rollout finished. Off Kubernetes (one server,
+  // local work) this boot is the whole rollout.
+  const onKubernetes = !!process.env.KUBERNETES_SERVICE_HOST;
+  if (runtime && !onKubernetes) await releaseBooted(pool).catch(warn('Could not report the running release'));
 }
 
 // The build this process runs (release/boot.ts): GIT_SHA, or, on a build
@@ -1562,7 +1568,7 @@ export async function parentMerged(p: { sessionId: number; appId: number; parent
 // of it still waiting to go live hears it, and checks whether that build
 // contains it. (A child app's deploys are app-delivery's, which tells the
 // merges waiting on it.)
-async function productionDeployed(appId: number, sha: string): Promise<void> {
+export async function productionDeployed(appId: number, sha: string): Promise<void> {
   if (!runtime || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
   const { rows } = await kernelPool!.query(
     `SELECT key FROM wf_instances

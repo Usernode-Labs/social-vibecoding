@@ -1729,29 +1729,34 @@ async function annotateDeploymentState(config, pool, app, rows) {
     };
   }
 
-  const { rows: boundaryRows } = await pool.query(
-    `SELECT live.id, live.pr_number, live.pr_title, live.merge_commit_sha,
-            live.merged_at, live.created_at,
-            (SELECT COUNT(*)::int
-               FROM chat_sessions newer
-              WHERE newer.app_id = live.app_id AND newer.status = 'merged'
-                AND (COALESCE(newer.merged_at, newer.created_at), newer.id)
-                    > (COALESCE(live.merged_at, live.created_at), live.id)) AS pending_count
-       FROM chat_sessions live
-      WHERE live.app_id = $1 AND live.status = 'merged'
-        AND LOWER(live.merge_commit_sha) = LOWER($2)
-      ORDER BY COALESCE(live.merged_at, live.created_at) DESC, live.id DESC
-      LIMIT 1`,
-    [app.id, runningSha]
-  );
-  const boundary = boundaryRows[0] || null;
-  if (!boundary) {
-    for (const row of prRows) row.deployment_state = 'unknown';
-    return {
-      state: 'unknown', runningSha, liveSessionId: null,
-      livePrNumber: null, pendingCount: null,
-    };
+  // #6233: production carries a change once the WHOLE rollout finished, not
+  // when the first server booted the build. `live_at` is that finished time
+  // (the platform-rollout job stamps it); `live_rolled_back_at` says a
+  // complete rollout served a build without the change, so it went back to
+  // Going live. main_sha moves before the rollout (the migration Job writes
+  // it), so it no longer decides this.
+  //
+  // The board's rows select live_rolled_back_at; a single proposal row comes
+  // from another read, so its mark is read here when it is absent.
+  if (prRows.some((row) => row.live_rolled_back_at === undefined)) {
+    const ids = prRows.map((row) => Number(row.id)).filter((n) => Number.isInteger(n) && n > 0);
+    if (ids.length) {
+      const { rows: marks } = await pool.query(
+        'SELECT id, live_rolled_back_at FROM chat_sessions WHERE id = ANY($1::int[])', [ids]);
+      const byId = new Map(marks.map((m) => [Number(m.id), m.live_rolled_back_at]));
+      for (const row of prRows) {
+        if (row.live_rolled_back_at === undefined) row.live_rolled_back_at = byId.get(Number(row.id)) ?? null;
+      }
+    }
   }
+
+  // Merges from before live tracking began are history: nothing recorded
+  // their build, and they have served for a long time. Only rows from the
+  // tracking start are waiting for a rollout.
+  const setting = (await pool.query(
+    `SELECT value AS tracked_since FROM platform_settings WHERE key = 'platform_live_tracked_since'`)).rows[0];
+  const trackedSince = setting?.tracked_since ? Date.parse(setting.tracked_since) : NaN;
+  const tracked = (row) => !Number.isFinite(trackedSince) || deploymentOrder(row).at >= trackedSince;
 
   const releaseWatch = require('../services/release-watch');
   let stall = releaseWatch.describe(app, runningSha);
@@ -1776,8 +1781,14 @@ async function annotateDeploymentState(config, pool, app, rows) {
     const at = deploymentOrder(row).at;
     return Number.isFinite(stalledAt) && at > 0 && at <= stalledAt;
   };
+  let newestLive = null;
   for (const row of prRows) {
-    if (!isAfterDeploymentBoundary(row, boundary)) {
+    if (row.live_at) {
+      row.deployment_state = 'deployed';
+      if (!newestLive || isAfterDeploymentBoundary(row, newestLive)) newestLive = row;
+    } else if (row.live_rolled_back_at) {
+      row.deployment_state = 'rolled_back';
+    } else if (!tracked(row)) {
       row.deployment_state = 'deployed';
     } else if ((stalledSha && normalizedSha(row.merge_commit_sha) === stalledSha) || heldBack(row)) {
       row.deployment_state = 'stalled';
@@ -1793,7 +1804,8 @@ async function annotateDeploymentState(config, pool, app, rows) {
 
   // When each change still going live does: the next release, worded by
   // the board as "Merged; goes live in the next release (about 8 minutes)"
-  // (services/release-watch.js). The newest one's is the column's.
+  // (services/release-watch.js). The newest one's is the column's. A
+  // rolled-back change says that instead (releasesFor leaves it out).
   const deploying = prRows.filter((row) => row.deployment_state === 'deploying');
   let newest = null;
   if (deploying.length) {
@@ -1806,12 +1818,21 @@ async function annotateDeploymentState(config, pool, app, rows) {
     }
   }
 
-  const pendingCount = Math.max(0, Number(boundary.pending_count) || 0);
+  // The column's count is the whole history's, not this page's: a merge of
+  // the platform's own app still waits for its rollout however far back its
+  // row is.
+  const { rows: [{ pending_count }] } = await pool.query(
+    `SELECT COUNT(*)::int AS pending_count
+       FROM chat_sessions
+      WHERE app_id = $1 AND status = 'merged' AND live_at IS NULL AND live_rolled_back_at IS NULL
+        AND ($2::timestamptz IS NULL OR COALESCE(merged_at, created_at) >= $2::timestamptz)`,
+    [app.id, Number.isFinite(trackedSince) ? new Date(trackedSince).toISOString() : null]);
+  const pendingCount = Math.max(0, Number(pending_count) || 0);
   return {
     state: pendingCount > 0 ? (stall.stalled ? 'stalled' : 'deploying') : 'deployed',
     runningSha,
-    liveSessionId: Number(boundary.id) || null,
-    livePrNumber: Number(boundary.pr_number) || null,
+    liveSessionId: newestLive ? Number(newestLive.id) || null : null,
+    livePrNumber: newestLive ? Number(newestLive.pr_number) || null : null,
     pendingCount,
     ...(stall.stalled ? { stall } : {}),
     ...(pendingCount > 0 && !stall.stalled && newest ? { release: newest.release } : {}),
@@ -2578,9 +2599,11 @@ function mergedRowSelect() {
            -- merged before the column existed — consumers must keep the
            -- created_at fallback forever.
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
-           -- When production first ran it; NULL while a merge is still going
-           -- live (the merge-followups workflow machine), so the card says so.
-           cs.live_at,
+           -- When the whole rollout finished carrying it; NULL while a merge
+           -- is still going live (the merge-followups workflow machine), so
+           -- the card says so. #6233: live_rolled_back_at says a later
+           -- complete rollout no longer serves it ("Release rolled back").
+           cs.live_at, cs.live_rolled_back_at,
            COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
            -- A change that went live inside another one
@@ -5266,7 +5289,7 @@ function voteRoutes(config) {
       // A change stuck behind a red release has no estimate: its page says
       // what blocked it instead (release_block).
       if (proposal.status === 'merged' && proposal.live_at === null && !proposal.release
-          && proposal.deployment_state !== 'stalled') {
+          && proposal.deployment_state !== 'stalled' && proposal.deployment_state !== 'rolled_back') {
         const releaseWatch = require('../services/release-watch');
         if (IS_STAGING && req.query.demo === '1' && Number(proposal.id) === DEMO_GOING_LIVE_ID) {
           proposal = { ...proposal, release: releaseWatch.demoRelease() };

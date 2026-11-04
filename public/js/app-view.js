@@ -7653,6 +7653,10 @@ const AppView = {
       // Where the rollout is, in the pill's own states.
       const LIVE = {
         deployed: 'changes:page.votes.note.live', merged: 'changes:page.votes.note.live', deploying: 'changes:page.votes.note.goingLive', merging: 'changes:page.votes.note.goingLive',
+        // #6233: Live, but this tab is older than the build that carries it;
+        // or a later release went back to a build without it.
+        deployed_reload: 'changes:page.votes.note.liveReload', merged_reload: 'changes:page.votes.note.liveReload',
+        rolled_back: 'changes:page.votes.note.rolledBack',
         delivery_pending: 'changes:page.votes.note.goingLive', deployment_stalled: 'changes:page.votes.note.stuck', delivery_failed: 'changes:page.votes.note.failed',
       };
       // A merge of Homeroom itself says when its release comes instead:
@@ -11595,7 +11599,11 @@ const AppView = {
       || (card.actionPreview && card.actionPreview.state === 'live')));
     const settled = (pill) => {
       if (!pill) return;
-      if (pill.key === 'deployed' || pill.key === 'merged') { tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.live'), tone: 'ok' }); return; }
+      // #6233: the _reload keys are the same settled state, in an older tab.
+      if (pill.key === 'deployed' || pill.key === 'merged'
+          || pill.key === 'deployed_reload' || pill.key === 'merged_reload') {
+        tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.live'), tone: 'ok' }); return;
+      }
       // A merge of Homeroom itself says when its release comes, on hover.
       const release = pill.key === 'deploying' ? AppView._releaseSentence(it) : null;
       tags.push({
@@ -24920,6 +24928,23 @@ const AppView = {
     return PlatformI18n.t('changes:badge.pill.thresholdWas', { now, was });
   },
 
+  // #6233: is this change Live in a build newer than the one this tab
+  // loaded? Only the platform's own app has a merge order to compare with,
+  // and the tab-build store (frontend/src/lib/tab-build.ts) holds it once
+  // /api/version answered with ?have=. Unknown is never "lacking".
+  _tabLacksChange(p) {
+    try {
+      const bridge = window.UsernodeReact && window.UsernodeReact.tabBuild;
+      if (!bridge || typeof bridge.tabLacks !== 'function' || !p) return false;
+      return !!bridge.tabLacks({
+        liveAt: p.live_at || null,
+        mergedAt: p.merged_at || p.created_at || null,
+        id: p.id,
+        selfHosted: !!(AppView.appData && AppView.appData.self_hosted),
+      });
+    } catch { return false; }
+  },
+
   statusPillState(item, opts) {
     // No row, no pill. The guard used to sit in `statusPillHtml`, which is
     // retired with the rest of the card markup — leaving it out here would
@@ -24966,16 +24991,31 @@ const AppView = {
     // tones. The card's edge follows the tone (edgeFor), so a live card's
     // spine is green again too.
     if (p.status === 'merged') {
+      // #6233: a Live change this tab's build is older than says so, with a
+      // Reload on its line, rather than a bare Live the reader cannot see.
+      const tabBehind = AppView._tabLacksChange(p);
+      const livePill = (key) => (tabBehind
+        ? { key: `${key}_reload`, label: PlatformI18n.t('changes:badge.pill.liveReload'),
+          title: PlatformI18n.t('changes:badge.pill.liveReloadTitle') }
+        : { key, label: PlatformI18n.t('changes:badge.pill.live'), title: PlatformI18n.t('changes:badge.pill.liveTitle') });
       if (p.deployment_state === 'deployed') {
-        return { ...base, tier: 0, key: 'deployed', label: PlatformI18n.t('changes:badge.pill.live'), tone: 'ok', lock: false, advisory: 0,
-          title: PlatformI18n.t('changes:badge.pill.liveTitle') };
+        const live = livePill('deployed');
+        return { ...base, tier: 0, key: live.key, label: live.label, tone: 'ok', lock: false, advisory: 0, title: live.title };
+      }
+      // #6233: a later complete rollout went back to a build without it.
+      if (p.deployment_state === 'rolled_back') {
+        return { ...base, tier: 0, key: 'rolled_back', label: PlatformI18n.t('changes:badge.pill.rolledBack'), tone: 'neutral', lock: false, advisory: 0,
+          title: PlatformI18n.t('changes:badge.pill.rolledBackTitle') };
       }
       // A merge of Homeroom itself waits for the platform's next release:
       // the pill's title says when (_releaseSentence), where a child app's
       // says only that the app is still on the version before.
       const releaseWords = AppView._releaseSentence(p);
       if (p.deployment_state === 'deploying') {
-        return { ...base, tier: 0, key: 'deploying', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
+        // #6233: the step, when the release outlook knows it ("rolling out").
+        const goingLive = p.release && p.release.state === 'rolling'
+          ? PlatformI18n.t('changes:badge.pill.goingLiveRolling') : PlatformI18n.t('changes:badge.pill.goingLive');
+        return { ...base, tier: 0, key: 'deploying', label: goingLive, tone: 'progress', spinner: true, lock: false, advisory: 0,
           title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
       if (p.deployment_state === 'stalled') {
@@ -25002,10 +25042,13 @@ const AppView = {
       // it does (the merge-followups workflow machine). A row without the
       // field reads as it always did.
       if (p.live_at === null) {
-        return { ...base, tier: 0, key: 'deploying', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
+        const goingLive = p.release && p.release.state === 'rolling'
+          ? PlatformI18n.t('changes:badge.pill.goingLiveRolling') : PlatformI18n.t('changes:badge.pill.goingLive');
+        return { ...base, tier: 0, key: 'deploying', label: goingLive, tone: 'progress', spinner: true, lock: false, advisory: 0,
           title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
-      return { ...base, tier: 0, key: 'merged', label: PlatformI18n.t('changes:badge.pill.live'), tone: 'ok', lock: false, advisory: 0 };
+      const live = livePill('merged');
+      return { ...base, tier: 0, key: live.key, label: live.label, tone: 'ok', lock: false, advisory: 0, title: live.title };
     }
     // 1 — in flight.
     if (p.status === 'merging') {

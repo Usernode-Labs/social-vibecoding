@@ -727,9 +727,12 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
 
   await t.test('a production build stamps the merges into Homeroom it carries, once', async () => {
     const release = require('../src/services/platform-release');
-    assert.equal(await release.recordRunning(pool, { sha: sha('e'), env: 'production' }), 0, 'a build that is no merge\'s stamps nothing');
-    assert.equal(await release.recordRunning(pool, { sha: sha('c'), env: 'production' }), 2);
-    assert.equal(await release.recordRunning(pool, { sha: sha('c'), env: 'production' }), 0, 'a restart or a second process changes nothing');
+    // Off Kubernetes one process is the whole rollout, so its boot is Live
+    // (#6233). On Kubernetes a boot only records platform_first_served_at,
+    // and the platform-rollout job writes the finished time.
+    assert.equal(await release.recordRunning(pool, { sha: sha('e'), env: 'production', onKubernetes: false }), 0, 'a build that is no merge\'s stamps nothing');
+    assert.equal(await release.recordRunning(pool, { sha: sha('c'), env: 'production', onKubernetes: false }), 2);
+    assert.equal(await release.recordRunning(pool, { sha: sha('c'), env: 'production', onKubernetes: false }), 0, 'a restart or a second process changes nothing');
     const { rows } = await pool.query('SELECT id, platform_live_at IS NOT NULL AS live FROM chat_sessions WHERE app_id = $1 ORDER BY id', [platform.id]);
     assert.deepEqual(rows.map((r) => [r.id, r.live]), [[before, false], [first, true], [second, true], [pending, false]],
       'not a merge from before records began, nor one the build does not carry');

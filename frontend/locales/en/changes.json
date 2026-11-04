@@ -5603,9 +5603,29 @@
     "text": "This change is live in the app.",
     "description": "Tooltip of the status pill on a change's card when it reads \"✓ Live\"."
   },
+  "badge.pill.liveReload": {
+    "text": "✓ Live · reload to get it",
+    "description": "Label of the status pill on a change's card when the change is live in the app but the page open in this tab still runs the version before it. A Reload button sits beside it. Keep the check mark and the middle dot."
+  },
+  "badge.pill.liveReloadTitle": {
+    "text": "This change is live. This tab opened before it, so reload to get it here.",
+    "description": "Tooltip of the status pill on a change's card when it reads \"✓ Live · reload to get it\"."
+  },
+  "badge.pill.rolledBack": {
+    "text": "Release rolled back",
+    "description": "Label of the status pill on a change's card when the change was live, and a later release went back to a build without it. It says Live again when a release carries it again."
+  },
+  "badge.pill.rolledBackTitle": {
+    "text": "A later release went back to a version without this change. It goes live again with a release that carries it.",
+    "description": "Tooltip of the status pill on a change's card when it reads \"Release rolled back\"."
+  },
   "badge.pill.goingLive": {
     "text": "Going live…",
     "description": "Label of the status pill on a change's card (the rounded bar that shows the vote): the change was approved and is on its way into the running app. Keep the ellipsis."
+  },
+  "badge.pill.goingLiveRolling": {
+    "text": "Going live… rolling out",
+    "description": "Label of the status pill on a change's card while the release that carries it is rolling out to the platform's servers. It reads Live only once every server runs it. Keep the ellipsis."
   },
   "badge.pill.goingLiveTitle": {
     "text": "This change was approved. The app is still running the version before it.",
@@ -8662,6 +8682,14 @@
   "page.votes.note.goingLive": {
     "text": "It’s going live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while the approved change is being applied to the running app."
+  },
+  "page.votes.note.liveReload": {
+    "text": "It’s live. Reload to get it in this tab.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page when the change is live in the app but the page open in this tab runs the version before it."
+  },
+  "page.votes.note.rolledBack": {
+    "text": "A later release went back to a version without it. It goes live again with a release that carries it.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page when a release rolled back past this change."
   },
   "page.votes.note.stuck": {
     "text": "It’s stuck going live.",

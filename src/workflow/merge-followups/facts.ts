@@ -51,6 +51,10 @@ export interface App {
   // main_sha, which the migration Job writes from the incoming release
   // before the rollout).
   booted: { sha: string; at: string }[];
+  // #6233: on Kubernetes one process booting is one server of a rollout,
+  // not production carrying the change. Live comes from the platform-rollout
+  // job's Deployed once the whole rollout finished.
+  onKubernetes: boolean;
 }
 
 export interface Facts { session: Session | null; app: App | null }
@@ -205,6 +209,7 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
       booted: (Array.isArray(a.booted_shas) ? a.booted_shas : [])
         .filter((b: any) => /^[0-9a-f]{40}$/i.test(String(b?.sha || '')) && !Number.isNaN(Date.parse(b?.at)))
         .map((b: any) => ({ sha: String(b.sha).toLowerCase(), at: new Date(b.at).toISOString() })),
+      onKubernetes: !!process.env.KUBERNETES_SERVICE_HOST,
     } : null,
   };
 }

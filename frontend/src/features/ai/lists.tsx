@@ -71,6 +71,7 @@ import {
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
+import { reload as reloadTab, tabLacks, useTabBuild } from '../../lib/tab-build';
 import { rowKey } from './column';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
@@ -541,11 +542,19 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     ...movingShown.map(waitingLine),
   ];
   const stillLines: Line[] = stillShown.map(waitingLine);
-  const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => ({
-    ...threadLine(() => <CheckIcon className={G} />)(th),
-    right: dayOf(th.at, t),
-    tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
-  }));
+  const tab = useTabBuild();
+  const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => {
+    // #6233: Live, but this tab runs the build before it: the row asks for
+    // the reload rather than a day the reader still cannot see.
+    const lacks = tabLacks({ liveAt: th.at, mergedAt: th.mergedAt, id: th.changeId, appSlug: th.app?.slug }, tab);
+    return {
+      ...threadLine(() => <CheckIcon className={G} />)(th),
+      right: lacks ? t('messages:ai.short.reload') : dayOf(th.at, t),
+      owe: lacks,
+      tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
+    };
+  });
+  const liveBehind = liveLines.some((line) => line.owe);
   const owedShown = picked.length ? needLines.filter((line) => line.owe).length : owed;
   // One project picked: its chip names it, so its name is not said again over every section.
   const heads = picked.length !== 1;
@@ -642,6 +651,21 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
       {liveLines.length ? (
         <div className={`${PLANE} pb-2`} data-ai-sheet="live">
           <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={GROUP_FIRST.live} heads={heads} />
+          {liveBehind ? (
+            // #6233: one Reload under the list, for every row this tab is
+            // older than.
+            <div className="flex items-center gap-2 border-t border-zinc-900/[0.07] px-4 pt-2 pb-1 dark:border-white/[0.08]" data-ai-older-tab="">
+              <span className="min-w-0 flex-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.live.olderTab')}</span>
+              <button
+                type="button"
+                className="shrink-0 text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                onClick={() => reloadTab()}
+                data-ai-older-tab-reload=""
+              >
+                {t('messages:ai.short.reload')}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
