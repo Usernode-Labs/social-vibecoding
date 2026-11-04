@@ -241,6 +241,7 @@ const NOT_SENDERS = new Map([
   ['src/services/agent-models.js', 'reads the model catalog (GET /models)'],
   ['src/services/agent-turn.js', 'hands the base to the worker, whose listeners send'],
   ['src/services/bot-review.js', 'sends through openrouter-mayor.js'],
+  ['src/services/homeroom-bot-already-done.js', 'sends through openrouter.js'],
   ['src/services/homeroom-bot-mayor.js', 'sends through openrouter.js and openrouter-mayor.js'],
   ['src/services/llm.js', 'sends through openrouter.js'],
   ['src/services/model-costs.js', 'names the catalog URL in a comment'],

@@ -145,6 +145,21 @@ export interface BotOfferView {
   status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
   forMe: boolean;
   actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+  /** #6305: 'file_many' when one request is offered on several projects. */
+  kind?: string;
+  rows?: BotOfferRow[] | null;
+}
+
+/** #6305: one project's row on a many-project offer in a thread. */
+export interface BotOfferRow {
+  named: string;
+  match: 'exact' | 'guess' | 'none';
+  slug: string | null;
+  name: string;
+  choices: { slug: string; name: string }[];
+  done: string | null;
+  disabled: 'not_member' | null;
+  ticked: boolean;
 }
 
 /** 3 Nov 2026: suggested replies under Homeroom bot's message in a thread. */

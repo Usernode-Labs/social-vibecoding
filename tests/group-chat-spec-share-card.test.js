@@ -28,7 +28,7 @@ const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-const { renderComponent } = require('./lib/render-tsx');
+const { renderComponent, loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
 
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
 
@@ -220,6 +220,41 @@ test('the topic frame carries the detail slot, as the general chat pane does', (
   }
   assert.match(topic, /^<div class="flex flex-col h-full min-h-0 dc-lift dc-lift-strip"><div class="gc-tab-body flex-1 flex min-h-0"><div id="dev-topic-thread" class="flex-1 min-w-0 min-h-0">/);
   assert.match(chat, /<div class="gc-tab-body flex-1 flex min-h-0">/);
+});
+
+// #6317: the slot opened only for a plan (`kind === 'plan'`), so a change's
+// before and after — which opens a `shots` entry, from the thumbnails and
+// from Expand (thread-changes.tsx ShotsPair) — was rendered but stayed
+// `display: none`. The slot now opens through `slotOpens`, the rule
+// tests/ai-detail.test.js pins; this is that rule seen from the component
+// itself, so a shots entry that opens in the store is drawn open by the
+// markup app.css lays out.
+test('the detail slot opens for a shots entry, not only a plan (#6317)', () => {
+  const SLOT = 'frontend/src/features/detail/detail-slot.tsx';
+
+  // Rendered through the real component: the store is stubbed to hold a
+  // shots entry (its server snapshot is closed, so a real one renders shut).
+  const entry = {
+    kind: 'shots',
+    ref: { changeId: 2151 },
+    version: null,
+    payload: { html: '<p>Before and after</p>' },
+    from: null,
+    seq: 1,
+  };
+  const detail = {
+    useDetailLayout: () => 'halves',
+    useDetailState: () => ({ entry, title: '', subtitle: null, canCopy: false, body: null, raw: null }),
+    closeDetail: () => {},
+  };
+  const { DetailSlot } = loadTsx(SLOT, { stubs: { '../ai/detail': detail } });
+  const html = renderToHtml(createElement(DetailSlot, { surface: 'topic', resizerLabel: 'Resize' }));
+
+  assert.match(html, /class="gc-spec-side-panel gc-spec-side-panel-open"/,
+    'the host carries the class app.css opens it with');
+  assert.match(html, /data-detail-kind="shots"/, 'and says what it shows');
+  assert.match(html, /dev-thread-shots-viewer/, 'the change\'s viewer is in it');
+  assert.match(html, /Before and after/, 'with the html the change carried');
 });
 
 // #4875: the Workshop's side panel (workshop/side-panel.tsx) shows the same

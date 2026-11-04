@@ -119,22 +119,26 @@ test('a figure off its target says so; on target it is grey; nothing to count sa
   assert.deepEqual([figures.present('infra.restarts', { n: 0, apps: 0 }).value, figures.present('infra.restarts', { n: 0, apps: 0 }).sub], ['None', '']);
   const limits = figures.present('infra.limits-filled', { n: 0 });
   assert.deepEqual([limits.state, limits.value, limits.sub], ['ok', 'None', 'across the platform']);
+  // #6273: a count whose target is none says so in words, and only off it.
   const full = figures.present('infra.limits-filled', { n: 2 });
-  assert.deepEqual([full.state, full.value, full.sub], ['warn', '2 times', 'across the platform · target none']);
+  assert.deepEqual([full.state, full.value, full.sub], ['warn', '2 times', 'across the platform · none expected']);
   // A refusal is counted when it happens; the alert above only samples.
   const away = figures.present('infra.turned-away', { n: 3 });
-  assert.deepEqual([away.state, away.value, away.sub], ['warn', '3 times', 'across the platform · target none']);
+  assert.deepEqual([away.state, away.value, away.sub], ['warn', '3 times', 'across the platform · none expected']);
   assert.deepEqual(figures.present('infra.turned-away', { n: 0 }).value, 'None');
+  assert.doesNotMatch(JSON.stringify(figures.present('infra.turned-away', { n: 0 })), /target none|none expected/, 'on target, the line names no target');
   // Pauses of a project's merges: how many and how long in all, per side.
   const paused = figures.present('pipeline.main-paused', { homeroom: { n: 2, secs: 9000 }, others: { n: 0, secs: 0 } });
-  assert.deepEqual([paused.state, paused.value, paused.sub], ['warn', 'Homeroom 2 times · Other projects None', 'target none']);
+  assert.deepEqual([paused.state, paused.value, paused.sub], ['warn', 'Homeroom 2 times · Other projects None', 'none expected']);
+  const unpaused = figures.present('pipeline.main-paused', { homeroom: { n: 0, secs: 0 }, others: { n: 0, secs: 0 } });
+  assert.deepEqual([unpaused.state, unpaused.sub], ['ok', ''], 'a split count with both sides at None has no target line');
   assert.deepEqual(sidesOf(paused), [['homeroom', 'warn', '2 times', '2 h 30 min in all'], ['others', 'ok', 'None', '']]);
   // Reds the same code passed when it ran again: a share of every red, per side.
   const reruns = figures.present('pipeline.reds-rerun', { homeroom: { hits: 6, total: 41 }, others: { hits: 0, total: 0 } });
   assert.deepEqual(sidesOf(reruns), [['homeroom', 'warn', '15%', '6 of 41 reds'], ['others', 'empty', 'None yet', '']]);
   // Homeroom's own releases and processes.
   const stalls = figures.present('infra.homeroom-stalls', { n: 1 });
-  assert.deepEqual([stalls.state, stalls.value, stalls.sub], ['warn', '1 time', 'across the platform · target none']);
+  assert.deepEqual([stalls.state, stalls.value, stalls.sub], ['warn', '1 time', 'across the platform · none expected']);
   assert.deepEqual(figures.present('infra.homeroom-crashes', { n: 0 }).value, 'None');
   const none = figures.present('infra.apps-up', { hits: 0, total: 0 });
   assert.deepEqual([none.state, none.value, none.sub], ['empty', 'None yet', 'No opens yet'], 'nothing to count is never a 0%');
@@ -351,12 +355,50 @@ test('the strip: its window, a cell per figure with what it means, off target in
   assert.match(html, />Last 7 days</);
   assert.doesNotMatch(html, /<select|data-topic-figures-scope/, 'no choice of projects: the split figures show both');
   assert.deepEqual([...html.matchAll(/data-topic-figure="([^"]+)"/g)].map((m) => m[1]), TOPIC_IDS.infra);
-  assert.match(html, /data-topic-figure="infra.limits-filled" data-fig-state="warn"[\s\S]*?class="dev-ws-fig-sub dev-ws-fig-sub-warn"><svg class="dev-ws-fig-warn"/);
+  // #6273: a figure off its target is read at a glance: its value in the
+  // attention ink with the glyph before it (as a split side is), its line
+  // in the same ink; the glyph is not drawn twice.
+  const limits = html.slice(html.indexOf('data-topic-figure="infra.limits-filled"'), html.indexOf('data-topic-figure="infra.turned-away"'));
+  assert.match(limits, /^data-topic-figure="infra.limits-filled" data-fig-state="warn"/);
+  assert.match(limits, /class="dev-ws-fig-value dev-ws-fig-value-warn"><svg class="dev-ws-fig-warn"[^>]*>[\s\S]*?<\/svg>2 times</);
+  assert.match(limits, /class="dev-ws-fig-sub dev-ws-fig-sub-warn">across the platform · none expected</);
+  assert.equal([...limits.matchAll(/class="dev-ws-fig-warn"/g)].length, 1, 'one glyph per figure');
   assert.match(html, /data-topic-figure="infra.apps-up" data-fig-state="ok"[\s\S]*?class="dev-ws-fig-value">99\.2%</);
+  assert.doesNotMatch(html, /dev-ws-fig-value dev-ws-fig-value-warn"><svg[^>]*>[\s\S]*?<\/svg>99\.2%/, 'on target stays grey, with no glyph');
   assert.match(html, /aria-label="What Merge → live means"/);
   // What each figure means is in the document, hidden until its ⓘ opens it.
   assert.match(html, /<span id="[^"]+" hidden="">How long from a change merging to it running in production\./);
   assert.match(html, /data-topic-figures-demo="">Staging demo figures, not real numbers\.</);
+});
+
+test('the tiles wrap into rows of readable tiles, and a value never breaks mid-word (#6273)', () => {
+  const css = read('public/css/app.css');
+  const rule = (sel) => {
+    const m = css.match(new RegExp(`^${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`, 'm'));
+    assert.ok(m, `rule for ${sel}`);
+    return m[1];
+  };
+  // The card is a grid of as many tiles at least 170px wide as fit a row,
+  // not one row of as many columns as there are figures.
+  const tiles = rule('.dev-ws-figs-tiles');
+  assert.match(tiles, /grid-template-columns: repeat\(auto-fill, minmax\(170px, 1fr\)\);/);
+  assert.doesNotMatch(tiles, /grid-auto-flow: column/);
+  // The room a short last row leaves is the plane colour; each tile draws
+  // the hairline above and before it.
+  assert.match(tiles, /gap: 0;[\s\S]*background: var\(--dc-sheet-solid\);/);
+  assert.match(rule('.dev-ws-figs-tiles > .dev-ws-fig'), /box-shadow: -1px -1px 0 0 var\(--app-sheet-line\);/);
+  // A value wraps at a space or not at all: "7 times", never "7 tim / es".
+  const value = rule('.dev-ws-fig-value');
+  assert.match(value, /overflow-wrap: normal; word-break: keep-all;/);
+  assert.doesNotMatch(value, /overflow-wrap: anywhere/);
+  // Off target, the value is in the attention ink.
+  assert.match(rule('.dev-ws-fig-value-warn'), /color: var\(--state-attention\);/);
+  assert.match(rule('.dev-ws-fig-sub-warn'), /color: var\(--state-attention\);/);
+  // On a phone the tiles still sit two by two, the odd last one across both.
+  assert.match(css, /@container \(max-width: 560px\) \{\s*\.dev-ws-figs-tiles \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}\s*\.dev-ws-figs-tiles > \.dev-ws-fig:last-child:nth-child\(odd\) \{ grid-column: 1 \/ -1; \}/);
+  // The strip's markup the declared check and the tests above select on is unchanged.
+  const html = strip('infra');
+  assert.match(html, /<div class="dev-ws-figs-card dev-ws-figs-tiles" data-topic-figures-layout="tiles" data-fig-count="11">/);
 });
 
 test('a split cell: Homeroom over Other projects, the side off target marked, the target line plain', () => {

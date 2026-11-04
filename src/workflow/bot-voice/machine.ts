@@ -91,7 +91,8 @@ const EVENTS = {
   OfferTapped: (p: any) => {
     const choice = p?.choice === 'yes' ? 'yes' : p?.choice === 'no' ? 'no' : null;
     if (!choice) throw new Error('choice must be yes or no');
-    return { ...where(p), offerId: int(p?.offerId, 'offerId'), userId: int(p?.userId, 'userId'), choice };
+    const rows = Array.isArray(p?.rows) ? p.rows.filter((r: unknown) => typeof r === 'string').slice(0, 12) : undefined;
+    return { ...where(p), offerId: int(p?.offerId, 'offerId'), userId: int(p?.userId, 'userId'), choice, ...(rows ? { rows } : {}) };
   },
   // What came of a change people asked for here: the asks it made, by id.
   Report: (p: any) => {
@@ -193,7 +194,7 @@ const tapGuard = (s: VState, e: Event<any>, f: Facts, ctx: TransitionContext): C
 const tapped = (s: VState, e: Event<any>): Outcome<VState> => {
   const d = live(s, e);
   const key = `offer:${e.payload.offerId}`;
-  return owe(s, e, { kind: WORK.act, key, input: { offerId: e.payload.offerId, userId: e.payload.userId, choice: e.payload.choice, key } },
+  return owe(s, e, { kind: WORK.act, key, input: { offerId: e.payload.offerId, userId: e.payload.userId, choice: e.payload.choice, key, ...(e.payload.rows ? { rows: e.payload.rows } : {}) } },
     { taps: { ...d.taps, [String(e.payload.offerId)]: e.payload.choice } });
 };
 

@@ -53,7 +53,10 @@ async function connect() {
     CREATE TABLE sessions (
       token      VARCHAR(64) PRIMARY KEY,
       user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      expires_at TIMESTAMPTZ NOT NULL
+      expires_at TIMESTAMPTZ NOT NULL,
+      -- #5974: what Settings › Linked devices names a browser row by, and when it was last used
+      user_agent_class TEXT,
+      last_seen_at TIMESTAMPTZ
     );
   `);
   await pool.query(REDEMPTIONS);

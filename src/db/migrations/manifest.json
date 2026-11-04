@@ -122,9 +122,14 @@
       "schemaSha256": "9710077860526a1a6641fc2d7f952f188382e4c869f2dbe9b55608b64e29eecf"
     },
     {
+      "id": "sessions-device-class",
+      "sha256": "069df414c37cdc3fa7241e20a7a712b91f355954efc9c3f263d058c220e1c509",
+      "schemaSha256": "ef73406dc8664ab5ffa31577b6c898f7b123291b80f01fe4cab0205097dd843d"
+    },
+    {
       "id": "allow-copy-request-dm-action",
       "sha256": "99530db4c42ba06f4e2f607e04631d5583d81f753e301853143868cbfa4ee982",
-      "schemaSha256": "bf0d6e4d69387025e021981ec0a46cebc5f3b70826f5cd14346adf00fdda12ad"
+      "schemaSha256": "e525ebc35b733513ecaccbb5997eace8bc70353bbe38e60770f6868054a1b743"
     }
   ]
 }

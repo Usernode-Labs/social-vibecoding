@@ -1528,16 +1528,16 @@
     "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
   },
   "phones.title": {
-    "text": "Linked phones",
-    "description": "Heading of the Settings > Linked phones page, which lists the phones signed in to the account through the Homeroom mobile app."
+    "text": "Linked devices",
+    "description": "Heading of the Settings > Linked devices page, which lists the phones signed in to the account through the Homeroom mobile app and the browsers signed in on the web."
   },
   "phones.intro": {
-    "text": "Phones signed in to your account with the Homeroom app. Unlink one you no longer use, or don't recognise: it is signed out and stops getting your notifications.",
-    "description": "Explanation under the Linked phones heading in Settings > Linked phones."
+    "text": "The phones and browsers signed in to your account. Unlink or sign out any you no longer use, or don't recognise.",
+    "description": "Explanation under the Linked devices heading in Settings > Linked devices: the page lists phones (Homeroom app) and browsers (the web), each with a way to sign it out."
   },
   "phones.empty": {
     "text": "No phones are linked. Sign in with the Homeroom app on your phone and it shows up here.",
-    "description": "Shown in Settings > Linked phones when no phone is signed in to the account through the Homeroom mobile app."
+    "description": "Shown under the Phones heading of Settings > Linked devices when no phone is signed in to the account through the Homeroom mobile app."
   },
   "phones.platform.android": {
     "text": "Android phone",
@@ -1557,7 +1557,7 @@
   },
   "phones.detail": {
     "text": "Last used {{lastUsed}} · Linked {{linked}}",
-    "description": "Line under a phone in Settings > Linked phones. {{lastUsed}} is the date the Homeroom app last used the account on that phone; {{linked}} is the date it was first signed in there. Both are already-formatted dates."
+    "description": "Line under a phone in Settings > Linked devices. {{lastUsed}} is the date the Homeroom app last used the account on that phone (within the last 30 days); {{linked}} is the date it was first signed in there. Both are already-formatted dates."
   },
   "phones.unlink": {
     "text": "Unlink",
@@ -1577,11 +1577,131 @@
   },
   "phones.loadFailed": {
     "text": "Couldn't load your linked phones. Try again in a moment.",
-    "description": "Error on the Settings > Linked phones page when reading the list from the server failed."
+    "description": "Error on the Settings > Linked devices page when reading the list of phones from the server failed."
   },
   "phones.unlinkFailed": {
     "text": "Couldn't unlink that phone. Try again in a moment.",
-    "description": "Error on the Settings > Linked phones page when unlinking a phone failed; the phone stays in the list."
+    "description": "Error on the Settings > Linked devices page when unlinking a phone failed; the phone stays in the list."
+  },
+  "phones.group.phones": {
+    "text": "Phones",
+    "description": "Heading of the first group on the Settings > Linked devices page: the phones signed in to the account through the Homeroom mobile app."
+  },
+  "phones.group.browsers": {
+    "text": "Browsers",
+    "description": "Heading of the second group on the Settings > Linked devices page: the browsers (on computers, phones or tablets) signed in to the account on the web."
+  },
+  "phones.phonesNote": {
+    "text": "Each row is one install of the Homeroom app. Reinstalling the app makes a new row; unlink any you no longer use.",
+    "description": "Explanation under the Phones heading in Settings > Linked devices, saying why one phone can appear more than once: every installation of the Homeroom mobile app is its own row."
+  },
+  "phones.detailStale": {
+    "text": "Not used since {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the Homeroom app has not used the account on that phone for more than 30 days. {{lastUsed}} is the date it was last used; {{linked}} is the date it was first signed in there. Both are already-formatted dates."
+  },
+  "phones.browsers.note": {
+    "text": "Each row is one browser signed in to Homeroom on the web. Sign out of any you don't recognise.",
+    "description": "Explanation under the Browsers heading in Settings > Linked devices. Homeroom is the product name."
+  },
+  "phones.browsers.empty": {
+    "text": "No browsers are signed in to your account.",
+    "description": "Shown under the Browsers heading of Settings > Linked devices when the account has no browser session on the web (for example when the page is open inside the Homeroom app, whose own session is listed as a phone)."
+  },
+  "phones.browsers.name": {
+    "text": "{{browser}} on {{os}}",
+    "description": "Name of a row in Settings > Linked devices > Browsers: which browser on which system is signed in. {{browser}} is a browser name (Chrome, Safari, Firefox…) and {{os}} a system name (Mac, Windows, iPhone…), both already translated."
+  },
+  "phones.browsers.nameSystemOnly": {
+    "text": "Browser on {{os}}",
+    "description": "Name of a row in Settings > Linked devices > Browsers when Homeroom knows the system (Mac, Windows, iPhone…) the browser runs on but not which browser it is. {{os}} is already translated."
+  },
+  "phones.browsers.unknown": {
+    "text": "Browser",
+    "description": "Name of a row in Settings > Linked devices > Browsers when Homeroom does not know which browser or system it is (the session was made before Homeroom recorded that, or by a browser it does not recognise)."
+  },
+  "phones.browsers.browser.chrome": {
+    "text": "Chrome",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Google Chrome: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.safari": {
+    "text": "Safari",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Apple Safari: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.firefox": {
+    "text": "Firefox",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Mozilla Firefox: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.edge": {
+    "text": "Edge",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Microsoft Edge: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.opera": {
+    "text": "Opera",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Opera: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.samsung": {
+    "text": "Samsung Internet",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Samsung Internet, the browser on Samsung phones: a product name, usually kept as is."
+  },
+  "phones.browsers.os.mac": {
+    "text": "Mac",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: an Apple Mac computer."
+  },
+  "phones.browsers.os.windows": {
+    "text": "Windows",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: a Windows computer. Microsoft Windows is a product name, usually kept as is."
+  },
+  "phones.browsers.os.linux": {
+    "text": "Linux",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: a Linux computer. Linux is a product name, usually kept as is."
+  },
+  "phones.browsers.os.android": {
+    "text": "Android",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: an Android phone or tablet. Android is a product name, usually kept as is."
+  },
+  "phones.browsers.os.ios": {
+    "text": "iPhone",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: an iPhone. A product name, usually kept as is."
+  },
+  "phones.browsers.os.ipad": {
+    "text": "iPad",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: an iPad. A product name, usually kept as is."
+  },
+  "phones.browsers.os.chromeos": {
+    "text": "Chromebook",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: a Chromebook (a ChromeOS computer). A product name, usually kept as is."
+  },
+  "phones.browsers.thisBrowser": {
+    "text": "This browser",
+    "description": "Small label beside the name of a row in Settings > Linked devices > Browsers: the row is the browser this page is open in."
+  },
+  "phones.browsers.detail": {
+    "text": "Last used {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers. {{lastUsed}} is the date that browser last used the account (within the last 30 days); {{signedIn}} is the date it signed in. Both are already-formatted dates."
+  },
+  "phones.browsers.detailStale": {
+    "text": "Not used since {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when it has not used the account for more than 30 days. {{lastUsed}} is the date it was last used; {{signedIn}} is the date it signed in. Both are already-formatted dates."
+  },
+  "phones.browsers.signOut": {
+    "text": "Sign out",
+    "description": "Red button on a row of Settings > Linked devices > Browsers: signs that browser out of the account (verb). Pressed once it asks to confirm; pressed again it signs the browser out."
+  },
+  "phones.browsers.confirm": {
+    "text": "Press Sign out again to sign that browser out.",
+    "description": "Replaces the dates under a browser in Settings > Linked devices > Browsers after Sign out was pressed once, asking to confirm."
+  },
+  "phones.browsers.confirmThisBrowser": {
+    "text": "This is the browser you are using. Press Sign out again to sign out here.",
+    "description": "Replaces the dates under the browser this page is open in, in Settings > Linked devices > Browsers, after Sign out was pressed once: signing it out signs the person out here."
+  },
+  "phones.browsers.loadFailed": {
+    "text": "Couldn't load your browsers. Try again in a moment.",
+    "description": "Error on the Settings > Linked devices page when reading the list of signed-in browsers from the server failed."
+  },
+  "phones.browsers.signOutFailed": {
+    "text": "Couldn't sign that browser out. Try again in a moment.",
+    "description": "Error on the Settings > Linked devices page when signing a browser out failed; the browser stays in the list."
   },
   "devConsole.title": {
     "text": "Developer console",
@@ -2112,8 +2232,8 @@
     "description": "Name of a part of Settings: the Privacy page (who can message or invite you, and whether people can find your profile). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
   "nav.part.phones": {
-    "text": "Linked phones",
-    "description": "Name of a part of Settings: the Linked phones page (the phones signed in to the account with the Homeroom app, and unlinking one). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+    "text": "Linked devices",
+    "description": "Name of a part of Settings: the Linked devices page (the phones signed in to the account with the Homeroom app and the browsers signed in on the web, and signing one out). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
   "nav.part.wallet": {
     "text": "Homeroom Wallet",
@@ -2224,8 +2344,8 @@
     "description": "One muted line under the Linked accounts row in the phone's Settings menu, saying what the page is for: connecting a GitHub or X account raises the weekly AI credits. Keep it short; it is cut to one line."
   },
   "nav.subtitle.phones": {
-    "text": "Phones signed in with the Homeroom app",
-    "description": "One muted line under the Linked phones row in the phone's Settings menu, saying what the page lists. Homeroom is the product name. Keep it short; it is cut to one line."
+    "text": "Phones and browsers signed in to your account",
+    "description": "One muted line under the Linked devices row in the phone's Settings menu, saying what the page lists. Keep it short; it is cut to one line."
   },
   "nav.subtitle.connectors": {
     "text": "Build from Claude, ChatGPT or a terminal",
@@ -2241,11 +2361,11 @@
   },
   "nav.status.linked_one": {
     "text": "{{count}} linked",
-    "description": "Muted words at the end of the Linked accounts or Linked phones row in the Settings menu: how many accounts (GitHub, X) or phones are linked. Shown only when at least one is. Keep it short."
+    "description": "Muted words at the end of the Linked accounts or Linked devices row in the Settings menu: how many accounts (GitHub, X) or devices (phones and browsers) are linked. Shown only when at least one is. Keep it short."
   },
   "nav.status.linked_other": {
     "text": "{{count}} linked",
-    "description": "Muted words at the end of the Linked accounts or Linked phones row in the Settings menu: how many accounts (GitHub, X) or phones are linked. Shown only when at least one is. Keep it short."
+    "description": "Muted words at the end of the Linked accounts or Linked devices row in the Settings menu: how many accounts (GitHub, X) or devices (phones and browsers) are linked. Shown only when at least one is. Keep it short."
   },
   "nav.status.connected_one": {
     "text": "{{count}} connected",
@@ -2340,8 +2460,8 @@
     "description": "Not shown on screen. Extra search words for \"Privacy\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.phones": {
-    "text": "phone phones mobile app device devices signed in sessions sign out log out unlink disconnect android iphone",
-    "description": "Not shown on screen. Extra search words for \"Linked phones\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+    "text": "phone phones mobile app device devices computer computers laptop desktop tablet browser browsers chrome safari firefox signed in sessions sign out log out unlink disconnect android iphone",
+    "description": "Not shown on screen. Extra search words for \"Linked devices\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.wallet": {
     "text": "crypto link qr",

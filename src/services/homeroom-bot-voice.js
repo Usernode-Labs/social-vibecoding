@@ -132,6 +132,7 @@ const SWITCH_OF = Object.freeze({
 
 const OFFER_WORDS = Object.freeze({
   file_request: { yes: 'File it', no: 'Not now' },
+  file_many: { yes: 'File on all', no: 'Not now' },
   withdraw_change: { yes: 'Withdraw it', no: 'Keep it' },
   close_request: { yes: 'Propose to close', no: 'Keep it open' },
   try_again: { yes: 'Let it try again', no: 'Not now' },
@@ -1145,9 +1146,22 @@ function toolsFor(place, {
     tools.push(fn('offer_copy_request', 'Offer to file this request on Homeroom\'s own board too, keeping it open here.', {}, []));
   }
   if (['chat', 'category', 'message'].includes(place.type)) {
-    tools.push(fn('offer_request', 'Offer to file a request on this project in their words.', {
+    tools.push(fn('offer_request', 'Offer to file a request on this project in their words. When they ask for the SAME request on several projects, pass them all in projects: one card files them all.', {
       title: { type: 'string', description: 'A short title: an imperative action, 5 to 10 words.' },
       details: { type: 'string', description: 'What they asked for, in their words.' },
+      projects: {
+        type: 'array', minItems: 2, maxItems: 12,
+        items: {
+          type: 'object',
+          properties: {
+            project: { type: 'string', description: 'The project\'s name or short name, from my_projects.' },
+            named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when it is not the project\'s own name.' },
+          },
+          required: ['project'],
+          additionalProperties: false,
+        },
+        description: 'Several projects for the SAME request, in the order they named them.',
+      },
     }, ['title', 'details']));
     tools.push(fn('offer_close_request', 'Offer a vote on closing one of this project\'s requests, by its number.', {
       number: { type: 'integer', description: 'The request\'s number, from the messages, the facts or a lookup.' },
@@ -1766,6 +1780,34 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         }
         const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')), 120);
         if (title.length < 3) return { error: 'Give it a short title.' };
+        // #6305: one request on several projects, from one card in a thread.
+        if (Array.isArray(args.projects) && args.projects.length) {
+          const rows = await mayor.resolveRows(pool, { items: args.projects, user });
+          if (rows.length >= 2) {
+            const exact = rows.filter((r) => r.match === 'exact' && !r.disabled);
+            const already = exact.length
+              ? await require('./homeroom-bot-already-done').alreadyDoes(pool, {
+                user, apps: exact.map((r) => ({ slug: r.slug, name: r.name })), title, details: clip(withoutEmDashes(args.details), 3000),
+                deps, ctx,
+              })
+              : {};
+            for (const row of exact) {
+              const found = already && already[row.slug];
+              if (found && found.done) {
+                row.done = clip(withoutEmDashes(String(found.sentence || '').trim()), 140) || null;
+                row.ticked = false;
+              }
+            }
+            ctx.offer = {
+              kind: 'file_many', forUserId: user.id,
+              args: { title, details: clip(withoutEmDashes(args.details), 3000), rows, messageId: Number(ctx.triggerMessage.id) },
+            };
+            return {
+              ok: true,
+              offered: `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. A row whose name does not match says "Did you mean ...?" on the card, so never ask about names in your reply, and answer once how it works.`,
+            };
+          }
+        }
         ctx.offer = {
           kind: 'file_request', forUserId: user.id,
           args: { title, details: clip(withoutEmDashes(args.details), 3000), messageId: Number(ctx.triggerMessage.id) },
@@ -2080,7 +2122,12 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
       kind: 'voice',
       ...(mark ? { turn: { key: String(mark.key), ...(mark.through ? { through: Number(mark.through) } : {}) } } : {}),
       ...(offerRow ? {
-        offer: { id: Number(offerRow.id), kind: offer.kind, status: 'open', forUserId: Number(offer.forUserId) || null },
+        offer: {
+          id: Number(offerRow.id), kind: offer.kind, status: 'open', forUserId: Number(offer.forUserId) || null,
+          // #6305: a many-project offer's rows travel with it, so a thread
+          // draws the same card a private chat does.
+          ...(Array.isArray(offer.args?.rows) ? { rows: offer.args.rows } : {}),
+        },
         actions: offerActions(offer.kind, offerRow.id),
       } : {}),
       ...(suggestActions.length ? {
@@ -2127,15 +2174,20 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
  * it (actOnOffer): the buttons give way when the room hears it was decided.
  * Resolves { ok, status?, error? }.
  */
-async function decideOffer(pool, config, { app, user: viewer, messageId, choice, deps = {} }) {
+async function decideOffer(pool, config, { app, user: viewer, messageId, choice, rows = null, deps = {} }) {
   if (!viewer?.id) return { ok: false, status: 404, error: 'Nothing to decide here.' };
   if (choice !== 'yes' && choice !== 'no') return { ok: false, status: 400, error: 'choice must be yes or no' };
+  // #6305: a many-project card's File on all says which rows are ticked.
+  if (choice === 'yes' && Array.isArray(rows) && !rows.length) {
+    return { ok: false, status: 400, error: 'Tick at least one project.' };
+  }
   const { rows: [offer] } = await pool.query(
     'SELECT id FROM homeroom_bot_voice_offers WHERE message_id = $1 AND app_id = $2', [Number(messageId), app.id],
   );
   if (!offer) return { ok: false, status: 404, error: 'Nothing to decide here.' };
   return workflowModule(deps).tapVoiceOffer({
     appId: Number(app.id), offerId: Number(offer.id), messageId: Number(messageId), userId: Number(viewer.id), choice,
+    ...(Array.isArray(rows) ? { rows } : {}),
   });
 }
 
@@ -2146,7 +2198,7 @@ async function decideOffer(pool, config, { app, user: viewer, messageId, choice,
  * gate read again, done, and said. Throws on a failure a retry can cure.
  * Resolves { decision }.
  */
-async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp = false, deps: given = {} }) {
+async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = null, gaveUp = false, deps: given = {} }) {
   // The act's claim rides with it, so a gate that cannot read GitHub for a
   // moment throws to the work instead of failing the tap (mayor.retryAct).
   const deps = { ...given, actKey: key };
@@ -2231,6 +2283,22 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp =
     if (!filed.ok) return settle('failed', { error: filed.code }, `I couldn't file it there: ${filed.error}`);
     return settle('done', { issueNumber: filed.issueNumber },
       `Filed on Homeroom's own board as request ${requestMd(domainOf(deps), filed.target.slug, filed.issueNumber)}, with a link back here. This request stays open.`);
+  }
+  if (offer.kind === 'file_many') {
+    // #6305: every ticked row files, and nothing else. Each request then
+    // follows its usual life, as any filed request does.
+    const out = await require('./homeroom-bot-file-many').fileMany(pool, config, {
+      user, rows: Array.isArray(args.rows) ? args.rows : [], picks: Array.isArray(rows) ? rows : [],
+      title: args.title, details: args.details, extras: null, messageId: null,
+      fileKeyPrefix: `voice-offer:${offer.id}`, settings, deps,
+    });
+    const filed = (out.rows || []).filter((r) => Number(r.issueNumber) > 0);
+    if (!out.ok || !filed.length) {
+      return settle('failed', { error: 'nothing_filed' }, 'I couldn\'t file them just now. Tick a row and try again.');
+    }
+    const numbers = filed.map((r) => requestMd(domainOf(deps), String(r.slug || ''), r.issueNumber));
+    return settle('done', { filed: filed.map((r) => ({ slug: r.slug, issueNumber: r.issueNumber })) },
+      `Filed ${numbers.length === 1 ? 'one request' : `${numbers.length} requests`}: ${numbers.join(', ')}. Each one is read and built on its own.`);
   }
   if (offer.kind === 'file_request') {
     const chat = chatModule(deps);

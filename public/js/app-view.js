@@ -4852,6 +4852,7 @@ const AppView = {
     // active. The page drew its head and composer with no replies and no
     // plan cards until a reload.
     else AppView._devTopicInPanel = false;
+    if (subTab === 'topic') AppView._dropPanelAddressStamp();
 
     // The topic sub-view used to be an `innerHTML` template, so it had to
     // retire whatever interim root the previous surface had left on
@@ -9456,6 +9457,10 @@ const AppView = {
     // flag here would freeze the next issue's header repaints.
     AppView._editingIssueTitle = null;
     AppView._editingSessionTitle = null;
+    // #6110: the side panel's address (the item's) goes back to the page's
+    // before the page's own route is written, so that route is a step on
+    // top of the Workshop and Back returns to it.
+    AppView._restorePanelAddress();
     if (typeof App !== 'undefined' && App.switchTab) {
       // #4367: a change with a pull request opens at `dev/changes/<N>`.
       const pr = kind === 'proposal' ? Number(AppView._findItem('proposal', id)?.pr_number) : 0;
@@ -9502,6 +9507,7 @@ const AppView = {
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     AppView._devTopic = { kind, id };
     AppView._devTopicInPanel = true;
+    AppView._followPanelAddress(kind, id);
     if (kind === 'proposal' || kind === 'session') window.Notifications?.markProposalSeen?.(id);
     AppView._invalidateVoteRoster(id);
     if (kind === 'gov') AppView._invalidateGovVoteRoster(id);
@@ -9539,6 +9545,7 @@ const AppView = {
   // `kind`/`id` name the panel's own item: a panel closing after its page
   // gave way to another topic (#4480) leaves that topic's thread alone.
   closeTopicPanel(kind, id) {
+    AppView._restorePanelAddress();
     if (!AppView._devTopicInPanel) return;
     const t = AppView._devTopic;
     if (kind && id && (!t || t.kind !== kind || t.id !== id)) return;
@@ -12523,10 +12530,130 @@ const AppView = {
     const loc = window.location;
     const hash = String(loc.hash || '').replace(/^#/, '').split('?')[0];
     const segs = (hash || String(loc.pathname || '').replace(/^\/+/, '').replace(/\/+$/, '')).split('/');
-    if (segs.length !== 3 || segs[0] !== 'app') return false;
+    // #6110: while the Workshop's side panel holds an item, the address is
+    // the item's (_followPanelAddress), and the page is still the page.
+    if (segs.length !== 3 || segs[0] !== 'app') return AppView._panelAddressIsUp(slug);
     let at;
     try { at = decodeURIComponent(segs[1]); } catch { return false; }
     return at === slug && (segs[2] === 'workshop' || segs[2] === 'board' || segs[2] === 'dev');
+  },
+  /**
+   * THE ADDRESS FOLLOWS THE SIDE PANEL (#6110). On a wide window a row of
+   * the Workshop opens its item's page in the panel beside the list
+   * (openTopicInPanel), and the address stayed the Workshop's
+   * (/app/<slug>/workshop), so the browser's own Copy or Share, or the
+   * phone's, handed out the Workshop's address for a change somebody was
+   * looking at. While the panel holds an item the address is the item's
+   * own — the one openTopic would write for its full page (dev/changes/<N>,
+   * dev/proposals/<id>, dev/issues/<n>; App._appUrl) — written IN PLACE, so
+   * Back is not given a step, and put back when the panel closes.
+   *
+   * The router never reads the replaced address as a move: replaceState
+   * fires neither popstate nor hashchange. Where it does read it:
+   *   - a reload, a pasted link: the item's own page (the full-page route);
+   *   - Back or Forward onto the entry: the Workshop it was, at its place
+   *     (_leavePanelAddress, from App._routeFromHash), because a traversal is
+   *     not a door. The entry's state names the page's address for that.
+   * `_onProjectPage` counts the panel's address as the page, so a place
+   * press while the panel is open still pushes its entry (_pushWorkshopTab).
+   */
+  PANEL_ADDRESS_STATE_KEY: '__unPanelPage',
+  // `{ slug, from, to }` while the panel's address is written: `from` the
+  // page's own address it replaced, `to` the item's.
+  _panelAddress: null,
+  _hereAddress() {
+    const loc = typeof window !== 'undefined' && window.location ? window.location : null;
+    return loc ? `${loc.pathname || ''}${loc.search || ''}${loc.hash || ''}` : '';
+  },
+  _panelAddressIsUp(slug) {
+    const p = AppView._panelAddress;
+    return !!p && !!slug && p.slug === slug && AppView._devTopicInPanel && AppView._hereAddress() === p.to;
+  },
+  // The item's own address, as openTopic's full page gets it (#4367: a
+  // change with a pull request by its number).
+  _panelItemAddress(kind, id) {
+    if (typeof App === 'undefined' || !App || !App._appUrl || !App.currentApp) return null;
+    const pr = kind === 'proposal' ? Number(AppView._findItem('proposal', id)?.pr_number) : 0;
+    const ref = Number.isInteger(pr) && pr > 0 ? { kind, id, pr } : { kind, id };
+    return App._appUrl(App.currentApp, 'dev', ref, 'topic');
+  },
+  _followPanelAddress(kind, id) {
+    const slug = typeof App !== 'undefined' && App ? App.currentApp : null;
+    const to = slug ? AppView._panelItemAddress(kind, id) : null;
+    if (!to || typeof window === 'undefined' || !window.history) return false;
+    const here = AppView._hereAddress();
+    const prev = AppView._panelAddress;
+    // Another item in the same panel: the page's address is the one kept.
+    const carried = prev && prev.slug === slug && prev.to === here;
+    if (!carried && !AppView._onProjectPage(slug)) return false;
+    const from = carried ? prev.from : here;
+    if (here !== to) {
+      try {
+        const state = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
+        window.history.replaceState({ ...state, [AppView.PANEL_ADDRESS_STATE_KEY]: { slug, from } }, '', to);
+      } catch { return false; }
+    }
+    AppView._panelAddress = { slug, from, to };
+    return true;
+  },
+  // The panel closes, or its item opens as a page: the page's own address
+  // comes back, in place. Nothing when the address has moved on already.
+  _restorePanelAddress() {
+    const p = AppView._panelAddress;
+    if (!p) return false;
+    AppView._panelAddress = null;
+    if (typeof window === 'undefined' || !window.history || AppView._hereAddress() !== p.to) return false;
+    try {
+      const state = window.history.state && typeof window.history.state === 'object' ? { ...window.history.state } : {};
+      delete state[AppView.PANEL_ADDRESS_STATE_KEY];
+      window.history.replaceState(state, '', p.from);
+    } catch { return false; }
+    return true;
+  },
+  // What Back or Forward landed on, before the router reads it: an entry the
+  // panel's address was written on is the page's, at the address it kept.
+  // Rewritten in place (replaceState fires nothing), and the router then
+  // reads the page's address, with the place the entry names
+  // (_historyWorkshopTab). A reload is not a traversal and never comes here:
+  // it opens the item's page.
+  _leavePanelAddress() {
+    if (typeof window === 'undefined' || !window.history) return false;
+    let stamp = null;
+    try {
+      const state = window.history.state;
+      stamp = state && typeof state === 'object' ? state[AppView.PANEL_ADDRESS_STATE_KEY] : null;
+    } catch { return false; }
+    if (!stamp || typeof stamp !== 'object' || typeof stamp.slug !== 'string' || typeof stamp.from !== 'string') return false;
+    const here = AppView._hereAddress();
+    // The panel is up for this very entry (a sheet pushed over it, closed
+    // with Back): the address stays the item's.
+    if (AppView._panelAddressIsUp(stamp.slug) && AppView._panelAddress.to === here) return false;
+    const item = /^\/app\/([^/?#]+)\/dev\/(issues|changes|proposals|shared|governance)\/\d+(?:[?#]|$)/.exec(here);
+    const page = /^\/app\/([^/?#]+)\/(workshop|board|dev)(?:[?#]|$)/.exec(stamp.from);
+    if (!item || !page || item[1] !== page[1] || page[1] !== encodeURIComponent(stamp.slug)) {
+      AppView._dropPanelAddressStamp();
+      return false;
+    }
+    AppView._panelAddress = null;
+    try {
+      const state = { ...window.history.state };
+      delete state[AppView.PANEL_ADDRESS_STATE_KEY];
+      window.history.replaceState(state, '', stamp.from);
+    } catch { return false; }
+    return true;
+  },
+  // An item's page opened on the panel's address (a reload of it) keeps the
+  // entry, so the stamp comes off: a later traversal onto it is the page's.
+  _dropPanelAddressStamp() {
+    if (typeof window === 'undefined' || !window.history) return false;
+    try {
+      const state = window.history.state;
+      if (!state || typeof state !== 'object' || !(AppView.PANEL_ADDRESS_STATE_KEY in state)) return false;
+      const next = { ...state };
+      delete next[AppView.PANEL_ADDRESS_STATE_KEY];
+      window.history.replaceState(next, '');
+    } catch { return false; }
+    return true;
   },
   // The tab an entry's state names, or null: `{ slug, tab, from }`.
   _workshopTabStamp(state) {
