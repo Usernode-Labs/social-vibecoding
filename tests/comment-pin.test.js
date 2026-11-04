@@ -818,9 +818,10 @@ test('takeBase asks the side panel for its picture with the others, and lays it 
   // any other frame the picture fills in.
   assert.match(src, /getElementById\('side-panel-frame'\)/);
   assert.match(src, /export function panelFrame\(\): \{ frame: HTMLIFrameElement; rect: Rect \} \| null \{/);
-  // Asked once, in the same Promise.all as the shell and the app's picture,
-  // so the slowest of the three bounds the wait.
-  assert.match(src, /Promise\.all\(\[shell, app, panelPicture\]\)/);
+  // Asked once, in the same Promise.all as the shell, the app's picture and
+  // the designs' (they were added beside it), so the slowest leg bounds the
+  // wait.
+  assert.match(src, /Promise\.all\(\[shell, app, panelPicture, designs\]\)/);
   // Laid in at the frame's rectangle times the picture's real scale, on the
   // first canvas and on the retake (the same blob, asked once).
   assert.match(src, /await layInPanel\(canvas, actual, panel\?\.rect, panelBlob\);/);
@@ -989,6 +990,123 @@ test('takeBase bounds the shell\'s own draw, and layInPanel bounds the panel blo
   assert.ok(lay, 'layInPanel exists beside layInApp');
   assert.match(lay[0], /within\(createImageBitmap\(blob\), PANEL_PICTURE_TIMEOUT_MS, null\)/);
   assert.match(lay[0], /if \(!bitmap\) return;/);
+});
+
+// ── 3c. Designs draw their own picture (#6261) ────────────────────────
+
+test('takeBase asks each design frame for its own picture and lays it in on the first picture and the retake', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // Both design iframes carry the marker the shell finds them by.
+  assert.match(read('frontend/src/features/messages/design-pane.tsx'), /data-design-frame=""/);
+  assert.match(read('frontend/src/features/messages/design-card.tsx'), /data-design-frame=""/);
+  assert.match(src, /iframe\[\$\{DESIGN_FRAME_ATTR\}\]/);
+  // Asked beside the shell, the app and the panel, bounded like the panel: a
+  // design that misses its bound draws nothing, holding no longer than it.
+  assert.match(src, /const designs = within\(designPictures\(scale\), PANEL_PICTURE_TIMEOUT_MS, \[\]\);/);
+  assert.match(src, /Promise\.all\(\[shell, app, panelPicture, designs\]\)/);
+  // Its picture goes into the frame's own rectangle, clipped to its wrapper,
+  // on the first canvas and on the retake (the blobs are asked once).
+  assert.match(src, /for \(const design of designBlobs\) await layInDesign\(canvas, actual, design\.rect, design\.clip, design\.blob\);/);
+  assert.match(src, /for \(const design of designBlobs\) await layInDesign\(again, retaken, design\.rect, design\.clip, design\.blob\);/);
+  // drawDocument, the panel's own page, runs the same leg before encoding.
+  const draw = src.match(/export async function drawDocument[\s\S]*?\n\}\n\nexport interface Base/);
+  assert.ok(draw, 'drawDocument is exported beside drawShell');
+  assert.match(draw[0], /within\(designPictures\(scale\), PANEL_PICTURE_TIMEOUT_MS, \[\]\)/);
+  assert.match(draw[0], /layInDesign\(canvas, scale, design\.rect, design\.clip, design\.blob\)/);
+  // No blob draws nothing: the shell's hidden frame keeps its place, which is
+  // today's empty box, never a wrong claim about the design.
+  const lay = src.match(/async function layInDesign[\s\S]*?\n\}/);
+  assert.ok(lay, 'layInDesign exists beside layInPanel');
+  assert.match(lay[0], /if \(!blob\) return;/);
+  assert.match(lay[0], /ctx\.save\(\)/);
+  assert.match(lay[0], /ctx\.clip\(\)/);
+  assert.match(lay[0], /ctx\.restore\(\)/);
+  // Every frame is still hidden by the shell's own draw, so none is drawn
+  // twice and the ones that are not designs keep their blank place.
+  assert.match(src, /exclude: \[\(el: Element\) => el === host, 'iframe'\],\s*excludeMode: 'hide'/);
+});
+
+test('designFrames finds the marked frames on screen and stops at eight', () => {
+  const prev = { document: globalThis.document, window: globalThis.window };
+  const frameAt = (r, extra = {}) => ({
+    contentWindow: {},
+    getBoundingClientRect: () => r,
+    checkVisibility: () => true,
+    parentElement: { getBoundingClientRect: () => r },
+    ...extra,
+  });
+  const good = frameAt({ left: 10, top: 20, width: 100, height: 200, right: 110, bottom: 220 });
+  const tiny = frameAt({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 });
+  const hidden = frameAt({ left: 10, top: 10, width: 50, height: 50, right: 60, bottom: 60 }, { checkVisibility: () => false });
+  const offscreen = frameAt({ left: 900, top: 0, width: 100, height: 100, right: 1000, bottom: 100 });
+  const gone = frameAt({ left: 0, top: 0, width: 10, height: 10, right: 10, bottom: 10 }, { contentWindow: null });
+  globalThis.document = {
+    querySelectorAll: (sel) => (sel === 'iframe[data-design-frame]' ? [good, tiny, hidden, offscreen, gone] : []),
+    documentElement: {},
+  };
+  globalThis.window = { innerWidth: 800, innerHeight: 600 };
+  try {
+    const found = picture.designFrames();
+    assert.equal(found.length, 1, 'only a frame that is really on screen');
+    assert.equal(found[0].frame, good);
+    assert.deepEqual(found[0].rect, { x: 10, y: 20, width: 100, height: 200 });
+    assert.deepEqual(found[0].clip, { x: 10, y: 20, width: 100, height: 200 }, 'its wrapper, inside the viewport');
+    // A frame partly out of the viewport is clipped to the part that shows.
+    const partial = frameAt({ left: -50, top: -10, width: 100, height: 100, right: 50, bottom: 90 });
+    globalThis.document = { querySelectorAll: () => [partial], documentElement: {} };
+    assert.deepEqual(picture.designFrames()[0].clip, { x: 0, y: 0, width: 50, height: 90 });
+    // More than a page normally shows: the first eight only.
+    const many = Array.from({ length: 12 }, () => frameAt({ left: 0, top: 0, width: 10, height: 10, right: 10, bottom: 10 }));
+    globalThis.document = { querySelectorAll: () => many, documentElement: {} };
+    assert.equal(picture.designFrames().length, 8);
+  } finally {
+    globalThis.document = prev.document;
+    globalThis.window = prev.window;
+  }
+});
+
+test('requestDesignPicture takes only this frame\'s answer with the id it sent, and gives up after its bound', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const prev = globalThis.window;
+  const listeners = [];
+  const sent = [];
+  const target = { postMessage: (message) => sent.push(message) };
+  const other = {};
+  const frame = { contentWindow: target };
+  globalThis.window = {
+    addEventListener: (type, fn) => { if (type === 'message') listeners.push(fn); },
+    removeEventListener: (type, fn) => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); },
+  };
+  try {
+    const asked = picture.requestDesignPicture(frame, 2, '/* snapdom */', 1000);
+    assert.equal(sent.length, 1, 'one request is posted');
+    assert.equal(sent[0].__design, 'picture');
+    assert.equal(sent[0].scale, 2);
+    assert.equal(sent[0].lib, '/* snapdom */');
+    assert.equal(typeof sent[0].id, 'string');
+    const id = sent[0].id;
+    const blob = new Blob(['png'], { type: 'image/png' });
+    // Another frame's answer, and this frame's answer with another id, are
+    // both ignored: a design's script can supply only its own frame's image.
+    for (const answer of [
+      { source: other, data: { __design: 'picture', id, blob } },
+      { source: target, data: { __design: 'picture', id: 'another', blob } },
+      { source: target, data: { __design: 'pin', id, blob } },
+    ]) listeners.slice().forEach((fn) => fn(answer));
+    assert.equal(listeners.length, 1, 'still waiting after the wrong answers');
+    listeners.slice().forEach((fn) => fn({ source: target, data: { __design: 'picture', id, blob } }));
+    assert.equal(await asked, blob);
+    assert.equal(listeners.length, 0, 'the listener is gone once answered');
+    // Nothing said: the bound resolves null, and the listener is gone too.
+    const slow = picture.requestDesignPicture(frame, 1, 'lib', 1000);
+    assert.equal(listeners.length, 1);
+    t.mock.timers.tick(1000);
+    assert.equal(await slow, null);
+    assert.equal(listeners.length, 0);
+  } finally {
+    t.mock.timers.reset();
+    globalThis.window = prev;
+  }
 });
 
 // ── 2. Posting ────────────────────────────────────────────────────────

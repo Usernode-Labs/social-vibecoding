@@ -108,32 +108,21 @@ test('voteCountPill: no advisory chip under the anyone policy or on settled rows
   assert.doesNotMatch(merged, /advisory/);
 });
 
-// ── voteButtonsHtml / _voteBtnTally ──────────────────────────────────
+// ── _voteBtnTally ────────────────────────────────────────────────────
+// (voteButtonsHtml, which spliced these labels into the chat's inline vote
+// row, is retired with the row — #6236. The tally stays: the board card's
+// Yes/No pair and the governance card's Up/Down pair read it.)
 
-test('voteButtonsHtml: invited rows split the button tallies into Q✓ +A', () => {
+test('_voteBtnTally: invited rows split the tally into Q✓ +A; default policy keeps the raw total', () => {
   const AppView = makeAppView();
-  const btns = AppView.voteButtonsHtml({
-    id: 5, status: 'promoted', my_vote: null, yes_count: 2, no_count: 1,
-    qualified_yes_count: 0, qualified_no_count: 1,
-    approval_policy: 'invited',
-  });
-  assert.match(btns, /Yes \(0✓ \+2\)/);
+  const split = AppView._voteBtnTally(0, 2, 'invited', 'yes');
+  assert.equal(split.label, '0✓ +2');
+  assert.match(split.title, /advisory votes don&#39;t count toward merging/, 'the tooltip is an attribute, so its apostrophe is escaped');
   // Advisory suffix omitted when the surplus is zero.
-  assert.match(btns, /No \(1✓\)/);
-  // The tooltip is an attribute, so its apostrophe is escaped.
-  assert.match(btns, /advisory votes don&#39;t count toward merging/);
-});
-
-test('voteButtonsHtml: default-policy rows keep the raw totals unchanged', () => {
-  const AppView = makeAppView();
-  const btns = AppView.voteButtonsHtml({
-    id: 5, status: 'promoted', my_vote: null, yes_count: 2, no_count: 0,
-  });
-  assert.match(btns, /Yes \(2\)/);
-  // V03: a side nobody has taken says no count.
-  assert.match(btns, />No<\/button>/);
-  assert.doesNotMatch(btns, /\(0\)/);
-  assert.doesNotMatch(btns, /✓/);
+  assert.equal(AppView._voteBtnTally(1, 1, 'invited', 'no').label, '1✓');
+  const raw = AppView._voteBtnTally(undefined, 2, undefined, 'yes');
+  assert.equal(raw.label, '2');
+  assert.equal(raw.title, '');
 });
 
 // ── _renderGovCard ───────────────────────────────────────────────────
@@ -222,30 +211,14 @@ test('_votingHelpText: invited default-clock branch names the rule + advisory ta
 // are ordinary notifications in the merged hamburger), so the pill has one
 // renderer again and AppView.voteCountPill above is the whole contract.
 
-// ── #4747: the advisory vote line on the legacy vote rows ─────────────
+// ── #4747: the advisory vote line ─────────────────────────────────────
+// The legacy vote rows carried it beside their buttons (_uncountedVoteNoteHtml);
+// #6236 retired them, and the board card's picker is the one place it is drawn.
 
-test('voteButtonsHtml: an advisory row carries the advisory line; one without the flag does not', () => {
+test('the advisory line has one renderer left: the picker', () => {
   const AppView = makeAppView();
-  const advisory = AppView.voteButtonsHtml({
-    id: 5, status: 'promoted', my_vote: null, yes_count: 2, no_count: 0,
-    approval_policy: 'invited', my_vote_advisory: true,
-  });
-  assert.match(advisory, /gc-vote-uncounted/);
-  assert.match(advisory, /Your vote is advisory: it’s recorded, but it doesn’t decide this change\./);
-  assert.doesNotMatch(advisory, /Test account/);
-  // The collapsed "You voted" box carries the line too.
-  const collapsed = AppView.voteButtonsHtml({
-    id: 5, status: 'promoted', my_vote: 'yes', yes_count: 3, no_count: 0,
-    approval_policy: 'invited', my_vote_advisory: true,
-  }, { collapseVoted: true });
-  assert.match(collapsed, /gc-vote-voted-box-yes/);
-  assert.match(collapsed, /Your vote is advisory: it’s recorded, but it doesn’t decide this change\./);
-  // A row without the flag keeps its buttons bare.
-  const plain = AppView.voteButtonsHtml({
-    id: 5, status: 'promoted', my_vote: null, yes_count: 2, no_count: 0,
-    approval_policy: 'invited',
-  });
-  assert.doesNotMatch(plain, /gc-vote-uncounted/);
+  assert.equal(typeof AppView._uncountedVoteNoteHtml, 'undefined');
+  assert.equal(typeof AppView.voteButtonsHtml, 'undefined');
 });
 
 test('#4747: an advisory row gets no one-tap Approve and no "your yes puts it live"', () => {

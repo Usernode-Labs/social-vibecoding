@@ -742,6 +742,7 @@ module.exports = {
   observe,
   converged,
   describe,
+  mergeOrder,
   readStall,
   carriedBy,
   classify,

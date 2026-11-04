@@ -224,3 +224,25 @@ test('invited app: gate fields attached; advisory votes never read as passed', a
     server.close();
   }
 });
+
+// Request 6265: the header pill reads the server's own merge answers off the
+// session payload, including a merge GitHub held back and when it is retried.
+test('payload carries integration.heldUntil, so the header can say "Waiting on GitHub"', async () => {
+  const MergeStatus = require('../public/js/merge-status.js');
+  sessionRow = baseRow({
+    integration_block_reasons: ['github_busy'],
+    merge_held_until: '2026-11-04T10:45:00Z',
+  });
+  const server = await startServer();
+  try {
+    const { body } = await getSession(server, 42);
+    const s = body.session;
+    assert.deepStrictEqual(s.integration.blockReasons, ['github_busy']);
+    assert.strictEqual(s.integration.heldUntil, '2026-11-04T10:45:00.000Z');
+    const life = MergeStatus.lifecycle(s);
+    assert.strictEqual(life.key, 'merge_held');
+    assert.strictEqual(life.label, 'Waiting on GitHub');
+  } finally {
+    server.close();
+  }
+});
