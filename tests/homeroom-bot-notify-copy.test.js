@@ -27,7 +27,8 @@ const BODIES = [
   ['needs_you', 'decide_others', { deciders: '@ada and @ben' }, 'This needs a decision from @ada and @ben before I build it.'],
   ['needs_you', 'blocked', {}, 'I can\'t build it as written. Add detail and I\'ll look again.'],
   ['needs_you', 'empty', {}, 'I couldn\'t find anything to build. Add detail and I\'ll look again.'],
-  ['needs_you', 'done', {}, 'This looks done already. Close it, or tell me what\'s missing.'],
+  // #6306: nothing is left to build; the ask already works.
+  ['needs_you', 'done', {}, 'Already works. Propose to close it, or tell me what\'s missing.'],
   ['needs_you', 'platform', {}, 'This is about Homeroom itself. Move it to Homeroom\'s own board?'],
   ['ready', 'ready', {}, 'Ready to try. Try it, and approve it if you\'re happy.'],
   ['ready', 'ready_group', { waiting: 'you and @ada' }, 'Ready to try. It goes live once you and @ada say yes.'],
@@ -80,7 +81,7 @@ const LABELS = { needs_you: 'Needs you', ready: 'Ready to try', stopped: 'Stoppe
 const ASKS = {
   question: 'Question for you', questions: 'Questions for you', followup_ask: 'Question for you', plan: 'Plan to approve',
   decide: 'Your decision', decide_others: 'Waiting on @ada and @ben', blocked: 'Needs more detail', empty: 'Needs more detail',
-  done: 'Looks done already', platform: 'Move it to Homeroom\'s board?',
+  done: 'Already works', platform: 'Move it to Homeroom\'s board?',
 };
 const labelOf = (moment, said) => (moment === 'needs_you' ? ASKS[said] : LABELS[moment]);
 
@@ -106,6 +107,18 @@ test('every variant of the contract is worded, with the request and its project 
   for (const [moment, saids] of Object.entries(copy.SAID_BY_MOMENT)) {
     for (const said of saids) assert.ok(covered.has(said), `${moment}/${said} is pinned here`);
   }
+});
+
+test('#6306: an already-done verdict says what works, and offers to close it', () => {
+  const got = words({ moment: 'needs_you', kind: 'person', said: 'done', reason: 'Visitors get the lobby and play as a guest' });
+  assert.equal(got.bellLabel, 'Already works');
+  assert.equal(got.body, 'Already works: Visitors get the lobby and play as a guest. Propose to close it?');
+  // A reason that already ends in a full stop is not given a second one.
+  assert.equal(words({ moment: 'needs_you', kind: 'person', said: 'done', reason: 'It already ships.' }).body,
+    'Already works: It already ships. Propose to close it?');
+  // The detail carries it, so the bell and the push say the same.
+  const detail = copy.botNotificationDetail({ ...BASE, moment: 'needs_you', kind: 'person', said: 'done', reason: 'It already ships.' });
+  assert.equal(copy.parseBotDetail(detail).reason, 'It already ships.');
 });
 
 test('a request whose title is not known is named by its number, never by its project alone', () => {

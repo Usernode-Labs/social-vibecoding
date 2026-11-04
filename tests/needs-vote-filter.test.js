@@ -97,33 +97,9 @@ test('the chips are not drawn when the feed holds only one kind of vote', () => 
   assert.equal(draw({ all: 0, deciding: 0, advisory: 0 }), '', 'an empty feed');
 });
 
-test('NeedsReel draws the chips over the feed when both kinds are owed', () => {
-  const draw = (items) => renderToHtml(createElement(reel.NeedsReel, {
-    items, error: false, capped: false, onDone: noop,
-  }));
-  const both = draw([item({ id: 1 }), item({ id: 2, advisory: true })]);
-  assert.match(both, /data-needs-vote-chips=""/);
-  assert.match(both, /data-needs-vote-chip="all"/);
-  assert.match(both, /data-needs-vote-chip="deciding"/);
-  assert.match(both, /data-needs-vote-chip="advisory"/);
-  assert.match(both, /aria-label="Votes that decide, 1 vote"/);
-
-  const advisoryOnly = draw([item({ id: 2, advisory: true })]);
-  assert.doesNotMatch(advisoryOnly, /data-needs-vote-chips/);
-});
 
 // ── The project's own Needs you, and the experimental run ──────────────
 
-test('a project\'s Needs you hosts the same filter and opens its subset from the first row', () => {
-  const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(WORKSHOP, /const \[needsFilter, setNeedsFilter\] = useState<VoteFilter>\('all'\);/);
-  assert.match(WORKSHOP, /const needsCards = useMemo\(\(\) => \(v\.queue \|\| \[\]\)\.filter\(\(r\) => r\.t === 'card'\), \[v\.queue\]\);/,
-    'only the rows that are cards are counted');
-  assert.match(WORKSHOP, /const needsTallies = useMemo\(\(\) => voteTallies\(needsCards, rowVoteType\), \[needsCards\]\);/);
-  assert.match(WORKSHOP, /<VoteTypeChips tallies=\{needsTallies\} pressed=\{needsFilter\} onPress=\{setNeedsFilter\} \/>/);
-  assert.match(WORKSHOP, /<NeedsFeed\s+key=\{needsFilter\}\s+rows=\{filterByVoteType\(v\.queue, needsFilter, rowVoteType\)\}/,
-    'a switch opens the subset from its first row');
-});
 
 test('the experimental run filters its run and draws the chips under its bar', () => {
   const SRC = read('frontend/src/features/review-flow/review-flow.tsx');

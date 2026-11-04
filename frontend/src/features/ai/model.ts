@@ -69,7 +69,7 @@ export interface AiThread {
   href: string;
   group: 'needs' | 'next' | 'waiting' | 'live';
   what:
-    | 'plan' | 'decide' | 'build_stopped' | 'fix_stopped'
+    | 'plan' | 'decide' | 'already_works' | 'build_stopped' | 'fix_stopped'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'updating' | 'building' | 'reading' | 'reading_reply'
     | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'update_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'retrying_plan' | 'on_hold'
     | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
@@ -356,6 +356,8 @@ const PILLS: Record<string, string> = {
   bot_question: 'messages:ai.pill.answer',
   plan: 'messages:ai.pill.buildIt',
   decide: 'messages:ai.pill.decide',
+  // #6306: nothing is left to build; the request only needs closing.
+  already_works: 'messages:ai.pill.proposeClose',
   build_stopped: 'messages:ai.pill.tryAgain',
   fix_stopped: 'messages:ai.pill.letTryAgain',
 };
@@ -492,7 +494,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   for (const t of work?.needs || []) {
     if (isOwed(owed, t)) continue;
     rows.push({
-      key: `${t.what === 'decide' ? 'decide' : t.what === 'build_stopped' ? 'stopped' : t.what === 'fix_stopped' ? 'fix_stopped' : 'plan'}:${t.threadId}`,
+      key: `${t.what === 'decide' ? 'decide' : t.what === 'already_works' ? 'works' : t.what === 'build_stopped' ? 'stopped' : t.what === 'fix_stopped' ? 'fix_stopped' : 'plan'}:${t.threadId}`,
       title: t.title || '',
       app: t.app,
       who: 'all',
@@ -503,7 +505,11 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // asking again, so it is here too, with Try again.
       sub: t.what === 'decide'
         ? { id: 'messages:ai.row.decide', values: where(t.app, t.number) }
-        : t.what === 'build_stopped'
+        : t.what === 'already_works'
+          ? (t.reason
+            ? { id: 'messages:ai.row.alreadyWorks', values: { ...where(t.app, t.number), reason: t.reason } }
+            : { id: 'messages:ai.row.alreadyWorksPlain', values: where(t.app, t.number) })
+          : t.what === 'build_stopped'
           ? { id: 'messages:ai.row.buildStopped', values: where(t.app, t.number) }
           : t.what === 'fix_stopped'
             ? { id: 'messages:ai.row.fixStopped', values: where(t.app, t.number) }
@@ -569,6 +575,8 @@ export function owedCount(rows: WorkRow[]): number {
 /** The phone's second line for a Needs you row, by the reason its tooltip gives. */
 const WHY: Record<string, string> = {
   'messages:ai.row.decide': 'messages:ai.why.decide',
+  'messages:ai.row.alreadyWorks': 'messages:ai.why.alreadyWorks',
+  'messages:ai.row.alreadyWorksPlain': 'messages:ai.why.alreadyWorksPlain',
   'messages:ai.row.buildStopped': 'messages:ai.why.buildStopped',
   'messages:ai.row.fixStopped': 'messages:ai.why.fixStopped',
   'messages:ai.row.voteFreesSlot': 'messages:ai.why.voteFreesSlot',
@@ -581,7 +589,12 @@ const WHY: Record<string, string> = {
  */
 export function whyOf(row: WorkRow): Phrase | null {
   const id = WHY[row.sub.id];
-  return id ? { id } : null;
+  if (!id) return null;
+  // #6306: an already-done row's reason is the bot's own sentence.
+  if (id === 'messages:ai.why.alreadyWorks') {
+    return { id, values: { reason: row.sub.values?.reason ?? '' } };
+  }
+  return { id };
 }
 
 /** Pure: the same for an In progress or Waiting row: a slot your votes can free. */

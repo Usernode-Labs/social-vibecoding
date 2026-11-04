@@ -376,6 +376,8 @@ const RETIRED_IDS = {
   'waitlist-discovery-chips': 'The join form\'s "How did you find us?" chips. Asked in the waiting room as #waiting-about-discovery, and saved to the same answers.discovery.source.',
   'waitlist-submit': 'The join form\'s submit. Continue is the one way to join.',
   'waitlist-queued': 'The "already on the list" note a signed-in visitor saw in place of the join form. A signed-in #waitlist goes to the waiting room now, which shows their spot.',
+  // ── #6276: Needs you is the review flow, with no switch ────────────
+  'review-flow-enabled': 'The New Needs you switch in Settings, Experimental. The review flow is what every Needs you draws now, so there is nothing to turn on and the row is gone (features/settings/sections/experimental.tsx).',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -396,8 +398,6 @@ const ADDED_IDS = {
   // ── iPhone Duo: the side strip (24 Oct 2026) ───────────────────────
   'platform-side-strip-top': 'iPhone Duo: the top of the column of system chrome down the screen\'s edge, holding the header\'s back controls while <html data-side-strip> is set (features/nav/strip-back.tsx, app.css THE SIDE STRIP). Ships drawn as nothing; display:none off the strip.',
   'platform-side-strip-back': 'iPhone Duo: #back-btn\'s copy in the side strip, rendered from the same useBackSlot hook and handing its press to #back-btn. Ships hidden with no href, as #back-btn does.',
-  // ── New Needs you (an experiment) ──────────────────────────────────
-  'review-flow-enabled': 'New Needs you: the switch in Settings, Experimental (off by default, kept on the device by features/review-flow/settings.ts) that draws the Communities tab\'s Needs you as the new review flow. settings.js paints and saves it through window.UsernodeReact.reviewFlow.',
   // ── New look (an experiment) ───────────────────────────────────────
   'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────

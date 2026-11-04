@@ -230,7 +230,7 @@ export function toReviewItems(
   shape: (visuals: unknown, shots: unknown) => Visuals,
 ): ReviewItem[] {
   // #6019: a ballot and the bot's question are decided on their request's
-  // page; this experimental flow draws the changes and decisions it knows.
+  // page; this flow draws the changes and decisions it knows.
   return items.filter((item) => item.kind === 'proposal' || item.kind === 'governance').map((item) => {
     const change = item.kind !== 'governance';
     const v = change && (item.shots || item.visuals) ? shape(item.visuals || null, item.shots || null) : null;

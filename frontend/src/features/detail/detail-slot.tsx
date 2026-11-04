@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
-import { useDetailLayout, useDetailState, type DetailSurface } from '../ai/detail';
+import { useDetailLayout, useDetailState, type DetailEntry, type DetailKind, type DetailSurface } from '../ai/detail';
 import { DetailPane } from './detail-pane';
 
 const WIDTH_KEY = 'gc-spec-panel-width-v1';
@@ -38,6 +38,19 @@ function writeWidth(px: number): void {
   try { localStorage.setItem(WIDTH_KEY, String(Math.round(px))); } catch { /* private mode */ }
 }
 
+/**
+ * The kinds this column can draw (./detail-pane.tsx draws each one): a design's
+ * preview, a plan, a change's before and after. #6315: the slot used to open
+ * for a plan alone, so Expand on a request's page put a shots entry into the
+ * store and drew nothing.
+ */
+const DRAWN: ReadonlySet<DetailKind> = new Set<DetailKind>(['design', 'plan', 'shots']);
+
+/** Pure: whether the slot opens for this entry. Nothing open means nothing drawn. */
+export function slotOpens(entry: Pick<DetailEntry, 'kind'> | null | undefined): boolean {
+  return !!entry && DRAWN.has(entry.kind);
+}
+
 export interface DetailSlotProps {
   surface: DetailSurface | 'chat';
   /** The host's extra classes, where a frame has always spelled them. */
@@ -54,9 +67,7 @@ export interface DetailSlotProps {
 export function DetailSlot({ surface, className, resizerLabel }: DetailSlotProps): ReactNode {
   const layout = useDetailLayout(surface === 'workshop' ? 'workshop' : 'topic');
   const state = useDetailState();
-  // Every kind the column can show opens it (a design, a plan, a change's
-  // before and after): the store only holds an entry while one is open.
-  const open = !!state.entry;
+  const open = slotOpens(state.entry);
   const [width, setWidth] = useState<number | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
