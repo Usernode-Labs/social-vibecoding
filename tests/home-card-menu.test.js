@@ -2136,7 +2136,7 @@ test('app menus use an anchored popover even on touch', () => {
   const anchor = { getBoundingClientRect: () => ({ left: 20, top: 20, right: 76, bottom: 76 }) };
   Home.openCardMenu('demo-app', anchor);
   assert.equal(options.anchorEl, anchor);
-  assert.equal(options.headerEl.className, 'card-menu-header');
+  assert.equal(options.headerEl.className, 'card-menu-header interface-mode-advanced');
   assert.ok(options.items.length > 0);
 });
 
