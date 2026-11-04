@@ -101,6 +101,10 @@ async function migrate(config) {
   // #6264: a request whose bot kept its word, for the before & after shots
   // of "tell me when it's done" (the promise, then the line it posted).
   await seedStagingBotFollowUp(pool);
+  // #6255's shots: the member asks the bot, in Main Chat, to say when a
+  // request it is still building is made, and it agrees. Nothing here runs
+  // a model, so a fresh staging copy has no such exchange to show.
+  await seedStagingBotTellMeWhen(pool);
   // #6228's shots: a reply on the handed-back request #9103 (above), for the
   // thread's status line, its track card and the Homeroom bot page's row.
   await seedStagingBotReplyWaiting(pool);
@@ -1997,6 +2001,72 @@ async function seedStagingBotFollowUp(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot follow-up seeding failed', { message: err.message });
+  }
+}
+
+// #6255: the bot agrees, in the member fixture's Main Chat, to say when a
+// request it is still building is made ("I'll tell you here when it's ready
+// to vote"). A fresh staging copy has no such exchange, because nothing here
+// runs a model, so the before & after shots would find an empty chat. The
+// lines are obviously fake and nothing reads them. Idempotent through the
+// direct pair and each line's key; a no-op outside staging.
+async function seedStagingBotTellMeWhen(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!people.rows.length || !bots.rows.length) return;
+    const member = Number(people.rows[0].id);
+    const bot = Number(bots.rows[0].id);
+    if (member === bot) return;
+    const low = Math.min(member, bot);
+    const high = Math.max(member, bot);
+    const found = await pool.query(
+      `SELECT p.conversation_id FROM conversation_direct_pairs p
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2 LIMIT 1`,
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [bot],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', $2, NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, bot, member],
+    );
+    const lines = [
+      [member, 'staging-tellmewhen-1', 'Staging demo: can you build request #9108 on Homeroom?', '27 minutes'],
+      [bot, 'staging-tellmewhen-2', "I've started building Homeroom request #9108. It usually takes about 20 minutes.", '26 minutes'],
+      [member, 'staging-tellmewhen-3', "Great, tell me when it's made.", '25 minutes'],
+      [bot, 'staging-tellmewhen-4', "I'll tell you here when it's ready to vote.", '25 minutes'],
+    ];
+    for (const [sender, key, content, ago] of lines) {
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - $5::interval)
+         ON CONFLICT (conversation_id, sender_id, idempotency_key)
+           WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+         DO NOTHING`,
+        [conversationId, sender, content, key, ago],
+      );
+    }
+    log.info('db', 'Staging tell-me-when chat seeded', { conversationId });
+  } catch (err) {
+    log.warn('db', 'Staging tell-me-when chat seeding failed', { message: err.message });
   }
 }
 

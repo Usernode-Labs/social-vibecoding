@@ -6179,6 +6179,7 @@ module.exports = {
   retryAct,
   normalizeCalls,
   myWork,
+  progressOf,
   requestDetail,
   myProjects,
   // #4145
