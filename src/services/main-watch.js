@@ -332,6 +332,10 @@ async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onR
     return { state: 'error', detail: { failureReason: String(err && err.message || err).slice(0, 600) } };
   } finally {
     if (slot) await slot.release().catch(() => {});
+    // The test-durations baseline, read at the merge commit: past a tenth of
+    // the test files with no entry or a placeholder, one low-priority request
+    // asks for a refresh. Never a failure, never a pause, and never throws.
+    await checkBaselineRefresh(config, pool, app, parsed, mergeSha).catch(() => {});
   }
 }
 
@@ -616,6 +620,146 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
   }
 }
 
+// ── The test-durations baseline ──────────────────────────────────────────
+//
+// The baseline (tests/baselines/test-durations.json) only balances the unit
+// suite across its shards (scripts/test-shard-plan.js): a file it does not
+// know is planned at defaultSeconds, so a missing entry costs a little
+// balance, never a place. The guard that reads it
+// (tests/test-shard-plan.test.js) prints a diagnostic and does not fail, so
+// main never goes red over it. To keep it from going stale, one low-priority
+// request asks for a refresh when missing plus placeholder entries pass
+// BASELINE_REFRESH_SHARE of the test files, and no second one is filed while
+// the last is open or inside its window.
+
+// Missing plus placeholder entries past this share of the test files ask for
+// a refresh. Below it, the imbalance is too small to pay a request for.
+const BASELINE_REFRESH_SHARE = 0.1;
+// A refresh request is a housekeeping ask: one per this many days.
+const BASELINE_REQUEST_DAYS = 30;
+const BASELINE_FILE = 'tests/baselines/test-durations.json';
+const BASELINE_REQUEST_TITLE = 'Refresh the test-durations baseline';
+
+// File the baseline refresh request. On by default.
+function baselineRequestsEnabled() {
+  const v = String(process.env.MAIN_WATCH_BASELINE_REQUESTS ?? '1').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+
+/** Is the baseline stale enough to ask for a refresh? Pure. */
+function baselineNeedsRefresh({ missing = 0, unmeasured = 0, total = 0 } = {}) {
+  const count = (v) => (Array.isArray(v) ? v.length : Number(v) || 0);
+  const files = count(total);
+  if (files <= 0) return false;
+  return count(missing) + count(unmeasured) > files * BASELINE_REFRESH_SHARE;
+}
+
+/**
+ * The baseline's gaps at `sha`, read from the repo: `{ total, missing,
+ * unmeasured }`, or null when there is nothing readable to judge. `deps`
+ * stands in for GitHub in tests. Throws when the repository cannot be read.
+ */
+async function baselineGapsAt({ parsed, sha }, deps = null) {
+  const github = deps || require('./github');
+  const listing = await github.listRepoFiles(parsed.owner, parsed.repo, sha);
+  if (!listing || listing.truncated) return null;
+  const files = listing.files.map((f) => f.path).filter((p) => /^tests\/[^/]+\.test\.js$/.test(p || '')).sort();
+  if (!files.length) return null;
+  const text = await github.getFileContent(parsed.owner, parsed.repo, BASELINE_FILE, sha);
+  if (typeof text !== 'string') return null;
+  const raw = JSON.parse(text);
+  // A broken baseline is a real error, never a gap to file a request about.
+  if (!raw || raw.version !== 1 || !(Number(raw.defaultSeconds) > 0)) {
+    throw new Error(`${BASELINE_FILE} is not a version 1 durations baseline`);
+  }
+  const gaps = require('../../scripts/test-shard-plan').baselineGaps(files, raw);
+  return { total: files.length, missing: gaps.missing, unmeasured: gaps.unmeasured };
+}
+
+/** The request's title and body. Pure. */
+function baselineRequestText({ total, missing = [], unmeasured = [] }) {
+  const lines = [
+    `tests/baselines/test-durations.json is ${missing.length + unmeasured.length} of ${total} test files out of date.`,
+    'The baseline only balances the unit suite across its shards, so this never fails a check: a file it does not know is planned at the default time and still runs.',
+    '',
+    '### What to do',
+    '- In the worker image (8 CPUs, PostgreSQL up), run `npm run test:durations` to measure every file and replace the placeholders with real times.',
+    '- If a full run is too long, `npm run test:durations -- --add <files>` gives the new files a default entry, which is enough to keep the plan even.',
+  ];
+  if (missing.length) {
+    lines.push('', `### No entry at all (${missing.length})`, ...missing.slice(0, 40).map((f) => `- \`${f}\``));
+    if (missing.length > 40) lines.push(`- …and ${missing.length - 40} more`);
+    lines.push('', 'Add them with:', '', '```',
+      missing.length > 40 ? 'npm run test:durations -- --add' : `npm run test:durations -- --add ${missing.join(',')}`,
+      '```');
+  }
+  if (unmeasured.length) {
+    lines.push('', `### Placeholder durations (${unmeasured.length})`, ...unmeasured.slice(0, 40).map((f) => `- \`${f}\``));
+    if (unmeasured.length > 40) lines.push(`- …and ${unmeasured.length - 40} more`);
+  }
+  lines.push('', '---', 'Filed by Homeroom\'s main watch, which reads the baseline after a unit-suite run on main.');
+  return { title: BASELINE_REQUEST_TITLE, body: lines.join('\n') };
+}
+
+/**
+ * File the refresh request when the gaps pass the share, unless one is open
+ * for the app already or the last was filed inside the window. Resolves the
+ * issue number, or null. Never throws unless `strict`.
+ */
+async function fileBaselineRefreshRequest(config, pool, app, gaps, { fileBotIssue, strict = false } = {}) {
+  if (!baselineRequestsEnabled() || !pool || !app || !fileBotIssue) return null;
+  if (!baselineNeedsRefresh(gaps)) return null;
+  const parsed = parseRepo(app.repo_url);
+  if (!parsed) return null;
+  try {
+    // Claimed by the request itself: one open at a time, and one per window.
+    const { rows } = await pool.query(
+      `SELECT github_issue_number, status, created_at FROM issues
+        WHERE app_id = $1 AND kind = 'general' AND title = $2
+        ORDER BY id DESC LIMIT 1`, [app.id, BASELINE_REQUEST_TITLE]);
+    const last = rows[0];
+    if (last && (last.status === 'open'
+      || (last.created_at && Date.now() - new Date(last.created_at).getTime() < BASELINE_REQUEST_DAYS * 86400000))) {
+      return null;
+    }
+  } catch (err) {
+    if (strict) throw err;
+    log.warn('main-watch', 'baseline request claim failed (non-fatal)', { appId: app.id, err: err.message });
+    return null;
+  }
+  const { title, body } = baselineRequestText(gaps);
+  try {
+    const issueNumber = await fileBotIssue(config, pool, app, parsed, { title, body });
+    log.info('main-watch', 'Filed a request to refresh the test-durations baseline', {
+      appId: app.id, slug: app.slug, issueNumber,
+      missing: gaps.missing.length, unmeasured: gaps.unmeasured.length, total: gaps.total,
+    });
+    return issueNumber;
+  } catch (err) {
+    if (strict) throw err;
+    log.warn('main-watch', 'baseline request failed (non-fatal)', { appId: app.id, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Read the baseline at `sha` and file the refresh request if it asks for one.
+ * Never throws unless `strict`. Resolves the issue number, or null.
+ */
+async function checkBaselineRefresh(config, pool, app, parsed, sha, { strict = false, deps = null, fileBotIssue = null } = {}) {
+  if (!baselineRequestsEnabled() || !pool || !app || !parsed || !sha) return null;
+  try {
+    if (!deps && !require('./github').isEnabled()) return null;
+    const gaps = await baselineGapsAt({ parsed, sha }, deps);
+    if (!gaps) return null;
+    return await fileBaselineRefreshRequest(config, pool, app, gaps, { fileBotIssue, strict });
+  } catch (err) {
+    if (strict) throw err;
+    log.warn('main-watch', 'baseline gap check failed (non-fatal)', { appId: app.id, sha, err: err.message });
+    return null;
+  }
+}
+
 // One run of the suite on `sha` for the main-check machine's main.suite work
 // (src/workflow/main-check/): `onRunId` is told the checks-queue row's run id
 // before its Jobs exist, and an attempt after a crash passes it back
@@ -651,6 +795,14 @@ module.exports = {
   fileFlakeRequest,
   fileBotIssue,
   flakeRequestText,
+  baselineNeedsRefresh,
+  baselineGapsAt,
+  baselineRequestText,
+  fileBaselineRefreshRequest,
+  checkBaselineRefresh,
+  BASELINE_REFRESH_SHARE,
+  BASELINE_REQUEST_DAYS,
+  BASELINE_REQUEST_TITLE,
   MAX_FLAKES_PER_RED,
   FLAKE_MEMORY_DAYS,
 };

@@ -94,6 +94,10 @@ async function migrate(config) {
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
+  // #6271's shots: a private thread with the bot, already marked done this
+  // week, so Live this week has a closed thread to show. Staging has no
+  // model, so the bot's reply is stored rather than asked for.
+  await seedStagingClosedPrivateThread(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
@@ -101,6 +105,10 @@ async function migrate(config) {
   // #6264: a request whose bot kept its word, for the before & after shots
   // of "tell me when it's done" (the promise, then the line it posted).
   await seedStagingBotFollowUp(pool);
+  // #6255's shots: the member asks the bot, in Main Chat, to say when a
+  // request it is still building is made, and it agrees. Nothing here runs
+  // a model, so a fresh staging copy has no such exchange to show.
+  await seedStagingBotTellMeWhen(pool);
   // #6228's shots: a reply on the handed-back request #9103 (above), for the
   // thread's status line, its track card and the Homeroom bot page's row.
   await seedStagingBotReplyWaiting(pool);
@@ -1796,6 +1804,85 @@ async function seedStagingBotWaitingRows(pool) {
   }
 }
 
+// #6271 (4 Nov 2026): a private thread marked done now stays under Live this
+// week for a week. A fresh staging copy has no private thread with the bot,
+// and staging has no model to make one, so this seeds one already closed,
+// with the bot's reply stored. Rows for the shots' own member fixture
+// (usernode-capture) only; nothing here is a signal the bot reads to decide
+// anything. Idempotent through the root message's idempotency key and the
+// private thread's unique root; strictly a no-op outside staging.
+async function seedStagingClosedPrivateThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        'INSERT INTO conversations (kind, created_by) VALUES (\'direct\', $1) RETURNING id',
+        [member.id],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status)
+       VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')
+       ON CONFLICT (conversation_id, user_id) DO UPDATE SET status = 'member'`,
+      [conversationId, member.id, bot.id],
+    );
+    const key = 'staging-demo-closed-private-thread';
+    const had = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, member.id, key],
+    );
+    let rootId = had.rows[0]?.id;
+    if (!rootId) {
+      const root = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, 'Staging demo: a private thread marked done this week', $3, NOW() - INTERVAL '2 days')
+         RETURNING id`,
+        [conversationId, member.id, key],
+      );
+      rootId = root.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: kept here for a week so it can be reopened.', $3, NOW() - INTERVAL '2 days')`,
+        [conversationId, bot.id, rootId],
+      );
+    }
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const appId = apps.rows[0]?.id || null;
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, done_at, done_from)
+       VALUES ($1, $2, $3, $4, 'idea', 'done', NOW() - INTERVAL '2 days', 'open')
+       ON CONFLICT (root_message_id) DO NOTHING`,
+      [member.id, conversationId, rootId, appId],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging closed private thread seeding failed', { message: err.message });
+  }
+}
+
 // #6228 (3 Nov 2026): the thread's status line and the track card after a
 // person replies on a request the bot handed back. A fresh staging copy has
 // no such request, so this seeds one on a request page staging can open (a
@@ -1997,6 +2084,72 @@ async function seedStagingBotFollowUp(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot follow-up seeding failed', { message: err.message });
+  }
+}
+
+// #6255: the bot agrees, in the member fixture's Main Chat, to say when a
+// request it is still building is made ("I'll tell you here when it's ready
+// to vote"). A fresh staging copy has no such exchange, because nothing here
+// runs a model, so the before & after shots would find an empty chat. The
+// lines are obviously fake and nothing reads them. Idempotent through the
+// direct pair and each line's key; a no-op outside staging.
+async function seedStagingBotTellMeWhen(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!people.rows.length || !bots.rows.length) return;
+    const member = Number(people.rows[0].id);
+    const bot = Number(bots.rows[0].id);
+    if (member === bot) return;
+    const low = Math.min(member, bot);
+    const high = Math.max(member, bot);
+    const found = await pool.query(
+      `SELECT p.conversation_id FROM conversation_direct_pairs p
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2 LIMIT 1`,
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [bot],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', $2, NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, bot, member],
+    );
+    const lines = [
+      [member, 'staging-tellmewhen-1', 'Staging demo: can you build request #9108 on Homeroom?', '27 minutes'],
+      [bot, 'staging-tellmewhen-2', "I've started building Homeroom request #9108. It usually takes about 20 minutes.", '26 minutes'],
+      [member, 'staging-tellmewhen-3', "Great, tell me when it's made.", '25 minutes'],
+      [bot, 'staging-tellmewhen-4', "I'll tell you here when it's ready to vote.", '25 minutes'],
+    ];
+    for (const [sender, key, content, ago] of lines) {
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - $5::interval)
+         ON CONFLICT (conversation_id, sender_id, idempotency_key)
+           WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+         DO NOTHING`,
+        [conversationId, sender, content, key, ago],
+      );
+    }
+    log.info('db', 'Staging tell-me-when chat seeded', { conversationId });
+  } catch (err) {
+    log.warn('db', 'Staging tell-me-when chat seeding failed', { message: err.message });
   }
 }
 
@@ -10280,6 +10433,20 @@ async function seedStagingDiscussionContext(pool, config) {
     '[staging fixture] Answers to your questions:\n1. The app view header, not the platform top bar.\n2. "Nicer" means tidier spacing — no visual refresh.\n3. Yes, ship it behind no flag.',
     'message', issueThread, 48);
   await insert(null, 'Staging demo: a system activity row in the issue thread', 'system', issueThread, 45);
+
+  // #6268: a message a person's coding agent posted for them that Homeroom
+  // bot will not answer says so, quietly, under it. An agent cannot post
+  // through the connector on a copy with no model, so the state the shots
+  // need is written here: one agent row on the request's discussion, with
+  // the reason the route stores when it skips one.
+  await pool.query(
+    `INSERT INTO chat_messages
+       (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via, created_at)
+     VALUES ($1, $2, $3, 'message', $4::jsonb, 'issue', 42, 'agent', NOW() - INTERVAL '42 minutes')`,
+    [appId, other,
+      '[staging fixture] @Homeroom bot, one more thing while you are in here: keep the mobile header as it is.',
+      JSON.stringify({ homeroomBotSkip: { why: 'connector_run' } })],
+  );
 
   log.info('db', 'Seeded staging discussion-context fixture', { appId, sessionId, issueNumber: 42 });
 }

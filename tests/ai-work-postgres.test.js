@@ -354,6 +354,35 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.equal(listedNow.find((p) => p.rootId === opened.id).state, 'open');
   assert.equal(listedNow.find((p) => p.rootId === idea.id).resultRef, undefined, 'one that went nowhere has no number');
 
+  // #6271: a private thread marked done this week stays listed for a week
+  // (Live this week's), with the day it closed; one closed longer ago goes.
+  const closed = await say(ada, 'Swap reminders by email');
+  await say(bot, 'Done.', closed.id);
+  await pool.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, done_at)
+     VALUES ($1, $2, $3, $4, 'idea', 'done', NOW() - INTERVAL '2 days')`,
+    [ada.id, convo.id, closed.id, app.id]);
+  const oldClosed = await say(ada, 'An older finished idea');
+  await say(bot, 'Done.', oldClosed.id);
+  await pool.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, done_at)
+     VALUES ($1, $2, $3, $4, 'idea', 'done', NOW() - INTERVAL '10 days')`,
+    [ada.id, convo.id, oldClosed.id, app.id]);
+  const afterDone = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).private;
+  const closedRow = afterDone.find((p) => p.rootId === closed.id);
+  assert.deepEqual([closedRow.state, typeof closedRow.doneAt], ['done', 'string'], 'a done thread is read with the day it closed');
+  assert.equal(afterDone.find((p) => p.rootId === oldClosed.id), undefined, 'one closed longer than a week is not read');
+  assert.equal(aiWork.shapePrivate({ root_id: 1, content: 'x', state: 'done', done_at: null }).doneAt, undefined,
+    'a done thread with no day says none');
+  // Homeroom bot's answer reads it as Live this week's, never Needs you's.
+  const afterLists = await aiWork.pageLists(pool, { user: { id: ada.id }, deps: { bot } });
+  assert.equal(afterLists.needsYou.some((r) => r.title === 'Swap reminders by email'), false, 'closed is not Needs you\'s');
+  const liveClosed = afterLists.liveThisWeek.filter((r) => r.title === 'Swap reminders by email');
+  assert.equal(liveClosed.length, 1, 'it is Live this week\'s');
+  assert.match(liveClosed[0].says, /^closed/);
+  assert.equal(afterLists.liveThisWeek.some((r) => r.title === 'An older finished idea'), false);
+  assert.equal(afterLists.counts.liveThisWeek, afterLists.liveThisWeek.length, 'the heading\'s count includes it');
+
   // The route: signed in only.
   const httpApp = express();
   httpApp.use((req, _res, next) => { req.user = req.get('x-test-user') ? { id: Number(req.get('x-test-user')) } : null; next(); });
