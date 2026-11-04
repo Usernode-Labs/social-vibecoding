@@ -607,8 +607,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     // Homeroom bot parity (P1-P9): what the thread tools add this turn (homeroom-bot-thread-tools/).
     ...extra,
     'Finish every turn by calling reply exactly once: plain text (short unless they asked for more), cards for up to 3 requests,',
-    'changes or projects you mention, and up to 3 suggestions: short things they might say next, in their own',
-    'words ("How long will it take?"), each something you can do or answer from this chat. Offer at least one',
+    'changes or projects you mention, and up to 3 suggestions in the reply tool\'s suggestions field: short things they',
+    'might say next, in their own words ("How long will it take?"), each something you can do or answer from this',
+    'chat. They are shown as buttons. Never write them in the text. Offer at least one',
     'unless the conversation has plainly ended.',
     '',
     'HOW HOMEROOM WORKS',
@@ -2720,6 +2721,51 @@ function suggestionLabels(list) {
   return out;
 }
 
+/** Pure: a heading a reply may have written its suggestions under. */
+const SUGGESTIONS_HEADING_RE = /^\s*[*_]{0,2}(suggestions|you could say)\s*:?\s*[*_]{0,2}\s*:?\s*$/i;
+/** Pure: one line of a list: `-`, `*`, `•`, `1.` or `1)`. */
+const SUGGESTIONS_ITEM_RE = /^\s*(?:[-*•]|\d+[.)])\s+(.*\S)\s*$/;
+
+/** Pure: a list item's words, its marker and surrounding quotes gone. */
+function suggestionItem(line) {
+  const m = SUGGESTIONS_ITEM_RE.exec(line);
+  if (!m) return null;
+  return m[1].replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Pure (#6272): a reply that still wrote its suggested replies into its text,
+ * under a "Suggestions:" or "You could say:" heading, has them moved out into
+ * `suggestions`, where say() turns them into the buttons the people it
+ * answered tap. Only a list at the very end is moved and the rest of the text
+ * stays as it was written; a reply that already gave suggestions as buttons,
+ * or whose text would be left empty, is untouched. A move is logged so the
+ * prompt fix can be measured.
+ */
+function liftTextSuggestions(text, suggestions, logContext = {}) {
+  if (suggestionLabels(suggestions).length) return { text, suggestions, moved: false };
+  const body = String(text == null ? '' : text);
+  const lines = body.split(/\r?\n/);
+  for (let start = lines.length - 1; start >= 0; start -= 1) {
+    if (!SUGGESTIONS_HEADING_RE.test(lines[start])) continue;
+    const items = [];
+    let list = true;
+    for (const line of lines.slice(start + 1)) {
+      if (!line.trim()) continue;
+      const item = suggestionItem(line);
+      if (item == null) { list = false; break; }
+      items.push(item);
+    }
+    if (!list || !items.length) continue;
+    const before = lines.slice(0, start).join('\n').replace(/\s+$/, '');
+    if (!before) return { text, suggestions, moved: false };
+    const labels = suggestionLabels(items);
+    log.warn('homeroom-bot-mayor', 'Moved a suggestions list out of a reply\'s text', { ...logContext, count: labels.length });
+    return { text: before, suggestions: labels, moved: true };
+  }
+  return { text, suggestions, moved: false };
+}
+
 /** Cards from the model's `reply`, resolved to Messages' shared objects. */
 async function resolveCards(pool, user, cards) {
   const out = [];
@@ -3122,7 +3168,10 @@ async function runTool(pool, ctx, name, args) {
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
       case 'reply': {
-        ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: args.suggestions };
+        // #6272: a list the model still wrote into its text becomes buttons.
+        const lifted = liftTextSuggestions(String(args.text == null ? '' : args.text), args.suggestions,
+          { userId: user.id, chat: ctx.conversationId });
+        ctx.reply = { text: clip(lifted.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: lifted.suggestions };
         return { ok: true };
       }
       default: {
@@ -6179,6 +6228,7 @@ module.exports = {
   retryAct,
   normalizeCalls,
   myWork,
+  progressOf,
   requestDetail,
   myProjects,
   // #4145
@@ -6233,6 +6283,7 @@ module.exports = {
   noteRequests,
   namedCards,
   suggestionLabels,
+  liftTextSuggestions,
   MAX_SUGGESTIONS,
   MAX_SUGGESTION_CHARS,
   claimProblems,

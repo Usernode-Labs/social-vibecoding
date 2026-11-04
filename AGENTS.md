@@ -157,6 +157,9 @@ selects a skill.
   with a `// test:changed: when <path> (…)` line, and a change to that file
   or anything under that directory selects it: the Mayor turn golden
   declares `src/prompts/`, because the prompts it pins are built from there.
+  A new `tests/*.test.js` needs its entry in `tests/baselines/test-durations.json`
+  (`npm run test:durations -- --add <file>`); test:changed reports one that is
+  missing and the unit suite fails on it.
 - **Run `npm test` only when shared code moved and the mapping cannot see
   who depends on it** — a `public/js/**` module other modules reach through
   a global (the mapping runs the suites that name the module, not those of

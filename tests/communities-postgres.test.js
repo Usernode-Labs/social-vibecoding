@@ -236,10 +236,23 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
         policy: 'anyone', approvals_required: null, electorate: 1, required: 1,
         mode: 'columns', preset: 'group_vote', rules: null, groups: [],
         creator: { id: owner.id, username: owner.username, display_name: null },
+        creator_gone: false,
         // Polish board #13: the invited approvers' names, so the Workshop's
         // rule line is drawn once. None here: approval is not by invitation.
         approvers: null,
       });
+      // #6281: a creator who deleted their account leaves apps.created_by
+      // NULL (ON DELETE SET NULL), so the sheet is told the account is gone
+      // rather than that the project never had a creator. The platform's own
+      // project has no creator by design, and keeps saying so.
+      await pool.query('UPDATE apps SET created_by = NULL WHERE id = $1', [a.id]);
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.equal(got.body.approval.creator, null);
+      assert.equal(got.body.approval.creator_gone, true);
+      await pool.query('UPDATE apps SET self_hosted = true WHERE id = $1', [a.id]);
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.equal(got.body.approval.creator_gone, false, 'no creator by design is not a gone account');
+      await pool.query('UPDATE apps SET self_hosted = false, created_by = $2 WHERE id = $1', [a.id, owner.id]);
       assert.deepEqual(got.body.visibility, { build: 'public', view: 'public' });
       assert.deepEqual(got.body.channel, {
         last_message: null, last_at: null, last_by: null, unread_count: 0,

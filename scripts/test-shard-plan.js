@@ -64,6 +64,10 @@ function loadDurations(file = DURATIONS_FILE) {
   if (!raw || raw.version !== 1 || typeof raw.files !== 'object' || raw.files === null) {
     throw new Error(`${path.relative(ROOT, file)} is not a version 1 durations baseline`);
   }
+  if (raw.unmeasured !== undefined
+    && (!Array.isArray(raw.unmeasured) || raw.unmeasured.some((name) => typeof name !== 'string'))) {
+    throw new Error(`${path.relative(ROOT, file)} has an unmeasured list that is not an array of paths`);
+  }
   const defaultSeconds = Number(raw.defaultSeconds);
   if (!(defaultSeconds > 0)) throw new Error('the durations baseline has no defaultSeconds');
   const files = new Map();
@@ -80,6 +84,36 @@ function loadDurations(file = DURATIONS_FILE) {
     if (known) files.set(name, { ...known, cores: Number(o.cores) });
   }
   return { defaultSeconds, files };
+}
+
+/**
+ * What the baseline is missing, and whether its placeholders have piled up:
+ * `{ missing, unmeasured, advisory, missingAdvisory }`. `missing` is the test
+ * files with no entry at all. `unmeasured` is the placeholder entries that
+ * still name a test file. Both are ADVISORY, never a failure: a file the
+ * baseline does not know is planned at `defaultSeconds`, so it costs a little
+ * balance and never a place. `advisory` is a note to print when the
+ * placeholders pass a fifth of all files, `missingAdvisory` one naming the
+ * files with no entry at all; either is null when there is nothing to say.
+ * Only a broken baseline (loadDurations throws for one) is an error.
+ */function baselineGaps(files, raw) {
+  const known = new Set(Object.keys((raw && raw.files) || {}));
+  const present = new Set(files);
+  const missing = files.filter((file) => !known.has(file));
+  const unmeasured = [...new Set(Array.isArray(raw && raw.unmeasured) ? raw.unmeasured : [])]
+    .filter((name) => present.has(name))
+    .sort();
+  const advisory = unmeasured.length > files.length * 0.2
+    ? `${unmeasured.length} of ${files.length} test files have placeholder durations, not measured ones;`
+      + ' refresh them with npm run test:durations (in the worker image, 8 CPUs, PostgreSQL up)'
+    : null;
+  const missingAdvisory = missing.length
+    ? `${missing.length} of ${files.length} test files have no entry in tests/baselines/test-durations.json`
+      + ` and are planned at the default ${raw && raw.defaultSeconds}s (${missing.slice(0, 20).join(', ')}`
+      + `${missing.length > 20 ? `, …and ${missing.length - 20} more` : ''}); add them with:\n`
+      + `  npm run test:durations -- --add ${missing.join(',')}`
+    : null;
+  return { missing, unmeasured, advisory, missingAdvisory };
 }
 
 /**
@@ -149,5 +183,5 @@ function parseShard(value) {
 }
 
 module.exports = {
-  CONCURRENCY, CPUS, DURATIONS_FILE, listTestFiles, loadDurations, plan, verifyPartition, planId, parseShard,
+  CONCURRENCY, CPUS, DURATIONS_FILE, listTestFiles, loadDurations, baselineGaps, plan, verifyPartition, planId, parseShard,
 };
