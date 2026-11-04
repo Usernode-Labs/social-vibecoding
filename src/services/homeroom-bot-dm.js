@@ -1384,6 +1384,13 @@ function buildFailedCause(reason) {
   if (/ran past its time limit/.test(r)) return { cause: 'time' };
   if (/restarted|by a restart/.test(r)) return { cause: 'restart' };
   if (/built but could not be proposed/.test(r)) return { cause: 'unproposed' };
+  if (/couldn't push the build's commit/.test(r)) {
+    // #6267: the upload, not the build, failed. A temporary refusal is being
+    // retried; the other two say how a person can help.
+    if (/gave up/.test(r)) return { cause: 'push_gave_up' };
+    if (/permanent/.test(r)) return { cause: 'push_permanent' };
+    return { cause: 'push' };
+  }
   if (/produced no change/.test(r)) return { cause: 'no_change' };
   if (/could not start|would not start|could not open a session|could not create its branch/.test(r)) {
     return { cause: 'no_start' };
@@ -1412,6 +1419,9 @@ const FAILED_SAID = Object.freeze({
     unproposed: (d, it) => `I built ${it}, but I couldn't put it up for approval.`,
     no_change: (d, it) => `I couldn't ${d.verb} ${it}: I ended up with no changes to show you.`,
     no_start: (d, it) => `I couldn't get started on ${d.starting} ${it}.`,
+    push: (d, it) => `I built ${it}, but GitHub refused the upload (GitHub is having problems right now). I'll try again in a few minutes.`,
+    push_permanent: (d, it) => `I built ${it}, but GitHub wouldn't take the upload, and sending it again won't help.`,
+    push_gave_up: (d, it) => `I built ${it}, but GitHub kept refusing the upload, so I've stopped trying for now.`,
     other: (d, it) => `I couldn't ${d.verb} ${it}: something went wrong while I was working on it.`,
   }),
   bot: Object.freeze({
@@ -1421,6 +1431,9 @@ const FAILED_SAID = Object.freeze({
     unproposed: (d, it) => `Homeroom bot built ${it}, but couldn't put it up for approval.`,
     no_change: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: it ended up with no changes to show.`,
     no_start: (d, it) => `Homeroom bot couldn't get started on ${d.starting} ${it}.`,
+    push: (d, it) => `Homeroom bot built ${it}, but GitHub refused the upload (GitHub is having problems right now). It will try again in a few minutes.`,
+    push_permanent: (d, it) => `Homeroom bot built ${it}, but GitHub wouldn't take the upload, and sending it again won't help.`,
+    push_gave_up: (d, it) => `Homeroom bot built ${it}, but GitHub kept refusing the upload, so it has stopped trying for now.`,
     other: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: something went wrong during the ${d.noun}.`,
   }),
 });
@@ -1590,11 +1603,24 @@ function requestNews(kind, dm, context) {
       // again proposes what was built (finishOnTryAgain), so it says it
       // finishes it. Every other cause still starts over.
       if (context.firstVersion) {
-        const finishes = buildFailedCause(dm.reason).cause === 'unproposed';
-        return `${line}\n\n${buildFailedWords(dm.reason, context.appName || it, 'me', { first: true })} `
-          + (finishes ? 'Tap Try again and I\'ll finish it.' : 'Tap Try again and I\'ll start over.');
+        const cause = buildFailedCause(dm.reason).cause;
+        const finishes = cause === 'unproposed';
+        const why = `${line}\n\n${buildFailedWords(dm.reason, context.appName || it, 'me', { first: true })}`;
+        // #6267: the platform retries a temporary refusal itself, so the
+        // maker is not asked to do anything; the others say how a tap helps.
+        if (cause === 'push') return why;
+        if (cause === 'push_gave_up') return `${why} Tap Try again and I'll send it.`;
+        return `${why} ${finishes ? 'Tap Try again and I\'ll finish it.' : 'Tap Try again and I\'ll start over.'}`;
       }
-      return `${line}\n\n${buildFailedWords(dm.reason, it)} Reply here and I'll try again.`;
+      {
+        // #6267: a temporary refusal is being retried, so no "Reply here"
+        // line; a permanent one or one given up on says a reply helps.
+        const cause = buildFailedCause(dm.reason).cause;
+        const words = `${line}\n\n${buildFailedWords(dm.reason, it)}`;
+        if (cause === 'push') return words;
+        if (cause === 'push_gave_up') return `${words} Reply here and I'll send it again.`;
+        return `${words} Reply here and I'll try again.`;
+      }
     case 'followup_failed': {
       // 5 Oct 2026: an update to their change that did not happen, in plain
       // words (updateFailedWords), never the run's own record, and how to

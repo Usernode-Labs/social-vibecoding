@@ -359,8 +359,14 @@ function liveHomeroomText({ title, project }) {
 // (homeroom-bot.js finishBuiltFirstVersion).
 function buildFailedText(reason, { firstVersion = false } = {}) {
   const dm = require('./homeroom-bot-dm');
+  const read = dm.buildFailedCause(reason);
   const words = dm.buildFailedWords(reason, 'this', 'bot', { first: firstVersion });
-  if (firstVersion && dm.buildFailedCause(reason).cause === 'unproposed') {
+  // #6267: a temporary refusal is being retried by the platform, so there is
+  // nothing for a person to do; the other two push causes say how to help.
+  if (read.cause === 'push') return words;
+  if (read.cause === 'push_permanent') return `${words} Reply here (or on the GitHub issue) and it will try again.`;
+  if (read.cause === 'push_gave_up') return `${words} Reply here (or on the GitHub issue) and it will send it again.`;
+  if (firstVersion && read.cause === 'unproposed') {
     return `${words} Whoever asked for it can tap Try again in their chat with Homeroom bot, and it will finish it.`;
   }
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
@@ -4974,9 +4980,28 @@ async function buildAndPropose({
     // not land (worker.js unpushedCommit: ahead > 0, push_ok=0). It was
     // recorded as "no change", which said the build had done nothing.
     const unpushed = result.pushOk === false && Number(result.ahead) > 0;
+    const pushFailure = result.pushFailure && typeof result.pushFailure === 'object' ? result.pushFailure : null;
+    const pushCode = result.pushFailed || pushFailure?.code || 'push_failed';
+    // #6267: a temporary refusal is not a failed build. Keep the session and
+    // its worker volume (the commit is recorded in session_workers), leave
+    // it paused, and wait to push: homeroom-bot.js finishWaitingPush sends
+    // this exact commit later, or a person's reply does, without building
+    // it again.
+    if (unpushed && pushFailure && pushFailure.permanent !== true) {
+      log.warn('homeroom-bot', 'A finished build waits for its upload', {
+        app: app.slug, issueNumber, sessionId: session.id, code: pushCode, sha: (result.sha || '').slice(0, 8),
+      });
+      steps.fence();
+      return {
+        ok: false, waitingToPush: true, sessionId: session.id,
+        branchName: session.branch_name || null, sha: result.sha || null,
+        error: `waiting to push: couldn't push the build's commit (${pushCode}, temporary)`,
+        ...specOut(), ...costsOut(),
+      };
+    }
     return {
-      ...(await fail(result.pushFailed
-        ? `couldn't push the build's commit (${result.pushFailed})`
+      ...(await fail(pushFailure
+        ? `couldn't push the build's commit (${pushCode}${pushFailure.permanent === true ? ', permanent' : ''})`
         : unpushed ? 'couldn\'t push the build\'s commit'
           : 'the build produced no change to propose')),
       costUsd,

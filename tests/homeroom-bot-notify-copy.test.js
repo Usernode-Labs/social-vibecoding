@@ -40,6 +40,10 @@ const BODIES = [
   ['stopped', 'build_not_proposed', {}, 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.'],
   ['stopped', 'build_no_start', {}, 'Stopped: I couldn\'t get started. Tap Try again.'],
   ['stopped', 'build_other', {}, 'Stopped: something went wrong while I was building. Tap Try again.'],
+  // #6267: the build finished and GitHub refused the upload.
+  ['stopped', 'build_push', {}, 'Built, but GitHub refused the upload. I\'ll try again soon.'],
+  ['stopped', 'build_push_permanent', {}, 'Built, but GitHub wouldn\'t take the upload. Reply to try again.'],
+  ['stopped', 'build_push_gave_up', {}, 'Built, but GitHub kept refusing the upload. Reply to send it.'],
   ['stopped', 'update_failed', {}, 'Stopped: I couldn\'t update it. It\'s as it was.'],
   ['stopped', 'needs_look', {}, 'Stopped: it\'s built, but a person needs to look at it before you can try it.'],
   ['stopped', 'checks', {}, 'Stopped: its checks still fail. A person needs to look.'],
