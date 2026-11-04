@@ -627,6 +627,12 @@ export interface ChecksExplainView {
   /** The run: its checks_checked_at. */
   at: string;
   fallback: string | null;
+  /**
+   * #6288: the Testing card's lead when main is already failing these tests,
+   * so the Checks step says whose they are too (it is drawn above the
+   * failure's own words). Null when main is not failing them.
+   */
+  mainLead?: string | null;
   /** The page the first failing check opened on the preview, when it can be reopened. */
   page?: { path: string; stagingUrl: string } | null;
 }
@@ -672,10 +678,23 @@ export interface ChangeGateView {
   details?: boolean;
   /** Testing only, when its checks failed: what went wrong, in plain words. */
   explain?: ChecksExplainView | null;
+  /**
+   * #6288: while main is already failing this change's tests, the request
+   * main watch filed to fix main. The one thing to read instead of asking
+   * the change's author to fix a failure that is not theirs.
+   */
+  mainFailure?: { href: string; label: string; mixed: boolean } | null;
   /** Testing only, for the change's author: Fix it. */
   fix?: FixChecksView | null;
   /** Testing only, for everybody else: who has to fix it. */
   authorNote?: string | null;
+  /**
+   * #6234: Testing only, on a change Homeroom bot built whose checks failed:
+   * where its own fix of them stands (services/homeroom-bot-progress.js
+   * changeBotFix), carried on the card as `data-change-bot-fix`. The words
+   * are in `authorNote`.
+   */
+  botFix?: 'fixing' | 'queued' | 'handed_off' | null;
   /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps

@@ -3141,7 +3141,11 @@
   },
   "whoDecides.group.creatorNobody": {
     "text": "Nobody: this project has no creator",
-    "description": "Line under the Creator group on a project with no creator."
+    "description": "Line under the Creator group on a project that has no creator by design, such as Homeroom's own project. Keep it distinct from a creator whose account no longer exists."
+  },
+  "whoDecides.group.creatorGone": {
+    "text": "The account that made this project no longer exists",
+    "description": "Line under the Creator group on the Who can see & change it sheet when the person who made the project deleted their account."
   },
   "whoDecides.group.members": {
     "text": "All members",

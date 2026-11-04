@@ -77,6 +77,9 @@ const FIRST_PERSON = Object.freeze([
   [/It is trying once more\./, 'I\'m trying once more.'],
   [/Homeroom bot can't get this change working on its own:/, 'I can\'t get this change working on my own:'],
   [/Homeroom bot can't get this change past its checks on its own:/, 'I can\'t get this change past its checks on my own:'],
+  // #6234: the fix's start line (homeroom-bot-followup.js checksFixingText).
+  [/^Homeroom bot is (fixing|adding) /, 'I\'m $1 '],
+  [/It will say here when it's done\./, 'I\'ll say here when it\'s done.'],
   // A fix round's note (homeroom-bot-followup.js checksRevisedText).
   [/^Homeroom bot (fixed|added) (the |what |sample )/, 'I $1 $2'],
   // Why a fix of its checks stopped (homeroom-bot-followup.js whySentence).

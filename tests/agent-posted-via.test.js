@@ -315,6 +315,12 @@ test('the view model reads the marker off a loaded row and a live one, and nothi
   assert.equal(gc._messageView({ ...base, postedVia: 'agent' }).postedVia, 'agent', 'broadcast spelling');
   assert.equal(gc._messageView(base).postedVia, null, 'a person typing');
   assert.equal(gc._messageView({ ...base, posted_via: 'robot' }).postedVia, null, 'only the value the server writes');
+  // #6268: whether Homeroom bot will answer it, decided when it was posted.
+  const skip = { metadata: { homeroomBotSkip: { why: 'connector_run' } } };
+  assert.equal(gc._messageView({ ...base, posted_via: 'agent', ...skip }).botSkipped, true);
+  assert.equal(gc._messageView({ ...base, postedVia: 'agent', meta: skip.metadata }).botSkipped, true, 'a live row');
+  assert.equal(gc._messageView({ ...base, posted_via: 'agent' }).botSkipped, false);
+  assert.equal(gc._messageView({ ...base, ...skip }).botSkipped, false, 'a person\'s own row never says it');
 });
 
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
@@ -340,6 +346,15 @@ test('the transcript row wears the chip and data-posted-via only for an agent ro
   const person = renderToHtml(createElement(MessageRow, { msg: rowBase }));
   assert.ok(!/data-posted-via/.test(person), 'an ordinary row has no attribute');
   assert.ok(!/gc-posted-via|via agent/.test(person), 'and no chip');
+
+  // #6268: an agent message Homeroom bot will not answer says so, quietly,
+  // under it; an ordinary agent row and a person's own row do not.
+  const skipped = renderToHtml(createElement(MessageRow, { msg: { ...rowBase, postedVia: 'agent', botSkipped: true } }));
+  assert.match(skipped, /<p class="[^"]*\bgc-msg-bot-skip\b[^"]*"[^>]*data-bot-skip=""/);
+  assert.match(skipped, /doesn(?:&#x27;|'|’)?t answer this message; @ it in your own words to ask it\./);
+  assert.match(skipped, /data-posted-via="agent"/, 'it keeps its "via agent" chip');
+  assert.ok(!/data-bot-skip/.test(agent), 'an answered agent message says nothing');
+  assert.ok(!/data-bot-skip/.test(person), 'and never a person\'s own message');
 });
 
 test('the Activity feed bubble wears the same chip, from the REST spelling', () => {

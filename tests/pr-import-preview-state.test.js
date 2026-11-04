@@ -199,53 +199,17 @@ const PR = (over) => ({
   ...over,
 });
 
-test('a built preview renders the ordinary Preview button', () => {
+// #6236: the chat's inline vote row, whose voteButtonsHtml spelled these
+// three states beside Yes and No, is retired. The ONE preview affordance is
+// card/dev-card.tsx's `Preview` from `_cardPreviewSpec`
+// (tests/dev-preview-affordance.test.js pins its three states); the chat's
+// vote card offers Preview only once the preview is live, and says
+// "Preview building…" in words before (tests/vote-row-card.test.js).
+test('the retired inline row left one preview renderer', () => {
   const AppView = makeAppView();
-  const html = AppView.voteButtonsHtml(PR({ staging_url: 'https://widget--abc123.example.test' }));
-  assert.match(html, />Preview</, 'Preview button present');
-  assert.match(html, /swapToStagingForSession\(77, 'https:\/\/widget--abc123\.example\.test'\)/);
-  assert.doesNotMatch(html, /Preview building/, 'not also claiming to be building');
-  assert.doesNotMatch(html, /Retry preview/, 'nothing to retry');
-});
-
-test('a build in flight renders a non-interactive "Preview building…" pill', () => {
-  const AppView = makeAppView();
-  const html = AppView.voteButtonsHtml(PR({ staging_building: true }));
-  assert.match(html, /Preview building/, 'the building state is stated, not left blank');
-  assert.ok(!/onclick="AppView\.swapToStagingForSession\(77/.test(html),
-    'not clickable: an ensure-staging POST mid-build can only answer "rebuilding"');
-  assert.match(html, /dc-status-spinner-arc/, 'carries the shared spinner glyph');
-  assert.doesNotMatch(html, /Retry preview/, 'a running build is not retried');
-  // Voting is unaffected by a missing preview.
-  assert.match(html, /castVote\(77, 'yes'\)/);
-});
-
-test('a failed build renders the unavailable chip with the reason, plus Retry preview', () => {
-  const AppView = makeAppView();
-  const reason = 'missing required secret DEMO_API_KEY';
-  const html = AppView.voteButtonsHtml(PR({ staging_error: reason }));
-  assert.match(html, /Preview unavailable/, 'says so rather than rendering an empty slot');
-  assert.ok(html.includes(reason), 'the captured reason rides along in the tooltip');
-  assert.match(html, /Retry preview/, 'a viewer who can act gets an escape hatch');
-  // The retry goes through ensure-staging (swapToStagingForSession with no
-  // URL → ensureStaging → POST /api/sessions/:id/ensure-staging).
-  assert.match(html, /Retry preview<\/button>/);
-  assert.match(html, /swapToStagingForSession\(77, ''\)/);
-});
-
-test('a read-only viewer sees the state but gets no Retry preview', () => {
-  const AppView = makeAppView({ readOnly: true });
-  assert.equal(AppView.readOnly, true, 'viewer is read-only');
-  const html = AppView.voteButtonsHtml(PR({ staging_error: 'boom' }));
-  assert.match(html, /Preview unavailable/, 'the state is still explained');
-  assert.doesNotMatch(html, /Retry preview/, 'the ensure POST is collab-gated');
-  assert.doesNotMatch(html, /castVote/, 'and no vote controls, as before');
-});
-
-test('neither flag keeps the historical empty slot', () => {
-  const AppView = makeAppView();
-  const html = AppView.voteButtonsHtml(PR({}));
-  assert.doesNotMatch(html, /Preview/, 'a plain GC\'d/never-built row renders no preview affordance');
+  assert.equal(typeof AppView.voteButtonsHtml, 'undefined');
+  assert.equal(typeof AppView._previewAffordanceHtml, 'undefined');
+  assert.equal(typeof AppView._cardPreviewSpec, 'function');
 });
 
 test('the detail view explains the same three states in prose', () => {

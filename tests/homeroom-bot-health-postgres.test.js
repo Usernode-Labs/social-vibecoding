@@ -118,6 +118,25 @@ test('rollout health against the full PostgreSQL schema', { timeout: 120000 }, a
   await turn('turn_failed:timeout', ['plain:timeout'], 'broken');
   await turn('invalid_request', [], 'plain', 24 * 10);
 
+  // Plan cards that failed a check (#6269): by outcome and by broken rule,
+  // in this week only.
+  const planCard = (metadata, hoursAgo = 1) => pool.query(
+    `INSERT INTO events (app_id, event_type, metadata, created_at) VALUES ($1, 'bot_plan_card', $2, NOW() - make_interval(hours => $3))`,
+    [app, metadata, hoursAgo],
+  );
+  for (const metadata of [
+    { kinds: ['summary_long'], repaired: true, kindsAfter: [], used: 'whole' },
+    { kinds: ['summary_long'], repaired: true, kindsAfter: [], used: 'whole' },
+    { kinds: ['summary_long'], repaired: true, kindsAfter: [], used: 'lines' },
+    { kinds: ['line_long'], repaired: true, kindsAfter: [], used: 'whole' },
+    { kinds: ['line_long'], repaired: false, kindsAfter: ['line_long'], used: 'fallback' },
+    { kinds: ['line_not_sentence'], repaired: false, kindsAfter: ['line_not_sentence'], used: 'fallback' },
+  ]) await planCard(metadata);
+  await planCard({ kinds: ['summary_long'], repaired: false, kindsAfter: ['summary_long'], used: 'fallback' }, 24 * 9);
+  await pool.query(
+    `INSERT INTO events (app_id, event_type, metadata) VALUES ($1, 'dapp_opened', '{}'::jsonb)`, [app],
+  );
+
   const h = await health.rolloutHealth(pool, { botUsername: BOT_USERNAME });
 
   await t.test('proposals: the week\'s, the bot\'s own, by how they ended, with the median wait from the request', () => {
@@ -147,6 +166,14 @@ test('rollout health against the full PostgreSQL schema', { timeout: 120000 }, a
     // The proposals' eight ready runs are this week's turns too.
     assert.deepEqual(h.turns, { runs: 13, failed: 1, builds: 2, buildsFailed: 1 });
     assert.deepEqual(h.chat, { turns: 5, failed: 2, unanswered: 1, recovered: 2, claimsCaught: 1 });
+  });
+
+  await t.test('plan cards: fixed, kept their lines, fell back, and each rule, this week only', () => {
+    assert.deepEqual(h.cards, {
+      total: 6, repaired: 4, whole: 3, lines: 1, fallback: 2,
+      kinds: { summary_long: 3, line_long: 2, line_not_sentence: 1 },
+    });
+    assert.equal(h.watch.cardFallbacks, true, '2 of 6 fell back, more than 1 in 5');
   });
 
   await t.test('too little behind a figure is no verdict; enough is', () => {

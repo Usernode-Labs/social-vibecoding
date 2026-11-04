@@ -208,6 +208,7 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
       data-done={shown.done ? 'true' : 'false'}
       data-tone={shown.tone}
       data-change-fixing={fixing ? '' : undefined}
+      data-change-bot-fix={shown.botFix || undefined}
       role="group"
       aria-label={shown.name}
     >
@@ -236,6 +237,13 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
               {t('project:topic.change.gate.openPage')}
             </button>
           ) : null}
+        </p>
+      ) : null}
+      {shown.mainFailure?.href ? (
+        <p className="dev-change-gate-note">
+          <a className="dev-change-gate-link" href={shown.mainFailure.href} data-change-main-fix="">
+            {shown.mainFailure.label}
+          </a>
         </p>
       ) : null}
       {shown.fix ? <FixRow fix={shown.fix} rerun={rerun} /> : null}

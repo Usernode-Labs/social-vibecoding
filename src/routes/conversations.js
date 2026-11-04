@@ -310,6 +310,53 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #6264: the plan card's "Notify me when it's ready" makes the same
+  // promise the bot makes when somebody asks in words: one stored follow-up
+  // for "ready to vote" on the request's change, told in their chat with the
+  // bot. It is their own row only, on a project they can see, in a
+  // conversation between them and the bot.
+  router.post('/api/conversations/homeroom-bot/followups', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const body = req.body || {};
+      const slug = typeof body.appSlug === 'string' ? body.appSlug.slice(0, 200) : '';
+      const issueNumber = Number(body.issueNumber);
+      const event = String(body.event || 'vote');
+      const conversationId = Number(body.conversationId);
+      const threadRootId = body.threadRootId == null ? null : Number(body.threadRootId);
+      if (!slug || !Number.isInteger(issueNumber) || issueNumber <= 0) {
+        return res.status(400).json({ error: 'Where and what to tell you about are both needed.' });
+      }
+      if (!['update', 'checks', 'vote', 'merged', 'live'].includes(event)) {
+        return res.status(400).json({ error: 'Unknown moment.' });
+      }
+      const mayor = require('../services/homeroom-bot-mayor');
+      const app = await mayor.findApp(pool, slug);
+      if (!app || !(await mayor.canView(pool, app, req.user))) return res.status(404).json({ error: 'No such project' });
+      const bot = await require('../services/homeroom-bot-dm').botAccount(pool);
+      if (!bot) return res.status(503).json({ error: 'The bot is not available just now.' });
+      if (Number.isInteger(conversationId) && conversationId > 0) {
+        const { rows } = await pool.query(
+          `SELECT 1 FROM conversations c
+             JOIN conversation_members me ON me.conversation_id = c.id AND me.user_id = $1
+             JOIN conversation_members them ON them.conversation_id = c.id AND them.user_id = $2
+            WHERE c.id = $3 AND c.kind = 'direct'`, [Number(req.user.id), Number(bot.id), conversationId]);
+        if (!rows.length) return res.status(404).json({ error: 'No such conversation' });
+      }
+      const out = await require('../services/thread-followups').register(pool, {
+        user: req.user, app, issueNumber, event,
+        place: { type: 'dm', ref: null },
+        conversationId: Number.isInteger(conversationId) && conversationId > 0 ? conversationId : null,
+        threadRootId: Number.isInteger(threadRootId) && threadRootId > 0 ? threadRootId : null,
+      });
+      if (!out.ok) return res.status(409).json({ error: out.error });
+      return res.json({ ok: true, id: out.id });
+    } catch (err) {
+      log.error('conversations', 'homeroom bot follow-up failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #6019 (stage 5): a private thread's two doors, from the head of a
   // thread the person started in their chat with the bot
   // (frontend/src/features/messages/private-thread-bar.tsx,

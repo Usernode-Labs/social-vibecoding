@@ -486,9 +486,9 @@ function planHtml({ design, title, notes, before = null, after, version }) {
         + ' screen\'s own stylesheets. Build it in the project\'s own code and components. Scripts the design used for'
         + ' its interactive states are left out of this plan.</p>'
       : `<p>The screen is new: before is what is there today, nothing; after is version ${Number(version)} of the design, a`
-        + ' mockup drawn with the project\'s stylesheets. Build it in the project\'s own code and components, as a screen'
-        + ' of its own, and keep its words, its layout and what it shows. Scripts the design used for its interactive'
-        + ' states are left out of this plan.</p>',
+        + ` mockup drawn with ${design.surface === 'new' ? 'Homeroom\'s own' : 'the project\'s'} stylesheets. Build it in`
+        + ' the project\'s own code and components, as a screen of its own, and keep its words, its layout and what it'
+        + ' shows. Scripts the design used for its interactive states are left out of this plan.</p>',
     '</section>',
     '</article>',
   ].join('\n');
@@ -575,7 +575,7 @@ async function planTargetOf(pool, design) {
  * error, code? }.
  */
 async function postDesignPlan(pool, config, {
-  user, rootId, version = null, issueNumber = null, title = null, notes = null, deps = {},
+  user, rootId, version = null, issueNumber = null, title = null, notes = null, appId = null, deps = {},
 }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
@@ -585,8 +585,19 @@ async function postDesignPlan(pool, config, {
   if (!POSTABLE.has(design.state)) {
     return { ok: false, status: 409, error: 'already_done', state: design.state, number: design.number };
   }
-  if (!design.app) return { ok: false, status: 404, error: 'This design has no project yet.' };
-  const app = await mayor.findApp(pool, design.app.slug);
+  let app = null;
+  if (design.app) {
+    app = await mayor.findApp(pool, design.app.slug);
+  } else if (Number.isSafeInteger(Number(appId)) && Number(appId) > 0) {
+    // A screen with no project yet, filed on a project they named: the card
+    // stored it on the action (homeroom-bot-mayor.js sendDesignOffer).
+    const { rows: [row] } = await pool.query(
+      `SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`, [Number(appId)],
+    );
+    app = row || null;
+  } else {
+    return { ok: false, status: 404, error: 'This design has no project yet.' };
+  }
   if (!app || !(await mayor.canView(pool, app, user))) return { ok: false, status: 404, error: 'No such project' };
   if (!(await mayor.canFile(pool, app, user))) {
     return { ok: false, status: 403, error: 'join_required', code: 'join_required', app: { slug: app.slug, name: app.name || app.slug } };
@@ -630,9 +641,9 @@ async function postDesignPlan(pool, config, {
     await pool.query(
       `UPDATE private_threads
           SET state = CASE WHEN state = 'filed' AND result_ref = $2 THEN state ELSE 'posted' END,
-              result_ref = $2, updated_at = NOW()
+              result_ref = $2, app_id = COALESCE(app_id, $3), updated_at = NOW()
         WHERE id = $1`,
-      [design.threadId, n],
+      [design.threadId, n, app.id],
     );
     await dm.sendDm(pool, {
       bot, userId: user.id, threadRootId: design.rootId, moment: null,
@@ -662,8 +673,8 @@ async function postDesignPlan(pool, config, {
   });
   const number = Number(filed.issueNumber);
   await pool.query(
-    `UPDATE private_threads SET state = 'filed', result_ref = $2, updated_at = NOW() WHERE id = $1`,
-    [design.threadId, number],
+    `UPDATE private_threads SET state = 'filed', result_ref = $2, app_id = COALESCE(app_id, $3), updated_at = NOW() WHERE id = $1`,
+    [design.threadId, number, app.id],
   );
   let attached = true;
   let planVersion = null;

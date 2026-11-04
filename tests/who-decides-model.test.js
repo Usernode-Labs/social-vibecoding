@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 const serverRules = require('../src/services/governance-rules');
 
 const ROOT = path.join(__dirname, '..');
@@ -199,6 +200,36 @@ test('a minimum on a majority or a share, in words, sent and read back as the se
     'the same rule with and without a minimum are two rules');
 });
 
+test('a creator whose account is gone is said as gone, not as no creator (#6281)', () => {
+  const model = loadTsx(MODEL);
+  const dialogs = JSON.parse(read('frontend/locales/en/dialogs.json'));
+  assert.equal(model.creatorGroupLine('evan', false), 'evan');
+  assert.equal(model.creatorGroupLine('evan', true), 'evan', 'a live creator still shows their username');
+  assert.equal(model.creatorGroupLine(null, true), message('dialogs:whoDecides.group.creatorGone'));
+  assert.equal(model.creatorGroupLine(null, false), message('dialogs:whoDecides.group.creatorNobody'));
+  assert.equal(dialogs['whoDecides.group.creatorGone'].text, 'The account that made this project no longer exists');
+  assert.notEqual(dialogs['whoDecides.group.creatorGone'].text, dialogs['whoDecides.group.creatorNobody'].text,
+    'a deleted account is not the same as a project with no creator by design');
+  assert.match(dialogs['whoDecides.group.creatorGone'].description, /deleted their account/);
+  assert.match(dialogs['whoDecides.group.creatorNobody'].description, /by design/);
+  const sheet = read('frontend/src/features/dialogs/who-decides.tsx');
+  assert.match(sheet, /approval\?\.creator_gone === true/);
+  assert.match(sheet, /creatorGroupLine\(creator, creatorGone\)/);
+});
+
+test('Creator is not offered when adding a rule to a project that has no creator (#6281)', () => {
+  const model = loadTsx(MODEL);
+  const groups = [{ name: 'Lifeguards', people: ['evan'] }];
+  assert.deepEqual(model.ruleGroupChoices(groups, {}), ['creator', 'members', 'admins', 'lifeguards']);
+  assert.deepEqual(model.ruleGroupChoices(groups, { creatorGone: false }), ['creator', 'members', 'admins', 'lifeguards']);
+  assert.deepEqual(model.ruleGroupChoices(groups, { creatorGone: true }), ['members', 'admins', 'lifeguards'],
+    'a rule that only the creator can pass would never pass');
+  assert.deepEqual(model.ruleGroupChoices(groups, { creatorGone: true, current: 'creator' }),
+    ['creator', 'members', 'admins', 'lifeguards'], 'a saved Creator rule still shows its chip');
+  const sheet = read('frontend/src/features/dialogs/who-decides.tsx');
+  assert.match(sheet, /ruleGroupChoices\(draft\.groups, \{ creatorGone, current: ruleDraft\.group \}\)/);
+});
+
 // #5816: the creator-or-admin switch, read, sent and compared.
 test('#5816: the switch is what the project has, what the sheet sends, and a difference', () => {
   const model = loadTsx(MODEL);
@@ -220,7 +251,8 @@ test('#5816: the switch is what the project has, what the sheet sends, and a dif
   assert.equal(model.currentValue({ ...approval, builder_yes: undefined }).builderYes, undefined);
 });
 
-test('the sheet refuses what the server would, in words', () => {  const model = loadTsx(MODEL);
+test('the sheet refuses what the server would, in words', () => {
+  const model = loadTsx(MODEL);
   assert.match(model.valueProblem({ preset: null, groups: [], rules: [] }), /at least one rule/);
   assert.match(model.valueProblem({ preset: null, groups: [], rules: [{ group: 'gone', kind: 'atLeast', n: 1 }] }), /group that is gone/);
   assert.match(model.valueProblem({

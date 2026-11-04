@@ -113,9 +113,10 @@ test('Main Chat\'s thread takes its whole column, alone: Main Chat is a row of t
   assert.match(css, /\.messages-layout\[data-main-chat\]\.messages-has-reply-thread > \.messages-thread-pane \{ display: none; \}/);
   assert.match(css, /\.messages-layout\[data-main-chat\] > \.messages-reply-pane \{\n {2}flex: 1 1 auto;\n {2}width: 100%;/);
   assert.match(css, /\.messages-layout\[data-main-chat\] > \.messages-reply-pane > \.messages-reply-resizer \{ display: none; \}/);
-  // 1 Nov 2026: no Back to Main Chat on the thread; a phone's arrow goes to the list.
+  // 4 Nov 2026: a thread in Main Chat's place leads with Back to Main Chat;
+  // a phone's arrow goes to the list.
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.doesNotMatch(screen, /replies\.backToMain/);
+  assert.match(screen, /data-reply-back=""\s+aria-label=\{t\('messages:replies\.backToMain'\)\} title=\{t\('messages:replies\.backToMain'\)\} onClick=\{\(\) => closeThread\(\)\}/);
   assert.match(screen, /data-reply-back=""\s+aria-label=\{t\('messages:ai\.drawer\.back'\)\}/);
   assert.match(read('frontend/src/features/ai/index.tsx'), /<EmbeddedConversation [^>]*mainChat/);
   assert.match(read('frontend/src/features/ai/phone-drawer.tsx'), /<EmbeddedConversation [^>]*mainChat onBack=\{onBack\}/);

@@ -5755,6 +5755,8 @@ async function runFollowUp(pool, config, {
       finish: (db) => voice.finishAsks(db, { runTag, runId }),
     }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
   }
+  // #6264: whoever asked to be told when the update is in hears it here.
+  await tellUpdateLanded(pool, session.id, deps);
   // #4612: the updated plan, where the first plan was posted: the spec card
   // in the change's discussion, then its copy on the GitHub issue. Its own
   // comment is pushed into postedAt so the turn does not read it back as
@@ -6205,6 +6207,19 @@ async function runChecksFix(pool, config, {
     });
   }
 
+  // #6234: one line on the change as its fix starts, so the request's page
+  // hears the bot is on it (its Testing card reads the queue row; the
+  // thread hears it here). Once across the look's attempts (`note` is
+  // look.once), so a look resumed after a restart does not say it twice,
+  // and not on the second try after running out of time: checks_retry said
+  // so. The end line (checks_revise, checks_retry, the hand-off) follows.
+  // Not for a round only its shots asked for (onlyShots): its checks pass,
+  // nothing said a person had to fix it, and a seed that adds nothing ends
+  // in silence, which would leave a start line with no end.
+  if (!onlyShots && !await look.once('retriedAtStart', () => checksRetried(pool, session.id, head))) {
+    await note('checks_fixing', { runId: null, text: followup.checksFixingText({ failing, broken, skipped }) });
+  }
+
   let turn = null;
   const seed = sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, issueThread?.messages || []);
   const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
@@ -6301,6 +6316,8 @@ async function runChecksFix(pool, config, {
     // plain words; the turn's own summary stays on the run, and the note
     // links nowhere, as it is on the change's page already.
     await note('checks_revise', { runId, text: followup.checksRevisedText({ failing, broken, skipped }) });
+    // #6264: whoever asked to be told when the update is in hears it here.
+    await tellUpdateLanded(pool, session.id, deps);
     log.info('homeroom-bot', 'Revised its proposal to fix its failing checks', {
       app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, skipped: skipped.length, costUsd, runId,
     });
@@ -7513,12 +7530,16 @@ function planCardOf(specHtmlText, { app = null, issueNumber = null } = {}) {
     const card = require('./spec-html').specCard(specHtmlText);
     if (!card || !card.lines.length) return null;
     if (card.problems.length) {
-      log.info('homeroom-bot', 'A plan\'s card text failed its checks; its card keeps the lines cut from the spec', {
-        app: app?.slug, issueNumber, problems: card.problems.slice(0, 5),
+      // #6269: the log names each problem by kind, so a writer that keeps
+      // missing one shows up; good lines are kept when only the summary
+      // fails, and the older lines are used only when a line itself fails.
+      log.info('homeroom-bot', 'A plan\'s card text failed its checks', {
+        app: app?.slug, issueNumber, problems: card.problems.slice(0, 5), kinds: card.kinds,
+        linesKept: card.lineProblems.length === 0, summaryDropped: card.summaryProblems.length > 0,
       });
-      return null;
     }
-    return { summary: card.summary, lines: card.lines };
+    if (card.lineProblems.length) return null;
+    return { summary: card.summaryProblems.length ? '' : card.summary, lines: card.lines };
   } catch (err) {
     log.warn('homeroom-bot', 'Could not read a plan\'s card text', { err: err.message });
     return null;
@@ -10274,7 +10295,26 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));
   // P6: fixes of flaky checks merged or ended, and the changes waiting on them.
   await each('flakyChecks', () => flakyChecks(deps).sweep(pool, config, { deps }));
+  // #6264: a promise about a change that never came is dropped quietly.
+  await each('followupsExpired', () => require('./thread-followups').expireOld(pool));
   return out;
+}
+
+/**
+ * #6264: an update the bot pushed landed. Whoever asked to be told when it
+ * was in hears it, in the place they asked, if it is a newer head than the
+ * one they asked about. Best effort and logged: a failed line is retried by
+ * the change's own work.
+ */
+async function tellUpdateLanded(pool, sessionId, deps = {}) {
+  try {
+    const { rows: [row] } = await pool.query('SELECT reviewed_head_sha FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
+    await require('./thread-followups').fire(pool, {
+      sessionId: Number(sessionId), event: 'update', head: row?.reviewed_head_sha || null, deps,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not tell who asked when an update landed', { sessionId, err: err.message });
+  }
 }
 
 // A live run waiting for its build that no request instance holds: one an
@@ -10410,6 +10450,7 @@ module.exports = {
   creatorChoiceNote,
   awaitGo,
   planBeforeBuilding,
+  planCardOf,
   plannedWithRequester,
   approvedSpecHtml,
   buildItOnRequest,
@@ -10494,6 +10535,9 @@ module.exports = {
   NOT_FOLLOW_UP,
   checksToFix,
   runChecksFix,
+  // #6234: whether a fix of a head ran out of time once, for the change
+  // page's "trying once more" (homeroom-bot-progress.js changeBotFix).
+  checksRetried,
   queueWait,
   queueSnapshot,
   recordReviewState,

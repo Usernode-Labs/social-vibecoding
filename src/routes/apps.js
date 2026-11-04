@@ -4421,6 +4421,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           rules: described ? described.rules : null,
           groups: described ? described.groups : [],
           creator,
+          // #6281: the creator's account is gone (apps.created_by is
+          // ON DELETE SET NULL), so the sheet says that rather than
+          // "this project has no creator", which reads like a bug. The
+          // platform's own project has no creator by design, hence the
+          // self_hosted check.
+          creator_gone: !app.self_hosted && !creator,
           approvers: approverNames,
           // #5816: whether a Yes from the creator or an admin is enough. Said
           // only when it is on, so a project that never turned it on answers
