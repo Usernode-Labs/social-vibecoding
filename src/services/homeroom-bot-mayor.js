@@ -4667,6 +4667,11 @@ async function commentOnRequest(pool, ctx, args) {
  * waiting for somebody else says whose OK it waits on, and a ready verdict
  * whose build waits its turn or runs is not looked at again: a new look
  * would only replace it.
+ *
+ * #6252: a go-ahead said in the chat by the person the bot's last note named
+ * is a decision already made. Its look records that, so the fresh read
+ * treats what the note left for a person as decided instead of returning the
+ * same person verdict and the note being posted again.
  */
 async function startRequest(pool, ctx, args) {
   const { user, settings, deps } = ctx;
@@ -4741,23 +4746,31 @@ async function startRequest(pool, ctx, args) {
       already: `It is ready and its build is already on its way${before?.doing ? ` (${before.doing})` : ''}, so nothing new was queued: a new look would only start it over.`,
     };
   }
-  const queued = await botModule(deps).enqueueFront(pool, {
-    appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_start',
-    // Its requester pays for their own; anybody else asking pays for theirs.
-    payerId: theirs ? null : user.id,
-  });
+  // #6252: the last look, read before the queued one replaces it: a verdict
+  // of `person` means the bot left this request for a person, and the note
+  // named who. A go-ahead from that person is the decision the note asked
+  // for, so the queued look records it rather than asking again.
   const { rows: lastLook } = await pool.query(
     `SELECT verdict, reason FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, n],
   );
+  const goAhead = lastLook[0]?.verdict === 'person'
+    && await botModule(deps).goAheadCounts(pool, app, requester, user.id);
+  const queued = await botModule(deps).enqueueFront(pool, {
+    appId: app.id, issueNumber: n, userId: user.id, reason: goAhead ? 'dm_go_ahead' : 'dm_start',
+    // Its requester pays for their own; anybody else asking pays for theirs.
+    payerId: theirs ? null : user.id,
+  });
   ctx.started = name;
   ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
   require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
   const after = await entryFor().catch(() => null);
-  const left = lastLook[0]?.verdict === 'person'
-    ? { lastLook: `Your last look left it for a person to decide: ${clip(lastLook[0].reason, 300)}. Looking again gives the same answer unless something changed; say so, and that a comment on it (comment_on_request) is how to change it.` }
-    : {};
+  const left = goAhead
+    ? { goAhead: 'Their go-ahead is recorded on this look: what your last look left for them is decided. Do not ask them for it again.' }
+    : lastLook[0]?.verdict === 'person'
+      ? { lastLook: `Your last look left it for a person to decide: ${clip(lastLook[0].reason, 300)}. Looking again gives the same answer unless something changed; say so, and that a comment on it (comment_on_request) is how to change it.` }
+      : {};
   return {
     ok: true,
     queued: queued ? 'At the front of your queue.' : 'You are already on it: it is not waiting in the queue.',
