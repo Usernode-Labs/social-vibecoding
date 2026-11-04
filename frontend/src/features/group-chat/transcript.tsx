@@ -878,6 +878,16 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
         <>
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
           <Body html={msg.bodyHtml} />
+          {/*
+              #6268: a message posted for somebody by their own coding agent
+              that Homeroom bot will not answer says so under it, quietly, so
+              nobody waits for a reply that is not coming.
+          */}
+          {msg.botSkipped ? (
+            <p className="gc-msg-bot-skip mt-1 text-[12px] text-zinc-500 dark:text-zinc-400" data-bot-skip="">
+              {t('chat:group.row.botSkipped')}
+            </p>
+          ) : null}
           <Attachments items={msg.attachments} />
           {/*
               #3660: a link in the words to one of Homeroom's own pages —

@@ -10281,6 +10281,20 @@ async function seedStagingDiscussionContext(pool, config) {
     'message', issueThread, 48);
   await insert(null, 'Staging demo: a system activity row in the issue thread', 'system', issueThread, 45);
 
+  // #6268: a message a person's coding agent posted for them that Homeroom
+  // bot will not answer says so, quietly, under it. An agent cannot post
+  // through the connector on a copy with no model, so the state the shots
+  // need is written here: one agent row on the request's discussion, with
+  // the reason the route stores when it skips one.
+  await pool.query(
+    `INSERT INTO chat_messages
+       (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via, created_at)
+     VALUES ($1, $2, $3, 'message', $4::jsonb, 'issue', 42, 'agent', NOW() - INTERVAL '42 minutes')`,
+    [appId, other,
+      '[staging fixture] @Homeroom bot, one more thing while you are in here: keep the mobile header as it is.',
+      JSON.stringify({ homeroomBotSkip: { why: 'connector_run' } })],
+  );
+
   log.info('db', 'Seeded staging discussion-context fixture', { appId, sessionId, issueNumber: 42 });
 }
 
