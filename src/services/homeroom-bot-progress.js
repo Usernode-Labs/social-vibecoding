@@ -90,6 +90,47 @@ function replyLateralSql({
 }
 
 /**
+ * #6246 (4 Nov 2026): a plan waiting for Build it, as `$`-free SQL that
+ * returns the newest run's `awaiting_go_at` when the request's newest run
+ * (newest by id, any mode) waits: live, ready, nothing built from it, not
+ * held by a limit, on a request still open. Null otherwise. The aliases are
+ * the caller's, as replyLateralSql's are, so the bot page (ai-work.js
+ * FACTS_SQL) and the Workshop (workshop-waiting.js PLANS_SQL) ask the same
+ * question one way. planWaits below mirrors it field by field.
+ */
+function planWaitingSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
+  return `(SELECT CASE WHEN run.mode = 'live' AND run.verdict = 'ready'
+                    AND run.awaiting_go_at IS NOT NULL
+                    AND run.live_build_waiting_at IS NULL
+                    AND run.build_ok IS NULL
+                    AND run.build_session_id IS NULL
+                    AND run.proposal_session_id IS NULL
+                    AND run.cap_suppressed IS NULL
+                    AND NOT (COALESCE((SELECT ri.status = 'closed' FROM issues ri
+                                        WHERE ri.app_id = ${appId} AND ri.github_issue_number = ${issueNumber}
+                                        ORDER BY ri.id DESC LIMIT 1), FALSE)
+                             OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
+                                         WHERE cr.app_id = ${appId} AND cr.issue_number = ${issueNumber}
+                                           AND cr.closed_at IS NOT NULL))
+                   THEN run.awaiting_go_at END
+              FROM homeroom_bot_runs run
+             WHERE run.app_id = ${appId} AND run.issue_number = ${issueNumber}
+             ORDER BY run.id DESC LIMIT 1)`;
+}
+
+/**
+ * Pure (#6246): whether a requestRows row is a plan waiting for Build it:
+ * its newest run is live and ready with nothing built from it, the plan still
+ * waits (plan_waiting_at), no build is queued or under way, no limit held it,
+ * and the request is not closed. planWaitingSql is the same test in SQL.
+ */
+function planWaits(row) {
+  return !!row && row.mode === 'live' && row.verdict === 'ready' && row.build_ok == null
+    && !row.run_proposal && !!row.plan_waiting_at && !row.build_waiting_at
+    && !row.build_session_id && !row.cap_suppressed && row.request_closed !== true;
+}
+
+/**
  * Pure (#6228): whether a person's reply on a request is newer than the
  * bot's last look and still waiting to be read, from a requestRows row (with
  * the `reply` lateral). A read that has started, or a queue row not on hold,
@@ -541,6 +582,22 @@ function stageOf(input, { now = new Date() } = {}) {
     }
     return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests are ${checks}` };
   }
+  // #6246 (4 Nov 2026): a plan waiting for Build it is what the person acts
+  // on now, so it stays the plan whatever sits beside it: a reply the bot is
+  // reading, a queue row on hold, or a question left open from before the
+  // look that made it (#6219: asked before that run started, like a note
+  // from a pass the day's limit held). A question the plan's own look asked
+  // still wins. The Workshop reads the same wait (planWaitingSql).
+  if (planWaits(row)) {
+    const olderQuestion = !!row.question_at && !!row.run_at && new Date(row.question_at) < new Date(row.run_at);
+    if (row.question_at && !olderQuestion) {
+      return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
+    }
+    return {
+      stage: 'plan', since: row.plan_waiting_at, waitingOn: 'them',
+      doing: 'the plan is ready and waits for Build it',
+    };
+  }
   if (row.started_at) {
     // #6228: a read under way after a person replied is reading that reply.
     if (replyWaits(row, { now })) {
@@ -548,14 +605,7 @@ function stageOf(input, { now = new Date() } = {}) {
     }
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
-  // #6219 (3 Nov 2026): a plan waiting for Build it is what the person acts
-  // on now, so a question left open from before the look that made the plan
-  // (asked before that run started, like a note from a pass the day's limit
-  // held) does not hide it. A question the plan's own look asked still wins.
-  const planWaits = row.mode === 'live' && row.verdict === 'ready' && row.build_ok == null && !row.run_proposal
-    && !!row.plan_waiting_at && !row.build_waiting_at && !row.build_session_id && !row.cap_suppressed;
-  const olderQuestion = planWaits && !!row.question_at && !!row.run_at && new Date(row.question_at) < new Date(row.run_at);
-  if (row.question_at && !closed && !olderQuestion) {
+  if (row.question_at && !closed) {
     return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
   }
   // The newest look decided to build it, and nothing has finished it yet.
@@ -1539,6 +1589,9 @@ module.exports = {
   REPLY_WAIT_MS,
   replyWaits,
   replyLateralSql,
+  // #6246: a plan waiting for Build it, read by the bot page and the Workshop.
+  planWaits,
+  planWaitingSql,
   inFlight,
   stageOf,
   checksOnHead,
