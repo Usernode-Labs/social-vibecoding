@@ -1393,14 +1393,14 @@
       "kind": "structural-template",
       "fingerprint": "4d178bc5a789829c1bc5",
       "count": 1,
-      "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
+      "preview": "`WITH mine AS ( SELECT r.app_id, r.issue_number, r.issue_title, r.first_version FROM homeroom_bot_requesters r WHERE r.user_id = $1 UNION SELECT q.app_id, q.iss"
     },
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
-      "fingerprint": "b06b9239a7126202da61",
+      "fingerprint": "78c2595a6c02401a3e85",
       "count": 1,
-      "preview": "`WITH mine AS ( SELECT r.app_id, r.issue_number, r.issue_title, r.first_version FROM homeroom_bot_requesters r WHERE r.user_id = $1 UNION SELECT q.app_id, q.iss"
+      "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
     },
     {
       "source": "src/services/homeroom-bot-progress.js",

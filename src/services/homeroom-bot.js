@@ -4643,7 +4643,7 @@ async function runTriage(pool, config, {
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
-    plan: parsed.plan, aboutPlatform: !!parsed.platform, alreadyDone: !!parsed.done, complicated: !!parsed.complicated,
+    plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
