@@ -301,7 +301,7 @@ function merged(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
 }
 
 // #6264: one follow-up work item, unless it was already asked under its key.
-function followupWork(d: Data, event: string, key: string, input: Json = {}): WorkRequest[] {
+function followupWork(d: Data, event: string, key: string, input: Record<string, Json> = {}): WorkRequest[] {
   if (d.notes[key]) return [];
   return [{ kind: WORK.followups, key, input: { sessionId: d.sessionId, event, ...input } }];
 }
