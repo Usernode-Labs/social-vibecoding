@@ -973,9 +973,10 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     'Finish every turn by calling reply exactly once, or stay_quiet when the newest messages are people talking to each',
     'other and nothing is asked of you.',
     ...(['issue', 'session'].includes(place.type)
-      ? ['End the reply with one to three short things the people you answered might say next, in their own words, as',
-        'suggestions: the buttons send them as that person\'s own reply. Leave them out when the conversation has plainly',
-        'ended (the change is built or live, the request is closed, or you are only saying where things stand).']
+      ? ['Put one to three short things the people you answered might say next, in their own words, in the reply',
+        'tool\'s suggestions field. They are shown as buttons that send them as that person\'s own reply. Never',
+        'write them in the text. Leave them out when the conversation has plainly ended (the change is built or',
+        'live, the request is closed, or you are only saying where things stand).']
       : []),
     '',
     'Rules:',
@@ -1524,9 +1525,13 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
   try {
     switch (name) {
       case 'reply': {
-        const text = String(args.text || '').trim();
+        let text = String(args.text || '').trim();
         if (!text) return { error: 'Say something, or call stay_quiet.' };
-        ctx.reply = { text, ...(Array.isArray(args.suggestions) ? { suggestions: args.suggestions } : {}) };
+        // #6272: a list the model still wrote into its text becomes buttons.
+        const lifted = mayor.liftTextSuggestions(text, args.suggestions,
+          { app: app.slug, appId: app.id, thread: placeKey(app.id, place) });
+        text = lifted.text;
+        ctx.reply = { text, ...(Array.isArray(lifted.suggestions) ? { suggestions: lifted.suggestions } : {}) };
         return { ok: true };
       }
       case 'stay_quiet':
@@ -2507,6 +2512,7 @@ module.exports = {
   systemPrompt,
   requestMd,
   toolsFor,
+  runTool,
   scopedPlatformCall,
   unreadDescriptionClaims,
   stripUnreadClaims,
