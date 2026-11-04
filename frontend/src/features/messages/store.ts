@@ -50,6 +50,14 @@ export interface Typist {
   bot?: boolean;
   /** What the bot says it is doing now (its typing event's `doing`); null while it thinks. */
   doing?: BotDoing | null;
+  /**
+   * 4 Nov 2026 (#6302): the answer written so far, held across the doing
+   * changes that follow it (a tool step, a wordless "thinking"), so the card
+   * does not drop the words and draw them again as each round streams. It
+   * goes with the entry when the typing stops, or when a newer answer
+   * replaces it.
+   */
+  draft?: string;
 }
 
 /**
@@ -83,6 +91,22 @@ export function botDoingOf(raw: unknown): BotDoing | null {
     ...(project ? { project } : {}),
     ...(text ? { text } : {}),
   };
+}
+
+/**
+ * 4 Nov 2026 (#6302): the Homeroom bot's entry on the typing line, from what
+ * its newest event says, with the answer written so far kept from `prior`
+ * unless this event writes a newer one. The server names a new doing as each
+ * tool step starts (and sends none while it thinks), so building the entry
+ * from the event alone erased the draft between rounds and the card flashed
+ * between its words and "Thinking"/"Reading request #…". The draft leaves
+ * with the entry when typing stops, which is also when the bot's message
+ * takes the card's place.
+ */
+export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null): Typist {
+  const written = doing?.kind === 'writing' && doing.text ? doing.text : '';
+  const draft = written || prior?.draft || '';
+  return { name: shown, unnamed: false, bot: true, doing, ...(draft ? { draft } : {}) };
 }
 
 interface InternalState extends MessagesSnapshot {
@@ -3141,8 +3165,9 @@ export function handleEvent(raw: ConversationEvent): void {
         // The stand-in only while every holder is nameless: a real account under the same word is named.
         // 1 Nov 2026: the bot, with what it says it is doing (its card's words);
         // nobody else's event carries that.
+        const prior = current.find((each) => each.name === shown);
         const entry: Typist = botPeer
-          ? { name: shown, unnamed: false, bot: true, doing: botDoingOf(event.doing) }
+          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing))
           : { name: shown, unnamed: [...holders.values()].every(Boolean) };
         next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
       }
