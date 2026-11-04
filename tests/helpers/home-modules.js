@@ -82,7 +82,9 @@ const SEARCH_RANK_PATH = path.join(FEATURE_DIR, '..', '..', 'lib', 'search-rank.
 const SEARCH_RANK_SRC = fs.readFileSync(SEARCH_RANK_PATH, 'utf8').replace(/^export\s+/gm, '');
 
 // Classic-script form: the `import` lines removed. See the note above.
+const MODE_SRC = require('typescript').transpile(fs.readFileSync(path.join(FEATURE_DIR, '..', 'settings', 'interface-mode.ts'), 'utf8'), { target: 99, module: 99 }).replace(/^export\s+/gm, '');
 const HOME_SRC = HOME_RAW
+  .replace(/^import \{ readInterfaceMode \}.*$/m, MODE_SRC)
   .replace(I18N_IMPORT, () => I18N_BINDINGS)
   .replace(/^import .* from '\.\.\/first-session\/build-line-words\.js';$/m, () => BUILD_LINE_WORDS_SRC)
   .replace(/^import .* from '\.\.\/\.\.\/lib\/repo-link\.js';$/m, () => REPO_LINK_SRC)

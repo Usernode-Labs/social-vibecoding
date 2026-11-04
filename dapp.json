@@ -1832,7 +1832,7 @@
     {
       "name": "Home card actions menu opens from ?shot=card-menu (#847)",
       "path": "/?demo=1&shot=card-menu",
-      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
+      "expectSelector": ".un-popover .card-menu-header:is(.interface-mode-basic, .interface-mode-advanced) .card-menu-title"
     },
     {
       "name": "Home card actions menu paints an opaque surface (#847)",
