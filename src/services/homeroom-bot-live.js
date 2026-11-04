@@ -3729,7 +3729,12 @@ async function draftSpec({
   // A durable build's spec turn is a durable step (services/durable-turn.js):
   // a restart's next attempt follows it instead of writing the plan again.
   const steps = durableSteps.of(deps);
-  const dispatch = (extra = {}, promptText = prompt) => sessions.runCodexAttemptLoop({
+  // One dispatcher per prompt, bound here. A durable step calls its dispatch
+  // as dispatch(extra, { budgetMs }) (durable-turn.js), so a second parameter
+  // is the clock, never a prompt: taking it as one sent every production
+  // spec turn "[object Object]" on 4 Nov 2026 while the inert context, which
+  // passes one argument, kept the tests green.
+  const dispatchWith = (promptText) => (extra = {}) => sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
       telemetryComponent,
@@ -3767,7 +3772,7 @@ async function draftSpec({
       pool, session, mode: 'scout', budgetMs, deps,
       stop: () => stopOnClock(pool, worker, session.id),
       onProgress: teeProgress(progress, watching),
-      dispatch,
+      dispatch: dispatchWith(prompt),
     });
     routed = turn.routed;
     stopped = turn.stopped || !!turn.stoppedBy;
@@ -3811,7 +3816,7 @@ async function draftSpec({
             pool, session, mode: 'scout', budgetMs: repairBudgetMs, deps,
             stop: () => stopOnClock(pool, worker, session.id),
             onProgress: teeProgress(progress, watching),
-            dispatch: (extra) => dispatch(extra, cardRepairPrompt({
+            dispatch: dispatchWith(cardRepairPrompt({
               title: specHeading(specMd) || '', summary: before.summary, lines: before.lines, problems: before.problems,
             })),
           });
