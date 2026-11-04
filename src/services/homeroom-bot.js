@@ -4603,6 +4603,12 @@ async function runTriage(pool, config, {
   const decided = await look.once('verdict', async () => {
     let v = parsed;
     if (v.complicated && requester?.firstVersion) v = { ...v, complicated: false };
+    // #6209 (4 Nov 2026, evan): a request that asks for a plan before
+    // building is still built straight away when the change is
+    // straightforward: its spec is posted as a plan card and the build goes
+    // on. Only a complicated change, or one that says not to build yet
+    // (which the triage labels complicated), is planned first and waits for
+    // Build it. Nothing here forces that path for every plan-first request.
     if (liveMode && v.verdict === 'ready' && !v.complicated && !requester?.firstVersion
       && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
       v = { ...v, complicated: true };
@@ -5659,6 +5665,42 @@ async function runFollowUp(pool, config, {
     }
   }
 
+  // #6263: a revision that changed what the change does also rewrites the
+  // description people vote on, through the same edit seam its author uses.
+  // When it cannot be written, the summary is marked stale so the page says
+  // so and the reply says the description is out of date.
+  let descriptionStale = false;
+  if (moved && (parsed?.title || parsed?.planChanged)) {
+    descriptionStale = await look.once('description', async () => {
+      const raw = followup.descriptionOut(result.lastResultText).description;
+      if (raw) {
+        try {
+          const edit = require('./proposal-description-edit');
+          const askedBy = await live.askerOf(pool, session.id);
+          const text = live.creditedDescription(withoutEmDashes(raw), askedBy);
+          const editable = await edit.readEditable(pool, session.id, bot.id);
+          if (editable) {
+            const out = await edit.edit({
+              pool, sessionId: session.id, userId: bot.id,
+              input: { description: text, expectedVersion: edit.snapshot(editable).version },
+              ...(github ? { gh: github } : {}),
+            });
+            if (out?.status === 200) return false;
+            log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+              app: app.slug, issueNumber, sessionId: session.id, status: out?.status || null,
+            });
+          }
+        } catch (err) {
+          log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+            app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+          });
+        }
+      }
+      await pool.query('UPDATE chat_sessions SET pr_summary_stale = TRUE WHERE id = $1 AND pr_summary_md IS NOT NULL', [session.id]);
+      return true;
+    });
+  }
+
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     ...billingOf(item, runMode),
@@ -5681,7 +5723,7 @@ async function runFollowUp(pool, config, {
   const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
-      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl,
+      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl, descriptionStale,
     })
     : action === 'ask' ? followup.askText({ reply, prNumber })
       : action === 'person' ? followup.personText({ reply, prNumber })
@@ -5709,7 +5751,7 @@ async function runFollowUp(pool, config, {
     // places' own work, it survives a restart, and is said once.
     await voice.reportFollowUp(pool, config, {
       app, session, asks, runTag, deps: voiceDeps,
-      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion },
+      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion, descriptionStale },
       finish: (db) => voice.finishAsks(db, { runTag, runId }),
     }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
   }
@@ -6513,8 +6555,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
          FROM chat_sessions WHERE id = $1`,
       [built.sessionId],
     ).catch(() => ({ rows: [] }));
-    await say('proposal', live.proposalText({ link }), {
-      homeroomText: live.proposalHomeroomText({ title: named?.title || null }),
+    await say('proposal', live.proposalText({ link, docOnly: built.docOnly === true }), {
+      homeroomText: live.proposalHomeroomText({ title: named?.title || null, docOnly: built.docOnly === true }),
       msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
       dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },
     });
@@ -10224,6 +10266,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('unproposedLooked', () => (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null }));
   await each('strandedAsks', () => sweepStrandedAsks(pool, bot, settings, deps));
   await each('buildsOwed', () => sweepWaitingBuilds(pool, deps));
+  // #6209: bot changes that add only documents stop linking the requests
+  // they plan for, so a merge cannot close one as done.
+  await each('docOnlyUnlinked', () => live.unlinkDocOnlyProposals(pool, { github: deps.github || require('./github') }));
   // Homeroom bot parity (P4, P5): batches' roll-ups, and notes whose build ended first.
   await each('batches', () => require('./homeroom-bot-batches').sweep(pool, deps));
   await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));

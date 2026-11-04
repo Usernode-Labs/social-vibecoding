@@ -162,22 +162,22 @@ const names = (tools) => tools.map((t) => t.function.name);
 
 test('each place gets the tools that fit it, and nothing that acts without a tap', () => {
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: true })),
-    ['reply', 'stay_quiet', 'update_change', 'offer_withdraw', 'request_detail', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_withdraw', 'request_detail', 'read_message', 'list_source', 'read_source']);
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
-    ['reply', 'stay_quiet', 'request_detail', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
+    ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
-    ['reply', 'stay_quiet', 'start_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'start_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
   // Papote #3: under its plan waiting for Build it, a change to the plan is asked for here.
   const planned = voice.toolsFor({ type: 'issue', ref: 1 }, { planWaiting: true });
   assert.deepEqual(names(planned),
-    ['reply', 'stay_quiet', 'start_request', 'change_plan', 'offer_close_request', 'request_detail', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'start_request', 'change_plan', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
   const prompt = voice.systemPrompt({ app: { slug: 'papote', name: 'Papote' }, place: { type: 'issue', ref: 3 }, tools: planned });
   assert.match(prompt, /Them saying to build it or go ahead is start_request, which builds the plan as they saw it\. Somebody asking for something in the plan to change is change_plan/);
   assert.match(prompt, /When it gives a link or changeLink, include them as written\./,
     '#6247: a start\'s reply carries the request\'s (and change\'s) link as given');
   assert.doesNotMatch(voice.systemPrompt({ app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }) }), /change_plan/);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
-  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'offer_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
+  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
   assert.ok(chat[2].function.parameters.properties.change, 'in a chat it names which change');
   assert.ok(!names(chat).includes('offer_withdraw'), 'withdrawing is offered where the change is');
   const chatClose = chat.find((t) => t.function.name === 'offer_close_request');
@@ -185,6 +185,48 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   const issueClose = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })
     .find((t) => t.function.name === 'offer_close_request');
   assert.ok(!issueClose.function.parameters.properties.number, 'on the request it is the request itself');
+});
+
+test('get_change gives back the description people vote on, as data, with its version and plan', async () => {
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (/FROM chat_sessions cs WHERE cs\.id/.test(s)) {
+        return { rows: [{
+          id: 7, app_id: 3, user_id: 9, status: 'promoted', is_headless: false,
+          pr_summary_md: 'Adds a dark mode toggle.', pr_body: 'The whole pull request body.',
+          pr_summary_stale: true, pr_summary_input_version: 4,
+        }] };
+      }
+      if (/MAX\(version\)/.test(s)) return { rows: [{ version: 2 }] };
+      return { rows: [] };
+    },
+  };
+  const platform = {
+    async call() {
+      return { isError: false, text: JSON.stringify({ changeId: 7, title: 'A dark mode toggle', status: 'promoted' }) };
+    },
+  };
+  const out = await voice.scopedPlatformCall(pool, platform, { id: 3, slug: 'todo' }, 'get_change', { changeId: 7 });
+  const shaped = JSON.parse(out.result);
+  assert.equal(shaped.description, '<untrusted-content>Adds a dark mode toggle.</untrusted-content>');
+  assert.equal(shaped.pullRequestBody, '<untrusted-content>The whole pull request body.</untrusted-content>');
+  assert.equal(shaped.descriptionStale, true);
+  assert.equal(shaped.descriptionVersion, 4);
+  assert.equal(shaped.planVersion, 2);
+  assert.equal(shaped.title, 'A dark mode toggle', 'the platform read still comes through');
+});
+
+test('#6263: a reply never says what a description contains unless it read it this turn', () => {
+  const said = 'That\'s the earlier wording, from before the update.';
+  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set() }),
+    [{ kind: 'unread_description', said: 'describes what a change\'s description says without reading it in this turn' }]);
+  assert.deepEqual(voice.unreadDescriptionClaims('The description says it adds a toggle.', { readChanges: new Set() }).map((p) => p.kind),
+    ['unread_description']);
+  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set([7]) }), [],
+    'it read the change this turn, so quoting it is allowed');
+  assert.deepEqual(voice.unreadDescriptionClaims('Done: the header is blue now.', { readChanges: new Set() }), []);
+  assert.equal(voice.stripUnreadClaims(`It says a lot. ${said}`, [{ kind: 'unread_description' }]), 'It says a lot.');
 });
 
 test('the prompt says where it is, lists only what it can do, and holds it to what it did', () => {
@@ -196,9 +238,16 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
   assert.match(prompt, /by its number/);
   assert.doesNotMatch(prompt, /update_change|offer_withdraw/);
   assert.match(prompt, /Never say you did something/);
+  assert.match(prompt, /Never say what a change's description, title, plan or any other text says/,
+    '#6263: it never describes text it has not read');
+  assert.match(prompt, /a change's description: get_change/);
   assert.match(prompt, /Credit what was said to the person whose name is on that message\./,
     '#5371: each answer is credited to the person who wrote it, not to whoever filed the request');
   assert.match(prompt, /stay_quiet/);
+  assert.match(prompt, /was shortened by you reading it, not/);
+  assert.match(prompt, /Never tell anyone\s+their message cuts off/);
+  assert.match(prompt, /the limit is\s+yours/);
+  assert.match(prompt, /Read one message of this thread in full \(read_message\)\./);
   assert.match(prompt, /Today is 2026-10-10/);
   assert.doesNotMatch(prompt, /—/, 'no em dashes in what it is told either');
 });
@@ -210,6 +259,34 @@ test('a transcript line says who wrote it, what it replied to, and the bot as "y
   assert.match(voice.transcriptLine({ id: 6, user_id: 1, content: 'Done', msg_type: 'message', created_at: at, metadata: {} }, 1), /you \(Homeroom bot\): Done/);
   assert.match(voice.transcriptLine({ id: 7, user_id: 2, username: 'evan', content: 'thanks', msg_type: 'message', created_at: at, metadata: { quote: { refMsgId: 6, author: 'homeroom_bot', snippet: 'Done' } } }, 1),
     /replying to #6 by @homeroom_bot: "Done"/);
+});
+
+test('a long message is marked where it was cut, and read whole when it is the one answered', () => {
+  const at = new Date('2026-11-04T12:30:00Z');
+  const row = { id: 232063, user_id: 2, username: 'evan', msg_type: 'message', created_at: at, metadata: {} };
+  const text = 'x'.repeat(2207);
+  const line = voice.transcriptLine({ ...row, content: text }, 1);
+  assert.match(line, /\[cut at 700 of 2,207 characters; read_message #232063 for the rest\]$/);
+  assert.equal((line.match(/x/g) || []).length, 700, 'the short form keeps today\'s 700 characters');
+  const whole = voice.transcriptLine({ ...row, content: text }, 1, { whole: true });
+  assert.ok(whole.endsWith(text), 'all 2,207 characters reach the model');
+  assert.doesNotMatch(whole, /cut at/);
+  // Read whole, a message keeps its paragraphs; the short form still squeezes.
+  const para = voice.transcriptLine({ ...row, id: 7, content: 'first\n\nsecond' }, 1, { whole: true });
+  assert.match(para, /: first\n\nsecond$/);
+  const huge = voice.transcriptLine({ ...row, id: 9, content: 'y'.repeat(9000) }, 1, { whole: true });
+  assert.match(huge, /\[cut at 8,000 of 9,000 characters; read_message #9 for the rest\]$/);
+});
+
+test('read_message is offered in every place a turn runs', () => {
+  for (const place of [
+    { type: 'chat', ref: null }, { type: 'category', ref: 3 }, { type: 'message', ref: 9 },
+    { type: 'issue', ref: 1 }, { type: 'session', ref: 2 },
+  ]) {
+    const names = voice.toolsFor(place, { ownChange: true, requestChange: true, openChangeCount: 1 })
+      .map((t) => t.function.name);
+    assert.ok(names.includes('read_message'), place.type);
+  }
 });
 
 test('an offer is two buttons the person it is for taps; the reply quotes what it answers', () => {
@@ -254,6 +331,13 @@ test('an ask is read by the follow-up beside the other replies, saying where it 
   assert.match(prompt, /evan, asked you for a change in the project's chat/);
   assert.match(prompt, /Make the header blue on every page/);
   assert.equal(followup.askAsReply({ source: 'issue', place_type: 'issue', instruction: 'x' }).where, 'issue');
+  // #6266: a long ask reaches the follow-up's prompt whole.
+  const long = `Rewrite the description and fix the checks. ${'Keep every detail. '.repeat(250)}THE LAST FIX.`;
+  const longAsk = followup.askAsReply({
+    id: 4, asker: 'evan', instruction: long, source: 'chat', place_type: 'chat',
+    created_at: new Date('2026-10-10T09:00:00Z'),
+  });
+  assert.ok(followup.followUpPrompt({ seed: 'SEED', replies: [longAsk], canRevise: true }).includes(long));
 });
 
 test('a repeat note is held for a mention the voice answers, but an answer to its question still speaks', () => {
@@ -500,6 +584,26 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
     assert.match(await facts(p, d), /A run on it is going right now\./, what);
     assert.equal(await ask(p, d), true, what);
   }
+});
+
+test('a long ask is stored whole, so the build reads all of it', async () => {
+  const instruction = `Rewrite the description and fix the checks. ${'Keep every detail. '.repeat(300)}THE LAST FIX.`;
+  assert.ok(instruction.length > 5000);
+  let inserted = null;
+  const pool = {
+    async query(sql, params) {
+      if (/INSERT INTO homeroom_bot_change_asks/.test(sql)) { inserted = params; return { rows: [{ id: 9 }] }; }
+      if (/AS busy FROM chat_sessions cs WHERE cs\.id/.test(sql)) return { rows: [{ busy: false }] };
+      if (/FROM chat_sessions cs WHERE cs\.id/.test(sql)) return { rows: [{ id: 70 }] };
+      if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(sql)) return { rows: [{ n: 0 }] };
+      return { rows: [] };
+    },
+  };
+  const deps = { botSvc: { async enqueueFront() { return true; } } };
+  await voice.recordAsk(pool, {
+    appId: 9, sessionId: 70, issueNumber: 12, askerId: 2, instruction, force: true, deps,
+  });
+  assert.equal(inserted[4], instruction, 'not clipped at 2,000 characters');
 });
 
 test("a request's report names it by its number, linked where a chat can tap it", () => {

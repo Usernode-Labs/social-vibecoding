@@ -155,9 +155,14 @@ test('the three surfaces render an HTML spec from its document and keep copying 
   assert.match(devChat, /DevChat\.specViewer\.draftHtml = data\.html \|\| null;/);
   assert.match(devChat, /DevChat\.specViewer\.viewVersionHtml = data\.spec\.content_html \|\| null;/);
   assert.match(devChat, /raw: displayContent,/, 'Copy markdown still copies the markdown');
+  // #6230: the reader's document and its raw markdown are the detail store's
+  // now; group-chat.js hands both to it and no longer builds the body.
+  const detail = read('frontend/src/features/ai/detail.ts');
+  assert.match(detail, /body: specBody\(markdown, spec\.content_html \|\| null\)/);
+  assert.match(detail, /raw: spec\.content == null \? null : String\(spec\.content\)/, 'Copy markdown still copies the markdown');
   const groupChat = read('public/js/group-chat.js');
-  assert.equal((groupChat.match(/html: data\.spec\.content_html \|\| null,/g) || []).length, 2);
-  assert.match(groupChat, /GroupChat\._specPanelRaw = content == null \? '' : String\(content\);/);
+  assert.match(groupChat, /html: html \|\| null,/);
+  assert.match(groupChat, /markdown: content == null \? '' : String\(content\)/);
   const pane = read('frontend/src/features/agent-session/index.tsx');
   assert.match(pane, /sheet\.html \? renderSpecHtml\(sheet\.html, \{ key: `as-\$\{sheet\.changeId\}-\$\{sheet\.version \?\? 'latest'\}` \}\) : null/);
   for (const file of ['frontend/src/features/dev-chat/spec-viewer.tsx', 'frontend/src/features/group-chat/spec-panel.tsx', 'frontend/src/features/agent-session/index.tsx']) {

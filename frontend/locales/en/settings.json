@@ -4364,7 +4364,7 @@
     "description": "Explanation below the mode switch when Advanced is selected."
   },
   "experimental.interfaceMode.basic": {
-    "text": "Basic mode is selected. A simpler experience is coming soon; for now, both modes show the same interface.",
+    "text": "Basic mode is selected. Home app menus show fewer details and actions. More simplifications are coming soon.",
     "description": "Explanation below the mode switch when Basic is selected."
   },
   "experimental.interfaceMode.device": {

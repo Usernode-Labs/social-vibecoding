@@ -3684,12 +3684,12 @@
     "description": "One line among the replies on a request's page: Homeroom bot (an assistant that builds requests, speaking in the first person) posted its plan (the written description of the change) and is building it. {{version}} is the plan's version number; \"v\" abbreviates version. {{title}} is the plan's title. A \"Read\" link follows the line."
   },
   "topic.request.stream.botPlanWaiting": {
-    "text": "Plan v{{version}}: {{title}}. Waiting for @{{requester}} to say Build it.",
-    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for it approves it. {{version}} is the plan's version number; {{title}} is the plan's title; {{requester}} is that person's username, after an @. \"Build it\" is the name of the button they tap: keep it as the button reads in your language. A \"Read\" link follows the line."
+    "text": "Plan v{{version}}: {{title}}. Nothing is built yet. Waiting for @{{requester}} to say Build it.",
+    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for it approves it. It says plainly that nothing has been built yet. {{version}} is the plan's version number; {{title}} is the plan's title; {{requester}} is that person's username, after an @. \"Build it\" is the name of the button they tap: keep it as the button reads in your language. A \"Read\" link follows the line."
   },
   "topic.request.stream.botPlanWaitingUnnamed": {
-    "text": "Plan v{{version}}: {{title}}. Waiting for the person who asked for it to say Build it.",
-    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for the request approves it; used when that person cannot be named. {{version}} is the plan's version number; {{title}} is the plan's title. \"Build it\" is the name of the button they tap. A \"Read\" link follows the line."
+    "text": "Plan v{{version}}: {{title}}. Nothing is built yet. Waiting for the person who asked for it to say Build it.",
+    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for the request approves it; used when that person cannot be named. It says plainly that nothing has been built yet. {{version}} is the plan's version number; {{title}} is the plan's title. \"Build it\" is the name of the button they tap. A \"Read\" link follows the line."
   },
   "topic.request.stream.botPlanReplaced": {
     "text": "Plan v{{version}}: {{title}}. A newer plan replaced it.",

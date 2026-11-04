@@ -31,6 +31,8 @@ const groupChatSrc = read('public', 'js', 'group-chat.js');
 // The panel's MARKUP moved to a component in #1191; group-chat.js keeps the
 // fetch, the raw-source stash and the gate that decides whether Copy appears.
 const panelTsx = read('frontend', 'src', 'features', 'group-chat', 'spec-panel.tsx');
+// #6230: the open state and the raw document moved to the detail store.
+const detailTs = read('frontend', 'src', 'features', 'ai', 'detail.ts');
 // #1078: the dev-chat viewer's markup moved the same way the panel's did.
 const viewerTsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
 const { renderComponent } = require('./lib/render-tsx');
@@ -147,35 +149,31 @@ test('the copy button flashes its own label and reports failure', () => {
 
 // ── 3. Group-chat shared-spec panel ─────────────────────────────────────
 
-test('_showSpecPanel stashes the raw markdown in JS state', () => {
-  const src = methodSource(groupChatSrc, '_showSpecPanel', 'group-chat.js');
-  assert.ok(/GroupChat\._specPanelRaw = content/.test(src),
-    '_showSpecPanel must stash `content` on _specPanelRaw — the panel does not '
-    + 'hold the raw source, it renders the markdown');
+test('the detail store keeps the raw markdown, and the panel copies it', () => {
+  // #6230: the raw source moved from `GroupChat._specPanelRaw` into the one
+  // detail store, so a closed panel's document is forgotten with its entry.
+  assert.ok(/raw: string \| null/.test(detailTs), 'the store carries the raw document');
+  assert.ok(/raw: input\.payload\?\.error \? null : \(markdown \|\| null\)/.test(detailTs),
+    'a text plan keeps its own markdown as the raw source');
+  assert.ok(/raw: spec\.content == null \? null : String\(spec\.content\)/.test(detailTs),
+    'a fetched spec keeps the markdown the server sent');
   // Multi-KB markdown with quotes/newlines must never be inlined into markup.
-  assert.ok(!/data-spec-(?:raw|content|markdown)/.test(src),
+  assert.ok(!/data-spec-(?:raw|content|markdown)/.test(detailTs),
     'the raw spec must not be interpolated into a data- attribute');
-  // The copy handler moved into the panel component with the markup (#1191);
-  // what it copies did not change, and it still reaches the stash by name
-  // because that is where the raw source lives.
   assert.ok(!/data-spec-(?:raw|content|markdown)/.test(panelTsx),
     'nor into one on the React side');
-  assert.ok(/copyText\?\.\(controller\(\)\?\._specPanelRaw\)/.test(panelTsx),
-    'the panel copy handler must copy the stashed raw markdown');
+  assert.ok(/copyText\?\.\(raw\)/.test(panelTsx),
+    'the panel copy handler must copy the raw markdown it was given');
 });
 
 test('the panel copy button is gated on canCopy and a non-error body', () => {
-  // The GATE is still decided in the module, where `isError` and the option
+  // #6230: the GATE is the store's now, where `error` and the raw document
   // live; the button is drawn from the one field it produces.
-  const src = methodSource(groupChatSrc, '_showSpecPanel', 'group-chat.js');
-  assert.ok(/canCopy = true/.test(src),
-    '_showSpecPanel must accept a canCopy option defaulting to true');
-  assert.ok(/canCopy: !!\(canCopy && !isError && content\)/.test(src),
-    'the button must render only for a copyable, non-error, non-empty body');
+  assert.ok(/canCopy: !!markdown && !input\.payload\?\.error/.test(detailTs),
+    'a text plan offers Copy only when it has markdown and is no error');
+  assert.ok(/canCopy: !!spec\.content/.test(detailTs),
+    'a fetched spec offers Copy only when it has content');
 
-  // …and the header's order is checked on the RENDERED markup rather than on
-  // template-literal positions, which is a stronger statement of the same
-  // thing: the copy control sits left of the close ✕.
   const header = (state) => renderComponent(
     'frontend/src/features/group-chat/spec-panel.tsx', 'SpecPanelView', state);
   const base = {
@@ -185,41 +183,38 @@ test('the panel copy button is gated on canCopy and a non-error body', () => {
   const withCopy = header(base);
   assert.ok(withCopy.indexOf('gc-spec-panel-copy') < withCopy.indexOf('gc-spec-panel-close'),
     'the copy button must sit left of the close ✕');
-  // Gated off: an error body, and an explicit canCopy: false.
   assert.ok(!header({ ...base, canCopy: false }).includes('gc-spec-panel-copy'));
   assert.ok(!header({ ...base, canCopy: false, body: { kind: 'error', text: 'Not found' } })
     .includes('gc-spec-panel-copy'));
-  // An error body is TEXT, never markdown — formatting a 404 makes it look
-  // like a document.
   const err = header({ ...base, canCopy: false, body: { kind: 'error', text: '<b>404</b>' } });
   assert.ok(!err.includes('<b>404</b>'), 'the error message is not markup');
-  assert.match(err, /gc-spec-panel-error">&lt;b&gt;404&lt;\/b&gt;</);
+  assert.match(err, /gc-spec-panel-error">&lt;b&gt;404&lt;\/b&gt;/);
 });
 
-test('the reload-restore skeleton is not copyable', () => {
-  const src = methodSource(groupChatSrc, '_restoreSpecPanelIfSaved', 'group-chat.js');
+test('the loading skeleton is not copyable', () => {
   assert.equal(message('chat:group.spec.loading'), 'Loading…');
-  assert.ok(/content: PlatformI18n\.t\('chat:group\.spec\.loading'\),[\s\S]{0,240}canCopy: false/.test(src),
-    "the 'Loading…' skeleton render must pass canCopy: false");
+  // #6230: the store paints the header while the fetch is in flight, with no
+  // Copy until the real content lands.
+  assert.ok(/canCopy: false, body: \{ kind: 'error', text: say\('chat:group\.spec\.loading'/.test(detailTs),
+    "the 'Loading…' skeleton render must offer no Copy");
+  const src = methodSource(groupChatSrc, '_restoreSpecPanelIfSaved', 'group-chat.js');
+  assert.ok(/detail\?\.open\(\{[\s\S]{0,220}sessionId: saved\.sessionId/.test(src),
+    'a reload reopens the saved plan version');
 });
 
-test('_closeSpecPanel clears the stashed document', () => {
+test('closing the panel forgets its document', () => {
+  // #6230: closeDetail resets the whole state, raw document included.
+  assert.ok(/state = CLOSED;/.test(detailTs), 'closing resets the store');
   const src = methodSource(groupChatSrc, '_closeSpecPanel', 'group-chat.js');
-  assert.ok(/GroupChat\._specPanelRaw = null/.test(src),
-    'a closed panel must not leave its document copyable');
+  assert.ok(/detail\?\.close/.test(src), 'the shim closes the one detail store');
 });
 
-test('both group-chat spec fetches forward the ?demo=1 flag', () => {
-  const fetches = groupChatSrc.match(/fetch\(`\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}[^`]*`\)/g) || [];
-  assert.equal(fetches.length, 2,
-    'expected exactly the two spec-version fetches (click delegate + reload restore)');
-  for (const f of fetches) {
-    assert.ok(f.includes('GroupChat._specDemoQS()'),
-      `spec fetch must forward the demo flag: ${f}`);
-  }
-  const helper = methodSource(groupChatSrc, '_specDemoQS', 'group-chat.js');
-  assert.ok(/get\('demo'\) === '1' \? '\?demo=1' : ''/.test(helper),
-    '_specDemoQS must only forward demo=1 when the page URL carries it');
+test('the spec fetches forward the ?demo=1 flag', () => {
+  assert.ok(/fetch\(path\)/.test(detailTs), 'the store fetches the spec version');
+  assert.ok(/\$\{demoQS\(\)\}/.test(detailTs),
+    'the spec path forwards the demo flag');
+  assert.ok(/function demoQS\(\)[\s\S]{0,140}get\('demo'\) === '1' \? '\?demo=1' : ''/.test(detailTs),
+    'demoQS must only forward demo=1 when the page URL carries it');
 });
 
 // ── 4. CSS ──────────────────────────────────────────────────────────────

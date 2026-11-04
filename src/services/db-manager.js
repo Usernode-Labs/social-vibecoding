@@ -1049,7 +1049,12 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
     // table with a foreign child, or refilled by its own code; row-level
     // security on a private column; an extension the copy cannot make): no
     // retry fixes those, and the author is the one to tell.
-    if (appCaused(err)) {
+    if (err && typeof err === 'object' && err.platformRollout) {
+      // #6149: Homeroom was updating itself when this copy was made, which is
+      // the server's own fault: never the app's, so it keeps the platform-fault
+      // retries instead of becoming an appCaused refusal.
+      err.infrastructure = true;
+    } else if (appCaused(err)) {
       err.appCaused = true;
     } else if (err && typeof err === 'object' && (server === PREVIEW_SERVER || err.previewDatabaseServer)) {
       err.infrastructure = true;

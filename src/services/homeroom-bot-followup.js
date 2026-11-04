@@ -61,6 +61,7 @@
 const log = require('./logger');
 const { parseStopMentioning, failedClaudeTurn, requestRulesLines, localeRule } = require('./homeroom-bot-live');
 const shotsState = require('./shots-state');
+const proposalDescription = require('./proposal-description');
 const { withoutEmDashes } = require('./em-dashes');
 
 // Revisions the bot makes to one proposal on its own. Each one clears the
@@ -123,7 +124,10 @@ function newReplies({
 function describeReply(r) {
   const place = r.via === 'ask' ? `asked you for a change ${ASKED_IN[r.askedIn] || 'in Homeroom'}, as you wrote it down when they asked`
     : r.where === 'proposal' ? 'in the proposal\'s discussion' : (r.via === 'github' ? 'on the GitHub issue' : 'in the issue\'s discussion');
-  return `- ${r.author}, ${place} (${String(r.createdAt || '').slice(0, 16)}):\n${clipText(r.body, 2000).split('\n').map((l) => `  ${l}`).join('\n')}`;
+  // A person's ask is passed on whole (up to the chat message limit); other
+  // replies keep the short form.
+  const limit = r.via === 'ask' ? 8000 : 2000;
+  return `- ${r.author}, ${place} (${String(r.createdAt || '').slice(0, 16)}):\n${clipText(r.body, limit).split('\n').map((l) => `  ${l}`).join('\n')}`;
 }
 
 // Where a change asked of the bot was asked (homeroom_bot_change_asks.source).
@@ -257,6 +261,7 @@ function followUpPrompt({
   if (canRevise) {
     lines.push(
       '- "revise": they asked for a clear change to this proposal. Make that change, and only that change, in this working tree. Follow the repository\'s own agent instructions, keep it small, and run the tests that cover it. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again. When the change alters what the proposal does, give it a new `title` that says what it does now (its name on the vote; the old one stays otherwise).'
+        + ' When the revision changes what the change does for people, so the description people vote on no longer describes it (you set a new title or plan), also write the change\'s whole new description between `DESCRIPTION` and `END DESCRIPTION` lines before the JSON block, written the way the first build\'s description is: one or two short paragraphs in plain language, what is different for someone using the app, what they can now do or what stops going wrong, with no file names, code, commit hashes or test results, and no em dashes.'
         + (planFormat
           ? ' When the revision changes what the change does for people, so the spec above no longer describes it, write the whole updated plan in your message before the JSON block, following the plan format below, and set `"plan": true`. A code fix, a test fix or a tweak that the spec still describes keeps `"plan": false`.'
           : ''),
@@ -387,10 +392,21 @@ const CAUSES = new Set(['change', 'not_change', 'unsure']);
  * is no action block at all.
  */
 function planOutOf(text) {
+  return descriptionOut(text).rest;
+}
+
+/**
+ * #6263: the description a revise turn wrote, as the DESCRIPTION block in
+ * the text before its action JSON block (proposal-description.extract), and
+ * the rest of that text with the block taken out. `rest` is the plan, so the
+ * description never becomes part of it.
+ */
+function descriptionOut(text) {
   const raw = String(text || '');
   const block = lastActionBlock(raw);
-  if (!block || block.start <= 0) return '';
-  return raw.slice(0, block.start).trim();
+  const before = block && block.start > 0 ? raw.slice(0, block.start) : '';
+  const { cleanedText, description } = proposalDescription.extract(before);
+  return { description: description || null, rest: cleanedText.trim() };
 }
 
 // ── What it says ─────────────────────────────────────────────────────────
@@ -421,10 +437,11 @@ function personText({ reply }) {
 // One note per update: that earlier votes were cleared is the platform's
 // line in the change's discussion to say (routes/votes.js
 // reconcileNativeReviewedHead), not said again here.
-function revisedText({ summary, reply, planVersion = null }) {
+function revisedText({ summary, reply, planVersion = null, descriptionStale = false }) {
   const lines = [`Homeroom bot updated this change: ${clipText(summary || reply, 600)}`];
   if (summary && reply && reply !== summary) lines.push('', clipText(reply, 2000));
   if (planVersion) lines.push('', `Its plan is updated to match: version ${planVersion} is in the change's discussion.`);
+  if (descriptionStale) lines.push('', 'Its description still describes the earlier version. Ask me here to reword it.');
   return lines.join('\n');
 }
 
@@ -1050,6 +1067,7 @@ module.exports = {
   followUpPrompt,
   parseFollowUp,
   planOutOf,
+  descriptionOut,
   answerText,
   askText,
   personText,

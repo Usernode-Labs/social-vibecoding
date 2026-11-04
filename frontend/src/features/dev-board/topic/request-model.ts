@@ -141,14 +141,29 @@ export function eventText(m: TranscriptMessage): string {
   return claimed ? t('project:topic.request.stream.claimedPlain', { member: claimed[1] }) : text;
 }
 
-/** Open a spec card's Read in the spec reader beside the page. */
+/**
+ * Open a spec card's Read in the detail column beside the thread (#6230).
+ * A shared spec is fetched by its session and version; a plan that exists
+ * only in the card carries its own words.
+ */
 export function openRequestSpec(card: RequestSpecCard): Promise<void> | void {
-  const gc = typeof window !== 'undefined' ? (window as any).GroupChat : null;
-  if (!gc) return;
+  const detail = typeof window !== 'undefined' ? (window as any).UsernodeReact?.detail : null;
+  if (!detail) return;
   if (card.read.kind === 'shared') {
-    return gc.openSharedSpec?.(card.read.sessionId, card.read.version, card.read.previewTitle);
+    detail.open({
+      kind: 'plan',
+      ref: { sessionId: card.read.sessionId },
+      version: card.read.version,
+      payload: { title: card.read.previewTitle },
+    });
+    return;
   }
-  gc._showSpecPanel?.({ title: card.read.title, version: null, content: card.read.markdown, html: card.read.html });
+  detail.open({
+    kind: 'plan',
+    ref: {},
+    version: null,
+    payload: { title: card.read.title, markdown: card.read.markdown, html: card.read.html },
+  });
 }
 
 /** Where a request is: the stepper's four stops. */
