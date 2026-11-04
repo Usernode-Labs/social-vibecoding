@@ -5665,6 +5665,42 @@ async function runFollowUp(pool, config, {
     }
   }
 
+  // #6263: a revision that changed what the change does also rewrites the
+  // description people vote on, through the same edit seam its author uses.
+  // When it cannot be written, the summary is marked stale so the page says
+  // so and the reply says the description is out of date.
+  let descriptionStale = false;
+  if (moved && (parsed?.title || parsed?.planChanged)) {
+    descriptionStale = await look.once('description', async () => {
+      const raw = followup.descriptionOut(result.lastResultText).description;
+      if (raw) {
+        try {
+          const edit = require('./proposal-description-edit');
+          const askedBy = await live.askerOf(pool, session.id);
+          const text = live.creditedDescription(withoutEmDashes(raw), askedBy);
+          const editable = await edit.readEditable(pool, session.id, bot.id);
+          if (editable) {
+            const out = await edit.edit({
+              pool, sessionId: session.id, userId: bot.id,
+              input: { description: text, expectedVersion: edit.snapshot(editable).version },
+              ...(github ? { gh: github } : {}),
+            });
+            if (out?.status === 200) return false;
+            log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+              app: app.slug, issueNumber, sessionId: session.id, status: out?.status || null,
+            });
+          }
+        } catch (err) {
+          log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+            app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+          });
+        }
+      }
+      await pool.query('UPDATE chat_sessions SET pr_summary_stale = TRUE WHERE id = $1 AND pr_summary_md IS NOT NULL', [session.id]);
+      return true;
+    });
+  }
+
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     ...billingOf(item, runMode),
@@ -5687,7 +5723,7 @@ async function runFollowUp(pool, config, {
   const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
-      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl,
+      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl, descriptionStale,
     })
     : action === 'ask' ? followup.askText({ reply, prNumber })
       : action === 'person' ? followup.personText({ reply, prNumber })
@@ -5715,7 +5751,7 @@ async function runFollowUp(pool, config, {
     // places' own work, it survives a restart, and is said once.
     await voice.reportFollowUp(pool, config, {
       app, session, asks, runTag, deps: voiceDeps,
-      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion },
+      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion, descriptionStale },
       finish: (db) => voice.finishAsks(db, { runTag, runId }),
     }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
   }
