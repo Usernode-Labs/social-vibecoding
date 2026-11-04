@@ -92,9 +92,14 @@
       "schemaSha256": "a5483f6e9846f3ac2f4848eb5bd583f966b8a2bd9077db97a4eac23f7429fd7a"
     },
     {
+      "id": "bot-followups",
+      "sha256": "fd61d6185077d024a85db7ceec16fc53bd56fa823994558f99e7cb0c62310c9e",
+      "schemaSha256": "a6eeb9cbaf64abb0dab1fb773d8dcbf45136cb20a843adb866b4488f32a954fc"
+    },
+    {
       "id": "user-content-translations",
       "sha256": "91f4a28ba6d8dfb0e33768dd0f0ae3da3ed6c3db5819d217d8daa139e2ec9efa",
-      "schemaSha256": "3c75672899d6b111843d0295df12572afd4d092b00173b617fc42a3eeef133b9"
+      "schemaSha256": "66dab57c24a2d7b8438b16fe739a61076712dfb714ce8edcb1e710c8a80216ce"
     }
   ]
 }

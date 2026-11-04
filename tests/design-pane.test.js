@@ -145,6 +145,29 @@ test('the bridge answers a capture only to Homeroom, and its mirror is the same 
   assert.equal(read('public/usernode-bridge.js'), bridge);
 });
 
+// #6261: a comment's picture leaves every frame out, so a design's frame was
+// a blank box. The frame draws its own body, with the vendored SnapDOM source
+// sent in and run as an inline script (the policy allows inline scripts),
+// and answers the shell.
+test('a design frame draws its own picture when the shell asks', () => {
+  const doc = frame.designFrameDoc('<p>Hi</p>', { origin: 'https://h.test' });
+  assert.equal(frame.DESIGN_FRAME_ATTR, 'data-design-frame');
+  // The helper answers a picture request, and only from the parent.
+  assert.match(doc, /d\.__design==='picture'/, 'the helper handles a picture request');
+  assert.match(doc, /typeof d\.lib!=='string'/, 'the library text comes in the request');
+  assert.match(doc, /s\.textContent=d\.lib/, 'the vendored library arrives as an inline script');
+  assert.match(doc, /exclude:\['\[data-design-pins\]'\]/, 'the pins layer is left out of the design\'s own picture');
+  assert.match(doc, /parent\.postMessage\(\{__design:'picture'/, 'the picture goes back to the shell');
+  assert.match(doc, /e\.source!==parent/, 'only the parent is believed');
+  assert.match(doc, /\},'\*'\);/, 'the frame\'s origin is opaque, so the reply is not origin-scoped');
+  // The safety limits are unchanged.
+  assert.ok(doc.includes(`content="${frame.designCsp('https://h.test')}"`), 'the same policy as before');
+  assert.equal(frame.DESIGN_SANDBOX, 'allow-scripts');
+  // Both design frames are marked for the shell to find.
+  assert.match(read('frontend/src/features/messages/design-pane.tsx'), /data-design-frame=""/);
+  assert.match(read('frontend/src/features/messages/design-card.tsx'), /data-design-frame=""/);
+});
+
 test('the design routes are the owner\'s taps: same-origin and limited, and a pin rides only when it checks out', () => {
   const routes = read('src/routes/conversations.js');
   assert.match(routes, /router\.post\('\/api\/conversations\/homeroom-bot\/designs', conversationActionLimiter, sameOriginBrowserOnly,/);

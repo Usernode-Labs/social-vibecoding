@@ -64,13 +64,17 @@ test('D3: the stream tags a change\'s rows with it, and keeps a reply on it apar
   const rows = src.slice(src.indexOf('export function RequestRows('), src.indexOf('#4455: something that happened to a change'));
   assert.match(rows, /foldRepeats\(view\.messages\)\.filter\(\(m\) => !m\.changeOf \|\| keptOnRequest\(m\)\)/);
   assert.match(rows, /<ChangeEvent key=\{key\} msg=\{msg\} changeId=\{msg\.changeOf\.sessionId\} tag=\{tagOf\(msg\)\} \/>/);
-  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{tagOf\(msg\)\} \/>/);
+  // #6236: a post about one of the request's changes also gets the See the
+  // vote line (seeVote) instead of the vote card.
+  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} \/>/);
   assert.match(rows, /\(previous\.changeOf\?\.sessionId \?\? null\) === \(msg\.changeOf\?\.sessionId \?\? null\)/);
   assert.equal(message('project:topic.request.stream.onChange', { number: 6063 }), 'on Change #6063');
   assert.equal(message('project:topic.request.stream.onChangeUnnumbered'), 'on a change');
   const { publishRequestChanges, requestChangesStore } = loadTsx(`${TOPIC}/request-model.ts`);
-  publishRequestChanges(10, [{ id: 91, number: 6063 }, { id: 92, number: null }]);
-  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get())), { number: 10, numbers: { 91: 6063, 92: null } });
+  publishRequestChanges(10, [{ id: 91, number: 6063, title: 'Dark mode' }, { id: 92, number: null }]);
+  // #6236: each change's title rides along, for the line under the bot's
+  // "It's up for a vote" post that names the change (vote-card.tsx VoteLine).
+  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get())), { number: 10, numbers: { 91: 6063, 92: null }, titles: { 91: 'Dark mode', 92: null } });
   const head = read(`${TOPIC}/request-head.tsx`);
   assert.match(head, /publishRequestChanges\(r\.number, layout\.changes\);/);
   assert.match(head, /GroupChat\?\.setThreadMembers\?\.\('issue', r\.number, layout\.changes\.map\(\(c\) => c\.id\)\)/);

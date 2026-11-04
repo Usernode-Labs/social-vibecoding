@@ -190,6 +190,17 @@ export function appendTranscriptMessage(message: TranscriptMessage, key = 'main'
  * an append: the row may legitimately have been pruned by a reload that raced
  * the websocket event.
  */
+/** Whether a patched field says the same thing: identity, or the same plain-object facts. */
+function sameValue(before: unknown, after: unknown): boolean {
+  if (before === after) return true;
+  if (!isPlainObject(before) || !isPlainObject(after)) return false;
+  return JSON.stringify(before) === JSON.stringify(after);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
+}
+
 export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMessage>): void {
   transcriptStore.set((s: TranscriptState) => {
     let hit = false;
@@ -207,8 +218,11 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
           // that runs after every render: `refreshVoteControls` patches each
           // vote row's tint from the effect in transcript.tsx, so an
           // unconditional new object would render → patch → render forever.
+          // #6236: it patches `vote` too, a plain object built afresh on
+          // every refresh, so a plain object that spells the same facts is
+          // the same value here; anything else compares by identity.
           const keys = Object.keys(patch) as (keyof TranscriptMessage)[];
-          if (keys.every((key) => m[key] === patch[key])) return m;
+          if (keys.every((key) => sameValue(m[key], patch[key]))) return m;
           hit = true;
           return { ...m, ...patch };
         }),

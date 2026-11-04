@@ -33,11 +33,11 @@
  * screen. From 768px the column beside the list holds one thing at a time:
  * Main Chat, or one private thread, alone under its own head (its name and
  * "Only you can see this thread"; ReplyThreadPanel `inMain`), and the row
- * of whichever it is is drawn lit. Main Chat is a row, so a thread has no
- * way back to it of its own. On a phone the list and the column are one
- * drawer, as Messages' list and a conversation are (./phone-drawer.tsx):
- * the column peeks at the list's right, a row or the Ask bar slides it in,
- * and a thread's back arrow slides the list back.
+ * of whichever it is is drawn lit. Main Chat is a row, and a thread in its
+ * place leads with a back arrow to Main Chat. On a phone the list and the
+ * column are one drawer, as Messages' list and a conversation are
+ * (./phone-drawer.tsx): the column peeks at the list's right, a row or the
+ * Ask bar slides it in, and a thread's back arrow slides the list back.
  *
  * A REQUEST, A CHANGE OR A DECISION OPENS HERE TOO. On a wide window in the
  * column beside the list, in Main's place: the side panel, drawn as this

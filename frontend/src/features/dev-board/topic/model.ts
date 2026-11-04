@@ -679,6 +679,13 @@ export interface ChangeGateView {
   /** Testing only, for everybody else: who has to fix it. */
   authorNote?: string | null;
   /**
+   * #6234: Testing only, on a change Homeroom bot built whose checks failed:
+   * where its own fix of them stands (services/homeroom-bot-progress.js
+   * changeBotFix), carried on the card as `data-change-bot-fix`. The words
+   * are in `authorNote`.
+   */
+  botFix?: 'fixing' | 'queued' | 'handed_off' | null;
+  /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps
    * counting down ("Merged; goes live in the next release (about 8
