@@ -274,12 +274,17 @@ test('the bot\'s proposal post is a message row that carries the vote card', () 
   assert.equal(gone.voteRef, null, 'a deleted post loses its card with its words');
 });
 
-test('a message row renders the same controls host a vote row does', () => {
+test('a message row hangs the same vote card a vote row does, and no module-filled host', () => {
+  // #6236: the card is React's (features/group-chat/vote-card.tsx) — the
+  // line with See the vote on a request's page, the small card with Preview
+  // and Vote elsewhere — drawn from the row's model, never filled by
+  // group-chat.js. Pinned in tests/vote-row-card.test.js; here only that
+  // the bubble carries it.
   const tsx = read('frontend/src/features/group-chat/transcript.tsx');
-  const row = tsx.slice(tsx.indexOf('export const MessageRow'), tsx.indexOf('export const MessageRow') + 6000);
-  assert.match(row, /\{msg\.voteRef \? \(\s*<span\s+className="gc-vote-inline gc-vote-inline-block"\s+data-vote-controls=""\s+data-session-id=\{msg\.voteRef\.sessionId\}\s+data-pr-number=\{msg\.voteRef\.prNumber\}/,
-    'the host GroupChat.refreshVoteControls fills');
-  assert.match(read('public/css/app.css'), /\.gc-vote-inline\.gc-vote-inline-block \{[^}]*display: flex;[^}]*margin-top: 6px;/);
+  const row = tsx.slice(tsx.indexOf('export const MessageRow'), tsx.indexOf('export const MessageRow') + 7000);
+  assert.match(row, /\{msg\.voteRef \? \(seeVote\s*\? <VoteLine sessionId=\{seeVote\.sessionId\} number=\{seeVote\.number\} title=\{seeVote\.title\} \/>\s*: <VoteCard msg=\{msg\} \/>\) : null\}/);
+  assert.doesNotMatch(tsx, /data-vote-controls=""|gc-vote-inline/, 'no host left for the module to fill');
+  assert.match(read('public/css/app.css'), /\.gc-vote-card \{[^}]*border-radius: 20px;[^}]*background: var\(--dc-sheet-solid\);/);
 });
 
 // ── And it is not somebody active on the project ────────────────────────

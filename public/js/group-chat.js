@@ -1212,7 +1212,14 @@ const GroupChat = {
     // "PR #N" its content happens to carry must not resolve it to one.
     // A row on the proposal's own page (`here`) is not a door to that page.
     const linksProposal = !!event && event.type !== 'weekly' && !event.here;
-    const pr = (isVote || linksProposal) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
+    // #3288: an ordinary message can be about a change too, when its
+    // metadata names the proposal: the Homeroom bot's "built this" post is a
+    // message from its own user, and its card hangs under the bubble. Only
+    // that metadata, never a "PR #N" in the words, which anybody can type;
+    // and a person's post cannot set it (handleMessage builds its metadata).
+    // A deleted post loses its card with its words.
+    const aboutChange = kind === 'message' && !msg.deleted && !!(meta.vote && meta.vote.sessionId);
+    const pr = (isVote || linksProposal || aboutChange) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
     // #2387: a deleted message keeps its row and its thread, and loses its
     // words, files, quote and reactions (the server sends it that way; a live
     // `chat_delete` patches the same fields).
@@ -1312,15 +1319,6 @@ const GroupChat = {
         icon: GroupChat._eventIcon(event.type, event),
       } : null,
       eventHref: linksProposal ? GroupChat._eventHref(GroupChat._voteRef(msg)[0], pr) : null,
-      // The controls host is module-filled, but only the message knows WHICH
-      // pull request it is about — so the pair rides on the view model and
-      // lands on the host as the two data-* attributes refreshVoteControls
-      // reads back.
-      // #3288: an ordinary message can carry one too, when its metadata
-      // names the proposal: the Homeroom bot's "built this" post is a message
-      // from its own user, and its card hangs under the bubble. Only that
-      // metadata, never a "PR #N" in the words, which anybody can type; and
-      // a person's post cannot set it (handleMessage builds its metadata).
       // B9: how a request asked of Homeroom bot is going, on the message
       // everybody sees (its metadata, set by the server alone), and the card
       // under it for its writer alone (GroupChat._botCards).
@@ -1331,9 +1329,19 @@ const GroupChat = {
         && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
         && !(meta.botRequest) && !GroupChat._botCards.has(Number(msg.id))
         && !/(^|[^\w])@(homeroom_bot\b|homeroom\s+bot\b)/i.test(String(msg.content || '')),
-      voteRef: isVote || (kind === 'message' && !deleted && !!(meta.vote && meta.vote.sessionId))
+      // Only the message knows WHICH change it is about, so the pair rides
+      // on the view model: the row renders it as data-vote-session /
+      // data-vote-pr, which refreshVoteControls reads back to resolve the
+      // row against the vote snapshot and patch `vote` below.
+      voteRef: isVote || aboutChange
         ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
         : null,
+      // #6236: where the change's vote and checks stand, for the vote card
+      // (features/group-chat/vote-card.tsx) — resolved here when the
+      // snapshot is already in hand, else null until refreshVoteControls
+      // patches it in. Only on a row about a change, so the key is absent
+      // on every other kind.
+      ...(isVote || aboutChange ? { vote: GroupChat._voteView(pr) } : {}),
       specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,
       // #4455: a preview build notice ('started' / 'ready', pr-import-sync.js
       // and staging-recovery.js), which a change's page draws as one line.
@@ -4405,16 +4413,15 @@ const GroupChat = {
   // the rest was already duplicated by the view builder, so keeping a second
   // copy of it would only be a second thing to keep in step.
 
-  // `_voteControlsHtml` lived here — the `.gc-vote-inline` wrapper plus its
-  // first fill, as one string. The wrapper is transcript.tsx's now (it is a
-  // vote row's markup, and the row is React's); the FILL is still
-  // `refreshVoteControls` below, because it comes from AppView's vote
-  // renderers and arrives on the vote panel's schedule.
-  //
-  // Retiring it left the host with the wrong attribute for a while:
-  // `[data-gc-vote-controls]` is not `[data-vote-controls]`, the selector
-  // below matched nothing, and every vote row rendered an empty span where
-  // its Yes/No pair and tally pill belonged.
+  // `_voteControlsHtml` and then `_voteInnerHtml` lived here — the
+  // `.gc-vote-inline` row of Preview / Yes / No / Admin merge, as AppView's
+  // own markup, filled into a `[data-vote-controls]` host on every vote row.
+  // #6236 retired the row and the host: a row about a change models the
+  // vote (`voteRef` and `vote`, below) and features/group-chat/vote-card.tsx
+  // draws it. What stays here is the RESOLUTION, `_resolvePr` and
+  // `_voteView`, because AppView.voteState is this module's neighbour and
+  // arrives on the vote panel's schedule; `refreshVoteControls` patches the
+  // model with it, and never writes a node React renders.
 
   // [sessionId, prNumber] ref for a vote-activity row: the precise metadata
   // session id (new server) when present, plus the "PR #N" parsed from the
@@ -4445,7 +4452,7 @@ const GroupChat = {
     // after the PR leaves the votable set — the Figma Activity stream shows
     // history as history. Recently-merged rows are already in hand
     // (AppView._merged), so resolve against them and mark the result settled:
-    // _voteInnerHtml renders the badge alone for these (no live tally left).
+    // _voteView says merged alone for these (no live tally left).
     if (prNum && Array.isArray(typeof AppView !== 'undefined' && AppView._merged)) {
       const merged = AppView._merged.find((m) => m
         && (String(m.pr_number) === String(prNum) || (sid && String(m.session_id || m.id) === String(sid))));
@@ -4458,23 +4465,46 @@ const GroupChat = {
     return null;
   },
 
-  // Inner HTML for a resolved votable PR: the live "yes / majority" count
-  // followed by the vote buttons. Empty when the PR isn't votable, so the
-  // wrapper collapses and the row falls back to a plain activity line.
-  _voteInnerHtml(pr) {
-    if (!pr || typeof AppView.voteButtonsHtml !== 'function') return '';
-    // A settled historical row (see _resolvePr): the persistent "✓ Merged"
-    // chip alone — there is no live tally or castable vote left to draw.
-    if (pr._settled) return AppView.mergedBadgeHtml();
+  // #6236: the facts the vote card says, from a resolved row — plain data
+  // for features/group-chat/vote-card.tsx to word (transcript-store.ts
+  // VoteView). Null when the change is not in the snapshot, in which case
+  // the card shows the change's name and its doors alone. A settled
+  // historical row (see _resolvePr) is merged with nothing else to say.
+  _voteView(pr) {
+    if (!pr) return null;
+    const id = Number(pr.id) || null;
+    const number = pr.pr_number != null ? (Number(pr.pr_number) || null) : null;
+    const status = pr.status === 'merging' ? 'merging' : pr.status === 'merged' || pr._settled ? 'merged' : 'promoted';
+    const title = String(pr.pr_title || pr.session_title || pr.title || '').trim() || null;
+    if (status !== 'promoted') {
+      return { sessionId: id, number, title, status, yes: null, needed: null, needsOtherMember: false, myVote: null, checks: null, preview: null };
+    }
     const st = (typeof AppView !== 'undefined' && AppView.voteState) || {};
-    // collapseVoted: in the chat, a cast vote collapses to a "You voted X"
-    // box (the drawer keeps the full set so it stays re-castable there).
-    // A "Merging…"/"Merged" badge is appended (not substituted) once the PR
-    // crosses the threshold, so the pill + "You voted X" survive the merge.
-    let badge = '';
-    if (pr.status === 'merging') badge = AppView.mergingBadgeHtml();
-    else if (pr.status === 'merged') badge = AppView.mergedBadgeHtml();
-    return AppView.voteCountPill(pr, st.majority, { words: true }) + AppView.voteButtonsHtml(pr, { collapseVoted: true }) + badge;
+    // The threshold the way the tally pill picks it (AppView.voteCountPill):
+    // an at-least-N project's approvals, else the row's own snapshot of the
+    // majority, else the live one; and only the votes that count (#646).
+    const approvals = parseInt(pr.approvals_required);
+    const snap = parseInt(pr.votes_required);
+    const needed = Number.isFinite(approvals) && approvals > 0 ? approvals
+      : Number.isFinite(snap) && snap > 0 ? snap : (st.majority || 1);
+    const yes = pr.qualified_yes_count != null
+      ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
+    const checks = ['passing', 'failing', 'pending', 'error', 'skipped'].includes(pr.check_state) ? pr.check_state : null;
+    const preview = pr.staging_url ? { kind: 'live', url: String(pr.staging_url) }
+      : pr.staging_building ? { kind: 'building' }
+        : pr.staging_error ? { kind: 'unavailable' } : null;
+    return {
+      sessionId: id,
+      number,
+      title,
+      status,
+      yes,
+      needed,
+      needsOtherMember: !!(pr.requires_explicit_approval && pr.needs_other_member_yes),
+      myVote: pr.my_vote === 'yes' || pr.my_vote === 'no' ? pr.my_vote : null,
+      checks,
+      preview,
+    };
   },
 
   // Row text-color class from the viewer's vote status: faded once voted,
@@ -4739,38 +4769,35 @@ const GroupChat = {
       : `/app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
   },
 
-  // Re-fill every inline vote-control wrapper from the current
-  // AppView.voteState. Called by AppView.loadVotePanel after it reloads on
+  // Resolve every row about a change against the current AppView.voteState
+  // and patch its model. Called by AppView.loadVotePanel after it reloads on
   // a vote/session update (and on first open, covering the race where the
-  // chat renders before the panel finishes fetching), so the inline
-  // buttons + count + row tint track the panel. A PR no longer in the
-  // votable set yields empty controls and the row falls back to a plain
-  // activity line.
+  // chat renders before the panel finishes fetching), and by the transcript
+  // once a row about a change is on screen, so the vote card's facts, the
+  // row's tint and its phase track the panel. A change no longer in the
+  // votable set yields no facts, and the card keeps the change's name and
+  // its doors.
   refreshVoteControls() {
-    document.querySelectorAll('#gc-messages [data-vote-controls], #gc-thread-messages [data-vote-controls]').forEach((el) => {
-      const pr = GroupChat._resolvePr(
-        el.getAttribute('data-session-id') || '',
-        el.getAttribute('data-pr-number') || ''
-      );
-      // The host's CONTENTS stay ours — this is AppView's markup, and the
-      // element is rendered once as an empty span it never looks inside.
-      el.innerHTML = GroupChat._voteInnerHtml(pr);
-      // The row's TINT is not: `voteRowClass` is on the view model and React
-      // renders it, so a classList write here would be undone by the next
-      // repaint. Patch the model instead — and only when it moved, or the
-      // effect that calls this after each render would publish forever.
-      const row = el.closest('.gc-msg-vote[data-msg-id]');
-      const id = row && parseInt(row.dataset.msgId || '', 10);
-      if (id) {
-        // The phase rides along for the same reason: a row that was 'unknown'
-        // at first paint learns here whether it stands or folds. A settled
-        // row already inside a collapsed digest has no host in the DOM and
-        // is not visited — it has nothing left to learn.
-        GroupChat._react()?.patchTranscriptMessage(id, {
-          voteRowClass: GroupChat._rowVoteClass(pr),
-          votePhase: GroupChat._votePhase(pr),
-        });
+    // #6236: the rows are React's end to end. They are READ here — the pair
+    // they render as data-vote-session / data-vote-pr, and their id — and
+    // the model is what is written; a classList or innerHTML write would be
+    // undone by the next repaint, and is the ownership rule's one thing.
+    document.querySelectorAll('#gc-messages [data-vote-session][data-msg-id], #gc-thread-messages [data-vote-session][data-msg-id]').forEach((el) => {
+      const id = parseInt(el.dataset.msgId || '', 10);
+      if (!id) return;
+      const pr = GroupChat._resolvePr(el.dataset.voteSession || '', el.dataset.votePr || '');
+      const patch = { vote: GroupChat._voteView(pr) };
+      // A vote row's tint and phase ride along: a row that was 'unknown' at
+      // first paint learns here whether it stands or folds. A settled row
+      // already inside a collapsed digest is not on screen and is not
+      // visited — it has nothing left to learn. Only when something moved,
+      // or the effect that calls this after each render would publish
+      // forever (mount.ts patchTranscriptMessage compares the facts).
+      if (el.classList.contains('gc-msg-vote')) {
+        patch.voteRowClass = GroupChat._rowVoteClass(pr);
+        patch.votePhase = GroupChat._votePhase(pr);
       }
+      GroupChat._react()?.patchTranscriptMessage(id, patch);
     });
     // The general chat's proposal events carry no host — their controls live
     // on the proposal's page — so they are visited by row: a submission's

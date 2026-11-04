@@ -223,14 +223,25 @@ export function publishRequestThread(number: number, rows: TranscriptMessage[]):
 export interface RequestChangesState {
   number: number | null;
   numbers: Record<number, number | null>;
+  /**
+   * #6236: each change's title, by session id, for the line under the
+   * bot's "It's up for a vote" post that names the change and offers See
+   * the vote (../../group-chat/vote-card.tsx VoteLine).
+   */
+  titles: Record<number, string | null>;
 }
 
-export const requestChangesStore = createStore<RequestChangesState>({ number: null, numbers: {} });
+export const requestChangesStore = createStore<RequestChangesState>({ number: null, numbers: {}, titles: {} });
 
-export function publishRequestChanges(number: number, changes: readonly { id: number; number: number | null }[]): void {
+export function publishRequestChanges(number: number, changes: readonly { id: number; number: number | null; title?: string | null }[]): void {
   const numbers: Record<number, number | null> = {};
-  for (const c of changes) numbers[Number(c.id)] = c.number == null ? null : Number(c.number);
+  const titles: Record<number, string | null> = {};
+  for (const c of changes) {
+    numbers[Number(c.id)] = c.number == null ? null : Number(c.number);
+    titles[Number(c.id)] = c.title ? String(c.title) : null;
+  }
   const prev = requestChangesStore.get();
-  if (prev.number === number && JSON.stringify(prev.numbers) === JSON.stringify(numbers)) return;
-  requestChangesStore.set({ number, numbers });
+  if (prev.number === number && JSON.stringify(prev.numbers) === JSON.stringify(numbers)
+    && JSON.stringify(prev.titles) === JSON.stringify(titles)) return;
+  requestChangesStore.set({ number, numbers, titles });
 }
