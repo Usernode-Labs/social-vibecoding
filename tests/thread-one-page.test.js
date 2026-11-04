@@ -137,6 +137,10 @@ test('D1: a change\'s line has its pill and its own ⋯, and its title is no doo
   assert.doesNotMatch(src, /data-thread-earlier/, 'the fold of its earlier replies is gone: they are in the discussion');
   // Its summary, its before and after, and its sheets.
   assert.match(src, /<RequestWords html=\{summary\} \/>/);
+  // #6263: an out-of-date description says so here, as on a change's own
+  // page, with that page's own words.
+  assert.match(src, /\{view\?\.body\.summaryStale && summary\s*\?\s*<p className="dev-change-stale" role="note" data-thread-change-stale=\{item\.id\}>\{t\('project:topic\.change\.summaryStale'\)\}<\/p>/,
+    'the stale note renders under the summary, in the catalog entry change-head.tsx uses');
   // #6230 (3 Nov 2026): Expand opens the change's before and after in the
   // detail column beside the thread, as a design's preview and a plan do,
   // instead of popping the viewer over the page; the request asked for it.

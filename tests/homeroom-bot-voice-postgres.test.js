@@ -232,6 +232,53 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(sent.length, 1);
   });
 
+  await t.test('#6263: a reply that describes a description it did not read is caught, and it answers again', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, 'What does the change description say right now?', place);
+    const model = scripted([
+      { text: 'That\'s the earlier wording, from before the update.' },
+      { tool: 'reply', args: { text: 'I cannot see the change\'s description from here. Ask me and I will look it up.' } },
+    ]);
+    const out = await turn(place, model, { through: id - 1 });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, 2, 'its first answer was refused and it was asked again');
+    assert.ok(model.seen[1].messages.some((m) => /read it with get_change, or say you cannot see it/i.test(String(m.content || ''))),
+      'the retry note says what to do');
+    assert.equal(sent.length, 1);
+    assert.doesNotMatch(sent[0].content, /earlier wording/, 'the claim it could not check was never posted');
+    assert.match(sent[0].content, /cannot see the change's description from here/);
+    const { rows: [record] } = await pool.query(
+      'SELECT failures FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1',
+    );
+    assert.ok(record.failures.some((f) => f === 'claims:unread_description'), JSON.stringify(record.failures));
+  });
+
+  await t.test('#6263: once it has read the change, it may quote the description', async () => {
+    sent.length = 0;
+    await pool.query(
+      `UPDATE chat_sessions SET pr_summary_md = 'The header is blue.', pr_summary_input_version = 1 WHERE id = $1`,
+      [change.id],
+    );
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, 'What does the description say right now?', place);
+    const platform = {
+      async call() {
+        return { isError: false, text: JSON.stringify({ changeId: change.id, title: 'Blue header', status: 'promoted' }) };
+      },
+      async close() {},
+    };
+    const model = scripted([
+      { tool: 'get_change', args: { changeId: change.id } },
+      { tool: 'reply', args: { text: 'It says: "The header is blue." That is the earlier wording.' } },
+    ]);
+    const out = await turn(place, model, { through: id - 1, deps: { noPlatform: false, openMcp: async () => platform } });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, 2, 'read first, then answered: no retry');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /The header is blue\./, 'the description it read is quoted');
+  });
+
   await t.test('words a DM passed on as an ask are the follow-up\'s, not answered again', async () => {
     const place = { type: 'session', ref: change.id };
     const before = sent.length;
@@ -670,6 +717,105 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
 // word (the bot's, or a person's, both call this) closes the open sets before
 // it in that thread and tells every reader, leaving a set already closed, a
 // message with an offer, and another thread's sets alone.
+// #6263: a reword is the author edit people make: the text changes, and the
+// head, checks and votes stay exactly as they were. Only the bot's own open
+// change may be reworded.
+test('#6263: update_change_description rewords the bot\'s own change and moves nothing else', { timeout: 180000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+  const { rows: [botUser] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE, TRUE) RETURNING id, username`,
+  );
+  const { rows: [evan] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access) VALUES ('evan', 'x', TRUE) RETURNING id, username`,
+  );
+  const { rows: [app] } = await pool.query(
+    `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility)
+     VALUES ('Todo List', 'todo-list', 'running', $1, 'https://github.com/usernode-bot/todo-list', 'public', 'public') RETURNING id`,
+    [evan.id],
+  );
+  if (app.community_id != null) {
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, evan.id]);
+  }
+  await pool.query(
+    `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', 'live')
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+  );
+  const { rows: [change] } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, status, session_title, linked_issues, promoted_at, reviewed_head_sha,
+        approval_epoch, check_state, pr_summary_md, pr_summary_input_version, pr_summary_source, pr_summary_stale)
+     VALUES ($1, $2, 'dev/homeroom_bot-blue', 'promoted', 'Blue header', $3, NOW(), $4, 3, 'passing',
+             'The header is blue.', 1, 'author', FALSE)
+     RETURNING *`,
+    [app.id, botUser.id, [12], 'a'.repeat(40)],
+  );
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, head_sha) VALUES ($1, $2, 'yes', $3)`,
+    [change.id, evan.id, 'a'.repeat(40)],
+  );
+
+  const sent = [];
+  const ws = {
+    async sendBotMessage(p, appId, { user: from, content, metadata = null, thread }) {
+      const { rows: [row] } = await p.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+         VALUES ($1, $2, $3, 'message', $4, $5, $6) RETURNING id, created_at`,
+        [appId, from.id, content, JSON.stringify(metadata || {}), thread.type, thread.ref],
+      );
+      sent.push({ id: row.id, content, metadata, thread });
+      return { id: row.id, createdAt: row.created_at };
+    },
+    broadcast() {},
+    async broadcastThreadSummary() {},
+  };
+  const notifications = { async createMentionNotifications() { return []; }, async hydrateAndPush() {} };
+  const ask = async (who, text, place) => (await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+     VALUES ($1, $2, $3, 'message', 'session', $4) RETURNING id`,
+    [app.id, who.id, text, place.ref],
+  )).rows[0].id;
+  const run = async (place, script) => voice.runTurn(pool, {}, {
+    appId: app.id, place, turnKey: `d${sent.length}-${place.ref}`, deps: {
+      ws, notifications, chat: scripted(script).chat, apiKey: 'test-key', noPlatform: true,
+    },
+  });
+
+  const place = { type: 'session', ref: change.id };
+  const id = await ask(evan, '@Homeroom bot update the description to say the header is green.', place);
+  const out = await run(place, [
+    { tool: 'update_change_description', args: { description: 'The header is green now.' } },
+    { tool: 'reply', args: { text: 'Done: the description says the header is green. Only the text changed, so the code, checks and votes are as they were.' } },
+  ]);
+  assert.equal(out.outcome, 'replied');
+  const { rows: [after] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [change.id]);
+  assert.equal(after.pr_summary_md, 'The header is green now.');
+  assert.equal(after.pr_summary_source, 'author');
+  assert.equal(after.pr_summary_stale, false);
+  assert.equal(Number(after.pr_summary_input_version), 2);
+  assert.equal(after.reviewed_head_sha, change.reviewed_head_sha, 'the head did not move');
+  assert.equal(Number(after.approval_epoch), Number(change.approval_epoch), 'the approval epoch did not move');
+  assert.equal(after.check_state, change.check_state, 'the checks did not run again');
+  const { rows: votes } = await pool.query('SELECT vote FROM pr_votes WHERE session_id = $1', [change.id]);
+  assert.deepEqual(votes.map((v) => v.vote), ['yes'], 'the vote stands');
+
+  // It cannot reword somebody else's change.
+  const { rows: [theirs] } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, linked_issues, promoted_at, pr_summary_md, pr_summary_input_version)
+     VALUES ($1, $2, 'dev/evan-dark', 'promoted', 'Dark mode', $3, NOW(), 'Evan wrote this.', 1) RETURNING *`,
+    [app.id, evan.id, [13]],
+  );
+  const otherPlace = { type: 'session', ref: theirs.id };
+  await ask(evan, '@Homeroom bot reword the description', otherPlace);
+  await run(otherPlace, [
+    { tool: 'update_change_description', args: { description: 'Rewritten by the bot.' } },
+    { tool: 'reply', args: { text: 'That change is not one I built, so I cannot reword it.' } },
+  ]);
+  const { rows: [untouched] } = await pool.query('SELECT pr_summary_md FROM chat_sessions WHERE id = $1', [theirs.id]);
+  assert.equal(untouched.pr_summary_md, 'Evan wrote this.', 'nothing was written');
+  assert.equal(sent.length, 2, 'both turns replied');
+});
+
 test('retireThreadSuggestions closes only older open sets in the same thread', { timeout: 120000 }, async (t) => {
   const pool = await openDatabase(t);
   if (!pool) return;
