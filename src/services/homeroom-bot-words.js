@@ -58,6 +58,9 @@ const FIRST_PERSON = Object.freeze([
   [/Homeroom bot updated this change:/, 'I updated this change:'],
   [/Homeroom bot couldn't update this change: it has already updated it as many times as it may on its own,/,
     'I couldn\'t update this change: I\'ve already updated it as many times as I may on my own,'],
+  // #6284: the cap on updates people asked for (followup.revisionFailedText).
+  [/Homeroom bot couldn't update this change: it has already made (\d+) updates people asked for on it, as many as it may\./,
+    'I couldn\'t update this change: I\'ve already made $1 updates people asked for on it, as many as I may.'],
   [/Homeroom bot is working on it…/, 'I\'m working on it…'],
   [/Homeroom bot saw your message, but another update to this change is running right now\. It will answer once that finishes\./,
     'I saw your message, but another update to this change is running right now. I\'ll answer once that finishes.'],
@@ -94,6 +97,8 @@ const FIRST_PERSON = Object.freeze([
   [/can tap Try again in their chat with Homeroom bot, and it will finish it\./,
     'can tap Try again in their chat with me, and I\'ll finish it.'],
   [/: it ended up with no changes to show\./, ': I ended up with no changes to show.'],
+  // #6313: a failure the bot is already trying again by itself.
+  [/\. It is trying again\./, '. I\'m trying again.'],
   [/Homeroom bot couldn't\b/g, 'I couldn\'t'],
   // Leaving a request to the people holding it (homeroom-bot-holds.js).
   [/, so Homeroom bot is leaving it to the vote\./, ', so I\'m leaving it to the vote.'],

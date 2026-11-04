@@ -581,7 +581,12 @@ test('the guest bar: the wordmark at the column\'s left, Sign in and Sign up at 
   assert.match(actions, /data-landing-sign-in=""\s+className=\{hiddenLast\(session \|\| !guestPages, 'un-touch-target -my-2 min-h-11 rounded-full px-2 /);
   assert.match(actions, /onClick=\{\(\) => \{ noteSignUpFrom\('header_sign_in'\); setSheet\('signin'\); \}\}/);
   assert.match(actions, /<Button\s+type="button"\s+variant="pillAccent"\s+size="none"\s+ink="solid"\s+data-landing-sign-up=""/);
-  assert.match(actions, /data-landing-sign-up=""\s+className=\{guestTop \? 'un-touch-target -my-2 min-h-11 /);
+  // Both branches centre the label in the 44px pill. On a project's page the
+  // button is `md:inline-flex`, and a flex box without `items-center`
+  // stretches its anonymous text item, so the label sat at the top of the
+  // pill while the inline-block Discover one looked centred (#6309).
+  assert.match(actions, /data-landing-sign-up=""\s+className=\{guestTop \? 'un-touch-target items-center justify-center -my-2 min-h-11 /);
+  assert.match(actions, /: 'un-touch-target items-center justify-center hidden md:inline-flex -my-2 min-h-11 /);
   assert.doesNotMatch(header, /<a[\s>]/, 'still no anchor in the bar');
   // A project's page keeps its title centred and clear of the buttons.
   assert.match(header, /id="landing-header-title"\s+className="flex-1 min-w-0 px-10 /);

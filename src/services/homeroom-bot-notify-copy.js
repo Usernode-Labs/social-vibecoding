@@ -64,7 +64,7 @@ const SAID_BY_MOMENT = Object.freeze({
     'blocked', 'empty', 'done', 'platform']),
   ready: Object.freeze(['ready', 'ready_group', 'ready_first', 'ready_broken']),
   stopped: Object.freeze(['build_time', 'build_restart', 'build_no_change', 'build_not_proposed', 'build_no_start',
-    'build_other', 'build_push', 'build_push_permanent', 'build_push_gave_up', 'update_failed', 'needs_look', 'checks', 'first_failed']),
+    'build_other', 'build_no_plan', 'build_push', 'build_push_permanent', 'build_push_gave_up', 'update_failed', 'needs_look', 'checks', 'first_failed']),
   // 16 Oct 2026: `slots`, a build held because the project's changes waiting
   // for votes are as many as it may have (homeroom-bot.js WAITING_PER_APP),
   // rings once; #6156: `builds`, because its builds are (BUILDS_PER_APP).
@@ -141,6 +141,9 @@ const BUILD_CAUSES = Object.freeze({
   no_start: 'build_no_start', not_started: 'build_no_start',
   // #6267: the build finished and GitHub refused the upload.
   push: 'build_push', push_permanent: 'build_push_permanent', push_gave_up: 'build_push_gave_up',
+  // #6313: the plan could not be written; nothing was built, and the bot is
+  // trying again by itself.
+  plan: 'build_no_plan',
 });
 
 function oneLine(value, max) {
@@ -377,6 +380,9 @@ function bodyFor(d) {
     case 'build_push_permanent': return 'Built, but GitHub wouldn\'t take the upload. Reply to try again.';
     case 'build_push_gave_up': return 'Built, but GitHub kept refusing the upload. Reply to send it.';
     case 'build_other': return 'Stopped: something went wrong while I was building. Tap Try again.';
+    // #6313: nothing was built, so it is never said as "while I was building",
+    // and no tap is asked for a retry that is already coming.
+    case 'build_no_plan': return 'Stopped: I couldn\'t write the plan for it. I\'m trying again.';
     case 'update_failed': return 'Stopped: I couldn\'t update it. It\'s as it was.';
     case 'needs_look': return 'Stopped: it\'s built, but a person needs to look at it before you can try it.';
     case 'checks': return 'Stopped: its checks still fail. A person needs to look.';

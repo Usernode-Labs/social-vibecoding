@@ -116,6 +116,7 @@ function needGlyph(row: WorkRow): ReactNode {
   if (kind === 'plan') return <PlayIcon className={G} />;
   if (kind === 'decide') return <HandRaisedIcon className={G} />;
   if (kind === 'stopped') return <ArrowPathIcon className={G} />;
+  if (kind === 'fix_stopped') return <ArrowPathIcon className={G} />;
   if (kind === 'private') return <LockIcon className={G} />;
   return <BallotIcon className={G} />;
 }
@@ -158,6 +159,15 @@ function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; qui
  * stay lined up. The accent the page already uses for Vote and Decide.
  */
 const DOT = 'absolute -start-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
+
+/**
+ * #6312 (4 Nov 2026, Evan): the box a fold clips, while it animates open and
+ * shut. The dot stands 12px past its row's start edge (DOT), so the box keeps
+ * 16px of room on that side: the negative start margin widens the clip edge,
+ * and the same padding leaves every row exactly where it was, so a row with
+ * something new shows its dot folded and open alike.
+ */
+const FOLD_CLIP = 'min-h-0 overflow-hidden -ms-4 ps-4';
 
 function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   const t = useMessages('messages');
@@ -405,7 +415,7 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
                   inert={!open}
                   data-ai-group-rest=""
                 >
-                  <div className="min-h-0 overflow-hidden">
+                  <div className={FOLD_CLIP}>
                     {items.slice(shown).map(draw)}
                   </div>
                 </div>
@@ -501,7 +511,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
             inert={!stillShown}
             data-ai-still-rest=""
           >
-            <div className="min-h-0 overflow-hidden">
+            <div className={FOLD_CLIP}>
               <GroupList lines={still.lines} quiet={quiet} heads={heads} first={still.lines.length} />
             </div>
           </div>

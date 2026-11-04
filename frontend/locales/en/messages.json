@@ -4939,6 +4939,10 @@
     "text": "{{project}} · #{{number}} · Homeroom bot's build stopped",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a request of the person's whose build by Homeroom bot came to nothing, so nothing happens until somebody asks it to try again."
   },
+  "ai.row.fixStopped": {
+    "text": "{{project}} · #{{number}} · Checks failing · Homeroom bot stopped",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of a change of the person's whose checks failed after Homeroom bot stopped at its own limit of fixes, so somebody may let it try again."
+  },
   "ai.row.voteFreesSlot": {
     "text": "{{project}} · #{{number}} · Your vote helps free a build slot",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a vote on one of Homeroom bot's changes while a request of the person's waits for one of its slots on that project; deciding the change frees one."
@@ -5002,6 +5006,10 @@
   "ai.pill.tryAgain": {
     "text": "Try again",
     "description": "The AI tab's main view, Needs you: the pill on a request whose build by Homeroom bot stopped. Opens the request, where Homeroom bot can be asked to build it again."
+  },
+  "ai.pill.letTryAgain": {
+    "text": "Try again",
+    "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester or an admin may let it try once more."
   },
   "ai.pill.needsYou": {
     "text": "Needs you",
@@ -5474,6 +5482,10 @@
   "ai.why.buildStopped": {
     "text": "Homeroom bot's build stopped",
     "description": "Homeroom bot tab, on a phone: the second line of a Needs you row whose build by Homeroom bot stopped without a change."
+  },
+  "ai.why.fixStopped": {
+    "text": "Checks failing · Homeroom bot stopped",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a change whose checks failed after Homeroom bot stopped at its own limit of fixes."
   },
   "ai.why.voteFreesSlot": {
     "text": "Your vote helps free a build slot",
@@ -6082,5 +6094,17 @@
   "ai.thread.aboutChangeUntitledPr": {
     "text": "Change PR {{number}}",
     "description": "The name over a private thread with Homeroom bot that was opened from a change's page, when the change's title is not known. On a project whose code is on GitHub, the change's number is written PR, not #."
+  },
+  "bot.track.line.queued.planRetry": {
+    "text": "Retrying the plan",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn in the chat with the bot, a request's thread, the request's page and the bot's slots page. Its line for a request queued to be read again after Homeroom bot could not write its plan, so it is trying the plan again."
+  },
+  "ai.short.retryPlan": {
+    "text": "Retrying the plan",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: Homeroom bot is queued to try the plan again after it could not write one, and has not started reading the request yet."
+  },
+  "ai.up.retryingPlan": {
+    "text": "Homeroom bot is trying the plan again",
+    "description": "The AI tab's main view: the tooltip of a one-line row in Waiting whose request is queued to be read again after Homeroom bot could not write its plan."
   }
 }
