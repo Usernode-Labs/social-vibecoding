@@ -233,7 +233,7 @@ test('a new phone account gives a name: verify finishes it, with a provisional h
   const routes = read('src/routes/phone-auth.js');
   const verify = routes.slice(routes.indexOf("router.post('/api/auth/phone/verify'"), routes.indexOf("router.post('/api/auth/phone/finish'"));
   assert.match(verify, /const name = result\.next === 'username' && !invite\?\.public\s+\? phoneAuth\.cleanName\(req\.body\?\.name\) : null;/);
-  assert.match(verify, /phoneAuth\.finishWithName\(pool, \{ signupToken: result\.signupToken, name, createSession \}\)/);
+  assert.match(verify, /phoneAuth\.finishWithName\(pool, \{ signupToken: result\.signupToken, name, createSession: mintSession \}\)/);
   assert.ok(verify.indexOf('finishWithName') > verify.indexOf('redeemCarried'), 'the link is followed by the account first');
   assert.ok(verify.indexOf('finishWithName') < verify.indexOf("privateCookie(res, 'hr_phone_signup'"), 'before any username step');
 });

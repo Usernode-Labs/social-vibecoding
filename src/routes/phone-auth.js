@@ -221,7 +221,9 @@ function phoneAuthRoutes(config) {
             );
             return phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
           })();
-      const result = await phoneAuth.signIn(pool, claims, { createSession });
+      // #5974: the session row names the browser that signed in.
+      const mintSession = (db, userId) => createSession(db, userId, req);
+      const result = await phoneAuth.signIn(pool, claims, { createSession: mintSession });
 
       // An invite link this visitor opened first is followed as the account
       // the phone just CREATED, and an existing account follows it only when
@@ -258,7 +260,7 @@ function phoneAuthRoutes(config) {
       const name = result.next === 'username' && !invite?.public
         ? phoneAuth.cleanName(req.body?.name) : null;
       const named = name
-        ? await phoneAuth.finishWithName(pool, { signupToken: result.signupToken, name, createSession })
+        ? await phoneAuth.finishWithName(pool, { signupToken: result.signupToken, name, createSession: mintSession })
         : null;
       if (named) {
         createSessionCookie(res, named.session.token, named.session.expiresAt);
@@ -321,7 +323,8 @@ function phoneAuthRoutes(config) {
       const done = await providers.completeUsername(pool, {
         signupToken: req.cookies?.hr_phone_signup,
         username: typeof req.body?.username === 'string' ? req.body.username : '',
-        createSession,
+        // #5974: the session row names the browser that signed in.
+        createSession: (db, userId) => createSession(db, userId, req),
       });
       clearPrivateCookie(res, 'hr_phone_signup');
       createSessionCookie(res, done.session.token, done.session.expiresAt);

@@ -87,11 +87,19 @@ async function seed(pool, store) {
 test('media column removal refuses incomplete migrations, preserves references, and upgrades atomically', { timeout: 90000 }, async t => {
   if (!DSN) { t.skip('set TEST_DATABASE_URL for the real migration regression'); return; }
   assert.ok(cut > 0);
-  const prefixDir = fs.mkdtempSync(path.join(os.tmpdir(),'media-history-'));
-  t.after(() => fs.rmSync(prefixDir,{recursive:true,force:true}));
-  for (const m of plan.slice(0,cut)) fs.copyFileSync(path.join(__dirname,'../src/db/migrations',m.id+'.sql'),path.join(prefixDir,m.id+'.sql'));
-  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname,'../src/db/migrations/manifest.json')));
-  fs.writeFileSync(path.join(prefixDir,'manifest.json'),JSON.stringify({...manifest,migrations:manifest.migrations.slice(0,cut)}));
+  // History up to the media migration (`prefixDir`) and through it
+  // (`throughDir`): the catalog comparison below reads the media migration's
+  // own effect, whatever later migrations (#5974's sessions columns, for one)
+  // add after it; the rest of history is applied afterwards.
+  const history = (count) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(),'media-history-'));
+    t.after(() => fs.rmSync(dir,{recursive:true,force:true}));
+    for (const m of plan.slice(0,count)) fs.copyFileSync(path.join(__dirname,'../src/db/migrations',m.id+'.sql'),path.join(dir,m.id+'.sql'));
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname,'../src/db/migrations/manifest.json')));
+    fs.writeFileSync(path.join(dir,'manifest.json'),JSON.stringify({...manifest,migrations:manifest.migrations.slice(0,count)}));
+    return dir;
+  };
+  const prefixDir = history(cut), throughDir = history(cut+1);
   const pool = await database(t);
   await apply(pool,{...options,dir:prefixDir});
   const store = memoryMediaStore({now:()=>0});
@@ -151,7 +159,7 @@ test('media column removal refuses incomplete migrations, preserves references, 
     finally { await pool.query('DROP VIEW local_media_dependency'); }
   });
 
-  await apply(pool,options);
+  await apply(pool,{...options,dir:throughDir});
   assert.deepEqual(await byteColumns(pool),[]);
   assert.deepEqual(await references(pool),beforeRefs,'all foreign keys survive');
   assert.deepEqual(await indexes(pool),beforeIndexes,'all key and unrelated indexes survive');
@@ -162,12 +170,16 @@ test('media column removal refuses incomplete migrations, preserves references, 
   }
   assert.deepEqual(await media.bytes(store,{object_key:denseKey}),dense);
   assert.equal((await media.sweep(pool,store)).removed,0,'referenced ordinary and dense objects stay protected');
+  assert.equal((await receipts(pool)).length,cut+1);
+  const mediaCatalog=await catalog(pool);
+  const expectedTables=TABLES.map(t=>'public.'+t).sort();
+  assert.deepEqual(mediaCatalog.relations.filter(r=>JSON.stringify(r)!==JSON.stringify(beforeCatalog.relations.find(p=>p.name===r.name))).map(r=>r.name).sort(),expectedTables);
+  assert.deepEqual(mediaCatalog.sequences,beforeCatalog.sequences);
+  // The rest of history, whatever it holds by now.
+  await apply(pool,options);
   const afterReceipts=await receipts(pool);
   assert.equal(afterReceipts.length,plan.length);
   const afterCatalog=await catalog(pool);
-  const expectedTables=TABLES.map(t=>'public.'+t).sort();
-  assert.deepEqual(afterCatalog.relations.filter(r=>JSON.stringify(r)!==JSON.stringify(beforeCatalog.relations.find(p=>p.name===r.name))).map(r=>r.name).sort(),expectedTables);
-  assert.deepEqual(afterCatalog.sequences,beforeCatalog.sequences);
 
   await t.test('new constraints reject missing keys, wrong hashes and inconsistent originals',async()=>{
     for (const table of TABLES) {

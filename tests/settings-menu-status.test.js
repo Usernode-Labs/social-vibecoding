@@ -161,12 +161,14 @@ test('Experimental carries a Beta tag and nothing else; the tag wins the row edg
   }
 });
 
-test('the phones section reports its list to the menu, and clears it on a failed load', () => {
+test('the devices section reports its lists to the menu, and clears it on a failed load', () => {
+  // #5974: the page lists phones and browsers, and the menu's "3 linked"
+  // counts both; a load that fails on both sides clears the count.
   const src = read('frontend/src/features/settings/sections/linked-phones.tsx');
   assert.match(src, /_setNavStatus\?\.\('phones', count\)/);
-  assert.match(src, /if \(phones\) reportPhones\(phones\.length\)/);
-  const failure = src.slice(src.indexOf('} catch {'), src.indexOf("useEffect(() => { void load(); }"));
-  assert.match(failure, /reportPhones\(null\)/, 'a failed reload clears the count');
+  assert.match(src, /if \(phones \|\| browsers\) reportPhones\(\(phones\?\.length \|\| 0\) \+ \(browsers\?\.length \|\| 0\)\)/);
+  const load = src.slice(src.indexOf('const load = useCallback('), src.indexOf("useEffect(() => { void load(); }"));
+  assert.match(load, /if \(!nextPhones && !nextBrowsers\) reportPhones\(null\)/, 'a failed reload clears the count');
 });
 
 test('a load that succeeds and then fails leaves the row saying nothing', async () => {

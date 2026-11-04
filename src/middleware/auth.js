@@ -4,6 +4,7 @@ const { setSessionCacheCookie, stampApiIdentity } = require('../services/browser
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const { classifyUserAgent } = require('../services/linked-browsers');
 const platformJwt = require('../services/platform-jwt');
 
 const PUBLIC_PATHS = [
@@ -371,6 +372,28 @@ async function renewCookieSession(pool, res, token, row) {
   }
 }
 
+// #5974: Settings › Linked devices says when each browser was last used.
+// `sessions.last_seen_at` is written at most once per 15 minutes per
+// session: a request whose row was stamped more recently writes nothing, and
+// the UPDATE repeats the window so two requests racing on a stale row cost
+// one write. Never awaited: the request has authenticated by now, and the
+// date is a convenience the response must not wait for or fail on.
+const SESSION_SEEN_THROTTLE_MS = 15 * 60 * 1000;
+
+function touchSessionLastSeen(pool, token, row) {
+  const seen = row.last_seen_at ? new Date(row.last_seen_at).getTime() : NaN;
+  if (Number.isFinite(seen) && Date.now() - seen < SESSION_SEEN_THROTTLE_MS) return;
+  Promise.resolve()
+    .then(() => pool.query(
+      `UPDATE sessions
+          SET last_seen_at = NOW()
+        WHERE token = $1
+          AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '15 minutes')`,
+      [token]
+    ))
+    .catch((err) => log.warn('auth', 'Session last-seen update failed', { message: err.message }));
+}
+
 function authMiddleware(config) {
   const pool = getPool(config);
 
@@ -386,7 +409,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -478,6 +501,7 @@ function authMiddleware(config) {
           // the cookie outright, so renewing the credential it is discarding
           // would both waste a write and set competing cookies on one response.
           const renewedExpiry = await renewCookieSession(pool, res, cookieToken, rows[0]);
+          touchSessionLastSeen(pool, cookieToken, rows[0]);
           stampApiIdentity(req, res, cookieToken, renewedExpiry || rows[0].expires_at);
           bindStreamSession(req, cookieToken);
           log.debug('auth', 'Session validated', { userId: req.user.id });
@@ -610,8 +634,8 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
   const expiresAt = new Date(Date.now() + STAGING_SESSION_DAYS * 24 * 60 * 60 * 1000);
   try {
     await pool.query(
-      'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
-      [sessionToken, userRow.id, expiresAt]
+      'INSERT INTO sessions (token, user_id, expires_at, user_agent_class) VALUES ($1, $2, $3, $4)',
+      [sessionToken, userRow.id, expiresAt, classifyUserAgent(req?.headers?.['user-agent'])]
     );
   } catch (err) {
     log.error('auth', 'Staging iframe-JWT session insert failed', { err: err.message });
