@@ -183,7 +183,7 @@ test('a private thread about a request or a change, and the hold, against the fu
     // 1 Nov 2026 (C1): the bot tab lists it by its request ("#18 Dark mode"),
     // not by the bot's opening line.
     const aiWork = require('../src/services/ai-work');
-    const listed = (await pool.query(aiWork.PRIVATE_SQL, [ada.id, botUser.id, aiWork.PRIVATE_MAX])).rows.map(aiWork.shapePrivate);
+    const listed = (await pool.query(aiWork.PRIVATE_SQL, [ada.id, botUser.id, aiWork.PRIVATE_MAX, aiWork.LIVE_DAYS])).rows.map(aiWork.shapePrivate);
     const mine = listed.find((p) => p.rootId === adaRoot);
     assert.deepEqual({ title: mine.title, about: mine.about }, { title: 'Dark mode', about: { kind: 'request', number: 18 } });
   });

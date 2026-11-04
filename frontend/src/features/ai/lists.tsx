@@ -568,7 +568,24 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     ...movingShown.map(waitingLine),
   ];
   const stillLines: Line[] = stillShown.map(waitingLine);
-  const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => ({
+  const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => (th.what === 'closed' ? {
+    // #6271: a private thread marked done this week: a lock, its title, the
+    // day it closed, and no number. It opens the thread, where Reopen is.
+    key: `closed:${th.rootId}`,
+    kind: 'closed',
+    app: th.app,
+    glyph: <LockIcon className={G} />,
+    number: null,
+    title: th.title || '',
+    right: dayOf(th.at, t),
+    tooltip: th.app
+      ? t('messages:ai.live.closed', { project: th.app.name || th.app.slug })
+      : t('messages:ai.live.closedSolo'),
+    why: null,
+    owe: false,
+    lit: !!lit && rowKey(th) === lit,
+    open: () => openThread(th),
+  } : {
     ...threadLine(() => <CheckIcon className={G} />)(th),
     right: dayOf(th.at, t),
     tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
