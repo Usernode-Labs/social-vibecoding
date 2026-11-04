@@ -231,12 +231,12 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   // thread and quotes what asked for it (the offer itself is in the thread).
   // 1 Nov 2026 (C2.2, C2.4): and a design's two cards, and a new project's
   // thread's line in Main, which quotes what asked for it.
-  assert.equal(sends.length, 8, 'a turn\'s answer, a draft\'s line, its offer, the answer to a tap, a tap whose act failed for good, a design\'s plan and project cards, and a new project\'s line');
+  assert.equal(sends.length, 9, 'a turn\'s answer, a draft\'s line, its offer, a many-project offer, the answer to a tap, a tap whose act failed for good, a design\'s plan and project cards, and a new project\'s line');
   // B3: the answer to a tap (settleOffer) quotes what was typed or quoted
   // when there was one; a button's tap has no message of hers to quote.
   // One story: a tap with nothing typed is answered where its offer is (the
   // offer's own message, never quoted, names its thread).
-  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId: opened \? null : message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra|replyToId: action\.message_id \|\| null,|replyToId: ctx\.messageId, threadRootId: false/);
+  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId: opened \? null : message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra|replyToId: action\.message_id \|\| null,|replyToId: ctx\.messageId, threadRootId: false|replyToId: message\.threadRootId \|\| message\.thread_root_id \? null : message\.id/);
   assert.match(src, /settleOffer\(pool, config, \{\s*bot, user, settings, action, yes, deps, replyToId: message\.id,/);
 });
 
@@ -840,7 +840,7 @@ test('#4525: offering a vote on closing a request, as the model and the person s
 test('#6251: offer_request carries pictures, related requests, where it happened and Done when', () => {
   const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
   assert.deepEqual(Object.keys(tool.parameters.properties).sort(),
-    ['attachmentIds', 'context', 'details', 'doneWhen', 'named', 'project', 'related', 'title']);
+    ['attachmentIds', 'context', 'details', 'doneWhen', 'named', 'project', 'projects', 'related', 'title']);
   assert.ok(tool.parameters.required.includes('doneWhen'), 'a draft always says what done looks like');
   assert.deepEqual(tool.parameters.properties.related.items.properties.relation.enum,
     ['same', 'part_of', 'depends_on', 'build_together']);

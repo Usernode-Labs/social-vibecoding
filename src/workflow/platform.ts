@@ -1059,13 +1059,14 @@ function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; er
 
 // A tap under one of the voice's offers (routes/chat.js): decided once in
 // the place its message is in; the act is that place's work.
-export async function tapVoiceOffer(p: { appId: number; offerId: number; messageId: number; userId: number; choice: string }) {
+export async function tapVoiceOffer(p: { appId: number; offerId: number; messageId: number; userId: number; choice: string; rows?: string[] | null }) {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const { rows: [m] } = await kernelPool!.query('SELECT thread_type, thread_ref FROM chat_messages WHERE id = $1 AND app_id = $2', [p.messageId, p.appId]);
   const place = m ? placeOf(m.thread_type ? { type: m.thread_type, ref: m.thread_ref } : null) : null;
   if (!place) return { ok: false, status: 404, error: 'Nothing to decide here.' };
   const out = await runtime.appendAndWait(BOT_VOICE, voiceKey(p.appId, place),
-    { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice } },
+    { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice,
+      ...(Array.isArray(p.rows) ? { rows: p.rows } : {}) } },
     { requestKey: `tap-offer:${p.offerId}:${p.userId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-offer' }, actor: `user:${p.userId}`, appId: p.appId });
   return tapAnswer(out, VOICE_TAP);
 }

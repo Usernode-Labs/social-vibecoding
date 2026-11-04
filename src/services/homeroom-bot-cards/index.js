@@ -31,6 +31,7 @@ const HANDLERS = Object.freeze({
   confirm: () => require('./confirm'), // P7
   gallery: () => require('./gallery'), // P8
   investigation: () => require('./investigation'), // P9
+  file_many: () => require('./file-many'), // #6305
 });
 
 const MAX_ACTION_CHARS = 60;

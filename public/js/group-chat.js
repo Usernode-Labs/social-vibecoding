@@ -1382,7 +1382,13 @@ const GroupChat = {
     const actions = (Array.isArray(bot.actions) ? bot.actions : [])
       .filter((a) => a && (a.id === 'yes' || a.id === 'no') && typeof a.label === 'string' && a.label)
       .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
-    return { status, forMe: me != null && Number(bot.offer.forUserId) === me, actions };
+    // #6305: a many-project offer carries the rows it would file.
+    const rows = Array.isArray(bot.offer.rows) ? bot.offer.rows.slice(0, 12) : null;
+    return {
+      status, forMe: me != null && Number(bot.offer.forUserId) === me, actions,
+      kind: typeof bot.offer.kind === 'string' ? bot.offer.kind : '',
+      ...(rows ? { rows } : {}),
+    };
   },
 
   // The suggested replies under Homeroom bot's message in a request's or a
@@ -1425,12 +1431,13 @@ const GroupChat = {
 
   // Yes or No under one of Homeroom bot's offers. The buttons go when the
   // room hears it was decided (`chat_message_updated`); a refusal is said.
-  async decideBotOffer(messageId, choice) {
+  async decideBotOffer(messageId, choice, rows) {
     const slug = GroupChat.appSlug;
     if (!slug || !messageId || (choice !== 'yes' && choice !== 'no')) return;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(messageId)}/bot-offer`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ choice }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice, ...(Array.isArray(rows) ? { rows } : {}) }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('chat:group.botOffer.failed'));
