@@ -96,7 +96,7 @@ async function deploy(config, {
   const previewPolicy = require('./platform-preview-data-policy');
   if (environment === 'staging' && app.slug === previewPolicy.PLATFORM_SLUG
       && labels?.[previewPolicy.LABEL] !== previewPolicy.DIGEST) {
-    throw previewPolicy.refuse('platform deploy requires a verified sanitized clone');
+    throw previewPolicy.refuse('platform deploy requires a verified sanitized clone', { policySkew: true });
   }
   if (environment === 'production' && previewProjects.active()) {
     return previewProjects.deploy(config, { app, imageRef, env, onRollout });

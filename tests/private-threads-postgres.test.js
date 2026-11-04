@@ -193,13 +193,13 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
       draft: { kind: 'ask', state: 'open', appSlug: 'pt-seed-swap', appName: 'Seed swap', changeKind: 'fix' },
     });
     // The Homeroom bot tab lists it by her first words in it, not the bot's line.
-    const { rows } = await pool.query(aiWork.PRIVATE_SQL, [ada.id, bot.id, aiWork.PRIVATE_MAX]);
+    const { rows } = await pool.query(aiWork.PRIVATE_SQL, [ada.id, bot.id, aiWork.PRIVATE_MAX, aiWork.LIVE_DAYS]);
     const listed = rows.find((r) => Number(r.root_id) === made.rootId);
     assert.equal(listed.kind, 'ask');
     assert.equal(listed.first_own, 'The swap button does nothing on my phone');
     // #6250 (4 Nov 2026): a posted, filed or put-away draft stays listed; only
     // a done thread leaves the lists, until it is reopened.
-    const listedNow = async () => (await pool.query(aiWork.PRIVATE_SQL, [ada.id, bot.id, aiWork.PRIVATE_MAX])).rows
+    const listedNow = async () => (await pool.query(aiWork.PRIVATE_SQL, [ada.id, bot.id, aiWork.PRIVATE_MAX, aiWork.LIVE_DAYS])).rows
       .some((r) => Number(r.root_id) === made.rootId);
     await pool.query(`UPDATE private_threads SET state = 'posted', result_ref = 41 WHERE root_message_id = $1`, [made.rootId]);
     assert.equal(await listedNow(), true, 'a posted draft stays listed');

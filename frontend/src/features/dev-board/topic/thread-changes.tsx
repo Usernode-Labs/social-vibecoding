@@ -60,6 +60,7 @@ import type { ReactNode, RefObject } from 'react';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { i18n } from '../../../lib/i18n/runtime';
 import { projectChangesOnGithub } from '../../../lib/change-ref';
+import { reload as reloadTab } from '../../../lib/tab-build';
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
@@ -223,11 +224,24 @@ export function ChangeLine({ item, view, letter = null }: { item: ThreadItem; vi
   const t = useMessages('project');
   const kicker = useKicker(item, letter);
   const status = view?.v.status || null;
+  // #6233: the change is live in the app, but this tab runs the version
+  // before it: say so and offer the same reload the side menu does.
+  const behind = !!status && (status.key === 'deployed_reload' || status.key === 'merged_reload');
   return (
     <div className="min-w-0" data-thread-change-line={item.id}>
       <div className="flex min-w-0 items-center gap-2">
         <div className={`${KICKER} min-w-0 flex-1 truncate`}>{kicker}</div>
         {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
+        {behind ? (
+          <button
+            type="button"
+            className="shrink-0 text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
+            onClick={() => reloadTab()}
+            data-thread-change-reload={item.id}
+          >
+            {t('project:change.reload')}
+          </button>
+        ) : null}
         <ChangeMenu item={item} view={view} />
       </div>
       <h3 className="mt-0.5 min-w-0 text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
@@ -424,6 +438,9 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
     <>
       <AlsoCloses item={item} request={request} />
       {summary ? <div className="dev-thread-change-summary" data-thread-change-summary={item.id}><RequestWords html={summary} /></div> : null}
+      {view?.body.summaryStale && summary
+        ? <p className="dev-change-stale" role="note" data-thread-change-stale={item.id}>{t('project:topic.change.summaryStale')}</p>
+        : null}
       {plan ? <PlanLine plan={plan} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} s={view.v.shots} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (

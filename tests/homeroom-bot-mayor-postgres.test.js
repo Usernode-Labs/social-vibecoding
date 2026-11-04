@@ -428,7 +428,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(opens[0].imageInput, true, 'the shim is told the model can look');
     const hers = views[0].at(-1);
     assert.equal(hers.role, 'user');
-    assert.equal(hers.content[0].text, 'what is wrong in this?\n[Homeroom: they attached the picture broken.png, shown below.]');
+    // #6251: the picture's id is on its line, so offer_request can name it.
+    assert.match(hers.content[0].text, /^what is wrong in this\?\n\[Homeroom: they attached the picture broken\.png \(id a{31}1\), shown below\.\]$/);
     assert.deepEqual(hers.content.slice(1), [PART]);
     const at = views[1].findIndex((m) => m.role === 'tool');
     assert.ok(!JSON.stringify(views[1][at]).includes('/9j/4AAQ'), 'no bytes in the tool message');
@@ -448,7 +449,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     });
     assert.equal(opensPlain[0].imageInput, false);
     assert.ok(!plain[0].includes(PNG.toString('base64')), 'no bytes reach a text-only model');
-    assert.match(plain[0], /broken\.png, which you cannot see: your model reads text only/);
+    assert.match(plain[0], /broken\.png \(id a{31}1\), which you cannot see: your model reads text only/);
 
     // Only her newest messages' pictures are sent again; older ones are named.
     const later = [];
@@ -456,7 +457,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       deps: { seesImages: true },
     });
     assert.ok(!later[0].includes('"image_url"'));
-    assert.match(later[0], /broken\.png\. Only the newest pictures are shown\./);
+    assert.match(later[0], /broken\.png \(id a{31}1\)\. Only the newest pictures are shown\./);
 
     // A provider that cannot read a picture: the round goes once more without.
     const tries = [];
@@ -551,12 +552,23 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   await t.test('a new request is offered, filed only on File it, as hers, and decided once', async () => {
     const chat = scripted([
       [['my_projects']],
-      [['offer_request', { project: 'Note board', title: 'Add a search box', details: 'Search notes by their text.' }]],
+      [['offer_request', { project: 'Note board', title: 'Add a search box', details: 'Search notes by their text.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Want me to file this on Note board?' }]],
     ]);
     const offered = await turn('can you add search to note board?', chat);
     const msg = await read(offered);
-    assert.match(msg.content, /^Want me to file this on Note board\?\n\n\*\*Note board\*\* · new request: Add a search box\n\nSearch notes by their text\.$/);
+    assert.equal(msg.content, [
+      'Want me to file this on Note board?',
+      '',
+      '**Note board** · new request: Add a search box',
+      '',
+      'Search notes by their text.',
+      '',
+      '**Where:** your message in Main Chat',
+      '',
+      '**Done when:**',
+      '- It does what was asked.',
+    ].join('\n'));
     const meta = msg.metadata.homeroomBot;
     assert.equal(meta.kind, 'confirm');
     assert.deepEqual(meta.answers, ['File it', 'Not now']);
@@ -568,7 +580,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const ack = await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} });
     assert.equal(created.length, 1);
     assert.deepEqual({ title: created[0].title, repo: created[0].repo }, { title: 'Add a search box', repo: 'note-board' });
-    assert.match(created[0].body, /Search notes by their text\.\n\n---\nFiled from ada_\d+'s chat with Homeroom bot\./);
+    assert.match(created[0].body, /^Search notes by their text\.\n\n\*\*Done when\*\*\n- It does what was asked\.\n\n---\nFiled from ada_\d+'s \[chat with Homeroom bot\]\(https:\/\/apps\.example\.invalid\/#homeroom-bot\/main\)\.$/);
     const n = 41;
     const { rows: [issue] } = await pool.query('SELECT created_by, title FROM issues WHERE app_id = $1 AND github_issue_number = $2', [notes.id, n]);
     assert.deepEqual(issue, { created_by: ada.id, title: 'Add a search box' });
@@ -612,7 +624,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
 
   await t.test('Not now files nothing; a project she is not in cannot be offered', async () => {
     const chat = scripted([
-      [['offer_request', { project: 'seed-swap', title: 'Trade history', details: 'A list of past swaps.' }]],
+      [['offer_request', { project: 'seed-swap', title: 'Trade history', details: 'A list of past swaps.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'File it?' }]],
     ]);
     const offered = await turn('add trade history', chat);
@@ -624,7 +636,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(created.length, 1);
 
     const refused = scripted([
-      [['offer_request', { project: 'sam-shop', title: 'Cheaper prices', details: 'x' }]],
+      [['offer_request', { project: 'sam-shop', title: 'Cheaper prices', details: 'x', doneWhen: ['It does what was asked.'] }]],
       (req) => {
         assert.match(lastToolResult(req, 'offer_request').error, /not a member of Sam shop/);
         return [['reply', { text: 'You\'re not in Sam shop, so I can\'t file there.' }]];
@@ -641,7 +653,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   let tapFiled = null;
   await t.test('B3: a tap on File it decides the offer once, for the person it was offered to', async () => {
     const offered = await turn('could note board sort by colour?', scripted([
-      [['offer_request', { project: 'note-board', title: 'Sort by colour', details: 'Group notes by their colour.' }]],
+      [['offer_request', { project: 'note-board', title: 'Sort by colour', details: 'Group notes by their colour.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Want me to file this?' }]],
     ]));
     const meta = (await read(offered)).metadata.homeroomBot;
@@ -728,7 +740,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   // good with nothing queued.
   await t.test('a tap whose queueing fails for a moment is retried by its work, and files and queues once', async () => {
     const offered = await turn('could note board export to csv?', scripted([
-      [['offer_request', { project: 'note-board', title: 'CSV export', details: 'Export notes as CSV.' }]],
+      [['offer_request', { project: 'note-board', title: 'CSV export', details: 'Export notes as CSV.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Want me to file this?' }]],
     ]));
     const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
@@ -765,7 +777,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
 
   await t.test('an offer drafted again by a retried answer is the one under its message', async () => {
     const steps = [
-      [['offer_request', { project: 'note-board', title: 'Sort by size', details: 'Sort notes by size.' }]],
+      [['offer_request', { project: 'note-board', title: 'Sort by size', details: 'Sort notes by size.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Want me to file this?' }]],
     ];
     const message = await say('could note board sort by size?');
@@ -786,7 +798,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
 
   await t.test('B3: a tap on Not now sends nothing, and the buttons give way to the choice', async () => {
     const offered = await turn('add a print button to note board', scripted([
-      [['offer_request', { project: 'note-board', title: 'Print notes', details: 'Print the board.' }]],
+      [['offer_request', { project: 'note-board', title: 'Print notes', details: 'Print the board.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'File it?' }]],
     ]));
     const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
@@ -837,7 +849,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // Main's line that opened it quotes what asked for it.
     const ask = await say('could you add tags to note board?');
     const offered = await run(ask, [
-      [['offer_request', { project: 'note-board', title: 'Tags', details: 'Tag notes to find them.' }]],
+      [['offer_request', { project: 'note-board', title: 'Tags', details: 'Tag notes to find them.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Want me to file this?' }]],
     ]);
     const draftCard = await read(offered);
@@ -1716,7 +1728,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
     const before = created.length;
     const offered = await turn('can you add note colours to note board?', scripted([
-      [['offer_request', { project: 'note-board', title: 'Note colours', details: 'Let each note have a colour.' }]],
+      [['offer_request', { project: 'note-board', title: 'Note colours', details: 'Let each note have a colour.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Want me to file this?' }]],
     ]));
     // A plain "yes" decides it only while the draft is the newest message.
@@ -1748,7 +1760,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
 
     // A draft that is not the newest message: "yes" is the model's to read.
     const second = await turn('and a pin colour?', scripted([
-      [['offer_request', { project: 'note-board', title: 'Pin colour', details: 'Pins in colour.' }]],
+      [['offer_request', { project: 'note-board', title: 'Pin colour', details: 'Pins in colour.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'File this one?' }]],
     ]));
     await turn('hello', scripted([[['reply', { text: 'Hi!' }]]]));
@@ -2276,7 +2288,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   await t.test('#4097: Filed on a project the bot does not build on leads with the request\'s line, its card said once', async () => {
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
     const offered = await turn('can you let me pin notes on note board?', scripted([
-      [['offer_request', { project: 'note-board', title: 'Pin notes', details: 'Keep a note at the top of the board.' }]],
+      [['offer_request', { project: 'note-board', title: 'Pin notes', details: 'Keep a note at the top of the board.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Want me to file this?' }]],
     ]));
     const tap = await say('File it', { reply_to_id: offered.messageId });
@@ -2389,4 +2401,110 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const history = await mayor.historyMessages(pool, { conversationId: opened.conversationId, botId: bot.id, upToId: offered.messageId });
     assert.match(history.at(-1).content, /^Two ways\.\n\[Homeroom: under this reply you offered options: A\. Newest first; B\. By name \(A to Z\)\. They picked B\.\]$/);
   });
+
+  await t.test('#6251: a draft keeps the picture, related requests, where and Done when, and the filed request carries them', async () => {
+    const PNG2 = Buffer.from('89504e470d0a1a0a0000000d4948445200000002000000020806000000', 'hex');
+    // The project's open board: one request the draft names as related.
+    const board = {
+      ...githubStub,
+      async fetchPublicIssues() {
+        return { issues: [{ number: 6230, title: 'One detail column for plans and designs' }] };
+      },
+    };
+    const deps = { github: board };
+    // A request that exists on note-board, for context.request.
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+       VALUES ($1, 6151, 'Open a plan beside the request', 'x', 'general', '{}', $2)`,
+      [notes.id, ada.id],
+    );
+    async function picture(text, filename, data) {
+      const message = await say(text);
+      const id = crypto.randomBytes(16).toString('hex');
+      await pool.query(
+        `INSERT INTO conversation_message_attachments
+           (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+         VALUES ($1, $2, $3, $4, 'image', $5, 'image/png', $6, $7)`,
+        [id, opened.conversationId, message.id, ada.id, filename, data.length, data],
+      );
+      return { id, message };
+    }
+    const shot = await picture('maybe in the sidebar, like this', 'draft.png', PNG2);
+    const offered = await turn('file the plan and design in one column with this screenshot', scripted([
+      [['offer_request', {
+        project: 'note-board', title: 'Open a plan and design in one side column',
+        details: 'The plan and design open in one column.',
+        attachmentIds: [shot.id],
+        related: [{ number: 6230, relation: 'build_together', why: 'it is the same column' }],
+        context: { request: { project: 'note-board', number: 6151 }, saw: 'the request page' },
+        doneWhen: ['A plan and a design open in the same side column', 'The request stays in view beside it'],
+      }]],
+      [['reply', { text: 'Here is what I would file.' }]],
+    ]), { deps });
+    const draft = await read(offered);
+    assert.match(draft.content, /\*\*Where:\*\* request #6151 on Note board · the request page/);
+    assert.match(draft.content, /#6230 One detail column for plans and designs: build together, it is the same column/);
+    assert.match(draft.content, /\*\*Done when:\*\*\n- A plan and a design open in the same side column/);
+    // The extras are kept on the draft message, and the picture is shown on the draft.
+    const draftExtras = (await read(offered)).metadata.homeroomBot.draftExtras;
+    assert.deepEqual(draftExtras.attachmentIds, [shot.id]);
+    assert.deepEqual(draftExtras.related, [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }]);
+    assert.deepEqual(draftExtras.doneWhen, ['A plan and a design open in the same side column', 'The request stays in view beside it']);
+    assert.deepEqual(draftExtras.context.request, { slug: 'note-board', name: 'Note board', number: 6151 });
+    const { rows: drafted } = await pool.query(
+      "SELECT kind, filename FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'", [offered.messageId],
+    );
+    assert.deepEqual(drafted.map((r) => r.filename), ['draft.png']);
+
+    // File it: the picture gets its own row in the request's store, stamped
+    // with its number, and the body links it, the related request and Done when.
+    const before = created.length;
+    const tap = await say('File it', { reply_to_id: offered.messageId });
+    await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps });
+    assert.equal(created.length, before + 1, 'filed once');
+    const { rows: shots } = await pool.query(
+      "SELECT id, issue_owner, issue_repo, issue_number FROM issue_screenshots WHERE user_id = $1 AND issue_number IS NOT NULL ORDER BY created_at DESC", [ada.id],
+    );
+    assert.equal(shots.length, 1);
+    assert.equal(shots[0].issue_owner, 'usernode-bot');
+    assert.equal(shots[0].issue_repo, 'note-board');
+    const filed = created.at(-1);
+    assert.equal(shots[0].issue_number, 40 + created.length);
+    assert.match(filed.body, new RegExp(`/issue-images/${shots[0].id}`));
+    assert.match(filed.body, /\[#6230\]\(https:\/\/apps.example.invalid\/#app\/note-board\/dev\/issues\/6230\) One detail column for plans and designs: build together, it is the same column/);
+    assert.match(filed.body, /\[Request #6151 on Note board\]/);
+    assert.match(filed.body, /\*\*Done when\*\*\n- A plan and a design open in the same side column\n- The request stays in view beside it/);
+    assert.match(filed.body, /\n---\nFiled from ada_\d+'s \[chat with Homeroom bot\]/);
+
+    // A picture deleted from the chat before File it is skipped, and filing still works.
+    const gone = await picture('this one goes away', 'gone.png', PNG2);
+    const second = await turn('file another', scripted([
+      [['offer_request', {
+        project: 'note-board', title: 'Another request with a picture', details: 'It had a picture.',
+        attachmentIds: [gone.id], doneWhen: ['It is filed without the picture.'],
+      }]],
+      [['reply', { text: 'Here it is.' }]],
+    ]), { deps });
+    await pool.query('DELETE FROM conversation_message_attachments WHERE id = $1', [gone.id]);
+    const tap2 = await say('File it', { reply_to_id: second.messageId });
+    await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap2, deps });
+    assert.equal(created.length, before + 2, 'filed without it');
+    assert.doesNotMatch(created.at(-1).body, /issue-images/, 'no picture embed');
+
+    // A fileKey retry copies no second picture.
+    const kept = await picture('and this one stays', 'stay.png', Buffer.from('89504e470d0a1a0a', 'hex'));
+    const once = await mayor.fileRequest(pool, CONFIG, {
+      user: ada, app: notes, title: 'A pictured request', details: 'x', settings, deps,
+      extras: { attachmentIds: [kept.id], doneWhen: ['It is filed.'] }, conversationId: opened.conversationId, fileKey: 'dm-action:pictured',
+    });
+    await mayor.fileRequest(pool, CONFIG, {
+      user: ada, app: notes, title: 'A pictured request', details: 'x', settings, deps,
+      extras: { attachmentIds: [kept.id], doneWhen: ['It is filed.'] }, conversationId: opened.conversationId, fileKey: 'dm-action:pictured',
+    });
+    const { rows: copies } = await pool.query(
+      'SELECT id FROM issue_screenshots WHERE issue_number = $1', [once.issueNumber],
+    );
+    assert.equal(copies.length, 1, 'one copy for the one filing');
+  });
+
 });

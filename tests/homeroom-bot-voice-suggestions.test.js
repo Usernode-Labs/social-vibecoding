@@ -27,11 +27,23 @@ test('only a request\'s or a change\'s discussion offers suggestions', () => {
 test('the prompt asks for suggestions in a request or a change, and nowhere else', () => {
   const tools = voice.toolsFor({ type: 'issue', ref: 1 });
   const issue = voice.systemPrompt({ app: { slug: 'x', name: 'X' }, place: { type: 'issue', ref: 1 }, tools });
-  assert.match(issue, /End the reply with one to three short things/);
+  assert.match(issue, /Put one to three short things the people you answered might say next, in their own words, in the reply\s+tool's suggestions field/);
+  assert.match(issue, /They are shown as buttons/);
+  assert.match(issue, /Never\s+write them in the text/);
+  assert.doesNotMatch(issue, /End the reply with one to three short things/, 'no longer invites a list in the text');
   assert.match(issue, /Leave them out when the conversation has plainly\s+ended/);
   const chatTools = voice.toolsFor({ type: 'chat', ref: null });
   const chat = voice.systemPrompt({ app: { slug: 'x', name: 'X' }, place: { type: 'chat', ref: null }, tools: chatTools });
-  assert.doesNotMatch(chat, /End the reply with one to three short things/);
+  assert.doesNotMatch(chat, /suggestions field/);
+});
+
+test('a reply that writes its suggestions as a list has them moved into the tool\'s field', async () => {
+  const ctx = { app: { id: 1, slug: 'x' }, place: { type: 'issue', ref: 7 }, deps: {} };
+  const raw = 'Once it is built, the change runs its checks.\n\nSuggestions:\n'
+    + '- So once the checks pass I can vote on it?\n- Where do I see the checks?\n';
+  await voice.runTool({}, ctx, 'reply', { text: raw });
+  assert.equal(ctx.reply.text, 'Once it is built, the change runs its checks.');
+  assert.deepEqual(ctx.reply.suggestions, ['So once the checks pass I can vote on it?', 'Where do I see the checks?']);
 });
 
 // ── say() ────────────────────────────────────────────────────────────────

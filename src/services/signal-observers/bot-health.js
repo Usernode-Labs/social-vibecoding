@@ -78,6 +78,15 @@ const FIGURES = Object.freeze({
       + `${h.chat.claimsCaught} said it had done something it had not and were written again.`,
     summary: 'More than 1 in 10 of the bot\'s DM answers could not be written over the last week.',
   },
+  cardFallbacks: {
+    title: (t) => `plan cards falling back above ${pct(t.above)}`,
+    value: (h) => `${h.cards.fallback} of ${plural(h.cards.total, 'plan card', 'plan cards')} fell back to the older lines (${pct(health.share(h.cards.fallback, h.cards.total))})`,
+    line: (t) => `above ${pct(t.above)}`,
+    sample: (h) => plural(h.cards.total, 'plan card', 'plan cards'),
+    unit: 'plan cards',
+    detail: (h) => `${h.cards.repaired} were fixed by a repair turn, ${h.cards.lines} kept their numbered lines without a summary.`,
+    summary: 'More than 1 in 5 of the bot\'s plan cards fell back to the older unnumbered lines over the last week. The rules they broke are on the panel.',
+  },
 });
 
 /** The items for the figures past their lines. Pure. */

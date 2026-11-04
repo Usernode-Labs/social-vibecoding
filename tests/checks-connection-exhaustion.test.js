@@ -224,9 +224,10 @@ test('classify carries the marker without changing the persisted record', () => 
 
 test('an infrastructure boot failure blocks the merge but does not nudge the author', () => {
   // The prepare reports the failure with the marker; the preview machine's
-  // prepareFailed domain write records it.
+  // prepareFailed domain write records it. #6149 made a policy refusal during a
+  // release a platform fault too, so it keeps the retries and the quiet card.
   const services = stripComments(read('src/workflow/preview/services.ts'));
-  assert.match(services, /const infrastructure = !!legacy\('services\/deploy-failure'\)\.bootFailureIsInfrastructure\(err\);/);
+  assert.match(services, /const infrastructure = rollout \|\| !!legacy\('services\/deploy-failure'\)\.bootFailureIsInfrastructure\(err\);/);
   const src = stripComments(read('src/workflow/preview/machine.ts'));
   const fn = src.slice(src.indexOf('async prepareFailed('));
   const body = fn.slice(0, fn.indexOf('\n  },\n') + 5);

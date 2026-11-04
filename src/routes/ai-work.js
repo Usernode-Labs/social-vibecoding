@@ -38,6 +38,8 @@ function demoWork() {
       // where it went ("Only you · Staging demo app · Filed as #404"). #404 is
       // obviously fake and names no request the demo lists.
       { rootId: -9103, title: 'Staging demo: keep my private threads in the list', kind: 'ask', app, at: at(3), state: 'filed', resultRef: 404 },
+      // #6271: a private thread marked done this week, which Live this week lists.
+      { rootId: -9104, title: 'Staging demo: a private thread marked done this week', kind: 'idea', app, at: at(6), state: 'done', doneAt: at(6) },
     ],
     needs: [
       { threadId: -9210, number: 9210, kind: 'work', title: 'Staging demo: a reminder email', app, change: null, href: issue(app, 9210), group: 'needs', what: 'plan', at: at(4) },

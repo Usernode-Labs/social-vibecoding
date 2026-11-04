@@ -164,6 +164,21 @@ module.exports = function install(world) {
         const files = Array.from({ length: n }, (_, i) => ({ filename: `src/part-${i + 1}.js`, status: 'added', additions: 3, deletions: 0, previous: null }));
         return { files, diff: files.map((f) => `+++ ${f.filename}`).join('\n'), complete: true, truncated: false };
       },
+      // #6209: the build's own check for a change that adds only documents
+      // (homeroom-bot-live.js unlinkDocOnlyBuild) reads the changed paths,
+      // as compareFiles' list is made: this build's commits, by its branch.
+      async compareRefs(owner, repo, basehead) {
+        const [base, head] = String(basehead).split('...');
+        const { rows: [b] } = await pool.query('SELECT sha FROM crash_world_branches WHERE repo = $1 AND branch = $2', [`${owner}/${repo}`, head]);
+        const tip = b?.sha || head;
+        const { rows: [c] } = await pool.query('SELECT ahead FROM crash_world_commits WHERE sha = $1', [tip]);
+        const n = tip === base ? 0 : Math.max(0, Number(c?.ahead) || 0);
+        return {
+          mergeBaseSha: MAIN_SHA,
+          files: Array.from({ length: n }, (_, i) => `src/part-${i + 1}.js`),
+          filesComplete: true,
+        };
+      },
       async createBranch(owner, repo, branch) {
         await pool.query(
           'INSERT INTO crash_world_branches (repo, branch, sha) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',

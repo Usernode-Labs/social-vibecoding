@@ -1,5 +1,6 @@
 // The two contracts a group chat row hands back to public/js/group-chat.js:
-// the vote-controls host and the quoted-reply block.
+// the pair a row about a change carries (which `refreshVoteControls` reads
+// to patch the row's model) and the quoted-reply block.
 //
 // ── Why this file is new ──────────────────────────────────────────────
 //
@@ -7,10 +8,12 @@
 // attribute, and both were silently wrong after the transcript's conversion:
 //
 //   * The vote row rendered `<span data-gc-vote-controls="5">` — but
-//     `refreshVoteControls` selects `[data-vote-controls]` and reads
-//     `data-session-id` / `data-pr-number` off the element it finds. The
+//     `refreshVoteControls` selected `[data-vote-controls]` and read
+//     `data-session-id` / `data-pr-number` off the element it found. The
 //     selector matched nothing, so every vote row showed a plain activity
-//     line with no tally pill and no Yes/No pair.
+//     line with no tally pill and no Yes/No pair. (#6236 retired that
+//     module-filled host altogether: the row renders `data-vote-session` /
+//     `data-vote-pr`, the module patches the MODEL, and the card is React's.)
 //   * The quoted reply rendered `ThreadReplySummary` — the widget language's
 //     "N replies" control for a THREAD — so it read "1 reply alice", lost the
 //     snippet and the source icon, and carried none of the `data-quote-*`
@@ -103,37 +106,47 @@ test('#1926: folding updates after earlier history or a live notice joins the ru
   assert.equal(foldRepeats(history)[0].id, 4);
 });
 
-// ── The vote-controls host ────────────────────────────────────────────
+// ── A row about a change ──────────────────────────────────────────────
+//
+// #6236: the vote-controls host is gone. A vote row, or a message whose
+// metadata names the proposal, renders the pair it is about as
+// `data-vote-session` / `data-vote-pr`, and `refreshVoteControls` READS
+// those to resolve the row against AppView.voteState and patch the MODEL
+// (`vote`, plus a vote row's tint and phase). The card itself is React's
+// (features/group-chat/vote-card.tsx, tests/vote-row-card.test.js).
 
-test('the host carries exactly what refreshVoteControls selects and reads', () => {
+test('a vote row carries exactly what refreshVoteControls selects and reads, and no host', () => {
   const html = renderComponent(TRANSCRIPT, 'SystemRow', {
     msg: { ...base, kind: 'vote', voteRef: { sessionId: '9000401', prNumber: '12' } },
   });
   // Read the selector out of the module rather than restating it, so a change
   // at either end has to be a change at both.
-  const selector = stripped.match(/document\.querySelectorAll\('([^']*data-vote-controls[^']*)'\)/);
+  const selector = stripped.match(/document\.querySelectorAll\('([^']*data-vote-session[^']*)'\)/);
   assert.ok(selector, 'located the refresh selector');
-  assert.match(selector[1], /#gc-messages \[data-vote-controls\]/);
-  assert.match(selector[1], /#gc-thread-messages \[data-vote-controls\]/);
+  assert.match(selector[1], /#gc-messages \[data-vote-session\]\[data-msg-id\]/);
+  assert.match(selector[1], /#gc-thread-messages \[data-vote-session\]\[data-msg-id\]/);
 
-  assert.match(html, /<span class="gc-vote-inline" data-vote-controls=""/);
-  assert.match(html, /data-session-id="9000401"/);
-  assert.match(html, /data-pr-number="12"/);
-  // The two attributes it reads back, named in the module, present in the row.
-  assert.match(stripped, /el\.getAttribute\('data-session-id'\)/);
-  assert.match(stripped, /el\.getAttribute\('data-pr-number'\)/);
-  // …and the row it walks up to for the tint.
-  assert.match(html, /class="gc-msg-system gc-msg-vote[^"]*"/);
-  assert.match(stripped, /el\.closest\('\.gc-msg-vote\[data-msg-id\]'\)/);
+  assert.match(html, /class="gc-msg-system gc-msg-vote[^"]*" data-msg-id="5" data-vote-session="9000401" data-vote-pr="12"/);
+  // The attributes it reads back, named in the module, present on the row.
+  assert.match(stripped, /el\.dataset\.voteSession/);
+  assert.match(stripped, /el\.dataset\.votePr/);
+  assert.match(stripped, /el\.dataset\.msgId/);
+  // No module-filled host anywhere in the row, and nothing to fill one with.
+  assert.doesNotMatch(html, /data-vote-controls|gc-vote-inline/);
+  assert.doesNotMatch(stripped, /data-vote-controls|_voteInnerHtml|voteButtonsHtml/);
+  // The card is there instead.
+  assert.match(html, /<div class="gc-vote-card" role="group"/);
 });
 
-test('the host is emitted for vote rows and nothing else', () => {
+test('the pair is rendered for rows about a change and nothing else', () => {
   const plain = renderComponent(TRANSCRIPT, 'SystemRow', { msg: base });
-  assert.ok(!plain.includes('data-vote-controls'), 'an ordinary system row has no host');
-  // A vote row whose ref could not be derived draws no host either — the same
+  assert.ok(!plain.includes('data-vote-session'), 'an ordinary system row carries none');
+  assert.ok(!plain.includes('gc-vote-card'));
+  // A vote row whose ref could not be derived draws no card either — the same
   // "nothing to resolve, fall back to a plain activity line" the module has.
   const unrefd = renderComponent(TRANSCRIPT, 'SystemRow', { msg: { ...base, kind: 'vote' } });
-  assert.ok(!unrefd.includes('data-vote-controls'));
+  assert.ok(!unrefd.includes('data-vote-session'));
+  assert.ok(!unrefd.includes('gc-vote-card'));
 });
 
 test('the module derives the ref from metadata, then from the row text', () => {
@@ -146,6 +159,7 @@ test('the module derives the ref from metadata, then from the row text', () => {
   });
   assert.equal(tagged.kind, 'vote');
   assert.deepEqual(tagged.voteRef, { sessionId: '9000401', prNumber: '12' });
+  assert.equal(tagged.vote, null, 'no snapshot yet: the facts come with refreshVoteControls');
 
   // Older rows predate the metadata tag and carry only the parsed number.
   const parsed = view({
@@ -154,26 +168,25 @@ test('the module derives the ref from metadata, then from the row text', () => {
   });
   assert.deepEqual(parsed.voteRef, { sessionId: '', prNumber: '7' });
 
-  assert.equal(view({
+  const chat = view({
     id: 7, userId: 2, username: 'bob', content: 'hi',
     msgType: 'message', createdAt: '2026-07-20T12:00:00.000Z',
-  }).voteRef, null, 'ordinary rows carry none');
+  });
+  assert.equal(chat.voteRef, null, 'ordinary rows carry none');
+  assert.ok(!('vote' in chat), 'and no facts key at all');
 });
 
-test('the tint goes through the model, and the fill does not', () => {
+test('the tint and the facts go through the model, and nothing is written to the row', () => {
   const refresh = stripped.match(/refreshVoteControls\(\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(refresh, 'refreshVoteControls() found');
-  // The host's contents stay the module's — this is AppView's markup.
-  assert.match(refresh[1], /el\.innerHTML = GroupChat\._voteInnerHtml\(pr\)/);
-  // The row's class is React's, so it is patched, not written.
-  assert.doesNotMatch(refresh[1], /classList/,
-    'no class is written onto a row the transcript renders');
-  // The phase rides in the same patch since the activity digest: a vote row
-  // learns here whether it stands or folds (tests/group-chat-activity-digest.test.js).
-  assert.match(
-    refresh[1],
-    /patchTranscriptMessage\(id, \{\s*voteRowClass: GroupChat\._rowVoteClass\(pr\),\s*votePhase: GroupChat\._votePhase\(pr\),\s*\}\)/,
-  );
+  // Nothing is written onto a row the transcript renders.
+  assert.doesNotMatch(refresh[1], /innerHTML|classList\.(add|remove|toggle)|setAttribute/,
+    'no node React renders is written');
+  // The facts are patched on every row about a change; the tint and the
+  // phase only on a vote row (a bot's post is a message row).
+  assert.match(refresh[1], /const patch = \{ vote: GroupChat\._voteView\(pr\) \};/);
+  assert.match(refresh[1], /if \(el\.classList\.contains\('gc-msg-vote'\)\) \{\s*patch\.voteRowClass = GroupChat\._rowVoteClass\(pr\);\s*patch\.votePhase = GroupChat\._votePhase\(pr\);\s*\}/);
+  assert.match(refresh[1], /patchTranscriptMessage\(id, patch\)/);
   // And the component renders that class.
   const html = renderComponent(TRANSCRIPT, 'SystemRow', {
     msg: { ...base, kind: 'vote', voteRowClass: 'gc-vote-voted', voteRef: { sessionId: '1', prNumber: '' } },
@@ -181,11 +194,11 @@ test('the tint goes through the model, and the fill does not', () => {
   assert.match(html, /class="gc-msg-system gc-msg-vote gc-vote-voted"/);
 });
 
-// #6109: the tally on a vote row follows other people's votes. The burst's
+// #6109: the facts on a vote card follow other people's votes. The burst's
 // read (public/js/app.js _flushLiveRefresh) calls AppView.loadVoteState,
 // which rewrites AppView.voteState and calls refreshVoteControls — so the
-// count on a row already on screen changes in place, on the same element.
-function loadVoteModules(host) {
+// count on a row already on screen changes in place, through the model.
+function loadVoteModules(rows, patches) {
   const sandbox = {
     PlatformI18n: englishPlatformI18n(),
     console,
@@ -197,8 +210,8 @@ function loadVoteModules(host) {
     document: {
       getElementById: () => null,
       querySelector: () => null,
-      // refreshVoteControls' own selector, answered with the row on screen.
-      querySelectorAll: (sel) => (String(sel).includes('data-vote-controls') ? [host] : []),
+      // refreshVoteControls' own selector, answered with the rows on screen.
+      querySelectorAll: (sel) => (String(sel).includes('data-vote-session') ? rows : []),
       addEventListener() {},
       createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
       body: { appendChild() {} },
@@ -215,6 +228,8 @@ function loadVoteModules(host) {
   };
   sandbox.window = sandbox;
   sandbox.window.matchMedia = () => ({ matches: false });
+  // The React API the module patches the model through.
+  sandbox.window.UsernodeReact = { groupChat: { patchTranscriptMessage: (id, patch) => patches.push({ id, patch }) } };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(
@@ -224,21 +239,24 @@ function loadVoteModules(host) {
   return sandbox.__M;
 }
 
-test('a new vote snapshot repaints the tally on the same row, without remounting', () => {
-  const host = {
-    _html: '1 of 3 yes votes',
-    get innerHTML() { return this._html; },
-    set innerHTML(v) { this._html = v; },
-    getAttribute: (n) => (n === 'data-session-id' ? '9000401' : (n === 'data-pr-number' ? '12' : null)),
-    closest: () => null,
-  };
-  const { AppView, GroupChat } = loadVoteModules(host);
+/** A row as the transcript renders it: a vote row (`.gc-msg-vote`) or the bot's message row. */
+const rowOnScreen = (msgId, { vote = true, sessionId = '9000401', pr = '12' } = {}) => ({
+  dataset: { msgId: String(msgId), voteSession: sessionId, votePr: pr },
+  classList: { contains: (c) => vote && c === 'gc-msg-vote' },
+  // What the old host had, and what must never be written now.
+  set innerHTML(v) { throw new Error('refreshVoteControls wrote innerHTML onto a React row'); },
+});
+
+test('a new vote snapshot patches the facts onto the same row, without remounting', () => {
+  const patches = [];
+  const { AppView, GroupChat } = loadVoteModules([rowOnScreen(7), rowOnScreen(8, { vote: false })], patches);
   let mounts = 0;
   GroupChat.mountThread = () => { mounts += 1; };
   const snapshot = (yes) => ({
     bySession: {
       9000401: {
-        id: 9000401, pr_number: 12, status: 'promoted', yes_count: yes, no_count: 0, my_vote: null,
+        id: 9000401, pr_number: 12, pr_title: 'Dark mode', status: 'promoted', yes_count: yes, no_count: 0, my_vote: null,
+        check_state: 'passing', staging_url: 'https://stg.example.test',
       },
     },
     byPrNumber: {},
@@ -248,30 +266,70 @@ test('a new vote snapshot repaints the tally on the same row, without remounting
   AppView._merged = [];
   AppView.voteState = snapshot(1);
   GroupChat.refreshVoteControls();
-  assert.match(host.innerHTML, /1 of 3 yes votes/, 'the row opens on the count it was given');
+  assert.equal(patches.length, 2, 'both rows about the change are patched');
+  const [voteRow, botRow] = patches;
+  assert.equal(voteRow.id, 7);
+  // Through JSON: the module's objects come from the vm context, whose
+  // Object is not this one's, and strict deep equality compares prototypes.
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  assert.deepEqual(plain(voteRow.patch.vote), {
+    sessionId: 9000401, number: 12, title: 'Dark mode', status: 'promoted', yes: 1, needed: 3,
+    needsOtherMember: false, myVote: null, checks: 'passing', preview: { kind: 'live', url: 'https://stg.example.test' },
+  });
+  assert.equal(voteRow.patch.voteRowClass, 'gc-vote-unvoted', 'a vote row gets its tint');
+  assert.equal(voteRow.patch.votePhase, 'open');
+  assert.deepEqual(Object.keys(botRow.patch), ['vote'], 'a message row gets the facts alone');
 
-  const same = host;
+  patches.length = 0;
   AppView.voteState = snapshot(2);
   GroupChat.refreshVoteControls();
-  assert.equal(host, same, 'the row is the same element, patched in place');
-  assert.match(host.innerHTML, /2 of 3 yes votes/, 'and it now carries the other member\'s vote');
+  assert.equal(patches[0].patch.vote.yes, 2, 'and the next snapshot carries the other member\'s vote');
   assert.equal(mounts, 0, 'the thread was never remounted');
 });
 
-test('a patch that says nothing new is not a state change', () => {  // The loop guard. `refreshVoteControls` runs from an effect after the
-  // transcript renders, and it patches every vote row's tint — so a patch
-  // that always produced a new object would render, patch, render, forever.
+test('_voteView: the threshold the tally pill picks, settled rows, and a change gone from the set', () => {
+  const { AppView, GroupChat } = loadVoteModules([], []);
+  AppView.voteState = { bySession: {}, byPrNumber: {}, majority: 2, activeUsers: 2 };
+  const promoted = { id: 5, status: 'promoted', yes_count: 1, no_count: 0 };
+  assert.equal(GroupChat._voteView(promoted).needed, 2, 'the live majority when the row has no snapshot');
+  assert.equal(GroupChat._voteView({ ...promoted, votes_required: 4 }).needed, 4, 'the row\'s own snapshot first');
+  assert.equal(GroupChat._voteView({ ...promoted, votes_required: 4, approvals_required: 1 }).needed, 1, 'an at-least-N project\'s approvals win');
+  assert.equal(GroupChat._voteView({ ...promoted, qualified_yes_count: 0, yes_count: 3 }).yes, 0, 'only the votes that count (#646)');
+  assert.equal(GroupChat._voteView({ ...promoted, my_vote: 'no' }).myVote, 'no');
+  assert.equal(GroupChat._voteView({ ...promoted, requires_explicit_approval: true, needs_other_member_yes: true }).needsOtherMember, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(GroupChat._voteView({ ...promoted, staging_building: true }).preview)), { kind: 'building' });
+  assert.equal(GroupChat._voteView({ ...promoted, check_state: 'weird' }).checks, null);
+  const merging = GroupChat._voteView({ ...promoted, status: 'merging' });
+  assert.equal(merging.status, 'merging');
+  assert.equal(merging.yes, null, 'a settled row has no live tally');
+  assert.equal(GroupChat._voteView({ status: 'merged', pr_number: 12, id: 9, _settled: true }).status, 'merged', 'a recently-merged row');
+  assert.equal(GroupChat._voteView(null), null, 'gone from the votable set: the card keeps the name and the doors');
+});
+
+test('a patch that says nothing new is not a state change, facts included', () => {  // The loop guard. `refreshVoteControls` runs from an effect after the
+  // transcript renders, and it patches every vote row's tint and facts — so a
+  // patch that always produced a new object would render, patch, render, forever.
   const api = loadTsx('tests/fixtures/group-chat-transcript-api.ts');
-  const row = { ...base, id: 11, kind: 'vote', voteRowClass: 'gc-vote-unvoted' };
+  const facts = () => ({ sessionId: 1, number: 12, title: 'x', status: 'promoted', yes: 1, needed: 2, needsOtherMember: false, myVote: null, checks: null, preview: null });
+  const row = { ...base, id: 11, kind: 'vote', voteRowClass: 'gc-vote-unvoted', vote: facts() };
   api.publishTranscript([row]);
   const before = api.transcriptStore.get();
 
   api.patchTranscriptMessage(11, { voteRowClass: 'gc-vote-unvoted' });
   assert.equal(api.transcriptStore.get(), before, 'an identical patch changes nothing at all');
+  // #6236: `vote` is a plain object built afresh on every refresh, so the
+  // same facts in a new object are the same value here.
+  api.patchTranscriptMessage(11, { vote: facts() });
+  assert.equal(api.transcriptStore.get(), before, 'the same facts in a new object change nothing either');
+
+  api.patchTranscriptMessage(11, { vote: { ...facts(), yes: 2 } });
+  const moved = api.transcriptStore.get();
+  assert.notEqual(moved, before, 'a fact that moved does');
+  assert.equal(moved.byKey.main.messages[0].vote.yes, 2);
 
   api.patchTranscriptMessage(11, { voteRowClass: 'gc-vote-voted' });
   const after = api.transcriptStore.get();
-  assert.notEqual(after, before, 'a real one does');
+  assert.notEqual(after, moved, 'a real one does');
   assert.equal(after.byKey.main.messages[0].voteRowClass, 'gc-vote-voted');
 
   // A patch for a row that is not there is a no-op, not an append.
@@ -280,18 +338,17 @@ test('a patch that says nothing new is not a state change', () => {  // The loop
   assert.equal(api.transcriptStore.get().byKey.main.messages.length, 1);
 });
 
-test('the transcript fills new vote rows itself', () => {
+test('the transcript resolves new rows about a change itself', () => {
   // `AppView.loadVotePanel` refreshes when the vote state moves, which does
   // not cover a vote row ARRIVING on a transcript that already rendered, nor
-  // a first paint after the panel finished loading. The string renderer had
-  // no such gap — it filled the wrapper as it built the row.
+  // a first paint after the panel finished loading.
   const tsx = read(TRANSCRIPT);
   assert.match(tsx, /controller\(\)\?\.refreshVoteControls\?\.\(\)/);
   // Keyed on which vote rows are present, not on every render.
   assert.match(tsx, /\}, \[voteRows\]\)/);
   // #5458: a vote row, or an ordinary message whose metadata names the
-  // proposal — both carry the controls host, and either can be the row
-  // that arrives after the snapshot landed.
+  // proposal — both draw the card, and either can be the row that arrives
+  // after the snapshot landed.
   assert.match(tsx, /\.filter\(\(m\) => m\.kind === 'vote' \|\| m\.voteRef\)/);
 });
 
