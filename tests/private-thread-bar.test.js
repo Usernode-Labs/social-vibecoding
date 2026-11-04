@@ -145,10 +145,12 @@ test('in Main Chat\'s column a thread is alone under its own head, and says it i
   assert.match(screen, /<div className="messages-thread-name min-w-0 truncate" data-reply-title="">\{mainTitle\}<\/div>/);
   assert.match(screen, /<span className="truncate">\{t\('messages:ai\.thread\.sub'\)\}<\/span>/);
   assert.equal(message('messages:ai.thread.sub'), 'Only you can see this thread');
-  // No ✕ and no Back to Main Chat in the column; a phone's arrow goes to the list.
+  // No ✕ in the column: its thread leads with Back to Main Chat. A phone's
+  // arrow still goes to the list.
   assert.match(screen, /\{inMain \? null : \(\s*<button type="button" className="messages-thread-action" data-reply-close=""/);
   assert.match(screen, /\{inMain && onBack \? \(\s*<button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""\s+aria-label=\{t\('messages:ai\.drawer\.back'\)\}/);
-  assert.doesNotMatch(screen, /replies\.backToMain/);
+  assert.match(screen, /\) : inMain \? \([\s\S]*?data-reply-back=""\s+aria-label=\{t\('messages:replies\.backToMain'\)\} title=\{t\('messages:replies\.backToMain'\)\} onClick=\{\(\) => closeThread\(\)\}/);
+  assert.equal(message('messages:replies.backToMain'), 'Back to Main Chat');
   assert.match(screen, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel inMain=\{mainChat\} onBack=\{onBack\} \/> : null\}/);
 });
 

@@ -18523,7 +18523,7 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    a word a line. The thread covers the chat, as it does on a phone, and
    lies flat as the chat does. 1 Nov 2026: it is alone in the column, under
    its own head (ReplyThreadPanel `inMain`), with no bar of Main Chat's over
-   it and no way back to it: Main Chat is a row of the list. The phone's
+   it. 4 Nov 2026: it leads with a back arrow to Main Chat. The phone's
    drawer holds the column the same way. */
 .messages-layout[data-main-chat].messages-has-reply-thread > .messages-thread-pane { display: none; }
 .messages-layout[data-main-chat] > .messages-reply-pane {
