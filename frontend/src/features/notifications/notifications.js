@@ -2150,9 +2150,18 @@ function conversationNotificationHref(n) {
   // detail names (services/homeroom-bot-notify-copy.js); else the message
   // itself, whose permalink lands inside its thread. 1 Nov 2026: on the bot's
   // tab, the chat's only place (features/ai/door.ts botTabAddress).
-  if (BUILD_KIND_MOMENTS[n.kind] || isBotMomentDetail(n.detail)) {
+  // 4 Nov 2026 (#6290): a request's news lives in the request's OWN thread
+  // since #6207, so a moment (or a bot reply) that names a request opens it
+  // there (#homeroom-bot/request/<slug>/<n>, features/ai/door.ts
+  // botItemAddress) rather than landing in Main Chat with nothing about it.
+  if (BUILD_KIND_MOMENTS[n.kind] || isBotMomentDetail(n.detail)
+      || (isBotUsername(n.sourceUsername) && storyIssueOf(n) && n.appSlug)) {
     const root = valid(rootId) ? rootId : (parseBotDetail(n.detail) || {}).threadRootId;
     if (valid(root)) return `#homeroom-bot/thread/${root}`;
+    const detail = parseBotDetail(n.detail) || {};
+    const slug = BOT_SLUG_RE.test(String(n.appSlug || '')) ? String(n.appSlug) : (detail.appSlug || '');
+    const issue = storyIssueOf(n) || detail.issueNumber;
+    if (slug && valid(Number(issue))) return `#homeroom-bot/request/${slug}/${Number(issue)}`;
     if (valid(messageId)) return `#homeroom-bot/main/m/${messageId}`;
     return '#homeroom-bot/main';
   }
@@ -2569,6 +2578,9 @@ function screenViews(items) {
 // tests/homeroom-bot-notify.test.js holds the two together).
 const BOT_DETAIL_PREFIX = 'hrbot2:';
 const BOT_LEGACY_RE = /^hrbot:([a-z_]{1,20}):(.*)$/;
+// A project slug, as features/ai/door.ts reads one (SLUG there): a request's
+// address is `#homeroom-bot/request/<slug>/<n>`, so both parts must be its shape.
+const BOT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,254}$/;
 const BOT_MOMENT_ALIASES = { question: 'needs_you', held: 'on_hold' };
 const BOT_LABEL_IDS = {
   needs_you: 'notifications:row.bot.label.needsYou',
@@ -2634,6 +2646,7 @@ function parseBotDetail(detail) {
       deciders: oneLine(raw.d, 120),
       count: positiveId(raw.c),
       issueNumber: positiveId(raw.i),
+      appSlug: BOT_SLUG_RE.test(String(raw.p || '')) ? String(raw.p) : '',
       threadRootId: positiveId(raw.r),
     };
   }
@@ -2650,6 +2663,7 @@ function parseBotDetail(detail) {
     deciders: '',
     count: null,
     issueNumber: null,
+    appSlug: '',
     threadRootId: null,
   };
 }

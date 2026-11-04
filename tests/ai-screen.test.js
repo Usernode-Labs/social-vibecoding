@@ -1041,6 +1041,17 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   // A request in no list (closed, live long ago): the thread stays reachable as it was.
   const gone = { private: [design(736, { state: 'filed', resultRef: 9 })], needs: [], next: [building], waiting: [], live: [] };
   assert.deepEqual(needsYou([], gone).map((r) => [r.key, r.rootId]), [['private:736', 736]]);
+  // #6250: a kept thread says where it went, in the row's own words.
+  assert.equal(words(needsYou([], gone)[0].sub), 'Only you · Ear Trainer · Filed as #9');
+  const posted = { private: [design(737, { state: 'posted', resultRef: 8 })], needs: [], next: [building], waiting: [], live: [] };
+  assert.equal(words(needsYou([], posted)[0].sub), 'Only you · Ear Trainer · Posted on #8');
+  const putAway = { private: [design(738, { state: 'dropped' })], needs: [], next: [building], waiting: [], live: [] };
+  assert.equal(words(needsYou([], putAway)[0].sub), 'Only you · Ear Trainer · Put away');
+  const done = { private: [design(739, { state: 'done' })], needs: [], next: [building], waiting: [], live: [] };
+  assert.deepEqual(needsYou([], done), [], 'a done thread is the only one left out');
+  // An open thread in a project keeps today's line.
+  const stillOpen = { private: [design(740, { state: 'open' })], needs: [], next: [building], waiting: [], live: [] };
+  assert.equal(words(needsYou([], stillOpen)[0].sub), 'Only you · Ear Trainer · Not posted yet');
   // A vote you owe on its change is the feed's row, by the request's number: still one row.
   const owed = [{ kind: 'proposal', id: 12229, number: 330, title: 'Ear Trainer home', app: ear, request: { number: 14 } }];
   assert.deepEqual(needsYou(owed, work).map((r) => r.key), ['need:proposal:12229']);
@@ -1070,8 +1081,12 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   assert.deepEqual(lists.inProgress.map((r) => r.number), [14]);
   assert.equal(lists.counts.needsYou, 0);
   const kept = aiWork.listsOf([], gone, { botUsername: 'homeroom_bot' });
-  assert.deepEqual(kept.needsYou.map((r) => r.says), ['their private thread with Homeroom bot, not posted yet']);
+  assert.deepEqual(kept.needsYou.map((r) => r.says), ['their private thread with Homeroom bot, filed as #9']);
   assert.equal(kept.counts.needsYou, 0, 'a private thread asks nothing');
+  assert.deepEqual(aiWork.listsOf([], posted, { botUsername: 'homeroom_bot' }).needsYou.map((r) => r.says),
+    ['their private thread with Homeroom bot, posted on #8']);
+  assert.deepEqual(aiWork.listsOf([], putAway, { botUsername: 'homeroom_bot' }).needsYou.map((r) => r.says),
+    ['their private thread with Homeroom bot, put away']);
   // And the server says where each went (ai-work.js shapePrivate, PRIVATE_SQL).
   assert.match(aiWork.PRIVATE_SQL, /SELECT m\.id AS root_id, m\.content, m\.created_at, p\.kind, p\.state, p\.result_ref,/);
   const shaped = aiWork.shapePrivate({ root_id: 731, content: 'I opened a design thread.', kind: 'design', design_title: 'Ear Trainer home', state: 'filed', result_ref: 14, slug: 'ear-trainer', name: 'Ear Trainer' });

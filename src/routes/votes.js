@@ -2097,9 +2097,17 @@ async function reconcileNativeReviewedHead({
   // that passed none used to say a bot's push "was updated on GitHub". An
   // unreadable answer is neither, which says what this said before.
   let made = { madeByHomeroom: false, fixOnly: false };
+  let commits = null;
   try {
-    made = homeroomCommits.classify(await mirror.commitsBetween(dir, oldHead, liveHead));
+    commits = await mirror.commitsBetween(dir, oldHead, liveHead);
+    made = homeroomCommits.classify(commits);
   } catch (_) { /* fail open: a person's update, as before */ }
+
+  // #6287: a catch-up with main changes nothing the change does, so it keeps
+  // the description as the fix round below does. It is a move that keeps the
+  // votes (mechanical or resolved) and adds no commit of the change's own; an
+  // unreadable list (null) is not a catch-up.
+  const catchUp = keepsApprovals && Array.isArray(commits) && commits.length === 0;
 
   // One move, the proposal machine's (Q3): the head installed and, unless the
   // move kept the approvals, the epoch moved on, in one statement, so a crash
@@ -2108,10 +2116,11 @@ async function reconcileNativeReviewedHead({
   // this one was reading (the head it read is no longer the row's), or the
   // proposal has closed or merged meanwhile. A fix round leaves the
   // description as it stands: it changes how the change works, not what it
-  // does (summary-freshness.js).
+  // does (summary-freshness.js). A catch-up with main is kept for the same
+  // reason: it changes nothing the change does.
   const moved = await workflowPlatform().moveReviewHead({
     sessionId: session.id, appId: session.app_id, column: 'reviewed', from: oldHead, to: liveHead,
-    keepVotes: keepsApprovals, fixOnly: made.fixOnly, reason: move.kind,
+    keepVotes: keepsApprovals, fixOnly: made.fixOnly || catchUp, reason: move.kind,
   });
 
   if (!moveAccepted(moved)) return refusedMove(pool, session, liveHead, moved);
@@ -2121,7 +2130,7 @@ async function reconcileNativeReviewedHead({
   session.approval_epoch = epoch;
   session.pr_summary_stale = typeof moved.reply?.prSummaryStale === 'boolean'
     ? moved.reply.prSummaryStale
-    : (made.fixOnly ? !!session.pr_summary_stale : (session.pr_summary_stale || !!session.pr_summary_md));
+    : (made.fixOnly || catchUp ? !!session.pr_summary_stale : (session.pr_summary_stale || !!session.pr_summary_md));
 
   // Checks policy follows who wrote the tree. A mechanical merge is pure git
   // over a tested branch and a tested main, so the verdict carries. Anything
@@ -2685,6 +2694,15 @@ function mergedRowSelect() {
            -- #6282: an update on its way. The Votes card says so and holds
            -- its Vote button until it lands (AppView._changeVotesView).
            ${updateComingSql('cs')} AS update_coming,
+           -- #6287: the viewer's vote on an EARLIER version — still on their
+           -- row, no longer counted. The change's page, its request's page,
+           -- the pinned Votes card and the side panel all read this row, so
+           -- their Vote button asks "Still yes?" from it (as the Workshop
+           -- card already does from /promoted). Mirrors the /promoted
+           -- subquery below.
+           (SELECT pv.vote FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.user_id = $2
+               AND NOT COALESCE(${currentVotePredicateSql('pv', 'cs')}, FALSE)) as my_prior_vote,
            -- #4715: whose ask a merged bot change was (#4538's rule, the
            -- shared fragment), so Your work can keep the viewer's own
            -- going-live change after it merges. Both callers bind the
