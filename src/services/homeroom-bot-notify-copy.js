@@ -48,7 +48,8 @@ const NEEDS_YOU_ASKS = Object.freeze({
   decide: 'Your decision',
   blocked: 'Needs more detail',
   empty: 'Needs more detail',
-  done: 'Looks done already',
+  // #6306: nothing is left to build; the ask already works.
+  done: 'Already works',
   platform: 'Move it to Homeroom\'s board?',
 });
 
@@ -259,6 +260,9 @@ function botNotificationDetail(metadata) {
   );
   if (deciders) out.d = deciders;
   if (metadata.oneMore === true) out.o = 1;
+  // #6306: an already-done verdict's own sentence.
+  const reason = oneLine(metadata.reason, 120);
+  if (reason) out.n = reason;
   // Done another way: who shipped it.
   const doneBy = oneLine(metadata.doneBy, 60);
   if (doneBy) out.y = doneBy;
@@ -301,6 +305,8 @@ function parseBotDetail(detail) {
       firstVersion: raw.f === 1 || raw.f === true,
       waiting: oneLine(raw.w, 120),
       deciders: oneLine(raw.d, 120),
+      // #6306: an already-done verdict's own sentence.
+      reason: oneLine(raw.n, 120),
       oneMore: raw.o === 1 || raw.o === true,
       doneBy: oneLine(raw.y, 60),
       takenBy: oneLine(raw.k, 60),
@@ -348,7 +354,15 @@ function bodyFor(d) {
     case 'decide_others': return `This needs a decision from ${d.deciders || d.waiting || 'someone else'} before I build it.`;
     case 'blocked': return 'I can\'t build it as written. Add detail and I\'ll look again.';
     case 'empty': return 'I couldn\'t find anything to build. Add detail and I\'ll look again.';
-    case 'done': return 'This looks done already. Close it, or tell me what\'s missing.';
+    case 'done': {
+      // #6306: the bot's one sentence says what already works; the offer is
+      // the same close vote the row and the page offer.
+      if (d.reason) {
+        const reason = /[.!?…]$/.test(d.reason) ? d.reason : `${d.reason}.`;
+        return `Already works: ${reason} Propose to close it?`;
+      }
+      return 'Already works. Propose to close it, or tell me what\'s missing.';
+    }
     case 'platform': return 'This is about Homeroom itself. Move it to Homeroom\'s own board?';
     case 'ready': return 'Ready to try. Try it, and approve it if you\'re happy.';
     case 'ready_group': {

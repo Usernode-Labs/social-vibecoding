@@ -564,8 +564,8 @@
     "description": "First line of a notification from Homeroom bot: the bot could not build one of the viewer's requests as written and asks them to add detail. The request's title is on the line below."
   },
   "row.bot.ask.done": {
-    "text": "Looks done already",
-    "description": "First line of a notification from Homeroom bot: what one of the viewer's requests asks for seems to exist already, and the bot offers to close it. The request's title is on the line below."
+    "text": "Already works",
+    "description": "First line of a notification from Homeroom bot: what one of the viewer's requests asks for already exists, and the bot offers to close it. The request's title is on the line below."
   },
   "row.bot.ask.platform": {
     "text": "Move it to Homeroom's board?",
