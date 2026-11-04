@@ -175,10 +175,11 @@ test('media column removal refuses incomplete migrations, preserves references, 
   const expectedTables=TABLES.map(t=>'public.'+t).sort();
   assert.deepEqual(mediaCatalog.relations.filter(r=>JSON.stringify(r)!==JSON.stringify(beforeCatalog.relations.find(p=>p.name===r.name))).map(r=>r.name).sort(),expectedTables);
   assert.deepEqual(mediaCatalog.sequences,beforeCatalog.sequences);
-  // The rest of history, whatever it holds by now.
+  // The rest of history, whatever it holds by now: every migration in the
+  // manifest has its receipt once it is applied.
   await apply(pool,options);
   const afterReceipts=await receipts(pool);
-  assert.equal(afterReceipts.length,cut+1);
+  assert.equal(afterReceipts.length,plan.length);
   const afterCatalog=await catalog(pool);
 
   await t.test('new constraints reject missing keys, wrong hashes and inconsistent originals',async()=>{
@@ -197,10 +198,11 @@ test('media column removal refuses incomplete migrations, preserves references, 
     await assert.rejects(pool.query("UPDATE shot_artifacts SET media='pdf'"),{code:'23514'});
   });
   await t.test('a fresh database matches the upgrade; repeat startup performs no media DDL',async()=>{
-    const fresh=await database(t);await apply(fresh,{...options,dir:throughDir});
+    // The whole history on a fresh database matches the upgraded one.
+    const fresh=await database(t);await apply(fresh,options);
     assert.deepEqual(await catalog(fresh),afterCatalog);
     const reader=await pool.connect();await reader.query('BEGIN; LOCK TABLE shot_artifacts IN ACCESS SHARE MODE');
-    try { await apply(pool,{...options,dir:throughDir});assert.deepEqual(await receipts(pool),afterReceipts); }
+    try { await apply(pool,options);assert.deepEqual(await receipts(pool),afterReceipts); }
     finally { await reader.query('ROLLBACK');reader.release(); }
     await assert.rejects(apply(pool,{...options,dir:prefixDir}),/newer than this build/);
   });
