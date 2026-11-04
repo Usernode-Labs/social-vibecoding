@@ -100,8 +100,8 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(rows[4].plan, undefined);
   const index = read('frontend/src/features/ai/index.tsx');
   assert.doesNotMatch(index, /openBotRequest/, 'no row opens Main Chat at a plan');
-  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}\s+openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/,
-    'every other row opens its own page');
+  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}\s+openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/,
+    'every other row opens its own page, and opening it clears what is new');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
   assert.deepEqual([rows[6].who, words(rows[6].sub)], ['me', 'Only you · Garden club · Not posted yet']);
@@ -137,6 +137,12 @@ test('each section groups its rows by project, and a project shows its first few
   // past the first rows, it joins them. #6245: only while the group is
   // folded (open ? -1): an opened group keeps every row's own place.
   assert.match(read(MODEL), /const litAt = open \? -1 : items\.findIndex\(\(row\) => row\.lit\);/);
+  // #6262: Needs you orders its rows with the new ones first, before the
+  // drawn order is held, then folds through the same pure rule (which never
+  // hides a fresh row either).
+  assert.match(lists, /const ordered = freshStyle \? freshFirst\(lines\) : lines;/);
+  assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
+    'the new first, then the drawn order held');
   assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open\);/,
     'the group draws through the pure order rule');
   assert.match(lists, /\{\(hidden \? items\.slice\(0, shown\) : items\)\.map\(/);
@@ -181,7 +187,7 @@ test('#6245: a row pressed in an opened group keeps its place, and a live refres
   assert.deepEqual(holdOrder([], drawn), [], 'an emptied list holds nothing');
 
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(lines, drawn\.current\) : lines;/,
+  assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'only Needs you holds its order, only while held');
   assert.match(lists, /onPointerEnter=\{startHold\}\s+onPointerLeave=\{endHold\}/, 'the pointer over the list holds it');
   assert.match(lists, /onFocus=\{\(e\) => \{ if \(!within\(e\.relatedTarget\)\) startHold\(\); \}\}/,
@@ -208,6 +214,76 @@ test('#6245: a row pressed in an opened group keeps its place, and a live refres
   const shown = html.slice(0, html.indexOf('data-ai-group-rest'));
   assert.ok(shown.indexOf('Row 7') > shown.indexOf('Row 5'), 'folded, the row you are on joins the first five');
   assert.ok(!shown.includes('Row 6') && !shown.includes('Row 8'), 'and the rows below it fold away');
+});
+
+// #6262 (4 Nov 2026, Evan): "Hard to tell which threads have unread content."
+// A thread somebody has written in since the viewer opened it gets a blue dot
+// and a bold title, and Needs you says how many are new: on its own heading,
+// on each project's name, in the header and on the filter chips.
+test('#6262: threads with something new get a dot, a bold title and a count', () => {
+  const { freshCount, freshByProject, freshFirst, groupRows, needsYou, heroWords } = loadTsx(MODEL);
+  // Stable: the new ones first, each keeping its own order.
+  assert.deepEqual(
+    freshFirst([{ key: 'a' }, { key: 'b', fresh: true }, { key: 'c' }, { key: 'd', fresh: true }]).map((r) => r.key),
+    ['b', 'd', 'a', 'c']);
+  assert.equal(freshCount([{ unread: 0 }, { unread: 2 }, { }, { unread: 1 }]), 2);
+  assert.deepEqual(freshByProject([
+    { app, unread: 1 }, { app, unread: 0 }, { app: { ...app, slug: 'games' }, unread: 3 },
+  ]), { garden: 1, games: 1 }, 'a row counts once, by its project');
+  // A fresh row is never folded away under Show more.
+  const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i === 6 }));
+  const folded = groupRows(many, 5, false);
+  assert.deepEqual(folded.items.slice(0, 6).map((r) => r.key), ['r1', 'r2', 'r3', 'r4', 'r5', 'r7']);
+  assert.deepEqual([folded.shown, folded.hidden], [6, 2], 'and the rest still folds');
+
+  // A feed item and a plan both carry their thread and what is new in it;
+  // a private thread is not a thread of its own here.
+  const rows = needsYou([
+    { kind: 'proposal', id: 1, number: 500, title: 'New vote', app, threadId: 41, unread: 2 },
+    { kind: 'proposal', id: 2, number: 501, title: 'Old vote', app, threadId: 42 },
+  ], {
+    private: [{ rootId: 9, title: 'An idea', kind: 'idea', app: null, at: null }],
+    needs: [thread(7, 410, 'plan', { group: 'needs', unread: 1 })],
+    next: [], waiting: [], live: [],
+  });
+  assert.deepEqual(rows.map((r) => [r.threadId, r.unread]), [[41, 2], [42, 0], [7, 1], [null, 0]]);
+  const hero = heroWords(13, 7, 4);
+  assert.equal(hero.id, 'messages:ai.hero.bothFresh');
+  assert.equal(words(hero), 'Needs you: 13 · <0>4 new</0> · In progress: 7', 'the count sits between the two');
+  assert.equal(heroWords(13, 7, 0).id, 'messages:ai.hero.both', 'nothing new says nothing');
+  assert.equal(heroWords(13, 0, 2).id, 'messages:ai.hero.needsFresh');
+
+  // Rendered: the dot, the bold title, the Earlier line, both pills and the
+  // chip number show; a zero shows nothing.
+  const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: null };
+  const line = (key, title, appIn, unread) => ({
+    key, title, app: appIn, who: 'all',
+    sub: { id: 'messages:ai.row.where', values: { project: appIn.name, number: 1 } },
+    pill: { id: 'messages:ai.pill.vote' }, href: `#app/${appIn.slug}/dev/issues/1`, rootId: null,
+    threadId: Number(key.replace(/\D/g, '')) + 40, unread,
+  });
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 3,
+    rows: [line('need:proposal:1', 'New one', app, 2), line('need:proposal:2', 'Old one', app, 0),
+      line('need:proposal:3', 'Other project', games, 1)],
+    lit: null, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
+  });
+  assert.match(html, /data-ai-dot=""/, 'a new row has its dot');
+  assert.match(html, /font-bold text-zinc-900 dark:text-zinc-100">New one</, 'and a bold title');
+  assert.match(html, /data-ai-earlier=""/, 'Needs you draws the Earlier line');
+  assert.ok(html.includes('2 new'), 'the heading pill counts them');
+  assert.ok(html.includes('1 new'), 'a project names its own count');
+  assert.match(html, /data-ai-chip="garden"[\s\S]*?data-ai-fresh=""/, 'a chip carries its number');
+  // Nothing new: no dot, no Earlier line, no pill anywhere.
+  const quiet = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 2,
+    rows: [line('need:proposal:1', 'One', app, 0), line('need:proposal:3', 'Two', games, 0)],
+    lit: null, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
+  });
+  assert.ok(!quiet.includes('data-ai-dot'), 'nothing new has no dot');
+  assert.ok(!quiet.includes('data-ai-earlier'), 'and no Earlier line');
+  assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
 });
 
 test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {
@@ -1093,7 +1169,7 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.match(src, /const BOT_PAGE = BOT_TAB;/);
   assert.equal(loadTsx('frontend/src/features/ai/door.ts').BOT_TAB, '#homeroom-bot');
   // #6153: a request filed from a private thread opens that thread first.
-  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
+  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+markThreadRead\(th\.threadId, th\.app\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
     'In progress, Waiting and Live this week');
   assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/, 'and Needs you');
   const { isTopicHref } = loadTsx(MODEL);
@@ -1103,7 +1179,7 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.equal(isTopicHref('#app/garden/workshop'), false, 'a Workshop is no topic: the origin would wait for the next one');
   // A private thread is the column's: the panel gives its place back first (showAt).
   assert.match(src, /const openPrivate = \(rootId: number\) => \{\s+const next = \{ threadRootId: rootId, focusMessageId: null \};[\s\S]{0,160}showAt\(next\);\s+\};/);
-  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
+  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
   // The panel may stand beside the AI tab's page, and stays while it is up.
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /const besideAi = typeof A\._isScreenVisible === 'function' && A\._isScreenVisible\('ai-screen'\);/);

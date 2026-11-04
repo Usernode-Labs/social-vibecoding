@@ -793,9 +793,17 @@ async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
     botStages(pool, user, deps),
   ]);
   const facts = await requestFacts(pool, threadRows, user.id, deps);
+  const lists = arrange(threadRows, user.id, new Date(), bot ? bot.id : null, bots, facts);
+  // #6262: how many messages in each listed thread are new to the viewer.
+  // Private threads are not `threads` rows and keep no cursor here: Main
+  // Chat's own "N new" covers them.
+  const listed = [...lists.needs, ...lists.next, ...lists.waiting, ...lists.live];
+  const unread = await (deps.threadReads || require('./thread-reads'))
+    .unreadFor(pool, user.id, listed.map((t) => t.threadId));
+  for (const t of listed) t.unread = unread.get(t.threadId) || 0;
   return {
     private: privateRows.map(shapePrivate),
-    ...arrange(threadRows, user.id, new Date(), bot ? bot.id : null, bots, facts),
+    ...lists,
   };
 }
 

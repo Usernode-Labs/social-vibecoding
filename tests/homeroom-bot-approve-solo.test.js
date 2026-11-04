@@ -383,7 +383,7 @@ test('#4270: the needs feed marks a change approve by AppView._approveSolo\'s th
   // advisory/uncounted first, and puts the deciding rows first after shaping.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/workshop-overview.js'), 'utf8');
   assert.match(src, /await withViewerDecides\(pool, rows, user\.id\);/);
-  assert.match(src, /return decidingFirst\(shapeNeedsFeed\(await withVotesRequired\(pool, rows\)\)\);/);
+  assert.match(src, /const items = decidingFirst\(shapeNeedsFeed\(await withVotesRequired\(pool, rows\), \{ inThreads \}\)\);/);
   assert.match(src, /const items = await needsFeedFor\(pool, \{/, 'the route reads it so');
   assert.match(src, /row\.votes_required = governance\.computeGate\(gov, electorate\.active, row\.yes, row\.no, row\.at, null\)\.required;/);
 });

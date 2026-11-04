@@ -2,8 +2,12 @@
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
+const appAccess = require('../services/app-access');
+const threadReads = require('../services/thread-reads');
 const aiWork = require('../services/ai-work');
 const log = require('../services/logger');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { appChatReadLimiter } = require('../middleware/rate-limits');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -38,12 +42,12 @@ function demoWork() {
       { rootId: -9103, title: 'Staging demo: a private thread marked done this week', kind: 'idea', app, at: at(6), state: 'done', doneAt: at(6) },
     ],
     needs: [
-      { threadId: -9210, number: 9210, kind: 'work', title: 'Staging demo: a reminder email', app, change: null, href: issue(app, 9210), group: 'needs', what: 'plan', at: at(4) },
+      { threadId: -9210, number: 9210, kind: 'work', title: 'Staging demo: a reminder email', app, change: null, href: issue(app, 9210), group: 'needs', what: 'plan', at: at(4), unread: 1 },
       { threadId: -9214, number: 9214, kind: 'work', title: 'Staging demo: a points table for the season', app, change: null, href: issue(app, 9214), group: 'needs', what: 'decide', at: at(7) },
       { threadId: -9215, number: 9215, kind: 'work', title: 'Staging demo: a high score board', app: game, change: null, href: issue(game, 9215), group: 'needs', what: 'build_stopped', at: at(9) },
     ],
     next: [
-      { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: issue(app, 9201), group: 'next', what: 'going_live', at: at(1) },
+      { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: issue(app, 9201), group: 'next', what: 'going_live', at: at(1), unread: 1 },
       { threadId: -9208, number: 9208, kind: 'work', title: 'Staging demo: tag filter', app, change: { id: -9208, number: 9209 }, href: issue(app, 9208), group: 'next', what: 'building', at: at(3), by: 'bot' },
       { threadId: -9216, number: 9216, kind: 'work', title: 'Staging demo: a sound toggle', app: game, change: null, href: issue(game, 9216), group: 'next', what: 'building', at: at(5), by: 'someone', claimedBy: 'staging-demo-partner' },
     ],
@@ -56,7 +60,7 @@ function demoWork() {
       { threadId: -9220, number: 9220, kind: 'work', title: 'Staging demo: a page for each month', app: album, change: null, href: issue(album, 9220), group: 'waiting', what: 'build_queued', at: at(4) },
     ],
     live: [
-      { threadId: -9206, number: 9206, kind: 'work', title: 'Staging demo: weekly digest', app, change: { id: -9206, number: 9207 }, href: issue(app, 9206), group: 'live', what: 'live', at: at(30) },
+      { threadId: -9206, number: 9206, kind: 'work', title: 'Staging demo: weekly digest', app, change: { id: -9206, number: 9207 }, href: issue(app, 9206), group: 'live', what: 'live', at: at(30), unread: 1 },
       { threadId: -9218, number: 9218, kind: 'work', title: 'Staging demo: a pause button', app: game, change: { id: -9218, number: 9219 }, href: issue(game, 9218), group: 'live', what: 'live', at: at(50) },
       { threadId: -9221, number: 9221, kind: 'work', title: 'Staging demo: a bigger cover picture', app: picture, change: { id: -9221, number: 9222 }, href: issue(picture, 9221), group: 'live', what: 'live', at: at(26) },
       { threadId: -9223, number: 9223, kind: 'work', title: 'Staging demo: roll two dice', app: dice, change: { id: -9223, number: 9224 }, href: issue(dice, 9223), group: 'live', what: 'live', at: at(60) },
@@ -78,6 +82,56 @@ function aiWorkRoutes(config = {}) {
       return res.json(await aiWork.workFor(pool, { user: req.user, showSelfHosted }));
     } catch (err) {
       log.error('ai-work', 'Failed to read the AI tab\'s work', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #6262: opening a request's, a change's or a decision's thread marks it
+  // read, from its page (public/js/group-chat.js mountThread) or from the
+  // Homeroom bot page's list. Body: { thread_id } or { thread_type,
+  // thread_ref }, where the type is 'issue' (a request's number), 'session'
+  // (a chat_sessions id) or 'governance' (an issues id). Reading is not
+  // taking part, so there is no join gate; the thread must be this app's.
+  router.post('/api/apps/:slug/threads/read', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const body = req.body || {};
+      const raw = body.thread_id == null ? NaN : Number(body.thread_id);
+      // ?demo=1 on staging names mock rows with negative ids, which open no
+      // real thread; the page's dot still clears without an error.
+      if (IS_STAGING && req.query.demo === '1' && Number.isInteger(raw) && raw < 0) {
+        return res.json({ ok: true, unread: 0 });
+      }
+      let threadId = Number.isInteger(raw) && raw > 0 ? raw : null;
+      if (!threadId && body.thread_type != null && body.thread_ref != null) {
+        threadId = await threadReads.threadOf(pool, app.id, String(body.thread_type), Number(body.thread_ref));
+      }
+      if (!threadId) {
+        // A page asks about its own number on every open, and some have no
+        // thread: a staging mock request, a row the backfill has not reached,
+        // ?demo=1's fake threads. That is an answer, not an error — a 4xx
+        // here is a console error on a page that is otherwise fine (the same
+        // reason GET threads/:number answers `thread: null`).
+        return res.json({ ok: true, unread: 0 });
+      }
+      const { rows } = await pool.query('SELECT id FROM threads WHERE id = $1 AND app_id = $2', [threadId, app.id]);
+      if (!rows.length) {
+        // A number whose thread moved away is still an answer; a thread_id
+        // the caller named is a mistake, and 404s (and another app's thread
+        // is not this app's).
+        if (body.thread_id == null) return res.json({ ok: true, unread: 0 });
+        return res.status(404).json({ error: 'Thread not found' });
+      }
+      const moved = await threadReads.markRead(pool, { userId: req.user.id, threadId });
+      if (!moved) return res.status(404).json({ error: 'Thread not found' });
+      return res.json({ ok: true, unread: moved.unread });
+    } catch (err) {
+      log.error('ai-work', 'Failed to mark a thread read', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
