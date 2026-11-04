@@ -7948,8 +7948,10 @@ const AppView = {
       at: String(item.checks_checked_at),
       fallback: AppView._failureInWords(v),
       // #6288: whose these tests are, above the failure's own words in the
-      // Checks step, so it does not read as the change's fault either.
-      mainLead: AppView._mainFailureSplit(v) ? AppView._failedLead(v) : null,
+      // Checks step, so it does not read as the change's fault either. Left
+      // out entirely when main is not failing them, so the view's shape is
+      // exactly what it was before this change.
+      ...(AppView._mainFailureSplit(v) ? { mainLead: AppView._failedLead(v) } : {}),
       page: path && stagingUrl ? { path, stagingUrl } : null,
     };
   },
@@ -8065,6 +8067,9 @@ const AppView = {
       // offered disabled: running the checks now would restart its fix.
       const botFix = item.bot_fix && typeof item.bot_fix === 'object' && item.bot_fix.state ? item.bot_fix : null;
       const botNote = botFix ? AppView._botFixNote(botFix) : null;
+      // #6288: left out when main is not failing these tests, so the card's
+      // shape is exactly what it was before this change.
+      const mainFailure = AppView._mainFailureLink(v);
       if (botFix && botFix.state === 'fixing') {
         if (rerun) {
           actions.push({
@@ -8078,7 +8083,7 @@ const AppView = {
           label: PlatformI18n.t('changes:page.testing.label.botFixing'),
           note: [AppView._failedLead(v)], actions, details: true,
           explain: AppView._checksExplainView(item, v),
-          mainFailure: AppView._mainFailureLink(v),
+          ...(mainFailure ? { mainFailure } : {}),
           fix,
           authorNote: rerun ? `${botNote} ${PlatformI18n.t('changes:page.testing.note.botRerun')}` : botNote,
           botFix: 'fixing',
@@ -8090,7 +8095,7 @@ const AppView = {
         label: PlatformI18n.t('changes:page.testing.label.failing'),
         note: [AppView._failedLead(v)], actions, details: true,
         explain: AppView._checksExplainView(item, v),
-        mainFailure: AppView._mainFailureLink(v),
+        ...(mainFailure ? { mainFailure } : {}),
         fix,
         authorNote: botNote || (mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes')),
         botFix: botFix ? botFix.state : null,
