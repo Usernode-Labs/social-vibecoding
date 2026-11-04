@@ -136,6 +136,8 @@ const OFFER_WORDS = Object.freeze({
   withdraw_change: { yes: 'Withdraw it', no: 'Keep it' },
   close_request: { yes: 'Propose to close', no: 'Keep it open' },
   try_again: { yes: 'Let it try again', no: 'Not now' },
+  // #6311: the copy beside the move. The original stays open.
+  copy_request: { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' },
 });
 
 let sharedConfig = null;
@@ -422,6 +424,26 @@ async function answersQuestion(pool, { app, issueNumber, bot, row }) {
   return new Date(row.created_at).getTime() > new Date(note.created_at).getTime();
 }
 
+/**
+ * #6311: whether `row` is written straight after one of the bot's own posts
+ * in this thread, this soon after it. A person's follow-up to the bot's note
+ * is to the bot, with no @ and no Reply needed. The same test a reply thread
+ * uses (`continued`).
+ */
+async function followsBotPost(pool, { app, place, row, bot }) {
+  if (!app?.id || place?.type !== 'issue' || !row?.id || !bot?.id) return false;
+  const { rows } = await pool.query(
+    `SELECT m.user_id, m.created_at FROM chat_messages m
+      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2 AND m.id < $3
+        AND m.deleted_at IS NULL
+      ORDER BY m.id DESC LIMIT 1`,
+    [app.id, Number(place.ref), Number(row.id)],
+  );
+  const before = rows[0];
+  if (!before || Number(before.user_id) !== Number(bot.id)) return false;
+  return Date.now() - new Date(before.created_at).getTime() < CONTINUE_MINUTES * 60 * 1000;
+}
+
 /** The bot's own change a session is, as the gate and the facts read it, or null. */
 async function changeRow(pool, sessionId) {
   const { rows } = await pool.query(
@@ -461,7 +483,7 @@ async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }
   }
   const mentioned = mentionsBot(row.content);
   const replied = mentioned ? false : await quotesBot(pool, row, bot.id);
-  const addressed = mentioned ? 'mentioned' : replied ? 'replied' : null;
+  let addressed = mentioned ? 'mentioned' : replied ? 'replied' : null;
   if (place.type === 'session' || place.type === 'issue') {
     // Words a DM, a chat or a No vote passed on as a change to make are the
     // follow-up's, which answers them when it has made it.
@@ -479,6 +501,13 @@ async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }
     // there is about that change, as on the change itself.
     const open = await liveModule(deps).openBotProposal(pool, bot.id, app.id, place.ref).catch(() => null);
     if (open?.status === 'promoted') return { speak: true, why: addressed || 'own_change' };
+    // #6311: the requester or a project admin writing straight after one of
+    // the bot's posts is answering it, with no @ and no Reply needed.
+    if (!addressed
+      && await followsBotPost(pool, { app, place, row, bot })
+      && await require('./homeroom-bot-move').asksForRequest(pool, { app, issueNumber: place.ref, user: speaker })) {
+      addressed = 'followed';
+    }
     if (!addressed) return no('not_addressed');
     // Before that, the request is its build's to read: a message after the
     // question the bot asked there is the answer, and the build reads it and
@@ -961,6 +990,7 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
       ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.'
       : '- Offer a vote on closing one of this project\'s requests, by its number, when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it.') : null,
     has('offer_request') ? '- Offer to file a request in their words when somebody asks for a change to the app that none of your changes up for a vote covers (offer_request). Nothing is filed until they tap File it under your reply: say so, and never say it was filed.' : null,
+    has('offer_copy_request') ? '- When the person who asked for this request, or the project\'s creator or an admin, wants it on Homeroom\'s own board as well, offer it (offer_copy_request). Nothing is filed until they tap Put it on Homeroom\'s board, and this request stays open here: say so.' : null,
     has('request_detail') ? '- Read the story of one of this project\'s requests (request_detail).' : null,
     has('read_message') ? '- Read one message of this thread in full (read_message).' : null,
     has('read_source') ? '- Read the project\'s code as it is on main (list_source, then read_source) when somebody asks how something works. Say which file you read.' : null,
@@ -1003,6 +1033,8 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     '  always the one who answered it: never say one person said what another wrote.',
     '- Keep a reply under 100 words unless they ask for detail. No headings. Never start with "Homeroom bot" or with a',
     '  note in brackets, and never write a line that looks like Homeroom\'s own automatic messages.',
+    '- Write in plain words a member understands: never "checkout", "head commit", "build agent" or "the platform',
+    '  conventions", and never talk about yourself as Homeroom bot.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- Never say you did something (changed, updated, filed, started, withdrew, closed, posted, told the team) unless a',
     '  tool you called in this turn did it and its result says so. Never promise to look into something or come back to',
@@ -1110,6 +1142,8 @@ function toolsFor(place, {
     tools.push(fn('offer_close_request', 'Offer a vote on closing this request.', {
       why: { type: 'string', description: 'Why it should close, in their words.' },
     }, ['why']));
+    // #6311: beside a move, the copy that leaves this request open.
+    tools.push(fn('offer_copy_request', 'Offer to file this request on Homeroom\'s own board too, keeping it open here.', {}, []));
   }
   if (['chat', 'category', 'message'].includes(place.type)) {
     tools.push(fn('offer_request', 'Offer to file a request on this project in their words. When they ask for the SAME request on several projects, pass them all in projects: one card files them all.', {
@@ -1721,6 +1755,23 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         };
         return { ok: true, offered: 'Propose to close and Keep it open are under your reply, for them to tap. Nothing happens until they do; the request closes only if its group votes for it.' };
       }
+      case 'offer_copy_request': {
+        if (place.type !== 'issue') return { error: 'Not here.' };
+        if (ctx.offer) return { error: 'One offer per reply.' };
+        const moveSvc = require('./homeroom-bot-move');
+        const gate = await moveSvc.moveGate(pool, { app, issueNumber: place.ref, user, deps });
+        if (!gate.ok) return { ok: false, error: gate.error };
+        const target = await moveSvc.platformApp(pool, deps);
+        if (!target) return { ok: false, error: 'Homeroom\'s own board is not available right now.' };
+        if (!(await mayor.canFile(pool, target, user))) {
+          return { ok: false, error: 'They are not a member of Homeroom\'s own community, so they cannot file there. They can join it from its page.' };
+        }
+        ctx.offer = {
+          kind: 'copy_request', forUserId: user.id,
+          args: { issueNumber: gate.issueNumber, title: gate.issue.title },
+        };
+        return { ok: true, offered: 'Put it on Homeroom\'s board and Keep it here only are under your reply, for them to tap. Nothing is filed until they do, and this request stays open.' };
+      }
       case 'offer_request': {
         if (!['chat', 'category', 'message'].includes(place.type)) return { error: 'Not here.' };
         if (ctx.offer) return { error: 'One offer per reply.' };
@@ -1988,6 +2039,46 @@ function offerActions(kind, offerId) {
 }
 
 /**
+ * #6311: an offer under a fixed note in a request's thread (a platform
+ * verdict's copy offer), stored now and tied to the note's message once it
+ * is posted (tieThreadOffer). Resolves { id, metadata } in the shape say()
+ * builds, or null. Never throws.
+ */
+async function threadOffer(pool, { app, kind, forUserId, args = {} }) {
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [Number(app.id), String(kind), JSON.stringify(args || {}), forUserId || null],
+    );
+    const id = Number(rows[0]?.id);
+    if (!id) return null;
+    return {
+      id,
+      metadata: {
+        offer: { id, kind, status: 'open', forUserId: Number(forUserId) || null },
+        actions: offerActions(kind, id),
+      },
+    };
+  } catch (err) {
+    log.warn('homeroom-bot-voice', 'Could not put an offer under a note', { app: app?.slug, kind, err: err.message });
+    return null;
+  }
+}
+
+/** #6311: tie a thread offer to the note's message, so decideOffer finds it. */
+async function tieThreadOffer(pool, offerId, messageId) {
+  await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
+    [Number(offerId), Number(messageId)])
+    .catch((err) => log.warn('homeroom-bot-voice', 'Could not tie an offer to its note', { offerId, messageId, err: err.message }));
+}
+
+/** #6311: the note could not be posted: its offer is dropped. */
+async function dropThreadOffer(pool, offerId) {
+  await pool.query('DELETE FROM homeroom_bot_voice_offers WHERE id = $1 AND message_id IS NULL', [Number(offerId)])
+    .catch((err) => log.warn('homeroom-bot-voice', 'Could not drop an offer for an unposted note', { offerId, err: err.message }));
+}
+
+/**
  * One message from the bot in `place`, quoting the newest message it
  * answers and telling the people it answers (a mention notification each,
  * never in the text). In a project's main chat or a topic, it goes in a
@@ -2183,6 +2274,15 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
     });
     if (!proposed.ok) return settle('failed', { error: proposed.code }, 'I couldn\'t propose closing it just now.');
     return settle('done', { closeIssueId: proposed.id || null }, `Done: a vote on closing request ${requestMd(domainOf(deps), app.slug, args.issueNumber)} is open. It closes if the group votes for it.`);
+  }
+  if (offer.kind === 'copy_request') {
+    const full = await mayor.findApp(pool, app.slug);
+    const filed = await require('./homeroom-bot-move').copyToHomeroom(pool, config, {
+      user, app: full, issueNumber: args.issueNumber, fileKey: `voice-offer:${offer.id}`, settings, deps,
+    });
+    if (!filed.ok) return settle('failed', { error: filed.code }, `I couldn't file it there: ${filed.error}`);
+    return settle('done', { issueNumber: filed.issueNumber },
+      `Filed on Homeroom's own board as request ${requestMd(domainOf(deps), filed.target.slug, filed.issueNumber)}, with a link back here. This request stays open.`);
   }
   if (offer.kind === 'file_many') {
     // #6305: every ticked row files, and nothing else. Each request then
@@ -2747,6 +2847,9 @@ module.exports = {
   dropAsks,
   quoteOf,
   offerActions,
+  threadOffer,
+  tieThreadOffer,
+  dropThreadOffer,
   say,
   retireThreadSuggestions,
   decideOffer,

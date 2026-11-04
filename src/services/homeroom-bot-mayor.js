@@ -197,6 +197,10 @@ const KEEP_IT = 'Keep it';
 // to Homeroom's own board (homeroom-bot-move.js).
 const MOVE_IT = 'Move it to Homeroom';
 const KEEP_HERE = 'Keep it here';
+// #6311: the answers under an offer to file a copy on Homeroom's own board
+// as well, leaving the original open (homeroom-bot-move.js copyToHomeroom).
+const PUT_ON_BOARD = 'Put it on Homeroom\'s board';
+const KEEP_HERE_ONLY = 'Keep it here only';
 // #4525: the answers under an offer to open a vote on closing one of their
 // requests (the request page's own "Propose to close").
 const PROPOSE_CLOSE = 'Propose to close';
@@ -219,6 +223,8 @@ const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
   move_request: Object.freeze([MOVE_IT, KEEP_HERE]),
+  // #6311: a copy beside a move: the original stays open.
+  copy_request: Object.freeze([PUT_ON_BOARD, KEEP_HERE_ONLY]),
   close_request: Object.freeze([PROPOSE_CLOSE, KEEP_OPEN]),
   post_reply: Object.freeze([POST_IT, KEEP_PRIVATE]),
   // 1 Nov 2026 (threads, one loop: C2.2): a design posted as a plan. Its
@@ -580,7 +586,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
     '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
     '  it, or they made the project or are one of its admins, offer to move it there (offer_move_request). Nothing',
-    '  moves until they tap Move it to Homeroom under your message, so never say it was moved.',
+    '  moves until they tap Move it to Homeroom under your message, so never say it was moved. When they want it on',
+    '  Homeroom\'s own board as well and the request kept here, offer to copy it there instead (offer_copy_request):',
+    '  nothing is filed until they tap Put it on Homeroom\'s board, and this request stays open.',
     '- When they ask you to close a request, or say one is done and can be closed, offer a vote on closing it',
     '  (offer_close_request). Nothing happens until they tap Propose to close under your message, and it closes only',
     '  if its group votes for it, so never say it was closed.',
@@ -921,6 +929,23 @@ const TOOLS = [
           project: { type: 'string', description: 'The project it is on: its name or short name.' },
           number: { type: 'integer', description: 'The request number.' },
           reason: { type: 'string', description: 'Why it is about Homeroom rather than the project, in a few plain words. They see it with the offer.' },
+        },
+        required: ['project', 'number', 'reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_copy_request',
+      description: 'Offer to file a request on Homeroom\'s own board as well, without moving it: the original stays open here. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Put it on Homeroom\'s board and Keep it here only; nothing is filed unless they tap. One offer per turn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project it is on: its name or short name.' },
+          number: { type: 'integer', description: 'The request number.' },
+          reason: { type: 'string', description: 'Why it belongs on Homeroom\'s own board too, in a few plain words. They see it with the offer.' },
         },
         required: ['project', 'number', 'reason'],
         additionalProperties: false,
@@ -3372,6 +3397,7 @@ async function runTool(pool, ctx, name, args) {
         return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
       }
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
+      case 'offer_copy_request': return await offerCopyRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
       case 'reply': {
         // #6272: a list the model still wrote into its text becomes buttons.
@@ -4450,24 +4476,28 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   // request, which names it too.
   const withdraw = o.kind === 'withdraw_proposal';
   const move = o.kind === 'move_request';
+  // #6311: the copy beside a move. The original stays open.
+  const copy = o.kind === 'copy_request';
   const close = o.kind === 'close_request';
   // #6019: words from this chat waiting to go public as theirs, on a
   // request (`issueNumber`), or on the change it asks to revise (`sessionId`).
   const post = o.kind === 'post_reply';
-  const kind = withdraw || move || close || post ? o.kind : 'file_request';
+  const kind = withdraw || move || copy || close || post ? o.kind : 'file_request';
   const { rows: [action] } = await pool.query(
     `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number,
                                           target_message_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
     [user.id, conversationId, o.app.id, kind, o.title, o.details || null,
       withdraw || (post && o.sessionId) ? o.sessionId : null,
-      move || close || post ? o.issueNumber : null, post && o.targetMessageId ? Number(o.targetMessageId) : null],
+      move || copy || close || post ? o.issueNumber : null, post && o.targetMessageId ? Number(o.targetMessageId) : null],
   );
   const moveSvc = require('./homeroom-bot-move');
   const body = post
     ? postOfferText({ name, issueNumber: o.issueNumber, revise: !!o.sessionId, text, draft: o.details })
     : move
     ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
+    : copy
+    ? moveSvc.copyOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
     : close
     ? closeOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
     : withdraw
@@ -4510,13 +4540,14 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     ...(opened ? { threadRootId: opened.messageId } : {}),
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw || (post && o.sessionId) ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
-      : move || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
+      : move || copy || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
     metadata: {
       ...(post ? confirmMeta('post_reply', {
         app: o.app, name, actionId: action.id,
         question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
       })
         : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
+        : copy ? moveSvc.copyOfferMeta({ app: o.app, actionId: action.id })
         : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
         : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
         : confirmMeta(kind, {
@@ -4808,6 +4839,8 @@ const OFFER_WORDS = Object.freeze({
   file_request: { yes: new Set(['file it', 'file it please', 'please file it']), no: new Set(['not now']) },
   withdraw_proposal: { yes: new Set(['withdraw it', 'withdraw it please', 'please withdraw it']), no: new Set(['keep it']) },
   move_request: { yes: new Set(['move it', 'move it to homeroom', 'move it please', 'please move it']), no: new Set(['keep it here']) },
+  // #6311: the copy's own words (its buttons' text).
+  copy_request: { yes: new Set(['put it on homeroom\'s board', 'put it on homeroom', 'file it on homeroom\'s board too']), no: new Set(['keep it here only']) },
   // #4525: the close offer's own words. "Propose to close" is the request
   // page's own button text.
   close_request: { yes: new Set(['propose to close', 'propose to close it', 'propose closing it']), no: new Set(['keep it open']) },
@@ -5040,7 +5073,9 @@ async function settleOffer(pool, config, {
   );
   if (!claimed.length) {
     if (tapped) return { alreadyDecided: true };
-    if (action.status === 'done' && action.issue_number && action.kind !== 'move_request') return ack(...await alreadyFiled(pool, action));
+    // A copy is filed on another project, so its own words name it, not
+    // alreadyFiled's (which reads the original's project).
+    if (action.status === 'done' && action.issue_number && action.kind !== 'move_request' && action.kind !== 'copy_request') return ack(...await alreadyFiled(pool, action));
     return ack('That one is already decided.');
   }
   // The buttons give way to the choice on every device it is open on.
@@ -5064,6 +5099,10 @@ async function settleOffer(pool, config, {
   if (action.kind === 'withdraw_proposal') return decideWithdraw(pool, { bot, user, action, yes, ack, deps: actDeps });
   if (action.kind === 'move_request') {
     return require('./homeroom-bot-move').decideMove(pool, config, { bot, user, settings, action, yes, ack, deps: actDeps });
+  }
+  // #6311: a copy on Homeroom's own board too; the original stays open.
+  if (action.kind === 'copy_request') {
+    return require('./homeroom-bot-move').decideCopy(pool, config, { user, settings, action, yes, ack, deps: actDeps });
   }
   if (action.kind === 'close_request') return decideClose(pool, { user, action, yes, ack, deps: actDeps });
   if (action.kind === 'post_reply') return decidePost(pool, { bot, user, settings, action, yes, ack, deps: actDeps });
@@ -6131,6 +6170,37 @@ async function offerMoveRequest(pool, ctx, args) {
 }
 
 /**
+ * #6311: offer_copy_request. Nothing is filed here: the offer goes under the
+ * reply with Put it on Homeroom's board and Keep it here only, and a tap
+ * decides it (homeroom-bot-move.js decideCopy). The original stays open.
+ */
+async function offerCopyRequest(pool, ctx, args) {
+  const { user, deps } = ctx;
+  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was filed.' };
+  const app = await findApp(pool, args.project);
+  if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
+  ctx.appIds.add(Number(app.id));
+  const moveSvc = require('./homeroom-bot-move');
+  const gate = await moveSvc.moveGate(pool, { app, issueNumber: args.number, user, deps });
+  if (!gate.ok) return { ok: false, error: `${gate.error} Nothing was filed.` };
+  const target = await findApp(pool, botModule(deps).PLATFORM_SELF_APP_SLUG);
+  if (!target) return { ok: false, error: 'Homeroom\'s own board is not available. Nothing was filed.' };
+  if (!(await canFile(pool, target, user))) {
+    return { ok: false, error: 'They are not a member of Homeroom\'s own community, so they cannot file there. They can join it from its page. Nothing was filed.' };
+  }
+  ctx.offer = {
+    kind: 'copy_request', app, issueNumber: gate.issueNumber,
+    title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
+    details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
+  };
+  return {
+    ok: true,
+    request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
+    shown: 'They see it under your reply with Put it on Homeroom\'s board and Keep it here only. Nothing is filed until they tap Put it on Homeroom\'s board, and the request stays open here: ask them to, and never say it was filed.',
+  };
+}
+
+/**
  * #4525: the gates of an offer to propose closing one of their requests,
  * read again at the tap. Unlike a move (homeroom-bot-move.js moveGate), a
  * request on Homeroom's own board counts too, and there is no "theirs" rule:
@@ -6659,6 +6729,7 @@ module.exports = {
   findApp,
   canFile,
   offerMoveRequest,
+  offerCopyRequest,
   // #4525
   PROPOSE_CLOSE,
   KEEP_OPEN,

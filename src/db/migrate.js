@@ -1812,6 +1812,44 @@ async function seedStagingBotWaitingRows(pool) {
           }),
         ],
       );
+      // #6311: the note about Homeroom itself, with the copy offer under it
+      // (Put it on Homeroom's board / Keep it here only). The before & after
+      // shots need the state on the after copy; nothing here is a signal the
+      // bot reads. Idempotent by its stagingDemo mark.
+      const copyNote = await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '20 hours'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'copy-offer-note')
+          RETURNING id`,
+        [
+          appId, botRow.rows[0].id,
+          'I think this is about Homeroom itself, not Staging demo: Staging demo: the signed-out page sends a person '
+            + 'to the authorize page. I can put it on Homeroom\'s own board too and keep this request open here.',
+          JSON.stringify({ stagingDemo: 'copy-offer-note' }),
+        ],
+      );
+      if (copyNote.rows.length) {
+        const messageId = Number(copyNote.rows[0].id);
+        const { rows: [offer] } = await pool.query(
+          `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id)
+           VALUES ($1, 'copy_request', $2, $3, $4) RETURNING id`,
+          [appId, JSON.stringify({ issueNumber: 9103, title: 'Staging demo: the signed-out page sends a person to the authorize page' }), userId, messageId],
+        );
+        const offerId = Number(offer.id);
+        await pool.query('UPDATE chat_messages SET metadata = $2 WHERE id = $1', [messageId, JSON.stringify({
+          stagingDemo: 'copy-offer-note',
+          homeroomBot: {
+            kind: 'voice',
+            offer: { id: offerId, kind: 'copy_request', status: 'open', forUserId: userId },
+            actions: [
+              { id: 'yes', label: 'Put it on Homeroom\'s board', style: 'primary', offerId },
+              { id: 'no', label: 'Keep it here only', style: 'secondary', offerId },
+            ],
+          },
+        })]);
+      }
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });

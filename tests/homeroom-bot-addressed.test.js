@@ -38,6 +38,18 @@ test('the bot speaks the first time it could leave a note here', () => {
   assert.deepEqual(addressed.addressed({ lastNote: null }), { speak: true, why: 'first_note' });
 });
 
+test('#6311: a re-read says the same note only when its words have not changed', () => {
+  const note = 'I think this is about Homeroom itself, not Ear trainer: the header is drawn by Homeroom.';
+  assert.equal(addressed.sameNote(note, note), true);
+  assert.equal(addressed.sameNote(note, 'I think this is about Homeroom itself, not Ear trainer: The header is drawn by Homeroom!'),
+    true, 'case and punctuation ignored');
+  assert.equal(addressed.sameNote(note, `${note} The button is the app's own.`), true, '80% of the words in common');
+  assert.equal(addressed.sameNote(note, 'I think this is about Homeroom itself, not Ear trainer: sign-in is Homeroom\'s own.'),
+    false, 'a different reason');
+  assert.equal(addressed.sameNote('', note), false);
+  assert.equal(addressed.sameNote(null, note), false, 'a missing previous text never matches');
+});
+
 test('people talking among themselves after a person note are not for the bot', () => {
   const result = addressed.addressed({
     lastNote: NOTE('person'),
@@ -367,6 +379,27 @@ test('a repeat person note stays quiet while people talk among themselves', asyn
   assert.deepEqual(pool.queries.find(([sql]) => /FROM homeroom_bot_posts/.test(sql))[1], [9, 12]);
   assert.deepEqual(pool.queries.find(([sql]) => /metadata->'quote'/.test(sql))[1],
     [9, 12, '2026-10-09T09:02:00Z', 77], 'the words after the note, for its user');
+});
+
+test('#6311: a re-read whose note would say the same thing posts nothing, and a changed reason posts', async (t) => {
+  const seen = stubLive(t);
+  const noteText = live.personHomeroomText({ ...PERSON_PARSED, project: 'Chores', requester: null, deciders: [] });
+  const same = fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: noteText }] }],
+    NOTE_ROUTE,
+    [/metadata->'quote'/, { rows: [{ id: 4, content: 'the list one, please', created_at: AFTER, quotes_bot: true }] }],
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: same, relook: true })), 'unchanged');
+  assert.equal(seen.posts.length, 0, 'the same note is not posted again');
+
+  seen.posts.length = 0;
+  const changed = fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: 'I think a person needs to decide this one: something else entirely. The person who asked for it can say Go ahead in a chat with me, or reply here.' }] }],
+    NOTE_ROUTE,
+    [/metadata->'quote'/, { rows: [{ id: 4, content: 'now it is for a person', created_at: AFTER, quotes_bot: true }] }],
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: changed, relook: true })), 'person');
+  assert.equal(seen.posts.length, 1, 'a reason that changed is said');
 });
 
 test('the note is posted again after a mention, and after a reply to one of its messages', async (t) => {
