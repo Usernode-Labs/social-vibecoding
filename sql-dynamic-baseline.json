@@ -1159,17 +1159,17 @@
     },
     {
       "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "01e08fd9d8d7511b2ca6",
+      "kind": "runtime-expression",
+      "fingerprint": "96c1fb05c4f66e1d6284",
       "count": 1,
-      "preview": "`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE ${tables.join(', ')} FROM ${role}`"
+      "preview": "statements.join(';\\n')"
     },
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
-      "fingerprint": "0cc0689e7562bfd29e9d",
+      "fingerprint": "01e08fd9d8d7511b2ca6",
       "count": 1,
-      "preview": "`GRANT SELECT ON TABLE ${item.name} TO ${runtime}, ${reader}; REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE ${item.name} FROM ${runtime}"
+      "preview": "`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE ${tables.join(', ')} FROM ${role}`"
     },
     {
       "source": "src/services/database-role-grants.js",
@@ -1188,6 +1188,13 @@
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
+      "fingerprint": "5595dfe45f4625d5d3a3",
+      "count": 1,
+      "preview": "` SELECT c.oid::regclass::text AS name, c.relkind AS kind, n.nspname || '.' || c.relname AS qualified_name, ${required('$3')} AS web_ready, ${required('$4')} AS"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
       "fingerprint": "592ffe03aaeca8bcf3cb",
       "count": 1,
       "preview": "`SELECT count(*)::int AS n FROM public.platform_processes WHERE role IN ('web', 'all') AND heartbeat_at > now() - make_interval(secs => $1) AND NOT ${table.reco"
@@ -1202,37 +1209,9 @@
     {
       "source": "src/services/database-role-grants.js",
       "kind": "structural-template",
-      "fingerprint": "8dfce378dabb4eacb36e",
-      "count": 1,
-      "preview": "`REVOKE CREATE ON SCHEMA ${schema} FROM PUBLIC; GRANT USAGE ON SCHEMA ${schema} TO ${runtime}, ${reader}; ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA $"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
       "fingerprint": "9b13ef88245dc8d28eb9",
       "count": 1,
       "preview": "`GRANT SELECT ON TABLE ${tables.join(', ')} TO ${role}`"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "9f766fdb6eafbeca0016",
-      "count": 1,
-      "preview": "`GRANT SELECT ON ${kind} ${item.name} TO ${reader}`"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "bcac2736e4c8905c37f8",
-      "count": 1,
-      "preview": "`GRANT EXECUTE ON ROUTINE ${item.name} TO ${runtime}`"
-    },
-    {
-      "source": "src/services/database-role-grants.js",
-      "kind": "structural-template",
-      "fingerprint": "e108d5d62c6e003e3f4a",
-      "count": 1,
-      "preview": "`GRANT ${privileges} ON ${kind} ${item.name} TO ${isKernelRelation(item.qualified_name) ? conductor : runtime}`"
     },
     {
       "source": "src/services/db-manager.js",
@@ -1258,13 +1237,6 @@
     {
       "source": "src/services/debug-access.js",
       "kind": "runtime-built-identifier",
-      "fingerprint": "35f1322f2f4f01e6afff",
-      "count": 1,
-      "preview": "stmt"
-    },
-    {
-      "source": "src/services/debug-access.js",
-      "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
       "count": 1,
       "preview": "sql"
@@ -1282,6 +1254,13 @@
       "fingerprint": "8d1c343d22d20864eb5c",
       "count": 1,
       "preview": "`GRANT CONNECT ON DATABASE ${quoteIdent(dbName)} TO ${ROLE}`"
+    },
+    {
+      "source": "src/services/debug-access.js",
+      "kind": "structural-template",
+      "fingerprint": "b2a10721e45b83a06b27",
+      "count": 1,
+      "preview": "`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE};\\n${grants.join(';\\n')}`"
     },
     {
       "source": "src/services/debug-access.js",
@@ -1767,6 +1746,27 @@
       "preview": "`SELECT cs.id, cs.pr_number, COALESCE(cs.pr_title, cs.session_title) AS title, cs.pr_summary_md, cs.promoted_at, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.sess"
     },
     {
+      "source": "src/services/readonly-role-state.js",
+      "kind": "runtime-expression",
+      "fingerprint": "0e3d77e39cefc654ef46",
+      "count": 1,
+      "preview": "parents.map(r => r.statement).join(';\\n')"
+    },
+    {
+      "source": "src/services/readonly-role-state.js",
+      "kind": "runtime-expression",
+      "fingerprint": "4158e120b354740d5079",
+      "count": 1,
+      "preview": "rows.map(r => r.statement).join(';\\n')"
+    },
+    {
+      "source": "src/services/readonly-role-state.js",
+      "kind": "runtime-expression",
+      "fingerprint": "bbbdcbfee234c00be0b4",
+      "count": 1,
+      "preview": "overrides.map(r => r.statement).join(';\\n')"
+    },
+    {
       "source": "src/services/report-ai.js",
       "kind": "structural-template",
       "fingerprint": "6300e3c7db647c91a87a",
@@ -1936,13 +1936,6 @@
     },
     {
       "source": "src/services/topochain/db-console-role.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "35f1322f2f4f01e6afff",
-      "count": 1,
-      "preview": "stmt"
-    },
-    {
-      "source": "src/services/topochain/db-console-role.js",
       "kind": "structural-template",
       "fingerprint": "4c6c90277104f2f11c38",
       "count": 1,
@@ -1968,6 +1961,13 @@
       "fingerprint": "a4497f4684c07f2bfa7c",
       "count": 1,
       "preview": "`GRANT ${ROLE} TO ${quoteIdent(dbUser)}`"
+    },
+    {
+      "source": "src/services/topochain/db-console-role.js",
+      "kind": "structural-template",
+      "fingerprint": "b2a10721e45b83a06b27",
+      "count": 1,
+      "preview": "`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE};\\n${grants.join(';\\n')}`"
     },
     {
       "source": "src/services/topochain/db-export.js",

@@ -16696,6 +16696,11 @@ async function migrateAppDbsToPerRole(pool, config) {
   const respawnQueue = [];
   let adopted = 0, verified = 0, recreated = 0, skipped = 0, failed = 0;
 
+  const inventoryStarted = Date.now();
+  const existingRoles = await dbManager.existingRoles(rows.filter(app => app.db_password)
+    .map(app => dbManager.ownerRoleName(dbManager.appDbName(app.slug))));
+  const inventoryMs = Date.now() - inventoryStarted;
+
   for (const app of rows) {
     const dbName = dbManager.appDbName(app.slug);
 
@@ -16727,7 +16732,7 @@ async function migrateAppDbsToPerRole(pool, config) {
       } else {
         // Verify role still exists; recreate with stored password if not.
         const role = dbManager.ownerRoleName(dbName);
-        const exists = await dbManager.roleExists(role);
+        const exists = existingRoles.has(role);
         if (!exists) {
           await dbManager.ensureRoleExists(dbName, app.db_password);
           recreated += 1;
@@ -16744,7 +16749,7 @@ async function migrateAppDbsToPerRole(pool, config) {
   }
 
   log.info('db', 'Per-app role migration scan complete', {
-    adopted, verified, recreated, skipped, failed,
+    adopted, verified, recreated, skipped, failed, inventoryMs,
     toRespawn: respawnQueue.length,
   });
 
@@ -17169,6 +17174,7 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
+  migrateAppDbsToPerRole,
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,

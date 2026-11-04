@@ -79,6 +79,7 @@
 const log = require('../logger');
 const { getPool } = require('../../db/pool');
 const { loadConsoleScope, DENIED_CONSOLE_COLUMNS, SAFE_IDENT } = require('./db-console-scope');
+const { readOnlyRoleCurrent, consolePermissionsCurrent, repairReadOnlyDrift } = require('../readonly-role-state');
 
 const ROLE = 'topochain_console_ro';
 
@@ -137,6 +138,16 @@ async function ensureConsoleRole(config, { admin = null } = {}) {
     const pool = getPool(config);
     const roleAdmin = admin || pool;
 
+    const scope = await loadConsoleScope(pool);
+    if (await readOnlyRoleCurrent(pool, { role: ROLE, login: false, timeoutMs: 10000 })
+        && await consolePermissionsCurrent(pool, ROLE, scope, DENIED_CONSOLE_COLUMNS)) {
+      _available = true;
+      _unavailableReason = null;
+      log.info('topochain-console', 'SQL console role verified; permissions unchanged');
+      await recordBootstrap(config);
+      return;
+    }
+
     await roleAdmin.query(`DO $$ BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
         CREATE ROLE ${ROLE} NOLOGIN;
@@ -153,6 +164,7 @@ async function ensureConsoleRole(config, { admin = null } = {}) {
     }
     await roleAdmin.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
     await roleAdmin.query(`ALTER ROLE ${ROLE} SET statement_timeout = '10s'`);
+    await repairReadOnlyDrift(pool, ROLE, roleAdmin);
 
     const { rows: dbRows } = await pool.query('SELECT current_database() AS db, current_user AS usr');
     const dbName = dbRows[0].db;
@@ -171,11 +183,8 @@ async function ensureConsoleRole(config, { admin = null } = {}) {
     // table-name cache `sql-console.js`'s synchronous validator reads —
     // so a console query typed before anyone opens the schema browser
     // still gets a specific "no such table" instead of a bare 400.
-    await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE}`);
     const grants = await buildGrantStatements(pool);
-    for (const stmt of grants) {
-      await pool.query(stmt);
-    }
+    await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE};\n${grants.join(';\n')}`);
 
     // Let the app's own connecting role SET ROLE to this one. A no-op
     // in this repo's dev/self-hosted setup (the connecting user is
@@ -196,6 +205,10 @@ async function ensureConsoleRole(config, { admin = null } = {}) {
       });
     }
 
+    if (!await readOnlyRoleCurrent(pool, { role: ROLE, login: false, timeoutMs: 10000 })
+        || !await consolePermissionsCurrent(pool, ROLE, await loadConsoleScope(pool), DENIED_CONSOLE_COLUMNS)) {
+      throw new Error('SQL console role authority could not be repaired');
+    }
     _available = true;
     _unavailableReason = null;
     log.info('topochain-console', 'SQL console role ensured', {
@@ -228,8 +241,8 @@ async function recordBootstrap(config) {
 
 // A process that did not set the role up takes the record's word for it:
 // the role exists with this release's grants or the previous one's, which
-// each release's migration step replaces (REVOKE, then GRANT: never wider
-// than either). Read at most every SHARED_TTL_MS; it also primes the table-name
+// each release's migration step checks against the live catalog and repairs
+// when needed. Read at most every SHARED_TTL_MS; it also primes the table-name
 // cache the validator reads, as the setup does. Never throws.
 async function loadShared(pool) {
   if (_available || Date.now() - _sharedReadAt < SHARED_TTL_MS) return;

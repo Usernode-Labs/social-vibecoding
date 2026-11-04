@@ -209,6 +209,7 @@
 "tests/app-ready-signal.test.js":[0.3,0.9],
 "tests/app-report-eligibility.test.js":[0.6,1.5],
 "tests/app-respawn-source-revision.test.js":[0.1,1.1],
+"tests/app-role-reconciliation.test.js":[1.3,1],
 "tests/app-rollover.test.js":[0.4,0.7],
 "tests/app-safe-area.test.js":[0.2,1],
 "tests/app-scaffold-freshness.test.js":[0.9,0.4],
@@ -2386,4 +2387,4 @@
 "tests/ws-validate-thread-merged.test.js":[0.6,0.6],
 "tests/ws-workflow-relay.test.js":[1.4,0.5],
 "tests/x-link.test.js":[0.5,0.5],
-"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/bot-build-crash-budget.test.js","tests/homeroom-bot-failure-repeat-postgres.test.js","tests/homeroom-bot-fixes-stopped-seed-postgres.test.js","tests/homeroom-bot-lift-suggestions.test.js","tests/homeroom-bot-revision-limit.test.js","tests/main-failure-lead.test.js"]}
+"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/app-role-reconciliation.test.js","tests/bot-build-crash-budget.test.js","tests/homeroom-bot-failure-repeat-postgres.test.js","tests/homeroom-bot-fixes-stopped-seed-postgres.test.js","tests/homeroom-bot-lift-suggestions.test.js","tests/homeroom-bot-revision-limit.test.js","tests/main-failure-lead.test.js"]}

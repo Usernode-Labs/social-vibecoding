@@ -189,6 +189,22 @@ migration Job applies the new schema while it still runs. A node drain
 open until it exits, so with `drainingMax` 2 up to three Pods' pools are open
 at once.
 
+The migration Job checks tenant role names in one catalog query before it
+adopts databases or recreates missing roles. A failed inventory stops that
+check instead of treating every role as missing. Previews skip the fleet
+check. Its completion log includes `inventoryMs` and the adoption, verification
+and repair counts.
+
+Release permission setup compares the live catalog with the current policy.
+Unchanged runtime grants, workflow restrictions and read-only roles execute
+no permission DDL. Missing grants, changed defaults, newly added objects and
+unexpected read-only access trigger repair. The debug role also authenticates
+with its saved encrypted credential before reusing it; an unusable credential
+is replaced. Failed read-only policy checks leave the capability unavailable.
+No saved success marker substitutes for checking actual permissions. Runtime
+permission logs include the objects examined, statements applied and elapsed
+time.
+
 ## Shared app and preview TLS
 
 Generated apps and previews share the installation-owned TLS Secret named by
