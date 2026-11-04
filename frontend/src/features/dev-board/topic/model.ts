@@ -555,6 +555,8 @@ export interface RequestView {
   titleEditing: { issue: number; initial: string } | null;
   /** The request's words, rendered, without the leading "**Source:**" line. */
   bodyHtml: string;
+  /** #6081: the same words as markdown, what Translate sends to the model. */
+  bodyMarkdown: string;
   /**
    * The author's editor for the words. `source` is the "**Source:**" line
    * the page leaves out, put back in front of what they save.

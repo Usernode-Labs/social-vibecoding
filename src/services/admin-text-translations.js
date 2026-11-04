@@ -561,6 +561,7 @@ module.exports = {
   approve,
   correct,
   languageFor,
+  matchTag,
   look,
   overview,
   retranslate,

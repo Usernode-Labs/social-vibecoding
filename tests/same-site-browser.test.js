@@ -304,6 +304,9 @@ const EXEMPT = new Map([
   ['topochain/partner.js POST /api/v4/user-activities', TOKEN],
   ['topochain/public.js POST /api/v4/app-version/check', TOKEN],
   ['user-agent-files.js POST /api/me/agent-files', JSON_FIELD],
+  // #6081: the words to translate arrive in a JSON `texts` array; another
+  // origin cannot send one without a preflight.
+  ['user-content-translations.js POST /api/translations', JSON_FIELD],
   ['votes.js POST /api/apps/:slug/pr-import', JSON_FIELD],
   ['votes.js POST /api/apps/:slug/pr-import/_mock/advance', JSON_FIELD],
   ['votes.js POST /api/sessions/:id/vote', JSON_FIELD],

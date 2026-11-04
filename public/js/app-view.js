@@ -6214,6 +6214,7 @@ const AppView = {
       title: issue.title || '',
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
+      bodyMarkdown: words.text,
       editor: {
         issue: n,
         markdown: words.text,
