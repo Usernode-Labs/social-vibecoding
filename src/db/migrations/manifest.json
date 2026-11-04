@@ -90,6 +90,11 @@
       "id": "media-drop-bytes",
       "sha256": "97a57e67745033a0a8e4faeb400eebb3c8c288876581efbf79b2f8d76d0c7853",
       "schemaSha256": "a5483f6e9846f3ac2f4848eb5bd583f966b8a2bd9077db97a4eac23f7429fd7a"
+    },
+    {
+      "id": "user-content-translations",
+      "sha256": "91f4a28ba6d8dfb0e33768dd0f0ae3da3ed6c3db5819d217d8daa139e2ec9efa",
+      "schemaSha256": "3c75672899d6b111843d0295df12572afd4d092b00173b617fc42a3eeef133b9"
     }
   ]
 }

@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 
 import {
-  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, GlobeIcon, LinkIcon, NoSymbolIcon,
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
@@ -41,6 +41,7 @@ import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
+import { TranslateNote, useTranslate } from './translate';
 
 /*
  * A CONVERSATION HAS SIDES (#5680). A direct message and a group chat — the
@@ -177,6 +178,11 @@ export const MessageRow = memo(function MessageRow({
 }) {
   const t = useMessages('messages');
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
+  // #6081: someone else's words can be read in the reader's language. Asked
+  // for on a tap from the ⋯ menu; never on a page load.
+  const translation = useTranslate(message.content ? [message.content] : [], {
+    enabled: !mine && !!message.content && !message.deleted && !message.moderated,
+  });
   // #4655: in a direct message people are named bare ("ada", not "@ada") in
   // the Block and Report labels; group chats and channels keep the @ there.
   // The author line, a quote and the sheet's header name them bare in every
@@ -304,6 +310,22 @@ export const MessageRow = memo(function MessageRow({
   if (message.content) {
     items.push({ key: 'copy', label: t('messages:row.menu.copyText'), icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, t('messages:row.textCopied')); } });
   }
+  // #6081: someone else's words, in the reader's language. One more item in
+  // the same menu, so a chat does not fill up with a button on every message.
+  if (!mine && message.content && !message.deleted && !message.moderated) {
+    const label = translation.state === 'shown'
+      ? t('messages:row.menu.showOriginal')
+      : translation.state === 'original'
+        ? t('messages:row.menu.showTranslation')
+        : t('messages:row.menu.translate');
+    items.push({
+      key: 'translate', label, icon: GlobeIcon, disabled: translation.state === 'pending',
+      onSelect: () => {
+        if (translation.state === 'shown' || translation.state === 'original') translation.toggle();
+        else translation.ask();
+      },
+    });
+  }
   // #4055: its pictures onto the device, whoever sent them.
   const pictures = downloadableImages(images.map((att) => ({ src: att.url, name: att.name })));
   if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
@@ -368,7 +390,7 @@ export const MessageRow = memo(function MessageRow({
   const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
   const words = !message.content ? null : head
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
-    : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
+    : <MessageMarkdown content={translation.state === 'shown' ? translation.texts[0] : message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
 
   // #5680: which rows have a side. A DM and a group do; a channel does not
   // (#2783), and neither does a row that is not something a person said: the
@@ -588,6 +610,8 @@ export const MessageRow = memo(function MessageRow({
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}
         {sided ? <div className="messages-bubble" dir="auto">{body}</div> : body}
+        {/* #6081: under the words, the way back to them, or why they stayed. */}
+        {message.content && !message.deleted && !message.moderated ? <TranslateNote view={translation} className="mt-1" /> : null}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
         {failedNote}

@@ -273,6 +273,9 @@ async function migrate(config) {
   await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
+  // #6081: a message and a request in another language, with the English the
+  // translation route serves without a model key the copies do not have.
+  await seedStagingUserContentTranslations(pool);
   await seedStagingDbExports(pool);
   // #3654: the Homeroom bot console's Benchmark area (services/bench/demo.js).
   // Its tables are staging:private, so a preview would otherwise show none.
@@ -2204,6 +2207,116 @@ async function seedStagingScrollTestThread(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging scroll-test thread seeding failed', { message: err.message });
+  }
+}
+
+// #6081's before/after shots follow words written in another language, read
+// in English on a tap. The copies have no model key, so a tap there cannot
+// ask for a translation; the route still answers from what is stored. This
+// seeds one message and one request in Spanish, with the English the route
+// serves at once, so the after build can show the translated state. The rows
+// are obviously fake, in the staging ranges, idempotent, and a strict no-op
+// outside staging.
+async function seedStagingUserContentTranslations(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const digest = (text) => crypto.createHash('sha256').update(text).digest('hex');
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-lin', 'staging-demo-general-ada')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const lin = people.rows.find((row) => row.username === 'staging-demo-general-lin');
+    const ada = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    if (!member || !lin || !ada) {
+      log.warn('db', 'Staging translation fixtures skipped: fixture users missing');
+      return;
+    }
+
+    // A direct thread the member can open from Messages, with one line in
+    // Spanish from the other person and the English for it.
+    const low = Math.min(member.id, lin.id);
+    const high = Math.max(member.id, lin.id);
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+         JOIN conversation_direct_pairs p ON p.conversation_id = c.id
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2
+        LIMIT 1`,
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [member.id]
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, member.id, lin.id]
+    );
+    const spanishMessage = '¿Alguien puede revisar el cambio del botón antes del viernes?';
+    const englishMessage = 'Can someone review the button change before Friday?';
+    await pool.query(
+      `INSERT INTO conversation_messages
+         (conversation_id, sender_id, content, idempotency_key, created_at)
+       VALUES ($1, $2, $3, 'staging-translate-demo-1', NOW() - INTERVAL '2 minutes')
+       ON CONFLICT (conversation_id, sender_id, idempotency_key)
+         WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+       DO NOTHING`,
+      [conversationId, lin.id, spanishMessage]
+    );
+    await pool.query(
+      `INSERT INTO user_content_translations
+         (source_digest, language, text, source_language, same_language, model, attempted_at)
+       VALUES ($1, 'en', $2, 'es', FALSE, 'staging-fixture', NOW())
+       ON CONFLICT (source_digest, language) DO NOTHING`,
+      [digest(spanishMessage), englishMessage]
+    );
+
+    // A request on a demo app, written by one of the fake people, with its
+    // title and words translated. Its id is its number on the page.
+    const app = await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-alpha'");
+    if (!app.rows[0]?.id) {
+      log.warn('db', 'Staging translation request skipped: demo app missing');
+      return;
+    }
+    const title = 'La página del desafío no muestra por qué cuenta el progreso';
+    const body = 'En la cuenta seacookie19910814, la solicitud #123 se convirtió en el cambio #124, '
+      + 'y el cambio muestra que está en votación. La página del desafío dice que '
+      + '"Suggest an improvement" cuenta una propuesta enviada a votación, pero el desafío sigue sin empezar.';
+    const englishTitle = "The challenge page doesn't show why progress counts";
+    const englishBody = 'On the account seacookie19910814, request #123 became change #124, and the '
+      + 'change shows that it is up for a vote. The challenge page says that "Suggest an improvement" '
+      + 'counts one proposal sent to a vote, but the challenge has still not started.';
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, created_by, status)
+       VALUES (9056199, $1, $2, $3, $4, 'open')
+       ON CONFLICT (id) DO NOTHING`,
+      [app.rows[0].id, title, body, ada.id]
+    );
+    for (const [source, translated] of [[title, englishTitle], [body, englishBody]]) {
+      await pool.query(
+        `INSERT INTO user_content_translations
+           (source_digest, language, text, source_language, same_language, model, attempted_at)
+         VALUES ($1, 'en', $2, 'es', FALSE, 'staging-fixture', NOW())
+         ON CONFLICT (source_digest, language) DO NOTHING`,
+        [digest(source), translated]
+      );
+    }
+    log.info('db', 'Staging translation fixtures seeded', { conversationId, issue: 9056199 });
+  } catch (err) {
+    log.warn('db', 'Staging translation fixtures seeding failed', { message: err.message });
   }
 }
 
