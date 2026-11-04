@@ -439,7 +439,7 @@ async function backfillPlanRows(pool) {
     result = await pool.query(
       `UPDATE chat_messages m
           SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb(s.note)),
-              content = regexp_replace(m.content, '\\. Waiting for [^\\n]*$',
+              content = regexp_replace(m.content, '\\.(?: Nothing is built yet\\.)? Waiting for [^\\n]*$',
                 CASE s.note WHEN 'building' THEN $1 WHEN 'replaced' THEN $2 ELSE $3 END)
          FROM (SELECT p.thread_message_id AS id,
                       CASE WHEN r.plan->'chosen' IS NOT NULL THEN 'building'

@@ -1012,7 +1012,7 @@ test('the column from 768px: Main, or one thread alone under its own head; a pag
   assert.match(src, /data-ai-column=\{threadUp \? 'thread' : 'main'\}/);
   // A place in the chat: the panel gives the column back, a blank thread goes, Main closes a thread.
   // 1 Nov 2026 (C1): and a design's preview goes, unless it is that thread's.
-  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!next\.threadRootId \|\| next\.threadRootId !== preview\?\.rootId\) closePreview\(\);\s+if \(!next\.threadRootId && openRoot\) closeThread\(\);\s+setAt\(\{ \.\.\.next \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
+  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!detail \|\| detail\.kind === 'design'\) \{\s+if \(!next\.threadRootId \|\| next\.threadRootId !== detail\?\.ref\.rootId\) closeDetail\(\);\s+\}\s+if \(!next\.threadRootId && openRoot\) closeThread\(\);\s+setAt\(\{ \.\.\.next \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
   assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);/);
   assert.match(src, /if \(openPublic\(href, app, title\)\) underPanel\(\);/);
   // 3 Nov 2026: the address is the column's, written by one effect (#6215).
@@ -1419,7 +1419,7 @@ test('one column state: where each row goes, the row it lights, its address and 
   // The page reads it once; nothing else keeps a copy.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /: panelRoute \? \{ at: 'page', route: panelRoute \}/);
-  assert.match(src, /showAddress\(columnAddress\(column\)\);/);
+  assert.match(src, /showAddress\(columnAddress\(columnShown\)\);/);
   assert.equal((src.match(/showAddress\(/g) || []).length, 2, 'one writer of the address, besides its definition');
   assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(row\) === lit,/);
   assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(th\) === lit,/);

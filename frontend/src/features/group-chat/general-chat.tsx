@@ -36,6 +36,7 @@ import { useMemo, useRef, useState, type RefObject } from 'react';
 
 import { ChatComposerBar, NewMessagesBanner, TranscriptOverlay } from '@/components/ui/chat';
 import { useMessages } from '../../lib/i18n/react';
+import { DetailSlot } from '../detail/detail-slot';
 import { useStoreState } from '../../lib/use-store-state';
 import { JumpToLatest } from '../messages/jump-to-latest';
 import {
@@ -172,14 +173,7 @@ export function GeneralChat({ readOnly, notice, maxLength, placeholder }: Genera
             )}
           </ChatComposerBar>
         </div>
-        <div
-          id="gc-spec-resizer"
-          className="gc-spec-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('chat:group.specPanel.resize')}
-        />
-        <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
+        <DetailSlot surface="chat" resizerLabel={t('chat:group.specPanel.resize')} />
       </div>
     </div>
   );

@@ -263,13 +263,16 @@ test('the preview: its own column beside the thread, three where they fit, halve
   assert.equal(preview.previewLayout({ phone: false, three: false }), 'halves');
   assert.equal(preview.THREE_COLUMNS, '(min-width: 1500px)');
   const ai = read('frontend/src/features/ai/index.tsx');
-  assert.match(ai, /data-ai-preview=\{previewUp \? layout : undefined\}/);
-  assert.match(ai, /<aside className="ai-preview-pane" data-ai-preview-pane=\{layout\} aria-label=\{t\('messages:design\.pane\.label'\)\}>\n\s+<DesignPane/);
-  assert.match(ai, /onClose=\{closePreview\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
-  assert.match(ai, /const previewUp = mounted && !!preview && !!botId && preview\.conversationId === botId && openRoot === preview\.rootId/,
+  // #6230: the preview is one kind of the detail column, drawn by
+  // ../detail/detail-pane.tsx; the page still sets data-ai-preview for it.
+  assert.match(ai, /data-ai-preview=\{detailHere \? layout : undefined\}/);
+  assert.match(ai, /<aside className="ai-preview-pane" data-ai-preview-pane=\{layout\} aria-label=\{t\('messages:design\.pane\.label'\)\}>\n\s+<DetailPane layout=\{layout\} \/>/);
+  assert.match(read('frontend/src/features/detail/detail-pane.tsx'),
+    /onClose=\{closeDetail\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
+  assert.match(ai, /const detailHere = !!detail && !!botId && \(detail\.kind === 'design'\n\s+\? detail\.ref\.conversationId === botId && openRoot === detail\.ref\.rootId/,
     'only beside the thread it is the design of');
-  assert.match(ai, /if \(preview && openRoot && openRoot !== preview\.rootId\) closePreview\(\);/, 'another thread in the column closes it');
-  assert.match(ai, /const back = \(\) => \{ if \(window\.location\.hash === BOT_TAB\) closePreview\(\); \};/, 'the tab brings the list back');
+  assert.match(ai, /if \(detail\.kind === 'design' && openRoot && openRoot !== detail\.ref\.rootId\) closeDetail\(\);/, 'another thread in the column closes it');
+  assert.match(ai, /if \(window\.location\.hash === BOT_TAB\) closeDetail\(\);/, 'the tab brings the list back');
   const css = read('public/css/app.css');
   assert.match(css, /#ai-screen\[data-ai-preview="three"\] \{\n\s+--ai-col-w: min\(var\(--ai-main-w\), 440px\);/);
   assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \.ai-screen-body \{ display: none; \}/, 'the list steps aside');

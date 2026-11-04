@@ -326,7 +326,6 @@ const GroupChat = {
     // saved open state so a refresh re-opens the same spec the user
     // was last viewing in this app. Both are no-ops when nothing's
     // saved or the slot doesn't exist yet.
-    GroupChat._initSpecPanelResizer();
     GroupChat._restoreSpecPanelIfSaved(appSlug);
 
     // Reuse the existing connection only if it's actually usable
@@ -4379,7 +4378,7 @@ const GroupChat = {
   // plain download when the panel slot isn't in the current tab's DOM.
   async _openMarkdownAttachment(url, filename, unnamed) {
     if (!url) return;
-    if (!document.getElementById('gc-spec-side-panel')) {
+    if (!window.UsernodeReact?.detail) {
       window.open(url, '_blank', 'noopener');
       return;
     }
@@ -4876,202 +4875,55 @@ const GroupChat = {
   // older share that predates `metadata.specShare.title`.
   async openSharedSpec(sessionId, version, previewTitle) {
     if (!sessionId || !version) return;
-    const title = previewTitle || PlatformI18n.t('chat:group.spec.title', { version });
-    // Persist the open state so a refresh re-opens this same spec
-    // automatically. Per-app keying ensures switching apps doesn't drag this
-    // open state along with you.
-    GroupChat._writeSpecPanelOpen(GroupChat.appSlug, {
-      sessionId: parseInt(sessionId, 10),
-      version: parseInt(version, 10),
-      title,
+    const id = parseInt(sessionId, 10);
+    const v = parseInt(version, 10);
+    GroupChat._writeSpecPanelOpen(GroupChat.appSlug, { sessionId: id, version: v, title: previewTitle || null });
+    // #6230: the reader is the detail column's now (frontend/src/features/
+    // ai/detail.ts). Inside the side panel's frame this forwards to the top
+    // document, where the bot page draws it beside the request.
+    window.UsernodeReact?.detail?.open({
+      kind: 'plan',
+      ref: { sessionId: id },
+      version: v,
+      payload: { title: previewTitle || null },
     });
-    try {
-      const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}${GroupChat._specDemoQS()}`);
-      // After #6, the server allows any authed user to read a spec version
-      // that was explicitly shared into the group chat. A 404 here therefore
-      // means the share was withdrawn or the version row is gone (rare —
-      // would require manual DB edits or a session DELETE CASCADE) rather
-      // than the routine "not the owner" case it used to mean.
-      if (!resp.ok) {
-        GroupChat._showSpecPanel({
-          title,
-          version,
-          content: resp.status === 404
-            ? PlatformI18n.t('chat:group.spec.gone')
-            : PlatformI18n.t('chat:group.spec.loadFailed', { status: resp.status }),
-          isError: true,
-        });
-        return;
-      }
-      const data = await resp.json();
-      GroupChat._showSpecPanel({
-        title,
-        version,
-        content: data.spec.content || PlatformI18n.t('chat:group.spec.empty'),
-        html: data.spec.content_html || null,
-        builtAt: data.spec.built_at,
-        prNumber: data.spec.pr_number,
-      });
-    } catch (err) {
-      GroupChat._showSpecPanel({
-        title,
-        version,
-        content: PlatformI18n.t('chat:group.spec.error', { message: err.message }),
-        isError: true,
-      });
-    }
   },
 
-  // (#1012) Raw markdown currently displayed in the spec panel, kept in
-  // JS state because the panel rewrites its own innerHTML and nothing
-  // else retains `content`. Deliberately NOT a data- attribute: a spec
-  // is multi-KB markdown full of quotes and newlines.
-  _specPanelRaw: null,
-
-  _showSpecPanel({ title, version, content, html = null, builtAt, prNumber, isError, canCopy = true }) {
-    // Populates the side-panel slot rendered inside the group-chat
-    // tab body (see app-view.js renderGroupChatTab). The same panel
-    // markup serves both responsive layouts — CSS switches between
-    //   ≥ 1024px → inline side panel beside the chat (does NOT cover
-    //              the app header or vote panel, slots into the
-    //              gc-tab-body row alongside gc-chat-pane)
-    //   < 1024px → fullscreen modal covering only the gc-tab-body
-    //              area (still does NOT cover the app header or
-    //              vote/issue panel, since the slot is constrained
-    //              to that flex row).
-    // Esc closes; the panel persists across re-renders of the chat
-    // tab because the slot lives in the layout, not in body.
-    //
-    // The general chat is not the only layout with the slot: a request's or
-    // a proposal's Discussion is a thread in the Dev topic frame
-    // (features/dev-board/topic-frame.tsx), which carries the same row, and
-    // a spec card there opens the panel beside the topic. Before it did, the
-    // lookup below found nothing and "View full spec" did nothing (#3495).
-    const panel = document.getElementById('gc-spec-side-panel');
-    if (!panel) return;
-    // The divider is bound on mount by the general chat; the topic frame has
-    // no mount of this module's, so bind it here too. Idempotent per handle.
-    GroupChat._initSpecPanelResizer();
-
-    GroupChat._specPanelRaw = content == null ? '' : String(content);
-
-    if (!panel._gcKeyHandler) {
-      const onKey = (e) => {
-        if (e.key === 'Escape' && panel.classList.contains('gc-spec-side-panel-open')) {
-          GroupChat._closeSpecPanel();
-        }
-      };
-      document.addEventListener('keydown', onKey);
-      panel._gcKeyHandler = onKey;
-    }
-
-    // Same table as the share card above, from the same helper (#1808).
-    const builtStr = GroupChat._stamp(builtAt).text;
-    const subtitleParts = [];
-    if (version != null) subtitleParts.push(`v${version}`);
-    if (builtStr) subtitleParts.push(builtStr);
-    if (prNumber) subtitleParts.push(PlatformI18n.t('chat:group.quote.pr', { number: prNumber }));
-    const subtitle = subtitleParts.join(' · ');
-
-    // Render markdown for normal content; error / 404 messages are
-    // plain text so we don't accidentally turn an error into a
-    // misleadingly-formatted bit of markup. See the _specShareView
-    // comment for why we use a bare `DevChat` reference + `typeof`
-    // guard rather than `window.DevChat` (const-declared globals don't
-    // attach to window).
-    // An error renders as TEXT and a spec as markdown, and that split is
-    // deliberate: formatting a 404 message turns it into something that looks
-    // like a document. It used to be two branches of one HTML string; it is
-    // two tags in features/group-chat/spec-panel.tsx now, so the error path
-    // cannot acquire markup by accident. See the _specShareView comment
-    // for why this is a bare `DevChat` reference behind a `typeof` guard
-    // rather than `window.DevChat` (const-declared globals don't attach).
-    // #3699: a version written as HTML renders from its own document, with
-    // the dev chat viewer's two tabs (frontend/src/lib/spec-html.ts);
-    // `content`, its markdown copy, is still what Copy markdown takes.
-    const specHtml = !isError && html && window.UsernodeReact && window.UsernodeReact.specHtml;
-    const doc = specHtml && typeof specHtml.render === 'function'
-      ? specHtml.render(String(html), { key: `gc-${version == null ? 'x' : version}` })
-      : null;
-    const body = isError
-      ? { kind: 'error', text: String(content == null ? '' : content) }
-      : doc
-        ? { kind: 'spec', ...doc }
-        : (typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-          ? { kind: 'markdown', html: DevChat.renderMarkdown(content) }
-          : { kind: 'error', text: String(content == null ? '' : content) });
-
-    GroupChat._react()?.mountSpecPanel?.(panel);
-    GroupChat._react()?.publishSpecPanel?.({
-      open: true,
-      title: String(title == null ? '' : title),
-      subtitle: subtitle || null,
-      // (#1012) Copy the whole document as raw markdown. Suppressed for an
-      // error body (a 404 message is not a spec) and for a caller that opted
-      // out via canCopy — the reload-restore skeleton, whose placeholder
-      // "Loading…" must never be copyable.
-      canCopy: !!(canCopy && !isError && content),
-      body,
+  // A document handed straight to the reader — a markdown attachment, a
+  // spec card's plan. No session, so no fetch and no address of its own.
+  _showSpecPanel({ title, version, content, html = null, isError, canCopy = true }) {
+    window.UsernodeReact?.detail?.open({
+      kind: 'plan',
+      ref: {},
+      version: version == null ? null : parseInt(version, 10),
+      payload: {
+        title: String(title == null ? '' : title),
+        markdown: content == null ? '' : String(content),
+        html: html || null,
+        // An error and the reload-restore skeleton both render as text, and
+        // neither offers Copy markdown.
+        error: !!isError || canCopy === false,
+      },
     });
-    // The HOST's class stays ours: it is the AUTHORITATIVE open state that the
-    // resizer and the width restore both read.
-    panel.classList.add('gc-spec-side-panel-open');
-    GroupChat._applySavedSpecPanelWidth();
-
-    const handle = document.getElementById('gc-spec-resizer');
-    if (handle) handle.classList.add('gc-spec-resizer-open');
   },
 
   _closeSpecPanel() {
-    const panel = document.getElementById('gc-spec-side-panel');
-    if (!panel) return;
-    panel.classList.remove('gc-spec-side-panel-open');
-    // Publish "closed" rather than clearing the host: its subtree is React's,
-    // and an innerHTML wipe behind React's back is the write the ownership
-    // rule forbids. The portal stays mounted and draws nothing.
-    GroupChat._react()?.publishSpecPanel?.({
-      open: false, title: '', subtitle: null, canCopy: false, body: null,
-    });
-    // Don't leave a closed panel's document copyable.
-    GroupChat._specPanelRaw = null;
-    if (panel._gcKeyHandler) {
-      document.removeEventListener('keydown', panel._gcKeyHandler);
-      panel._gcKeyHandler = null;
-    }
-    const handle = document.getElementById('gc-spec-resizer');
-    if (handle) handle.classList.remove('gc-spec-resizer-open');
+    window.UsernodeReact?.detail?.close?.();
     GroupChat._writeSpecPanelOpen(GroupChat.appSlug, null);
   },
 
-  // ===== Spec panel: draggable divider + open/width persistence =====
+  // ===== The reader's remembered state =====
   //
-  // Mirrors DevChat's spec-viewer pattern. Width is a global user
-  // preference (one value across all apps). Open state is per-app —
-  // when you're viewing app A with a panel open and switch to app B,
-  // B opens with its own remembered state, not A's leftover.
+  // Open state is per-app — when you're viewing app A with a panel open and
+  // switch to app B, B opens with its own remembered state. The width lives
+  // in the detail column itself (features/detail/detail-slot.tsx).
   //
   // Open state shape: { sessionId, version, title } so we can paint
   // the panel header instantly on refresh while the spec content
   // request is in flight.
 
-  _SPEC_PANEL_WIDTH_KEY: 'gc-spec-panel-width-v1',
-  _SPEC_PANEL_OPEN_KEY_PREFIX: 'gc-spec-panel-open-v1:',
-
   // (#1012) ?demo=1 passthrough for the spec-version fetch, same shape as
-  // Notifications' and Browse's. chat_session_specs is staging:private, so
-  // on a prod-cloned staging DB the cloned spec_share cards in group chat
-  // have no content to load and the panel only ever renders its error
-  // branch. With demo=1 on the page URL the server answers a mock version
-  // (see stagingMockSpecVersion in src/routes/sessions.js) so the panel —
-  // and its copy button — are reviewable in a staging preview. Honoured by
-  // the server ONLY in staging; a no-op in production.
-  // #1808: the same ?demo=1 passthrough for the TRANSCRIPT reads. A declared
-  // check renders against a fresh, empty staging database, so both the
-  // general stream and a topic's Discussion thread came back with nothing to
-  // stamp; the server answers a first page of `[Mock]` rows spanning all
-  // three branches (see stagingMockGroupChat in src/routes/chat.js). Only on
-  // a first page — a `before` cursor is paging past what is already on
-  // screen — and honoured by the server ONLY in staging.
+  // Notifications' and Browse's. Honoured by the server ONLY in staging.
   _demoParam() {
     try {
       return new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
@@ -5084,17 +4936,7 @@ const GroupChat = {
     } catch { return ''; }
   },
 
-  _readSpecPanelWidth() {
-    try {
-      const v = parseInt(localStorage.getItem(GroupChat._SPEC_PANEL_WIDTH_KEY) || '', 10);
-      return Number.isFinite(v) && v > 0 ? v : null;
-    } catch { return null; }
-  },
-
-  _writeSpecPanelWidth(px) {
-    try { localStorage.setItem(GroupChat._SPEC_PANEL_WIDTH_KEY, String(Math.round(px))); }
-    catch {}
-  },
+  _SPEC_PANEL_OPEN_KEY_PREFIX: 'gc-spec-panel-open-v1:',
 
   _readSpecPanelOpen(appSlug) {
     if (!appSlug) return null;
@@ -5116,137 +4958,19 @@ const GroupChat = {
     } catch {}
   },
 
-  // Apply the persisted width as inline style on the panel. Called
-  // by _showSpecPanel when opening; CSS clamps via min-width /
-  // max-width so a stale value can't strand the chat too narrow.
-  _applySavedSpecPanelWidth() {
-    const panel = document.getElementById('gc-spec-side-panel');
-    if (!panel) return;
-    const w = GroupChat._readSpecPanelWidth();
-    if (w) panel.style.width = `${w}px`;
-  },
-
-  // Bind the resizer's drag handler. Idempotent: re-binding on
-  // every group-chat mount is fine because the handle element gets
-  // recreated whenever the tab re-renders, and we tag the handle
-  // so we don't double-bind on the same element.
-  _initSpecPanelResizer() {
-    const handle = document.getElementById('gc-spec-resizer');
-    const panel = document.getElementById('gc-spec-side-panel');
-    if (!handle || !panel) return;
-    if (handle._gcResizerBound) return;
-    handle._gcResizerBound = true;
-
-    handle.addEventListener('pointerdown', (e) => {
-      // Drag only matters when the panel is actually showing in
-      // side-panel layout. CSS hides the handle (display: none)
-      // outside that condition, so a pointerdown reaching this
-      // listener already implies the layout is correct — but the
-      // `.gc-spec-side-panel-open` class is the authoritative
-      // signal so we double-check it.
-      if (!panel.classList.contains('gc-spec-side-panel-open')) return;
-      e.preventDefault();
-
-      const tabBody = handle.parentElement;
-      const startX = e.clientX;
-      const startWidth = panel.getBoundingClientRect().width;
-      const bodyRect = tabBody.getBoundingClientRect();
-      const minWidth = 280;
-      // Leave at least 320px for the chat pane on the left, even on
-      // tiny laptop screens where 50vw might breach that.
-      const maxWidth = Math.max(minWidth + 1, bodyRect.width - 320);
-
-      handle.setPointerCapture(e.pointerId);
-      handle.classList.add('gc-spec-resizer-active');
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'col-resize';
-
-      const onMove = (ev) => {
-        // Dragging right shrinks the panel (its left edge moves right).
-        const delta = ev.clientX - startX;
-        const next = Math.max(minWidth, Math.min(maxWidth, startWidth - delta));
-        panel.style.width = `${next}px`;
-      };
-
-      const onUp = () => {
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', onUp);
-        handle.removeEventListener('pointercancel', onUp);
-        try { handle.releasePointerCapture(e.pointerId); } catch {}
-        handle.classList.remove('gc-spec-resizer-active');
-        document.body.style.userSelect = '';
-        document.body.style.cursor = '';
-        const finalWidth = panel.getBoundingClientRect().width;
-        GroupChat._writeSpecPanelWidth(finalWidth);
-      };
-
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onUp);
-      handle.addEventListener('pointercancel', onUp);
-    });
-  },
-
-  // Restore the panel from localStorage on group-chat tab mount /
-  // page refresh. The header paints immediately from the saved
-  // {title, version}; the spec content fetches in the background
-  // and replaces the body when it lands. If the request 404s (e.g.
-  // the user no longer has access), we surface the same error
-  // message the click-handler does — keeps the panel visible
-  // instead of vanishing silently.
+  // Restore the reader from localStorage on group-chat tab mount / page
+  // refresh: the store fetches the saved version and paints the header while
+  // it loads, as the panel always did.
   async _restoreSpecPanelIfSaved(appSlug) {
     if (!appSlug) return;
     const saved = GroupChat._readSpecPanelOpen(appSlug);
     if (!saved) return;
-
-    const { sessionId, version, title } = saved;
-    const previewTitle = title || PlatformI18n.t('chat:group.spec.title', { version });
-
-    // Show the panel header right away (skeleton body) so the user
-    // sees something immediately while the spec content loads.
-    GroupChat._showSpecPanel({
-      title: previewTitle,
-      version,
-      content: PlatformI18n.t('chat:group.spec.loading'),
-      // (#1012) The placeholder is not a document — no copy button until
-      // the real content lands and replaces this render.
-      canCopy: false,
+    window.UsernodeReact?.detail?.open({
+      kind: 'plan',
+      ref: { sessionId: saved.sessionId },
+      version: saved.version,
+      payload: { title: saved.title || null },
     });
-
-    try {
-      const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}${GroupChat._specDemoQS()}`);
-      // If the user navigated away during the fetch, don't clobber
-      // whatever's on screen.
-      if (GroupChat.appSlug !== appSlug) return;
-      if (!resp.ok) {
-        GroupChat._showSpecPanel({
-          title: previewTitle,
-          version,
-          content: resp.status === 404
-            ? PlatformI18n.t('chat:group.spec.gone')
-            : PlatformI18n.t('chat:group.spec.loadFailed', { status: resp.status }),
-          isError: true,
-        });
-        return;
-      }
-      const data = await resp.json();
-      if (GroupChat.appSlug !== appSlug) return;
-      GroupChat._showSpecPanel({
-        title: previewTitle,
-        version,
-        content: data.spec.content || PlatformI18n.t('chat:group.spec.empty'),
-        html: data.spec.content_html || null,
-        builtAt: data.spec.built_at,
-        prNumber: data.spec.pr_number,
-      });
-    } catch (err) {
-      if (GroupChat.appSlug !== appSlug) return;
-      GroupChat._showSpecPanel({
-        title: previewTitle,
-        version,
-        content: PlatformI18n.t('chat:group.spec.error', { message: err.message }),
-        isError: true,
-      });
-    }
   },
 
   renderTyping() {

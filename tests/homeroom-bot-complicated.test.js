@@ -67,6 +67,36 @@ test('the triage labels a ready change complicated only when it says so, and onl
   assert.equal(bot.parseVerdict(fence({ verdict: 'person', reason: 'x', complicated: true })).complicated, false);
 });
 
+// #6209 (4 Nov 2026, evan): a request that asks for a plan before a build is
+// still ready, and is built straight away when the change is straightforward:
+// its plan is posted on the request as a plan card, then the build goes on.
+// Only a complicated change, or one that says not to build yet, waits.
+test('a ready verdict that asks for a plan first builds straight away unless the change is complicated', async (t) => {
+  const ready = (extra) => bot.parseVerdict(fence({ verdict: 'ready', build_note: 'Add image models.', ...extra }));
+  // The triage has no separate wait signal any more: a plan-first request is
+  // not complicated by itself, and a straightforward one builds.
+  assert.equal(ready({ plan_first: true }).complicated, false, 'asking for a plan first is not complicated by itself');
+  assert.equal(ready({ plan_first: true }).planFirst, undefined, 'no separate plan-first field');
+  const md = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(md.replace(/\s+/g, ' '), /A request to plan before building is `ready`, not `person`; one that says not to build yet is `complicated`\./);
+  assert.doesNotMatch(md, /plan_first/, 'the triage no longer asks for a plan-first signal');
+  const src = read('src/services/homeroom-bot.js');
+  assert.doesNotMatch(src, /v\.planFirst/, 'nothing forces every plan-first request to wait');
+  const seen = stubLive(t);
+  // Straightforward: the ordinary build path, after its plan card.
+  const small = verdictArgs({ parsed: { verdict: 'ready', buildNote: 'Add image models.' } });
+  assert.equal(await bot.actOnVerdict(small), 'build_queued');
+  assert.equal(seen.built.length, 0, 'nothing is built in the triage turn');
+  // Complicated, or told not to build yet (the triage labels that
+  // complicated): its plan is drafted and waits for Build it.
+  const big = verdictArgs({ parsed: { verdict: 'ready', buildNote: 'Add image models.', complicated: true } });
+  assert.equal(await bot.actOnVerdict(big), 'plan_queued');
+  // A first version already plans first.
+  const first = verdictArgs({ firstVersion: true, parsed: { verdict: 'ready', buildNote: 'Add image models.' } });
+  first.deps.dm = { async sendPlanCard() { return { messageId: 3 }; } };
+  assert.equal(await bot.actOnVerdict(first), 'awaiting_go');
+});
+
 test('the triage prompt says what counts as complicated, leaning towards building straight away', () => {
   const md = read('src/prompts/homeroom-bot-triage.md');
   const flat = md.replace(/\s+/g, ' ');
@@ -100,7 +130,7 @@ test('3 Nov 2026: a complicated plan is held only by the slots a build is, never
 
 test('the plan is posted on the request and GitHub to read and answer; the build that follows does not post it again', () => {
   const text = live.planCommentText({ spec: '# Leaderboard\n\nA weekly leaderboard.', questions: PLAN.questions });
-  assert.match(text, /^Homeroom bot wrote a plan for this request, with its before and after screens, and will build it once the person who asked for it says Build it\. On Homeroom they can reply "build it" on this request when it looks right, or say what to change and it will plan it again\./);
+  assert.match(text, /^Homeroom bot wrote a plan for this request, with its before and after screens\. Nothing has been built yet\. It will build it once the person who asked for it says Build it\. On Homeroom they can reply "build it" on this request when it looks right, or say what to change and it will plan it again\./);
   assert.match(text, /One choice for them, or it goes with what it suggests:\n- Who shows on the leaderboard\? \(suggested: Everyone in the flat\)/);
   assert.match(text, /<details><summary>The plan<\/summary>\n\n# Leaderboard/);
   assert.doesNotMatch(text, /@/, 'nobody is @mentioned on GitHub');
@@ -108,7 +138,7 @@ test('the plan is posted on the request and GitHub to read and answer; the build
   assert.equal(card.msgType, 'spec_share');
   assert.equal(card.metadata.specShare.sessionId, 5, 'its card opens the spec, with its screens');
   // One request, one story: the plan in a line, saying who it waits for.
-  assert.equal(card.content, '📋 Plan v1: Leaderboard. Waiting for the person who asked for it to say Build it.');
+  assert.equal(card.content, '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for the person who asked for it to say Build it.');
   assert.equal(card.metadata.specShare.botNote, 'waiting');
   // A plan its requester said Build it to is not posted again: a note says so.
   assert.equal(live.approvedBuildHomeroomText({ requester: 'sam' }), '@sam said Build it. I\'m building it now.');
@@ -936,7 +966,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.equal((await rowOf(changed)).note, 'replaced');
     assert.deepEqual(await rowOf(wentAhead), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
     assert.equal((await rowOf(aWeek)).note, 'stopped');
-    assert.deepEqual(await rowOf(stillWaiting), { content: '📋 Plan v1: Leaderboard. Waiting for @maya to say Build it.', note: 'waiting' });
+    assert.deepEqual(await rowOf(stillWaiting), { content: '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for @maya to say Build it.', note: 'waiting' });
     assert.equal(await backfillPlanRows(pool), 0, 'once');
   });
 });
