@@ -4129,6 +4129,10 @@ function voteRoutes(config) {
       const appRows = [gatedApp];
 
       const userId = req.user?.id || null;
+      // The queue's own retry time for a merge GitHub held back (see
+      // HELD_UNTIL_SQL in services/integration.js), read beside
+      // integration_block_reasons, which carries the reason it explains.
+      const heldUntilSql = require('../services/integration').HELD_UNTIL_SQL;
       // Include 'merging' alongside 'promoted' so the PR stays visible
       // during the GitHub merge + prod rebuild + staging teardown
       // pipeline (~30s). Otherwise the card disappears the instant the
@@ -4203,8 +4207,8 @@ function voteRoutes(config) {
            cs.integration_merged_tree, cs.integration_checks_base_current,
            cs.integration_block_reasons, cs.integration_error,
            -- When the queue tries this change again after GitHub held its
-           -- merge back (services/integration.js heldUntil).
-           cs.merge_held_until,
+           -- merge back (services/integration.js HELD_UNTIL_SQL).
+           ${heldUntilSql} AS merge_held_until,
            cs.approval_epoch,
            -- #2061: the recording of what the merge gate last did, which the
            -- card turns into "what this still needs before it merges".

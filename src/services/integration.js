@@ -70,6 +70,17 @@ function parseRepo(repoUrl) {
 
 // ── The pure read ──────────────────────────────────────────────────────
 
+// When the merge queue tries this change again after GitHub held its merge
+// back (a "merge already in progress" busy answer, or a plain refusal nobody
+// has to act on). The record is the proposal machine's own (`src/workflow/
+// proposal/machine.ts`): `refused.retryAt` is written in the same transition
+// that puts `github_busy` / `github_refused` in `integration_block_reasons`,
+// and the next attempt clears it. So it is read only ALONGSIDE those reasons,
+// never as a standing claim; a record left by an earlier refusal says nothing.
+// Select it as `merge_held_until`, the field readIntegration reads.
+const HELD_UNTIL_SQL = `(SELECT wi.data->'refused'->>'retryAt' FROM wf_instances wi
+  WHERE wi.machine = 'proposal' AND wi.key = 'session:' || cs.id)`;
+
 /**
  * The `integration` block the API serializes and the card renders. Calls
  * nothing, never throws, and is correct on a row that predates the columns.
@@ -98,8 +109,9 @@ function readIntegration(session) {
     blockReasons: Array.isArray(s.integration_block_reasons)
       ? s.integration_block_reasons : [],
     // When the merge queue tries this change again after GitHub held its
-    // merge back (a busy answer or a plain refusal). Read only alongside the
-    // 'github_busy' / 'github_refused' reason, so a stale stamp says nothing.
+    // merge back (HELD_UNTIL_SQL): the queue's own record, read only
+    // alongside the 'github_busy' / 'github_refused' reason, so a stale
+    // record says nothing.
     heldUntil: s.merge_held_until ? new Date(s.merge_held_until).toISOString() : null,
     error: s.integration_error || null,
     // Derived, so every surface agrees without re-deriving: is this answer
@@ -492,6 +504,7 @@ const { currentVotePredicateSql } = require('./pr-vote-revision');
 
 module.exports = {
   readIntegration,
+  HELD_UNTIL_SQL,
   isFresh,
   measure,
   fetchAppMirror,

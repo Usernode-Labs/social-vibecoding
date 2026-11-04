@@ -1112,7 +1112,7 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
         : null;
       if (retryAt) {
         writes.push({ type: 'mergeHeld', sessionId: s.data.sessionId,
-          reason: kind === 'github_busy' ? 'github_busy' : 'github_refused', until: retryAt });
+          reason: kind === 'github_busy' ? 'github_busy' : 'github_refused' });
       }
       return backToReview(s, e, f, ctx, deps, {
         outcome: 'refused', extra: { kind }, line: said ? null : (r?.message || null), writes,
@@ -1950,8 +1950,7 @@ const WRITES = {
     }
   },
   claimed: async (tx: Tx, w: any) => tx.query(
-    `UPDATE chat_sessions SET merge_attempt_at = NOW(), integration_block_reasons = '[]'::jsonb,
-            merge_held_until = NULL WHERE id = $1`, [w.sessionId]),
+    `UPDATE chat_sessions SET merge_attempt_at = NOW(), integration_block_reasons = '[]'::jsonb WHERE id = $1`, [w.sessionId]),
   abandoned: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET approval_epoch = approval_epoch + 1, stale_notified_at = NULL WHERE id = $1', [w.sessionId]),
   // The revision the group votes on moved: one statement, so the approvals
@@ -1993,15 +1992,15 @@ const WRITES = {
     `UPDATE chat_sessions SET integration_block_reasons = $2::jsonb
       WHERE id = $1 AND integration_block_reasons IS DISTINCT FROM $2::jsonb`, [w.sessionId, JSON.stringify(w.reasons || [])]),
   // GitHub held this change's merge back (it was busy, or refused it for a
-  // reason nobody has to act on): the card says so, and says when the queue
-  // tries again. Its reasons are the server's alone; the queue's laneReasons
-  // rewrite leaves them alone.
+  // reason nobody has to act on): the card says so. The time of the next try
+  // is this machine's own refusal record (`refused.retryAt`, below), which the
+  // session reads carry alongside these reasons. Its reasons are the server's
+  // alone; the queue's laneReasons rewrite leaves them alone.
   mergeHeld: async (tx: Tx, w: any) => tx.query(
     `UPDATE chat_sessions
         SET integration_block_reasons = (COALESCE(integration_block_reasons, '[]'::jsonb) - 'github_busy' - 'github_refused')
-              || jsonb_build_array($2::text),
-            merge_held_until = $3
-      WHERE id = $1`, [w.sessionId, w.reason, w.until || null]),
+              || jsonb_build_array($2::text)
+      WHERE id = $1`, [w.sessionId, w.reason]),
   // The once-records of the platform's own syncs, written with the sync.
   bootFailureClaim: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET boot_failure_sync_head = $2 WHERE id = $1', [w.sessionId, w.head]),

@@ -804,10 +804,17 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
       assert.equal(calls(WORK.attempt).length, 2, 'the 5xx is retried, then GitHub\'s answer is read');
       const held = await row(s);
       assert.deepEqual(held.integration_block_reasons, [refusal.reason], 'the card is told why it waits');
-      assert.ok(held.merge_held_until, 'and when the queue tries again');
-      // Its own refusal record carries the retry, and the reason is served.
+      // The time of the next try is the queue's own refusal record, which the
+      // session reads carry beside those reasons (services/integration.js
+      // HELD_UNTIL_SQL); there is no copy of it on the session row.
       const pi = await pInst(s);
-      assert.equal(pi.data.refused.retryAt, new Date(held.merge_held_until).toISOString());
+      assert.ok(Date.parse(pi.data.refused.retryAt) > Date.now() - 1000,
+        'and when the queue tries again');
+      const { rows: [served] } = await pool.query(
+        `SELECT ${require('../src/services/integration').HELD_UNTIL_SQL} AS merge_held_until
+           FROM chat_sessions cs WHERE cs.id = $1`, [s.id]);
+      assert.equal(served.merge_held_until, pi.data.refused.retryAt,
+        'the read serves the queue\'s own retry time');
       // Nothing else happens on the app: only the queue's sweep, after the
       // recorded retry has passed, tries it again.
       await expire(s);

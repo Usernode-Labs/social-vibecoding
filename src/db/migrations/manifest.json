@@ -90,11 +90,6 @@
       "id": "media-drop-bytes",
       "sha256": "97a57e67745033a0a8e4faeb400eebb3c8c288876581efbf79b2f8d76d0c7853",
       "schemaSha256": "a5483f6e9846f3ac2f4848eb5bd583f966b8a2bd9077db97a4eac23f7429fd7a"
-    },
-    {
-      "id": "merge-held-until",
-      "sha256": "c04cec0efb5914b04ea08c303d040852dc29ed9239aa28313b6136d2acadeef7",
-      "schemaSha256": "584344be274356c072d12c8b0ef691d15e78a328bb443f0154475986d579c16d"
     }
   ]
 }
