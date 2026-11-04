@@ -894,13 +894,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "3b9fc58f8fe52776a79d",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
       "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
@@ -925,6 +918,13 @@
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "e6089463636a4a45d8c7",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
     {
       "source": "src/routes/votes.js",

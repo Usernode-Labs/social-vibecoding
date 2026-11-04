@@ -38,6 +38,7 @@ const summaryFreshness = require('../services/summary-freshness');
 const homeroomCommits = require('../services/homeroom-commits');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { updateComingSql } = require('../services/homeroom-bot-progress');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
@@ -2690,6 +2691,9 @@ function mergedRowSelect() {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- #6282: an update on its way. The Votes card says so and holds
+           -- its Vote button until it lands (AppView._changeVotesView).
+           ${updateComingSql('cs')} AS update_coming,
            -- #6287: the viewer's vote on an EARLIER version — still on their
            -- row, no longer counted. The change's page, its request's page,
            -- the pinned Votes card and the side panel all read this row, so
@@ -4285,6 +4289,9 @@ function voteRoutes(config) {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- #6282: an update on its way. The Votes card says so and holds
+           -- its Vote button until it lands (AppView._changeVotesView).
+           ${updateComingSql('cs')} AS update_coming,
            -- #4538: this change was built by Homeroom bot from a request
            -- made for the viewer, so their Workshop lists it in Your work.
            -- The bot stays the row's author; this only says whose ask it

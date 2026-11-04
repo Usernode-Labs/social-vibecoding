@@ -8707,6 +8707,10 @@
     "text": "It’s live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page once the approved change is applied to the running app."
   },
+  "page.votes.note.updateComing": {
+    "text": "An update is coming: votes cast now are cleared when it lands.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page when Homeroom bot or the change's author is changing it, or has a change queued: a Yes or No cast now is thrown away when the update lands, and everyone is asked again."
+  },
   "page.votes.note.goingLive": {
     "text": "It’s going live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while the approved change is being applied to the running app."

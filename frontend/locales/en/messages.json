@@ -5031,6 +5031,22 @@
     "text": "{{project}} · #{{number}} · Homeroom bot is following up on the replies",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change after the newest replies on it."
   },
+  "ai.next.updating": {
+    "text": "{{project}} · #{{number}} · Updating: {{ask}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change now, and {{ask}} is what somebody asked it to change, one line, cut short with an ellipsis when long."
+  },
+  "ai.next.updatingBare": {
+    "text": "{{project}} · #{{number}} · Updating the change",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change now, with nothing particular asked of it."
+  },
+  "ai.next.updatingPr": {
+    "text": "{{project}} · PR {{number}} · Updating: {{ask}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change now, and {{ask}} is what somebody asked it to change, one line, cut short with an ellipsis when long. On a project whose code is on GitHub, the change's number is written PR, not #."
+  },
+  "ai.next.updatingBarePr": {
+    "text": "{{project}} · PR {{number}} · Updating the change",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change now, with nothing particular asked of it. On a project whose code is on GitHub, the change's number is written PR, not #."
+  },
   "ai.next.reading": {
     "text": "{{project}} · #{{number}} · Homeroom bot is reading it",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is reading the request to decide whether to ask a question or build it. \"it\" is the request."
@@ -5090,6 +5106,22 @@
   "ai.up.followUpQueued": {
     "text": "{{project}} · #{{number}} · Waiting for a free builder to follow up on the replies",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot will change its change after the newest replies when one of its builders is free."
+  },
+  "ai.up.updateQueued": {
+    "text": "{{project}} · #{{number}} · Update queued: {{ask}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): somebody asked Homeroom bot to change its change, and that waits its turn; {{ask}} is what was asked, one line, cut short with an ellipsis when long."
+  },
+  "ai.up.updateQueuedBare": {
+    "text": "{{project}} · #{{number}} · Update queued",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): an update to its change waits its turn, and nobody's ask is recorded behind it."
+  },
+  "ai.up.updateQueuedPr": {
+    "text": "{{project}} · PR {{number}} · Update queued: {{ask}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): somebody asked Homeroom bot to change its change, and that waits its turn; {{ask}} is what was asked, one line, cut short with an ellipsis when long. On a project whose code is on GitHub, the change's number is written PR, not #."
+  },
+  "ai.up.updateQueuedBarePr": {
+    "text": "{{project}} · PR {{number}} · Update queued",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): an update to its change waits its turn, and nobody's ask is recorded behind it. On a project whose code is on GitHub, the change's number is written PR, not #."
   },
   "ai.up.buildQueued": {
     "text": "{{project}} · #{{number}} · Ready to build · waiting its turn",
@@ -5318,6 +5350,14 @@
   "ai.short.revising": {
     "text": "Following up",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is following up on replies to its change."
+  },
+  "ai.short.updating": {
+    "text": "Updating",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is changing this change now, after something somebody asked for."
+  },
+  "ai.short.updateQueued": {
+    "text": "Update queued",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: an update to this change waits its turn."
   },
   "ai.short.reading": {
     "text": "Reading it",
