@@ -4603,6 +4603,12 @@ async function runTriage(pool, config, {
   const decided = await look.once('verdict', async () => {
     let v = parsed;
     if (v.complicated && requester?.firstVersion) v = { ...v, complicated: false };
+    // #6209 (4 Nov 2026, evan): a request that asks for a plan before
+    // building is still built straight away when the change is
+    // straightforward: its spec is posted as a plan card and the build goes
+    // on. Only a complicated change, or one that says not to build yet
+    // (which the triage labels complicated), is planned first and waits for
+    // Build it. Nothing here forces that path for every plan-first request.
     if (liveMode && v.verdict === 'ready' && !v.complicated && !requester?.firstVersion
       && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
       v = { ...v, complicated: true };
@@ -6513,8 +6519,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
          FROM chat_sessions WHERE id = $1`,
       [built.sessionId],
     ).catch(() => ({ rows: [] }));
-    await say('proposal', live.proposalText({ link }), {
-      homeroomText: live.proposalHomeroomText({ title: named?.title || null }),
+    await say('proposal', live.proposalText({ link, docOnly: built.docOnly === true }), {
+      homeroomText: live.proposalHomeroomText({ title: named?.title || null, docOnly: built.docOnly === true }),
       msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
       dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },
     });
@@ -10224,6 +10230,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('unproposedLooked', () => (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null }));
   await each('strandedAsks', () => sweepStrandedAsks(pool, bot, settings, deps));
   await each('buildsOwed', () => sweepWaitingBuilds(pool, deps));
+  // #6209: bot changes that add only documents stop linking the requests
+  // they plan for, so a merge cannot close one as done.
+  await each('docOnlyUnlinked', () => live.unlinkDocOnlyProposals(pool, { github: deps.github || require('./github') }));
   // Homeroom bot parity (P4, P5): batches' roll-ups, and notes whose build ended first.
   await each('batches', () => require('./homeroom-bot-batches').sweep(pool, deps));
   await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));
