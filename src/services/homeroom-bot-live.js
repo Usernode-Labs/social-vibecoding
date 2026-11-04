@@ -1523,23 +1523,27 @@ function planCommentText({ spec, questions = [] }) {
  * posts (metadata.specShare), opening the version the build worked from.
  */
 function specCard({
-  sessionId, version, spec, bot, proposed = false, revised = false, asking = false, requester = null,
+  sessionId, version, spec, bot, proposed = false, revised = false, asking = false, waiting = false, requester = null,
 }) {
+  // #6280 (4 Nov 2026): a plan that waits for Build it is posted in the
+  // waiting form, and the building form only once its build has started.
+  // `waiting` says so by the plan's own state; `asking` is the older name.
+  const waits = asking || waiting;
   const title = specTitle(spec);
   // One sentence, as the request page draws the row (transcript.tsx
   // RequestEvent): "Plan v1: {title}. I'm building it now." The page reads
   // `botNote` (and `waitingFor`) off the metadata; the content is the same
   // words for anything that draws the message itself.
   const head = `📋 Plan v${Number(version)}${title ? `: ${title.replace(/[.!?]+$/, '')}` : ''}`;
-  const waitingFor = asking && requester ? String(requester) : null;
+  const waitingFor = waits && requester ? String(requester) : null;
   const content = proposed
     ? `${head}${revised ? ', updated for this change' : ''}.`
-    : asking
+    : waits
       ? `${head}. Nothing is built yet. Waiting for ${waitingFor ? `@${waitingFor}` : 'the person who asked for it'} to say Build it.`
       // #4488: a plan its requester approved was posted when they were
       // asked; its build says so in a note, with no second card.
       : `${head}. I'm building it now.`;
-  const botNote = proposed ? null : asking ? 'waiting' : 'building';
+  const botNote = proposed ? null : waits ? 'waiting' : 'building';
   return {
     content,
     msgType: 'spec_share',

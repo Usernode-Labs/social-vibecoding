@@ -47,6 +47,7 @@ import { normalizeBotTrack } from '../../messages/api';
 import { TrackCard, trackLinks } from '../../messages/bot-track';
 import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
+import { TranslateNote, useTranslate } from '../../messages/translate';
 import {
   STAGES,
   newestSpecVersion,
@@ -78,6 +79,23 @@ function call(fn: string, args: unknown[] = []): void {
 /** One of the layout's empty hosts, or null when the shell is not the request layout. */
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
+}
+
+/**
+ * #6081: translated words as the markup RequestWords draws. The same
+ * markdown renderer the request's own words go through, and the same wrapper
+ * `_issueBodyHtml` gives them, so a translated request looks like the one it
+ * replaces.
+ */
+function translatedWords(markdown: string): string {
+  const devChat = typeof window !== 'undefined' ? (window as any).DevChat : null;
+  if (!devChat?.renderMarkdown) {
+    const escaped = markdown.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+    return `<div class="dev-issue-body">${escaped}</div>`;
+  }
+  const rendered = devChat.renderMarkdown(markdown, { images: true });
+  const mentions = typeof window !== 'undefined' ? (window as any).renderRequestMentions : null;
+  return `<div class="dev-issue-body">${mentions ? mentions(rendered) : rendered}</div>`;
 }
 
 /**
@@ -155,7 +173,13 @@ function reducedMotion(): boolean {
  * and the screenshots leave the fold and are always shown under it, so
  * "Show more" opens only the words (#4481).
  */
-export function RequestWords({ html }: { html: string }): ReactNode {
+export function RequestWords({ html, translate, note }: {
+  html: string;
+  /** #6081: the Translate control that sits beside Show more, when the reader may ask. */
+  translate?: ReactNode;
+  /** The line under the words saying what happened, or how to go back. */
+  note?: ReactNode;
+}): ReactNode {
   const t = useMessages('project');
   const text = useRef<HTMLDivElement>(null);
   // `t` is the language on screen's: a switch lifts the pictures again, so
@@ -215,7 +239,19 @@ export function RequestWords({ html }: { html: string }): ReactNode {
   const togglePin = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (togglePinShot(event.target, event.currentTarget)) event.preventDefault();
   };
-  if (!words && !shots) return null;
+  if (!words && !shots && !translate && !note) return null;
+  const showMore = words && (folds || open);
+  const more = showMore ? (
+    <button
+      type="button"
+      className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
+      aria-expanded={shown}
+      onClick={toggle}
+    >
+      <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+      {shown ? t('project:topic.request.words.showLess') : t('project:topic.request.words.showMore')}
+    </button>
+  ) : null;
   return (
     <div className="dev-request-ask" onClick={togglePin}>
       {/* DevChat.renderMarkdown's output, sanitised where it is built. The
@@ -223,17 +259,8 @@ export function RequestWords({ html }: { html: string }): ReactNode {
           the length of the animation, and puts the clamp back as it ends so
           React's next render agrees with the DOM. */}
       {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
-      {words && (folds || open) ? (
-        <button
-          type="button"
-          className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
-          aria-expanded={shown}
-          onClick={toggle}
-        >
-          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          {shown ? t('project:topic.request.words.showLess') : t('project:topic.request.words.showMore')}
-        </button>
-      ) : null}
+      {translate ? <div className="mt-1 flex flex-wrap items-center gap-4">{more}{translate}</div> : more}
+      {note}
       {shots ? <div className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
     </div>
   );
@@ -434,6 +461,23 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const specs = thread.number === r.number ? thread.specs : [];
   const [editing, setEditing] = useState(false);
   const images = useInlineImageViewer();
+  // #6081: the reader's language, asked for on a tap. The title and the words
+  // are translated together so the pair reads as one; a request with no words
+  // sends only its title.
+  const t = useMessages('project');
+  const myUsername = typeof window !== 'undefined' ? String((window as any).App?.user?.username || '') : '';
+  const sources: string[] = [];
+  const titleAt = r.title?.trim() && r.title.length <= 8000 ? sources.push(r.title) - 1 : -1;
+  // The route takes at most 8000 characters per text; a longer body leaves
+  // its title to be translated on its own rather than failing the pair.
+  const bodyAt = r.bodyMarkdown?.trim() && r.bodyMarkdown.length <= 8000 ? sources.push(r.bodyMarkdown) - 1 : -1;
+  const canTranslate = !!myUsername && !!r.asker && r.asker !== myUsername && sources.length > 0;
+  const translation = useTranslate(sources, { enabled: canTranslate });
+  const shownTitle = translation.state === 'shown' && titleAt >= 0 ? translation.texts[titleAt] : r.title;
+  const shownBody = translation.state === 'shown' && bodyAt >= 0 ? translation.texts[bodyAt] : null;
+  // Rendering markdown on every render would rebuild the body's nodes under a
+  // reader who is just scrolling; the strings are the key, not the arrays.
+  const bodyHtml = useMemo(() => (shownBody == null ? r.bodyHtml : translatedWords(shownBody)), [shownBody, r.bodyHtml]);
   // ⋯ "Edit request" asks for the editor by event, as a change page's
   // "Edit description" does: the menu's row is a closure in AppView.
   useEffect(() => {
@@ -509,9 +553,24 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             {r.askedTime ? <time dateTime={r.askedAt || undefined} title={r.askedTitle}>{r.askedTime}</time> : null}
           </div>
           <h1 className="dev-request-title" data-issue-title={r.number}>
-            <TitleContent t={{ text: r.title, title: r.title, editing: r.titleEditing || undefined }} />
+            <TitleContent t={{ text: shownTitle, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
-          {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : <RequestWords html={r.bodyHtml} />}
+          {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
+            <RequestWords
+              html={bodyHtml}
+              translate={!canTranslate || editing || (translation.state !== 'idle' && translation.state !== 'pending') ? null : (
+                <button
+                  type="button"
+                  className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
+                  onClick={translation.ask}
+                  disabled={translation.state === 'pending'}
+                >
+                  {translation.state === 'pending' ? translate('messages:translate.pending') : t('project:topic.request.words.translate')}
+                </button>
+              )}
+              note={!canTranslate || translation.state === 'idle' ? undefined : <TranslateNote view={translation} className="mt-1" />}
+            />
+          )}
           {working && !r.status.closed ? null : (
             <RequestStatus s={r.status} specs={specs} tracked={!!track} />
           )}

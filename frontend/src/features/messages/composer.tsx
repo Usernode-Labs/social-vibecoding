@@ -13,8 +13,8 @@ import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjec
 import { fileSize, MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
 import { registerComposerDrop } from './pane-drop';
-import { refusalSummary } from '../attachments/refusal-summary';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
 import { wantsKeyboardFocus } from '../message-actions/focus';
@@ -23,7 +23,6 @@ import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShort
 import { SpeakButton } from '../dictation/speak-button';
 import { NotifyAsk } from '../notify-ask/notify-ask';
 
-const MAX_ATTACHMENTS = 4;
 // People asked for per `@` prefix in a channel (#3361).
 const CHANNEL_MENTION_LIMIT = 8;
 
@@ -37,14 +36,6 @@ const FORMAT_BUTTONS: Array<{ kind: FormatKind; label: string; Icon: typeof Bold
   { kind: 'quote', label: 'messages:composer.format.quote', Icon: QuoteIcon },
   { kind: 'bullet', label: 'messages:composer.format.bullets', Icon: ListBulletIcon },
 ];
-
-function attachmentLimit(file: File): number {
-  const name = file.name.toLowerCase();
-  if (file.type.startsWith('image/')) return 4 * 1024 * 1024;
-  if (/\.(txt|md|markdown|json|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|html?|py|rb|rs|go|java|kt|swift|dart|sh|sql|diff|patch)$/i.test(name) || file.type.startsWith('text/')) return 200 * 1024;
-  if (name.endsWith('.zip') || file.type === 'application/zip') return 20 * 1024 * 1024;
-  return 10 * 1024 * 1024;
-}
 
 /** The reference alone, as the server takes it: the staged title stays here. */
 function referenceOf(object: StagedObject): SharedObjectReference {
@@ -511,20 +502,11 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     // #6249: an upload that finishes after the person moved on is saved to
     // the draft it was started in, never drawn in the one they moved to.
     const startScope = scopeRef.current;
-    const room = Math.max(0, MAX_ATTACHMENTS - attachments.length - uploading);
-    const selected = files.slice(0, room);
-    if (!selected.length) { setError(t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS })); return; }
-    // #4065: one line for every file left out — the first reason, and how
-    // many more went with it. The files past the room used to go silently.
-    const tooLarge = selected.filter((file) => file.size > attachmentLimit(file));
-    const cut = files.length - selected.length;
-    const firstReason = tooLarge.length
-      ? t('messages:composer.fileTooLarge', { file: tooLarge[0].name })
-      : (cut ? t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS }) : '');
-    const refused = refusalSummary(firstReason, tooLarge.length + cut - 1);
+    // #6256: the cap, the per-type ceiling and the line naming what was left
+    // out are shared with the blank thread's composer (../attachments/limits).
+    const { upload, refused } = stageFiles(files, attachments.length + uploading, t);
     setError(refused);
-    for (const file of selected) {
-      if (tooLarge.includes(file)) continue;
+    for (const file of upload) {
       setUploading((count) => count + 1); setError(refused);
       try {
         const attachment = await api.uploadAttachment(conversationId, file);

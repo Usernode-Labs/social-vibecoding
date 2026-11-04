@@ -123,6 +123,18 @@ test('the request\'s page draws the plan once it is read, with Build it, and Cha
   assert.equal(card.planCardState(card.planFromRead(read1)), 'open');
   assert.equal(card.planCardState({ ...read1.plan, changing: true }), 'changing');
   assert.equal(card.planCardState({ ...read1.plan, state: 'building' }), 'built');
+  // #6280: the sub-line follows the plan's state. While it waits, who it
+  // waits for; once Build it is pressed, that it is being built, never
+  // "waiting for you".
+  assert.deepEqual(card.planSubOf({ ...read1.plan, mine: true }, 6210),
+    { id: 'project:topic.request.botPlan.subYours', values: { number: '6210' } });
+  assert.equal(message('project:topic.request.botPlan.subYours', { number: '6210' }), 'Plan for #6210 · waiting for you');
+  assert.deepEqual(card.planSubOf({ ...read1.plan, mine: false, requester: 'evan' }, 6210),
+    { id: 'project:topic.request.botPlan.subTheirs', values: { number: '6210', requester: 'evan' } });
+  assert.deepEqual(card.planSubOf({ ...read1.plan, mine: true, state: 'building' }, 6210),
+    { id: 'project:topic.request.botPlan.subBuilding', values: { number: '6210' } });
+  assert.equal(message('project:topic.request.botPlan.subBuilding', { number: '6210' }), 'Plan for #6210 · building');
+  assert.equal(card.planSubOf({ ...read1.plan, state: 'done' }, 6210), null, 'nothing to say once it is done');
   const src = read('frontend/src/features/dev-board/topic/request-plan.tsx');
   assert.match(src, /chat\.setQuote\(\{ source: 'message', refMsgId: plan\.postId, author: 'homeroom_bot'/, 'a public reply quoting the bot\'s post of the plan');
   assert.match(src, /document\.getElementById\('gc-thread-input'\)/);

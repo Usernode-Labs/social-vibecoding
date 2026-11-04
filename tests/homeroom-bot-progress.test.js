@@ -536,8 +536,11 @@ test('#6228: the reply read is one SQL definition, shared with the track', () =>
   assert.match(sql, /ru\.is_synthetic IS NOT TRUE/);
   assert.match(sql, /cm\.created_at > run\.created_at/);
   assert.match(progress.replyLateralSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.app_id = a\.id/);
+  // #6280: the track reads the same record fragment the bot page does, and
+  // the reply lateral is in it, so the two cannot read a reply differently.
   const trackSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-track.js'), 'utf8');
-  assert.match(trackSrc, /replyLateralSql\(\{ appId: 'a\.id', issueNumber: 'w\.n', runAt: 'run\.created_at' \}\)/);
+  assert.match(trackSrc, /requestRecordJoinsSql\(\{ appId: 'a\.id', issueNumber: 'w\.n' \}\)/);
+  assert.match(progress.requestRecordJoinsSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.created_at > run\.created_at/);
 });
 
 // ── #6234: the bot's own fix of a change's failing checks, for its page ───

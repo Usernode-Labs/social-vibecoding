@@ -3027,6 +3027,50 @@
     "text": "Copy text",
     "description": "Item in a message's actions menu: copies the message's words to the clipboard."
   },
+  "row.menu.translate": {
+    "text": "Translate",
+    "description": "Item in the actions menu of someone else's message: shows the message in the language the reader uses Homeroom in. A verb."
+  },
+  "row.menu.showOriginal": {
+    "text": "Show original",
+    "description": "Item in a message's actions menu once its translation is showing: puts the words back as their author wrote them."
+  },
+  "row.menu.showTranslation": {
+    "text": "Show translation",
+    "description": "Item in a message's actions menu while the original words are showing after a translation: shows the translation again."
+  },
+  "translate.from": {
+    "text": "Translated from {{language}}",
+    "description": "Small line under a message or a request that has been translated: names the language its author wrote it in. {{language}} is that language's name in the reader's language."
+  },
+  "translate.translated": {
+    "text": "Translated",
+    "description": "Small line under translated words when the language they were written in is not known: says only that the words were translated."
+  },
+  "translate.pending": {
+    "text": "Translating…",
+    "description": "Shown under words or on the Translate button while the translation is being made."
+  },
+  "translate.failed": {
+    "text": "Couldn't translate this",
+    "description": "Small line under words that could not be translated: says the words stayed as they were written."
+  },
+  "translate.same": {
+    "text": "Already in {{language}}",
+    "description": "Small line under words that were already in the reader's language, so nothing changed. {{language}} is that language's name."
+  },
+  "translate.showOriginal": {
+    "text": "Show original",
+    "description": "Button on the line under translated words: puts them back as their author wrote them."
+  },
+  "translate.showTranslation": {
+    "text": "Show translation",
+    "description": "Button on the line under the original words after they were translated: shows the translation again."
+  },
+  "translate.limit": {
+    "text": "You've translated a lot today. Try again tomorrow.",
+    "description": "Small line under words when the person has reached the daily limit on new translations: the words stay as written and the translation can be asked for again the next day."
+  },
   "row.textCopied": {
     "text": "Message text copied",
     "description": "Brief confirmation after copying a message's words to the clipboard."

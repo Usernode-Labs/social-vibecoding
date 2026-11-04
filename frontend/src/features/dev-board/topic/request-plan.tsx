@@ -64,6 +64,21 @@ export function planCardState(plan: RequestBotPlan): PlanCardState {
   return plan.changing ? 'changing' : 'open';
 }
 
+/**
+ * Pure (#6280, 4 Nov 2026): the line under the plan's title, by what the
+ * plan waits for. While it waits: who it waits for ("Plan for #N · waiting
+ * for you"). Once Build it is pressed: "Plan for #N · building", never
+ * "waiting for you". Null when the plan is no longer waiting or building.
+ */
+export function planSubOf(plan: RequestBotPlan, number: number): { id: string; values: Record<string, string> } | null {
+  const values = { number: String(number) };
+  if (plan.state === 'building') return { id: 'project:topic.request.botPlan.subBuilding', values };
+  if (plan.state !== 'waiting') return null;
+  if (plan.mine) return { id: 'project:topic.request.botPlan.subYours', values };
+  if (plan.requester) return { id: 'project:topic.request.botPlan.subTheirs', values: { ...values, requester: plan.requester } };
+  return { id: 'project:topic.request.botPlan.subAnyone', values };
+}
+
 /** What a refused Build it says, by the server's code. */
 const REFUSALS: Record<string, string> = {
   plan_changing: 'project:topic.request.botPlan.refused.changing',
@@ -150,11 +165,7 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
     questions: plan.choices,
     complicated: true,
   } as HomeroomBotPlan;
-  const sub = plan.mine
-    ? t('project:topic.request.botPlan.subYours', { number: String(number) })
-    : plan.requester
-      ? t('project:topic.request.botPlan.subTheirs', { number: String(number), requester: plan.requester })
-      : t('project:topic.request.botPlan.subAnyone', { number: String(number) });
+  const sub = planSubOf(plan, number);
   return (
     <div className="dev-request-plan" data-request-plan={planCardState(plan)}>
       <PlanCardView
@@ -167,7 +178,7 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
         onChange={change}
         surface="request"
         request={plan.title || ''}
-        sub={sub}
+        sub={sub ? t(sub.id, sub.values) : null}
         card={{ summary: plan.summary, lines: plan.lines }}
         planSpec={<PlanCrops html={specHtml} lines={plan.lines} />}
         readWhole={spec ? (

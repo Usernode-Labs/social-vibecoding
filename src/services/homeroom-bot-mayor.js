@@ -3561,7 +3561,9 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         withoutPictures(messages);
         plan = {};
       } else if (attempt < attempts) {
-        const forced = typeof (overrides.toolChoice ?? toolChoice) === 'object';
+        // #6270: 'required' is a tool choice the provider may refuse too; a
+        // retry then lets the model choose, with the same tools offered.
+        const forced = typeof (overrides.toolChoice ?? toolChoice) === 'object' || (overrides.toolChoice ?? toolChoice) === 'required';
         plan = retryPlan(err, { forced, elapsedMs: Date.now() - t.startedMs, attempt });
       }
       if (!plan) throw err;

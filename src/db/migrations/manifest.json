@@ -110,6 +110,11 @@
       "id": "bot-revision-grants",
       "sha256": "f58d9406fdbb616b0f25b4775a4919805a0eb249bb68d2c6d38644e8c9c1101e",
       "schemaSha256": "0c0ddb653e3e27fa9c83a79f266b770de3b3961d7c34752fbea557772302ff6f"
+    },
+    {
+      "id": "user-content-translations",
+      "sha256": "91f4a28ba6d8dfb0e33768dd0f0ae3da3ed6c3db5819d217d8daa139e2ec9efa",
+      "schemaSha256": "2cc3815976fedc3273f251b6859216f97e9eb37ef41a2a6943cdea3c73ece1b0"
     }
   ]
 }
