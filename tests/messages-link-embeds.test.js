@@ -220,6 +220,28 @@ test('Share to… lists where the sharer can write, and posts a discussion share
   }
   assert.equal(dialog.itemLink({ type: 'issue', appSlug: 'recipes', issueNumber: 12 }, 'https://app.onhomeroom.com'),
     'https://app.onhomeroom.com/app/recipes/dev/issues/12');
+  // #6110: a change or a request whose number did not come with it is never
+  // the app's home. It is the page the share was pressed on when that is an
+  // item's page of the same app (a change built for a request lives on the
+  // request's page); otherwise there is no link, and the send says so.
+  const origin = 'https://app.onhomeroom.com';
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, 'app/recipes/dev/proposals/41'),
+    'https://app.onhomeroom.com/app/recipes/dev/proposals/41', 'the fragment\u2019s spelling');
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, '/app/recipes/dev/changes/77?ws=needs'),
+    'https://app.onhomeroom.com/app/recipes/dev/changes/77', 'the clean path, less its query');
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, '/app/recipes/dev/issues/12'),
+    'https://app.onhomeroom.com/app/recipes/dev/issues/12', 'a change on its request\u2019s page');
+  assert.equal(dialog.itemLink({ type: 'issue', appSlug: 'recipes' }, origin, '/app/recipes/workshop'), null, 'the Workshop is not the request');
+  assert.equal(dialog.itemLink({ type: 'issue', appSlug: 'recipes' }, origin, '/app/other/dev/issues/12'), null, 'another app\u2019s page is not it either');
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, '/app/recipes'), null, 'never the app\u2019s home');
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, null), null);
+  assert.equal(dialog.itemLink({ type: 'app', appSlug: 'recipes' }, origin, '/app/recipes/dev/issues/12'),
+    'https://app.onhomeroom.com/app/recipes', 'only the app itself shares the app');
+  assert.equal(dialog.pageRoute({ pathname: '/app/recipes/dev/issues/12', hash: '' }), '/app/recipes/dev/issues/12');
+  assert.equal(dialog.pageRoute({ pathname: '/', hash: '#app/recipes/dev/issues/12' }), 'app/recipes/dev/issues/12', 'the fragment outranks the path, as the router reads it');
+  const dialogSource = read('frontend/src/features/messages/share-to-dialog.tsx');
+  assert.match(dialogSource, /const link = itemLink\(reference, window\.location\.origin, pageRoute\(window\.location\)\);\s*if \(!link\) throw new Error\(translate\('messages:shareTo\.error\.failed'\)\);/,
+    'a discussion share with no page to link refuses, through the dialog\u2019s own error line');
   const refused = (status, message) => new (loadTsx('frontend/src/features/messages/api.ts').MessagesApiError)(status, message);
   assert.equal(dialog.shareError(refused(404, 'App not found'), { kind: 'discussion', label: 'Recipes' }),
     'You can’t post in the Recipes discussion.', 'a discussion that hides who may post reads as the place');

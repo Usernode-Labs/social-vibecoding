@@ -44,6 +44,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { pageLinkFor } from '../ai/door';
 import { useDialog } from '../dialogs/use-dialog';
 import { toast } from '../message-actions/clipboard';
 import * as api from './api';
@@ -98,15 +99,31 @@ export function itemName(item: SharedObjectReference): string {
  * The card's page on this platform's own address, which an app's
  * discussion draws as its card. The clean path the router writes for it
  * (public/js/app.js `_appUrl`).
+ *
+ * #6110: a request or a change whose number did not come with it is NOT
+ * the app's home. `page` is the address the share was pressed on (the
+ * route: a clean path, or the fragment without its `#`); when it is an
+ * item's page of the same app, that page is the card's link, as it is the
+ * page the sharer is looking at. With neither there is no link, and the
+ * send says so, rather than handing out the app's home for a change.
+ * Only an item that IS the app shares `/app/<slug>`.
  */
-export function itemLink(item: SharedObjectReference, origin: string): string {
+export function itemLink(item: SharedObjectReference, origin: string, page?: string | null): string | null {
   const slug = encodeURIComponent(item.appSlug || '');
   const base = `${origin}/app/${slug}`;
   if (item.type === 'issue' && item.issueNumber) return `${base}/dev/issues/${item.issueNumber}`;
   if (item.type === 'proposal' && item.sessionId) return `${base}/dev/proposals/${item.sessionId}`;
   if (item.type === 'governance' && item.proposalId) return `${base}/dev/governance/${item.proposalId}`;
   if (item.type === 'spec' && item.sessionId) return `${base}/dev/sessions/${item.sessionId}`;
-  return base;
+  if (item.type === 'app') return base;
+  const here = pageLinkFor(page);
+  return here && slug && here.startsWith(`/app/${slug}/`) ? `${origin}${here}` : null;
+}
+
+/** The route on screen, as the router spells it: the fragment, else the clean path. */
+export function pageRoute(location: Pick<Location, 'pathname' | 'hash'>): string {
+  const hash = String(location.hash || '').replace(/^#/, '');
+  return hash || String(location.pathname || '');
 }
 
 /** The reference alone, as the server takes it: no title, nothing else. */
@@ -255,7 +272,8 @@ export function ShareToDialog() {
       if (choice.conversation) {
         await shareToConversation(choice.conversation.id, reference, note);
       } else if (choice.slug) {
-        const link = itemLink(reference, window.location.origin);
+        const link = itemLink(reference, window.location.origin, pageRoute(window.location));
+        if (!link) throw new Error(translate('messages:shareTo.error.failed'));
         const words = note.trim();
         await api.postAppMessage(choice.slug, words ? `${words}\n\n${link}` : link);
       }

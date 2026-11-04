@@ -4716,7 +4716,13 @@ const App = {
   // restoreFromHash so the many in-app callers that route WITHOUT the
   // address having moved (boot, the auth screens, the alias rewrites) don't
   // drag the shot appliers along.
+  //
+  // #6110: an entry the Workshop's side panel wrote its item's address on
+  // is the page's: a traversal onto it shows the page at its place, as Back
+  // did before the address followed the panel. Rewritten in place, first,
+  // before anything reads the address (AppView._leavePanelAddress).
   _routeFromHash() {
+    if (typeof AppView !== 'undefined') AppView._leavePanelAddress?.(); // #6110
     // Recorded before the router runs, and guarded on a real change: one
     // history traversal fires popstate AND hashchange, so this runs twice in
     // a tick with the address already settled (#1102). Without the guard the
@@ -8728,6 +8734,11 @@ const App = {
       }
       return segs.slice(0, 3).join('/');
     };
+    // #6110: while the Workshop's side panel holds an item the address is
+    // the item's (AppView._followPanelAddress); the page's own address,
+    // which this write would be, waits until the panel closes.
+    const panel = typeof AppView !== 'undefined' && AppView._panelAddress;
+    if (panel && currentFull === panel.to && screenIdOf(newUrl) === screenIdOf(panel.from)) return;
     const sameScreen = screenIdOf(currentFull) === screenIdOf(newUrl);
 
     if (opts.replace || sameScreen) {
