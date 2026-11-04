@@ -4411,16 +4411,17 @@ const App = {
     }
     // The chat on screen re-reads its vote snapshot for this vote burst
     // (#6109). loadVoteState rewrites AppView.voteState and patches the vote
-    // hosts through GroupChat.refreshVoteControls, so the count changes in
-    // place: no toast, no re-render, no remount, no scroll. Skipped when the
-    // dev path above already read that slug (refreshDevData reads it on the
-    // dev tab's own chat sub-tab), and when no vote row is on screen.
+    // cards' facts through GroupChat.refreshVoteControls, so the words change
+    // in place: no toast, no re-render, no remount, no scroll. Skipped when
+    // the dev path above already read that slug (refreshDevData reads it on
+    // the dev tab's own chat sub-tab), and when no row about a change is on
+    // screen (#6236: a row carries data-vote-session).
     let chatRead = null;
     const chatSlug = typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null;
     if (chatSlug && b.voteSlugs.has(chatSlug)
       && !(App.currentTab === 'dev' && App.currentApp === chatSlug && b.dev)
       && typeof AppView !== 'undefined' && AppView.loadVoteState
-      && document.querySelector('#gc-messages [data-vote-controls], #gc-thread-messages [data-vote-controls]')) {
+      && document.querySelector('#gc-messages [data-vote-session], #gc-thread-messages [data-vote-session]')) {
       try {
         chatRead = AppView.loadVoteState(chatSlug);
       } catch { chatRead = null; }

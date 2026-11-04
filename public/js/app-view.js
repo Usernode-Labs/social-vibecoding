@@ -10208,8 +10208,8 @@ const AppView = {
     return run;
   },
 
-  // Fetch the vote snapshot (promoted + merged) that powers the inline
-  // vote buttons on group-chat activity rows (AppView.voteState — see
+  // Fetch the vote snapshot (promoted + merged) that powers the vote cards
+  // under a chat's rows about a change (AppView.voteState — see
   // group-chat.js refreshVoteControls). The chat sub-tab calls this in
   // place of the old full vote-panel load.
   async loadVoteState(slug) {
@@ -17861,11 +17861,10 @@ const AppView = {
     return AppView._approveSolo(pr) ? PlatformI18n.t('changes:card.waiting.yourApproval') : PlatformI18n.t('changes:card.waiting.approval');
   },
 
-  // The card's Yes/No pair, and ONLY that pair. voteButtonsHtml stays as it
-  // is — group-chat.js's inline activity rows, the work drawer and the home
-  // strip all consume it, and its Preview/Retry/Admin-merge concatenation is
-  // still the right shape there. On the board those three moved to the icon
-  // slot and the ⋯ menu, so the card needs its own narrower builder.
+  // The card's Yes/No pair, and ONLY that pair. Preview, Retry and Admin
+  // merge moved to the icon slot and the ⋯ menu, so the card needs its own
+  // narrower builder (the chat's Preview/Yes/No/Admin-merge concatenation,
+  // voteButtonsHtml, is gone with its row — #6236).
   //
   // Keeps the reviewed_head_sha revision argument: the server rejects a vote
   // cast against a head the voter never saw, and dropping it here would
@@ -22293,8 +22292,8 @@ const AppView = {
   // Admin force-apply for an env-var (secret_change) proposal: bypass the
   // active-user vote majority and apply the change right now. Gated
   // server-side by /api/issues/:id/admin-apply (admin-only). Mirrors
-  // castAdminMerge's ConfirmModal misclick guard — the button sits inline
-  // with the regular Yes/No buttons.
+  // castAdminMerge's ConfirmModal misclick guard — the button sits beside
+  // the regular Yes/No buttons.
   async castIssueAdminApply(issueId) {
     if (!App.user?.isAdmin) return;
     const key = `issue-admin-apply:${issueId}`;
@@ -25204,19 +25203,10 @@ const AppView = {
       + `</span>` + advisoryChip + explicitChip;
   },
 
-  // "Merging…" badge shown alongside (not instead of) the vote controls
-  // once a PR crosses the threshold and the merge pipeline is in flight.
-  // Shared by the vote panel rows and the inline group-chat rows.
-  mergingBadgeHtml() {
-    return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${PlatformI18n.htmlText('changes:badge.merge.merging')}</span>`;
-  },
-
-  // "Merged" badge — the settled counterpart of the merging badge, shown
-  // next to the (now read-only) tally pill / "You voted X" box on group-chat
-  // rows after a PR lands so the voting info doesn't disappear.
-  mergedBadgeHtml() {
-    return `<span class="gc-merged-badge">${PlatformI18n.htmlText('changes:badge.merge.merged')}</span>`;
-  },
+  // `mergingBadgeHtml` / `mergedBadgeHtml` — the "Merging…" and "✓ Merged"
+  // badges beside a chat vote row's tally — went with that row (#6236): the
+  // vote card says the same in words (chat:group.voteCard.merging / merged).
+  // The board's own merging chip is `statusPillState`'s.
 
   // #361's persistent merge-status badges (conflictFailedBadgeHtml /
   // behindBadgeHtml) are GONE: the composite status pill derives
@@ -27139,81 +27129,16 @@ const AppView = {
     return out;
   },
 
-  voteButtonsHtml(pr, opts) {
-    if (!pr) return '';
-    AppView._rememberSessionTesting(pr.id, pr);
-    // Group-chat inline rows pass { collapseVoted: true }: once the viewer
-    // has voted, the whole control set is replaced by a single read-only
-    // "You voted X" box. The activity drawer passes nothing, so it keeps the
-    // full Preview/Yes/No/Admin-merge set (with the chosen side highlighted)
-    // so voters can re-cast or preview after voting.
-    if (opts && opts.collapseVoted && (pr.my_vote === 'yes' || pr.my_vote === 'no')) {
-      const voted = pr.my_vote === 'yes' ? PlatformI18n.htmlText('changes:vote.row.votedYes') : PlatformI18n.htmlText('changes:vote.row.votedNo');
-      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">${voted}</span>${AppView._uncountedVoteNoteHtml(pr)}`;
-    }
-    // In the chat, a merging/merged PR has closed voting — don't render live
-    // (now no-op) Yes/No buttons for someone who never voted; the pill +
-    // status badge already convey the outcome.
-    if (opts && opts.collapseVoted && pr.status !== 'promoted') return '';
-    const preview = AppView._previewAffordanceHtml(pr);
-    // #621: read-only viewers keep the Preview affordance but get no
-    // vote controls — the tally pill on the card already shows counts.
-    // #866: they also get no "Retry preview" (the ensure POST is
-    // collab-gated), so the unavailable chip renders bare for them.
-    if (AppView.readOnly) return preview;
-    const retryPreview = (!pr.staging_url && pr.staging_error)
-      ? `<button class="gc-vote-btn" title="${PlatformI18n.htmlText('changes:vote.row.retryPreviewTitle')}" onclick="AppView.swapToStagingForSession(${pr.id}, '')">${PlatformI18n.htmlText('changes:vote.row.retryPreview')}</button>`
-      : '';
-    // #788: force-merge is available to platform admins AND to the app's
-    // own declared admins (ctx.canManage covers creator + app admins,
-    // but only app admins / platform admins get force-merge — the
-    // server is the authority; this just decides whether to render the
-    // button). The one carve-out: a proposal that changes the admins
-    // block can't be force-merged by an app admin (self-escalation), so
-    // there the button is platform-admin-only.
-    const vbCtx = AppView._proposalsCtx || {};
-    const canForceMerge = App.user?.canAdminWrite
-      || (!!vbCtx.isAppAdmin && !pr.requires_explicit_approval);
-    const adminMerge = canForceMerge
-      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${escapeAttr(AppView._adminMergeTitle(pr))}" onclick="AppView.castAdminMerge(${pr.id})">${PlatformI18n.htmlText('changes:vote.row.adminMerge')}</button>`
-      : '';
-    // The vote carries the approval epoch this card was rendered with, so a
-    // proposal that genuinely changed under the voter is still refused —
-    // while one the platform merely rebased is not.
-    // #2038: see _cardVoteButtonSpecs — the epoch, not the commit.
-    const voteEpoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
-      ? parseInt(pr.approval_epoch, 10) : null;
-    const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
-    const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'yes');
-    const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'no');
-    // V03 (audit, 2 Nov 2026): a side nobody has taken says no count. "Yes
-    // (0)" and "No (0)" spelled out two zeros on every new change's row.
-    const yesWords = yesT.label === '0'
-      ? PlatformI18n.htmlText('changes:vote.row.yesNone')
-      : PlatformI18n.htmlText('changes:vote.row.yes', { tally: yesT.label });
-    const noWords = noT.label === '0'
-      ? PlatformI18n.htmlText('changes:vote.row.noNone')
-      : PlatformI18n.htmlText('changes:vote.row.no', { tally: noT.label });
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">${yesWords}</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">${noWords}</button>`;
-    return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
-  },
-
-  // One line beside the legacy vote controls: a test account's vote is
-  // recorded but not counted (my_vote_uncounted), and #4747 a viewer
-  // outside the people who decide has an advisory vote (my_vote_advisory)
-  // — recorded, shown, but it does not decide this one. The test-account
-  // line wins when both apply. The board card's picker carries the same
-  // words (VotePicker).
-  _uncountedVoteNoteHtml(pr) {
-    if (!pr) return '';
-    if (pr.my_vote_uncounted === true) {
-      return `<span class="gc-vote-uncounted" data-vote-uncounted="">${PlatformI18n.htmlText('changes:vote.row.uncounted')}</span>`;
-    }
-    return pr.my_vote_advisory === true
-      ? `<span class="gc-vote-uncounted" data-vote-uncounted="">${PlatformI18n.htmlText('changes:vote.row.advisory')}</span>`
-      : '';
-  },
+  // `voteButtonsHtml`, `_uncountedVoteNoteHtml` and `_previewAffordanceHtml`
+  // lived here: the Preview / Yes / No / Admin merge row (with the "You
+  // voted X" box, the Retry preview chip and the uncounted-vote line) that
+  // group-chat.js filled into a chat's vote rows. #6236 retired the row: a
+  // line about a change draws features/group-chat/vote-card.tsx now — the
+  // change's name with See the vote on its request's page, a small card with
+  // Preview and Vote elsewhere — and Admin merge is only in the change's ⋯
+  // menu (_proposalMenuItems). The Dev board's card and the change page
+  // never called these: their vote is _cardVoteButtonSpecs and VotePicker,
+  // their preview _cardPreviewSpec through card/dev-card.tsx.
 
   // #866: the Preview slot has three states, not two.
   //
@@ -27229,16 +27154,16 @@ const AppView = {
   //                        the first build is still running would only ever
   //                        return 'rebuilding' and park a loader.
   //   staging_error      → "Preview unavailable" with the captured reason in
-  //                        the tooltip; voteButtonsHtml adds "Retry preview"
-  //                        beside it for viewers who can trigger a rebuild.
+  //                        the tooltip; a change's Testing card offers the
+  //                        retry to viewers who can trigger a rebuild.
   // Neither flag (a plain GC'd or not-yet-built native row) keeps today's
   // empty slot.
   //
   // ── The ONE preview affordance ──────────────────────────────────────
   //
   // "Preview" used to be built in four separate places with four different
-  // tooltips and four different gating rules: proposal cards (through
-  // voteButtonsHtml), the viewer's own session cards, other users' shared
+  // tooltips and four different gating rules: proposal cards (through the
+  // since-retired voteButtonsHtml), the viewer's own session cards, other users' shared
   // session cards, and the headless branch of an issue card. All four
   // already funnelled into swapToStagingForSession(id, url), so the only
   // real differences were wording and which of staging_url / can_preview /
@@ -27334,21 +27259,6 @@ const AppView = {
   // `_cardPreviewSpec` through card/dev-card.tsx's `Preview` now, so the
   // truth table has exactly one renderer again.
 
-  _previewAffordanceHtml(pr) {
-    if (!pr) return '';
-    if (pr.staging_url) {
-      return `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">${PlatformI18n.htmlText('changes:vote.row.preview')}</button>`;
-    }
-    if (pr.staging_building) {
-      return `<span class="gc-checks-running-badge" title="${PlatformI18n.htmlText('changes:vote.row.previewBuildingTitle')}">`
-        + `<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${PlatformI18n.htmlText('changes:vote.row.previewBuilding')}</span>`;
-    }
-    if (pr.staging_error) {
-      return `<span class="gc-conflict-badge" title="${escapeAttr(String(pr.staging_error).slice(0, 300))}">${PlatformI18n.htmlText('changes:vote.row.previewUnavailable')}</span>`;
-    }
-    return '';
-  },
-
   // #695: the Yes/No button tally. On invited-approver apps (row carries
   // approval_policy='invited' + a qualifying count) the label splits into
   // approver votes (✓, the ones that count) plus the advisory surplus —
@@ -27383,9 +27293,9 @@ const AppView = {
   // Admin force-merge: bypass the active-user vote majority entirely
   // and merge a promoted PR right now. Gated server-side by
   // /api/sessions/:id/admin-merge (admin-only). The ConfirmModal here
-  // is the misclick guard — the "Admin merge" button sits inline with
-  // the regular Yes/No buttons, and we don't want a fat-finger to
-  // accidentally bypass voting when the admin meant to just vote.
+  // is the misclick guard: Admin merge is a row of the change's ⋯ menu
+  // (_proposalMenuItems) and nowhere else since #6236 — never inline in a
+  // chat line, where a fat-finger could bypass the vote by mistake.
   async castAdminMerge(sessionId) {
     if (!App.user?.isAdmin) return;
     const key = `admin-merge:${sessionId}`;

@@ -66,7 +66,9 @@ test('"Checks passing" no longer inherits the violet Merged colour', () => {
   // Its own class, so a future tone change to one can't silently move the
   // other, and both resolve to the OK token rather than a hex.
   assert.match(CSS, /\.gc-checks-passing-badge \{[^}]*color: var\(--state-ok\)/);
-  assert.match(CSS, /\.gc-merged-badge \{[^}]*color: var\(--state-ok\)/);
+  // #6236: the chat row's "✓ Merged" badge went with the row; its rule would
+  // be dead CSS for a badge nothing paints.
+  assert.doesNotMatch(CSS, /\.gc-merged-badge \{/);
   const FE = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
   assert.match(FE, /gc-checks-passing-badge[^>]*>\$\{PlatformI18n\.htmlText\('changes:chips\.checks\.passing'\)\}/,
@@ -74,14 +76,13 @@ test('"Checks passing" no longer inherits the violet Merged colour', () => {
   assert.equal(message('changes:chips.checks.passing'), '✓ Checks passing');
 });
 
-test('the tally pill and the voted box follow the theme', () => {
+test('the tally pill follows the theme', () => {
   const pill = CSS.slice(CSS.indexOf('.gc-vote-count {'), CSS.indexOf('.gc-vote-count-pending'));
   assert.doesNotMatch(pill, /#fff/, 'no hard-coded white');
   assert.match(pill, /background: var\(--bg-primary\)/);
   assert.match(CSS, /\.gc-vote-count-label \{[^}]*color: var\(--text-primary\)/);
-  const voted = CSS.slice(CSS.indexOf('.gc-vote-voted-box {'), CSS.indexOf('.gc-vote-voted-box-yes'));
-  assert.doesNotMatch(voted, /#fff/);
-  assert.match(voted, /background: var\(--bg-primary\)/);
+  // #6236: the chat row's "You voted X" box went with the row.
+  assert.doesNotMatch(CSS, /\.gc-vote-voted-box/);
 });
 
 // ── One meaning per hue ─────────────────────────────────────────────────
@@ -114,9 +115,13 @@ test('the in-flight merge stages read PROGRESS, freeing amber for warnings', () 
   for (const dead of ['resolvingBadgeHtml()', 'behindBadgeHtml(pr)', 'conflictFailedBadgeHtml()']) {
     assert.ok(!FE.includes(dead), `${dead} has no renderer left`);
   }
-  // The two that other surfaces still call must survive.
-  assert.match(FE, /mergingBadgeHtml\(\) \{/, 'group-chat.js still renders this one');
-  assert.match(FE, /mergedBadgeHtml\(\) \{/);
+  // #6236: the chat row's two badges went with the row; the vote card says
+  // merging and merged in words (chat:group.voteCard.merging / merged).
+  for (const dead of ['mergingBadgeHtml() {', 'mergedBadgeHtml() {']) {
+    assert.ok(!FE.includes(dead), `${dead} has no renderer left`);
+  }
+  assert.equal(message('chat:group.voteCard.merging'), 'Merging…');
+  assert.equal(message('chat:group.voteCard.merged'), 'Merged');
 });
 
 test('#2585: the building preview pill is gray in BOTH themes, and not ghosted', () => {
@@ -137,12 +142,10 @@ test('#2585: the building preview pill is gray in BOTH themes, and not ghosted',
     'it comes after :disabled and :hover, which both still match a disabled button');
 });
 
-test('an admin bypass is distinguished by SHAPE as well as hue', () => {
-  // Amber alone would compete with the advisory warnings, so the force-merge
-  // control carries a dashed outline too.
-  const admin = CSS.slice(CSS.indexOf('.gc-vote-btn-admin {'), CSS.indexOf('.gc-vote-btn-admin:hover'));
-  assert.match(admin, /color: var\(--state-admin\)/);
-  assert.match(admin, /border-style: dashed/);
+test('the chat row\'s dashed Admin merge button is gone with the row', () => {
+  // #6236: Admin merge is a row of the change's ⋯ menu alone, never inline
+  // in a chat line; the button's rule would be dead CSS.
+  assert.doesNotMatch(CSS, /\.gc-vote-btn-admin \{/);
 });
 
 test('the canonical MergeStatus tones route through the tokens', () => {

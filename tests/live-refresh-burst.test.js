@@ -78,7 +78,7 @@ function harness({ currentApp = 'demo', currentTab = 'dev', homeVisible = false,
     document: {
       getElementById: (id) => (id === 'home-screen'
         ? { classList: { contains: (c) => c === 'hidden' && !homeVisible } } : null),
-      querySelector: (sel) => (voteHost && /data-vote-controls/.test(sel)
+      querySelector: (sel) => (voteHost && /data-vote-session/.test(sel)
         ? { getAttribute: () => null } : null),
     },
   };
