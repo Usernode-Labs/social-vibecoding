@@ -368,7 +368,7 @@
     "description": "Heading of the dialog for proposing what Homeroom bot calls itself in a project."
   },
   "botName.current": {
-    "text": "In {{project}} it's called<0>{{name}}</0>",
+    "text": "In {{project}} it's called <0>{{name}}</0>",
     "description": "Line under the heading of the Bot's name dialog. {{project}} is the project's name and {{name}} is what the bot is called there now; the numbered tag sets the name in a different typeface and must stay around it."
   },
   "botName.label": {
