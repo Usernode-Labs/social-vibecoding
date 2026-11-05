@@ -252,12 +252,11 @@ test('#6153: the Vote under a request\'s up-for-a-vote line goes once its vote i
   assert.match(source, /const BEFORE_BUILD: ReadonlySet<string> = new Set\(\['reading', 'planning', 'waiting_for_you'\]\);/);
   assert.match(source, /const pastPlan = !!track && !BEFORE_BUILD\.has\(track\.work\.stage\);/);
   assert.match(source, /\.filter\(\(action\) => !\(pastPlan && action\.id === 'read_plan'\) && !\(pastVote && action\.id === 'vote'\)\);/);
+  // The lines themselves (buildingLine, upForVoteLine) are no longer said
+  // (5 Nov 2026, decision 6); one said before keeps its Vote until decided.
   const dm = require('../src/services/homeroom-bot-dm');
-  assert.equal(dm.buildingLine({ issueNumber: 14, appName: 'Ear Trainer', version: 4 }), 'Homeroom bot is building #14 from version 4.');
-  assert.equal(dm.buildingLine({ issueNumber: 14, appName: 'Ear Trainer' }), 'Homeroom bot is building #14.', 'a plan that names no design version');
-  assert.equal(dm.buildingLine({ issueNumber: 3, appName: 'Ear Trainer', firstVersion: true, version: 2 }),
-    'Homeroom bot is building the first version of Ear Trainer from version 2.');
-  assert.equal(dm.upForVoteLine({ issueNumber: 14, appName: 'Ear Trainer' }), '#14 is up for a vote.');
+  assert.equal(dm.buildingLine, undefined);
+  assert.equal(dm.upForVoteLine, undefined);
   const { planHtml, planDesignVersion } = require('../src/services/design-threads');
   const design = { title: 'Home', route: '/', width: 390, height: 844 };
   assert.equal(planDesignVersion(planHtml({ design, title: 'Design: Home', notes: '', after: '<p>new</p>', version: 4 })), 4, 'a new screen');

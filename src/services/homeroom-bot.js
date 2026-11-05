@@ -8743,7 +8743,9 @@ async function buildLive({
       log.warn('homeroom-bot', 'A first version did not finish; trying once more from its plan', {
         app: app.slug, issueNumber, runId, sessionId: first.sessionId || null, error: first.error,
       });
-      await steps.once('retry_said', () => say('spec', live.retryCommentText(), { dm: { building: true, retry: true } })
+      // Decision 6 (5 Nov 2026): not said in the request's thread, where its
+      // stage says it is building again; its first-version news keeps it.
+      await steps.once('retry_said', () => say('spec', live.retryCommentText(), { dm: { building: true, retry: true }, skipIssueThread: true })
         .then(() => true)
         .catch((err) => {
           durableSteps.rethrowStop(err, 'retry note');

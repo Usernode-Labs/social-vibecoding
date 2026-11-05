@@ -319,15 +319,15 @@ test('the client keeps a ready card\'s state only as one it knows, and only the 
 });
 
 test('a vote on one of the bot\'s changes reads its requester\'s DM again', () => {
-  // Told to the bot's change machine in the vote's own statement (its tray
-  // push, and a yes's line in the request's thread: bot.tellApproved), so a
-  // restart after the commit loses nothing.
+  // Told to the bot's change machine in the vote's own statement (its push
+  // of where its requests stand), so a restart after the commit loses
+  // nothing. A yes is no line in the request's thread (5 Nov 2026).
   const votes = read('src/routes/votes.js');
   const record = votes.slice(votes.indexOf('async function recordVote('), votes.indexOf('async function retractVote('));
   assert.match(record, /told AS \(\$\{botChangeVotedSql\(\{ from: 'v', sessionId: 'v\.session_id', voterId: '\$2::int', voter: '\$7::text', vote: '\$3::text', epoch: 'v\.approval_epoch' \}\)\}\)/);
   assert.doesNotMatch(votes, /noteVoted/);
   const machine = read('src/workflow/bot-change/machine.ts');
-  assert.match(machine, /return step\(live\.name as Name, asked\(live\.data, work\), \{ work, push: tray\(f\) \}\);/);
+  assert.match(machine, /return step\(live\.name as Name, live\.data, \{ work: \[\], push: tray\(f\) \}\);/);
   const store = read('frontend/src/features/messages/bot-activity-store.ts');
   assert.match(store, /ready: new Map\(ready\.map\(\(entry\) => \[entry\.messageId, entry\]\)\),/);
 });
@@ -450,19 +450,8 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       await yes(priya);
       const [after] = await ready();
       assert.deepEqual([after.approval.missing, after.approval.waitingOn], [0, []]);
-      assert.equal(await dm.sayApproved(pool, 999999, { voterId: priya.id, voter: 'priya' }), null, 'one indexed read for a change that is not the bot\'s');
-      // Her yes is said only while it stands: a retraction since (a re-asked
-      // vote landing after it) says nothing.
-      const asked = [];
-      const watched = { query: (sql, params) => { asked.push(sql); return pool.query(sql, params); } };
-      await pool.query('DELETE FROM pr_votes WHERE session_id = $1 AND user_id = $2', [first.id, priya.id]);
-      assert.equal(await dm.sayApproved(watched, first.id, { voterId: priya.id, voter: 'priya', epoch: 0 }), null, 'retracted');
-      assert.ok(/FROM pr_votes/.test(asked.at(-1)), 'stopped at its vote, nothing said');
-      await yes(priya);
-      asked.length = 0;
-      await dm.sayApproved(watched, first.id, { voterId: priya.id, voter: 'priya', epoch: 0 });
-      const at = asked.findIndex((q) => /FROM pr_votes/.test(q));
-      assert.ok(at >= 0 && asked.length > at + 1, 'standing: it goes on to say it');
+      // Her yes is no line in the request's thread (5 Nov 2026, decision 6).
+      assert.equal(dm.sayApproved, undefined);
     });
 
     await t.test('merged: the card says it is live, with no button of its own (#4228)', async () => {

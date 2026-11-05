@@ -489,6 +489,76 @@ async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, conten
   return { repeated: true, id: Number(last.post_id), threadMessageId: Number(last.message_id) };
 }
 
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4, decision 6): what the
+// bot says in a request's thread, and nothing else. Its question or plan
+// (`question`, `person` and `empty` ask its requester something; `plan` and
+// `spec` are the plan), the change built and up for a vote (`proposal`), one
+// failure post (FAILURE_KINDS, updated in place, replaceFailurePost), live
+// (`live`), and its answer to somebody who wrote to it there (`going_ahead`,
+// `held_by_person`, homeroom-bot-holds.js sayHeld). Where the work stands
+// otherwise is the request's stage, on its page (services/work-state.js):
+// "looking at this now" and the like go nowhere. Another kind is still
+// recorded, and still a GitHub comment on a project hosted there.
+const FAILURE_KINDS = new Set(['build_failed', 'followup_failed', 'followup_person', 'blocked']);
+const THREAD_KINDS = new Set([
+  'question', 'person', 'empty', 'plan', 'spec', 'proposal', ...FAILURE_KINDS, 'live', 'going_ahead', 'held_by_person',
+]);
+
+/** Pure: whether a post of this kind is said in the request's thread. */
+function saidInThread(kind) {
+  return THREAD_KINDS.has(String(kind || ''));
+}
+
+/**
+ * Decision 6: a failure, when the bot's last post in the request's thread
+ * was a failure too, takes that post's place: its message gets the new
+ * words and metadata (an offer to try again included), and the room hears
+ * both (chat_edit, chat_message_updated). The same words again
+ * are updateRepeatedBuildFailure's, before this. Resolves { id } of the
+ * message, or null when there is no such post to replace (it is then
+ * posted as new). `postId` is this post's own row, left out of the look.
+ */
+async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, content, metadata }) {
+  const { rows: [last] } = await pool.query(
+    `SELECT p.kind, m.id AS message_id
+       FROM homeroom_bot_posts p
+       JOIN chat_messages m ON m.id = p.thread_message_id AND m.deleted_at IS NULL
+      WHERE p.app_id = $1 AND p.issue_number = $2 AND p.id <> $3 AND p.thread_message_id IS NOT NULL
+      ORDER BY p.id DESC
+      LIMIT 1`,
+    [appId, issueNumber, postId],
+  );
+  if (!last || !FAILURE_KINDS.has(last.kind)) return null;
+  const text = String(content || '').trim();
+  if (!text) return null;
+  const { rows: [updated] } = await pool.query(
+    `UPDATE chat_messages SET content = $2, metadata = $3::jsonb, edited_at = NOW()
+      WHERE id = $1 AND deleted_at IS NULL
+      RETURNING id, edited_at, thread_type, thread_ref`,
+    [Number(last.message_id), text, JSON.stringify(metadata || {})],
+  );
+  if (!updated) return null;
+  try {
+    if (ws && typeof ws.broadcast === 'function') {
+      ws.broadcast(Number(appId), {
+        type: 'chat_edit',
+        messageId: Number(updated.id),
+        content: text,
+        editedAt: updated.edited_at,
+        thread: { type: updated.thread_type || 'issue', ref: Number(updated.thread_ref || issueNumber) },
+      });
+      ws.broadcast(Number(appId), {
+        type: 'chat_message_updated', id: Number(updated.id), metadata: metadata || {},
+        thread: { type: updated.thread_type || 'issue', ref: Number(updated.thread_ref || issueNumber) },
+      });
+    }
+  } catch { /* the next read draws it */ }
+  log.info('homeroom-bot', 'A failure took the place of the request\'s last failure post', {
+    appId, issueNumber, messageId: Number(updated.id), was: last.kind,
+  });
+  return { id: Number(updated.id) };
+}
+
 // #4367: by its pull request's number once it has one.
 function proposalLink(domain, appSlug, sessionId, prNumber = null) {
   return `https://${domain}/${require('./change-destination').changeHref(appSlug, sessionId, prNumber)}`;
@@ -2073,7 +2143,7 @@ async function post({
   // then hears only milestones) are left out, and the post is recorded,
   // and relayed to the requester's DM when it carries `dm`, as before.
   const noComment = proposalOnly || !!skipGithub;
-  const noIssueThread = proposalOnly || !!skipIssueThread;
+  const noIssueThread = proposalOnly || !!skipIssueThread || !saidInThread(kind);
   // #6229: a change built for a request has no page of its own (1 Nov 2026),
   // so the request's page is where its note is read. It is said once there,
   // tagged with the change, rather than twice (the request's copy and the
@@ -2218,15 +2288,23 @@ async function post({
       hrbotPost: String(postId),
     });
     try {
+      // Decision 6: one failure post, updated in place. Nobody is tagged or
+      // told again for it: its requester's bell rang from its stage.
+      const replaced = FAILURE_KINDS.has(kind) && sender && !threadMessage
+        ? await replaceFailurePost(pool, ws, {
+          appId: app.id, issueNumber, postId, content: threadText, metadata: marked(metadata),
+        })
+        : null;
+      if (replaced) messageSentBefore = true;
       // A spec is a card in the thread (its full text is on GitHub, and one
       // click away from the card), not a wall of markdown in a chat bubble.
-      message = threadMessage && sender
+      message = replaced || (threadMessage && sender
         ? await ws.sendBotMessage(pool, app.id, {
           user: sender, content: handles ? `${handles} ${firstPerson(threadMessage.content)}` : firstPerson(threadMessage.content),
           metadata: marked(threadMessage.metadata),
           thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
         })
-        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata));
+        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata)));
     } catch (err) {
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
       failed.push(`the thread message (${err.message})`);
@@ -5625,6 +5703,10 @@ async function unlinkDocOnlyProposals(pool, deps = {}) {
 }
 
 module.exports = {
+  FAILURE_KINDS,
+  THREAD_KINDS,
+  saidInThread,
+  replaceFailurePost,
   BOT_STOP_KEY,
   stopOnClock,
   botStopOf,
