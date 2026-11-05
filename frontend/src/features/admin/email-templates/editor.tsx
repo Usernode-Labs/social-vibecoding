@@ -8,6 +8,7 @@ import {
   confirmDiscard, errorsFor, FailureNotice, FieldErrors, isDirty, keepDraft, liveLayouts, liveTemplate,
   PlaceholderList, readFailure, request, useUnloadGuard, type Failure, type KeptDraft, type TemplateRow, type TemplatesPayload,
 } from './shared';
+import { insertAt, UploadImageButton } from './image-panel';
 import { VisualTab } from './visual-tab';
 
 // The template editor: what the email is for, its name, the layout it wears,
@@ -108,6 +109,18 @@ export function TemplateForm({
   const layouts = liveLayouts(payload);
   const err = (...fields: string[]) => errorsFor(failure, ...fields);
   const readOnly = !canWrite;
+  // The HTML box and its latest text, for an image tag put at the cursor once
+  // an upload finishes, by which time the admin may have typed on.
+  const htmlArea = useRef<HTMLTextAreaElement | null>(null);
+  const latestHtml = useRef(draft.html);
+  latestHtml.current = draft.html;
+  const putAtCursor = (tag: string) => {
+    const el = htmlArea.current;
+    const source = latestHtml.current;
+    const start = el ? el.selectionStart : source.length;
+    const end = el ? el.selectionEnd : source.length;
+    onChange('html', insertAt(source, start, end, tag));
+  };
   const e = {
     action: err('action'),
     name: err('name'),
@@ -203,9 +216,10 @@ export function TemplateForm({
               ) : tab === 'html' ? (
                 <Field id="email-template-html" label="HTML" errors={e.html}
                   hint={draft.layoutFamilyId == null ? 'The whole email, from <html> to </html>.' : 'The middle of the email; the layout adds the rest.'}>
-                  <textarea id="email-template-html" className={`${AdminUI.textarea} font-mono text-xs`} rows={18}
+                  <textarea id="email-template-html" ref={htmlArea} className={`${AdminUI.textarea} font-mono text-xs`} rows={18}
                     spellCheck={false} value={draft.html} readOnly={readOnly}
                     onChange={(ev) => onChange('html', ev.target.value)} {...described('email-template-html', e.html)} />
+                  {readOnly ? null : <UploadImageButton onTag={putAtCursor} />}
                 </Field>
               ) : (
                 <Field id="email-template-text" label="Text version"

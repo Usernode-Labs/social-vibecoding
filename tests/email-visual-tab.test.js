@@ -145,7 +145,7 @@ test('links take a web address or a link placeholder, and a button goes after th
   assert.equal(next, source.slice(0, model.blocks[0].outerEnd) + snippet + source.slice(model.blocks[0].outerEnd));
 });
 
-test('the toolbar offers what the brief lists, labelled, with Image waiting for the next part', () => {
+test('the toolbar offers what the brief lists, labelled, with Image opening its panel', () => {
   const source = englishTemplate('otp').html;
   const html = renderToHtml(createElement(visual.VisualTab, {
     source, opened: source, onChange() {},
@@ -154,11 +154,10 @@ test('the toolbar offers what the brief lists, labelled, with Image waiting for 
   for (const label of ['Bold', 'Italic', 'Link', 'Button', 'Image', 'Insert placeholder', 'Placeholder to insert', 'Revert to opened']) {
     assert.match(html, new RegExp(`aria-label="${label}"|>${label}<`), label);
   }
-  // Image stays focusable, and its reason is text a screen reader is pointed at.
-  assert.match(html, /<button[^>]*aria-label="Image"[^>]*aria-disabled="true"[^>]*aria-describedby="([^"]+)"/);
-  const noteId = html.match(/aria-label="Image"[^>]*aria-describedby="([^"]+)"/)[1];
-  assert.match(html, new RegExp(`id="${noteId}"[^>]*>Images are coming in the next part\\.<`));
-  assert.doesNotMatch(html, /aria-label="Image"[^>]*disabled=""/);
+  // Image is a working button now: it opens the panel (tests/email-image-panel.test.js).
+  assert.match(html, /<button[^>]*aria-label="Image" aria-expanded="false"/);
+  assert.doesNotMatch(html, /aria-label="Image"[^>]*aria-disabled/);
+  assert.doesNotMatch(html, /next part/);
   // Choosing a placeholder does nothing by itself: the Insert button inserts it.
   assert.match(html, /<select[^>]*aria-label="Placeholder to insert"/);
   assert.match(html, /<button[^>]*aria-label="Insert placeholder"[^>]*disabled=""/);

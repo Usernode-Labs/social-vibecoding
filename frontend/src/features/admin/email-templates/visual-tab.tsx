@@ -1,11 +1,12 @@
 'use strict';
 
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 import { AdminUI } from '../admin-console.js';
 import {
   editableBlocks, EditRefused, escapeText, findBlocks, insertAfterBlock, spliceBlock, tokenize, type Block,
 } from './html-runs';
+import { ImagePanel, imageSnippet, type ImageFields } from './image-panel';
 import type { Placeholder } from './shared';
 
 // The Visual tab: the email drawn as it looks, where an admin clicks a piece of
@@ -17,7 +18,9 @@ import type { Placeholder } from './shared';
 // back into {{name}}, and spliced into the source by ./html-runs.ts, which
 // refuses an edit that would drop a placeholder or add structure. Every other
 // byte stays as it was. Structure (tables, conditions) is changed in the HTML
-// tab, which is always the full truth.
+// tab, which is always the full truth. A button or an image is added as a new
+// paragraph after the block being edited (insertAfterBlock); a paragraph that
+// holds an image is drawn as it is and not retyped here.
 //
 // The frame is sandboxed without scripts, so nothing in the email runs; it is
 // same-origin so this module can reach its DOM and listen to it.
@@ -259,8 +262,8 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
   const [height, setHeight] = useState(320);
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState<LinkForm | null>(null);
+  const [imageOpen, setImageOpen] = useState(false);
   const [toInsert, setToInsert] = useState('');
-  const imageNote = useId();
   const latest = useRef({ onChange, allowed, source });
   latest.current = { onChange, allowed, source };
 
@@ -438,26 +441,36 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
     if (at && name) at.d.execCommand('insertHTML', false, chipHtml(name));
   };
 
+  // The block a new paragraph goes after, with the source it was read from.
+  const insertAfterCurrent = (snippet: string, what: string): boolean => {
+    const index = current.current;
+    const m = model.current;
+    if (m.source !== latest.current.source) return false;
+    if (index == null || !m.blocks[index]) { setNotice(`Click into the text the ${what} goes after first.`); return false; }
+    try {
+      const next = insertAfterBlock(m.source, m.blocks[index], snippet);
+      setNotice(null);
+      // New structure, so the frame is drawn again from it.
+      emit(openModel(next));
+      redraw(next);
+      return true;
+    } catch (err) {
+      setNotice(err instanceof EditRefused || err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  };
+
+  const addImage = (fields: ImageFields) => {
+    if (insertAfterCurrent(imageSnippet(fields), 'image')) setImageOpen(false);
+  };
+
   const applyForm = () => {
     if (!form) return;
     const href = form.placeholder ? `{{${form.placeholder}}}` : form.href.trim();
     const problem = linkProblem(href, form.placeholder || null);
     if (problem) { setNotice(problem); return; }
     if (form.kind === 'button') {
-      const index = current.current;
-      const m = model.current;
-      if (m.source !== latest.current.source) return;
-      if (index == null || !m.blocks[index]) { setNotice('Click into the text the button goes after first.'); return; }
-      try {
-        const next = insertAfterBlock(m.source, m.blocks[index], buttonSnippet(href, form.label.trim() || 'Open'));
-        setForm(null);
-        setNotice(null);
-        // The button is new structure, so the frame is drawn again from it.
-        emit(openModel(next));
-        redraw(next);
-      } catch (err) {
-        setNotice(err instanceof EditRefused || err instanceof Error ? err.message : String(err));
-      }
+      if (insertAfterCurrent(buttonSnippet(href, form.label.trim() || 'Open'), 'button')) setForm(null);
       return;
     }
     const at = focusBlock();
@@ -487,14 +500,11 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
           <button type="button" className={`${tool} italic`} aria-label="Italic" title="Italic"
             onMouseDown={(ev) => ev.preventDefault()} onClick={() => command('italic')}>I</button>
           <button type="button" className={tool} aria-label="Link" aria-expanded={form?.kind === 'link'}
-            onClick={() => setForm({ kind: 'link', href: 'https://', placeholder: '', label: '' })}>Link</button>
+            onClick={() => { setImageOpen(false); setForm({ kind: 'link', href: 'https://', placeholder: '', label: '' }); }}>Link</button>
           <button type="button" className={tool} aria-label="Button" aria-expanded={form?.kind === 'button'}
-            onClick={() => setForm({ kind: 'button', href: 'https://', placeholder: '', label: '' })}>Button</button>
-          {/* Focusable, so the reason can be reached and read; it does nothing until images land. */}
-          <button type="button" className={`${tool} opacity-50`} aria-label="Image" aria-disabled="true"
-            aria-describedby={imageNote} title="Coming in the next part"
-            onClick={() => setNotice('Images are coming in the next part.')}>Image</button>
-          <span id={imageNote} className="sr-only">Images are coming in the next part.</span>
+            onClick={() => { setImageOpen(false); setForm({ kind: 'button', href: 'https://', placeholder: '', label: '' }); }}>Button</button>
+          <button type="button" className={tool} aria-label="Image" aria-expanded={imageOpen}
+            onClick={() => { setForm(null); setImageOpen(true); }}>Image</button>
           {/* A choice, then Insert: a closed select changes value while it is browsed by keyboard. */}
           <select className={`${AdminUI.select} w-auto`} aria-label="Placeholder to insert" value={toInsert}
             onChange={(ev) => setToInsert(ev.target.value)}>
@@ -536,6 +546,7 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
           </div>
         </div>
       ) : null}
+      {imageOpen && !readOnly ? <ImagePanel onInsert={addImage} onCancel={() => setImageOpen(false)} /> : null}
       {notice ? (
         <p role="alert" className="rounded-lg bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">{notice}</p>
       ) : null}

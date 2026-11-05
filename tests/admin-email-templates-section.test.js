@@ -22,7 +22,7 @@ const { ACTIONS } = require('../src/services/mail/actions');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const SECTION = 'frontend/src/features/admin/admin-email-templates.tsx';
-const PARTS = ['list', 'editor', 'layouts', 'replace-dialog', 'preview', 'shared', 'visual-tab']
+const PARTS = ['list', 'editor', 'layouts', 'replace-dialog', 'preview', 'shared', 'visual-tab', 'image-panel']
   .map((name) => `frontend/src/features/admin/email-templates/${name}.tsx`);
 
 const ADMIN_UI = new Proxy({}, {
@@ -197,6 +197,7 @@ test('view-only hides writes', () => {
     preview: null,
   });
   assert.ok(!/>Save</.test(form), 'no Save');
+  assert.ok(!/Upload image/.test(form), 'no image upload');
   assert.match(form, /Editing needs full admin access/);
   assert.match(form, /id="email-template-subject"[^>]*readOnly=""|id="email-template-subject"[^>]*readonly=""/i);
 
@@ -545,6 +546,18 @@ test('Visual is the first body tab and the one both editors open on; the preview
     onDone() {}, onSaved() {}, onReload() {},
   });
   assert.match(layoutHtml, /title="Visual editor"/);
+});
+
+test('the HTML tab offers Upload image to a full admin, beside the HTML', () => {
+  const data = payload();
+  const live = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
+  const form = render('TemplateForm', {
+    payload: data, draft: load().draftFrom(live), isNew: false, canWrite: true, tab: 'html',
+    failure: null, saving: false, onChange() {}, onTab() {}, onSave() {}, onCancel() {}, onReload() {}, onRetry() {},
+    preview: null,
+  });
+  assert.match(form, /<button[^>]*>Upload image<\/button>/);
+  assert.ok(form.indexOf('Upload image') > form.indexOf('id="email-template-html"'), 'under the HTML it inserts into');
 });
 
 // ── Final review ────────────────────────────────────────────────────────
