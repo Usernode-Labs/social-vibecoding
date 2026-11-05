@@ -18,11 +18,15 @@
 // - A link placeholder carries a one-time secret (a reset or sign-in link), so
 //   in HTML it goes only in href and only as the whole value (`href="{{url}}"`),
 //   or as the whole text of the link it opens (`<a href="{{url}}">{{url}}</a>`).
-//   Joined to other text (`https://evil.example/?u={{url}}`, which a mail
-//   client turns into a link) or in an address the client fetches by itself on
-//   open (an image's src), it would hand that secret to another site. In the
-//   text version, of the whole mail inside its layout, only space, punctuation
-//   outside ASCII or a CJK letter may come right before it (see linkLeadOk).
+//   In an address the client fetches by itself on open (an image's src) it
+//   would hand that secret to another site.
+// - Every secret (a link, or a value marked `secret`, as a code is) goes in no
+//   other attribute, and wherever it is text (HTML, why, preheader, the text
+//   version and the subject, inside the layout on every path) only the start
+//   of the text or of an element, an ASCII space, tab or line break, or a "("
+//   after one of those may come right before it (secretLeadOk). Anything else
+//   (`https://evil.example/?c={{code}}`, `こちら{{url}}`, a full-width comma)
+//   is something a mail app might read as one address with the secret in it.
 // - Wording built in code (`fromCode`) and anything inserted as HTML (an
 //   action's `htmlValues`, a layout's {{content}}, {{why}} and {{preheader}})
 //   is not escaped for an attribute, so none of it may go in one.
@@ -160,6 +164,8 @@ function placementProblems(field, source, info, raw) {
         if (!about) continue;
         if (raw.has(body) || about.kind === 'html') {
           add(`${shown} is inserted as HTML, so it cannot go inside an attribute.`);
+        } else if (about.secret) {
+          add(`${shown} is a one-time secret, so it cannot go in an attribute (${attr.name}). Use it as text.`);
         } else if (about.fromCode) {
           add(`${shown} is wording built in code and is not escaped for an attribute, so it cannot go in ${attr.name}. Use it as text.`);
         } else if (attr.name === 'style') {
@@ -387,42 +393,43 @@ function requiredOnEveryPath(action, text, layout) {
   return null;
 }
 
-// What may come right before a link placeholder (or, in a layout's text, the
-// parts a link can open with) in the text form of a mail: the start, a space
-// or line break, punctuation outside ASCII (a full-width colon, as CJK
-// translations write it), or a CJK letter (`こちら{{url}}`). A "(" may, when
-// the start or a space comes before it. Anything else (an ASCII letter, digit
-// or sign, any other letter, a zero-width or no-break space, another value)
-// could make a mail app read the text before it and the link as one address.
-const LINK_SPACE = /^[ \t\n\r\f\v\u2028\u2029\u3000]$/u;
-const CJK_LETTER = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u;
-const standsApart = (ch) => ch === '' || LINK_SPACE.test(ch) || CJK_LETTER.test(ch) || (ch > '\u007f' && /^\p{P}$/u.test(ch));
-
-function linkLeadOk(out, at) {
-  const prev = at > 0 ? out[at - 1] : '';
-  if (standsApart(prev)) return true;
-  return prev === '(' && (at < 2 || LINK_SPACE.test(out[at - 2]));
+// What may come right before a secret wherever it is text: the start of the
+// text or of an element, an ASCII space, tab, CR or LF, or a "(" after one of
+// those. Nothing else, not even a CJK letter, a full-width comma or a
+// no-break or ideographic space: Android's Linkify and others read those as
+// part of an address, and would carry the secret off with it.
+const LEAD_SPACE = /^[ \t\r\n]$/;
+// `out` is plain text, or HTML with `tagEnds` (where each tag ends), where a
+// tag ending right before also starts the element's text.
+function secretLeadOk(out, at, tagEnds = null) {
+  const startsAt = (i) => i <= 0 || LEAD_SPACE.test(out[i - 1]) || (tagEnds !== null && tagEnds.has(i));
+  if (startsAt(at)) return true;
+  return out[at - 1] === '(' && startsAt(at - 1);
 }
 
-const LINK_JOINED = (name) => `{{${name}}} is a link that may carry a one-time secret, so in the text version only a space, a line break or "(" may come right before it. Joined to other text, it could become part of another site's address.`;
+const SECRET_JOINED = (name, where) => `{{${name}}} is a one-time secret, so in ${where} only a space, a line break or "(" may come right before it, or the start of the text. Joined to other text, it could become part of another site's address.`;
 
-// Every place `marker` sits in `out` is led as linkLeadOk wants.
-function markerLeadsOk(out, marker) {
+// Every place `marker` sits in `out` is led as secretLeadOk wants, skipping
+// the places `inTag` names (attributes have their own rules).
+function markerLeadsOk(out, marker, tagEnds = null, inTag = () => false) {
   for (let at = out.indexOf(marker); at !== -1; at = out.indexOf(marker, at + marker.length)) {
-    if (!linkLeadOk(out, at)) return false;
+    if (inTag(at)) continue;
+    if (!secretLeadOk(out, at, tagEnds)) return false;
   }
   return true;
 }
 
+const isSecret = (info) => !!info && (info.kind === 'url' || info.secret === true);
+
 const textMark = (name) => `\uE010${name}\uE011`;
 
-// The text form of the whole mail (the template's text, and its why and
-// preheader as the layout's text prints them, inside that text), on every
-// path through the template's conditions, must lead every link placeholder
-// as linkLeadOk wants. Null or a problem.
-function joinedLinkProblem(action, text, layout) {
-  const links = Object.entries(action.placeholders).filter(([, info]) => info.kind === 'url').map(([name]) => name);
-  if (!links.length) return null;
+// The whole mail, inside its layout, on every path through the template's
+// conditions and with every value printed as a marker: in its text form and
+// in its HTML text (outside tags), every secret must be led as secretLeadOk
+// wants. Null or { field, message }.
+function secretLeadProblem(action, text, layout) {
+  const secrets = Object.entries(action.placeholders).filter(([, info]) => isSecret(info)).map(([name]) => name);
+  if (!secrets.length) return null;
   const vars = new Set();
   const conditions = new Set();
   const walk = (list) => {
@@ -431,16 +438,16 @@ function joinedLinkProblem(action, text, layout) {
       else if (n.then) { conditions.add(n.name); walk(n.then); walk(n.else); }
     }
   };
-  for (const field of ['text', 'why', 'preheader']) {
+  for (const field of ['text', 'why', 'preheader', 'html', 'subject']) {
     const tree = safeTree(text[field]);
     if (!tree) return null;
     walk(tree);
   }
-  const used = links.filter((name) => vars.has(name));
+  const used = secrets.filter((name) => vars.has(name));
   if (!used.length) return null;
   const names = [...conditions];
   if (names.length > MAX_BRANCH_NAMES) {
-    return `The text version tests more than ${MAX_BRANCH_NAMES} different conditions (${names.join(', ')}), too many to check where its links land. Use fewer.`;
+    return { field: 'text', message: `This email tests more than ${MAX_BRANCH_NAMES} different conditions (${names.join(', ')}), too many to check where its secrets land. Use fewer.` };
   }
   for (let mask = 0; mask < 2 ** names.length; mask++) {
     const values = {};
@@ -448,21 +455,35 @@ function joinedLinkProblem(action, text, layout) {
     names.forEach((name, i) => {
       values[name] = mask & (1 << i) ? (vars.has(name) ? textMark(name) : true) : '';
     });
-    let out;
+    let plain;
+    let html;
+    let subject;
     try {
-      const plain = render(text.text, values, { mode: 'text' });
-      out = layout
+      subject = render(text.subject, values, { mode: 'text' });
+      const body = render(text.text, values, { mode: 'text' });
+      plain = layout
         ? render(layout.text, {
-          content: plain,
+          content: body,
           why: render(text.why, values, { mode: 'text' }),
           preheader: render(text.preheader, values, { mode: 'text' }),
         }, { mode: 'text' })
-        : plain;
+        : body;
+      const parts = Object.fromEntries(HTML_FIELDS.map((field) => [field, render(text[field], values)]));
+      html = layout
+        ? render(layout.html, { content: parts.html, why: parts.why, preheader: parts.preheader }, { raw: ['content', 'why', 'preheader'] })
+        : parts.html;
     } catch {
       return null;
     }
+    const scan = scanHtml(html);
+    if (!scan.ok) return null;
+    const tagEnds = new Set(scan.tags.map((t) => t.end));
+    const inTag = (at) => scan.tags.some((t) => at >= t.start && at < t.end);
     for (const name of used) {
-      if (!markerLeadsOk(out, textMark(name))) return LINK_JOINED(name);
+      const marker = textMark(name);
+      if (!markerLeadsOk(subject, marker)) return { field: 'subject', message: SECRET_JOINED(name, 'the subject') };
+      if (!markerLeadsOk(plain, marker)) return { field: 'text', message: SECRET_JOINED(name, 'the text version') };
+      if (!markerLeadsOk(html, marker, tagEnds, inTag)) return { field: 'html', message: SECRET_JOINED(name, 'the HTML') };
     }
   }
   return null;
@@ -470,8 +491,8 @@ function joinedLinkProblem(action, text, layout) {
 
 // A layout's text puts each email's text, why and preheader where it prints
 // {{content}}, {{why}} and {{preheader}}, and any of them can open with a
-// link. So on every path through its conditions, each must be led as
-// linkLeadOk wants. Null or a problem.
+// secret. So on every path through its conditions, each must be led as
+// secretLeadOk wants. Null or a problem.
 function layoutTextLeadProblem(source) {
   const tree = safeTree(source);
   if (!tree) return null;
@@ -482,7 +503,7 @@ function layoutTextLeadProblem(source) {
     try { out = render(source, values, { mode: 'text' }); } catch { return null; }
     for (const name of parts) {
       if (!markerLeadsOk(out, textMark(name))) {
-        return `In the text version, only a space, a line break or "(" may come right before {{${name}}}: an email's part can open with a link, and joined to other text that link could become part of another site's address.`;
+        return `In the text version, only a space, a line break or "(" may come right before {{${name}}}: an email's part can open with a link or a code, and joined to other text it could become part of another site's address.`;
       }
     }
   }
@@ -562,9 +583,17 @@ function validateTemplate(kind, fields, layout) {
     }
   }
 
-  if (trees.text) {
-    const joined = joinedLinkProblem(action, text, layout);
-    if (joined) errors.push({ field: 'text', message: joined });
+  // A link in the subject is text no one needs, and a mail app may link it.
+  if (trees.subject) {
+    for (const name of printedIn(trees.subject)) {
+      if (Object.hasOwn(action.placeholders, name) && action.placeholders[name].kind === 'url') {
+        errors.push({ field: 'subject', message: `{{${name}}} is a link that may carry a one-time secret, so it cannot go in the subject.` });
+      }
+    }
+  }
+  if (!errors.length) {
+    const lead = secretLeadProblem(action, text, layout);
+    if (lead) errors.push(typeof lead === 'string' ? { field: 'text', message: lead } : lead);
   }
 
   if (!errors.length) {

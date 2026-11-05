@@ -159,3 +159,9 @@ test('a <style> block reads no attribute and loads nothing; ping is refused', ()
   allowed('<p style="background:url(https://x.example/a.png)">x</p>');
   refused('<a href="https://x.example/" ping="https://evil.example/p">x</a>', /ping/);
 });
+
+test('<image> is read as the void <img> it is, and attr() is refused in any CSS', () => {
+  allowed('<p>x<image src="https://x.example/a.png" alt=""></p>');
+  refused('<p style="background:image(attr(href))">x</p>', /attr\(\)/);
+  refused('<style>a::after{content:attr(href)}</style>', /attr\(\)/);
+});

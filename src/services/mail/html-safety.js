@@ -42,7 +42,8 @@ const BLOCKED_ELEMENTS = new Set([
 ]);
 
 // Elements that have no end tag.
-const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+// <image> is one too: a browser reads it as <img>.
+const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'image', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 
 // Whose text runs to the matching end tag, unparsed.
 const RAW_TEXT_ELEMENTS = new Set(['style', 'textarea', 'title']);
@@ -117,11 +118,13 @@ function cssProblem(css, where, { block = false } = {}) {
     if (text.includes('data:')) return `${where} contains a data URL. Upload the image and link to it instead.`;
     if (text.includes('expression(')) return `${where} contains a CSS expression, which runs script in old Outlook.`;
     if (text.includes('-moz-binding') || text.includes('behavior:')) return `${where} attaches script through CSS.`;
+    // attr() reads an attribute's value (a link's address) into the styling.
+    if (text.includes('attr(')) return `${where} uses attr(), which could read a link's address into the styling.`;
   }
   if (block) {
     for (const text of [plain, raw]) {
       if (text.includes('[')) return `${where} cannot use an attribute selector ([...]): it could read a link's address and report it elsewhere.`;
-      if (text.includes('url(') || text.includes('image-set(')) return `${where} cannot load anything with url() or image-set(). Use an image with an https address, or a style attribute.`;
+      if (['url(', 'image-set(', 'image(', 'src(', 'cross-fade(', 'element('].some((fn) => text.includes(fn))) return `${where} cannot load anything (url(), image-set(), image(), src()). Use an image with an https address, or a style attribute.`;
     }
   }
   return null;

@@ -43,6 +43,10 @@ const clip = (value, max) => str(value).slice(0, max);
 
 const text = (description, extra) => ({ description, kind: 'text', ...extra });
 const link = (description) => ({ description, kind: 'url' });
+// A value that is a one-time secret by itself (a sign-in or verification
+// code): template-validation.js keeps it, as it keeps every link, from being
+// joined to an address a reader's mail app could follow.
+const SECRET = { secret: true };
 // `presenceOf` names the value a flag is the presence of: true exactly when
 // that value prints something, so `{{#if hasCode}}{{code}}{{/if}}` still always
 // prints the code whenever there is one (template-validation.js).
@@ -122,7 +126,7 @@ function inviteLine(payload, t, sender = asIs) {
 
 const codeAction = (label, expiry) => ({
   label,
-  placeholders: { code: text(`The six-digit code, valid ${expiry}`) },
+  placeholders: { code: text(`The six-digit code, valid ${expiry}`, SECRET) },
   required: BOTH('code'),
   englishOnly: false,
   sample: { code: '123456' },
@@ -139,7 +143,7 @@ const ACTIONS = {
   waitlist_joined: {
     label: 'Waitlist welcome',
     placeholders: {
-      code: text('Six-digit verification code, valid for 15 minutes'),
+      code: text('Six-digit verification code, valid for 15 minutes', SECRET),
       hasCode: flag('True when the mail carries a verification code', 'code'),
       confirmUrl: link('One-click link that confirms the address'),
       hasConfirmUrl: flag('True when the confirmation link is present', 'confirmUrl'),
@@ -158,7 +162,7 @@ const ACTIONS = {
   waitlist_code: {
     label: 'Waitlist confirmation or status code',
     placeholders: {
-      code: text('Six-digit code, valid for 15 minutes'),
+      code: text('Six-digit code, valid for 15 minutes', SECRET),
       hasCode: flag('False when no code could be made and the mail only points to the status page', 'code'),
       isConfirmed: flag('True when the address is already confirmed, so the code is a status code'),
       confirmUrl: link('One-click link that confirms the address'),
