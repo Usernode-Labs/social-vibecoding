@@ -92,7 +92,7 @@ export interface HomeroomBotMeta {
   answer?: string;
   link?: string;
   // B3: the decision a message's `server` buttons settle
-  // (homeroom_bot_dm_actions.id), the buttons themselves, and which one was
+  // (bot_cards.id), the buttons themselves, and which one was
   // chosen. An activity card's start and its live state ride along too.
   actionId?: number;
   actions?: HomeroomBotAction[];

@@ -5,37 +5,92 @@
  * The "+" opens a BLANK thread where a thread pane goes. Nothing is saved
  * yet: the thread is made when the person sends their first message
  * (POST /api/conversations/homeroom-bot/new-thread, then the message as its
- * first reply), and a stray tap leaves nothing behind. Until then it shows a
- * welcome block, like RecipeBot's: the project the change is for (Any
- * project) and the kind of change (Any kind of change; Fix something
- * broken, Add something new, Design a screen), and a line saying a change
- * can be started here or just typed into the chat. The two picks ride with
- * the first message, so the bot knows what the thread is for.
+ * first reply), and a stray tap leaves nothing behind.
  *
- * Design a screen is a message like the others (1 Nov 2026: the screen
- * picker retired): the block says to describe the screen, and Homeroom bot
- * draws it in the thread (services/design-bot.js write_screen).
+ * 5 Nov 2026 (Evan): it opens on what you can do, not on two web selects.
+ *
+ *            [H]
+ *   What do you want to do?
+ *   ( I want to fix an issue… )       ← starts, centred where messages go,
+ *   ( I want to add a feature… )        each its own pill in the message
+ *   ( I want to redesign the page… )    box's type; a tap writes its words
+ *   ( I want to design a new page… )    into the box, caret after them
+ *   ( I have a question about… )
+ *
+ *   [▦ Any project ⌄]                  ← the project, floating over the box
+ *   [ + | Message Homeroom bot | 🎙 | ↑ ] ← the same box as every chat
+ *
+ * The project is chosen as a community is (./project-picker.tsx: the "Your
+ * communities" rows, a sheet on a phone, a menu from 768px). Any project is
+ * the default. The kind of change the thread is for is no longer picked: it
+ * is read off the start the message begins with (`startOf`), so the server
+ * still gets the kind it knows (services/private-threads.js CHANGE_KINDS)
+ * and names the thread's line in Main by it. A design start says Homeroom
+ * bot draws the screen (services/design-bot.js write_screen), over the box.
+ *
+ * The box is the conversation composer's card (./composer.tsx), drawn with
+ * the same pieces: the "+" and its Attach files row, the field, dictation
+ * (../dictation/speak-button.tsx) and the accent send disc.
  */
 
-import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
-import { Select } from '@/components/ui/select';
-import { PaperClipIcon, PlusIcon, XIcon } from '@/components/ui/icons';
+import { AppWindowIcon, ArrowUpIcon, ChatIcon, FlagIcon, PaperClipIcon, PencilSquareIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
-import { useMessages } from '../../lib/i18n/react';
-import { useStoreState } from '../../lib/use-store-state';
-import { communityScopeStore, warmCommunities } from '../workshop/community-scope';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { useAutoGrow } from '../../lib/use-auto-grow';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
+import { SpeakButton } from '../dictation/speak-button';
 import * as api from './api';
 import { closeThread, openThread } from './store';
-import { fileSize } from './format';
+import { BOT_AVATAR, fileSize } from './format';
 import type { MessageAttachment } from './types';
-import { projectChoices } from './private-thread-bar';
+import { ProjectChip, ProjectPicker } from './project-picker';
 
 export type ChangeKind = 'any' | 'fix' | 'add' | 'design';
 export const CHANGE_KINDS: readonly ChangeKind[] = ['any', 'fix', 'add', 'design'];
+
+/**
+ * The ways to start, in order: the words each writes into the box (`text`),
+ * the pill that says them (`label`, the same words and a fainter "…"), and
+ * the kind of change a message that begins with them is for.
+ */
+export const NEW_THREAD_STARTS = [
+  { key: 'fix', kind: 'fix', label: 'messages:newThread.starts.fix.label', text: 'messages:newThread.starts.fix.text', Icon: FlagIcon },
+  { key: 'add', kind: 'add', label: 'messages:newThread.starts.add.label', text: 'messages:newThread.starts.add.text', Icon: SparklesIcon },
+  { key: 'redesign', kind: 'design', label: 'messages:newThread.starts.redesign.label', text: 'messages:newThread.starts.redesign.text', Icon: PencilSquareIcon },
+  { key: 'newPage', kind: 'design', label: 'messages:newThread.starts.newPage.label', text: 'messages:newThread.starts.newPage.text', Icon: AppWindowIcon },
+  { key: 'ask', kind: 'any', label: 'messages:newThread.starts.ask.label', text: 'messages:newThread.starts.ask.text', Icon: ChatIcon },
+] as const;
+
+/**
+ * Pure: the start a message begins with (its words, ignoring case and the
+ * space before them), the longest when two share a beginning; null for
+ * words of the person's own.
+ */
+export function startOf<T extends { text: string }>(words: string, starts: readonly T[]): T | null {
+  const said = String(words || '').replace(/^\s+/, '').toLocaleLowerCase();
+  let best: T | null = null;
+  for (const start of starts) {
+    const text = String(start.text || '').trim().toLocaleLowerCase();
+    if (text && said.startsWith(text) && (!best || text.length > best.text.trim().length)) best = start;
+  }
+  return best;
+}
+
+/**
+ * Pure: the box's words once a start is tapped. The start's words lead,
+ * then whatever followed the start the box already began with, or the
+ * person's own words when it began with none, then a space for the caret.
+ */
+export function withStart<T extends { text: string }>(words: string, start: T, starts: readonly T[]): string {
+  const current = startOf(words, starts);
+  const lead = String(words || '').replace(/^\s+/, '');
+  const rest = (current ? lead.slice(current.text.trim().length) : lead).trim();
+  return `${start.text.trim()} ${rest}`.replace(/\s+$/, ' ');
+}
 
 // Which conversation a blank thread is open beside, or none.
 let blankIn: number | null = null;
@@ -108,11 +163,11 @@ export function NewThreadButton({ conversationId, className, onOpen }: {
 /** The blank thread itself, in a thread pane's place. */
 export function NewThreadPanel({ conversationId }: { conversationId: number }): ReactNode {
   const t = useMessages('messages');
-  const scope = useStoreState(communityScopeStore);
   const [project, setProject] = useState('');
-  const [kind, setKind] = useState<ChangeKind>('any');
+  const [picking, setPicking] = useState(false);
   const [words, setWords] = useState('');
   const [busy, setBusy] = useState(false);
+  const [dictating, setDictating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // #6256: files, the way every other thread takes them — dropped, pasted or
   // picked from the "+". They upload at once to the bot chat, before the
@@ -123,10 +178,16 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const [addOpen, setAddOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const chipRef = useRef<HTMLButtonElement | null>(null);
   // The kit's keyboard avoidance, as a thread's own scroller has it.
   const scroller = useRef<HTMLDivElement>(null);
   useComposerKeyboard(scroller);
-  const projects = projectChoices(scope);
+  useAutoGrow(inputRef, words);
+  // The starts in the reader's language: what each writes, and what it is for.
+  const starts = NEW_THREAD_STARTS.map((start) => ({ ...start, text: t(start.text) }));
+  const begun = startOf(words, starts);
+  const drawing = begun?.kind === 'design';
 
   /** Attach a drop's, a paste's or a pick's files: stage them against the cap, then upload each. */
   const addFiles = async (files: File[]) => {
@@ -164,13 +225,36 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
     };
   }, [addOpen]);
 
+  /** The field, focused with its caret at the end of what it holds. */
+  const toField = () => {
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      const end = input.value.length;
+      input.setSelectionRange(end, end);
+    });
+  };
+
+  /** A start tapped: its words lead the box, and the caret waits after them. */
+  const begin = (start: (typeof starts)[number]) => {
+    setWords((current) => withStart(current, start, starts).slice(0, 8000));
+    toField();
+  };
+
+  const closePicker = useCallback(() => {
+    setPicking(false);
+    chipRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
     const content = words.trim();
-    if (busy || uploading || (!content && !attachments.length)) return;
+    if (busy || dictating || uploading || (!content && !attachments.length)) return;
     setBusy(true);
     setError(null);
     try {
+      const kind: ChangeKind = startOf(content, starts)?.kind || 'any';
       const made = await api.startBotThread({ project: project || null, kind });
       await api.sendMessage(conversationId, { content, threadRootId: made.rootId, attachmentIds: attachments.map((item) => item.id), idempotencyKey: key() });
       closeNewThread();
@@ -181,6 +265,9 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
       setBusy(false);
     }
   };
+
+  // Where the count turns amber, as in every other box.
+  const nearLimit = words.length > 7600;
 
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="">
@@ -195,93 +282,107 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
       </header>
       {/* A thread's foot, as every chat's (@/components/ui/chat, "A chat's
           foot"), with no typing line: nobody else is in a thread that does
-          not exist yet. */}
+          not exist yet. The starts sit in the middle of it, where the first
+          message will land (app.css "THE BLANK THREAD'S OPENING"). */}
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll flex flex-col justify-end chat-transcript">
-        <div className="mx-4 mb-4 flex flex-col gap-3 rounded-[20px] bg-white p-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900" data-bot-new-thread-start="">
-          <label className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
-            <span className="w-24 shrink-0">{t('messages:newThread.project')}</span>
-            <Select
-              aria-label={t('messages:newThread.project')}
-              value={project}
-              onFocus={() => warmCommunities(0)}
-              onChange={(e) => setProject(e.currentTarget.value)}
-              data-bot-new-thread-project=""
-            >
-              <option value="">{t('messages:newThread.anyProject')}</option>
-              {projects.map((p) => <option key={p.slug} value={p.slug}>{p.name}</option>)}
-            </Select>
-          </label>
-          <label className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
-            <span className="w-24 shrink-0">{t('messages:newThread.kind')}</span>
-            <Select
-              aria-label={t('messages:newThread.kind')}
-              value={kind}
-              onChange={(e) => setKind(e.currentTarget.value as ChangeKind)}
-              data-bot-new-thread-kind=""
-            >
-              <option value="any">{t('messages:newThread.kinds.any')}</option>
-              <option value="fix">{t('messages:newThread.kinds.fix')}</option>
-              <option value="add">{t('messages:newThread.kinds.add')}</option>
-              <option value="design">{t('messages:newThread.kinds.design')}</option>
-            </Select>
-          </label>
-          {kind === 'design' ? (
-            <p className="text-[13px] text-zinc-600 dark:text-zinc-300" data-bot-new-thread-draws="">
-              {t('messages:newThread.draws')}
-            </p>
-          ) : null}
-          <p className="text-[12px] text-zinc-500 dark:text-zinc-400">{t('messages:newThread.hint')}</p>
+        <div className="messages-starts" data-bot-new-thread-start="">
+          <div className="messages-starts-hello">
+            <img src={BOT_AVATAR} alt="" />
+            <h2 className="messages-starts-title">{t('messages:newThread.welcome.title')}</h2>
+            <p className="messages-starts-sub">{t('messages:newThread.welcome.sub')}</p>
+          </div>
+          <div className="messages-starts-list" role="group" aria-label={t('messages:newThread.starts.label')} data-bot-new-thread-starts="">
+            {starts.map((start) => (
+              <button
+                key={start.key}
+                type="button"
+                className="messages-start"
+                data-bot-new-thread-opener={start.key}
+                data-bot-new-thread-kind={start.kind}
+                aria-pressed={begun?.key === start.key}
+                // The field keeps the keyboard if it had it.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => begin(start)}
+              >
+                <start.Icon aria-hidden="true" />
+                <span><RichMessage id={start.label} components={[<span className="messages-start-more" />]} /></span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <ChatComposerBar as="form" className={`messages-composer messages-composer-thread${drop.dragging ? ' messages-composer-dragging' : ''}`} onSubmit={(e) => { void send(e); }} {...drop.handlers}>
-        {error ? <p className="px-4 pb-1 text-[13px] text-red-600" role="alert">{error}</p> : null}
-        {/* The files staged for the first message, as a reply thread draws
-            them: name, size, and a × that takes it back off. */}
-        {attachments.length || uploading ? (
-          <div className="dc-attach-strip dc-attach-strip-active">
-            {attachments.map((item) => (
-              <div key={item.id} className="dc-attach-item">
-                <div className="min-w-0">
-                  <div className="dc-attach-name">{item.name}</div>
-                  <div className="dc-attach-size">{fileSize(item.size)}</div>
-                </div>
-                <button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button>
-              </div>
-            ))}
-            {uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}
-          </div>
-        ) : null}
-        <div className="messages-composer-card flex items-end gap-2">
-          <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
-          {/* The same "+" and menu a reply thread offers. The cap disables the
-              Attach files ROW, never the "+" itself. */}
-          <div className="messages-composer-add" ref={addRef}>
-            <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
-            {addOpen ? (
-              <div className="messages-composer-menu" role="menu" aria-label={t('messages:composer.addToMessage')}>
-                <button type="button" role="menuitem" disabled={attachments.length + uploading >= MAX_ATTACHMENTS} onClick={() => { setAddOpen(false); fileRef.current?.click(); }}>
-                  <PaperClipIcon aria-hidden="true" />
-                  <span>{t('messages:composer.attachFiles')}</span>
-                </button>
-              </div>
-            ) : null}
-          </div>
-          <textarea
-            className="messages-composer-input"
-            value={words}
-            rows={1}
-            maxLength={8000}
-            placeholder={t('messages:newThread.placeholder')}
-            aria-label={t('messages:newThread.placeholder')}
-            onChange={(e) => setWords(e.currentTarget.value)}
-            onPaste={(e) => { const files = [...e.clipboardData.files]; if (files.length) { e.preventDefault(); void addFiles(files); } }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
-            }}
+        {drawing ? <p className="messages-composer-hint" data-bot-new-thread-draws="">{t('messages:newThread.draws')}</p> : null}
+        {/* The project it is for, floating over the box rather than in its card. */}
+        <div className="messages-project-row">
+          <ProjectChip
+            slug={project || null}
+            open={picking}
+            onOpen={(el) => { chipRef.current = el; setAddOpen(false); setPicking((open) => !open); }}
           />
-          <button type="submit" className="messages-composer-action" onMouseDown={(event) => event.preventDefault()} disabled={busy || uploading > 0 || (!words.trim() && !attachments.length)} aria-label={t('messages:newThread.send')} data-bot-new-thread-send="">
-            <span className="text-[13px] font-semibold">{t('messages:newThread.send')}</span>
-          </button>
+        </div>
+        <ProjectPicker
+          open={picking}
+          slug={project || null}
+          anchor={chipRef.current}
+          onPick={(slug) => { setProject(slug || ''); setPicking(false); toField(); }}
+          onClose={closePicker}
+        />
+        {/* The conversation composer's card (./composer.tsx), piece for piece. */}
+        <div className="messages-composer-card">
+          {/* The files staged for the first message, as a reply thread draws
+              them: name, size, and a × that takes it back off. */}
+          {attachments.length || uploading ? (
+            <div className="dc-attach-strip dc-attach-strip-active">
+              {attachments.map((item) => (
+                <div key={item.id} className="dc-attach-item">
+                  <div className="min-w-0">
+                    <div className="dc-attach-name">{item.name}</div>
+                    <div className="dc-attach-size">{fileSize(item.size)}</div>
+                  </div>
+                  <button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button>
+                </div>
+              ))}
+              {uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}
+            </div>
+          ) : null}
+          <div className="flex items-end gap-1.5">
+            <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
+            {/* The same "+" and menu a reply thread offers. The cap disables the
+                Attach files ROW, never the "+" itself. */}
+            <div className="messages-composer-add" ref={addRef}>
+              <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
+              {addOpen ? (
+                <div className="messages-composer-menu" role="menu" aria-label={t('messages:composer.addToMessage')}>
+                  <button type="button" role="menuitem" disabled={attachments.length + uploading >= MAX_ATTACHMENTS} onClick={() => { setAddOpen(false); fileRef.current?.click(); }}>
+                    <PaperClipIcon aria-hidden="true" />
+                    <span>{t('messages:composer.attachFiles')}</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <textarea
+              ref={inputRef}
+              dir="auto"
+              className="messages-composer-input"
+              value={words}
+              rows={1}
+              maxLength={8000}
+              placeholder={t('messages:newThread.placeholder')}
+              aria-label={t('messages:newThread.placeholder')}
+              onChange={(e) => setWords(e.currentTarget.value)}
+              onPaste={(e) => { const files = [...e.clipboardData.files]; if (files.length) { e.preventDefault(); void addFiles(files); } }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
+              }}
+            />
+            <SpeakButton scope="messages:new-thread" getText={() => inputRef.current?.value || ''} onText={setWords} maxLength={8000} onBusyChange={setDictating} disabled={busy} />
+            <button type="submit" className="messages-send" onMouseDown={(event) => event.preventDefault()} disabled={busy || dictating || uploading > 0 || (!words.trim() && !attachments.length)} aria-label={t('messages:composer.send')} data-bot-new-thread-send="">
+              <ArrowUpIcon aria-hidden="true" />
+            </button>
+          </div>
+          {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+          <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!words.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{words.length ? `${words.length}/8000` : ''}</span></div>
         </div>
         {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
       </ChatComposerBar>

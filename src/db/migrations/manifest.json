@@ -142,19 +142,24 @@
       "schemaSha256": "911318d8ac4b1f57f4a780ee0ef794fc1d4655abc8c3f8f982c590d96f86be2a"
     },
     {
+      "id": "voted-digest-push-kind",
+      "sha256": "993ada608b6e0af158312bfd6fbcb580bdcb342f4b9e7f6c0be575f75ab4e1d7",
+      "schemaSha256": "b867ea9d6234ced2f5a410107486d0120a05f9c170c59feadfa48e29e95de3d9"
+    },
+    {
       "id": "work-states",
       "sha256": "ed2c9be021f5dfe03d4e3d90ee1b3e16bd4b7a359e184eaddbca51a97fcb870c",
-      "schemaSha256": "4f3a77224f954d3427901b08a0e438a549d42f30c1e333a57ff9d07a7873c220"
+      "schemaSha256": "6aad7970375f0eee7a2f962349c03121632f003cea74b4541c63d34837ce199e"
     },
     {
       "id": "run-builder",
       "sha256": "df6e21a799e4a0efc4a03ebf0e2b7836102b5863f4dcc42e0309da25dc9a134d",
-      "schemaSha256": "01cb2558fc89ed17ce0138dcd81987c3f1bd3d4fc990ae173efbb4578e836656"
+      "schemaSha256": "755f0afa6010f3daf351fdab9f8a4f8994f991c20d88f858ac1f10014287b715"
     },
     {
       "id": "bot-cards",
       "sha256": "a219bde3c3474430e7c12a56d10fb944d3ed62bcdde01aa7c4c0781e55af72e8",
-      "schemaSha256": "cfaf1199899ff1c47b9a15d8b445be06809e46f9f3380c2ca657329af28d51ab"
+      "schemaSha256": "f99e4b978ff5db709e4182d9c716b6782e2482379688073f22346cef4f6bc64f"
     }
   ]
 }

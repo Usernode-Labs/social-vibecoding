@@ -3861,51 +3861,119 @@
   },
   "newThread.project": {
     "text": "Project",
-    "description": "Label of the menu in a new thread that chooses the project the change is for."
+    "description": "Title of the menu, on a wide window, that chooses which project a new thread with Homeroom bot is for."
   },
   "newThread.anyProject": {
     "text": "Any project",
-    "description": "The project menu's first choice and default in a new thread: the change is not tied to one project yet."
-  },
-  "newThread.kind": {
-    "text": "Change",
-    "description": "Label of the menu in a new thread that chooses what kind of change to make."
-  },
-  "newThread.kinds.any": {
-    "text": "Any kind of change",
-    "description": "The change menu's first choice and default in a new thread."
+    "description": "The default project of a new thread with Homeroom bot, on its chip over the message box and first in the project picker: the thread is not tied to one project yet."
   },
   "newThread.kinds.fix": {
     "text": "Fix something broken",
-    "description": "A choice in the change menu of a new thread with Homeroom bot."
+    "description": "Names a thread started with Homeroom bot to fix something broken (its message began \"I want to fix an issue\")."
   },
   "newThread.kinds.add": {
     "text": "Add something new",
-    "description": "A choice in the change menu of a new thread with Homeroom bot."
+    "description": "Names a thread started with Homeroom bot to add something new (its message began \"I want to add a feature\")."
   },
   "newThread.kinds.design": {
     "text": "Design a screen",
-    "description": "A choice in the change menu of a new thread with Homeroom bot: work on how a screen looks, in a design thread with a live preview."
+    "description": "Names a thread started with Homeroom bot to design a screen (its message began \"I want to redesign the page\" or \"I want to design a new page\")."
   },
   "newThread.draws": {
     "text": "Describe the screen and Homeroom bot draws it.",
-    "description": "In a new thread with Homeroom bot, under the kind of change once \"Design a screen\" is picked: the person says what the screen should be in the message box, and the bot draws it in the thread."
-  },
-  "newThread.hint": {
-    "text": "Start a change here, or just type what you want into the chat.",
-    "description": "Small text at the end of the welcome block of a new thread with Homeroom bot."
+    "description": "In a new thread with Homeroom bot, over the message box while the message begins \"I want to redesign the page\" or \"I want to design a new page\": the person describes the screen there, and the bot draws it in the thread."
   },
   "newThread.placeholder": {
     "text": "Message Homeroom bot",
     "description": "Placeholder and accessible name of the message box in a new blank thread."
   },
-  "newThread.send": {
-    "text": "Send",
-    "description": "Sends the first message of a new thread, which starts it."
-  },
   "newThread.failed": {
     "text": "The thread couldn't be started just now. Try again in a minute.",
     "description": "Shown in a new thread when starting it failed for a reason that was not said."
+  },
+  "newThread.welcome.title": {
+    "text": "What do you want to do?",
+    "description": "In the middle of a new, empty thread with Homeroom bot, over the ways to start."
+  },
+  "newThread.welcome.sub": {
+    "text": "Pick a start and finish the sentence, or just type.",
+    "description": "Under \"What do you want to do?\" in a new thread with Homeroom bot: tapping a start writes its words into the message box for the person to finish."
+  },
+  "newThread.starts.label": {
+    "text": "Ways to start",
+    "description": "Accessible name of the group of starts in a new thread with Homeroom bot."
+  },
+  "newThread.starts.fix.label": {
+    "text": "I want to fix an issue<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for fixing something broken. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.fix.text": {
+    "text": "I want to fix an issue",
+    "description": "Written into the message box when the \"I want to fix an issue…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as fixing something broken."
+  },
+  "newThread.starts.add.label": {
+    "text": "I want to add a feature<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for adding something new. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.add.text": {
+    "text": "I want to add a feature",
+    "description": "Written into the message box when the \"I want to add a feature…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as adding something new."
+  },
+  "newThread.starts.redesign.label": {
+    "text": "I want to redesign the page<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for changing how an existing page looks; Homeroom bot draws it. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.redesign.text": {
+    "text": "I want to redesign the page",
+    "description": "Written into the message box when the \"I want to redesign the page…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as changing how an existing page looks; Homeroom bot draws it."
+  },
+  "newThread.starts.newPage.label": {
+    "text": "I want to design a new page<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for designing a page that does not exist yet; Homeroom bot draws it. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.newPage.text": {
+    "text": "I want to design a new page",
+    "description": "Written into the message box when the \"I want to design a new page…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as designing a page that does not exist yet; Homeroom bot draws it."
+  },
+  "newThread.starts.ask.label": {
+    "text": "I have a question about<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for asking Homeroom bot a question. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.ask.text": {
+    "text": "I have a question about",
+    "description": "Written into the message box when the \"I have a question about…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as asking Homeroom bot a question."
+  },
+  "newThread.projectChip": {
+    "text": "Project: {{project}}",
+    "description": "Accessible name and tooltip of the chip over the message box of a new thread with Homeroom bot, which opens the project picker. {{project}} is the project picked, or \"Any project\"."
+  },
+  "newThread.picker.title": {
+    "text": "Which project is it for?",
+    "description": "Title of the sheet, on a phone, that chooses which project a new thread with Homeroom bot is for."
+  },
+  "newThread.picker.search": {
+    "text": "Search your projects",
+    "description": "Placeholder and accessible name of the search box in the project picker of a new thread with Homeroom bot."
+  },
+  "newThread.picker.anySub": {
+    "text": "Homeroom bot works out which one",
+    "description": "Under \"Any project\" in the project picker of a new thread: the bot decides which project the message is about."
+  },
+  "newThread.picker.recent": {
+    "text": "Recent",
+    "description": "Small caps label over the projects you used lately, in the project picker of a new thread with Homeroom bot."
+  },
+  "newThread.picker.more": {
+    "text": "All your projects",
+    "description": "Small caps label over the rest of the projects you are in, in the project picker of a new thread with Homeroom bot."
+  },
+  "newThread.picker.none": {
+    "text": "None of your projects match “{{query}}”.",
+    "description": "In the project picker of a new thread, when nothing matches the search. {{query}} is what was typed."
+  },
+  "newThread.picker.loading": {
+    "text": "Loading your projects…",
+    "description": "In the project picker of a new thread while the projects you are in are read."
   },
   "design.pane.showPreview": {
     "text": "Preview",

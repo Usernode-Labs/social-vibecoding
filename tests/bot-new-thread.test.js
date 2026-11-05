@@ -9,14 +9,17 @@
 // What this pins:
 //   1. The "+" is in the Homeroom bot tab's header and in the bot chat's
 //      header in Messages, and is nothing without the chat it opens beside.
-//   2. The blank thread's first render reads nothing and saves nothing: its
-//      welcome block offers Any project and Any kind of change, and says a
-//      change can be started there or just typed into the chat.
-//   3. The thread is made on the first send, through a same-origin door.
-//   4. A started thread is headed by its kind of change and its project, and
+//   2. The blank thread's first render reads nothing and saves nothing. It
+//      opens (5 Nov 2026) on the ways to start, each a pill whose words a tap
+//      writes into the box, and on Any project, a chip over the box that
+//      opens the "Your communities" rows (project-picker.tsx): no web select.
+//   3. The kind of change is read off the start a message begins with.
+//   4. The thread is made on the first send, through a same-origin door.
+//   5. A started thread is headed by its kind of change and its project, and
 //      in the Homeroom bot tab the blank thread takes Main Chat's place.
-//   5. 1 Nov 2026: Design a screen says to describe it, and Homeroom bot
-//      draws it: no screen to pick.
+//   6. Its box is the conversation composer's card, piece for piece.
+//   7. 1 Nov 2026: a design start says to describe the screen, and Homeroom
+//      bot draws it: no screen to pick.
 //
 // Run with: node --test tests/bot-new-thread.test.js
 
@@ -58,25 +61,88 @@ test('the "+" is in both headers, and is nothing without the chat it opens besid
   assert.match(messages, /\{botDm \? <NewThreadButton conversationId=\{active\.id\} className="messages-thread-action" \/> : null\}/, 'and the bot chat\'s in Messages');
 });
 
-test('the blank thread reads nothing and saves nothing in its first render, and offers any project and any kind', () => {
+const stripTags = (text) => text.replace(/<\/?\d+>/g, '');
+const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+test('the blank thread reads nothing and saves nothing in its first render, and opens on the ways to start', () => {
   const { mod, calls } = load();
   const html = renderToHtml(createElement(mod.NewThreadPanel, { conversationId: 7 }));
   assert.deepEqual(calls, [], 'no request, and no thread made, by opening it');
   assert.match(html, /data-bot-new-thread-pane=""/);
-  assert.match(html, new RegExp(`<option value="" selected="">${message('messages:newThread.anyProject')}</option>`));
-  assert.match(html, new RegExp(`<option value="any" selected="">${message('messages:newThread.kinds.any')}</option>`));
-  for (const kind of ['fix', 'add', 'design']) assert.match(html, new RegExp(`<option value="${kind}">`));
-  assert.equal(message('messages:newThread.hint'), 'Start a change here, or just type what you want into the chat.');
-  assert.match(html, new RegExp(message('messages:newThread.hint').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.doesNotMatch(html, /data-bot-new-thread-draws/, 'the drawing hint only once Design a screen is picked');
+  assert.doesNotMatch(html, /<select/, 'no plain web select for the project or the kind');
+  assert.match(html, new RegExp(escapeRe(message('messages:newThread.welcome.title'))));
+  assert.match(html, new RegExp(escapeRe(message('messages:newThread.welcome.sub'))));
+  // The five starts, in order, each a pill that is not yet the message's.
+  const keys = [...html.matchAll(/data-bot-new-thread-opener="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(keys, ['fix', 'add', 'redesign', 'newPage', 'ask']);
+  assert.equal((html.match(/class="messages-start"[^>]*aria-pressed="false"/g) || []).length, 5);
+  for (const start of mod.NEW_THREAD_STARTS) {
+    const words = message(start.text);
+    assert.equal(stripTags(message(start.label)), `${words}…`, `${start.key}: the pill says the words it writes, then "…"`);
+    assert.match(html, new RegExp(`${escapeRe(words)}<span class="messages-start-more">…</span>`));
+  }
+  // Any project, on the chip over the box; the picker is not drawn until it is opened.
+  assert.match(html, new RegExp(`class="messages-project-chip" data-bot-new-thread-project=""[^>]*aria-expanded="false"[^>]*>[\\s\\S]*?${escapeRe(message('messages:newThread.anyProject'))}`));
+  assert.doesNotMatch(html, /id="bot-project-picker"/);
+  assert.doesNotMatch(html, /data-bot-new-thread-draws/, 'the drawing line only once a design start begins the message');
   assert.deepEqual([...mod.CHANGE_KINDS], ['any', 'fix', 'add', 'design']);
   const server = require('../src/services/private-threads');
   assert.deepEqual(Object.keys(server.CHANGE_KINDS), [...mod.CHANGE_KINDS], 'the kinds the server knows');
+  for (const start of mod.NEW_THREAD_STARTS) assert.ok(mod.CHANGE_KINDS.includes(start.kind), `${start.key} is for a kind the server knows`);
+});
+
+test('the kind is read off the start a message begins with, and a tap writes the start into the box', () => {
+  const { mod } = load();
+  const starts = mod.NEW_THREAD_STARTS.map((start) => ({ ...start, text: message(start.text) }));
+  const kindOf = (words) => (mod.startOf(words, starts) || { kind: 'any' }).kind;
+  assert.equal(kindOf('I want to fix an issue with the login button'), 'fix');
+  assert.equal(kindOf('I want to add a feature for reminders'), 'add');
+  assert.equal(kindOf('  i want to REDESIGN the page where you vote'), 'design', 'case and the space before it do not matter');
+  assert.equal(kindOf('I want to design a new page for stats'), 'design');
+  assert.equal(kindOf('I have a question about checks'), 'any');
+  assert.equal(kindOf('Fix the login button'), 'any', 'words of their own: any kind of change');
+  assert.equal(kindOf(''), 'any');
+  const fix = starts.find((start) => start.key === 'fix');
+  const add = starts.find((start) => start.key === 'add');
+  assert.equal(mod.withStart('', fix, starts), 'I want to fix an issue ', 'the caret waits after the words');
+  assert.equal(mod.withStart('I want to fix an issue with login', add, starts), 'I want to add a feature with login', 'another start swaps the start and keeps the rest');
+  assert.equal(mod.withStart('I want to fix an issue ', add, starts), 'I want to add a feature ');
+  assert.equal(mod.withStart('the login button', fix, starts), 'I want to fix an issue the login button', 'their own words follow it');
+  const src = read(NEW_THREAD);
+  assert.match(src, /const begun = startOf\(words, starts\);/);
+  assert.match(src, /aria-pressed=\{begun\?\.key === start\.key\}/, 'the start the message begins with is lit');
+  assert.match(src, /setWords\(\(current\) => withStart\(current, start, starts\)\.slice\(0, 8000\)\);\n\s+toField\(\);/);
+  assert.match(src, /input\.setSelectionRange\(end, end\);/, 'the caret goes to the end');
+});
+
+test('the project is chosen from the "Your communities" rows, Any project first', () => {
+  const picker = loadTsx('frontend/src/features/messages/project-picker.tsx');
+  const info = {
+    a: { slug: 'a', name: 'Book Club' }, b: { slug: 'b', name: 'Trail Notes' }, c: { slug: 'c', name: 'Garden Swap' },
+  };
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const none = plain(picker.pickerSections(['a', 'b', 'c'], info, ['c', 'a'], ''));
+  assert.equal(none.found, null);
+  assert.deepEqual(none.recent.map((row) => row.slug), ['c', 'a'], 'Recent: the switcher\'s own');
+  assert.deepEqual(none.rest.map((row) => row.slug), ['b'], 'then every other community you are in');
+  const searched = plain(picker.pickerSections(['a', 'b', 'c'], info, ['c', 'a'], 'trail'));
+  assert.deepEqual(searched.found.map((row) => row.slug), ['b'], 'words in the search take their place');
+  assert.deepEqual(plain(picker.pickerSections(null, {}, [], '')), { found: null, recent: [], rest: [] });
+  assert.equal(renderToHtml(createElement(picker.ProjectPicker, { open: false, slug: null, anchor: null, onPick() {}, onClose() {} })), '', 'nothing until it is opened');
+  const src = read('frontend/src/features/messages/project-picker.tsx');
+  // A sheet from the floor on a phone (the kit's when it is there), a menu from 768px.
+  assert.match(src, /wide\n\s+\? <PickerMenu slug=\{slug\} anchor=\{anchor\} onPick=\{onPick\} onClose=\{onClose\} \/>\n\s+: <PickerSheet slug=\{slug\} onPick=\{onPick\} onClose=\{onClose\} \/>/);
+  assert.match(src, /adoptKitSurface\(\{\n\s+kind: 'sheet',/);
+  assert.match(src, /className="community-switcher community-switcher-sheet"/);
+  assert.match(src, /className="community-switcher community-switcher-menu"/);
+  assert.match(src, /import \{ switcherRecent, switcherSub \} from '\.\.\/workshop\/community-switcher';/, 'the switcher\'s Recent and its "Public · 23 members" line');
+  assert.doesNotMatch(src, /id="community-switcher/, 'its own ids, never the switcher\'s');
+  assert.doesNotMatch(src, /goToCommunity/, 'picking a project goes nowhere');
 });
 
 test('the thread is made on the first send, through a same-origin door, and the message goes into it', () => {
   const src = read(NEW_THREAD);
-  assert.match(src, /const made = await api\.startBotThread\(\{ project: project \|\| null, kind \}\);\n\s+await api\.sendMessage\(conversationId, \{ content, threadRootId: made\.rootId, attachmentIds: attachments\.map\(\(item\) => item\.id\), idempotencyKey: key\(\) \}\);\n\s+closeNewThread\(\);\n\s+openThread\(made\.rootId\);/);
+  assert.match(src, /const kind: ChangeKind = startOf\(content, starts\)\?\.kind \|\| 'any';\n\s+const made = await api\.startBotThread\(\{ project: project \|\| null, kind \}\);\n\s+await api\.sendMessage\(conversationId, \{ content, threadRootId: made\.rootId, attachmentIds: attachments\.map\(\(item\) => item\.id\), idempotencyKey: key\(\) \}\);\n\s+closeNewThread\(\);\n\s+openThread\(made\.rootId\);/);
   assert.match(read('frontend/src/features/messages/api.ts'), /request<unknown>\('\/api\/conversations\/homeroom-bot\/new-thread', \{ method: 'POST'/);
   assert.match(read('src/routes/conversations.js'), /router\.post\('\/api\/conversations\/homeroom-bot\/new-thread', conversationActionLimiter, sameOriginBrowserOnly,/);
 });
@@ -118,15 +184,47 @@ test('files are dropped, pasted or picked in a blank thread, and ride its first 
   }
   assert.doesNotMatch(src, /messages:newThread\.(attach|drop|upload)/, 'no new catalog text');
   // Send is enabled by files alone, and held while an upload runs.
-  assert.match(src, /disabled=\{busy \|\| uploading > 0 \|\| \(!words\.trim\(\) && !attachments\.length\)\}/);
-  assert.match(src, /if \(busy \|\| uploading \|\| \(!content && !attachments\.length\)\) return;/);
+  assert.match(src, /disabled=\{busy \|\| dictating \|\| uploading > 0 \|\| \(!words\.trim\(\) && !attachments\.length\)\}/);
+  assert.match(src, /if \(busy \|\| dictating \|\| uploading \|\| \(!content && !attachments\.length\)\) return;/);
   assert.match(src, /attachmentIds: attachments\.map\(\(item\) => item\.id\)/);
 });
 
-test('Design a screen says to describe it, and Homeroom bot draws it: no screen to pick', () => {
+test('its box is the conversation composer\'s card, piece for piece', () => {
+  const src = read(NEW_THREAD);
+  const composer = read('frontend/src/features/messages/composer.tsx');
+  for (const piece of [
+    '<div className="messages-composer-card">',
+    '<div className="flex items-end gap-1.5">',
+    '<div className="messages-composer-add" ref={addRef}>',
+    'className="messages-composer-input"',
+    'className="messages-send"',
+    "aria-label={t('messages:composer.send')}",
+    '<ArrowUpIcon aria-hidden="true" />',
+    '<div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]"',
+  ]) {
+    assert.ok(composer.includes(piece), `the conversation composer draws ${piece}`);
+    assert.ok(src.includes(piece), `and so does the blank thread's`);
+  }
+  assert.match(src, /<SpeakButton scope="messages:new-thread" getText=\{\(\) => inputRef\.current\?\.value \|\| ''\} onText=\{setWords\} maxLength=\{8000\} onBusyChange=\{setDictating\} disabled=\{busy\} \/>/, 'dictation, as in every box');
+  assert.match(src, /useAutoGrow\(inputRef, words\);/, 'the field grows with what is typed');
+  // The project floats over the card, never inside it.
+  const bar = src.slice(src.indexOf('<ChatComposerBar as="form"'), src.indexOf('<div className="messages-composer-card">'));
+  assert.match(bar, /<div className="messages-project-row">\n\s+<ProjectChip/);
+  assert.doesNotMatch(src, /newThread\.(send|hint|kind)\b/, 'the retired words');
+  for (const id of ['newThread.send', 'newThread.hint', 'newThread.kind', 'newThread.kinds.any']) {
+    assert.throws(() => message(`messages:${id}`), `${id} is retired`);
+  }
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-start \{[^}]*font-size: 17px;\n\s+line-height: 22px;/, 'a pill in the box\'s own type');
+  assert.match(css, /@media \(min-width: 768px\) \{\n\s+\.messages-start \{ font-size: 15px; \}\n\}/, 'which is 15px from 768px, as the box is');
+  assert.match(css, /\.messages-starts \{\n\s+margin-block: auto;/, 'in the middle of the empty thread');
+});
+
+test('a design start says to describe the screen, and Homeroom bot draws it: no screen to pick', () => {
   assert.equal(message('messages:newThread.draws'), 'Describe the screen and Homeroom bot draws it.');
   const src = read(NEW_THREAD);
-  assert.match(src, /\{kind === 'design' \? \(\n\s+<p className="text-\[13px\] text-zinc-600 dark:text-zinc-300" data-bot-new-thread-draws="">\n\s+\{t\('messages:newThread\.draws'\)\}/);
+  assert.match(src, /const drawing = begun\?\.kind === 'design';/);
+  assert.match(src, /\{drawing \? <p className="messages-composer-hint" data-bot-new-thread-draws="">\{t\('messages:newThread\.draws'\)\}<\/p> : null\}/);
   assert.doesNotMatch(src, /startScreenPick|pickScreen|<Button/, 'the screen picker retired');
   assert.throws(() => message('messages:newThread.pickScreen'));
 });

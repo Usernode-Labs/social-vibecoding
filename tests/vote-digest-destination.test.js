@@ -49,6 +49,7 @@ function load() {
     App: {
       user: { id: 1 },
       openAppTab: (slug, tab, opts) => { calls.push(['openAppTab', slug, tab, opts || null]); },
+      navigateToProfileProposals: (kind) => { calls.push(['navigateToProfileProposals', kind]); },
       _isScreenVisible: () => false,
     },
     UsernodeReact: {
@@ -80,6 +81,15 @@ test('a digest of one change opens that change', () => {
   // digest opens exactly the change it names. It normalizes to the same page
   // the old `subTab: 'proposals'` spelling did.
   assert.deepEqual(nav(calls), [['showVotes', 40], ['openAppTab', 'flat-4b-chores', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 40 } }]]);
+  assert.equal(calls[0][0], 'dismiss', 'the sheet gets out of the way first');
+});
+
+// #5404: the Monday count of the changes you voted on names none of them.
+test('the Monday row opens Your votes', () => {
+  const { N, calls } = load();
+  N.items = [{ id: 4, readAt: null, kind: 'voted_digest', detail: '3', appSlug: null, sessionId: null }];
+  N._onItemClick(4);
+  assert.deepEqual(nav(calls), [['navigateToProfileProposals', 'votes']]);
   assert.equal(calls[0][0], 'dismiss', 'the sheet gets out of the way first');
 });
 

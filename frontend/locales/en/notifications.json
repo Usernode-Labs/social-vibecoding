@@ -1127,6 +1127,18 @@
     "text": "{{count}} changes to review in {{project}}",
     "description": "Second line of the \"Waiting for your approval\" notification when it is about one project. {{count}} is how many proposed changes still wait for the viewer's vote; {{project}} is the project's name. \"Change\" is a noun."
   },
+  "row.votedDigest.label": {
+    "text": "Changes you voted on",
+    "description": "First line of a weekly notification about changes the viewer voted on. How many were decided is on the line below."
+  },
+  "row.votedDigest.count_one": {
+    "text": "{{count}} decided in the last week",
+    "description": "Second line of the weekly \"Changes you voted on\" notification. {{count}} is how many of those changes went live or were closed in the last week. Tapping it opens the Your votes page."
+  },
+  "row.votedDigest.count_other": {
+    "text": "{{count}} decided in the last week",
+    "description": "Second line of the weekly \"Changes you voted on\" notification. {{count}} is how many of those changes went live or were closed in the last week. Tapping it opens the Your votes page."
+  },
   "row.connector.shared": {
     "text": "Shared by your agent",
     "description": "First line of a notification: the viewer's own AI coding agent put its work where others can see it, without asking for a vote. The work's title is on the line below."

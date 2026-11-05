@@ -1016,6 +1016,12 @@ function authRoutes(config) {
         // analytics. The client waits for this server-owned decision.
         // People who objected to being recorded answer false too (#3369).
         uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
+        // The shell's one Google Analytics sign_up (#6314). A browser-check
+        // account is not somebody signing up.
+        analyticsCounted: await uiTelemetry.countsInGoogleAnalytics(pool, req.user),
+        justSignedUp: uiTelemetry.isEligibleUser(req.user)
+          && !req.user.isSynthetic
+          && await require('../services/usage-analytics').justSignedUp(pool, req.user.id),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating

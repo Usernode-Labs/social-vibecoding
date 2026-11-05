@@ -451,6 +451,11 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/weekly-digest').sweep(pool),
   },
   {
+    // The Monday row: how many changes you voted on were decided last week.
+    name: 'voted-digest', everyMs: HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/voted-digest').sweep(pool),
+  },
+  {
     // A person let in gets the welcome group an admin set up.
     name: 'welcome-dm', everyMs: 30 * 1000,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),

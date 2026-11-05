@@ -279,6 +279,20 @@ async function isRecordable(pool, user) {
   return !(await leftOut.hasObjected(pool, user.id));
 }
 
+// Whether the live shell's Google Analytics tag counts this person's visits
+// (#6314). The Share usage analytics switch does not decide this one, but an
+// objection does, and a service account is nobody. An unreadable list answers
+// false, so a failed read never counts somebody who objected.
+async function countsInGoogleAnalytics(pool, user) {
+  if (!isEligibleUser(user) || user.isSynthetic) return false;
+  try {
+    const ids = await leftOut.idsByReason(pool);
+    return !!ids && !ids.objected.has(Number(user.id));
+  } catch {
+    return false;
+  }
+}
+
 function plainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -1251,6 +1265,7 @@ module.exports = {
   browserLanguages,
   daysWindow,
   insertBatch,
+  countsInGoogleAnalytics,
   isEligibleUser,
   isRecordable,
   clientErrorCode,

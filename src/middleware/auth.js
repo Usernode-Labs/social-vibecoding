@@ -118,6 +118,9 @@ const PUBLIC_PATHS = [
   // body would arrive where a script was expected, leaving the whole app
   // unstyled. Static JS only, no data access.
   '/usernode-tailwind/',
+  // The Google Analytics frame (#6314): a static page the shell frames for
+  // signed-out visitors too. Whole file name, no data access.
+  '/analytics-frame.html',
   // PWA shell assets (#487). The service-worker script, manifest and
   // icons must be fetchable without a session: the browser requests them
   // from login.html (pre-auth) and during background SW update checks,
