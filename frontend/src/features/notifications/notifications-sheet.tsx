@@ -288,6 +288,35 @@ function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`da
 }
 
 /**
+ * #5929 item 13: one line over the Unread groups, "3 need you · 96 unread",
+ * so the shape of a backlog reads before its rows do.
+ *
+ * Its two numbers come from different places and neither pretends otherwise.
+ * The total is the bell's own (`badgeTotal`), printed through the bell's cap
+ * (#5289), and it INCLUDES the ones that need you: it is never the total less
+ * the asks, because the asks are only counted in the rows paged in, and that
+ * subtraction would state a figure nobody knows. So the asks say "At least"
+ * while the Unread pager still has rows to bring up (`partial`), and the
+ * total says nothing when it could only repeat them. Zero says nothing.
+ */
+function CatchUpLine({ needs, total, partial }: { needs: number; total: number; partial: boolean }): ReactNode {
+  const t = useMessages('notifications');
+  // Nothing asks: the total alone only repeats the Unread tab's own number.
+  if (!needs) return null;
+  const needsWords = t(partial ? 'notifications:sheet.catchUp.needsYouAtLeast' : 'notifications:sheet.catchUp.needsYou', { count: needs });
+  const totalWords = total <= needs ? null
+    : total > 99 ? t('notifications:sheet.catchUp.unreadCapped')
+      : t('notifications:sheet.catchUp.unread', { count: total });
+  return (
+    <p className="px-4 pt-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400" data-notif-catch-up="">
+      {needsWords}
+      {totalWords ? <span aria-hidden="true"> · </span> : null}
+      {totalWords}
+    </p>
+  );
+}
+
+/**
  * #5406: the heading of one app's group of unread notifications on the Unread
  * tab, with that app's "Mark read" beside it. The heading is the app's name
  * (the same words each row's meta line already carries); the pill is the
@@ -367,6 +396,60 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
           {t('notifications:sheet.markAppRead')}
         </button>
       ) : null}
+    </div>
+  );
+}
+
+/** #5929 (item 13): seven whole days, the window `markOlderRead` sends. */
+const OLDER_WINDOW_DAYS = 7;
+const OLDER_WINDOW_MS = OLDER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+/** A row still unread and created more than a week before `now`. */
+export function olderThanWeek(view: { unread?: boolean; createdAtMs?: number }, now: number = Date.now()): boolean {
+  return !!view.unread && !!view.createdAtMs && view.createdAtMs < now - OLDER_WINDOW_MS;
+}
+
+/**
+ * #5929 (item 13): the foot of the Unread tab's list offers "Mark everything
+ * older than a week as read" while an unread row that old is listed — the
+ * way through a 99+ backlog that keeps this week's news. Quiet words, like
+ * a group's Mark read: the title row's Mark all read is the one pill, and
+ * this is a narrower version of it, not a second one.
+ */
+function MarkOlderRead({ onRead }: {
+  /** Before the clear: let the old rows go, so they leave Unread (useHeldUnread). */
+  onRead: () => void;
+}): ReactNode {
+  const t = useMessages('notifications');
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="px-4 py-2">
+      <button
+        id="notifications-mark-older"
+        type="button"
+        data-notif-mark-older=""
+        className={'inline-flex w-full items-center justify-center h-9 px-3 rounded-full text-sm font-medium '
+          + 'bg-transparent text-zinc-500 enabled:hover:bg-zinc-100 enabled:hover:text-zinc-900 '
+          + 'dark:text-zinc-400 enabled:dark:hover:bg-zinc-800 enabled:dark:hover:text-zinc-100 '
+          + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 '
+          + 'disabled:opacity-40 un-touch-target'}
+        disabled={busy}
+        aria-busy={busy ? 'true' : undefined}
+        onClick={(event) => {
+          // Stopped for the reason every handler in this sheet stops its
+          // click: a click that re-renders the list would otherwise bubble
+          // to an outside-click listener that dismisses the sheet.
+          event.stopPropagation();
+          if (busy) return;
+          setBusy(true);
+          onRead();
+          Promise.resolve(controller()?.markOlderRead(OLDER_WINDOW_DAYS))
+            .catch(() => false)
+            .then(() => setBusy(false));
+        }}
+      >
+        {t('notifications:sheet.markOlder')}
+      </button>
     </div>
   );
 }
@@ -1376,6 +1459,8 @@ export function NotificationsSheetView() {
     loadingMore: boolean;
     /** #5289: the bell's number, which the Unread tab prints too. */
     badgeTotal?: number;
+    /** Pending invites, pinned above the list: the bell counts them too. */
+    invites?: unknown[] | null;
     /** #5527: the Unread tab's own pager — see loadMoreUnread(). */
     unreadCanLoadMore?: boolean;
     loadingUnread?: boolean;
@@ -1508,6 +1593,9 @@ export function NotificationsSheetView() {
   // has them.
   const unread = all.filter((view) => held.listed(view) && !view.plainMessage);
   const unreadNow = all.filter((view) => view.unread && !view.plainMessage);
+  // #5929 (item 13): the rows a week-old window would clear. While one is
+  // listed, collapsed Unread offers to mark everything that old read.
+  const olderUnread = unreadNow.filter((view) => olderThanWeek(view));
   // #3206: a kind chip narrows All only; Unread is grouped by project instead.
   const kindOn = tab === 'all' ? kindFilter : null;
   const rows = tab === 'unread' ? unread
@@ -1522,6 +1610,11 @@ export function NotificationsSheetView() {
   // sum the unread rows paged in so far, which on a backlog was a count of
   // the list ("Unread (81)") under a bell saying 99+ and a title saying 300.
   const unreadCount = snap.badgeTotal || 0;
+  // #5929 item 13: what still waits on the reader, in what is known of it:
+  // the unread rows in hand (one answered here stops counting at once, though
+  // its row stays until the sheet closes) and the pending invites, every one
+  // of which the bell's number holds too.
+  const needsCount = unreadNow.filter((view) => view.needsYou).length + (snap.invites || []).length;
   const boundary = startOfToday();
   const entries: Entry[] = shown.map((view) => (
     { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
@@ -1739,6 +1832,7 @@ export function NotificationsSheetView() {
           className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm '
             + 'hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target'}
           aria-label={t('core:common.close')}
+          title={t('core:common.close')}
           onClick={() => NotificationsSheet.close()}
         >
           <XIcon className="w-5 h-5" />
@@ -1870,6 +1964,9 @@ export function NotificationsSheetView() {
           </p>
         )
       ) : null}
+      {!searching && appGroups.length ? (
+        <CatchUpLine needs={needsCount} total={unreadCount} partial={!!snap.unreadCanLoadMore} />
+      ) : null}
       {!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (
         <>
           {renderAppGroups()}
@@ -1900,6 +1997,14 @@ export function NotificationsSheetView() {
           {tab === 'unread' ? t('notifications:sheet.empty.unread')
             : kindOn ? t('notifications:sheet.empty.kind') : t('notifications:sheet.empty.other')}
         </p>
+      ) : null}
+      {/* #5929 (item 13): under the groups, above the way on — only on the
+          collapsed Unread tab, and only while an unread row older than a
+          week is listed, so a tab with nothing that old never offers it. */}
+      {!searching && groupedUnread && olderUnread.length ? (
+        <MarkOlderRead
+          onRead={() => held.release(olderUnread.flatMap((view) => view.groupIds || [view.id]))}
+        />
       ) : null}
       {/*
           THE WAY ON, and it depends on which tab you are standing on.

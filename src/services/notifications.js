@@ -2243,7 +2243,7 @@ async function markReadForConversation(pool, userId, conversationId) {
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
-async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null } = {}) {
+async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null, olderThanDays = null } = {}) {
   // One clear that is several notifications (a story card, a folded row, a
   // conversation run): one statement, so the count the route reads back
   // after it is the count after all of them. One request per member raced:
@@ -2258,6 +2258,27 @@ async function markRead(pool, userId, { id, ids = null, all = false, kinds = nul
     return rowCount || 0;
   }
   if (all) {
+    // #5929 (item 13): the mark-all kept to the rows older than a window of
+    // whole days — the Unread tab's "Mark everything older than a week as
+    // read", which lets a backlog go without touching this week's news. Its
+    // own statement, so the SQL stays static; it does not combine with the
+    // kind scopes below (the route refuses that), and a caller that sends
+    // both gets an error rather than a clear wider than it asked for.
+    if (olderThanDays != null) {
+      if (!Number.isInteger(olderThanDays) || olderThanDays < 1) {
+        throw new TypeError('olderThanDays must be a positive integer number of days');
+      }
+      if ((Array.isArray(kinds) && kinds.length) || (Array.isArray(excludeKinds) && excludeKinds.length)) {
+        throw new TypeError('olderThanDays does not combine with kind scoping');
+      }
+      const { rowCount } = await pool.query(
+        `UPDATE notifications SET read_at = NOW()
+          WHERE user_id = $1 AND read_at IS NULL
+            AND created_at < NOW() - make_interval(days => $2)`,
+        [userId, olderThanDays]
+      );
+      return rowCount || 0;
+    }
     // Optional kind scoping for the split drawers: the header cog's
     // "Mark all read" sends kinds=[the session-related set] so it only
     // clears its own rows; the bell's sends excludeKinds=[same set] so

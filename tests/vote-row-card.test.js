@@ -102,6 +102,16 @@ test('before the snapshot lands, the card names the change from the row and offe
   assert.match(bare, /<div class="gc-vote-card-name">A change<\/div>/);
 });
 
+test('#6322: a vote line that names no change draws no card', () => {
+  const html = renderComponent(TRANSCRIPT, 'SystemRow', {
+    msg: voteRow({ systemText: 'snait voted up on close proposal for issue #436', voteRef: null }),
+  });
+  assert.match(html, /snait voted up on close proposal for issue #436/, 'the line itself stays');
+  assert.doesNotMatch(html, /gc-vote-card/);
+  assert.doesNotMatch(html, /data-vote-open/);
+  assert.doesNotMatch(html, /A change/);
+});
+
 test('a settled change says so, offers See the vote rather than Vote, and no preview', () => {
   const merged = renderComponent(TRANSCRIPT, 'SystemRow', { msg: voteRow({ vote: facts({ status: 'merged', preview: null }) }) });
   assert.match(merged, /data-vote-state="merged"/);

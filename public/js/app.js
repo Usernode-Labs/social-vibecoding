@@ -264,6 +264,14 @@ const App = {
     // …and the Workshop view the tab returns to (#2776), which names the
     // previous account's app and card in the same way.
     App._forgetWorkshopView();
+    // …and Discover's recent searches (#6197): what this account looked for,
+    // which the next account on this device must not be offered. Unlike unsent
+    // messages they carry no owner to check, and a changed session token is not
+    // necessarily the same person, so they go on every sweep. Browse.open reads
+    // them afresh, so no copy outlives this.
+    try {
+      localStorage.removeItem('usernode:browse-recent-searches');
+    } catch (err) { /* nothing stored, or no storage at all */ }
     // …and what Messages and the Homeroom bot tab kept to draw offline
     // (frontend/src/lib/kept-copies.ts): the conversation list, the newest
     // messages of the last few conversations and the bot tab's lists. The
