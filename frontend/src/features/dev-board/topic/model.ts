@@ -678,6 +678,12 @@ export interface ChangeGateView {
    * Votes only; the card keeps its tally and its note.
    */
   hold?: boolean;
+  /**
+   * #3800: Votes only, while a change is up for a vote: its lines under the
+   * bar, worded (AppView._changeVoteFacts). `ask` is the viewer's vote still
+   * being wanted, in the accent.
+   */
+  facts?: { key: 'tally' | 'ends' | 'mine'; text: string; ask?: boolean }[];
   /** Why this status is shown, disclosed beside the note when available. */
   noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */

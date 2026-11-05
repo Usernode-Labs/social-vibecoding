@@ -765,6 +765,8 @@ function ruleRowFields(gate) {
     approval_who_decides: !!gate.whoDecides,
     approval_passed_by: gate.passedBy ? gate.passedBy.group : null,
     creator_yes: !!gate.creatorYes,
+    // #3800: the rule the Votes card counts for (AppView._changeVoteFacts).
+    approval_rule: gate.shownRule || null,
   };
 }
 

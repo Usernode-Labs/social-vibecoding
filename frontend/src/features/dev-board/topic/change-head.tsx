@@ -229,6 +229,14 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
         </div>
       </div>
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
+      {/* #3800: the repeat at the foot of the page stays one small card. */}
+      {shown.facts?.length && !repeat ? (
+        <div className="dev-change-gate-facts">
+          {shown.facts.map((fact) => (
+            <p key={fact.key} data-change-vote-fact={fact.key} data-ask={fact.ask ? 'true' : undefined}>{fact.text}</p>
+          ))}
+        </div>
+      ) : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}
