@@ -397,7 +397,7 @@ const times = (n, step) => Array.from({ length: n }, () => step);
 const reply = (text) => ({ calls: [call('reply', { text })] });
 const edit = (find, replace, note) => ({ calls: [call('edit_design', { edits: [{ find, replace }], ...(note ? { note } : {}) })] });
 const TOOL_NAMES = designBot.TOOLS.map((tool) => tool.function.name);
-const ACT_NAMES = TOOL_NAMES.filter((name) => !['list_source', 'read_source', 'list_requests', 'get_request'].includes(name));
+const ACT_NAMES = TOOL_NAMES.filter((name) => !['list_source', 'read_source', 'list_requests', 'get_request', 'read_plan'].includes(name));
 
 // An edit: a message in a thread that holds version 2 already.
 const CURRENT = { version: 2, html: '<main>Keys</main>' };

@@ -494,6 +494,122 @@ function planHtml({ design, title, notes, before = null, after, version }) {
   ].join('\n');
 }
 
+// ── What a plan shows, against what the preview drew (#6353) ──────────────
+//
+// The preview runs a design's scripts (frontend/src/features/design/frame.ts,
+// sandbox "allow-scripts"); a plan shows the same HTML through screenMarkup,
+// which drops every <script>, and the frame draws it with sandbox "" (nothing
+// runs). A screen whose rows a script builds was therefore blank in its plan.
+// planGap says so before a plan is posted; planReadout reads a posted plan back.
+
+/** Pure: the words a markup shows, without its tags or styles. */
+function visibleText(markup) {
+  return String(markup || '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?(?:<\/script\s*>|$)/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// A script body that writes into the page (rather than, say, toggling a class).
+const WRITES_PAGE_RE = /innerHTML\s*\+?=|insertAdjacentHTML|appendChild|\.append\(|replaceChildren|createElement|textContent\s*=|innerText\s*=/;
+
+/** Pure: the visible words a script's string and template literals hold. */
+function scriptWords(body) {
+  const out = [];
+  for (const m of String(body || '').matchAll(/(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g)) out.push(m[2]);
+  return visibleText(out.join(' ').replace(/\$\{[^}]*\}/g, ' '));
+}
+
+/**
+ * Pure (#6353): whether a plan made from `html` would show clearly less than
+ * the preview drew, because a script builds it: null, or { kind: 'lists' |
+ * 'screen', empty, markupChars, scriptChars, reason }. Homeroom cannot run a
+ * design's scripts on the server, so this is judged from the design itself: a
+ * script that writes into the page and fills a box the plan leaves empty
+ * ('lists'), or one that holds more words than the page does ('screen').
+ */
+function planGap(html) {
+  const source = String(html || '');
+  const bodies = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)(?:<\/script\s*>|$)/gi)].map((m) => m[1]);
+  if (!bodies.length) return null;
+  const writing = bodies.filter((body) => WRITES_PAGE_RE.test(body));
+  if (!writing.length) return null;
+  const stripped = screenMarkup(source);
+  const ids = new Set();
+  for (const body of writing) {
+    for (const m of body.matchAll(/getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) ids.add(m[1]);
+    for (const m of body.matchAll(/querySelector\(\s*['"]#([^'"\s]+)['"]\s*\)/g)) ids.add(m[1]);
+  }
+  const empty = [];
+  for (const name of ids) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`<([a-z][\\w-]*)[^>]*\\bid=["']${escaped}["'][^>]*>\\s*</\\1\\s*>`, 'i').test(stripped)) empty.push(name);
+  }
+  const scriptChars = scriptWords(writing.join(' ')).length;
+  const markupChars = visibleText(stripped).length;
+  if (empty.length) {
+    return {
+      kind: 'lists', empty, markupChars, scriptChars,
+      reason: 'The plan would show its lists empty, because a script builds them.',
+    };
+  }
+  if (scriptChars >= Math.max(40, markupChars)) {
+    return {
+      kind: 'screen', empty, markupChars, scriptChars,
+      reason: 'The plan would show this screen mostly empty, because a script writes its words.',
+    };
+  }
+  return null;
+}
+
+/** Pure: a markup's shape, as planReadout reports it. */
+function markupCounts(part) {
+  const html = String(part || '');
+  let emptyLists = 0;
+  for (const m of html.matchAll(/<(ul|ol|table|tbody)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi)) {
+    if (!/<(?:li|tr)\b/i.test(m[2])) emptyLists += 1;
+  }
+  return {
+    elements: (html.match(/<[a-z][\w-]*\b/gi) || []).length,
+    lists: (html.match(/<(?:ul|ol|table|tbody)\b/gi) || []).length,
+    rows: (html.match(/<(?:li|tr)\b/gi) || []).length,
+    emptyLists,
+  };
+}
+
+/**
+ * Pure (#6353): a plan as it is drawn, since Homeroom bot cannot see a
+ * picture: [{ size, sides: [{ side, text, elements, lists, rows, emptyLists }] }],
+ * one per <template data-screen> and one per data-side part in it. Text is
+ * the first 1500 characters of what the side shows.
+ */
+function planReadout(plan) {
+  const source = String(plan || '');
+  const screens = [];
+  for (const m of source.matchAll(/<template\b[^>]*\bdata-screen\b[^>]*>([\s\S]*?)<\/template\s*>/gi)) {
+    const open = m[0].slice(0, m[0].indexOf('>') + 1);
+    const size = /\bdata-size\s*=\s*"([^"]*)"/i.exec(open)?.[1] || null;
+    const body = m[1];
+    const marks = [...body.matchAll(/<div\b[^>]*\bdata-side\s*=\s*"(before|after)"[^>]*>/gi)];
+    const sides = marks.map((mark, i) => {
+      const start = mark.index + mark[0].length;
+      const end = i + 1 < marks.length ? marks[i + 1].index : body.length;
+      const part = body.slice(start, end);
+      return { side: mark[1], text: visibleText(part).slice(0, 1500), ...markupCounts(part) };
+    });
+    screens.push({ size, sides });
+  }
+  return screens;
+}
+
 // What planHtml's tech section says its after side is, in either of its two wordings.
 const PLAN_VERSION_RE = /\bafter is version (\d+)(?:, a mockup| of the design)\b/;
 
@@ -575,7 +691,7 @@ async function planTargetOf(pool, design) {
  * error, code? }.
  */
 async function postDesignPlan(pool, config, {
-  user, rootId, version = null, issueNumber = null, title = null, notes = null, appId = null, deps = {},
+  user, rootId, version = null, issueNumber = null, title = null, notes = null, appId = null, allowEmptier = false, deps = {},
 }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
@@ -604,6 +720,22 @@ async function postDesignPlan(pool, config, {
   }
   const after = await versionOf(pool, { userId: user.id, rootId, version });
   if (!after) return { ok: false, status: 404, error: 'No such version' };
+  // #6353: the preview runs the design's scripts, the plan does not. A plan
+  // that would show clearly less than the preview says so, and offers the
+  // fix, instead of posting silently. A tap on the card that showed the
+  // warning, and a first version's automatic plan, pass allowEmptier.
+  const gap = planGap(after.html);
+  if (gap && !allowEmptier) {
+    return {
+      ok: false, status: 409, code: 'plan_emptier', gap,
+      error: `${gap.reason} Ask Homeroom bot to write them into the screen, then post it again.`,
+    };
+  }
+  if (gap) {
+    log.info('design-threads', 'Posted a plan emptier than its preview', {
+      app: app.slug, userId: user.id, kind: gap.kind, empty: gap.empty,
+    });
+  }
   // Version 1 is "before" only when it was the screen as it was.
   const captured = design.versions[0]?.author === 'capture';
   const before = captured ? await versionOf(pool, { userId: user.id, rootId, version: 1 }) : null;
@@ -744,6 +876,9 @@ module.exports = {
   startDesign,
   pinFor,
   screenMarkup,
+  visibleText,
+  planGap,
+  planReadout,
   planHtml,
   planDesignVersion,
   planTargetOf,

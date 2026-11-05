@@ -4640,7 +4640,7 @@ const MAX_PROJECT_NAME = 60;
  * note } for the turn's card (sendDesignOffer), or { ok: false, error }
  * for the model.
  */
-async function checkPlanOffer(pool, { user, design, args = {}, deps = {} }) {
+async function checkPlanOffer(pool, { user, design, args = {}, deps = {}, html = null }) {
   let app = null;
   if (!design?.app) {
     // A design for a screen that has no project yet: the project they named.
@@ -4684,12 +4684,21 @@ async function checkPlanOffer(pool, { user, design, args = {}, deps = {} }) {
     }
   }
   const version = design.latest;
+  // #6353: the plan shows the screen without its scripts. When that leaves
+  // it clearly emptier than the preview, the card says so and offers to
+  // write the rows into the markup first, and the model is told to say it.
+  const gap = typeof html === 'string'
+    ? (deps.designThreads || require('./design-threads')).planGap(html)
+    : null;
+  const said = n
+    ? `A card with "Post as a plan on #${n}" and "Not yet" goes under your reply. Say in a sentence that tapping it posts version ${version} on request #${n} as their plan, publicly, under their name.`
+    : `A card with "New request" and "Add to an existing request…" goes under your reply. Say in a sentence that New request files a request on ${name} with version ${version} as its plan, publicly, under their name, and that they can put it on a request they name instead.`;
   return {
     ok: true,
-    offer: { kind: 'plan', app, issueNumber: n || null, version },
-    note: n
-      ? `A card with "Post as a plan on #${n}" and "Not yet" goes under your reply. Say in a sentence that tapping it posts version ${version} on request #${n} as their plan, publicly, under their name.`
-      : `A card with "New request" and "Add to an existing request…" goes under your reply. Say in a sentence that New request files a request on ${name} with version ${version} as its plan, publicly, under their name, and that they can put it on a request they name instead.`,
+    offer: { kind: 'plan', app, issueNumber: n || null, version, ...(gap ? { gap } : {}) },
+    note: gap
+      ? `${said} The plan would show ${gap.kind === 'lists' ? 'these lists' : 'this screen'} empty, because of a script: say so, and that you can write the rows into the screen first.`
+      : said,
   };
 }
 
@@ -4741,17 +4750,27 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
      VALUES ($1, $2, $3, 'post_design', $4, $5, $6, $7) RETURNING id`,
     [user.id, conversationId, app.id, clip(design.title, MAX_TITLE_CHARS) || 'Design', n, design.threadId, v],
   );
+  // #6353: a plan that would show lists empty because a script builds them
+  // says so before it is posted, and offers to write the rows in first. The
+  // post stays, as a secondary action: the warning informs, it does not block.
+  const actions = o.gap
+    ? [
+      { id: 'fill', label: 'Write the rows in first', style: 'primary', type: 'prompt', quote: true },
+      ...designPlanActions(n).map((a) => (a.id === 'yes' ? { ...a, style: 'secondary' } : a)),
+    ]
+    : designPlanActions(n);
   const sent = await dm.sendDm(pool, {
     bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
     content: [
       text || (n ? `Want me to post this as your plan on request #${n}?` : `Want me to post this as a plan on ${name}?`),
       '',
       n ? `**${name}** · a plan on request #${n}: version ${v} of ${design.title}` : `**${name}** · a plan: version ${v} of ${design.title}`,
+      ...(o.gap ? ['', `${o.gap.reason} I can write the rows into the screen first.`] : []),
     ].join('\n'),
     metadata: {
       kind: 'confirm', appSlug: app.slug, appName: name, actionId: action.id,
       question: n ? `Post version ${v} as a plan on #${n}?` : `Post version ${v} as a plan on ${name}?`,
-      answers: designPlanAnswers(n), actions: designPlanActions(n), status: 'open', mirrors: false,
+      answers: designPlanAnswers(n), actions, status: 'open', mirrors: false,
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -4782,7 +4801,7 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
     posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
       user, rootId: Number(thread.root_message_id), version: Number(action.design_version) || null,
       issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null,
-      appId: Number(action.app_id) || null, deps,
+      appId: Number(action.app_id) || null, allowEmptier: true, deps,
     });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not post a design as a plan', { actionId: action.id, err: err.message });

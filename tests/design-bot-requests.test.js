@@ -58,12 +58,20 @@ function scripted(steps, seen = []) {
 
 // `threadApp`: the project the design's thread belongs to (surface 'new': null).
 // `apps`: what findApp resolves, by the name the model passed.
-function boardTurn(steps, { surface = 'app', threadApp = HOMEROOM, canView = true, apps = { homeroom: HOMEROOM, ear: EAR }, openMcp } = {}) {
+// `design`/`current`: the thread's design and the version shown (read_plan).
+// `planTarget`: the request planTargetOf gives; `requestSpecs` what it posts.
+function boardTurn(steps, {
+  surface = 'app', threadApp = HOMEROOM, canView = true, apps = { homeroom: HOMEROOM, ear: EAR }, openMcp,
+  design = null, current = null, planTarget = null, requestSpecs = null,
+} = {}) {
   const sent = [];
   const seen = [];
   const opened = [];
   const closes = [];
   const calls = [];
+  const versions = [];
+  const turns = [];
+  const realThreads = require('../src/services/design-threads');
   const platform = openMcp === undefined ? {
     async call(name, args) { calls.push({ name, args }); return { text: `answer from ${name}` }; },
     async close() { closes.push(true); },
@@ -73,7 +81,7 @@ function boardTurn(steps, { surface = 'app', threadApp = HOMEROOM, canView = tru
     chat: scripted(steps, seen), apiKey: 'sk-test', seesImages: false, sleep: async () => {},
     dm: { async sendDm(_pool, args) { sent.push(args); return { messageId: 900 + sent.length }; } },
     mayor: Object.assign(Object.create(mayor), {
-      async recordTurn() {}, async turnsLastHour() { return 0; },
+      async recordTurn(_pool, args) { turns.push(args); }, async turnsLastHour() { return 0; },
       async findApp(_pool, name) {
         const q = String(name || '').toLowerCase();
         return Object.values(apps).find((a) => a.slug === q || String(a.name).toLowerCase() === q) || null;
@@ -84,16 +92,19 @@ function boardTurn(steps, { surface = 'app', threadApp = HOMEROOM, canView = tru
       async canView() { return canView; },
     }),
     designThreads: {
+      ...realThreads,
       surfaceFor: () => surface,
       validHtml: () => true,
-      async versionOf() { return null; },
+      async versionOf() { return current; },
       async ensureDesign() { return { threadId: 7, title: 'Main screen', app: threadApp || HOMEROOM }; },
-      async addVersion() { return { version: 1 }; },
+      async addVersion(_pool, args) { versions.push(args); return { version: 1 }; },
       versionLine: (version, note) => `Version ${version} · ${note}`,
       async noteVersionMessage() {},
+      async planTargetOf() { return planTarget; },
     },
     track: { async tracksForRequests() { return new Map(); } },
     openMcp: async (options) => { opened.push(options); return openMcp === undefined ? platform : openMcp(); },
+    ...(requestSpecs ? { requestSpecs } : {}),
   };
   const run = designBot.answer(pool, { port: 3000 }, {
     bot: { id: 2, username: 'homeroom_bot' },
@@ -101,12 +112,12 @@ function boardTurn(steps, { surface = 'app', threadApp = HOMEROOM, canView = tru
     settings: { mode: 'live' },
     conversationId: 41,
     message: { id: 71, content: 'check recent issues on Homeroom' },
-    design: null,
+    design,
     thread: { rootId: 500, threadId: 7, app: threadApp },
     handoff: false,
     deps,
   });
-  return { run, sent, seen, opened, closes, calls, platform };
+  return { run, sent, seen, opened, closes, calls, versions, turns, platform };
 }
 
 /** The result the model was handed for the tool call with `id`. */
@@ -239,4 +250,135 @@ test('reading requests stops at the reading budget, like the code readers', asyn
   await turn.run;
   assert.deepEqual(turn.calls, [], 'the late board read never reaches the platform');
   assert.match(toolResult(turn.seen, 'clist_requests').error, /Reading is over/);
+});
+
+// ── #6353: the plan is drawn without scripts, and screens grow by edits ───
+
+// A design thread at version 4, its screen drawn at a phone size.
+const DESIGN = Object.freeze({
+  threadId: 7, rootId: 500, state: 'open', number: null, latest: 4,
+  app: { id: 3, slug: 'homeroom', name: 'Homeroom' },
+  title: 'Homeroom bot page', surface: 'platform', route: null, width: 390, height: 844,
+});
+
+test('read_plan is offered as a reader, and reads the plan the current version would make', async () => {
+  const names = designBot.TOOLS.map((t) => t.function.name);
+  assert.ok(names.includes('read_plan'));
+  assert.equal(designBot.READ_TOOLS.has('read_plan'), true, 'a reader: the reading budget applies');
+  assert.equal(designBot.ACT_TOOLS.some((t) => t.function.name === 'read_plan'), false);
+  const tool = designBot.TOOLS.find((t) => t.function.name === 'read_plan').function;
+  assert.deepEqual(tool.parameters, { type: 'object', properties: {}, additionalProperties: false });
+  assert.match(tool.description, /without scripts/);
+  assert.match(tool.description, /plan or the preview looks wrong/);
+  assert.doesNotMatch(tool.description, /—/);
+
+  // No design yet: said, not a read.
+  const none = boardTurn([
+    { calls: [call('read_plan', {})] },
+    { calls: [call('reply', { text: 'Draw it first.' })] },
+  ]);
+  await none.run;
+  assert.match(toolResult(none.seen, 'cread_plan').error, /no screen yet/);
+
+  const html = '<main><h1>Homeroom bot</h1><ul><li>One</li><li>Two</li></ul></main>';
+  const turn = boardTurn([
+    { calls: [call('read_plan', {})] },
+    { calls: [call('reply', { text: 'It shows two rows.' })] },
+  ], { design: DESIGN, current: { version: 4, html } });
+  await turn.run;
+  const result = toolResult(turn.seen, 'cread_plan');
+  assert.equal(result.ok, true);
+  assert.equal(result.posted, false);
+  assert.equal(result.designVersion, 4);
+  assert.equal(result.gap, null, 'rows in the markup leave no gap');
+  assert.equal(result.screens.length, 1);
+  assert.equal(result.screens[0].size, 'phone');
+  const after = result.screens[0].sides.find((s) => s.side === 'after');
+  assert.equal(after.lists, 1);
+  assert.equal(after.rows, 2);
+  assert.equal(after.emptyLists, 0);
+  assert.match(after.text, /Homeroom bot One Two/);
+});
+
+test('read_plan reads a posted plan back from its request, without scripts', async () => {
+  const designs = require('../src/services/design-threads');
+  const posted = designs.planHtml({
+    design: { width: 390, height: 844, title: 'Homeroom bot page', route: null, surface: 'platform' },
+    title: 'Homeroom bot page', notes: '', before: null, after: '<main><p>Posted words</p></main>', version: 3,
+  });
+  const read = [];
+  const turn = boardTurn([
+    { calls: [call('read_plan', {})] },
+    { calls: [call('reply', { text: 'The posted plan says Posted words.' })] },
+  ], {
+    design: { ...DESIGN, state: 'posted', number: 18 }, current: { version: 4, html: '<main><p>Now</p></main>' },
+    planTarget: 18,
+    requestSpecs: { async personPlanOf(_pool, args) { read.push(args); return { version: 2, html: posted }; } },
+  });
+  await turn.run;
+  assert.deepEqual(read, [{ appId: 3, issueNumber: 18 }], 'the thread\'s request, on its project');
+  const result = toolResult(turn.seen, 'cread_plan');
+  assert.equal(result.ok, true);
+  assert.equal(result.posted, true);
+  assert.equal(result.number, 18);
+  assert.equal(result.planVersion, 2, 'the plan\'s own version');
+  assert.equal(result.designVersion, 3, 'the design version it shows');
+  assert.match(result.screens[0].sides.find((s) => s.side === 'after').text, /Posted words/);
+});
+
+test('one whole screen a turn: a second write_screen is refused and recorded, and the edit goes through', async () => {
+  const first = '<main><h1>Homeroom bot</h1><p>Plenty of words written into this screen.</p></main>';
+  const second = '<main><p>Second screen.</p></main>';
+  const turn = boardTurn([
+    { calls: [call('write_screen', { title: 'Page', size: 'phone', html: first, note: 'A page' }, 'w1')] },
+    { calls: [call('write_screen', { title: 'Page', size: 'phone', html: second, note: 'Again' }, 'w2')] },
+    { calls: [call('edit_design', { edits: [{ find: 'Homeroom bot', replace: 'Homeroom' }], note: 'Tidied' }, 'e1')] },
+    { calls: [call('reply', { text: 'Drew it.' }, 'r1')] },
+  ], { design: DESIGN, current: { version: 4, html: '<main><p>Old screen</p></main>' } });
+  await turn.run;
+  assert.equal(toolResult(turn.seen, 'w1').ok, true);
+  const refused = toolResult(turn.seen, 'w2');
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error, 'You drew this turn\'s screen already. Change or extend it with edit_design: a second '
+    + 'write_screen is taken only when the first was refused or empty.');
+  assert.equal(toolResult(turn.seen, 'e1').ok, true, 'the edit is taken');
+  assert.deepEqual(turn.turns[0].failures, ['d2:rewrite'], 'recorded among the turn\'s failures');
+  const saved = turn.versions[0].html;
+  assert.doesNotMatch(saved, /Second screen/);
+  assert.match(saved, /Plenty of words written into this screen/);
+  assert.match(saved, /<h1>Homeroom<\/h1>/, 'the edit was applied to the first screen');
+});
+
+test('a second write_screen is taken after an empty one, or a refused one', async () => {
+  for (const [label, first, taken] of [
+    ['empty', '<main><div id="rows"></div><script>document.getElementById("rows").innerHTML = "x";</script></main>', true],
+    ['refused', '', false],
+  ]) {
+    const second = '<main><h1>Second</h1><p>Now with words in the markup.</p></main>';
+    const turn = boardTurn([
+      { calls: [call('write_screen', { title: 'Page', size: 'phone', html: first, note: 'First' }, 'w1')] },
+      { calls: [call('write_screen', { title: 'Page', size: 'phone', html: second, note: 'Second' }, 'w2')] },
+      { calls: [call('reply', { text: 'Drew it.' }, 'r1')] },
+    ], { design: DESIGN, current: { version: 4, html: '<main><p>Old screen</p></main>' } });
+    await turn.run;
+    assert.equal(toolResult(turn.seen, 'w1').ok, taken, label);
+    assert.equal(toolResult(turn.seen, 'w2').ok, true, `${label}: the second is taken`);
+    assert.match(turn.versions[0].html, /Now with words in the markup/, label);
+    assert.equal(turn.turns[0].failures.includes('d2:rewrite'), false, `${label}: no rewrite recorded`);
+  }
+});
+
+test('the tools and the prompt say a plan drops scripts, and name read_plan', () => {
+  const write = designBot.TOOLS.find((t) => t.function.name === 'write_screen').function.description;
+  assert.match(write, /A plan shows the screen without its scripts/);
+  assert.match(write, /write every row, label and state it must show into the markup/);
+  assert.match(write, /One write_screen a turn: grow it with edit_design/);
+  const edit = designBot.TOOLS.find((t) => t.function.name === 'edit_design').function.description;
+  assert.match(edit, /The way to change or extend this turn's screen/);
+  assert.match(edit, /write rows and words into the markup, not a script that builds them/);
+  const prompt = designBot.designPrompt({ username: 'evan', design: DESIGN, version: 4, html: '<p>x</p>' });
+  assert.match(prompt, /A plan shows the screen without its scripts, so\n {2}every row, label and state it must show goes in the markup/);
+  assert.match(prompt, /A second\n {2}write_screen is taken only when the first was refused or came out empty\./);
+  assert.doesNotMatch(prompt, /A second write_screen in a turn replaces the first/);
+  assert.match(prompt, /call read_plan first and answer from what it shows; never\n {2}guess why\./);
 });

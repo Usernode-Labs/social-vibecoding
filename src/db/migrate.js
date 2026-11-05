@@ -8733,6 +8733,35 @@ async function seedStagingDesignThread(pool) {
         [thread.id, saidTwo.messageId]
       );
     }
+    // #6353: the plan card as it is when a script builds the screen's rows:
+    // the warning and "Write the rows in first" beside posting as it is. A
+    // stored bot reply, never asked for, and obviously fake like the rest.
+    await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: [
+        'Want me to post this as your plan on request #6351?',
+        '',
+        `**Staging demo** · a plan on request #6351: version 2 of ${named}`,
+        '',
+        'The plan would show its lists empty, because a script builds them. I can write the rows into the screen first.',
+      ].join('\n'),
+      threadRootId: opened.messageId,
+      moment: null,
+      idempotencyKey: `staging-design-${thread.id}-plan-card`,
+      metadata: {
+        kind: 'confirm', status: 'open', question: 'Post version 2 as a plan on #6351?',
+        answers: ['Post as a plan on #6351', 'Not yet'],
+        actions: [
+          { id: 'fill', label: 'Write the rows in first', style: 'primary', type: 'prompt', quote: true },
+          { id: 'yes', label: 'Post as a plan on #6351', style: 'secondary', type: 'server' },
+          { id: 'no', label: 'Not yet', style: 'secondary', type: 'server' },
+        ],
+        mirrors: false,
+      },
+    }).catch((err) => {
+      log.warn('db', 'Staging design plan card failed', { message: err.message });
+    });
     log.info('db', 'Staging design thread fixture seeded', { threadId: thread.id });
   } catch (err) {
     log.warn('db', 'Staging design thread seeding failed', { message: err.message });
