@@ -132,7 +132,7 @@ function stagingMockNotifications() {
     // nulled; a preview has no Monday to wait for without this row.
     {
       ...base,
-      id: 990220, kind: 'voted_digest',
+      id: 990230, kind: 'voted_digest',
       createdAt: new Date(now - 3.2 * 60 * 1000).toISOString(),
       appId: null, appSlug: null, appName: null,
       detail: '3',
