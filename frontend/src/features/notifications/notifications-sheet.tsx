@@ -301,17 +301,16 @@ function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`da
  */
 function CatchUpLine({ needs, total, partial }: { needs: number; total: number; partial: boolean }): ReactNode {
   const t = useMessages('notifications');
-  if (!total && !needs) return null;
-  const needsWords = needs > 0
-    ? t(partial ? 'notifications:sheet.catchUp.needsYouAtLeast' : 'notifications:sheet.catchUp.needsYou', { count: needs })
-    : null;
+  // Nothing asks: the total alone only repeats the Unread tab's own number.
+  if (!needs) return null;
+  const needsWords = t(partial ? 'notifications:sheet.catchUp.needsYouAtLeast' : 'notifications:sheet.catchUp.needsYou', { count: needs });
   const totalWords = total <= needs ? null
     : total > 99 ? t('notifications:sheet.catchUp.unreadCapped')
       : t('notifications:sheet.catchUp.unread', { count: total });
   return (
     <p className="px-4 pt-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400" data-notif-catch-up="">
       {needsWords}
-      {needsWords && totalWords ? <span aria-hidden="true"> · </span> : null}
+      {totalWords ? <span aria-hidden="true"> · </span> : null}
       {totalWords}
     </p>
   );

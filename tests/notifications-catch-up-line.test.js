@@ -74,18 +74,18 @@ test('it sits over the groups, muted, and names the asks and the bell\'s number'
 test('asks are counted only as far as the rows in hand reach', () => {
   const html = render([asks(1), asks(2), view(3)], { badgeTotal: 300, unreadCanLoadMore: true });
   assert.equal(line(html), 'At least 2 need you · 99+ unread', 'the pager has more: a floor, and the bell\'s cap');
-  assert.equal(line(render([view(1)], { badgeTotal: 300, unreadCanLoadMore: true })), '99+ unread',
+  assert.equal(line(render([view(1)], { badgeTotal: 300, unreadCanLoadMore: true })), null,
     'none seen yet claims nothing about the rest');
 });
 
 test('zero says nothing, and neither does a total that only repeats the asks', () => {
-  assert.equal(line(render([view(1), view(2)])), '2 unread', 'no need-you clause at 0');
+  assert.equal(line(render([view(1), view(2)])), null, 'nothing asks: the total alone only repeats the tab');
   assert.equal(line(render([asks(1)])), '1 needs you', 'one of one: the total adds nothing');
   assert.equal(line(render([asks(1), asks(2)], { badgeTotal: 1 })), '2 need you', 'a bell a beat behind cannot read as fewer unread than asks');
 });
 
 test('a row already read stops asking, and a pending invite asks', () => {
-  assert.equal(line(render([view(1), { ...asks(2), unread: false }], { badgeTotal: 1 })), '1 unread');
+  assert.equal(line(render([view(1), { ...asks(2), unread: false }], { badgeTotal: 1 })), null);
   assert.equal(line(render([asks(1), view(2)], { badgeTotal: 3, invites: [invite] })), '2 need you · 3 unread',
     'the bell holds the invite, so the asks do too');
 });
