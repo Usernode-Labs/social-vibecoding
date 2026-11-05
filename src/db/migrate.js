@@ -1939,6 +1939,39 @@ async function seedStagingBotAlreadyWorks(pool) {
         [userId, appId, noteId, botId, detail],
       );
     }
+    // #6321: the note as it is written now, with Propose to close and Keep it
+    // open under it for any member. A copy that already has the older note is
+    // brought up to it, so the after copy shows the state either way. A row
+    // nobody decides with until a person taps; idempotent by the offer tied
+    // to the note.
+    if (noteId != null) {
+      const tied = await pool.query(
+        'SELECT 1 FROM homeroom_bot_voice_offers WHERE message_id = $1 LIMIT 1', [noteId],
+      );
+      if (!tied.rows.length) {
+        const { rows: [offer] } = await pool.query(
+          `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id)
+           VALUES ($1, 'close_request', $2, NULL, $3) RETURNING id`,
+          [appId, JSON.stringify({ issueNumber: number, title, why: reason }), noteId],
+        );
+        const offerId = Number(offer.id);
+        await pool.query('UPDATE chat_messages SET content = $2, metadata = $3 WHERE id = $1', [
+          noteId,
+          `Already works: ${reason} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`,
+          JSON.stringify({
+            stagingDemo: 'already-works-note',
+            homeroomBot: {
+              kind: 'voice',
+              offer: { id: offerId, kind: 'close_request', status: 'open', forUserId: null },
+              actions: [
+                { id: 'yes', label: 'Propose to close', style: 'primary', offerId },
+                { id: 'no', label: 'Keep it open', style: 'secondary', offerId },
+              ],
+            },
+          }),
+        ]);
+      }
+    }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
   }
@@ -10920,8 +10953,9 @@ async function seedStagingBotCloseOffer(pool, config) {
       );
     }
     const { rows: open } = await pool.query(
-      `SELECT id FROM homeroom_bot_voice_offers WHERE app_id = $1 AND kind = 'close_request' AND status = 'open' LIMIT 1`,
-      [app.id]
+      // Its own, the member's: #6321's already-works note carries one for nobody.
+      `SELECT id FROM homeroom_bot_voice_offers WHERE app_id = $1 AND kind = 'close_request' AND status = 'open' AND for_user_id = $2 LIMIT 1`,
+      [app.id, memberId]
     );
     if (open.length) return;
     const ask = '[staging fixture] @Homeroom bot request #1 is done, can you propose closing it?';

@@ -112,7 +112,7 @@ function controller(): any {
 /**
  * The buttons under Homeroom bot's offer in a thread (File it / Not now,
  * Withdraw it / Keep it, Propose to close / Keep it open), for the one
- * person it was offered to. A tap is sent once (GroupChat.decideBotOffer);
+ * person it was offered to (GroupChat._botOfferView says who). A tap is sent once (GroupChat.decideBotOffer);
  * the buttons then go for everybody when the room hears it was decided.
  */
 function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView }) {

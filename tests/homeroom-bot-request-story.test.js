@@ -328,7 +328,7 @@ test('decide: who can say Go ahead is named in Homeroom, and nobody on GitHub', 
   // #6306: a request already found working says so, and offers the close
   // vote, never Go ahead and never "a person needs to decide".
   assert.equal(live.personHomeroomText({ reason: 'Visitors get the lobby and play as a guest', done: true }),
-    'Already works: Visitors get the lobby and play as a guest. Anyone in the project can Propose to close it, or reply here if something is missing.');
+    'Already works: Visitors get the lobby and play as a guest. Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.');
   assert.doesNotMatch(live.personHomeroomText({ reason: 'x', done: true }), /Go ahead|person needs to decide/);
   assert.equal(live.personText({ reason: 'x', done: true }),
     'Homeroom bot found this already works: x.\n\nAnyone in the project can propose to close it, or reply here if something is missing.');

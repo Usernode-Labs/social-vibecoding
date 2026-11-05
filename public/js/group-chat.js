@@ -1375,7 +1375,10 @@ const GroupChat = {
 
   // The buttons under Homeroom bot's offer, from its message's metadata
   // (homeroom-bot-voice.js say): open until the person it was offered to
-  // taps one, for everybody else only a record that it was offered.
+  // taps one, for everybody else only a record that it was offered. #6321:
+  // Propose to close offered to nobody in particular, under an "already
+  // works" note, is any signed-in viewer's who can take part here; the
+  // server asks a non-member to join first.
   _botOfferView(meta) {
     const bot = meta && meta.homeroomBot;
     if (!bot || bot.kind !== 'voice' || !bot.offer || typeof bot.offer !== 'object') return null;
@@ -1387,8 +1390,11 @@ const GroupChat = {
       .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
     // #6305: a many-project offer carries the rows it would file.
     const rows = Array.isArray(bot.offer.rows) ? bot.offer.rows.slice(0, 12) : null;
+    const anyMember = bot.offer.forUserId == null && bot.offer.kind === 'close_request';
     return {
-      status, forMe: me != null && Number(bot.offer.forUserId) === me, actions,
+      status,
+      forMe: !!me && (anyMember ? !GroupChat._readOnly() : Number(bot.offer.forUserId) === me),
+      actions,
       kind: typeof bot.offer.kind === 'string' ? bot.offer.kind : '',
       ...(rows ? { rows } : {}),
     };
