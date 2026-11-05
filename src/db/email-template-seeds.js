@@ -514,8 +514,8 @@ function translatedTemplate(kind, t, { source } = {}) {
 // server that does not get it leaves the work to the one that did.
 const SEED_LOCK = 'email_template_seeds';
 
-// Every kind and the layout have a row, deleted rows included. An index-only look
-// on every boot, and nothing more once seeding is done.
+// Every kind and the layout have a row, deleted rows included. One query on every
+// boot, and nothing more once seeding is done.
 async function nothingToSeed(pool) {
   const { rows: [row] } = await pool.query(
     `SELECT (SELECT count(DISTINCT action)::int FROM email_templates WHERE action = ANY($1::text[])) AS seeded,

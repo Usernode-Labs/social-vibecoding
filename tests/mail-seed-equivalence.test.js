@@ -337,6 +337,20 @@ test('a translation that adds a line break is English for that one message, as t
   assert.match(translatedTemplate('otp', t).text, /It expires in 10 minutes/);
 });
 
+test('words built in code get the same message-by-message guard', () => {
+  const lines = {
+    'buildReady.lead.ready': 'Une ligne\nde plus.',
+    'buildReady.subject.ready': '   ',
+    'inviteActivity.joinedSomeone': 'Une ligne\nde plus pour {{app}}.',
+  };
+  const t = translatorFrom('fr', { ...FRENCH, ...lines }, ENGLISH);
+  for (const [kind, payload] of [['build_ready', { appName: 'Run Club' }], ['invite_activity', { appName: 'Run Club' }]]) {
+    const seeded = viaSeeds(kind, payload, t);
+    assert.deepEqual(seeded, buildMessage(kind, { ...payload, translate: t }), kind);
+    assert.doesNotMatch(seeded.text, /Une ligne/, kind);
+  }
+});
+
 // ── Accepted differences ─────────────────────────────────────────────────
 
 const APOSTROPHE = "O'Brien";

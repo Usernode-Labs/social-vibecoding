@@ -15,6 +15,7 @@
 
 const { actionFor } = require('./actions');
 const { render } = require('./template-language');
+const { englishFrom, englishTexts } = require('../push-text');
 
 const RAW_IN_LAYOUT = ['content', 'why', 'preheader'];
 
@@ -22,6 +23,19 @@ const RAW_IN_LAYOUT = ['content', 'why', 'preheader'];
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\x00-\x1f\x7f\u0085\u2028\u2029]/g;
 const cleanSubject = (subject) => subject.replace(CONTROL, ' ').replace(/ {2,}/g, ' ').trim();
+const controls = (text) => (text.match(CONTROL) || []).join('');
+
+// The words built in code ask a translator at send time, under the rule the seed
+// applied to the rest: an answer that is empty or brings line breaks the English
+// does not have costs that one message its translation.
+function guarded(t) {
+  const english = englishFrom(englishTexts(undefined, 'email'));
+  return (id, values) => {
+    const inEnglish = english(id, values);
+    const answer = t(id, values);
+    return typeof answer === 'string' && answer.trim() && controls(answer) === controls(inEnglish) ? answer : inEnglish;
+  };
+}
 
 /**
  * `t` is the translator of a translated `template`, for the words the action
@@ -31,8 +45,9 @@ const cleanSubject = (subject) => subject.replace(CONTROL, ' ').replace(/ {2,}/g
 function renderMessage(kind, { template, layout }, payload = {}, t) {
   const action = actionFor(kind);
   if (!action) throw new Error(`unknown mail kind: ${kind}`);
-  const values = action.values(payload, t);
-  const escaped = action.htmlValues ? action.htmlValues(payload, t) : {};
+  const words = t ? guarded(t) : undefined;
+  const values = action.values(payload, words);
+  const escaped = action.htmlValues ? action.htmlValues(payload, words) : {};
   const inHtml = (source) => render(source, { ...values, ...escaped }, { raw: Object.keys(escaped) });
   const inText = (source) => render(source, values, { mode: 'text' });
 

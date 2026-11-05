@@ -173,6 +173,7 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
       await holder.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR SHARE", [A.family_id]);
       let settled = false;
       const deleting = store.deleteLayout(pool, A.family_id, { replacementFamilyId: B.family_id }, userId).then(() => { settled = true; });
+      // fixed wait: proves the delete is still blocked, so there is no event to wait for
       await new Promise((r) => setTimeout(r, 400));
       assert.equal(settled, false, 'the delete waits for the share-locked save');
       await holder.query(
