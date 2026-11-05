@@ -69,7 +69,7 @@ test('a plan\'s card carries only yes or no: the request is the server\'s', () =
   ]);
   const settle = read('src/services/homeroom-bot-mayor.js');
   assert.match(settle, /if \(action\.kind === 'post_design'\) return decidePostDesign\(pool, config, \{ user, action, yes, ack, key, deps: actDeps \}\);/);
-  assert.match(settle, /issueNumber: Number\(action\.source_issue_number\) > 0 \? Number\(action\.source_issue_number\) : null,\n {6}appId: Number\(action\.app_id\) \|\| null, deps,/);
+  assert.match(settle, /issueNumber: Number\(action\.source_issue_number\) > 0 \? Number\(action\.source_issue_number\) : null,\n {6}appId: Number\(action\.app_id\) \|\| null, allowEmptier: true, deps,/);
   const migration = read('src/db/migrations/0005-plans-and-projects.sql');
   assert.match(migration, /'post_reply',\n {18}'post_design'\)\);/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS built_from_session_id INTEGER;/);
@@ -309,6 +309,135 @@ test('#6151: the design bot is told where a filed design\'s request stands; an u
   assert.equal(designBot.filedBuilds({ track: null, live: false }), false, 'off: a person decides');
   assert.equal(designBot.filedBuilds({ track: building, live: true }), true);
   assert.equal(designBot.filedBuilds({ track: track({ state: 'stopped', why: 'needs_person' }), live: true }), false);
+});
+
+// ── #6353: a plan is drawn without scripts, so a script-built screen is
+//    caught before it is posted, and the card offers to write the rows in ──
+
+const SCRIPTED_LISTS = '<main><h1>Homeroom bot</h1><ul id="rows"></ul></main>'
+  + '<script>document.getElementById("rows").innerHTML = "<li>One</li><li>Two</li>";</script>';
+
+// A design at version 4 whose screen is `html`.
+function gapDesignPool(html) {
+  return {
+    async query(sql, params = []) {
+      const text = String(sql);
+      if (/FROM private_threads p\s+JOIN design_threads d/.test(text)) {
+        return { rows: [{
+          id: 7, root_message_id: 500, conversation_id: 41, state: 'open', result_ref: null, kind: 'idea',
+          about_kind: null, about_number: null, slug: 'ear', name: 'Ear Trainer', title: 'Homeroom bot page',
+          surface: 'app', route: null, width: 390, height: 844,
+        }] };
+      }
+      if (/SELECT version, author, note, message_id, created_at FROM design_versions/.test(text)) {
+        return { rows: [{ version: 4, author: 'bot', note: null, message_id: null, created_at: new Date() }] };
+      }
+      if (/SELECT version, html FROM design_versions/.test(text)) return { rows: [{ version: params[1], html }] };
+      return { rows: [] };
+    },
+  };
+}
+
+async function postGap(html, { allowEmptier = false } = {}) {
+  const designs = require('../src/services/design-threads');
+  const posted = [];
+  const result = await designs.postDesignPlan(gapDesignPool(html), {}, {
+    user: { id: 9, username: 'evan' }, rootId: 500, issueNumber: 18, allowEmptier,
+    deps: {
+      mayor: { findApp: async () => EAR, canView: async () => true, canFile: async () => true },
+      dm: { botAccount: async () => ({ id: 2 }), async sendDm() { return { messageId: 901 }; } },
+      requestSpecs: {
+        prepareSpec: () => ({ ok: true }),
+        openRequest: async () => ({ ok: true, repo: { owner: 'usernode-bot', repo: 'ear' }, issue: { title: 'Homeroom bot page' } }),
+        async postRequestSpec(_pool, args) { posted.push(args); return { version: 1, sessionId: 77 }; },
+      },
+      domain: null,
+    },
+  });
+  return { result, posted };
+}
+
+test('planGap catches a script filling an empty list, and not rows already in the markup', () => {
+  const designs = require('../src/services/design-threads');
+  const gap = designs.planGap(SCRIPTED_LISTS);
+  assert.equal(gap.kind, 'lists');
+  assert.deepEqual(gap.empty, ['rows']);
+  assert.equal(gap.reason, 'The plan would show its lists empty, because a script builds them.');
+  assert.equal(designs.planGap(
+    '<main><ul id="rows"><li>One</li></ul></main><script>document.getElementById("rows").textContent = "x";</script>'
+  ), null, 'a target with rows in it is no gap');
+  assert.equal(designs.planGap('<main><ul><li>One</li></ul></main>'), null, 'no script, no gap');
+  assert.equal(designs.planGap(
+    '<main><p>Hi</p></main><script>document.getElementById("rows").classList.add("open");</script>'
+  ), null, 'a script that writes no page content is no gap');
+  const screen = designs.planGap('<main><p>Hi</p></main><script>document.getElementById("x").innerHTML = '
+    + '"Everything this screen shows is written by this script instead of the markup";</script>');
+  assert.equal(screen.kind, 'screen');
+  assert.equal(screen.reason, 'The plan would show this screen mostly empty, because a script writes its words.');
+});
+
+test('planReadout counts screens, lists, rows and empty lists as the plan draws them', () => {
+  const designs = require('../src/services/design-threads');
+  const plan = designs.planHtml({
+    design: { width: 390, height: 844, title: 'List', route: null, surface: 'app' },
+    title: 'List', notes: '', before: null,
+    after: '<main><ul><li>One</li><li>Two</li></ul><ol></ol></main>', version: 2,
+  });
+  const screens = designs.planReadout(plan);
+  assert.equal(screens.length, 1);
+  assert.equal(screens[0].size, 'phone');
+  const before = screens[0].sides.find((s) => s.side === 'before');
+  const after = screens[0].sides.find((s) => s.side === 'after');
+  assert.equal(before.text, 'List is not there yet.');
+  assert.equal(after.lists, 2);
+  assert.equal(after.rows, 2);
+  assert.equal(after.emptyLists, 1);
+  assert.match(after.text, /^One Two$/);
+});
+
+test('postDesignPlan refuses a plan a script would empty, and posts it when allowed', async () => {
+  const refused = await postGap(SCRIPTED_LISTS);
+  assert.equal(refused.result.ok, false);
+  assert.equal(refused.result.status, 409);
+  assert.equal(refused.result.code, 'plan_emptier');
+  assert.equal(refused.result.gap.kind, 'lists');
+  assert.match(refused.result.error, /^The plan would show its lists empty, because a script builds them\. Ask Homeroom bot to write them into the screen, then post it again\.$/);
+  assert.deepEqual(refused.posted, [], 'nothing is filed');
+
+  const posted = await postGap(SCRIPTED_LISTS, { allowEmptier: true });
+  assert.equal(posted.result.ok, true);
+  assert.equal(posted.result.planVersion, 1);
+  assert.equal(posted.posted.length, 1, 'the plan posts when the card showed the warning');
+  assert.match(posted.posted[0].text, /<ul id="rows"><\/ul>/, 'the plan keeps the empty list: that is what the warning is about');
+  assert.doesNotMatch(posted.posted[0].text, /<script\b/, 'and drops the script, as every plan does');
+
+  const clean = await postGap('<main><ul><li>One</li><li>Two</li></ul></main>');
+  assert.equal(clean.result.ok, true, 'a plan with its rows in the markup posts as before');
+});
+
+test('the plan card warns that the lists would show empty, and offers to write the rows in first', async () => {
+  const designs = require('../src/services/design-threads');
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const sent = [];
+  const pool = {
+    async query(sql) {
+      if (/INSERT INTO homeroom_bot_dm_actions/.test(String(sql))) return { rows: [{ id: 5 }] };
+      return { rows: [] };
+    },
+  };
+  const design = { threadId: 7, rootId: 500, title: 'Homeroom bot page', latest: 4 };
+  const offer = { kind: 'plan', app: EAR, issueNumber: 18, version: 4, gap: designs.planGap(SCRIPTED_LISTS) };
+  await mayor.sendDesignOffer(pool, {
+    bot: { id: 2 }, user: { id: 9 }, conversationId: 41, message: { id: 71 }, design, offer, key: 'k', text: '',
+    deps: { dmSvc: { async sendDm(_pool, args) { sent.push(args); return { messageId: 902 }; } } },
+  });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].content, /The plan would show its lists empty, because a script builds them\. I can write the rows into the screen first\./);
+  const actions = sent[0].metadata.actions;
+  assert.deepEqual(actions[0], { id: 'fill', label: 'Write the rows in first', style: 'primary', type: 'prompt', quote: true });
+  assert.deepEqual(actions[1], { id: 'yes', label: 'Post as a plan on #18', style: 'secondary', type: 'server' }, 'posting stays, as the way to post as it is');
+  assert.deepEqual(actions[2], { id: 'no', label: 'Not yet', style: 'secondary', type: 'server' });
+  assert.deepEqual(sent[0].metadata.answers, ['Post as a plan on #18', 'Not yet'], 'the answers are unchanged');
 });
 
 test('#6355: a card\'s sentence names only the request its button posts to', () => {

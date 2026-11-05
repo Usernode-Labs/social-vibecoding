@@ -5729,7 +5729,10 @@ async function postFirstDesignPlan(pool, config, { row, issueNumber, deps = {} }
     if (!u) return { posted: false, why: 'gone' };
     const posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
       user: { id: Number(u.id), username: u.username, isAdmin: !!u.is_admin },
-      rootId: Number(thread.root_message_id), version: Number(row.design_version) || null, issueNumber, deps,
+      rootId: Number(thread.root_message_id), version: Number(row.design_version) || null, issueNumber,
+      // #6353: a first version's plan posts even when a script builds its
+      // rows: the gap is logged rather than refusing a project's own plan.
+      allowEmptier: true, deps,
     });
     if (!posted.ok) {
       log.warn('homeroom-bot-dm', 'A first version\'s design was not posted as its plan', { app: row.slug, issueNumber, error: posted.error });
