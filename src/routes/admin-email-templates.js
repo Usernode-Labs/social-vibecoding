@@ -489,15 +489,17 @@ function emailTemplateAdminRoutes(pool, config) {
 
   // ── Translations ─────────────────────────────────────────────────────
 
-  const KINDS = { 'email-templates': 'template', 'email-layouts': 'layout' };
   const versionId = (req, kind) => {
     const id = toId(req.params.id);
     if (!id) throw Object.assign(new Error(kind === 'template' ? 'That template does not exist' : 'That layout version does not exist'), { code: 'not_found' });
     return id;
   };
 
-  for (const [base, kind] of Object.entries(KINDS)) {
-    router.post(`/api/admin/${base}/:id/translate`, requireAdminWrite, async (req, res) => {
+  // One set of handlers for both kinds. The paths are written out below
+  // rather than built from the kind, so the route inventory in
+  // tests/same-site-browser.test.js can read them as admin paths.
+  const handlers = (kind) => ({
+    start: async (req, res) => {
       try {
         const id = versionId(req, kind);
         const body = req.body || {};
@@ -522,25 +524,25 @@ function emailTemplateAdminRoutes(pool, config) {
       } catch (err) {
         sendError(res, err, `translate ${kind}`);
       }
-    });
+    },
 
-    router.get(`/api/admin/${base}/:id/translate`, async (req, res) => {
+    progress: async (req, res) => {
       try {
         res.json(await translate.jobStatus(pool, kind, versionId(req, kind)));
       } catch (err) {
         sendError(res, err, `translate ${kind} progress`);
       }
-    });
+    },
 
-    router.get(`/api/admin/${base}/:id/translations`, async (req, res) => {
+    read: async (req, res) => {
       try {
         res.json({ translations: await translate.translationsOf(pool, kind, versionId(req, kind)) });
       } catch (err) {
         sendError(res, err, `${kind} translations`);
       }
-    });
+    },
 
-    router.put(`/api/admin/${base}/:id/translations/:locale`, requireAdminWrite, async (req, res) => {
+    correct: async (req, res) => {
       try {
         const id = versionId(req, kind);
         const body = req.body || {};
@@ -553,8 +555,18 @@ function emailTemplateAdminRoutes(pool, config) {
       } catch (err) {
         sendError(res, err, `correct ${kind} translation`);
       }
-    });
-  }
+    },
+  });
+  const templates = handlers('template');
+  const layouts = handlers('layout');
+  router.post('/api/admin/email-templates/:id/translate', requireAdminWrite, templates.start);
+  router.get('/api/admin/email-templates/:id/translate', templates.progress);
+  router.get('/api/admin/email-templates/:id/translations', templates.read);
+  router.put('/api/admin/email-templates/:id/translations/:locale', requireAdminWrite, templates.correct);
+  router.post('/api/admin/email-layouts/:id/translate', requireAdminWrite, layouts.start);
+  router.get('/api/admin/email-layouts/:id/translate', layouts.progress);
+  router.get('/api/admin/email-layouts/:id/translations', layouts.read);
+  router.put('/api/admin/email-layouts/:id/translations/:locale', requireAdminWrite, layouts.correct);
 
   return router;
 }
