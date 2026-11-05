@@ -502,9 +502,11 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // decide"): nothing moves until a person does, so it is Needs you's,
       // and says why rather than "Nobody is building it yet" (30 Oct 2026).
       // A build of Homeroom bot's that came to nothing waits on somebody
-      // asking again, so it is here too, with Try again.
+      // asking again, so it is here too, with Restart build.
       sub: t.what === 'decide'
-        ? { id: 'messages:ai.row.decide', values: where(t.app, t.number) }
+        ? (t.reason
+          ? { id: 'messages:ai.row.decideWhy', values: { ...where(t.app, t.number), reason: t.reason } }
+          : { id: 'messages:ai.row.decide', values: where(t.app, t.number) })
         : t.what === 'already_works'
           ? (t.reason
             ? { id: 'messages:ai.row.alreadyWorks', values: { ...where(t.app, t.number), reason: t.reason } }
@@ -575,6 +577,7 @@ export function owedCount(rows: WorkRow[]): number {
 /** The phone's second line for a Needs you row, by the reason its tooltip gives. */
 const WHY: Record<string, string> = {
   'messages:ai.row.decide': 'messages:ai.why.decide',
+  'messages:ai.row.decideWhy': 'messages:ai.why.decideWhy',
   'messages:ai.row.alreadyWorks': 'messages:ai.why.alreadyWorks',
   'messages:ai.row.alreadyWorksPlain': 'messages:ai.why.alreadyWorksPlain',
   'messages:ai.row.buildStopped': 'messages:ai.why.buildStopped',
@@ -590,8 +593,9 @@ const WHY: Record<string, string> = {
 export function whyOf(row: WorkRow): Phrase | null {
   const id = WHY[row.sub.id];
   if (!id) return null;
-  // #6306: an already-done row's reason is the bot's own sentence.
-  if (id === 'messages:ai.why.alreadyWorks') {
+  // #6306: an already-done row's reason is the bot's own sentence; and a
+  // handed-back row's is the reason it wrote when it handed it back.
+  if (id === 'messages:ai.why.alreadyWorks' || id === 'messages:ai.why.decideWhy') {
     return { id, values: { reason: row.sub.values?.reason ?? '' } };
   }
   return { id };
