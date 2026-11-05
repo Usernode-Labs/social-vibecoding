@@ -548,3 +548,12 @@ test('with no database configured at all, mail is worded from the first template
   assert.equal(getPool.mock.callCount(), 1);
   assert.equal(rendered.length, 2);
 });
+
+test('a stored row shaped as nothing expected is no template, and a login code still goes', async (t) => {
+  const pool = poolWith();
+  const { config, rendered } = door(t, pool);
+  errorsLogged(t);
+  t.mock.method(store, 'resolve', () => { throw new Error('unexpected row'); });
+  await mail.sendOtpMail(config, 'a@example.com', '123456');
+  assert.match(rendered[0].text, /123456/);
+});

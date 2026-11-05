@@ -148,12 +148,16 @@ test('send() records a templated mail as untracked, so the reports never wait on
   t.after(() => { poolModule.getPool = realGetPool; });
   const sendWith = async (env) => {
     const inserts = [];
-    poolModule.getPool = () => ({
-      query: async (sql, args) => {
-        if (/INSERT INTO mail_deliveries/.test(sql)) { inserts.push(args); return { rows: [{ id: 1 }] }; }
-        return { rows: [] };
-      },
-    });
+    // The database holds the first templates, as a seeded one does: send()
+    // words every mail from the stored templates.
+    const seeded = require('../src/services/mail/template-store').seededSnapshot();
+    const query = async (sql, args) => {
+      if (/INSERT INTO mail_deliveries/.test(sql)) { inserts.push(args); return { rows: [{ id: 1 }] }; }
+      if (/FROM email_templates/.test(sql)) return { rows: Object.values(seeded.templates) };
+      if (/FROM email_layouts/.test(sql)) return { rows: Object.values(seeded.layouts) };
+      return { rows: [] };
+    };
+    poolModule.getPool = () => ({ query, connect: async () => ({ query, release() {} }) });
     await mail.send({ databaseUrl: 'postgres://unused.invalid/none', mailTransport: brevo.create(env, { sender: SENDER }) },
       { kind: 'project_invite', to: 'a@example.invalid', inviter: 'ada', project: 'Garden', url: 'https://example.invalid/w' });
     return inserts[0];

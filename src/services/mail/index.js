@@ -209,11 +209,18 @@ async function pruneDeliveries(pool) {
 async function resolvedFor(config, pool, kind, locale) {
   const action = actionFor(kind);
   const reader = action.englishOnly ? null : language.readerLanguage(locale);
-  const snapshot = pool ? await store.getSnapshot(pool) : (config && config.databaseUrl ? null : store.seededSnapshot());
-  const parts = store.resolve(snapshot, kind, reader);
-  const bodyTranslated = !!parts.template && parts.template !== parts.english.template;
-  const t = bodyTranslated && action.codeWords ? await language.translatorFor(pool, locale) : null;
-  return { ...parts, t, readerHasLanguage: !!reader };
+  try {
+    const snapshot = pool ? await store.getSnapshot(pool) : (config && config.databaseUrl ? null : store.seededSnapshot());
+    const parts = store.resolve(snapshot, kind, reader);
+    const bodyTranslated = !!parts.template && parts.template !== parts.english.template;
+    const t = bodyTranslated && action.codeWords ? await language.translatorFor(pool, locale) : null;
+    return { ...parts, t, readerHasLanguage: !!reader };
+  } catch (err) {
+    // A row shaped as nothing expected must not cost a sign-in code: it is the
+    // same as having no template.
+    log.error('platform-mail', 'Could not resolve an email template', { kind, message: err.message });
+    return { template: null, layout: null, t: null, readerHasLanguage: !!reader };
+  }
 }
 
 function unknownKind(kind) {
