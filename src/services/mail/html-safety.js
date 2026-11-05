@@ -50,7 +50,7 @@ const RAW_TEXT_ELEMENTS = new Set(['style', 'textarea', 'title']);
 // Attributes a mail client or browser follows as an address.
 const URL_ATTRIBUTES = new Set([
   'href', 'src', 'srcset', 'action', 'formaction', 'background', 'poster', 'cite', 'longdesc',
-  'lowsrc', 'dynsrc', 'usemap', 'data', 'codebase', 'manifest', 'icon', 'xlink:href',
+  'lowsrc', 'dynsrc', 'usemap', 'data', 'codebase', 'manifest', 'icon', 'xlink:href', 'ping',
 ]);
 
 // What a browser skips or folds while it reads a URL scheme or a CSS word

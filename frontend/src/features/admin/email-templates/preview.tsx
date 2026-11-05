@@ -16,7 +16,16 @@ import { FailureNotice, readFailure, request, type Failure, type FieldError, typ
 // that has not passed it yet, and the frame is what keeps a draft from
 // running anything in the console.
 
-export interface PreviewResult { subject: string; html: string; text: string; problems: FieldError[] }
+// `untranslated`: the preview is in another language, and the email's own
+// words are its English, as readers in that language get a version that has
+// not been translated (the server shows a saved translation where there is one).
+export interface PreviewResult { subject: string; html: string; text: string; problems: FieldError[]; untranslated?: boolean }
+
+/** The line under a preview whose own words are English in another language. */
+export function untranslatedNote(languages: Language[], locale: string): string {
+  const label = (languages.find((l) => l.code === locale) || { label: locale }).label;
+  return `Shows the English words as ${label} readers will get them after you save, until this version is translated.`;
+}
 
 interface TestResult { ok: boolean; message: string }
 
@@ -77,6 +86,9 @@ export function PreviewView({
       {result ? (
         <div className={stale ? 'opacity-50 space-y-3' : 'space-y-3'} data-email-preview-stale={stale ? '' : undefined}>
           {stale ? <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Last good preview, before your latest change</p> : null}
+          {result.untranslated && !englishOnly && locale !== 'en'
+            ? <p id="email-template-preview-untranslated" className="text-xs text-zinc-500 dark:text-zinc-400">{untranslatedNote(languages, locale)}</p>
+            : null}
           <div className="text-sm">
             <span className="text-zinc-500 dark:text-zinc-400">Subject: </span>
             <span className="font-medium break-words">{result.subject}</span>
@@ -166,6 +178,7 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
           html: String(res.data.html || ''),
           text: String(res.data.text || ''),
           problems: Array.isArray(res.data.problems) ? res.data.problems : [],
+          untranslated: res.data.untranslated === true,
         });
       } else {
         // The previous render stays, marked as the last good one (see stale).

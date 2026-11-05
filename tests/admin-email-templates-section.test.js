@@ -509,3 +509,37 @@ test('a kept draft belongs to the account that left it', () => {
     keepDraft(null);
   }
 });
+
+// ── Final review ────────────────────────────────────────────────────────
+
+test('a preview in another language says when it shows the English words', () => {
+  const props = {
+    loading: false, failure: null, mode: 'html', languages: payload().languages, englishOnly: false,
+    canWrite: true, testing: false, testResult: null, onLocale() {}, onSendTest() {},
+  };
+  const english = render('PreviewView', { ...props, locale: 'fr', result: { subject: 'S', html: '<p>x</p>', text: 'x', problems: [], untranslated: true } });
+  assert.match(english, /id="email-template-preview-untranslated"[^>]*>Shows the English words as Français readers will get them after you save, until this version is translated\./);
+  const saved = render('PreviewView', { ...props, locale: 'fr', result: { subject: 'S', html: '<p>x</p>', text: 'x', problems: [], untranslated: false } });
+  assert.ok(!/email-template-preview-untranslated/.test(saved), 'the saved translation is shown as it is');
+  const inEnglish = render('PreviewView', { ...props, locale: 'en', result: { subject: 'S', html: '<p>x</p>', text: 'x', problems: [], untranslated: true } });
+  assert.ok(!/email-template-preview-untranslated/.test(inEnglish));
+  const route = read('src/routes/admin-email-templates.js');
+  assert.match(route, /untranslated: !!reader && !shown/, 'the server says which it showed');
+});
+
+test('an edit says other languages get the English until it is translated, in the editor and after the save', () => {
+  const data = payload();
+  const live = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
+  const { draftFrom } = load();
+  const form = (extra) => render('TemplateForm', {
+    payload: data, draft: draftFrom(live), isNew: false, canWrite: true, tab: 'html', failure: null, saving: false,
+    onChange() {}, onTab() {}, onSave() {}, onCancel() {}, onReload() {}, onRetry() {}, preview: null, ...extra,
+  });
+  const note = /id="email-template-english-note"[^>]*>Readers in other languages get the English of this email until it is translated\./;
+  assert.match(form({ dirty: true }), note);
+  assert.ok(!note.test(form({ dirty: false })), 'nothing changed yet');
+  const report = data.templates.find((t) => t.action === 'content_report');
+  assert.ok(!note.test(form({ dirty: true, draft: draftFrom(report) })), 'an English-only email has no other languages');
+  const src = read(SECTION);
+  assert.match(src, /is live\. \$\{ENGLISH_UNTIL_TRANSLATED\}/, 'the save banner says it too');
+});

@@ -12,8 +12,15 @@
 // attribute, but not everywhere:
 // - Inside a tag but outside a quoted value (`<a href={{url}}>`, `<p {{x}}>`),
 //   a value could add attributes, so nothing may go there, conditions included.
-// - In href or src, only a link placeholder may go: its value has been checked
-//   to be an http(s) address. In a style attribute or a <style> block, none.
+// - In an address attribute (href, src, ping, ...), only a link placeholder may
+//   go: its value has been checked to be an http(s) address. In a style
+//   attribute or a <style> block, none.
+// - A link placeholder carries a one-time secret (a reset or sign-in link), so
+//   it goes only in href and only as the whole value (`href="{{url}}"`).
+//   Joined to other text (`https://evil.example/?u={{url}}`) or in an address
+//   the mail client fetches by itself on open (an image's src), it would hand
+//   that secret to another site. The text version holds it to the same rule:
+//   nothing but space may touch it, other than brackets around it.
 // - Wording built in code (`fromCode`) and anything inserted as HTML (an
 //   action's `htmlValues`, a layout's {{content}}, {{why}} and {{preheader}})
 //   is not escaped for an attribute, so none of it may go in one.
@@ -40,6 +47,11 @@ const LABELS = {
   text: 'text version',
 };
 const HTML_FIELDS = ['html', 'why', 'preheader'];
+
+// The only attributes a link placeholder may fill: followed when the reader
+// clicks, never fetched by the mail client on its own.
+const LINK_ATTRIBUTES = new Set(['href']);
+
 const SUBJECT_MAX = 500;
 
 const asText = (value) => (typeof value === 'string' ? value : value == null ? '' : null);
@@ -140,6 +152,10 @@ function placementProblems(field, source, info, raw) {
           add(`Placeholders cannot go inside a style attribute: ${shown} could change the styling rules.`);
         } else if (URL_ATTRIBUTES.has(attr.name) && about.kind !== 'url') {
           add(`Only a link placeholder can go in ${attr.name}, and ${shown} is not a link.`);
+        } else if (about.kind === 'url' && !LINK_ATTRIBUTES.has(attr.name)) {
+          add(`${shown} is a link that may carry a one-time secret, so it can only go in href, not in ${attr.name}.`);
+        } else if (about.kind === 'url' && source.slice(attr.valueStart, attr.valueEnd).trim() !== shown) {
+          add(`${shown} must be the whole ${attr.name} value (${attr.name}="${shown}"): joined to other text, the link could be sent to another site.`);
         }
       }
       continue;
@@ -352,6 +368,58 @@ function requiredOnEveryPath(action, text, layout) {
   return null;
 }
 
+// The text version on every path through its conditions, with each value
+// printed as a marker, must not join a link placeholder to an address before
+// it. Right before the link may come only space, punctuation outside ASCII
+// (a full-width colon, as a translation writes), or a bracket or quote that
+// itself follows one of those. Right after it, nothing that would carry the
+// address on (a letter, a digit, "/", "=", another value). Null or a problem.
+function joinedLinkProblem(action, source) {
+  const tree = safeTree(source);
+  if (!tree) return null;
+  const vars = new Set();
+  const conditions = new Set();
+  const walk = (list) => {
+    for (const n of list) {
+      if (n.type === 'var') vars.add(n.name);
+      else if (n.then) { conditions.add(n.name); walk(n.then); walk(n.else); }
+    }
+  };
+  walk(tree);
+  const used = Object.entries(action.placeholders)
+    .filter(([name, info]) => info.kind === 'url' && vars.has(name))
+    .map(([name]) => name);
+  if (!used.length) return null;
+  const names = [...conditions];
+  if (names.length > MAX_BRANCH_NAMES) {
+    return `The text version tests more than ${MAX_BRANCH_NAMES} different conditions (${names.join(', ')}), too many to check where its links land. Use fewer.`;
+  }
+  const mark = (name) => `\uE010${name}\uE011`;
+  const separates = (ch) => ch === '' || /\s/.test(ch) || (ch > '\u007f' && /\p{P}/u.test(ch));
+  for (let mask = 0; mask < 2 ** names.length; mask++) {
+    const values = {};
+    for (const name of vars) values[name] = mark(name);
+    names.forEach((name, i) => {
+      values[name] = mask & (1 << i) ? (vars.has(name) ? mark(name) : true) : '';
+    });
+    let out;
+    try { out = render(source, values, { mode: 'text' }); } catch { return null; }
+    for (const name of used) {
+      const marker = mark(name);
+      for (let at = out.indexOf(marker); at !== -1; at = out.indexOf(marker, at + marker.length)) {
+        const prev = at > 0 ? out[at - 1] : '';
+        const beforeOk = separates(prev) || ('([<"\''.includes(prev) && separates(at > 1 ? out[at - 2] : ''));
+        const next = out.charAt(at + marker.length);
+        const afterOk = !/[A-Za-z0-9/?=&#%+\-_~@$*\uE010]/.test(next);
+        if (!beforeOk || !afterOk) {
+          return `{{${name}}} is a link that may carry a one-time secret, so in the text version it must stand on its own, with space around it. Joined to other text, it could become part of another site's address.`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * `fields`: { name?, subject, preheader, why, html, text }. `layout`: the
  * layout row it wears ({ html, text }), or null for complete HTML. A `name`
@@ -423,6 +491,11 @@ function validateTemplate(kind, fields, layout) {
         message: `The ${LABELS[form]} must include {{${name}}}${about ? ` (${about.description.charAt(0).toLowerCase()}${about.description.slice(1)})` : ''}, or this email cannot do its job.`,
       });
     }
+  }
+
+  if (trees.text) {
+    const joined = joinedLinkProblem(action, text.text);
+    if (joined) errors.push({ field: 'text', message: joined });
   }
 
   if (!errors.length) {

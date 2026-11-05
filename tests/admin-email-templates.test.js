@@ -359,6 +359,42 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     assert.equal(sent.length, before.sent);
   });
 
+  await t.test('a preview in another language shows the saved translation only for the unchanged live version', async () => {
+    const current = await live('otp');
+    const french = { subject: 'Votre code {{code}}', preheader: current.preheader, why: current.why, html: '<p>Code : {{code}}</p>', text: 'Code : {{code}}' };
+    await pool.query(
+      `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
+       VALUES ($1, 'fr', $2, $3, $4, $5, $6, 'admin')`,
+      [current.id, french.subject, french.preheader, french.why, french.html, french.text]);
+    try {
+      const unchanged = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'fr', fields: otpBody(current) }, 'view');
+      assert.equal(unchanged.status, 200, JSON.stringify(unchanged.body));
+      assert.equal(unchanged.body.subject, 'Votre code 123456');
+      assert.ok(unchanged.body.html.includes('<p>Code : 123456</p>'));
+      assert.equal(unchanged.body.untranslated, false);
+      const edited = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'fr', fields: { ...otpBody(current), subject: 'New {{code}}' } }, 'view');
+      assert.equal(edited.status, 200);
+      assert.equal(edited.body.subject, 'New 123456', 'an edited draft has no translation yet: its English');
+      assert.equal(edited.body.untranslated, true);
+      const english = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'en', fields: otpBody(current) }, 'view');
+      assert.equal(english.body.untranslated, false);
+      const untranslatedLanguage = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'es', fields: otpBody(current) }, 'view');
+      assert.equal(untranslatedLanguage.body.untranslated, true, 'no Spanish translation: Spanish readers get the English');
+    } finally {
+      await pool.query("DELETE FROM email_template_translations WHERE template_id = $1 AND locale = 'fr'", [current.id]);
+    }
+  });
+
+  await t.test('the preview routes are rate limited per admin', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'admin-email-templates.js'), 'utf8');
+    assert.match(source, /router\.post\('\/api\/admin\/email-templates\/preview', emailPreviewLimiter,/);
+    assert.match(source, /router\.post\('\/api\/admin\/email-layouts\/preview', emailPreviewLimiter,/);
+    const limits = fs.readFileSync(path.join(__dirname, '..', 'src', 'middleware', 'rate-limits.js'), 'utf8');
+    const decl = limits.slice(limits.indexOf('const emailPreviewLimiter = makeLimiter('));
+    assert.match(decl.slice(0, 300), /keyByUser: true/);
+    assert.ok(!/exemptAdmins/.test(decl.slice(0, 300)), 'every preview route is admin-only, so exempting admins would disable it');
+  });
+
   await t.test('the test send goes to the signed-in admin only, with the unsaved fields, and stores nothing', async () => {
     const current = await live('otp');
     const templates = (await pool.query('SELECT count(*)::int AS n FROM email_templates')).rows[0].n;

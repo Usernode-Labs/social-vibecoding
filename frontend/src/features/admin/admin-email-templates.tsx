@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { TemplateList } from './email-templates/list';
-import { draftFrom, expectedLiveFor, TemplateEditor, TemplateForm } from './email-templates/editor';
+import { draftFrom, ENGLISH_UNTIL_TRANSLATED, expectedLiveFor, TemplateEditor, TemplateForm } from './email-templates/editor';
 import { LayoutEditor, LayoutList } from './email-templates/layouts';
 import { layoutReplacements, ReplaceDialog, templateReplacements } from './email-templates/replace-dialog';
 import { PreviewView } from './email-templates/preview';
@@ -240,7 +240,9 @@ function EmailTemplatesSection() {
     return (
       <TemplateEditor key={`t-${view.action}-${editorKey}`} payload={payload} action={view.action} isNew={view.isNew}
         restore={view.restore || null} canWrite={write} onDone={back} onReload={reload}
-        onSaved={(row) => saved(`${row.name} v${row.version} is live.`)()} />
+        onSaved={(row) => saved(payload.actions.find((a) => a.action === row.action)?.englishOnly
+          ? `${row.name} v${row.version} is live.`
+          : `${row.name} v${row.version} is live. ${ENGLISH_UNTIL_TRANSLATED}`)()} />
     );
   }
   if (view.kind === 'layout') {

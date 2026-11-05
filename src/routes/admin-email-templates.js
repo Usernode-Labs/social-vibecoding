@@ -30,7 +30,7 @@
 
 const { Router } = require('express');
 const { requireAdminWrite } = require('../middleware/admin');
-const { mailTestLimiter } = require('../middleware/rate-limits');
+const { mailTestLimiter, emailPreviewLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const events = require('../services/events');
 const mail = require('../services/mail');
@@ -113,6 +113,9 @@ function templateFields(body) {
   };
 }
 
+// A template's words, the part a translation replaces.
+const TEMPLATE_WORDS = ['subject', 'preheader', 'why', 'html', 'text'];
+
 function layoutFields(body) {
   return { name: str(body.name).trim(), html: str(body.html), text: str(body.text) };
 }
@@ -170,6 +173,12 @@ function emailTemplateAdminRoutes(pool, config) {
   // unsaved fields in the chosen layout (that layout's live version, in the
   // locale where translated); for a layout, the action's live template inside
   // the unsaved layout.
+  //
+  // A template's own words in another language: while the draft is still the
+  // live version's English word for word, readers in that language get the
+  // live version's translation of it, so that is what is shown. Any other
+  // draft has no translation yet, and its readers would get its English after
+  // a save: `untranslated` says so, and the console labels the preview.
   async function partsFor(what, body) {
     const kind = str(body.action) || (what === 'layout' ? 'otp' : '');
     const action = actionFor(kind);
@@ -185,7 +194,9 @@ function emailTemplateAdminRoutes(pool, config) {
         if (!Object.hasOwn(snap.layouts, familyId)) throw Object.assign(new Error('That layout does not exist'), { code: 'not_found' });
         layout = store.inReaderLanguage(snap.layouts[familyId], reader, 'layout');
       }
-      return { kind, template, layout, validation: validateTemplate(kind, { ...template, name: undefined }, layout) };
+      const validation = validateTemplate(kind, { ...template, name: undefined }, layout);
+      const shown = reader ? savedTranslation(snap, kind, template, reader) : null;
+      return { kind, template: shown || template, layout, validation, untranslated: !!reader && !shown };
     }
     const layout = layoutFields(fields);
     if (!Object.hasOwn(snap.templates, kind)) throw invalid([{ field: 'action', message: LIVE_ONLY_MESSAGE }]);
@@ -196,9 +207,20 @@ function emailTemplateAdminRoutes(pool, config) {
     return { kind, template, layout, validation };
   }
 
+  // The live version's words in `reader`, when `template` is that version's
+  // English unchanged and a send in `reader` would use a translation of it;
+  // else null.
+  function savedTranslation(snap, kind, template, reader) {
+    const live = Object.hasOwn(snap.templates, kind) ? snap.templates[kind] : null;
+    if (!live || !TEMPLATE_WORDS.every((field) => (live[field] || '') === template[field])) return null;
+    const translated = store.inReaderLanguage(live, reader, 'template');
+    if (translated === live) return null;
+    return { ...template, ...Object.fromEntries(TEMPLATE_WORDS.map((field) => [field, translated[field] || ''])) };
+  }
+
   async function preview(what, req, res) {
     try {
-      const { kind, template, layout, validation } = await partsFor(what, req.body || {});
+      const { kind, template, layout, validation, untranslated = false } = await partsFor(what, req.body || {});
       let message;
       try {
         ({ message } = await render(kind, template, layout, (req.body || {}).locale));
@@ -213,7 +235,7 @@ function emailTemplateAdminRoutes(pool, config) {
       }
       // Problems that would stop a save are shown beside the preview, not
       // instead of it, so an admin can see a draft while they fix it.
-      res.json({ subject: message.subject, html: message.html, text: message.text, problems: validation.ok ? [] : validation.errors });
+      res.json({ subject: message.subject, html: message.html, text: message.text, problems: validation.ok ? [] : validation.errors, untranslated });
     } catch (err) {
       sendError(res, err, `${what} preview`);
     }
@@ -289,7 +311,7 @@ function emailTemplateAdminRoutes(pool, config) {
     }
   });
 
-  router.post('/api/admin/email-templates/preview', (req, res) => preview('template', req, res));
+  router.post('/api/admin/email-templates/preview', emailPreviewLimiter, (req, res) => preview('template', req, res));
 
   router.post('/api/admin/email-templates/test', requireAdminWrite, mailTestLimiter, (req, res) => testSend('template', req, res));
 
@@ -366,7 +388,7 @@ function emailTemplateAdminRoutes(pool, config) {
     }
   });
 
-  router.post('/api/admin/email-layouts/preview', (req, res) => preview('layout', req, res));
+  router.post('/api/admin/email-layouts/preview', emailPreviewLimiter, (req, res) => preview('layout', req, res));
 
   router.post('/api/admin/email-layouts/test', requireAdminWrite, mailTestLimiter, (req, res) => testSend('layout', req, res));
 

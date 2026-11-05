@@ -73,8 +73,14 @@ const described = (id: string, errors: string[]) => (errors.length
   ? { 'aria-invalid': true as const, 'aria-describedby': `${id}-error` }
   : {});
 
+// Said in the editor once the draft differs from what it opened on, and in the
+// banner after a save: a new version starts with no translations, so readers
+// in other languages get its English until it is translated.
+export const ENGLISH_UNTIL_TRANSLATED = 'Readers in other languages get the English of this email until it is translated.';
+
 export function TemplateForm({
   payload, draft, isNew, canWrite, tab, failure, saving, onChange, onTab, onSave, onCancel, onReload, onRetry, preview,
+  dirty = false,
 }: {
   payload: TemplatesPayload;
   draft: TemplateDraft;
@@ -90,6 +96,8 @@ export function TemplateForm({
   onReload: () => void;
   onRetry: () => void;
   preview: React.ReactNode;
+  // The draft differs from what the editor opened on.
+  dirty?: boolean;
 }) {
   const action = payload.actions.find((a) => a.action === draft.action) || null;
   const layouts = liveLayouts(payload);
@@ -123,6 +131,9 @@ export function TemplateForm({
           Editing needs full admin access. You can read this template and preview it.
         </p>
       )}
+      {canWrite && dirty && action && !action.englishOnly ? (
+        <p id="email-template-english-note" className="text-sm text-zinc-600 dark:text-zinc-300">{ENGLISH_UNTIL_TRANSLATED}</p>
+      ) : null}
       <FailureNotice failure={failure} shownFields={SHOWN} onReload={onReload} onRetry={onRetry} />
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -319,6 +330,7 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   return (
     <TemplateForm payload={payload} draft={draft} isNew={isNew} canWrite={canWrite} tab={tab} failure={failure}
       saving={saving} onChange={change} onTab={setTab} onSave={save} onCancel={leave} onReload={reload} onRetry={save}
+      dirty={dirty}
       preview={(
         <PreviewPane base="/api/admin/email-templates" body={{ action: draft.action, fields }} mode={tab}
           languages={payload.languages} englishOnly={!!(info && info.englishOnly)} canWrite={canWrite}

