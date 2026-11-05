@@ -1,43 +1,28 @@
 'use strict';
 
-// The first versions of the admin-editable email templates: today's hard-coded
-// mails (src/services/mail/templates.js) written in the template language, and
-// the code that puts them in the database once. tests/mail-seed-equivalence.test.js
-// proves they render what that file renders, byte for byte, so change them only
-// together with it. Once an action has a row, deleted or not, nothing here
-// touches it again: from then on the words are the admins'.
+// The first versions of the admin-editable email templates, in plain English,
+// and the code that puts them in the database. They are data: what a fresh
+// database (a new install, a preview starting empty) starts from, and what a
+// process with no database at all renders with (template-store seededSnapshot).
+// From then on the words are the admins', written and translated in the admin
+// console (Admin, Email templates). Once an action has a row, deleted or not,
+// nothing here adds another; a row nobody has edited follows these words (see
+// "Untouched rows" below).
 //
-// ── Catalog references ─────────────────────────────────────────────────
+// They were taken from the hard-coded mails they replaced, and
+// tests/mail-seed-equivalence.test.js proves they render what those did, byte
+// for byte, against a snapshot of that output. Change them only together with
+// that test's accepted differences.
 //
-// `{{t:email:otp.subject}}` is a message of the email catalog. It is expanded
-// when seeding, once per language, so the rows hold finished text and no
-// reference: the template language itself would refuse one. In `subject` and
-// `text` the message goes in as written. In `html`, `why` and `preheader` it is
-// escaped as the code escapes a catalog message today, apostrophes left alone.
-// A message's own parameters stay placeholders, filled when a mail is sent.
-//
-// Options follow a `|`, one each:
-//   as:link=iosLink       the message's {{link}} is the action's {{iosLink}}
-//   anchor:url=statusUrl  the message's {{url}} becomes a link, showing the
-//                         address (`withLink` in templates.js)
-//   tags:strong,iosLink   numbered tags: <0> becomes <strong>, <1> a link to
-//                         {{iosLink}}; a tag with no entry stays words (`rich`)
-//   bareAmp               the message's "&" goes out bare (account_email's lead)
-//   breaks                a line break in the message becomes <br>
+// A fresh database gets English only. Its other languages come from Translate
+// in the console; until then a reader in another language gets the English.
 
 const crypto = require('node:crypto');
 const log = require('../services/logger');
-const languageCache = require('../services/language-cache');
 const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
 const { ACTIONS } = require('../services/mail/actions');
-const { parse } = require('../services/mail/template-language');
-const { englishTexts, translatorFrom } = require('../services/push-text');
-const { usableMessages } = require('../services/push-language');
 
 const STANDARD_LAYOUT = 'Homeroom standard';
-
-// tailwind.config.js `violet` ramp / public/css/app.css `--accent*`.
-const BRAND_ACCENT = '#0a6ee0';
 // tailwind.config.js `zinc` ramp.
 const NEUTRAL_PAGE_BG = '#f5f5f7';
 const NEUTRAL_HAIRLINE = '#e3e3e6';
@@ -62,76 +47,6 @@ const STANDARD_LAYOUT_HTML = `<!doctype html><html><body style="${BODY_STYLE}">`
   + `<div style="${FOOTER_STYLE}">Homeroom<br>{{why}}</div>`
   + '</div></body></html>';
 
-// ── The pieces the mails share ─────────────────────────────────────────
-
-const p = (inner) => `<p>${inner}</p>`;
-const CODE_BLOCK = '<p style="font-size:28px;font-weight:600;letter-spacing:4px">{{code}}</p>';
-const LINK_STYLE = `color:${BRAND_ACCENT}`;
-
-const BUTTON_STYLE = `display:inline-block;padding:11px 20px;border-radius:8px;background:${BRAND_ACCENT};`
-  + 'color:#ffffff;font-size:15px;font-weight:600;text-decoration:none';
-const button = (url, label) => `<p><a href="{{${url}}}" style="${BUTTON_STYLE}">${label}</a></p>`;
-
-const PILL_STYLE = `display:inline-block;padding:12px 28px;border-radius:999px;background:${BRAND_ACCENT};`
-  + 'color:#ffffff;font-size:16px;font-weight:650;text-decoration:none';
-const pill = (url, label) => `<p style="margin:20px 0 0"><a href="{{${url}}}" style="${PILL_STYLE}">${label}</a></p>`;
-
-const centered = (inner) => '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
-  + ` style="border-collapse:collapse"><tr><td style="text-align:center">${inner}</td></tr></table>`;
-
-const heroEyebrow = (inner, top = 0) => `<p style="margin:${top}px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;`
-  + `text-transform:uppercase;color:${NEUTRAL_SECONDARY_INK}">${inner}</p>`;
-const heroHeadline = (inner, size = 28, lineHeight = 32) => `<p style="margin:10px 0 0;font-size:${size}px;line-height:${lineHeight}px;font-weight:800;`
-  + `color:${NEUTRAL_INK}">${inner}</p>`;
-const heroLine = (inner) => `<p style="margin:10px 0 0;font-size:16px;line-height:22px;color:${NEUTRAL_SECONDARY_INK}">${inner}</p>`;
-
-const FRAME_WHY = '{{t:email:frame.why}}';
-
-// ── The three plain code mails ─────────────────────────────────────────
-
-const codeMail = (kind, area, htmlLead, htmlExpiry, textRest, leadOptions = '') => ({
-  name: ACTIONS[kind].label,
-  layout: STANDARD_LAYOUT,
-  subject: `{{t:email:${area}.subject}}`,
-  preheader: '',
-  why: FRAME_WHY,
-  html: p(`{{t:email:${htmlLead}${leadOptions}}}`) + CODE_BLOCK + p(`{{t:email:${htmlExpiry}}}`),
-  text: `{{t:email:${area}.text.code}}\n\n{{t:email:${textRest}}}`,
-});
-
-// ── The activity mails ─────────────────────────────────────────────────
-
-const STOP_LINK = '{{#if hasUnsubscribeUrl}}<p style="margin:16px 0 0;font-size:13px">'
-  + `<a href="{{unsubscribeUrl}}" style="color:${NEUTRAL_SECONDARY_INK}">{{t:email:activity.stop.link}}</a></p>{{/if}}`;
-const STOP_TEXT = '{{#if hasUnsubscribeUrl}}\n\n{{t:email:activity.stop.text|as:url=unsubscribeUrl}}{{/if}}';
-
-const activityHtml = (eyebrow, lead, label) => centered(eyebrow + heroHeadline(lead, 24, 30) + pill('url', label) + STOP_LINK);
-const activityText = (lead, textLink) => `${lead}\n\n${textLink}${STOP_TEXT}`;
-
-// ── Which sentence a project invite takes ──────────────────────────────
-
-const inviteWords = (part) => '{{#if hasInviter}}'
-  + `{{#if hasProject}}{{t:email:projectInvite.named.${part}}}{{else}}{{t:email:projectInvite.noProject.${part}}}{{/if}}`
-  + '{{else}}'
-  + `{{#if hasProject}}{{t:email:projectInvite.noInviter.${part}}}{{else}}{{t:email:projectInvite.nothing.${part}}}{{/if}}`
-  + '{{/if}}';
-
-// ── The waitlist release mail's chips ──────────────────────────────────
-
-const releaseChip = (line, color, top = 0) => '<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
-  + ` style="border-collapse:separate;margin:${top}px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)">`
-  + '<tr>'
-  + `<td width="34" height="34" bgcolor="${color}" style="width:34px;height:34px;background:${color}">&nbsp;</td>`
-  + `<td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:${NEUTRAL_INK}">${line}</td>`
-  + '</tr></table>';
-
-// ── The admin test mail's detail rows ──────────────────────────────────
-
-const detailRow = (label, value, first = false) => '<tr>'
-  + `<td style="font-size:14px;line-height:1.5;padding:6px 12px;color:${NEUTRAL_SECONDARY_INK}`
-  + (first ? '' : `;border-top:1px solid ${NEUTRAL_HAIRLINE}`) + `">${label}</td>`
-  + `<td style="font-size:14px;line-height:1.5;padding:6px 12px;text-align:right">${value}</td></tr>`;
-
 // ── The seeds ──────────────────────────────────────────────────────────
 
 const SEEDS = {
@@ -142,305 +57,281 @@ const SEEDS = {
     otp: {
       name: ACTIONS.otp.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{t:email:otp.subject}}',
-      preheader: '',
-      why: FRAME_WHY,
-      html: p('{{t:email:otp.html.code}}') + CODE_BLOCK + p('{{t:email:otp.expiry}}'),
-      text: '{{t:email:otp.text.code}}\n\n{{t:email:otp.expiry}}',
+      subject: `Your Homeroom login code`,
+      preheader: ``,
+      why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
+      html: `<p>Your Homeroom login code is:</p>`
+        + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">{{code}}</p>`
+        + `<p>It expires in 10 minutes. If you did not request it, you can ignore this email.</p>`,
+      text: `Your Homeroom login code is {{code}}.\n\n`
+        + `It expires in 10 minutes. If you did not request it, you can ignore this email.`,
     },
 
-    account_email: codeMail('account_email', 'accountEmail', 'accountEmail.html.lead', 'accountEmail.html.expiry', 'accountEmail.text.instructions', '|bareAmp'),
+    account_email: {
+      name: ACTIONS.account_email.label,
+      layout: STANDARD_LAYOUT,
+      subject: `Verify your account email`,
+      preheader: ``,
+      why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
+      html: `<p>Enter this code in Settings → Email & recovery to link this address to your account:</p>`
+        + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">{{code}}</p>`
+        + `<p>It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.</p>`,
+      text: `Your account email verification code is {{code}}.\n\n`
+        + `Enter it in Settings → Email & recovery to link this address to your account. It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.`,
+    },
 
-    username_change: codeMail('username_change', 'usernameChange', 'usernameChange.html.lead', 'usernameChange.html.expiry', 'usernameChange.text.instructions'),
+    username_change: {
+      name: ACTIONS.username_change.label,
+      layout: STANDARD_LAYOUT,
+      subject: `Confirm your new username`,
+      preheader: ``,
+      why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
+      html: `<p>Enter this code in Settings, Account, Username to confirm your new username:</p>`
+        + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">{{code}}</p>`
+        + `<p>It expires in 10 minutes. Never share this code. If you did not ask to change your username, ignore this email and nothing will change.</p>`,
+      text: `Your code to confirm a username change is {{code}}.\n\n`
+        + `Enter it in Settings, Account, Username. It expires in 10 minutes. Never share this code. If you did not ask to change your username, ignore this email and nothing will change.`,
+    },
 
     waitlist_joined: {
       name: ACTIONS.waitlist_joined.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{t:email:waitlistJoined.subject}}',
-      preheader: '',
-      why: FRAME_WHY,
-      html: '{{#if hasCode}}'
-        + p('<strong>{{t:email:waitlistJoined.heading}}</strong>')
-        + CODE_BLOCK
-        + p('{{t:email:waitlistJoined.html.codeLife}}')
-        + '{{/if}}'
-        + p('{{t:email:waitlistJoined.thanks}}')
-        + p('{{t:email:waitlistJoined.expectation}}')
-        + p('{{t:email:waitlistJoined.groups}}')
-        + `{{#if hasConfirmUrl}}${button('confirmUrl', '{{t:email:waitlistJoined.button}}')}{{/if}}`,
-      text: '{{#if hasCode}}{{t:email:waitlistJoined.heading}}\n{{t:email:waitlistJoined.text.code}}\n\n{{/if}}'
-        + '{{t:email:waitlistJoined.thanks}}\n\n{{t:email:waitlistJoined.expectation}}\n\n{{t:email:waitlistJoined.groups}}'
-        + '{{#if hasConfirmUrl}}\n\n{{t:email:waitlistJoined.text.oneTap}}\n{{confirmUrl}}{{/if}}',
+      subject: `You're on the Homeroom waitlist 🎉`,
+      preheader: ``,
+      why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
+      html: `{{#if hasCode}}<p><strong>Confirm your email</strong></p>`
+        + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">{{code}}</p>`
+        + `<p>It works for 15 minutes.</p>{{/if}}`
+        + `<p>Thanks for joining the Homeroom waitlist.</p>`
+        + `<p>We'll email you at this address as soon as your access is ready.</p>`
+        + `<p>Early access opens in small groups, with more groups opening on a rolling basis after that.</p>`
+        + `{{#if hasConfirmUrl}}<p><a href="{{confirmUrl}}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#0a6ee0;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none">Confirm my email</a></p>{{/if}}`,
+      text: `{{#if hasCode}}Confirm your email\nYour verification code is {{code}}. It works for 15 minutes.\n\n{{/if}}`
+        + `Thanks for joining the Homeroom waitlist.\n\n`
+        + `We'll email you at this address as soon as your access is ready.\n\n`
+        + `Early access opens in small groups, with more groups opening on a rolling basis after that.`
+        + `{{#if hasConfirmUrl}}\n\n`
+        + `Or confirm in one tap:\n{{confirmUrl}}{{/if}}`,
     },
 
-    // Three mails in one: an address that needs no code, a status code for a
-    // confirmed address, and a confirmation code.
     waitlist_code: {
       name: ACTIONS.waitlist_code.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{#if hasCode}}{{#if isConfirmed}}{{t:email:waitlistCode.status.subject}}{{else}}{{t:email:waitlistCode.confirm.subject}}{{/if}}'
-        + '{{else}}{{t:email:waitlistCode.done.subject}}{{/if}}',
-      preheader: '',
-      why: FRAME_WHY,
-      html: '{{#if hasCode}}{{#if isConfirmed}}'
-        + p('{{t:email:waitlistCode.status.html.code}}')
-        + CODE_BLOCK
-        + p('{{t:email:waitlistCode.status.html.life}}')
-        + `{{#if hasStatusUrl}}${button('statusUrl', '{{t:email:waitlistCode.status.button}}')}{{/if}}`
-        + p('{{t:email:waitlistCode.status.ignore}}')
-        + '{{else}}'
-        + p('{{t:email:waitlistCode.confirm.html.code}}')
-        + CODE_BLOCK
-        + p('{{t:email:waitlistCode.confirm.html.life}}')
-        + `{{#if hasConfirmUrl}}${button('confirmUrl', '{{t:email:waitlistCode.confirm.button}}')}{{/if}}`
-        + p('{{t:email:waitlistCode.confirm.ignore}}')
-        + '{{/if}}{{else}}'
-        + p('{{t:email:waitlistCode.done.asked}}')
-        + p('{{t:email:waitlistCode.done.nothingLeft}}')
-        + `{{#if hasStatusUrl}}${p('{{t:email:waitlistCode.done.status|anchor:url=statusUrl}}')}{{/if}}`
-        + '{{/if}}',
-      text: '{{#if hasCode}}{{#if isConfirmed}}'
-        + '{{t:email:waitlistCode.status.text.code}}\n\n{{t:email:waitlistCode.status.text.newest}}'
-        + '{{#if hasStatusUrl}}\n\n{{t:email:waitlistCode.status.text.enter}}\n{{statusUrl}}{{/if}}'
-        + '\n\n{{t:email:waitlistCode.status.ignore}}'
-        + '{{else}}'
-        + '{{t:email:waitlistCode.confirm.text.code}}\n\n{{t:email:waitlistCode.confirm.text.newest}}'
-        + '{{#if hasConfirmUrl}}\n\n{{t:email:waitlistCode.confirm.text.oneTap}}\n{{confirmUrl}}{{/if}}'
-        + '\n\n{{t:email:waitlistCode.confirm.ignore}}'
-        + '{{/if}}{{else}}'
-        + '{{t:email:waitlistCode.done.asked}}\n\n{{t:email:waitlistCode.done.nothingLeft}}'
-        + '{{#if hasStatusUrl}}\n\n{{t:email:waitlistCode.done.status|as:url=statusUrl}}{{/if}}'
-        + '{{/if}}',
+      subject: `{{#if hasCode}}`
+        + `{{#if isConfirmed}}Your Homeroom waitlist status code{{else}}`
+        + `Your Homeroom waitlist confirmation code{{/if}}{{else}}`
+        + `Your Homeroom waitlist address is already confirmed{{/if}}`,
+      preheader: ``,
+      why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
+      html: `{{#if hasCode}}`
+        + `{{#if isConfirmed}}<p>Your Homeroom waitlist status code is:</p>`
+        + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">{{code}}</p>`
+        + `<p>It works for 15 minutes. Any earlier code has stopped working, so use this one.</p>`
+        + `{{#if hasStatusUrl}}<p><a href="{{statusUrl}}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#0a6ee0;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none">Check my status</a></p>{{/if}}`
+        + `<p>If you did not ask for this, you can ignore this email.</p>{{else}}`
+        + `<p>Your Homeroom waitlist confirmation code is:</p>`
+        + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">{{code}}</p>`
+        + `<p>It works for 15 minutes. Any earlier code has stopped working, so use this one.</p>`
+        + `{{#if hasConfirmUrl}}<p><a href="{{confirmUrl}}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#0a6ee0;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none">Confirm my email</a></p>{{/if}}`
+        + `<p>If you did not ask for this, you can ignore this email.</p>{{/if}}{{else}}`
+        + `<p>You asked for a new confirmation code for the Homeroom waitlist.</p>`
+        + `<p>This address is already confirmed, so there is nothing left to do. You're on the list and we'll email you when your spot opens.</p>`
+        + `{{#if hasStatusUrl}}<p>Check where you stand: <a href="{{statusUrl}}" style="color:#0a6ee0">{{statusUrl}}</a></p>{{/if}}{{/if}}`,
+      text: `{{#if hasCode}}`
+        + `{{#if isConfirmed}}Your Homeroom waitlist status code is {{code}}. It works for 15 minutes.\n\n`
+        + `Any earlier code has stopped working, so use this one.`
+        + `{{#if hasStatusUrl}}\n\n`
+        + `Enter it here:\n{{statusUrl}}{{/if}}\n\n`
+        + `If you did not ask for this, you can ignore this email.{{else}}`
+        + `Your Homeroom waitlist confirmation code is {{code}}. It works for 15 minutes.\n\n`
+        + `Any earlier code has stopped working, so use this one.`
+        + `{{#if hasConfirmUrl}}\n\n`
+        + `Or confirm in one tap:\n{{confirmUrl}}{{/if}}\n\n`
+        + `If you did not ask for this, you can ignore this email.{{/if}}{{else}}`
+        + `You asked for a new confirmation code for the Homeroom waitlist.\n\n`
+        + `This address is already confirmed, so there is nothing left to do. You're on the list and we'll email you when your spot opens.`
+        + `{{#if hasStatusUrl}}\n\n`
+        + `Check where you stand: {{statusUrl}}{{/if}}{{/if}}`,
     },
 
     waitlist_released: {
       name: ACTIONS.waitlist_released.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{t:email:waitlistReleased.subject}}',
-      preheader: '{{t:email:waitlistReleased.preheader}}',
-      why: FRAME_WHY,
-      html: centered(
-        `<img src="${PRODUCTION_ORIGIN}/brand/people.png" width="272" height="204" alt=""`
-          + ' style="display:block;margin:0 auto;border:0;max-width:100%;height:auto">'
-        + heroEyebrow('{{t:email:waitlistReleased.eyebrow}}', 20)
-        + heroHeadline('{{t:email:waitlistReleased.headline}}')
-        + `{{#if hasAccount}}${heroLine('{{t:email:waitlistReleased.signIn.how}}')}{{/if}}`
-        + pill('url', '{{#if hasAccount}}{{t:email:waitlistReleased.signIn.button}}{{else}}{{t:email:waitlistReleased.create.button}}{{/if}}')
-        + `{{#if needsCodeNote}}<p style="margin:10px 0 0;font-size:13px;color:${NEUTRAL_SECONDARY_INK}">{{t:email:waitlistReleased.codeNote}}</p>{{/if}}`,
-      )
-        + releaseChip('{{t:email:waitlistReleased.canDo.make}}', '#3484fc', 24)
-        + releaseChip('{{t:email:waitlistReleased.canDo.use}}', '#8bd669')
-        + releaseChip('{{t:email:waitlistReleased.canDo.suggest}}', '#fc5750')
-        + '{{#if hasMobile}}'
-        + '<p style="margin:24px 0 8px;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;'
-        + `color:${NEUTRAL_SECONDARY_INK}">{{t:email:waitlistReleased.mobile.heading}}</p>`
-        + '{{#if hasIos}}<p style="margin:0 0 8px">{{t:email:waitlistReleased.mobile.ios.html|tags:strong,iosLink}}</p>{{/if}}'
-        + '{{#if hasAndroid}}<p style="margin:0 0 8px">{{t:email:waitlistReleased.mobile.android.html|tags:strong,androidLink}}</p>{{/if}}'
-        + '{{/if}}'
-        + p('{{t:email:waitlistReleased.signoff|breaks}}'),
-      text: '{{t:email:waitlistReleased.text.opening}}\n{{t:email:waitlistReleased.headline}}\n\n'
-        + '{{#if hasAccount}}{{t:email:waitlistReleased.signIn.how}}{{else}}{{t:email:waitlistReleased.create.text}}{{/if}}\n{{url}}'
-        + '{{#if needsCodeNote}}\n\n{{t:email:waitlistReleased.codeNote}}{{/if}}'
-        + '\n\n- {{t:email:waitlistReleased.canDo.make}}\n- {{t:email:waitlistReleased.canDo.use}}\n- {{t:email:waitlistReleased.canDo.suggest}}'
-        + '{{#if hasMobile}}\n\n{{t:email:waitlistReleased.mobile.heading}}'
-        + '{{#if hasIos}}\n{{t:email:waitlistReleased.mobile.ios.text|as:link=iosLink}}{{/if}}'
-        + '{{#if hasAndroid}}\n{{t:email:waitlistReleased.mobile.android.text|as:link=androidLink}}{{/if}}'
-        + '{{/if}}'
-        + '\n\n{{t:email:waitlistReleased.signoff}}',
+      subject: `You're in. Welcome to Homeroom`,
+      preheader: `Make and share apps with groups and friends. Here's how to get started.`,
+      why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center"><img src="${PRODUCTION_ORIGIN}/brand/people.png" width="272" height="204" alt="" style="display:block;margin:0 auto;border:0;max-width:100%;height:auto"><p style="margin:20px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">You're in</p>`
+        + `<p style="margin:10px 0 0;font-size:28px;line-height:32px;font-weight:800;color:#1c1c1e">Make and share apps with groups and friends.</p>`
+        + `{{#if hasAccount}}<p style="margin:10px 0 0;font-size:16px;line-height:22px;color:#68686c">Your account now has access. Sign in with your waitlist email.</p>{{/if}}`
+        + `<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">`
+        + `{{#if hasAccount}}Sign in{{else}}`
+        + `Create my account{{/if}}</a></p>`
+        + `{{#if needsCodeNote}}<p style="margin:10px 0 0;font-size:13px;color:#68686c">Opening it emails you a 6-digit code to sign in with. The code expires in 10 minutes.</p>{{/if}}</td></tr></table>`
+        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:24px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#3484fc" style="width:34px;height:34px;background:#3484fc">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Make an app for your group</td></tr></table>`
+        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#8bd669" style="width:34px;height:34px;background:#8bd669">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Use and improve apps together</td></tr></table>`
+        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#fc5750" style="width:34px;height:34px;background:#fc5750">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Suggest, preview and vote on changes</td></tr></table>`
+        + `{{#if hasMobile}}<p style="margin:24px 0 8px;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#68686c">Try it on mobile</p>`
+        + `{{#if hasIos}}<p style="margin:0 0 8px"><strong>iPhone</strong>: Install TestFlight, then <a href="{{iosLink}}" style="color:#0a6ee0">open the Homeroom invite</a>.</p>{{/if}}`
+        + `{{#if hasAndroid}}<p style="margin:0 0 8px"><strong>Android</strong>: <a href="{{androidLink}}" style="color:#0a6ee0">Open the Homeroom testing link</a> while signed into Google Play with your waitlist email.</p>{{/if}}{{/if}}`
+        + `<p>See you there,<br>Evan from Homeroom</p>`,
+      text: `You're in.\nMake and share apps with groups and friends.\n\n`
+        + `{{#if hasAccount}}Your account now has access. Sign in with your waitlist email.{{else}}`
+        + `Create my account:{{/if}}\n{{url}}`
+        + `{{#if needsCodeNote}}\n\n`
+        + `Opening it emails you a 6-digit code to sign in with. The code expires in 10 minutes.{{/if}}\n\n`
+        + `- Make an app for your group\n- Use and improve apps together\n- Suggest, preview and vote on changes`
+        + `{{#if hasMobile}}\n\n`
+        + `Try it on mobile`
+        + `{{#if hasIos}}\niPhone: Install TestFlight, then open the Homeroom invite ({{iosLink}}).{{/if}}`
+        + `{{#if hasAndroid}}\nAndroid: Open the Homeroom testing link ({{androidLink}}) while signed into Google Play with your waitlist email.{{/if}}{{/if}}\n\n`
+        + `See you there,\nEvan from Homeroom`,
     },
 
     password_reset: {
       name: ACTIONS.password_reset.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{t:email:passwordReset.subject}}',
-      preheader: '',
-      why: FRAME_WHY,
-      html: p('{{t:email:passwordReset.requested}}')
-        + p('{{t:email:passwordReset.link|anchor:url=url}}')
-        + p('{{t:email:passwordReset.expiry}}'),
-      text: '{{t:email:passwordReset.requested}}\n\n{{t:email:passwordReset.link}}\n\n{{t:email:passwordReset.expiry}}',
+      subject: `Reset your Homeroom password`,
+      preheader: ``,
+      why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
+      html: `<p>Someone asked to reset the password for the Homeroom account with this email address.</p>`
+        + `<p>Set a new password here: <a href="{{url}}" style="color:#0a6ee0">{{url}}</a></p>`
+        + `<p>The link expires in 30 minutes and works once. If you did not request this, you can ignore it. Your password is unchanged.</p>`,
+      text: `Someone asked to reset the password for the Homeroom account with this email address.\n\n`
+        + `Set a new password here: {{url}}\n\n`
+        + `The link expires in 30 minutes and works once. If you did not request this, you can ignore it. Your password is unchanged.`,
     },
 
-    // What only an admin or an operator receives is English, and asks no catalog.
     admin_test: {
       name: ACTIONS.admin_test.label,
       layout: STANDARD_LAYOUT,
-      subject: 'Homeroom test email',
-      preheader: '',
-      why: 'You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.',
-      html: centered(heroEyebrow('Test email') + heroHeadline('This is a test email from the Homeroom platform admin console.', 24, 30))
-        + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
-        + ` style="border-collapse:separate;margin:20px 0 0;border:1px solid ${NEUTRAL_HAIRLINE};border-radius:12px"><tbody>`
-        + detailRow('Provider', '<strong>{{provider}}</strong>', true)
-        + detailRow('Sent as', '{{from}}')
-        + detailRow('Sent at', '{{sentAt}}')
-        + detailRow('Reference', '<code>{{reference}}</code>')
-        + '</tbody></table>'
-        + `<p style="margin:16px 0 0;text-align:center;font-size:13px;color:${NEUTRAL_SECONDARY_INK}">`
-        + 'An administrator sent it to check that outbound email works. No action is needed.</p>',
-      text: 'This is a test email from the Homeroom platform admin console.\n\n'
-        + 'Provider: {{provider}}\nSent as: {{from}}\nSent at: {{sentAt}}\nReference: {{reference}}\n\n'
-        + 'An administrator sent it to check that outbound email works. No action is needed.',
+      subject: `Homeroom test email`,
+      preheader: ``,
+      why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center"><p style="margin:0px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">Test email</p>`
+        + `<p style="margin:10px 0 0;font-size:24px;line-height:30px;font-weight:800;color:#1c1c1e">This is a test email from the Homeroom platform admin console.</p></td></tr></table>`
+        + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:20px 0 0;border:1px solid #e3e3e6;border-radius:12px"><tbody><tr><td style="font-size:14px;line-height:1.5;padding:6px 12px;color:#68686c">Provider</td><td style="font-size:14px;line-height:1.5;padding:6px 12px;text-align:right"><strong>{{provider}}</strong></td></tr>`
+        + `<tr><td style="font-size:14px;line-height:1.5;padding:6px 12px;color:#68686c;border-top:1px solid #e3e3e6">Sent as</td><td style="font-size:14px;line-height:1.5;padding:6px 12px;text-align:right">{{from}}</td></tr>`
+        + `<tr><td style="font-size:14px;line-height:1.5;padding:6px 12px;color:#68686c;border-top:1px solid #e3e3e6">Sent at</td><td style="font-size:14px;line-height:1.5;padding:6px 12px;text-align:right">{{sentAt}}</td></tr>`
+        + `<tr><td style="font-size:14px;line-height:1.5;padding:6px 12px;color:#68686c;border-top:1px solid #e3e3e6">Reference</td><td style="font-size:14px;line-height:1.5;padding:6px 12px;text-align:right"><code>{{reference}}</code></td></tr>`
+        + `</tbody></table>`
+        + `<p style="margin:16px 0 0;text-align:center;font-size:13px;color:#68686c">An administrator sent it to check that outbound email works. No action is needed.</p>`,
+      text: `This is a test email from the Homeroom platform admin console.\n\n`
+        + `Provider: {{provider}}\nSent as: {{from}}\nSent at: {{sentAt}}\nReference: {{reference}}\n\n`
+        + `An administrator sent it to check that outbound email works. No action is needed.`,
     },
 
     content_report: {
       name: ACTIONS.content_report.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{subject}}',
-      preheader: 'New {{reason}} report on {{targetLabel}}',
-      why: "You are receiving this because this address is Homeroom's compliance inbox for content reports.",
-      html: p('A new report was submitted on Homeroom.')
-        + '<p>Reason: <strong>{{reason}}</strong><br>'
-        + 'Reported: {{typeLabel}} · {{targetLabel}}<br>'
-        + 'Reporter: {{reporter}}<br>'
-        + 'Case #{{caseId}} · Report #{{reportId}}</p>'
-        + p('Details from the reporter:')
-        + '<p style="white-space:pre-wrap">{{detail}}</p>'
-        + button('url', 'Open in Moderation'),
-      text: 'A new report was submitted on Homeroom.\n\n'
-        + 'Reason: {{reason}}\nReported: {{typeLabel}} · {{targetLabel}}\nReporter: {{reporter}}\n'
-        + 'Case #{{caseId}} · Report #{{reportId}}\n\n'
-        + 'Details from the reporter:\n{{detail}}\n\n'
-        + 'Open in Moderation: {{url}}',
+      subject: `{{subject}}`,
+      preheader: `New {{reason}} report on {{targetLabel}}`,
+      why: `You are receiving this because this address is Homeroom's compliance inbox for content reports.`,
+      html: `<p>A new report was submitted on Homeroom.</p>`
+        + `<p>Reason: <strong>{{reason}}</strong><br>Reported: {{typeLabel}} · {{targetLabel}}<br>Reporter: {{reporter}}<br>Case #{{caseId}} · Report #{{reportId}}</p>`
+        + `<p>Details from the reporter:</p>`
+        + `<p style="white-space:pre-wrap">{{detail}}</p>`
+        + `<p><a href="{{url}}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#0a6ee0;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none">Open in Moderation</a></p>`,
+      text: `A new report was submitted on Homeroom.\n\n`
+        + `Reason: {{reason}}\nReported: {{typeLabel}} · {{targetLabel}}\nReporter: {{reporter}}\nCase #{{caseId}} · Report #{{reportId}}\n\n`
+        + `Details from the reporter:\n{{detail}}\n\n`
+        + `Open in Moderation: {{url}}`,
     },
 
     project_invite: {
       name: ACTIONS.project_invite.label,
       layout: STANDARD_LAYOUT,
-      subject: inviteWords('subject'),
-      preheader: '',
-      why: '{{t:email:projectInvite.why}}',
-      html: centered(
-        heroEyebrow('{{t:email:projectInvite.eyebrow}}')
-        + heroHeadline(inviteWords('headline'), 24, 30)
-        + heroLine('{{t:email:projectInvite.html.line}}')
-        + `{{#if hasUrl}}${pill('url', '{{t:email:projectInvite.button}}')}{{/if}}`
-        + `<p style="margin:16px 0 0;font-size:13px;color:${NEUTRAL_SECONDARY_INK}">{{t:email:projectInvite.html.unexpected}}</p>`,
-      ),
-      text: `${inviteWords('lead')}\n\n{{t:email:projectInvite.text.how}}{{#if hasUrl}}\n\n{{url}}{{/if}}\n\n{{t:email:projectInvite.text.unexpected}}`,
+      subject: `{{#if hasInviter}}`
+        + `{{#if hasProject}}@{{inviter}} invited you to {{project}} on Homeroom{{else}}`
+        + `@{{inviter}} invited you to a project on Homeroom{{/if}}{{else}}`
+        + `{{#if hasProject}}Someone invited you to {{project}} on Homeroom{{else}}`
+        + `Someone invited you to a project on Homeroom{{/if}}{{/if}}`,
+      preheader: ``,
+      why: `You are receiving this because someone on Homeroom invited this address to a project. You will not hear from us again unless you join, or somebody invites you again.`,
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center"><p style="margin:0px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">You're invited</p>`
+        + `<p style="margin:10px 0 0;font-size:24px;line-height:30px;font-weight:800;color:#1c1c1e">`
+        + `{{#if hasInviter}}`
+        + `{{#if hasProject}}@{{inviter}} invited you to {{project}}.{{else}}`
+        + `@{{inviter}} invited you to a project.{{/if}}{{else}}`
+        + `{{#if hasProject}}Someone invited you to {{project}}.{{else}}`
+        + `Someone invited you to a project.{{/if}}{{/if}}</p>`
+        + `<p style="margin:10px 0 0;font-size:16px;line-height:22px;color:#68686c">It's a private community on Homeroom, where communities build the apps they use together. Join the waitlist with this email address. Once you are in, the invite will be waiting for you.</p>`
+        + `{{#if hasUrl}}<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">Join the waitlist</a></p>{{/if}}`
+        + `<p style="margin:16px 0 0;font-size:13px;color:#68686c">If you were not expecting this, you can ignore this email.</p></td></tr></table>`,
+      text: `{{#if hasInviter}}`
+        + `{{#if hasProject}}@{{inviter}} invited you to {{project}}, a private community on Homeroom, where communities build the apps they use together.{{else}}`
+        + `@{{inviter}} invited you to a project, a private community on Homeroom, where communities build the apps they use together.{{/if}}{{else}}`
+        + `{{#if hasProject}}Someone invited you to {{project}}, a private community on Homeroom, where communities build the apps they use together.{{else}}`
+        + `Someone invited you to a project, a private community on Homeroom, where communities build the apps they use together.{{/if}}{{/if}}\n\n`
+        + `Join the waitlist with this email address. Once you are in, the invite will be waiting for you.`
+        + `{{#if hasUrl}}\n\n`
+        + `{{url}}{{/if}}\n\n`
+        + `If you were not expecting this, you can ignore this email.`,
     },
 
-    // {{app}}, {{lead}} and {{subject}} are built in code (src/services/mail/actions.js).
     build_ready: {
       name: ACTIONS.build_ready.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{subject}}',
-      preheader: '{{lead}}',
-      why: '{{t:email:activity.why}}',
-      html: activityHtml(heroEyebrow('{{app}}'), '{{lead}}', '{{t:email:buildReady.button}}'),
-      text: activityText('{{lead}}', '{{t:email:buildReady.text.open}}'),
+      subject: `{{subject}}`,
+      preheader: `{{lead}}`,
+      why: `You are receiving this because there was news on Homeroom for you and no phone to send it to. Turn these emails off with the link above.`,
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center"><p style="margin:0px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">{{app}}</p>`
+        + `<p style="margin:10px 0 0;font-size:24px;line-height:30px;font-weight:800;color:#1c1c1e">{{lead}}</p>`
+        + `<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">Open it</a></p>`
+        + `{{#if hasUnsubscribeUrl}}<p style="margin:16px 0 0;font-size:13px"><a href="{{unsubscribeUrl}}" style="color:#68686c">Stop these emails</a></p>{{/if}}</td></tr></table>`,
+      text: `{{lead}}\n\nOpen it: {{url}}`
+        + `{{#if hasUnsubscribeUrl}}\n\n`
+        + `To stop these emails: {{unsubscribeUrl}}{{/if}}`,
     },
 
-    // {{line}} and {{subject}} are built in code (src/services/mail/actions.js).
     invite_activity: {
       name: ACTIONS.invite_activity.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{subject}}',
-      preheader: '{{line}}',
-      why: '{{t:email:activity.why}}',
-      html: activityHtml(
-        `{{#if hasApp}}${heroEyebrow('{{app}}')}{{/if}}`,
-        '{{line}}',
-        '{{#if hasApp}}{{t:email:inviteActivity.button}}{{else}}{{t:email:inviteActivity.buttonUnnamed}}{{/if}}',
-      ),
-      text: activityText('{{line}}', '{{#if hasApp}}{{t:email:inviteActivity.text.open}}{{else}}{{t:email:inviteActivity.text.openUnnamed}}{{/if}}'),
+      subject: `{{subject}}`,
+      preheader: `{{line}}`,
+      why: `You are receiving this because there was news on Homeroom for you and no phone to send it to. Turn these emails off with the link above.`,
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center">`
+        + `{{#if hasApp}}<p style="margin:0px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">{{app}}</p>{{/if}}`
+        + `<p style="margin:10px 0 0;font-size:24px;line-height:30px;font-weight:800;color:#1c1c1e">{{line}}</p>`
+        + `<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">`
+        + `{{#if hasApp}}Open {{app}}{{else}}`
+        + `Open your project{{/if}}</a></p>`
+        + `{{#if hasUnsubscribeUrl}}<p style="margin:16px 0 0;font-size:13px"><a href="{{unsubscribeUrl}}" style="color:#68686c">Stop these emails</a></p>{{/if}}</td></tr></table>`,
+      text: `{{line}}\n\n{{#if hasApp}}Open {{app}}: {{url}}{{else}}`
+        + `Open your project: {{url}}{{/if}}`
+        + `{{#if hasUnsubscribeUrl}}\n\n`
+        + `To stop these emails: {{unsubscribeUrl}}{{/if}}`,
     },
 
     project_opened: {
       name: ACTIONS.project_opened.label,
       layout: STANDARD_LAYOUT,
-      subject: '{{#if hasApp}}{{t:email:projectOpened.subject}}{{else}}{{t:email:projectOpened.subjectUnnamed}}{{/if}}',
-      preheader: '{{#if hasApp}}{{t:email:projectOpened.lead}}{{else}}{{t:email:projectOpened.leadUnnamed}}{{/if}}',
-      why: '{{t:email:activity.why}}',
-      html: activityHtml(
-        `{{#if hasApp}}${heroEyebrow('{{app}}')}{{/if}}`,
-        '{{#if hasApp}}{{t:email:projectOpened.lead}}{{else}}{{t:email:projectOpened.leadUnnamed}}{{/if}}',
-        '{{t:email:projectOpened.button}}',
-      ),
-      text: activityText(
-        '{{#if hasApp}}{{t:email:projectOpened.lead}}{{else}}{{t:email:projectOpened.leadUnnamed}}{{/if}}',
-        '{{t:email:projectOpened.text.open}}',
-      ),
+      subject: `{{#if hasApp}}{{app}} is open{{else}}`
+        + `A project you joined is open{{/if}}`,
+      preheader: `{{#if hasApp}}{{app}} is ready to use. Take a look.{{else}}`
+        + `A project you joined is ready to use. Take a look.{{/if}}`,
+      why: `You are receiving this because there was news on Homeroom for you and no phone to send it to. Turn these emails off with the link above.`,
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center">`
+        + `{{#if hasApp}}<p style="margin:0px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">{{app}}</p>{{/if}}`
+        + `<p style="margin:10px 0 0;font-size:24px;line-height:30px;font-weight:800;color:#1c1c1e">`
+        + `{{#if hasApp}}{{app}} is ready to use. Take a look.{{else}}`
+        + `A project you joined is ready to use. Take a look.{{/if}}</p>`
+        + `<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">Open it</a></p>`
+        + `{{#if hasUnsubscribeUrl}}<p style="margin:16px 0 0;font-size:13px"><a href="{{unsubscribeUrl}}" style="color:#68686c">Stop these emails</a></p>{{/if}}</td></tr></table>`,
+      text: `{{#if hasApp}}{{app}} is ready to use. Take a look.{{else}}`
+        + `A project you joined is ready to use. Take a look.{{/if}}\n\n`
+        + `Open it: {{url}}`
+        + `{{#if hasUnsubscribeUrl}}\n\n`
+        + `To stop these emails: {{unsubscribeUrl}}{{/if}}`,
     },
   },
 };
 
-// ── Expanding catalog references ───────────────────────────────────────
-
 const FIELDS = ['subject', 'preheader', 'why', 'html', 'text'];
-const PLAIN_FIELDS = new Set(['subject', 'text']);
-const REFERENCE = /\{\{t:(email:[^|}]+)((?:\|[^|}]+)*)\}\}/g;
 
-// Today's `esc`: the apostrophe stays, because catalog wording has always gone
-// out with it bare. A placeholder has no such character, so it comes through.
-const esc = (s) => String(s)
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;');
-
-const anchor = (url, inner) => `<a href="{{${url}}}" style="${LINK_STYLE}">${inner}</a>`;
-
-function optionsOf(written) {
-  const options = { renames: {}, anchors: {}, tags: null, bareAmp: false, breaks: false };
-  for (const option of written.split('|').filter(Boolean)) {
-    let m;
-    if ((m = /^as:(\w+)=(\w+)$/.exec(option))) options.renames[m[1]] = m[2];
-    else if ((m = /^anchor:(\w+)=(\w+)$/.exec(option))) options.anchors[m[1]] = m[2];
-    else if ((m = /^tags:(.+)$/.exec(option))) options.tags = m[1].split(',');
-    else if (option === 'bareAmp') options.bareAmp = true;
-    else if (option === 'breaks') options.breaks = true;
-    else throw new Error(`Unknown seed option: ${option}`);
-  }
-  return options;
-}
-
-// The same reading as `rich` in templates.js: after escaping, so anything but a
-// tag this message has a wrapper for stays words.
-function withTags(escaped, tags) {
-  return escaped.replace(/&lt;(\d+)&gt;(.*?)&lt;\/\1&gt;/gs, (whole, n, inner) => {
-    const tag = tags[Number(n)];
-    if (!tag) return whole;
-    return tag === 'strong' ? `<strong>${inner}</strong>` : anchor(tag, inner);
-  });
-}
-
-function inField(words, field, options) {
-  let out = PLAIN_FIELDS.has(field) ? words : esc(words);
-  if (!PLAIN_FIELDS.has(field)) {
-    if (options.bareAmp) out = out.replace(/&amp;/g, '&');
-    if (options.tags) out = withTags(out, options.tags);
-    if (options.breaks) out = out.replace(/\n/g, '<br>');
-  }
-  return out.replace(/\{\{(\w+)\}\}/g, (whole, name) => {
-    const target = options.anchors[name] || options.renames[name] || name;
-    if (options.anchors[name] && !PLAIN_FIELDS.has(field)) return anchor(target, `{{${target}}}`);
-    return `{{${target}}}`;
-  });
-}
-
-const expand = (source, field, wordsFor) => source.replace(REFERENCE, (_, id, written) => inField(wordsFor(id), field, optionsOf(written)));
-
-function expandTemplate(kind, wordsFor) {
-  const seed = SEEDS.templates[kind];
-  if (!seed) throw new Error(`No seed for ${kind}`);
-  const out = { name: seed.name, layout: seed.layout };
-  for (const field of FIELDS) out[field] = expand(seed[field], field, wordsFor);
-  return out;
-}
-
-// A catalog message as written, whatever parameters it has.
-function englishWords(source) {
-  const texts = englishTexts(source, 'email');
-  return (id) => {
-    const key = id.slice(id.indexOf(':') + 1);
-    if (!Object.hasOwn(texts, key)) throw new Error(`The email catalog has no ${id}`);
-    return texts[key];
-  };
-}
-
-function englishTemplate(kind, { source } = {}) {
-  return expandTemplate(kind, englishWords(source));
+/** A kind's seed: `{ name, layout, subject, preheader, why, html, text }`, a copy. */
+function englishTemplate(kind) {
+  if (!Object.hasOwn(SEEDS.templates, kind)) throw new Error(`No seed for ${kind}`);
+  return { ...SEEDS.templates[kind] };
 }
 
 function seededLayout(name) {
@@ -449,106 +340,41 @@ function seededLayout(name) {
   return layout;
 }
 
-// A translator fills a message's parameters in. Asked with this, each one answers
-// with itself, so what comes back is the translation as written, a parameter the
-// English does not have included.
-const SELF = new Proxy({}, {
-  get: (_, name) => (typeof name === 'string' ? `{{${name}}}` : undefined),
-  getOwnPropertyDescriptor: (_, name) => ({ value: `{{${String(name)}}}`, enumerable: true, configurable: true }),
-});
-
-// eslint-disable-next-line no-control-regex
-const CONTROL = /[\x00-\x1f\x7f\u0085\u2028\u2029]/g;
-const controls = (text) => (text.match(CONTROL) || []).join('');
-const tagsOf = (text) => [...text.matchAll(/<(\d+)>/g)].map((m) => m[1]);
-const keepsItsTags = (answer, english) => tagsOf(english).every((tag) => tagsOf(answer).includes(tag));
-
-// The placeholders of a message, or null if it holds anything else the template
-// language would act on. Today such text would reach a reader as words.
-function placeholdersOfMessage(words) {
-  try {
-    const { nodes } = parse(words);
-    if (nodes.some((node) => node.type !== 'text' && node.type !== 'var')) return null;
-    return nodes.filter((node) => node.type === 'var').map((node) => node.name).sort().join();
-  } catch {
-    return null;
-  }
-}
-
-class UnusableTranslation extends Error {}
-
-/**
- * A kind's template in the language of `t`, or null if the English should go
- * instead. Message by message, as today: an answer that is empty or brings line
- * breaks the English does not have costs that one message its translation. A
- * message that loses or changes its placeholders or tags is what
- * `keepsWhatItCarries` refuses at send time (the code or the link is gone), and
- * costs the whole mail: not seeded for this language, so it falls back to English.
- *
- * A language gets its row even where this kind's own words are all still English:
- * the words built in code may be translated, and a translated mail's subject is
- * cleaned, so that row is what keeps the mail what it is today.
- */
-function translatedTemplate(kind, t, { source } = {}) {
-  const inEnglish = englishWords(source);
-  const wordsFor = (id) => {
-    const english = inEnglish(id);
-    const answer = t(id, SELF);
-    if (typeof answer !== 'string' || !answer.trim() || controls(answer) !== controls(english)) return english;
-    const placeholders = placeholdersOfMessage(answer);
-    if (placeholders === null || placeholders !== placeholdersOfMessage(english) || !keepsItsTags(answer, english)) {
-      throw new UnusableTranslation(id);
-    }
-    return answer;
-  };
-  try {
-    return expandTemplate(kind, wordsFor);
-  } catch (err) {
-    if (err instanceof UnusableTranslation) return null;
-    throw err;
-  }
-}
-
 // ── Into the database ──────────────────────────────────────────────────
 
 // Any server may be the one to seed. The lock is only tried, never waited for: a
 // server that does not get it leaves the work to the one that did.
 const SEED_LOCK = 'email_template_seeds';
 
-// ── Untouched rows follow the catalog ──────────────────────────────────
+// ── Untouched rows follow the seeds ────────────────────────────────────
 //
 // A seed row nobody has edited (its action's only version is 1, written by no
-// one) is refreshed from the catalog and the translation cache on a seed run, in
-// place, so it sends what the code would send today. Once an admin saves a
-// version, the action is theirs and this never touches it again. The same holds
-// for the layout. Only what differs is written.
+// one) is brought in line with the seeds above on a seed run, in place. Once an
+// admin saves a version, the action is theirs and this never touches it again.
+// The same holds for the layout. Only what differs is written, and only the
+// English: a row whose English is already the seeds' is left alone, its
+// translations included, since those are Translate's or an admin's now.
 //
-// So that a run with nothing new still costs one query and never reads the 12 MB
-// language source, the run records what it was made from: the seeds, the email
-// catalog's English and the version of the email translations in the cache.
-// A later run with the same fingerprint has nothing to refresh.
+// So that a run with nothing new costs one query, the run records what it was
+// made from: a hash of the seeds, which are already the English they expand to.
+// A change to the seeds gives a new hash, and the next run compares every row
+// once. The words no longer depend on the language list or the translation
+// cache, so neither is part of it.
 const FINGERPRINT_KEY = 'email_template_seed_fingerprint';
+const FINGERPRINT = crypto.createHash('sha256')
+  .update(JSON.stringify(['frozen seeds', SEEDS]))
+  .digest('hex');
 
-function fingerprint(source, cacheVersion) {
-  return crypto.createHash('sha256')
-    .update(JSON.stringify([SEEDS, englishTexts(source, 'email'), cacheVersion]))
-    .digest('hex');
-}
-
-// Every kind and the layout have a row, deleted rows included, and nothing the
-// rows were made from has changed. One query on every boot.
-async function nothingToSeed(pool, source) {
+// Every kind and the layout have a row, deleted rows included, and the seeds
+// have not changed since the last full run. One query on every boot.
+async function nothingToSeed(pool) {
   const { rows: [row] } = await pool.query(
     `SELECT (SELECT count(DISTINCT action)::int FROM email_templates WHERE action = ANY($1::text[])) AS seeded,
             EXISTS (SELECT 1 FROM email_layouts WHERE name = $2) AS layout,
-            (SELECT value FROM platform_settings WHERE key = $3) AS fingerprint,
-            (SELECT count(*)::int || ':' || COALESCE((extract(epoch FROM max(created_at)) * 1000)::bigint, 0)
-               FROM language_translations WHERE namespace = 'email') AS cache`,
+            (SELECT value FROM platform_settings WHERE key = $3) AS fingerprint`,
     [Object.keys(SEEDS.templates), STANDARD_LAYOUT, FINGERPRINT_KEY],
   );
-  const done = row.layout && row.seeded === Object.keys(SEEDS.templates).length
-    && row.fingerprint === fingerprint(source, row.cache);
-  return { done, cache: row.cache };
+  return row.layout && row.seeded === Object.keys(SEEDS.templates).length && row.fingerprint === FINGERPRINT;
 }
 
 // A try-lock, never waited for: an admin saving this action or layout right now
@@ -577,10 +403,6 @@ async function translateJob(client, kind, id) {
   return job || null;
 }
 
-// Translate saved at least one language of this English: those are what an
-// admin asked for, so the catalog leaves the translations alone.
-const translateSaved = (job) => !!job && Object.values(job.per_language || {}).includes('saved');
-
 // The live layout a template is sent in, for a recheck, or null.
 async function liveLayoutOf(client, familyId) {
   if (familyId == null) return null;
@@ -589,7 +411,7 @@ async function liveLayoutOf(client, familyId) {
   return layout || null;
 }
 
-async function refreshUntouched(client, source, translations, families, seeded) {
+async function refreshUntouched(client, families, seeded) {
   const out = { templates: [], layouts: 0, busy: 0 };
   for (const layout of SEEDS.layouts) {
     const family = families[layout.name];
@@ -621,57 +443,22 @@ async function refreshUntouched(client, source, translations, families, seeded) 
       `SELECT id, version, status, created_by, deleted_at, name, subject, preheader, why, html, text, layout_family_id
          FROM email_templates WHERE action = $1 FOR UPDATE`, [kind]);
     const row = untouched(rows);
-    if (!row) continue;
+    const english = englishTemplate(kind);
+    if (!row || sameFields(row, english, ['name', ...FIELDS])) continue;
     // A Translate run in progress is left to finish; the next boot refreshes.
     const job = await translateJob(client, 'template', row.id);
     if (job && job.busy) continue;
-    let changed = false;
-    const english = englishTemplate(kind, { source });
-    const englishChanged = !sameFields(row, english, ['name', ...FIELDS]);
-    if (englishChanged) {
-      await client.query(
-        'UPDATE email_templates SET name = $2, subject = $3, preheader = $4, why = $5, html = $6, text = $7 WHERE id = $1',
-        [row.id, english.name, english.subject, english.preheader, english.why, english.html, english.text]);
-      changed = true;
-      // What Translate wrote was of the English just replaced: its machine
-      // rows are replaced below like any other, and its job goes with them.
-      if (job) await client.query("DELETE FROM email_translation_jobs WHERE kind = 'template' AND version_id = $1", [row.id]);
-    }
-    // The same English, translated by Translate: those translations stay.
-    if (!englishChanged && translateSaved(job)) {
-      if (changed) out.templates.push(kind);
-      continue;
-    }
-    const want = translations[kind] || {};
-    const { rows: have } = await client.query(
-      'SELECT locale, origin, subject, preheader, why, html, text FROM email_template_translations WHERE template_id = $1 FOR UPDATE', [row.id]);
-    const held = Object.fromEntries(have.map((translation) => [translation.locale, translation]));
-    for (const [locale, words] of Object.entries(want)) {
-      const current = held[locale];
-      if (current && (current.origin !== 'machine' || sameFields(current, words, FIELDS))) continue;
-      // An admin's translation, written meanwhile, wins over the machine's.
-      await client.query(
-        `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'machine')
-         ON CONFLICT (template_id, locale) DO UPDATE SET subject = EXCLUDED.subject, preheader = EXCLUDED.preheader,
-           why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, unusable = NULL, updated_at = NOW()
-         WHERE email_template_translations.origin = 'machine'`,
-        [row.id, locale, words.subject, words.preheader, words.why, words.html, words.text]);
-      changed = true;
-    }
-    // A machine translation the pipeline no longer gives (its language says
-    // nothing now, or refused it) goes, so the reader gets today's English.
-    for (const current of have) {
-      if (current.origin !== 'machine' || Object.hasOwn(want, current.locale)) continue;
-      await client.query("DELETE FROM email_template_translations WHERE template_id = $1 AND locale = $2 AND origin = 'machine'", [row.id, current.locale]);
-      changed = true;
-    }
-    if (!changed) continue;
-    // A rewritten translation starts usable (the upsert clears its mark), and
-    // every translation of this template is checked here, in the same
-    // transaction, inside the layout it is sent in: an admin may have edited
-    // that layout, and a catalog translation that does not work in it is
-    // marked again rather than sent.
+    await client.query(
+      'UPDATE email_templates SET name = $2, subject = $3, preheader = $4, why = $5, html = $6, text = $7 WHERE id = $1',
+      [row.id, english.name, english.subject, english.preheader, english.why, english.html, english.text]);
+    // The machine's translations, and the job that wrote them, were of the
+    // English just replaced: they go, and the reader gets the new English
+    // until Translate runs again. An admin's translation stays, rechecked
+    // below, as an admin's save of the English would leave it.
+    await client.query("DELETE FROM email_template_translations WHERE template_id = $1 AND origin = 'machine'", [row.id]);
+    if (job) await client.query("DELETE FROM email_translation_jobs WHERE kind = 'template' AND version_id = $1", [row.id]);
+    // Every translation left is checked here, in the same transaction, inside
+    // the layout it is sent in, and marked rather than sent if it no longer fits.
     await translateModule().recheckTranslations(client, {
       templates: [{ ...english, id: row.id, action: kind }],
       layout: await liveLayoutOf(client, row.layout_family_id),
@@ -701,39 +488,7 @@ async function kindsWithoutTemplate(pool) {
   return rows.map((row) => row.action);
 }
 
-// Whether `t` translates any email message at all. A language that does not has
-// no rows, and its reader gets the English template.
-function saysAnything(t, { source } = {}) {
-  return Object.entries(englishTexts(source, 'email')).some(([key, english]) => {
-    const answer = t(`email:${key}`, SELF);
-    return typeof answer === 'string' && answer !== english.replace(/\{\{\s*(\w+)\s*\}\}/g, '{{$1}}');
-  });
-}
-
-// What the catalog and the language cache can say now, per kind, for the
-// languages that say anything at all. Read before the transaction starts, so it
-// holds no connection while these reads wait for one. They go to the cache
-// directly and a failed one throws: the translator a mail asks with would answer
-// English instead, and this seed happens once, so a blip would lose the language
-// for good. Here it rolls the seed back and the next boot tries again.
-async function translationsToSeed(pool, source) {
-  const languages = Object.keys(source?.files?.['config.json']?.languages || {}).filter((language) => language !== 'en');
-  const inEnglish = englishTexts(source, 'email');
-  const out = {};
-  for (const language of languages) {
-    const cached = await languageCache.cachedNamespace(pool, language, 'email');
-    const t = translatorFrom(language, usableMessages(language, source, cached, 'email'), inEnglish);
-    if (!saysAnything(t, { source })) continue;
-    for (const [kind, action] of Object.entries(ACTIONS)) {
-      if (action.englishOnly) continue;
-      const template = translatedTemplate(kind, t, { source });
-      if (template) (out[kind] ||= {})[language] = template;
-    }
-  }
-  return out;
-}
-
-async function seedInTransaction(client, source, translations, cache) {
+async function seedInTransaction(client) {
   const { rows: [{ got }] } = await client.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS got', [SEED_LOCK]);
   if (!got) return { locked: false };
 
@@ -769,10 +524,10 @@ async function seedInTransaction(client, source, translations, cache) {
   for (const kind of Object.keys(SEEDS.templates)) {
     const { rows: present } = await client.query('SELECT 1 FROM email_templates WHERE action = $1 LIMIT 1', [kind]);
     if (present.length) continue;
-    const template = englishTemplate(kind, { source });
+    const template = englishTemplate(kind);
     const family = families[template.layout];
     // An admin deleted the layout this seed wears. A mail with no frame would be
-    // a surprise, so this kind stays on the code until an admin gives it one.
+    // a surprise, so this kind gets no template until an admin gives it one.
     if (!family) {
       log.error('email-templates', 'A seed\'s layout was deleted, so its template was not added', { kind, layout: template.layout });
       continue;
@@ -784,61 +539,39 @@ async function seedInTransaction(client, source, translations, cache) {
        ON CONFLICT DO NOTHING RETURNING id`,
       [kind, template.name, family, template.subject, template.preheader, template.why, template.html, template.text],
     );
-    if (!row) continue;
-    seeded.push(kind);
-    // Written whole just now; nothing for the refresh to compare.
-    for (const [locale, words] of Object.entries(translations[kind] || {})) {
-      await client.query(
-        `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'machine')`,
-        [row.id, locale, words.subject, words.preheader, words.why, words.html, words.text],
-      );
-    }
+    if (row) seeded.push(kind);
   }
-  const refreshed = await refreshUntouched(client, source, translations, families, seeded);
+  const refreshed = await refreshUntouched(client, families, seeded);
   // Only a run that could look at everything records that it did. A busy action
   // is looked at again next time.
   if (!refreshed.busy) {
     await client.query(
       `INSERT INTO platform_settings (key, value, updated_at) VALUES ($1, $2, NOW())
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-      [FINGERPRINT_KEY, fingerprint(source, cache)]);
+      [FINGERPRINT_KEY, FINGERPRINT]);
   }
   return { locked: true, seeded, refreshed };
 }
 
 /**
- * Adds version 1 of every kind that has no row at all, and refreshes the rows
- * nobody has edited, with the catalog and the translations that can be had now.
- * Runs on every migration, and costs one query when nothing has changed. A boot
- * must not depend on it: a problem is logged and the next run tries again (the
- * migration Job then refuses a release with a kind missing).
+ * Adds version 1 of every kind that has no row at all, in English, and brings
+ * the rows nobody has edited in line with the seeds. Runs on every migration,
+ * and costs one query when nothing has changed. A boot must not depend on it: a
+ * problem is logged and the next run tries again (the migration Job then
+ * refuses a release with a kind missing).
  */
-async function seedEmailTemplates(pool, { source: given } = {}) {
+async function seedEmailTemplates(pool) {
   let client = null;
   let rollbackFailed = null;
   try {
-    const { done, cache } = await nothingToSeed(pool, given);
-    if (done) return;
-    // Read only now: it is large, and most boots have nothing to seed. Without it
-    // there is no telling which languages exist, and rows written now would stop
-    // every later boot from adding them. A source listing none is a real answer.
-    const source = given === undefined ? languageCache.readSource() : given;
-    if (!source) {
-      log.error('email-templates', 'No language source to seed email templates from; a later boot will try again');
-      return;
-    }
-    const translations = await translationsToSeed(pool, source);
+    if (await nothingToSeed(pool)) return;
     client = await pool.connect();
     await client.query('BEGIN');
-    const { locked, seeded, refreshed } = await seedInTransaction(client, source, translations, cache);
+    const { locked, seeded, refreshed } = await seedInTransaction(client);
     await client.query('COMMIT');
-    if (locked && seeded.length) {
-      const languages = new Set(Object.values(translations).flatMap((byLanguage) => Object.keys(byLanguage))).size;
-      log.info('email-templates', 'Seeded email templates', { kinds: seeded.length, languages });
-    }
+    if (locked && seeded.length) log.info('email-templates', 'Seeded email templates', { kinds: seeded.length });
     if (locked && (refreshed.templates.length || refreshed.layouts)) {
-      log.info('email-templates', 'Refreshed untouched email templates from the catalog', { kinds: refreshed.templates, layouts: refreshed.layouts });
+      log.info('email-templates', 'Refreshed untouched email templates from the seeds', { kinds: refreshed.templates, layouts: refreshed.layouts });
     }
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch((rollbackError) => { rollbackFailed = rollbackError; });
@@ -850,5 +583,5 @@ async function seedEmailTemplates(pool, { source: given } = {}) {
 }
 
 module.exports = {
-  SEEDS, STANDARD_LAYOUT, englishTemplate, translatedTemplate, seededLayout, saysAnything, seedEmailTemplates, kindsWithoutTemplate,
+  SEEDS, STANDARD_LAYOUT, FINGERPRINT, englishTemplate, seededLayout, seedEmailTemplates, kindsWithoutTemplate,
 };
