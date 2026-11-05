@@ -33,7 +33,7 @@
  *     ./tour-steps.ts carries the whole argument;
  *   * the steps after it shut the menu through `Improve.close()`, the
  *     controller's own close path and never a write into its DOM, then point
- *     at the Messages tab, where Homeroom bot is, and the Me tab, whose
+ *     at Homeroom bot's own tab and the Me tab, whose
  *     screen holds Settings, where the tour can be replayed.
  *
  * ── The island rules, and how each is kept ────────────────────────────
