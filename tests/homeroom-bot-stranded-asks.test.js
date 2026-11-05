@@ -160,10 +160,13 @@ test('the stranded-ask sweep', { timeout: 180000 }, async (t) => {
     assert.equal(await bot.sweepStrandedAsks(pool, { id: ancient.botUser.id }, LIVE, {}), 0, 'older than 7 days: left alone');
     assert.deepEqual(await queueRows(pool, ancient.app.id), []);
 
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 2): one change-ask
+    // queue, taken whatever the change voice says, so a stranded ask is
+    // queued again with it off too: it was written and never taken before.
     const off = await seedScene(pool, { issueNumber: 17 });
     await off.askOf(40);
-    assert.equal(await bot.sweepStrandedAsks(pool, { id: off.botUser.id }, VOICE_OFF, {}), 0, 'the voice off on changes: the sweep does nothing');
-    assert.deepEqual(await queueRows(pool, off.app.id), []);
+    assert.equal(await bot.sweepStrandedAsks(pool, { id: off.botUser.id }, VOICE_OFF, {}), 1, 'the voice off on changes: still swept');
+    assert.equal((await queueRows(pool, off.app.id)).length, 1);
   });
 
   await t.test('#5217: the lane\'s sweep runs it, and the row it queues is there after', async () => {
@@ -185,4 +188,12 @@ test('the stranded-ask sweep', { timeout: 180000 }, async (t) => {
     assert.deepEqual(rows.map((r) => [r.issue_number, r.priority, r.reason, r.requested_by]),
       [[24, 0, 'voice_update', scene.evan.id]], 'the app, issue, reason and asker of the ask, as recordAsk queued it first');
   });
+});
+
+test('the follow-up takes the asks waiting on a change whatever the change voice says', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  const body = src.slice(src.indexOf('async function runFollowUp('), src.indexOf('async function runFollowUp(') + 40000);
+  assert.match(body, /\n {4}const taken = await voice\.takeAsks\(pool, \{ sessionId: proposal\.id, runTag \}\)/, 'taken, ungated');
+  assert.doesNotMatch(body, /if \(voiceOnChange\) \{\s+taken = await voice\.takeAsks/);
+  assert.match(body, /\n {4}await requeueAsks\(\);\n {4}return \{ ran: false, reason: 'no_new_replies' \};/);
 });

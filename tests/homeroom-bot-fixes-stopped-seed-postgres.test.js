@@ -104,7 +104,7 @@ test('the staging stopped-fix fixture reaches the state the shots need', { timeo
   assert.deepEqual(stop.metadata.homeroomBot.actions.map((a) => a.label), ['Let it try again', 'Not now']);
   assert.equal(stop.metadata.homeroomBot.offer.forUserId, Number(member.id));
   const { rows: [offer] } = await pool.query(
-    "SELECT id, message_id, status FROM homeroom_bot_voice_offers WHERE app_id = $1 AND kind = 'try_again'", [app.id],
+    "SELECT id, chat_message_id AS message_id, status FROM bot_cards WHERE place = 'thread' AND app_id = $1 AND kind = 'try_again'", [app.id],
   );
   assert.equal(offer.message_id, stop.id, 'a tap on the message finds the offer');
   assert.equal(offer.status, 'open');

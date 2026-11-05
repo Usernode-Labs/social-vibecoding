@@ -33,12 +33,12 @@ import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './ty
  * its Build it, a button to press) is not folded into a line: it is drawn
  * whole where it was said (asksInChat), so it is answered in the chat.
  *
- * A row says at a glance whether it is still open. One the tray holds open
- * is two lines with a full tile, and a badge in amber while it waits on the
- * person (the words under the title stay grey: amber words read as an
- * error). One
- * that is done, or that the tray no longer holds, is SETTLED: one line, a
- * small tile, and how it ended (a green check when it went live).
+ * A row says at a glance whether it is still open. One whose request is
+ * still under way (its track, bot-work.tsx) is two lines with a full tile,
+ * and a badge in amber while it waits on the person (the words under the
+ * title stay grey: amber words read as an error). One that is done, or that
+ * has no track any more, is SETTLED: one line, a small tile, and how it
+ * ended (a green check when it went live).
  *
  * The bot's conversational replies, its offers (File it / Not now), its
  * hellos and anything about no request stay ordinary messages
@@ -155,23 +155,23 @@ export interface NewsStatus {
   settled: boolean;
   /** How it ended, in the activity cards' words ('live', 'closed', …), when known. */
   ended: string | null;
-  /** The tray's row for it while it is open: what its badge shows. */
+  /** Its request's row (from its track) while it is open: what its badge shows. */
   row: StripRow | null;
 }
 
-/** What a request ended as, read from the last news about it when the tray has no record of it. */
+/** What a request ended as, read from the last news about it when its track has no record of it. */
 const KIND_ENDINGS: Record<string, string> = {
   merged: 'live', request_closed: 'done_elsewhere',
   build_failed: 'build_failed', first_version_failed: 'build_failed', preview_failed: 'build_failed', followup_failed: 'build_failed',
 };
 
 /**
- * Pure: a row's second line, and how it is drawn. A request the tray still
- * holds says where it stands NOW, in the drawer's own words, in amber only
- * while it waits on the person; done today, it is settled. One the tray no
- * longer holds is settled too, and keeps its message's words, an ask among
- * them told in the past ("Asked you a question"): whatever it asked has moved
- * on. Before the tray's first read, the message's words as they rang, and
+ * Pure: a row's second line, and how it is drawn. A request with a track
+ * says where it stands NOW, in its stage's own words, in amber only while
+ * it waits on the person; done today, it is settled. One with no track any
+ * more is settled too, and keeps its message's words, an ask among them told
+ * in the past ("Asked you a question"): whatever it asked has moved on.
+ * Before the tracks' first read, the message's words as they rang, and
  * nothing is settled yet.
  */
 export function newsStatus(meta: HomeroomBotMeta, now: Map<string, StripRow> | null, ended: Map<string, string> | null = null): NewsStatus {
@@ -195,8 +195,10 @@ const PAST_WORDS: Record<string, string> = {
 
 /** Pure: the request's name on a line: its title, "Plant Pal, first version", or "Request #12". */
 export function newsTitle(meta: HomeroomBotMeta): string {
-  const project = meta.appName || meta.appSlug || translate('messages:bot.job.unnamedProject');
-  if (meta.firstVersion) return translate('messages:bot.strip.firstVersion', { project });
+  const named = meta.appName || meta.appSlug;
+  const project = named || translate('messages:bot.job.unnamedProject');
+  // A project nobody can name is not named by its stand-in: its own wording.
+  if (meta.firstVersion) return named ? translate('messages:bot.strip.firstVersion', { project }) : translate('messages:bot.job.firstVersionUnnamed');
   const title = meta.requestTitle || meta.issueTitle;
   if (title) return title;
   return meta.issueNumber ? translate('messages:bot.strip.requestNumber', { number: String(meta.issueNumber) }) : project;
@@ -206,8 +208,8 @@ export function newsTitle(meta: HomeroomBotMeta): string {
  * Pure: whether a piece of news still asks something the chat answers: a
  * question with its answers, two at once, a plan to build, buttons to
  * press. Such a message is drawn whole in the main chat rather than folded
- * into its request's line, for as long as it is open. What it asks once the
- * tray no longer holds its request is the caller's to read (newsStatusOf):
+ * into its request's line, for as long as it is open. What it asks once its
+ * request has no track any more is the caller's to read (newsStatusOf):
  * that has moved on, and is a line again.
  */
 export function asksInChat(message: ConversationMessage): boolean {

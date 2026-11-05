@@ -80,7 +80,7 @@ async function fileMany(pool, config, {
       // One record per filed request, so a retry after a restart finds the
       // same fileKey and makes no second request (fileRequest reads it).
       const { rows: [action] } = await pool.query(
-        `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, status)
+        `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, details, status)
          VALUES ($1, $2, $3, 'file_request', $4, $5, 'open') RETURNING id`,
         [user.id, null, app.id, title, details || null],
       );
@@ -94,7 +94,7 @@ async function fileMany(pool, config, {
       });
       if (actionId) {
         await pool.query(
-          `UPDATE homeroom_bot_dm_actions SET status = 'done', issue_number = $2, decided_at = NOW() WHERE id = $1`,
+          `UPDATE bot_cards SET status = 'done', issue_number = $2, decided_at = NOW() WHERE id = $1`,
           [actionId, filed.issueNumber],
         );
       }
@@ -108,7 +108,7 @@ async function fileMany(pool, config, {
       });
       if (actionId) {
         await pool.query(
-          `UPDATE homeroom_bot_dm_actions SET status = 'failed', error = $2 WHERE id = $1`,
+          `UPDATE bot_cards SET status = 'failed', error = $2 WHERE id = $1`,
           [actionId, String(err.message || 'failed').slice(0, 300)],
         ).catch(() => {});
       }

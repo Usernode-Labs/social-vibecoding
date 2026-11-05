@@ -25,6 +25,7 @@
 //   bareAmp               the message's "&" goes out bare (account_email's lead)
 //   breaks                a line break in the message becomes <br>
 
+const crypto = require('node:crypto');
 const log = require('../services/logger');
 const languageCache = require('../services/language-cache');
 const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
@@ -514,15 +515,132 @@ function translatedTemplate(kind, t, { source } = {}) {
 // server that does not get it leaves the work to the one that did.
 const SEED_LOCK = 'email_template_seeds';
 
-// Every kind and the layout have a row, deleted rows included. One query on every
-// boot, and nothing more once seeding is done.
-async function nothingToSeed(pool) {
+// ── Untouched rows follow the catalog ──────────────────────────────────
+//
+// A seed row nobody has edited (its action's only version is 1, written by no
+// one) is refreshed from the catalog and the translation cache on a seed run, in
+// place, so it sends what the code would send today. Once an admin saves a
+// version, the action is theirs and this never touches it again. The same holds
+// for the layout. Only what differs is written.
+//
+// So that a run with nothing new still costs one query and never reads the 12 MB
+// language source, the run records what it was made from: the seeds, the email
+// catalog's English and the version of the email translations in the cache.
+// A later run with the same fingerprint has nothing to refresh.
+const FINGERPRINT_KEY = 'email_template_seed_fingerprint';
+
+function fingerprint(source, cacheVersion) {
+  return crypto.createHash('sha256')
+    .update(JSON.stringify([SEEDS, englishTexts(source, 'email'), cacheVersion]))
+    .digest('hex');
+}
+
+// Every kind and the layout have a row, deleted rows included, and nothing the
+// rows were made from has changed. One query on every boot.
+async function nothingToSeed(pool, source) {
   const { rows: [row] } = await pool.query(
     `SELECT (SELECT count(DISTINCT action)::int FROM email_templates WHERE action = ANY($1::text[])) AS seeded,
-            EXISTS (SELECT 1 FROM email_layouts WHERE name = $2) AS layout`,
-    [Object.keys(SEEDS.templates), STANDARD_LAYOUT],
+            EXISTS (SELECT 1 FROM email_layouts WHERE name = $2) AS layout,
+            (SELECT value FROM platform_settings WHERE key = $3) AS fingerprint,
+            (SELECT count(*)::int || ':' || COALESCE((extract(epoch FROM max(created_at)) * 1000)::bigint, 0)
+               FROM language_translations WHERE namespace = 'email') AS cache`,
+    [Object.keys(SEEDS.templates), STANDARD_LAYOUT, FINGERPRINT_KEY],
   );
-  return row.layout && row.seeded === Object.keys(SEEDS.templates).length;
+  const done = row.layout && row.seeded === Object.keys(SEEDS.templates).length
+    && row.fingerprint === fingerprint(source, row.cache);
+  return { done, cache: row.cache };
+}
+
+// A try-lock, never waited for: an admin saving this action or layout right now
+// holds it, and this run leaves that one alone rather than wait (and risk a
+// deadlock with the layout row it already holds).
+async function tryLock(client, scope, key) {
+  const { rows: [{ got }] } = await client.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS got', [`${scope}:${key}`]);
+  return got;
+}
+
+// The row if it is the only version, version 1, written by nobody and live.
+const untouched = (rows) => (rows.length === 1 && rows[0].version === 1 && rows[0].created_by == null
+  && rows[0].status === 'live' && rows[0].deleted_at == null ? rows[0] : null);
+
+const sameFields = (row, want, fields) => fields.every((field) => row[field] === want[field]);
+
+async function refreshUntouched(client, source, translations, families, seeded) {
+  const out = { templates: [], layouts: 0, busy: 0 };
+  for (const layout of SEEDS.layouts) {
+    const family = families[layout.name];
+    if (!family) continue;
+    if (!(await tryLock(client, 'email_layouts', family))) { out.busy += 1; continue; }
+    const { rows } = await client.query(
+      'SELECT id, name, version, status, created_by, deleted_at, html, text FROM email_layouts WHERE family_id = $1 FOR UPDATE', [family]);
+    const row = untouched(rows);
+    if (!row || row.name !== layout.name || sameFields(row, layout, ['html', 'text'])) continue;
+    await client.query('UPDATE email_layouts SET html = $2, text = $3 WHERE id = $1', [row.id, layout.html, layout.text]);
+    out.layouts += 1;
+  }
+  for (const kind of Object.keys(SEEDS.templates)) {
+    if (seeded.includes(kind)) continue;
+    if (!(await tryLock(client, 'email_templates', kind))) { out.busy += 1; continue; }
+    const { rows } = await client.query(
+      `SELECT id, version, status, created_by, deleted_at, name, subject, preheader, why, html, text
+         FROM email_templates WHERE action = $1 FOR UPDATE`, [kind]);
+    const row = untouched(rows);
+    if (!row) continue;
+    let changed = false;
+    const english = englishTemplate(kind, { source });
+    if (!sameFields(row, english, ['name', ...FIELDS])) {
+      await client.query(
+        'UPDATE email_templates SET name = $2, subject = $3, preheader = $4, why = $5, html = $6, text = $7 WHERE id = $1',
+        [row.id, english.name, english.subject, english.preheader, english.why, english.html, english.text]);
+      changed = true;
+    }
+    const want = translations[kind] || {};
+    const { rows: have } = await client.query(
+      'SELECT locale, origin, subject, preheader, why, html, text FROM email_template_translations WHERE template_id = $1 FOR UPDATE', [row.id]);
+    const held = Object.fromEntries(have.map((translation) => [translation.locale, translation]));
+    for (const [locale, words] of Object.entries(want)) {
+      const current = held[locale];
+      if (current && (current.origin !== 'machine' || sameFields(current, words, FIELDS))) continue;
+      // An admin's translation, written meanwhile, wins over the machine's.
+      await client.query(
+        `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'machine')
+         ON CONFLICT (template_id, locale) DO UPDATE SET subject = EXCLUDED.subject, preheader = EXCLUDED.preheader,
+           why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, updated_at = NOW()
+         WHERE email_template_translations.origin = 'machine'`,
+        [row.id, locale, words.subject, words.preheader, words.why, words.html, words.text]);
+      changed = true;
+    }
+    // A machine translation the pipeline no longer gives (its language says
+    // nothing now, or refused it) goes, so the reader gets today's English.
+    for (const current of have) {
+      if (current.origin !== 'machine' || Object.hasOwn(want, current.locale)) continue;
+      await client.query("DELETE FROM email_template_translations WHERE template_id = $1 AND locale = $2 AND origin = 'machine'", [row.id, current.locale]);
+      changed = true;
+    }
+    if (changed) out.templates.push(kind);
+  }
+  return out;
+}
+
+/**
+ * The actions with no live template on a live layout, sorted. Read by the
+ * migration Job (scripts/migrate-kubernetes.js), which stops a release that
+ * would send plain mail or none for them.
+ */
+async function kindsWithoutTemplate(pool) {
+  const { rows } = await pool.query(
+    `SELECT a.action FROM unnest($1::text[]) AS a(action)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM email_templates t
+         WHERE t.action = a.action AND t.status = 'live' AND t.deleted_at IS NULL
+           AND (t.layout_family_id IS NULL OR EXISTS (
+             SELECT 1 FROM email_layouts l
+              WHERE l.family_id = t.layout_family_id AND l.status = 'live' AND l.deleted_at IS NULL)))
+      ORDER BY a.action`,
+    [Object.keys(ACTIONS)],
+  );
+  return rows.map((row) => row.action);
 }
 
 // Whether `t` translates any email message at all. A language that does not has
@@ -557,7 +675,7 @@ async function translationsToSeed(pool, source) {
   return out;
 }
 
-async function seedInTransaction(client, source, translations) {
+async function seedInTransaction(client, source, translations, cache) {
   const { rows: [{ got }] } = await client.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS got', [SEED_LOCK]);
   if (!got) return { locked: false };
 
@@ -610,6 +728,7 @@ async function seedInTransaction(client, source, translations) {
     );
     if (!row) continue;
     seeded.push(kind);
+    // Written whole just now; nothing for the refresh to compare.
     for (const [locale, words] of Object.entries(translations[kind] || {})) {
       await client.query(
         `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
@@ -618,19 +737,31 @@ async function seedInTransaction(client, source, translations) {
       );
     }
   }
-  return { locked: true, seeded };
+  const refreshed = await refreshUntouched(client, source, translations, families, seeded);
+  // Only a run that could look at everything records that it did. A busy action
+  // is looked at again next time.
+  if (!refreshed.busy) {
+    await client.query(
+      `INSERT INTO platform_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [FINGERPRINT_KEY, fingerprint(source, cache)]);
+  }
+  return { locked: true, seeded, refreshed };
 }
 
 /**
- * Adds version 1 of every kind that has no row at all, with the translations
- * that can be had now. Runs on every boot, and costs one query once it is done.
- * Nothing sends from these yet, and a boot must not depend on them: a problem is
- * logged and the next boot tries again.
+ * Adds version 1 of every kind that has no row at all, and refreshes the rows
+ * nobody has edited, with the catalog and the translations that can be had now.
+ * Runs on every migration, and costs one query when nothing has changed. A boot
+ * must not depend on it: a problem is logged and the next run tries again (the
+ * migration Job then refuses a release with a kind missing).
  */
 async function seedEmailTemplates(pool, { source: given } = {}) {
   let client = null;
+  let rollbackFailed = null;
   try {
-    if (await nothingToSeed(pool)) return;
+    const { done, cache } = await nothingToSeed(pool, given);
+    if (done) return;
     // Read only now: it is large, and most boots have nothing to seed. Without it
     // there is no telling which languages exist, and rows written now would stop
     // every later boot from adding them. A source listing none is a real answer.
@@ -642,20 +773,24 @@ async function seedEmailTemplates(pool, { source: given } = {}) {
     const translations = await translationsToSeed(pool, source);
     client = await pool.connect();
     await client.query('BEGIN');
-    const { locked, seeded } = await seedInTransaction(client, source, translations);
+    const { locked, seeded, refreshed } = await seedInTransaction(client, source, translations, cache);
     await client.query('COMMIT');
     if (locked && seeded.length) {
       const languages = new Set(Object.values(translations).flatMap((byLanguage) => Object.keys(byLanguage))).size;
       log.info('email-templates', 'Seeded email templates', { kinds: seeded.length, languages });
     }
+    if (locked && (refreshed.templates.length || refreshed.layouts)) {
+      log.info('email-templates', 'Refreshed untouched email templates from the catalog', { kinds: refreshed.templates, layouts: refreshed.layouts });
+    }
   } catch (err) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (client) await client.query('ROLLBACK').catch((rollbackError) => { rollbackFailed = rollbackError; });
     log.error('email-templates', 'Could not seed email templates', { message: err.message });
   } finally {
-    if (client) client.release();
+    // A client whose rollback failed is in an unknown state: it is closed, not reused.
+    if (client) client.release(rollbackFailed || undefined);
   }
 }
 
 module.exports = {
-  SEEDS, STANDARD_LAYOUT, englishTemplate, translatedTemplate, seededLayout, saysAnything, seedEmailTemplates,
+  SEEDS, STANDARD_LAYOUT, englishTemplate, translatedTemplate, seededLayout, saysAnything, seedEmailTemplates, kindsWithoutTemplate,
 };

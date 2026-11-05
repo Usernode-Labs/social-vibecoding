@@ -265,10 +265,19 @@ const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reje
 
 async function readFacts(tx: Tx, event: Event<any>): Promise<Facts> {
   if (event.type !== 'OfferTapped') return NO_FACTS;
+  const id = Number(event.payload?.offerId);
+  // 5 Nov 2026: a thread's offers are Homeroom bot's cards (bot_cards); one
+  // made before is still read from its old table (homeroom-bot-voice.js
+  // OFFERS_SQL). A card's id is above every older offer's.
+  const { rows: [card] } = await tx.query(
+    `SELECT o.id, o.app_id, o.kind, o.user_id AS for_user_id, o.status, m.thread_type, m.thread_ref, m.app_id AS message_app_id
+       FROM bot_cards o JOIN chat_messages m ON m.id = o.chat_message_id
+      WHERE o.id = $1 AND o.place = 'thread' FOR UPDATE OF o`, [id]);
+  if (card) return { offer: card };
   const { rows: [offer] } = await tx.query(
     `SELECT o.id, o.app_id, o.kind, o.for_user_id, o.status, m.thread_type, m.thread_ref, m.app_id AS message_app_id
        FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id
-      WHERE o.id = $1 FOR UPDATE OF o`, [Number(event.payload?.offerId)]);
+      WHERE o.id = $1 FOR UPDATE OF o`, [id]);
   return { offer: offer || null };
 }
 

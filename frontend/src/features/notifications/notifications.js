@@ -1190,6 +1190,13 @@ const Notifications = {
         const href = conversationNotificationHref(item);
         if (messages?.openAddress) messages.openAddress(href);
         else window.location.hash = href;
+      } else {
+        // A request's moment with no chat behind it opens the request.
+        const href = conversationNotificationHref(item);
+        if (href) {
+          Notifications._dismissSheetForNav();
+          window.location.hash = href;
+        }
       }
       return;
     }
@@ -2200,6 +2207,14 @@ const CONVERSATION_NOTIF_KINDS = new Set([
 function conversationNotificationHref(n) {
   const valid = (v) => Number.isSafeInteger(v) && v > 0 && v <= 2147483647;
   const conversationId = Number(n && n.conversationId);
+  // 5 Nov 2026: a request's moment rung from its stage (services/work-state.js)
+  // to somebody who never wrote to the bot names no chat; it opens the request.
+  if (!valid(conversationId) && n && BUILD_KIND_MOMENTS[n.kind]) {
+    const detail = parseBotDetail(n.detail) || {};
+    const slug = BOT_SLUG_RE.test(String(n.appSlug || '')) ? String(n.appSlug) : (detail.appSlug || '');
+    const issue = storyIssueOf(n) || detail.issueNumber;
+    return slug && valid(Number(issue)) ? `#homeroom-bot/request/${slug}/${Number(issue)}` : null;
+  }
   if (!valid(conversationId)) return null;
   const messageId = Number(n.conversationMessageId);
   const rootId = Number(n.conversationThreadRootId);

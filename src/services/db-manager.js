@@ -610,6 +610,48 @@ function stagingConnectionLimit() {
   return raw > 0 ? raw : -1;   // -1 → unlimited, Postgres's own spelling
 }
 
+// A shots run's copies (SHOTS_CLONE_DB_RE) get a ceiling of their own, set
+// from what one of them can hold plus what the run itself opens into it.
+//
+// A copy of Homeroom holds, by its own configuration (USERNODE_ENV=staging,
+// src/config.js): its main pool (STAGING_DB_POOL_MAX, 8), its workflow pool
+// (WF_POOL_MAX, 2), the WebSocket bus's LISTEN client (services/ws-bus.js)
+// and the session-lock client (db/session-locks.js). That is 12, the
+// preview ceiling above, so a copy at full use had no connection left for
+// anyone else. The platform opens its own into a copy while it is up, both
+// signed in as the copy's owner role and so held to the ceiling: the run's
+// fixture client (services/shots-fixtures.js withClient, one per copy at a
+// time) and db-manager's per-database client (application name dbadmin).
+// When the copy's pools were full, the fixture client was refused with
+// 53300, "too many connections for database …_shots_<run>_b", and the run
+// failed before the shots agent started: 53 runs of Homeroom's own
+// proposals in the week to 5 Nov 2026, all of them from 4 Nov 14:00 UTC on.
+// The preview server's backends showed the copies at the ceiling
+// (cnpg_backends_total): homeroom-all 8, homeroom-all-workflow 2,
+// homeroom-all-bus 1, homeroom-all-locks 1.
+//
+// A copy can hold up to 14: those 12, and the presence client
+// (services/process-presence.js) and read-only debug pool
+// (services/debug-access.js, max 1), which it may open though none of the
+// 600 copies seen in the six days to 5 Nov held either. The platform's two
+// make 16, and 18 leaves two for a pool replacing a connection whose
+// backend has not exited yet. Still a backstop, not a budget. The preview
+// server allows 400 connections and peaked at 216 in the same days, with at
+// most 9 copies at once, so the 6 more each copy may take cost at most 54.
+// tests/preview-connection-budget.test.js keeps this sum honest: a newly
+// named connection fails it until it is counted here or said not to reach a
+// copy.
+//
+// SHOTS_DB_CONNECTION_LIMIT=0 (or negative) disables it, as the preview
+// ceiling's key does.
+const DEFAULT_SHOTS_DB_CONNECTION_LIMIT = 18;
+
+function shotsConnectionLimit() {
+  const raw = parseInt(process.env.SHOTS_DB_CONNECTION_LIMIT || '', 10);
+  if (!Number.isFinite(raw)) return DEFAULT_SHOTS_DB_CONNECTION_LIMIT;
+  return raw > 0 ? raw : -1;
+}
+
 // app_<slug>_staging_s<sessionId>_<tag> — the shape stagingDbName() builds.
 // The ceiling is for previews only: cloneDatabase also serves app forks,
 // whose target is a real production database and must stay uncapped.
@@ -954,7 +996,7 @@ async function applyStagingConnectionLimit(dbName, { execute: given = null, serv
   const execute = given || adminExecutor(server);
   if (!SAFE_IDENT.test(dbName)) return null;
   if (!isStagingCloneDb(dbName) && !isShotsCloneDb(dbName)) return null;
-  const limit = stagingConnectionLimit();
+  const limit = isShotsCloneDb(dbName) ? shotsConnectionLimit() : stagingConnectionLimit();
   if (limit < 0) return null;
   try {
     await execute(`ALTER DATABASE ${dbName} CONNECTION LIMIT ${limit}`);
@@ -4028,6 +4070,7 @@ module.exports = {
   dropDisposableDatabase,
   createFromTemplate,
   DEFAULT_STAGING_DB_CONNECTION_LIMIT,
+  DEFAULT_SHOTS_DB_CONNECTION_LIMIT,
   adoptExistingDatabase,
   ensureRoleExists,
   databaseExists,

@@ -175,38 +175,6 @@
     "text": "Fermer le panneau du plan",
     "source": "0e6f28f51fb878596c63b80d5e6c9d8397408d443812c637c8268bdcac16cfde"
   },
-  "group.botChip.reading": {
-    "text": "Homeroom bot examine ce message",
-    "source": "f3615f022199e6153e583b7b3b202b8784035d66b1dbb8b4fb88ec461cc20961"
-  },
-  "group.botChip.building": {
-    "text": "Homeroom bot le construit",
-    "source": "3c6231acc397ec700768ceda163343fdda9d1206cdaa203d5d3a5f63dbc168c3"
-  },
-  "group.botChip.fixing": {
-    "text": "Homeroom bot le corrige",
-    "source": "87c7ca8be9ffae108efbad1b867cd094bd22742b0a3302a5adfd89568711cdc3"
-  },
-  "group.botChip.hasThis": {
-    "text": "Homeroom bot s’en charge",
-    "source": "2dc27bfac826b8d0d8ddef853fe745b2c0a9349874bb1ab8fc8d6ba4f12d2a60"
-  },
-  "group.botChip.hasThisSaid": {
-    "text": "Homeroom bot s’en charge et commencera dès que la première version sera en ligne",
-    "source": "eedb0202e84e2431fab6f39690a8446565363e71a641afcff3e42d1819867144"
-  },
-  "group.botChip.live": {
-    "text": "En ligne",
-    "source": "b64ac05f17e64d037db81a98f51e2688216e292ae9748f979f04dfbac49fd7fc"
-  },
-  "group.botChip.liveSaid": {
-    "text": "Homeroom bot l’a construit, et c’est en ligne",
-    "source": "c72efeedfd257be20833d14ec1e1b9f6d72887199ea06082b7d45a829a9e1e79"
-  },
-  "group.botChip.tryIt": {
-    "text": "Essayer",
-    "source": "fe69511137842f6fddcfcc1e96e39bf6920b5ed00251ec6549d79463928b2e0c"
-  },
   "group.botCard.label": {
     "text": "Homeroom bot, vous seul pouvez voir ceci",
     "source": "befbba923ec26c1f1b679935219146710726488ac7728afbadcb7c13450b5835"

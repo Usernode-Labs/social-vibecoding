@@ -152,9 +152,24 @@
       "schemaSha256": "a9ef81414d7175de7964c07bdd11aeeea8df43e76eb8d573b515d985fd371fa5"
     },
     {
+      "id": "work-states",
+      "sha256": "ed2c9be021f5dfe03d4e3d90ee1b3e16bd4b7a359e184eaddbca51a97fcb870c",
+      "schemaSha256": "2e4fc2da6a172cc667c8e8d04877b8a06027b5db74200787d1bf4c861357bcc6"
+    },
+    {
+      "id": "run-builder",
+      "sha256": "df6e21a799e4a0efc4a03ebf0e2b7836102b5863f4dcc42e0309da25dc9a134d",
+      "schemaSha256": "99110e5927d8fde421eea9c2cab977df69d3f54345c82a3ba85dd3a5775c0d41"
+    },
+    {
+      "id": "bot-cards",
+      "sha256": "a219bde3c3474430e7c12a56d10fb944d3ed62bcdde01aa7c4c0781e55af72e8",
+      "schemaSha256": "b8e25565f3e006e56c19a0abb3683eb99e3c95a4da21e64fae850d21cf877b19"
+    },
+    {
       "id": "production-app-sleep",
       "sha256": "ec7a043e2e2298faa72c07424eb2b9b6bd48fbdb4bc84c0386490dca291c4df1",
-      "schemaSha256": "3355ededf76acae3fb4104ba6ae12f221bb86a743571d0ce8d6a35f6f63a345c"
+      "schemaSha256": "b9644717dc881f962e7cf26457fd8fd711b3bb4dee2efaf5dabe408de495ff2d"
     }
   ]
 }

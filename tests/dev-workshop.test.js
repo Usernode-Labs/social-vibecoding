@@ -6225,13 +6225,14 @@ test('a run that does not know its total yet still shows its bar: "Checks" on th
 
 // ── #5385: the bot's work on your requests, as it happens ──
 
-test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in the drawer\'s words', () => {
+test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in its track\'s words', () => {
   const AppView = makeAppView();
   seed(AppView);
   const trackSvc = require('../src/services/homeroom-bot-track');
-  const track = (number, title, job, extra = {}) => plain(trackSvc.trackOf({
-    job: { key: `demo-app#${number}`, appSlug: 'demo-app', appName: 'Demo app', issueNumber: number,
-      title, firstVersion: false, ...job }, ...extra,
+  // Each request's track, from its stored work state (services/work-state.js).
+  const track = (number, title, work) => plain(trackSvc.trackOf({
+    job: { key: `demo-app#${number}`, appSlug: 'demo-app', appName: 'Demo app', issueNumber: number, title, firstVersion: false },
+    work: { why: null, reason: null, line: null, whoseMove: null, since: null, ...work },
   }));
   // Request 12: the bot is writing its plan (in hand). Request 13: it
   // cannot build it as written (waiting). homeroomBotWork already carries
@@ -6240,7 +6241,7 @@ test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in 
     waitingOnYou: { plans: [], questions: [] },
     homeroomBotWork: [
       { number: 12, waiting: false, track: track(12, 'Dark mode resets', { stage: 'planning', since: at(0.02) }) },
-      { number: 13, waiting: true, track: track(13, 'Keyboard voting', { outcome: 'blocked', at: at(0.05) }) },
+      { number: 13, waiting: true, track: track(13, 'Keyboard voting', { stage: 'waiting_for_you', why: 'needs_detail', whoseMove: 'requester', since: at(0.05) }) },
     ],
   };
   const v = AppView._workshopView();
@@ -6265,12 +6266,13 @@ test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in 
   };
   const work = part('data-ws-mine=""');
   const wait = part('data-ws-mine-section="waiting"');
-  // The step at the line's end, in the drawer's own words: running work in
-  // the run tone, a wait in the warn one. Who made it goes first.
+  // The step at the line's end, in its track's own words (the stage's, where
+  // it has no second line): running work in the run tone, a wait in the warn
+  // one. Who made it goes first.
   assert.match(work, /<span class="dev-ws-hrow-tag" data-tone="plain"><svg[^]*?<\/svg>Homeroom bot<\/span>/);
   // Polish board #24: its words in full on hover, where a narrow card cuts them short.
-  assert.match(work, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="run" title="Writing the plan">Writing the plan<\/span>/);
-  assert.match(wait, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="warn" title="It can&#x27;t build this as written: add detail">It can&#x27;t build this as written: add detail<\/span>/);
+  assert.match(work, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="run" title="Planning">Planning<\/span>/);
+  assert.match(wait, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="warn" title="Waiting for more detail from you">Waiting for more detail from you<\/span>/);
   // #6145: the row opens like every row, the request's page (its href; the
   // side panel beside the Workshop on a wide window), which carries the
   // bot's story itself.
@@ -6283,7 +6285,7 @@ test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in 
   AppView._ghIssues.push({ number: 14, title: 'Rota export', createdAt: at(1), updatedAt: at(1), user: 'me', htmlUrl: 'https://github.com/x/y/issues/14' });
   AppView._ghIssuesMeta.homeroomBotWork.push({
     number: 14, waiting: true,
-    track: track(14, 'Rota export', { stage: 'plan', since: at(0.1) }),
+    track: track(14, 'Rota export', { stage: 'waiting_for_you', why: 'plan', whoseMove: 'requester', since: at(0.1) }),
   });
   const v2 = AppView._workshopView();
   const extras = plain(v2.mine.extra).filter((r) => r.key === 'mine:issue:14');

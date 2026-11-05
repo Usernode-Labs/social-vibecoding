@@ -35,7 +35,10 @@ const { Pool } = require('pg');
 
 const closedRequests = require('../src/services/homeroom-bot-closed-requests');
 const bot = require('../src/services/homeroom-bot');
-const tray = require('../src/services/homeroom-bot-tray');
+// 5 Nov 2026: where a request stands is its stored work state
+// (services/work-state.js). The writes here go straight to the tables; the
+// platform's triggers and drain (or the route) refresh it, as `stateOf` does.
+const workState = require('../src/services/work-state');
 // The real closeTwinRows stands in for the stub watcher's close (it is the
 // writer the stub must use); only broadcastClosed is stood in for.
 const realWatcher = require('../src/services/issue-close-watcher');
@@ -188,7 +191,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     const deps = {
       ...harness(gh()).deps,
       dm: { async sendDm(_pool, args) { sent.push(args); return { messageId: sent.length }; } },
-      tray: { noteWorkChanged(userId) { noted.push(userId); } },
+      workChanged: { noteWorkChanged(userId) { noted.push(userId); } },
     };
     await closedRequests.noteRequestsClosed(pool, { appId: app.id, closed: [30, 31, 32, 33], deps });
     assert.equal(sent.length, 1, 'only the request somebody else\'s change shipped');
@@ -201,7 +204,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       'it rings as done another way (homeroom-bot-dm.js STORY_MOMENTS)',
     );
     assert.equal(sent[0].idempotencyKey, `hrbot-done-elsewhere-${app.id}-30-${lee.id}`, 'said once, whichever Pod hears the close');
-    assert.deepEqual(noted, [lee.id], 'their open tray re-reads');
+    assert.deepEqual(noted, [lee.id], 'their open pages re-read');
     assert.equal(closedRequests.doneElsewhereText({ title: null, username: null }),
       'This request was done another way: another change did what it asked. There\'s nothing more for me to build here.');
     const quiet = [];
@@ -357,7 +360,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     return { pushes, broadcasts, restore: () => { if (realWs) require.cache[wsId] = realWs; else delete require.cache[wsId]; } };
   };
 
-  await t.test('a request closed by hand on GitHub closes the row the tray\'s Needs you reads (#5218)', async () => {
+  await t.test('a request closed by hand on GitHub closes the row its work state reads (#5218)', async () => {
     const { rows: [mia] } = await pool.query(
       `INSERT INTO users (username, password, has_platform_access) VALUES ('mia', 'x', TRUE) RETURNING id`,
     );
@@ -408,10 +411,12 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       [message, mia.id, conversation, app.id],
     );
 
-    const asMia = { id: mia.id, username: mia.username, isAdmin: false };
-    const key = (job) => `${job.appSlug}#${job.issueNumber}`;
-    const work = await tray.workFor(pool, { user: asMia });
-    assert.ok(work.needsYou.some((job) => key(job) === 'plant-pal#60'),
+    const stateOf = async (n) => {
+      await workState.refresh(pool, [{ appId: app.id, issueNumber: n }]);
+      return (await workState.forRequests(pool, app.id, [n])).get(n);
+    };
+    const before = await stateOf(60);
+    assert.deepEqual([before.stage, before.why], ['waiting_for_you', 'question'],
       'before the reconcile: the row is open, so the request waits on them');
 
     const github = gh({ closed: [60], broken: [64], prs: [65] });
@@ -428,7 +433,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       assert.deepEqual(busted, [{
         owner: 'usernode-bot', repo: 'plant-pal', appSlug: app.slug, appId: app.id, closed: [60],
       }], 'the same cache bust and broadcast a merge\'s close does');
-      assert.deepEqual(w.pushes, [[mia.id, { type: 'homeroom_bot_work_changed' }]], 'the requester\'s open tray re-reads');
+      assert.deepEqual(w.pushes, [[mia.id, { type: 'homeroom_bot_work_changed' }]], 'the requester\'s open pages re-read');
 
       const { rows: after } = await pool.query(
         'SELECT github_issue_number, status FROM issues WHERE app_id = $1 ORDER BY github_issue_number', [app.id],
@@ -437,12 +442,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
         [60, 'closed'], [61, 'open'], [62, 'open'], [63, 'closed'], [64, 'open'], [65, 'open'],
       ], 'only the confirmed close closed a row; nothing reopened');
 
-      const closed = await tray.workFor(pool, { user: asMia });
-      assert.ok(!closed.needsYou.some((job) => key(job) === 'plant-pal#60'), 'Needs you lets it go');
-      const tile = closed.history.find((job) => key(job) === 'plant-pal#60');
-      assert.equal(tile.outcome, 'stopped', 'History says the work stopped');
-      assert.equal(tile.ask, undefined, 'its old ask does not put it back');
-      assert.equal(tile.answered, false, 'the rest of its story stays');
+      assert.equal((await stateOf(60)).stage, 'closed', 'its old question does not keep it waiting on them');
     } finally {
       w.restore();
     }
@@ -492,8 +492,10 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
        VALUES ($1, $2, $3, $4, 90, 'question', 'open')`,
       [message, nia.id, conversation, app.id],
     );
-    const asNia = { id: nia.id, username: nia.username, isAdmin: false };
-    const waiting = async () => (await tray.workFor(pool, { user: asNia })).needsYou.some((job) => job.issueNumber === 90);
+    const waiting = async () => {
+      await workState.refresh(pool, [{ appId: app.id, issueNumber: 90 }]);
+      return (await workState.forRequests(pool, app.id, [90])).get(90).stage === 'waiting_for_you';
+    };
     assert.equal(await waiting(), true, 'before: it waits on her');
 
     const w = stubWs();
@@ -505,12 +507,9 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       });
       assert.deepEqual(out, { closed: [90] });
       assert.equal(await waiting(), false, 'Needs you lets it go');
-      const tile = (await tray.workFor(pool, { user: asNia })).history.find((job) => job.issueNumber === 90);
-      assert.equal(tile.outcome, 'stopped');
-      assert.equal(tile.ask, undefined, 'its old ask does not put it back');
       const tracks = await require('../src/services/homeroom-bot-track').tracksForRequests(pool, { appId: app.id, numbers: [90] });
-      assert.equal(tracks.get(90).state, 'closed', 'its track reads closed, on its page too');
-      assert.deepEqual(w.pushes, [[nia.id, { type: 'homeroom_bot_work_changed' }]], 'her open tray re-reads');
+      assert.equal(tracks.get(90).work.stage, 'closed', 'its track reads closed, on its page too');
+      assert.deepEqual(w.pushes, [[nia.id, { type: 'homeroom_bot_work_changed' }]], 'her open pages re-read');
 
       // Reopened on GitHub: back on a whole open list, its record goes, and it
       // waits on her again. A close from the last ten minutes is kept, in case
@@ -631,7 +630,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       assert.deepEqual(w.broadcasts, [{
         action: 'github_synced', appSlug: app.slug, appId: app.id, source: 'issue_close_watcher',
       }], 'the group chat refetches, as after a merge\'s close');
-      assert.deepEqual(w.pushes, [[lee.id, { type: 'homeroom_bot_work_changed' }]], 'the requester\'s open tray re-reads');
+      assert.deepEqual(w.pushes, [[lee.id, { type: 'homeroom_bot_work_changed' }]], 'the requester\'s open pages re-read');
     } finally {
       w.restore();
     }

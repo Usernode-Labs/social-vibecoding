@@ -24,6 +24,10 @@
 // template language's escaping and the catalog's words keep their bytes.
 //
 // `headers()`, where present, gives the extra mail headers a send carries.
+//
+// `codeWords` marks the actions whose `values()` build words from the email
+// catalog. A send asks for the reader's translator only for these, and only when
+// their template is translated, so a login code never waits on that read.
 
 const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const { destination } = require('./tracking');
@@ -295,13 +299,15 @@ const ACTIONS = {
   build_ready: {
     label: 'Homeroom bot: ready to try',
     placeholders: {
-      app: text('The project\'s name, at most 80 characters'),
+      // With no name, the catalog's word for an unnamed project.
+      app: text('The project\'s name, at most 80 characters', { fromCode: true }),
       subject: text('The subject line, as the bot\'s push words it', { fromCode: true }),
       lead: text('The headline: what is ready', { fromCode: true }),
       ...ACTIVITY_PLACEHOLDERS,
     },
     required: BOTH('unsubscribeUrl'),
     englishOnly: false,
+    codeWords: true,
     sample: { appName: 'Plant Pal', subject: 'Dark mode · Plant Pal: Ready to try', lead: 'Dark mode is ready to try.', url: 'https://app.onhomeroom.com/#app/plant-pal', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
     values: (payload, t = english) => ({ ...buildReadyWords(payload, t), ...activityValues(payload) }),
     htmlValues: (payload, t = english) => {
@@ -322,6 +328,7 @@ const ACTIONS = {
     },
     required: BOTH('unsubscribeUrl'),
     englishOnly: false,
+    codeWords: true,
     sample: { appName: 'Run Club', line: '@sam joined Run Club through your invite.', url: 'https://app.onhomeroom.com/#app/run-club', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
     values: (payload, t = english) => {
       const app = payload.appName ? clip(payload.appName, 80) : '';

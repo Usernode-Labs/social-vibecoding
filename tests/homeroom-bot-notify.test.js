@@ -6,7 +6,10 @@
 // (needs your answer, ready to try, stopped, live) and when it answers what
 // the person just wrote to it. Everything else is stored, counts as unread,
 // and rings nothing. What does ring says what happened, from "Homeroom bot",
-// in the push and in the bell alike.
+// in the push and in the bell alike. Since 5 Nov 2026 (docs/plans/bot-one-
+// model.md, step 4) an ordinary request's moments ring from its stage
+// (services/work-state.js bellPushes), with no message; a first version's
+// still ring from the bot's messages in its maker's chat.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-notify.test.js
 
@@ -311,52 +314,103 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
   );
   assert.equal(unread, said.length, 'the quiet ones are still there, unread');
 
-  // A change to a project with others in it is "your change to" it.
-  await dm.sendDm(pool, {
+  // A change to a project with others in it is "your change to" it. 5 Nov
+  // 2026 (docs/plans/bot-one-model.md, step 4): its news is not a message in
+  // Ben's chat with the bot; his bell rings from its stage
+  // (services/work-state.js bellPushes), in the same words.
+  assert.equal(await dm.sendDm(pool, {
     bot, userId: ben.id, content: 'It\'s built.', idempotencyKey: 'sc-1',
     metadata: { kind: 'proposal', appSlug: supper.slug, appName: supper.name, issueNumber: 4 },
-  });
-  await dm.sendDm(pool, {
-    bot, userId: ben.id, content: 'It\'s live now.', idempotencyKey: 'sc-2',
-    metadata: { kind: 'merged', appSlug: supper.slug, appName: supper.name, issueNumber: 4 },
-  });
+  }), null, 'not sent');
+  const workState = require('../src/services/work-state');
+  const { rows: [sc] } = await pool.query('SELECT id FROM apps WHERE slug = $1', [supper.slug]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 4, $2, 'Dark mode')`, [sc.id, ben.id]);
+  const { rows: [scChange] } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, promoted_at, check_state, checks_commit_sha, reviewed_head_sha)
+     VALUES ($1, $2, 'promoted', '{4}', NOW(), 'passing', 'abc', 'abc') RETURNING id`, [sc.id, bot.id]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, proposal_session_id)
+     VALUES ($1, 4, 'live', 'ready', TRUE, $2)`, [sc.id, scChange.id]);
+  const stage = async () => workState.pushesOf(pool, await workState.refresh(pool, [{ appId: sc.id, issueNumber: 4 }]));
+  await stage();
+  await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [scChange.id]);
+  await stage();
   const { rows: benRang } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id', [ben.id]);
   assert.deepEqual(moments(benRang), ['ready/ready_group:Supper Club', 'live/live:Supper Club']);
 
   await t.test('"it\'s built" waits until the change is ready to try, and is said once per approval round', async () => {
-    const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE slug = $1', [plantPal.slug]);
-    await pool.query(
-      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 9, $2, 'Water reminders')`,
-      [app.id, maya.id],
-    );
-    const { rows: [change] } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, check_state)
-       VALUES ($1, $2, 'bot/water', 'promoted', 'Water reminders', NOW(), 'pending') RETURNING id`,
-      [app.id, bot.id],
-    );
-    const { rows: [run] } = await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id)
-       VALUES ($1, 9, 'live', 'ready', $2) RETURNING id`,
-      [app.id, change.id],
-    );
-    const before = (await pool.query('SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = $1', [maya.id])).rows[0].n;
+    const rules = require('../src/workflow/rules/bot-readiness.ts');
+    // A change Homeroom bot put up for request `issue` on `slug`, its checks still running.
+    const upFor = async (slug, issue, title, { firstVersion = false } = {}) => {
+      const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE slug = $1', [slug]);
+      await pool.query(
+        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version) VALUES ($1, $2, $3, $4, $5)`,
+        [app.id, issue, maya.id, title, firstVersion],
+      );
+      const { rows: [change] } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, check_state)
+         VALUES ($1, $2, $3, 'promoted', $4, NOW(), 'pending') RETURNING id`,
+        [app.id, bot.id, `bot/${slug}-${issue}`, title],
+      );
+      const { rows: [run] } = await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id)
+         VALUES ($1, $2, 'live', 'ready', $3) RETURNING id`,
+        [app.id, issue, change.id],
+      );
+      return { app, change, run };
+    };
+    const rowOf = async (change) => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [change.id])).rows[0];
+    const count = async () => (await pool.query('SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = $1', [maya.id])).rows[0].n;
+    const rangSince = async (before) => moments((await pool.query(
+      'SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id OFFSET $2', [maya.id, before])).rows);
+
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): an ordinary request's
+    // "it's built" is no message in her chat with the bot. Its stage rings
+    // her once, when it is up for a vote with its checks passed
+    // (services/work-state.js bellPushes).
+    {
+      const { app, change, run } = await upFor(plantPal.slug, 9, 'Water reminders');
+      const before = await count();
+      const told = await dm.relayIssuePost({
+        pool, app, issueNumber: 9, kind: 'proposal', runId: run.id, postId: 501, bot,
+        dm: { link: 'https://x/#app/plant-pal/dev/proposals/1', sessionId: change.id },
+      });
+      assert.deepEqual([told.quiet, told.messageId, told.username], [true, null, maya.username], 'nothing in her chat');
+      assert.equal(await dm.untaggedRequester(pool, { appId: app.id, issueNumber: 9, bot, told }), maya.username,
+        'and the post on the request does not tag her instead');
+      const stage = async () => workState.pushesOf(pool, await workState.refresh(pool, [{ appId: app.id, issueNumber: 9 }]));
+      await stage();
+      assert.deepEqual(await rangSince(before), [], 'the change went up with its checks still running: nothing yet');
+      await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [change.id]);
+      assert.equal(rules.readiness(await rowOf(change), Date.now()).ready, true);
+      const ready = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
+      assert.equal(ready?.messageId ?? null, null, 'no ready card in her chat');
+      await stage();
+      await stage();
+      assert.deepEqual(await rangSince(before), ['ready/ready:Plant Pal'], 'one ring, when it was ready');
+    }
+
+    // A first version still hears it in its maker's chat (it has no request
+    // page yet), and the card's rules are unchanged.
+    await project('fern-log', 'Fern Log', [maya]);
+    const { app, change, run } = await upFor('fern-log', 1, 'First version', { firstVersion: true });
+    const before = await count();
     const told = await dm.relayIssuePost({
-      pool, app, issueNumber: 9, kind: 'proposal', runId: run.id, postId: 501, bot,
-      dm: { link: 'https://x/#app/plant-pal/dev/proposals/1', sessionId: change.id },
+      pool, app, issueNumber: 1, kind: 'proposal', runId: run.id, postId: 502, bot,
+      dm: { link: 'https://x/#app/fern-log/dev/proposals/1', sessionId: change.id },
     });
     assert.deepEqual([told.deferred, told.messageId, told.username], [true, null, maya.username],
       'the change went up with its checks still running: nothing yet');
-    assert.equal(await dm.untaggedRequester(pool, { appId: app.id, issueNumber: 9, bot, told }), maya.username,
+    assert.equal(await dm.untaggedRequester(pool, { appId: app.id, issueNumber: 1, bot, told }), maya.username,
       'and the post on the request does not tag her instead');
     // Whether it is ready is the bot's change machine's to decide, from the
     // row (src/workflow/bot-change/, rules/bot-readiness.ts); the card is
     // tellReady's to send once it has.
-    const rules = require('../src/workflow/rules/bot-readiness.ts');
-    const rowOf = async () => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [change.id])).rows[0];
-    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, false, 'still pending: not ready');
+    assert.equal(rules.readiness(await rowOf(change), Date.now()).ready, false, 'still pending: not ready');
 
     await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [change.id]);
-    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, true);
+    assert.equal(rules.readiness(await rowOf(change), Date.now()).ready, true);
     const ready = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
     assert.ok(ready?.messageId, 'checks passed: ready to try');
     const { rows: [msg] } = await pool.query('SELECT idempotency_key, metadata FROM conversation_messages WHERE id = $1', [ready.messageId]);
@@ -373,8 +427,7 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     const retried = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
     assert.deepEqual([retried.duplicate, retried.messageId], [true, ready.messageId]);
     assert.equal((await recorded()).rowCount, 1, 'recorded by the retry');
-    const { rows: rang } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id OFFSET $2', [maya.id, before]);
-    assert.deepEqual(moments(rang), ['ready/ready:Plant Pal'], 'one ring, when it was ready');
+    assert.deepEqual(await rangSince(before), ['ready/ready_first:Fern Log'], 'one ring, when it was ready');
 
     // Approvals were cleared (it changed): ready again is news again.
     await pool.query('UPDATE chat_sessions SET approval_epoch = approval_epoch + 1 WHERE id = $1', [change.id]);
@@ -391,7 +444,7 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     // Its preview will not start: while it is tried again that is quiet (one
     // story: no bell, no push), and never "ready".
     await pool.query(`UPDATE chat_sessions SET check_state = 'error' WHERE id = $1`, [change.id]);
-    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, false);
+    assert.equal(rules.readiness(await rowOf(change), Date.now()).ready, false);
     const stuck = await dm.noteChangeStopped(pool, change.id, { deps: { bot } });
     const { rows: [stuckMsg] } = await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [stuck.messageId]);
     assert.match(stuckMsg.content, /its preview didn't start, so it isn't ready to try yet/);
@@ -401,6 +454,41 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
 
   await t.test('#5582: a plan names its request, from the requester row or Homeroom\'s copy', async () => {
     const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE slug = $1', [plantPal.slug]);
+    const N = loadBell();
+    const rowView = (detail) => N._rowView({
+      id: 1, createdAt: AT, readAt: null, kind: 'build_needs_you', detail,
+      conversationId: 7, conversationKind: 'direct', sourceUsername: 'homeroom_bot',
+    });
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a complicated plan on
+    // an existing project is said on its request's page, not in her chat
+    // with the bot. Its stage rings her bell (services/work-state.js
+    // bellPushes), which names the request as the message did.
+    const planWaits = async (issue) => {
+      const { rows: [run] } = await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at)
+         VALUES ($1, $2, 'live', 'ready', NOW()) RETURNING id`,
+        [app.id, issue],
+      );
+      const changed = await workState.refresh(pool, [{ appId: app.id, issueNumber: issue }]);
+      assert.deepEqual([changed[0].state.stage, changed[0].state.why, changed[0].bell], ['waiting_for_you', 'plan', 'needs_you']);
+      await workState.pushesOf(pool, changed);
+      const { rows: [ring] } = await pool.query(
+        `SELECT detail, conversation_message_id FROM notifications WHERE user_id = $1 AND kind = 'build_needs_you'
+          ORDER BY id DESC LIMIT 1`, [maya.id],
+      );
+      assert.equal(ring.conversation_message_id, null, 'no message behind it');
+      return { run, ring };
+    };
+
+    // No title anywhere, not even on GitHub (no repo): the row still reads
+    // "Request #N".
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 12, $2)', [app.id, maya.id]);
+    const { ring: bareRing } = await planWaits(12);
+    assert.equal(notifyCopy.parseBotDetail(bareRing.detail).requestTitle, '');
+    const bareView = rowView(bareRing.detail);
+    assert.deepEqual([bareView.segments[0].v, bareView.appLine], ['Request #12', 'Plant Pal · Homeroom bot'],
+      'untitled, as the number said');
+
     // A requester row that kept no title, and Homeroom's own copy of the
     // request it falls back to.
     await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 11, $2)', [app.id, maya.id]);
@@ -412,45 +500,19 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 11, 'live', 'ready') RETURNING id`,
       [app.id],
     );
-    const N = loadBell();
-    const rowView = (detail) => N._rowView({
-      id: 1, createdAt: AT, readAt: null, kind: 'build_needs_you', detail,
-      conversationId: 7, conversationKind: 'direct', sourceUsername: 'homeroom_bot',
-    });
-    const sent = await dm.sendPlanCard(pool, {
+    assert.deepEqual(await dm.sendPlanCard(pool, {
       app: { id: app.id, slug: app.slug, name: app.name }, issueNumber: 11, runId: run.id, bot,
       plan: { bullets: ['Add a who-was-active panel to the hub', 'Keep it to members'], complicated: true },
-    });
-    assert.ok(sent?.messageId, 'the plan went out');
-    const { rows: [msg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
-    assert.equal(msg.metadata.homeroomBot.requestTitle, 'Show who was active this week on the hub',
-      'the title Homeroom stores reached the message through sendDm\'s lookup');
-    const { rows: [ring] } = await pool.query(
-      'SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id],
-    );
+    }), { messageId: null, stop: 'on_request' }, 'the plan is not sent to her chat: it waits on its request');
+    const { ring } = await planWaits(11);
     const detail = notifyCopy.parseBotDetail(ring.detail);
     assert.deepEqual([detail.moment, detail.said, detail.requestTitle],
-      ['needs_you', 'plan', 'Show who was active this week on the hub']);
+      ['needs_you', 'plan', 'Show who was active this week on the hub'],
+      'the title Homeroom stores reaches the bell');
     const view = rowView(ring.detail);
     assert.deepEqual([view.label, view.segments[0].v, view.appLine],
       ['Plan to approve', 'Show who was active this week on the hub', 'Plant Pal · #11 · Homeroom bot'],
       'the bell names the request, with the number beside the project under it');
-
-    // No title anywhere, not even on GitHub (no repo): the row still reads
-    // "Request #N", and the send is not blocked.
-    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 12, $2)', [app.id, maya.id]);
-    const bare = await dm.sendDm(pool, {
-      bot, userId: maya.id, content: 'My plan is ready. Tap Build it if it looks right.', idempotencyKey: '#5582-bare',
-      metadata: { kind: 'plan', appSlug: app.slug, appName: app.name, issueNumber: 12, firstVersion: false },
-    });
-    assert.ok(bare?.messageId);
-    const { rows: [bareRing] } = await pool.query(
-      'SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id],
-    );
-    assert.equal(notifyCopy.parseBotDetail(bareRing.detail).requestTitle, '');
-    const bareView = rowView(bareRing.detail);
-    assert.deepEqual([bareView.segments[0].v, bareView.appLine], ['Request #12', 'Plant Pal · Homeroom bot'],
-      'untitled, as the number said');
   });
 });
 

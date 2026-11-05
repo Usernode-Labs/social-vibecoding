@@ -104,7 +104,6 @@ async function debitBuildOnce(steps, key, totalUsd, debit) {
 
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
-function tray() { return require('./homeroom-bot-tray'); }
 // #3736: and the activity card that follows one piece of work there.
 function activity() { return require('./homeroom-bot-activity'); }
 // How a project's first version is built: the current configuration, its
@@ -2939,8 +2938,8 @@ async function insertRunRow(pool, run) {
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha, asked, asked_by, limit_stop, charged, payer_user_id, read_reason)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+        checks_head_sha, asked, asked_by, limit_stop, charged, payer_user_id, read_reason, builder)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -2959,7 +2958,11 @@ async function insertRunRow(pool, run) {
       run.charged ?? run.mode === 'live', run.payerUserId || null,
       // What started this read (readReasonOf), so a request read again and
       // again says why.
-      run.readReason || null],
+      run.readReason || null,
+      // 5 Nov 2026: who a hand-off named to build it, in the insert, so the
+      // bell its stage rings knows at once that it asks nothing of the
+      // requester (work-state.js quietBell).
+      run.builder || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -4050,8 +4053,9 @@ async function runTriage(pool, config, {
           : (look.n ? loopRules.lookCardKey(app.id, issueNumber, look.n) : item.id),
         deps: { dm: deps.dm },
       });
-      // B9: the chat message it was asked in, if it was, says it is read.
-      await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: 'reading' });
+      // B9: its requester's card under the chat message it was asked in, if
+      // it was, is pushed again.
+      await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber });
     }
     // B6: a plan still waiting for Build it is not what the bot thinks once
     // it reads the request again. Its buttons go now, so a tap while this
@@ -4646,7 +4650,7 @@ async function runTriage(pool, config, {
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
     plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
-    buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
+    buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed, builder: parsed.builder || null,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
     durationMs: Date.now() - startedMs, readFingerprint,
@@ -5357,14 +5361,16 @@ async function runFollowUp(pool, config, {
     // What people wrote where the voice answers is the voice's; what they
     // asked it to change comes here as asks.
     found = found.filter((r) => r.via !== 'homeroom' || (r.where === 'proposal' ? !voiceOnChange : !voiceOnRequest));
-    let taken = [];
-    if (voiceOnChange) {
-      taken = await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
-        log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
-        return [];
-      });
-      found = [...found, ...taken.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
-    }
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 2): one change-ask
+    // queue, taken whatever the change voice's switch says. With it off, the
+    // only asks recorded are the voice's own update_change ones (its words
+    // are not posted on the change, so none is read twice); they were
+    // written and never taken.
+    const taken = await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
+      log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
+      return [];
+    });
+    found = [...found, ...taken.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
     // Its own red checks: a failing verdict on the proposal's current head
     // that no follow-up has looked at yet is a reason to look again even
     // when nobody said anything. A person's reply comes first; a fix still
@@ -5401,9 +5407,9 @@ async function runFollowUp(pool, config, {
     // #5217: an ask recorded after this run took its asks (or while the row
     // was claimed) is stranded by this very return: the row is gone and
     // nothing re-queues it. Put it back, so its next follow-up takes it.
-    // Guarded: with the voice off, asks are never taken, and a requeue here
-    // would bring the issue back every pass.
-    if (voiceOnChange) await requeueAsks();
+    // 5 Nov 2026: asks are taken whatever the change voice says, so this is
+    // too (requeueAsks requeues only for an ask still waiting).
+    await requeueAsks();
     return { ran: false, reason: 'no_new_replies' };
   }
 
@@ -6247,9 +6253,10 @@ async function runChecksFix(pool, config, {
         ? await dmModule.requesterOf(pool, app.id, issueNumber).catch(() => null)
         : null;
       offerFor = who?.userId ? Number(who.userId) : null;
+      // A thread's offer is one of Homeroom bot's cards (bot_cards, 5 Nov 2026).
       const { rows: offerRows } = await pool.query(
-        `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
-         VALUES ($1, 'try_again', $2, $3) RETURNING id`,
+        `INSERT INTO bot_cards (place, app_id, kind, args, user_id)
+         VALUES ('thread', $1, 'try_again', $2, $3) RETURNING id`,
         [app.id, JSON.stringify({ sessionId: Number(session.id) }), offerFor],
       ).catch(() => ({ rows: [] }));
       offer = offerRows[0] || null;
@@ -6286,8 +6293,8 @@ async function runChecksFix(pool, config, {
     // (homeroom-bot-voice.decideOffer finds the offer by its message).
     if (offer && posted?.postId) {
       await pool.query(
-        `UPDATE homeroom_bot_voice_offers o SET message_id = p.thread_message_id
-           FROM homeroom_bot_posts p WHERE o.id = $1 AND p.id = $2 AND p.thread_message_id IS NOT NULL`,
+        `UPDATE bot_cards o SET chat_message_id = p.thread_message_id
+           FROM homeroom_bot_posts p WHERE o.id = $1 AND o.place = 'thread' AND p.id = $2 AND p.thread_message_id IS NOT NULL`,
         [offer.id, posted.postId],
       ).catch(() => {});
     }
@@ -7472,12 +7479,13 @@ async function actOnVerdict({
       // A note about Homeroom itself held so offers no move: the run says why.
       if (parsed.platform) await require('./homeroom-bot-move').noteMoveOffer(pool, runId, 'repeat_held');
     } else {
-      // #6311: a platform note carries the copy offer in the thread, for the
-      // person who asked for the request. Its own Move offer in their DM is
-      // unchanged.
+      // #6311: a platform note carries an offer in the thread, for the person
+      // who asked for the request. 5 Nov 2026: the move itself, which their
+      // chat with the bot offered when the request's news went there (a
+      // first version's still does: homeroom-bot-dm.js relayIssuePost).
       const copyOffer = parsed.platform && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0
         ? await voiceModule(deps).threadOffer(pool, {
-          app, kind: 'copy_request', forUserId: Number(requester.userId), args: { issueNumber },
+          app, kind: requester.firstVersion ? 'copy_request' : 'move_request', forUserId: Number(requester.userId), args: { issueNumber },
         }).catch(() => null)
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.
@@ -8744,7 +8752,9 @@ async function buildLive({
       log.warn('homeroom-bot', 'A first version did not finish; trying once more from its plan', {
         app: app.slug, issueNumber, runId, sessionId: first.sessionId || null, error: first.error,
       });
-      await steps.once('retry_said', () => say('spec', live.retryCommentText(), { dm: { building: true, retry: true } })
+      // Decision 6 (5 Nov 2026): not said in the request's thread, where its
+      // stage says it is building again; its first-version news keeps it.
+      await steps.once('retry_said', () => say('spec', live.retryCommentText(), { dm: { building: true, retry: true }, skipIssueThread: true })
         .then(() => true)
         .catch((err) => {
           durableSteps.rethrowStop(err, 'retry note');
@@ -9602,7 +9612,8 @@ const STRANDED_ASK_MS = 30 * 60 * 1000;
  */
 async function sweepStrandedAsks(pool, bot, settings, deps = {}) {
   const now = deps.now ? deps.now() : Date.now();
-  if (!voiceModule(deps).voiceOn(settings, { type: 'session' }) || !bot?.id) return 0;
+  // 5 Nov 2026: whatever the change voice says, as the follow-up takes them.
+  if (!bot?.id) return 0;
   const { rows } = await pool.query(
     `SELECT k.app_id, k.issue_number, k.session_id,
             (ARRAY_AGG(k.asker_id ORDER BY k.id))[1] AS asker_id
