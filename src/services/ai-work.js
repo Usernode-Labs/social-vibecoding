@@ -368,7 +368,8 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
     const byBot = botId != null && row.change_user != null && Number(row.change_user) === Number(botId);
     out.by = status ? (byBot ? 'bot' : theirs ? 'you' : 'someone') : 'bot';
   }
-  if (state.line?.code === 'claimed') out.by = row.claimed_mine === true ? 'you' : 'someone';
+  // Somebody pressed Claim, or is building a change of their own for it: you, or someone.
+  if (state.line?.code === 'claimed') out.by = row.claimed_mine === true || theirs ? 'you' : 'someone';
   if (state.stage === 'up_for_vote' && (row.my_vote === 'yes' || row.my_vote === 'no')) out.myVote = row.my_vote;
   // #6282: what was asked for, on an update on its way.
   if ((state.line?.code === 'revising' || state.line?.code === 'update_queued') && row.update_ask) out.ask = clip(row.update_ask);

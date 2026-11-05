@@ -65,7 +65,7 @@ const dm = require('../src/services/homeroom-bot-dm');
 const mayor = require('../src/services/homeroom-bot-mayor');
 const progressSvc = require('../src/services/homeroom-bot-progress');
 const homeroomBot = require('../src/services/homeroom-bot');
-const tray = require('../src/services/homeroom-bot-tray');
+const workState = require('../src/services/work-state');
 const followup = require('../src/services/homeroom-bot-followup');
 const { lookCardKey } = require('../src/workflow/rules/bot-loop.ts');
 
@@ -1572,17 +1572,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual(turned.tools, ['revise_proposal', 'reply']);
   });
 
-  await t.test('#3734: once it is queued, the activity tray and the progress answer both say it is in flight', async () => {
+  await t.test('#3734: once it is queued, its work state and the progress answer both say it is in flight', async () => {
     const progress = await progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
     const said = progress.rightNow.find((e) => e.project === 'note-board' && e.number === 5);
     assert.equal(said.stage, 'followup_queued');
     assert.equal(progressSvc.inFlight(said), true);
     assert.match(said.doing, /^waiting for a free builder to follow up on the newest replies on the change$/);
-    const work = await tray.workFor(pool, { user: ada, settings });
-    const shown = work.now.find((job) => job.appSlug === 'note-board' && job.issueNumber === 5);
-    assert.ok(shown, 'the tray lists it under Now');
-    assert.equal(shown.phase, 'follow_up_queued');
-    assert.equal(shown.href, `#app/note-board/dev/proposals/${proposal.id}`);
+    // Every screen reads the stored state (services/work-state.js), refreshed
+    // here as the platform's triggers and drain refresh it.
+    const stored = async () => {
+      await workState.refresh(pool, [{ appId: notes.id, issueNumber: 5 }]);
+      return (await workState.forRequests(pool, notes.id, [5])).get(5);
+    };
+    const shown = await stored();
+    assert.deepEqual([shown.stage, shown.line], ['up_for_vote', { code: 'update_queued' }], 'an update on its way holds the vote');
+    assert.equal(shown.sessionId, proposal.id);
     const words = await mayor.myWork(pool, { userId: ada.id, settings });
     assert.match(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
       /^step 5 of 6: waiting for a free builder to follow up on the newest replies on the change$/,
@@ -1599,7 +1603,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual([granted.state, granted.look.kind, granted.look.sessionId], ['following_up', 'followUp', proposal.id]);
     const running = (await progressSvc.progressFor(pool, { userId: ada.id, settings })).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
     assert.equal(running.stage, 'revising');
-    assert.equal((await tray.workFor(pool, { user: ada, settings })).now.find((j) => j.issueNumber === 5 && j.appSlug === 'note-board').phase, 'following_up');
+    const runningState = await stored();
+    assert.deepEqual([runningState.stage, runningState.line], ['building', { code: 'revising' }], 'and now it is being updated');
     // A second ask while that runs is still drafted, and sent on Post it.
     threadPosts.length = 0;
     let result = null;

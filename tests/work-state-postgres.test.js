@@ -190,14 +190,14 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     const first = await ws.sweep(pool, { olderThanMs: 0 });
     assert.equal(first.seeded, 1);
     assert.equal((await stored('request', 7)).stage, 'reading');
-    const before = await one('SELECT checked_at FROM work_states WHERE app_id = $1 AND item_ref = 7', [app.id]);
+    const before = await one(`SELECT checked_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 7`, [app.id]);
     const again = await ws.sweep(pool, { olderThanMs: 0, limit: 100 });
     assert.equal(again.seeded, 0);
     assert.ok(again.checked >= 1);
-    const after = await one('SELECT checked_at FROM work_states WHERE app_id = $1 AND item_ref = 7', [app.id]);
+    const after = await one(`SELECT checked_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 7`, [app.id]);
     assert.ok(new Date(after.checked_at) > new Date(before.checked_at), 'an unchanged row is still marked checked');
     assert.equal((await stored('request', 3)).stage, 'closed');
-    const closedChecked = await one('SELECT checked_at, updated_at FROM work_states WHERE app_id = $1 AND item_ref = 3', [app.id]);
+    const closedChecked = await one(`SELECT checked_at, updated_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 3`, [app.id]);
     assert.equal(String(closedChecked.checked_at), String(closedChecked.updated_at), 'a closed row is not swept');
   });
 

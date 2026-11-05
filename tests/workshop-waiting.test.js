@@ -130,68 +130,67 @@ test('the ?demo=1 mocks give the viewer a change up for a vote, one that needs a
 
 // ── #5385: what the bot has in hand or needs from the viewer ──
 
-const trackOf = (job, extra = {}) => require('../src/services/homeroom-bot-track').trackOf({ job, ...extra });
+// 5 Nov 2026: a track is its request's stored work state (services/work-state.js).
+const trackOf = (job, work, extra = {}) => require('../src/services/homeroom-bot-track').trackOf({ job, work, ...extra });
 const job = (over = {}) => ({
   key: 'demo-app#13', appSlug: 'demo-app', appName: 'Demo app', issueNumber: 13, title: 'Keyboard voting',
   firstVersion: false, ...over,
 });
+const w = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, whoseMove: null, since: null, ...extra });
 
 test('#5385: botEntryOf reads a track as in hand, waiting, or nothing', () => {
-  // In hand: each of the drawer's in-progress states and a hold for a slot.
-  assert.deepEqual(waiting.botEntryOf(trackOf(job({ stage: 'building', since: '2026-10-17T10:00:00Z' })), 'demo-app'),
-    { number: 13, waiting: false, track: trackOf(job({ stage: 'building', since: '2026-10-17T10:00:00Z' })) });
-  assert.ok(waiting.botEntryOf(trackOf(job({ stage: 'queued' })), 'demo-app'), 'queued is in hand');
-  assert.ok(waiting.botEntryOf(trackOf(job({ stage: 'reading', since: 'x' })), 'demo-app'), 'reading the request');
-  assert.ok(waiting.botEntryOf(trackOf(job({ stage: 'checks', since: 'x' })), 'demo-app'), 'its checks running');
-  const held = waiting.botEntryOf(trackOf(job({ outcome: 'held' }), { held: { position: 2, limit: 'slots' } }), 'demo-app');
+  // In hand: the bot reading, planning, building or checking it, a hold among it.
+  const building = trackOf(job(), w('building', { since: '2026-10-17T10:00:00Z' }));
+  assert.deepEqual(waiting.botEntryOf(building, 'demo-app'), { number: 13, waiting: false, track: building });
+  assert.ok(waiting.botEntryOf(trackOf(job(), w('reading', { line: { code: 'queued', place: 2 } })), 'demo-app'), 'queued is in hand');
+  assert.ok(waiting.botEntryOf(trackOf(job(), w('reading')), 'demo-app'), 'reading the request');
+  assert.ok(waiting.botEntryOf(trackOf(job(), w('checking')), 'demo-app'), 'its checks running');
+  const held = waiting.botEntryOf(trackOf(job(), w('building', { line: { code: 'held_waiting' } }), { held: { position: 2 } }), 'demo-app');
   assert.equal(held.waiting, false, 'a hold for a slot is in hand, not waiting');
-  // Waiting on the viewer.
-  const blocked = waiting.botEntryOf(trackOf(job({ outcome: 'blocked' })), 'demo-app');
-  assert.equal(blocked.waiting, true, 'it cannot build the request as written');
-  assert.equal(waiting.botEntryOf(trackOf(job({ stage: 'checks_failed', since: 'x', outcome: 'person' }),
-    { runs: [{ id: 1, verdict: 'ready', created_at: 'x', build_ok: false }] }), 'demo-app').waiting, true,
-  'failing checks handed to a person');
-  assert.ok(waiting.botEntryOf(trackOf(job({ stage: 'question', since: 'x' })), 'demo-app').waiting, 'a question waits');
+  // Waiting on the viewer: its stage waits for them, or it stopped.
+  assert.equal(waiting.botEntryOf(trackOf(job(), w('waiting_for_you', { why: 'needs_detail' })), 'demo-app').waiting, true,
+    'it cannot build the request as written');
+  assert.equal(waiting.botEntryOf(trackOf(job(), w('stopped', { reason: 'fix_stopped' })), 'demo-app').waiting, true,
+    'failing checks it stopped fixing');
+  assert.ok(waiting.botEntryOf(trackOf(job(), w('waiting_for_you', { why: 'question' })), 'demo-app').waiting, 'a question waits');
   // Nothing to draw.
-  assert.equal(waiting.botEntryOf(trackOf(job({ stage: 'held', since: 'x', outcome: 'held' }),
-    { held: { position: null, limit: 'taken', by: 'maya' } }), 'demo-app'), null,
-  'a request a person has taken: the bot leaves it alone');
-  assert.equal(waiting.botEntryOf(trackOf(job({ stage: 'vote', since: 'x' })), 'demo-app'), null, 'up for a vote is the proposal rows');
-  assert.equal(waiting.botEntryOf(trackOf(job({ outcome: 'live' })), 'demo-app'), null, 'live is History');
-  assert.equal(waiting.botEntryOf(trackOf(job({ outcome: 'stopped' })), 'demo-app'), null, 'stopped is History');
-  assert.equal(waiting.botEntryOf(trackOf(job({ outcome: 'closed' })), 'demo-app'), null, 'closed');
+  assert.equal(waiting.botEntryOf(trackOf(job(), w('building', { line: { code: 'claimed', by: 'maya' } })), 'demo-app'), null,
+    'a request a person has taken: the bot leaves it alone');
+  assert.equal(waiting.botEntryOf(trackOf(job(), w('up_for_vote')), 'demo-app'), null, 'up for a vote is the proposal rows');
+  assert.equal(waiting.botEntryOf(trackOf(job(), w('live')), 'demo-app'), null, 'live is History');
+  assert.equal(waiting.botEntryOf(trackOf(job(), w('closed')), 'demo-app'), null, 'closed');
   // Not on this project, not a request with a number, not a first version.
-  assert.equal(waiting.botEntryOf(trackOf(job({ stage: 'building', since: 'x' })), 'other-app'), null);
-  assert.equal(waiting.botEntryOf(trackOf(job({ stage: 'building', since: 'x', issueNumber: null, firstVersion: true })), 'demo-app'), null,
+  assert.equal(waiting.botEntryOf(trackOf(job(), w('building')), 'other-app'), null);
+  assert.equal(waiting.botEntryOf(trackOf(job({ issueNumber: null, firstVersion: true }), w('building')), 'demo-app'), null,
     'a first version is not a request on the board');
   assert.equal(waiting.botEntryOf(null, 'demo-app'), null);
 });
 
-test('#5385: botWorkOnApp reads the drawer\'s tracks for one project, one entry per request', async () => {
+test('#5385: botWorkOnApp reads the viewer\'s tracks for one project, one entry per request', async () => {
   const pool = fakePool([]);
   const tracks = [
-    { ...trackOf(job({ stage: 'building', since: 'x' })) },
-    { ...trackOf(job({ stage: 'planning', since: 'x', issueNumber: 14 })) },
-    { ...trackOf(job({ issueNumber: 13, outcome: 'held' }), { held: { position: 1, limit: 'slots' } }) },
-    { ...trackOf(job({ stage: 'vote', since: 'x', issueNumber: 15 })) },
-    { ...trackOf(job({ stage: 'building', since: 'x', appSlug: 'elsewhere' })) },
+    trackOf(job(), w('building')),
+    trackOf(job({ issueNumber: 14 }), w('planning')),
+    trackOf(job({ issueNumber: 13 }), w('building', { line: { code: 'held_waiting' } }), { held: { position: 1 } }),
+    trackOf(job({ issueNumber: 15 }), w('up_for_vote')),
+    trackOf(job({ appSlug: 'elsewhere' }), w('building')),
   ];
-  const tray = { workFor: async () => ({ tracks }) };
-  const out = await waiting.botWorkOnApp(pool, { app: { slug: 'demo-app' }, user: { id: 5 }, deps: { tray } });
+  const aiWork = { tracksFor: async () => ({ tracks }) };
+  const out = await waiting.botWorkOnApp(pool, { app: { slug: 'demo-app' }, user: { id: 5 }, deps: { aiWork } });
   assert.deepEqual(out.map((e) => e.number), [13, 14], 'this project, in hand only, one entry per request');
   assert.equal(out.every((e) => e.waiting === false), true);
-  assert.equal(pool.calls.length, 0, 'botWorkOnApp reads through the tray, not its own queries');
+  assert.equal(pool.calls.length, 0, 'botWorkOnApp reads the viewer\'s tracks, not queries of its own');
   // The viewer's answer is capped.
   const many = [];
-  for (let i = 1; i <= waiting.MAX_BOT + 5; i += 1) many.push({ ...trackOf(job({ stage: 'queued', issueNumber: i })) });
-  const capped = await waiting.botWorkOnApp(pool, { app: { slug: 'demo-app' }, user: { id: 5 }, deps: { tray: { workFor: async () => ({ tracks: many }) } } });
+  for (let i = 1; i <= waiting.MAX_BOT + 5; i += 1) many.push(trackOf(job({ issueNumber: i }), w('reading', { line: { code: 'queued', place: i } })));
+  const capped = await waiting.botWorkOnApp(pool, { app: { slug: 'demo-app' }, user: { id: 5 }, deps: { aiWork: { tracksFor: async () => ({ tracks: many }) } } });
   assert.equal(capped.length, waiting.MAX_BOT);
 });
 
 test('#5385: a failed read is nothing in hand, never a failed board', async () => {
   const pool = fakePool([]);
-  const tray = { workFor: async () => { throw new Error('boom'); } };
-  assert.deepEqual(await waiting.botWorkOnApp(pool, { app: { slug: 'demo-app' }, user: { id: 5 }, deps: { tray } }), []);
+  const aiWork = { tracksFor: async () => { throw new Error('boom'); } };
+  assert.deepEqual(await waiting.botWorkOnApp(pool, { app: { slug: 'demo-app' }, user: { id: 5 }, deps: { aiWork } }), []);
   assert.deepEqual(await waiting.botWorkOnApp(pool, { app: { slug: 'demo-app' }, user: null }), []);
 });
 
@@ -203,10 +202,10 @@ test('#5385: the request list carries it, and the staging demo shows one in hand
   const demo = waiting.demoBotWork(app);
   assert.deepEqual(demo.map((e) => e.number), [900018, 900013]);
   assert.equal(demo[0].waiting, false);
-  assert.equal(demo[0].track.state, 'building', '900018: the bot is building it');
+  assert.equal(demo[0].track.work.stage, 'building', '900018: the bot is building it');
   assert.equal(demo[1].waiting, true);
-  assert.equal(demo[1].track.state, 'waiting');
-  assert.equal(demo[1].track.why, 'detail', '900013: it cannot build this as written');
+  assert.deepEqual([demo[1].track.work.stage, demo[1].track.work.why], ['waiting_for_you', 'needs_detail'],
+    '900013: it cannot build this as written');
   // And the client keeps it with the list's other per-viewer facts.
   assert.match(read('public/js/app-view.js'), /homeroomBotWork: Array\.isArray\(ghData && ghData\.homeroomBotWork\) \? ghData\.homeroomBotWork : \[\],/);
 });

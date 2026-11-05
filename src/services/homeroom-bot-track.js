@@ -333,9 +333,10 @@ const TOUCHED_SQL = `
    WHERE EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.app_id = $1 AND r.issue_number = w.n AND r.mode = 'live')
       OR EXISTS (SELECT 1 FROM homeroom_bot_queue q WHERE q.app_id = $1 AND q.issue_number = w.n)`;
 
-// The records progress.stageOf reads, as homeroom-bot-progress.js
-// requestRows reads them for one person, for any requests of one project:
-// `$1` the project, `$2` the request numbers. An open question is anybody's.
+// One project's requests as a track names them (its title, its run, its
+// change up for a vote), from the shared per-request record
+// (homeroom-bot-progress.js requestRecordJoinsSql): `$1` the project, `$2`
+// the request numbers.
 const REQUEST_ROWS_SQL = `
   SELECT a.id AS app_id, a.slug, a.name, w.n AS issue_number,
          (SELECT i.title FROM issues i WHERE i.app_id = a.id AND i.github_issue_number = w.n
@@ -450,6 +451,16 @@ async function tracksForRequests(pool, { appId, numbers, deps = {}, people = nul
         doneBy: doneBy.get(`${appId}#${job.issueNumber}`) || null,
         until,
       }));
+    }
+    // A merge of Homeroom itself going live: when its release comes
+    // (release-watch.js releasesFor), as the change's own pill says it.
+    const going = [...out.values()].filter((t) => t.work.stage === 'going_live' && t.proposalId);
+    if (going.length) {
+      const releases = await (deps.releaseWatch || require('./release-watch')).releasesFor(pool, going.map((t) => t.proposalId));
+      for (const t of going) {
+        const release = releases.get(t.proposalId);
+        if (release) t.release = release;
+      }
     }
   } catch (err) {
     log.warn('homeroom-bot-track', 'Could not read a project\'s request tracks', { appId, err: err.message });
@@ -711,8 +722,8 @@ function demoSlots(app, now = Date.now(), mocks = []) {
     title: mock.get(n)?.title || fallback, askedBy, excerpt: requestExcerpt(mock.get(n)?.body) || null,
   });
   const job = (n, title) => ({ key: `demo#${n}`, appSlug: app.slug, appName: app.name || app.slug, issueNumber: n, title });
-  // Each demo request's work state: a stage of the bot's as stageOf names
-  // it (work-state.js fromStage), or how its work ended.
+  // Each demo request's work state: a stage of the bot's by its old name
+  // (work-state.js fromStage maps it), or how its work ended.
   const ENDED_WORK = {
     build_failed: { stage: 'stopped', reason: 'build_failed' },
     person: { stage: 'waiting_for_you', why: 'decide' },

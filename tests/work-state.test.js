@@ -38,6 +38,8 @@ test('the requester\'s move is always waiting_for_you, with why', () => {
   assert.deepEqual([plan.stage, plan.why, plan.whoseMove], ['waiting_for_you', 'plan', 'requester']);
   const question = derive({ question_at: ago(3), verdict: 'question' });
   assert.deepEqual([question.stage, question.why], ['waiting_for_you', 'question']);
+  const askedInThread = derive({ verdict: 'question' });
+  assert.deepEqual([askedInThread.stage, askedInThread.why], ['waiting_for_you', 'question'], 'a question asked in the request\'s thread');
   const decide = derive({ verdict: 'person', run_reason: 'Not a small change.\nIt touches every page.' });
   assert.deepEqual([decide.stage, decide.why, decide.line], ['waiting_for_you', 'decide', { code: 'reason', text: 'Not a small change.' }]);
   const works = derive({ verdict: 'person', run_already_done: true });

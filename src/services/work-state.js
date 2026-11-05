@@ -89,7 +89,9 @@ function fromStage(s, row) {
     case 'held':
       return state('building', { since, line: { code: row.cap_suppressed === 'builds_per_app' ? 'held_builds' : 'held_waiting' } });
     case 'build_queued':
-      return state('building', { since, line: { code: 'queued' } });
+      // #5323: its place among the project's builds waiting to start, so it
+      // never says a bare "waiting its turn".
+      return state('building', { since, line: { code: 'queued', ...(row.build_place ? { place: Number(row.build_place) } : {}) } });
     case 'starting':
       return state('building', { since, line: { code: 'starting' } });
     case 'stalled':
@@ -159,6 +161,19 @@ function derive(row, { now = new Date() } = {}) {
   if (row.awaiting_plan === true && !status && (!out || out.stage === 'reading')) {
     return state('planning', { since: row.request_at || row.run_at, line: { code: 'planning_with_you' }, whoseMove: 'requester' });
   }
+  // 16 Oct 2026: ready, but a person has the request now (a claim, or a
+  // change of their own under way): the bot leaves it alone, so it is
+  // theirs, not a wait for a slot.
+  // #4190: a claim made once the bot was already on it is a person working
+  // ALONGSIDE the bot, not a hold, so only an earlier claim counts here.
+  const personBuilding = row.lc_by && (row.lc_status === 'active' || row.lc_status === 'paused') ? row.lc_by : null;
+  const claimFirst = row.claimed_by && (!row.run_at || new Date(row.claimed_at) <= new Date(row.run_at)) ? row.claimed_by : null;
+  if (out && out.stage === 'building' && READY.has(out.line?.code) && (personBuilding || claimFirst)) {
+    return state('building', {
+      since: personBuilding ? row.lc_last_activity_at || out.since : row.claimed_at || out.since,
+      line: { code: 'claimed', by: personBuilding || claimFirst }, whoseMove: 'builder',
+    });
+  }
   if (out) return out;
 
   // A change somebody made for it, when Homeroom bot has none of its own:
@@ -169,6 +184,10 @@ function derive(row, { now = new Date() } = {}) {
       promoted_at: row.lc_promoted_at, merged_at: row.lc_merged_at, live_at: row.lc_live_at,
       last_activity_at: row.lc_last_activity_at, created_at: row.lc_created_at,
     }, { now });
+    // Somebody is building it: who, as a claim says it.
+    if (change.stage === 'building' && row.lc_by) {
+      return state('building', { since: change.since, line: { code: 'claimed', by: row.lc_by }, whoseMove: 'builder' });
+    }
     // #6282: an update on its way holds its vote too.
     if (row.lc_update_coming && (change.stage === 'up_for_vote' || change.stage === 'checking')) {
       return row.lc_update_coming === 'running'
@@ -193,6 +212,9 @@ function derive(row, { now = new Date() } = {}) {
     return state('waiting_for_you', { since: row.run_at, why: 'needs_detail', ...said });
   }
   if (row.mode === 'live' && row.verdict === 'failed') return state('stopped', { since: row.run_at, reason: 'look_failed' });
+  // Its newest look asked a question (in the request's thread, or a DM
+  // question since closed), and nothing has answered it: still theirs.
+  if (row.mode === 'live' && row.verdict === 'question') return state('waiting_for_you', { since: row.run_at, why: 'question' });
   if (row.claimed_by) return state('building', { since: row.claimed_at, line: { code: 'claimed', by: row.claimed_by }, whoseMove: 'builder' });
   // Not read yet, or read and nothing came of it (a skip): it waits to be read.
   return state('reading', { since: row.request_at || row.run_at, line: { code: 'waiting' } });
@@ -402,6 +424,16 @@ const REQUEST_FACTS_SQL = `
          lc.id AS lc_id, lc.status AS lc_status, lc.check_state AS lc_check_state, lc.checks_checked_at AS lc_checks_at,
          lc.promoted_at AS lc_promoted_at, lc.merged_at AS lc_merged_at, lc.live_at AS lc_live_at,
          lc.last_activity_at AS lc_last_activity_at, lc.created_at AS lc_created_at, lc.update_coming AS lc_update_coming,
+         lc.username AS lc_by,
+         -- #5323: a ready request's place among the project's builds waiting to start.
+         CASE WHEN run.live_build_waiting_at IS NOT NULL AND run.build_session_id IS NULL THEN (
+           SELECT COUNT(*)::int FROM homeroom_bot_runs b
+            WHERE b.app_id = it.app_id AND b.mode = 'live' AND b.live_build_waiting_at IS NOT NULL
+              AND b.build_session_id IS NULL AND b.build_ok IS NULL AND b.proposal_session_id IS NULL
+              AND b.live_build_waiting_at <= run.live_build_waiting_at
+              AND b.id = (SELECT MAX(b2.id) FROM homeroom_bot_runs b2
+                           WHERE b2.app_id = b.app_id AND b2.issue_number = b.issue_number AND b2.mode = 'live')
+         ) END AS build_place,
          CASE WHEN q.id IS NOT NULL AND q.started_at IS NULL THEN (
            SELECT COUNT(*)::int FROM homeroom_bot_queue q2
             WHERE q2.app_id = it.app_id AND q2.started_at IS NULL AND q2.enqueued_at <= q.enqueued_at
@@ -423,20 +455,20 @@ const REQUEST_FACTS_SQL = `
        ORDER BY ic.claimed_at DESC
        LIMIT 1
     ) cl ON TRUE
-    -- The change somebody made for it (it says it closes it), as the
-    -- request's thread lists one (ai-work.js THREADS_SQL): what it stands at
-    -- when Homeroom bot has no change of its own for it. A posted plan is
-    -- no change, and neither is a draft nobody has shared.
+    -- The change somebody made for it (it says it closes it): what it
+    -- stands at when Homeroom bot has no change of its own for it, and a
+    -- person's under way holds the bot off as the bot itself reads it
+    -- (homeroom-bot.js issueHolders). A posted plan is no change.
     LEFT JOIN LATERAL (
       SELECT c.id, c.status, c.check_state, c.checks_checked_at, c.promoted_at, c.merged_at, c.live_at,
              c.last_activity_at, c.created_at,
+             (SELECT u.username FROM users u WHERE u.id = c.user_id AND u.is_synthetic IS NOT TRUE) AS username,
              CASE WHEN c.status = 'promoted' THEN ${progress.updateComingSql('c')} END AS update_coming
         FROM chat_sessions c
        WHERE c.app_id = it.app_id AND it.issue_number = ANY(c.linked_issues)
          AND c.is_headless = FALSE
          AND NOT (c.source IS NOT DISTINCT FROM 'request_spec' AND c.branch_name IS NULL)
          AND c.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
-         AND (c.status NOT IN ('active', 'paused') OR c.shared_at IS NOT NULL)
        ORDER BY CASE c.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END, c.id DESC
        LIMIT 1
     ) lc ON TRUE`;

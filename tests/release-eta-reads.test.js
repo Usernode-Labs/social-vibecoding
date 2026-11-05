@@ -137,24 +137,23 @@ test('the bot DM\'s activity cards: one going live says when', async () => {
   assert.deepEqual(p.asked(), [[50, 60]], 'the SQL, not the caller, tells a child app\'s apart');
 });
 
-test('the bot\'s tray: a History entry going live says when', async () => {
-  const tray = require('../src/services/homeroom-bot-tray');
-  const at = new Date(NOW - 20 * MIN);
-  const run = (id, proposal_session_id, slug) => ({
-    id, issue_number: id, verdict: 'ready', build_ok: true, build_error: null, cap_suppressed: false,
-    proposal_session_id, proposal_pr_number: null, created_at: at, awaiting_go_at: null, request_closed: false, plan_only: false,
-    proposal_status: 'merging', proposal_at: at, merged_at: null, slug, name: slug, issue_title: 'Say when', first_version: false,
+test('a request\'s track going live says when, for a merge of Homeroom itself', async () => {
+  const track = require('../src/services/homeroom-bot-track');
+  const going = (sessionId) => ({ ...track.trackOf({
+    job: { key: `x#${sessionId}`, appSlug: 'usernode-2d5619', appName: 'Homeroom', issueNumber: sessionId, proposalId: sessionId },
+    work: { stage: 'going_live', line: null, whoseMove: null, since: new Date(NOW - 20 * MIN).toISOString() },
+  }) });
+  // The reader adds it as the change's own pill reads it (release-watch.js releasesFor).
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-track.js'), 'utf8');
+  assert.match(src, /const going = \[\.\.\.out\.values\(\)\]\.filter\(\(t\) => t\.work\.stage === 'going_live' && t\.proposalId\);/);
+  assert.match(src, /\.releasesFor\(pool, going\.map\(\(t\) => t\.proposalId\)\)/);
+  // And a track carries it through as given.
+  const withRelease = track.trackOf({
+    job: { key: 'x#1', appSlug: 'usernode-2d5619', appName: 'Homeroom', issueNumber: 1, proposalId: 50, release: EXPECTED() },
+    work: { stage: 'going_live', line: null, whoseMove: null, since: null },
   });
-  const p = pool((sql) => {
-    if (/FROM homeroom_bot_requesters q/.test(sql)) return [run(12, 50, 'usernode-2d5619'), run(13, 60, 'notes')];
-    if (/FROM apps WHERE slug = ANY/.test(sql)) return [APP(), APP({ id: 4, slug: 'notes', self_hosted: false })];
-    return undefined;
-  });
-  const work = await tray.workFor(p, { user: { id: 4 }, settings: { mode: 'off' } });
-  const byApp = new Map(work.history.map((job) => [job.appSlug, job]));
-  assert.equal(byApp.get('usernode-2d5619').outcome, 'going_live');
-  assert.deepEqual(byApp.get('usernode-2d5619').release, EXPECTED());
-  assert.equal(byApp.get('notes').release, undefined);
+  assert.deepEqual(withRelease.release, EXPECTED());
+  assert.equal(going(51).release, undefined, 'none unless the reader found one');
 });
 
 test('a project\'s chat: the requester\'s card, approved and merged into Homeroom, says when', async () => {

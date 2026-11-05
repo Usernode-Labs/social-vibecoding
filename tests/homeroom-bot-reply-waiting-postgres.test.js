@@ -67,12 +67,9 @@ test('#6228: a stored reply reads as waiting to be read, for the track and the b
     assert.equal(state.stage, 'reading');
     assert.equal(state.reply, true);
     assert.equal(state.waiting, true);
-    // The track draws it as the existing planning state, with its own line.
-    const job = track.jobOfRow(row, { stageOf: progress.stageOf, outcomeOf: () => null });
-    assert.equal(job.reply, true);
-    const t2 = track.trackOf({ job });
-    assert.equal(t2.state, 'planning');
-    assert.equal(t2.why, 'reply');
+    // The track draws its stored work state: reading, its line the reply.
+    const tracks = await track.tracksForRequests(pool, { appId: app.id, numbers: [6228] });
+    assert.deepEqual([tracks.get(6228).work.stage, tracks.get(6228).work.line], ['reading', { code: 'reply' }]);
   });
 
   // 5 Nov 2026: the bot page reads the request's stored work state

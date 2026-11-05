@@ -297,8 +297,10 @@ test('a ready request waiting for its build slot says so, and what it waits for'
   assert.equal(progress.buildWait(row, { busy: reading, now }).doing, 'ready to build; its build starts next',
     'a request being read on the project does not hold a build');
   assert.equal(progress.buildWait(row, { working: 2, perPerson: 2 }).waitingFor.reason, 'person_limit');
-  const tray = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-tray.js'), 'utf8');
-  assert.match(tray, /build_queued: 'queued',/, 'the tray draws it as waiting its turn');
+  // Every screen draws it as ready to build, waiting its turn (services/work-state.js).
+  const ws = require('../src/services/work-state');
+  assert.deepEqual(ws.fromStage({ stage: 'build_queued' }, {}).line, { code: 'queued' });
+  assert.equal(ws.stageSays(ws.fromStage({ stage: 'build_queued' }, {})), 'Ready to build');
 });
 
 test('#6216: a person\'s request says its project\'s own build number, not the default', async () => {
@@ -636,5 +638,5 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   assert.deepEqual([fixing.stage, fixing.line, ws.placeFor(fixing, { own: true })], ['building', { code: 'fixing' }, 'next']);
   const queued = ws.fromStage({ stage: 'fix_queued' }, {});
   assert.deepEqual([queued.stage, queued.line, ws.placeFor(queued, { own: true })], ['up_for_vote', { code: 'update_queued' }, 'waiting']);
-  assert.equal(require('../src/services/homeroom-bot-track').fromStage('fixing').why, 'fixing');
+  assert.equal(require('../src/services/homeroom-bot-track').STEP_OF_STAGE[fixing.stage], 'build', 'its track lights Build');
 });

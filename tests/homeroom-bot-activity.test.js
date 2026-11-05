@@ -428,13 +428,14 @@ test('#6133: a look and a build both check the week, the look at startCard and t
 // ── Work already under way without a card ──
 
 const progressSvc = require('../src/services/homeroom-bot-progress');
-const traySvc = require('../src/services/homeroom-bot-tray');
 
-test('work under way is a look being read, or the plan and build its ready verdict started: what the tray lists as looking or building', () => {
+test('work under way is a look being read, or the plan and build its ready verdict started', () => {
+  const ws = require('../src/services/work-state');
   for (const stage of activity.UNDER_WAY_STAGES) {
     assert.ok(progressSvc.BUSY_STAGES.has(stage), `${stage}: the bot is working on it this minute`);
-    assert.ok(progressSvc.IN_FLIGHT_STAGES.has(stage), `${stage}: the tray lists it under Now`);
-    assert.ok(['looking', 'building'].includes(traySvc.PHASE_OF_STAGE[stage]), stage);
+    assert.ok(progressSvc.IN_FLIGHT_STAGES.has(stage), `${stage}: it is in flight`);
+    // Every screen reads it as the bot's move (services/work-state.js).
+    assert.equal(ws.fromStage({ stage }, {}).whoseMove, 'bot', `${stage}: the bot's to do`);
   }
   // Everything else the tray lists under Now is not a look of the request's
   // own: waiting in the queue, a ready verdict waiting its turn to be built,
@@ -1174,8 +1175,8 @@ test('B6: Build it moves the card once it is decided, before the tray hears; Cha
   const body = source.slice(source.indexOf('async function decidePlanTap('), source.indexOf('async function changePlan('));
   const answered = body.indexOf("status: 'answered', chosen: 'build', answer: BUILD_IT");
   const move = body.indexOf("require('./homeroom-bot-activity').cardUnderPlan(pool, {");
-  const tray = body.indexOf("require('./homeroom-bot-tray').noteWorkChanged(user.id, deps)");
-  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "Building it", before the tray re-reads');
+  const tray = body.indexOf("require('./bot-work-changed').noteWorkChanged(user.id, deps)");
+  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "Building it", before the viewer\'s pages re-read');
   assert.match(body, /if \(app && requester && Number\(requester\.userId\) === Number\(user\.id\) && bot\) \{/,
     'only for the person the plan was for');
   assert.match(body, /runId: Number\(card\.run_id\), planMessageId: Number\(action\.message_id\),/);
