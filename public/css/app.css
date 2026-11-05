@@ -20494,6 +20494,118 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    back. In Messages it opens beside the chat, as a thread does. */
 .messages-layout-embedded.messages-has-blank-thread > .messages-thread-pane { display: none; }
 .messages-layout-embedded.messages-has-blank-thread > .messages-reply-pane { flex: 1 1 auto; margin-inline-start: 0; }
+/* THE BLANK THREAD'S OPENING (5 Nov 2026, new-thread.tsx). In the middle of
+   the empty thread, where the first message will land: the bot's face, what
+   it asks, and the ways to start, each its own pill. A pill is set in the
+   message box's own type (`.messages-composer-input`: 17px over 22px, 15px
+   from 768px) because it is the words a tap writes into the box; its "…" is
+   the box's placeholder ink. The one the message begins with wears the
+   card's focus ring. Auto margins centre the block in a scroller that keeps
+   its `justify-end`, and let it scroll when a short screen cannot hold it. */
+.messages-starts {
+  margin-block: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+}
+.messages-starts-hello { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+.messages-starts-hello > img { width: 40px; height: 40px; margin-bottom: 6px; border-radius: 12px; object-fit: cover; }
+.messages-starts-title { margin: 0; color: var(--text-primary); font-size: 17px; font-weight: 700; line-height: 22px; text-wrap: balance; }
+.messages-starts-sub { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 17px; }
+.messages-starts-list { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+.messages-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  min-height: 44px;
+  padding-block: 10px;
+  padding-inline: 14px 18px;
+  border-radius: 9999px;
+  color: var(--text-primary);
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow), 0 6px 16px -10px var(--app-sheet-shadow-near);
+  font-size: 17px;
+  line-height: 22px;
+  text-align: start;
+  transition: background 150ms, box-shadow 150ms;
+}
+.messages-start > svg {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.messages-start:hover { background: var(--messages-surface-2); }
+.messages-start:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.messages-start[aria-pressed="true"] { box-shadow: var(--messages-disc-shadow), 0 0 0 2px var(--accent); }
+.messages-start-more { color: var(--text-faint); }
+@media (min-width: 768px) {
+  .messages-start { font-size: 15px; }
+}
+/* THE PROJECT IT IS FOR, floating over the box: a disc of its own above the
+   card, not a row inside it, which opens the "Your communities" rows
+   (project-picker.tsx). A project picked tints it in its community's colour,
+   as the switcher tints the row you are on. */
+.messages-project-row { display: flex; padding-bottom: 8px; }
+.messages-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 34px;
+  padding-inline: 6px 11px;
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow), 0 6px 16px -8px var(--app-sheet-shadow-near);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 150ms;
+}
+.messages-project-chip:hover { background: var(--messages-surface-2); }
+.messages-project-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.messages-project-chip[data-picked] {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--project-ink) 14%, var(--messages-surface));
+}
+.messages-project-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages-project-chip-tile {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.messages-project-chip-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+.messages-project-chip-tile > span { font-size: inherit; line-height: 1; }
+.messages-project-chip-any { color: var(--text-muted); box-shadow: inset 0 0 0 1.5px var(--app-sheet-line); }
+.messages-project-chip-any > svg,
+.messages-project-chip-chev {
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.messages-project-chip-any > svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.messages-project-chip-chev { width: 14px; height: 14px; color: var(--text-muted); stroke-width: 2.4; }
+@media (prefers-reduced-motion: reduce) {
+  .messages-start,
+  .messages-project-chip { transition: none; }
+}
 /* A PROJECT'S OWN CHANNEL'S REPLY THREAD, IN PLACE TOO (#3653). The pane
    Messages opens beside an app channel (AppReplyThreadPane) opens beside the
    group chat's pane here: to its right on a desktop, over it on a phone,
