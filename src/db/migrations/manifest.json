@@ -145,6 +145,11 @@
       "id": "voted-digest-push-kind",
       "sha256": "993ada608b6e0af158312bfd6fbcb580bdcb342f4b9e7f6c0be575f75ab4e1d7",
       "schemaSha256": "b867ea9d6234ced2f5a410107486d0120a05f9c170c59feadfa48e29e95de3d9"
+    },
+    {
+      "id": "email-templates",
+      "sha256": "1360f85450e4799aa26224b8329fc6822e8451d7e39801872d74431c8059a2be",
+      "schemaSha256": "a9ef81414d7175de7964c07bdd11aeeea8df43e76eb8d573b515d985fd371fa5"
     }
   ]
 }

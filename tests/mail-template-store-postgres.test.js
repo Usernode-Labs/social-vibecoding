@@ -22,7 +22,7 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url) });
-  t.after(async () => { await pool.end(); await admin.query(`DROP DATABASE ${name}`); await admin.end(); });
+  t.after(async () => { await pool.end(); await admin.query(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end(); });
   const config = { databaseUrl: String(url), adminUsername: 'tpl-admin', adminPassword: 'only-for-tests', selfAppSlug: 'tpl-platform', platformRepoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
   const { migrate } = require('../src/db/migrate');
   await migrate(config); await migrate(config);
@@ -168,6 +168,8 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
   });
 
   await t.test('listAll returns every version including archived and deleted', async () => {
+    const { rows: [old] } = await pool.query("SELECT id FROM email_templates WHERE action = $1 AND status = 'archived' AND deleted_at IS NULL LIMIT 1", [OTP]);
+    await store.deleteTemplate(pool, old.id, {}, userId);
     const all = await store.listAll(pool);
     assert.ok(all.templates.some((r) => r.status === 'archived'));
     assert.ok(all.templates.some((r) => r.deleted_at));
