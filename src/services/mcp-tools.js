@@ -9479,6 +9479,7 @@ function registerTools(server, ctx) {
         suppressed_rate_limit: 'The mail throttle held the email back: an address gets at most three a day, a minute apart. Leave email out for a fresh +test alias, or wait.',
         suppressed_bounce: 'Mail to that address is suppressed because it bounced or was marked as spam before. Use another address.',
         no_transport: 'This server has no mail transport configured, so no email was sent.',
+        no_template: 'No email template could be loaded for this email, so it was not sent. Try again in a minute.',
         failed: 'The mail provider refused the email (see mail.error). Try again, or use another address.',
       };
       return toolResult({

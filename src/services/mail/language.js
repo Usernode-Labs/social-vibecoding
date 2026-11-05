@@ -30,6 +30,21 @@ async function translatorFor(pool, locale) {
 }
 
 /**
+ * The Homeroom language `locale` reads in (a regional tag finds its language),
+ * or null for English, one Homeroom does not have, or anything going wrong. The
+ * same decision translatorFor makes, without reading any translation. Never throws.
+ */
+function readerLanguage(locale) {
+  if (!locale || typeof locale !== 'string') return null;
+  try {
+    const { languageFor } = require('../admin-text-translations');
+    return languageFor(locale) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The language of the browser request behind a mail, for an address with no
  * account behind it: the first of its Accept-Language that Homeroom has. Null
  * for English, or for anything else. Never throws.
@@ -43,4 +58,4 @@ function requestLanguage(req) {
   }
 }
 
-module.exports = { READ_PATIENCE_MS, translatorFor, requestLanguage };
+module.exports = { READ_PATIENCE_MS, translatorFor, readerLanguage, requestLanguage };

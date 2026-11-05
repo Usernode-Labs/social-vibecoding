@@ -258,4 +258,38 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     assert.equal(errors.mock.callCount(), 1);
     assert.equal(errors.mock.calls[0].arguments[1], 'Could not seed email templates');
   });
+
+  await t.test('a send reads the stored rows through one consistent snapshot and records its delivery', async () => {
+    const mail = require('../src/services/mail');
+    const { buildMessage } = require('../src/services/mail/templates');
+    const { rows: [otp] } = await pool.query("SELECT id FROM email_templates WHERE action = 'otp' AND status = 'live' AND deleted_at IS NULL");
+    await store.saveTranslation(pool, 'template', otp.id, 'fr',
+      { subject: 'Votre code Homeroom', preheader: '', why: 'Pourquoi', html: '<p>{{code}}</p>', text: 'Votre code : {{code}}' }, 'admin');
+    const isolation = [];
+    const spied = { ...pool, query: pool.query.bind(pool), connect: async () => {
+      const client = await pool.connect();
+      return { query: async (sql, params) => {
+        const result = await client.query(sql, params);
+        if (/^SELECT e\.\*/.test(sql)) isolation.push((await client.query('SHOW transaction_isolation')).rows[0].transaction_isolation);
+        return result;
+      }, release: () => client.release() };
+    } };
+    dbPool.getPool = () => spied;
+    try {
+      const snapshot = await store.getSnapshot(spied);
+      assert.deepEqual(Object.keys(snapshot.templates).sort(), [...KINDS].sort());
+      assert.deepEqual(isolation, ['repeatable read', 'repeatable read']);
+      const rendered = [];
+      const config = { databaseUrl: String(url), mailStagingLogOnly: false, mailTransport: { provider: 'test', async send({ to, kind, ...payload }) { rendered.push(buildMessage(kind, payload)); } } };
+      await mail.sendOtpMail(config, 'fr@example.com', '654321', { locale: 'fr' });
+      await mail.sendOtpMail(config, 'en@example.com', '654321');
+      assert.equal(rendered[0].subject, 'Votre code Homeroom');
+      assert.equal(rendered[0].text, 'Votre code : 654321');
+      assert.deepEqual(rendered[1], buildMessage('otp', { code: '654321' }));
+      const { rows } = await pool.query("SELECT recipient, status FROM mail_deliveries WHERE kind = 'otp' ORDER BY id");
+      assert.deepEqual(rows, [{ recipient: 'fr@example.com', status: 'sent' }, { recipient: 'en@example.com', status: 'sent' }]);
+    } finally {
+      dbPool.getPool = () => pool;
+    }
+  });
 });

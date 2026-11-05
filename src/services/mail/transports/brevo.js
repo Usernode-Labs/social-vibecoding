@@ -71,7 +71,7 @@ function parseTemplates(env) {
 // What a Brevo template can use as {{ params.<name> }}: the values the mail was
 // sent with. Not the mail layer's own bookkeeping, and not an empty value, so a
 // template's {% if params.code %} reads as it looks.
-const NOT_PARAMS = new Set(['translate', 'messageId', 'trackingEnabled']);
+const NOT_PARAMS = new Set(['translate', 'resolved', 'messageId', 'trackingEnabled']);
 function paramsFrom(payload) {
   const params = {};
   for (const [name, value] of Object.entries(payload)) {
@@ -146,7 +146,7 @@ function create(env, { sender = null } = {}) {
   // A Brevo template holds one language, so somebody who reads another gets
   // Homeroom's own template, translated.
   const templateFor = (kind, payload) => (
-    !(payload && payload.translate) && Object.prototype.hasOwnProperty.call(templates, kind)
+    !(payload && (payload.translate || payload.resolved?.readerHasLanguage)) && Object.prototype.hasOwnProperty.call(templates, kind)
       ? templates[kind]
       : null
   );

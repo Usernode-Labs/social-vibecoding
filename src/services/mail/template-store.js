@@ -13,7 +13,8 @@
 // Errors carry a `code` for routes to map: conflict, replacement_required,
 // invalid_replacement, unknown_action, not_found, invalid_origin.
 
-const { actionFor } = require('./actions');
+const log = require('../logger');
+const { ACTIONS, actionFor } = require('./actions');
 
 function fail(code, message) {
   const err = new Error(message || code);
@@ -205,20 +206,208 @@ async function saveTranslation(pool, kind, id, locale, fields, origin) {
 }
 
 // What the sender reads: each action's live template and each layout family's
-// live layout, with every translation of that live row, in one query each.
+// live layout, with every translation of that live row. The two reads share one
+// REPEATABLE READ transaction, so they see the same moment: the sender keeps the
+// result for a while, and a layout deleted between two separate reads would
+// leave a template pointing at nothing until the next refresh.
 async function snapshot(pool) {
-  const [templates, layouts] = await Promise.all([
-    pool.query(`SELECT e.*, (SELECT COALESCE(json_object_agg(t.locale, to_jsonb(t) - 'template_id' - 'locale'), '{}'::json)
+  const client = await pool.connect();
+  let templates;
+  let layouts;
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    templates = await client.query(`SELECT e.*, (SELECT COALESCE(json_object_agg(t.locale, to_jsonb(t) - 'template_id' - 'locale'), '{}'::json)
                   FROM email_template_translations t WHERE t.template_id = e.id) AS translations
-                FROM email_templates e WHERE e.status = 'live' AND e.deleted_at IS NULL`),
-    pool.query(`SELECT e.*, (SELECT COALESCE(json_object_agg(t.locale, to_jsonb(t) - 'layout_id' - 'locale'), '{}'::json)
+                FROM email_templates e WHERE e.status = 'live' AND e.deleted_at IS NULL`);
+    layouts = await client.query(`SELECT e.*, (SELECT COALESCE(json_object_agg(t.locale, to_jsonb(t) - 'layout_id' - 'locale'), '{}'::json)
                   FROM email_layout_translations t WHERE t.layout_id = e.id) AS translations
-                FROM email_layouts e WHERE e.status = 'live' AND e.deleted_at IS NULL`),
-  ]);
+                FROM email_layouts e WHERE e.status = 'live' AND e.deleted_at IS NULL`);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
   const out = { templates: {}, layouts: {} };
   for (const row of templates.rows) out.templates[row.action] = row;
   for (const row of layouts.rows) out.layouts[row.family_id] = row;
   return out;
+}
+
+// ── What a send uses ───────────────────────────────────────────────────
+
+const TEMPLATE_FIELDS = ['subject', 'preheader', 'why', 'html', 'text'];
+const LAYOUT_FIELDS = ['html', 'text'];
+// A translation without these is not a translation of the mail.
+const TEMPLATE_NEEDS = ['subject', 'html', 'text'];
+const LAYOUT_NEEDS = ['html', 'text'];
+
+// The row in `language` where it has a usable translation, else the row itself.
+function inLanguage(row, language, fields, needs) {
+  const translations = row.translations;
+  const own = language && translations && typeof translations === 'object' && Object.hasOwn(translations, language)
+    ? translations[language] : null;
+  if (!own || !needs.every((field) => typeof own[field] === 'string' && own[field].trim())) return row;
+  const out = { ...row };
+  for (const field of fields) out[field] = typeof own[field] === 'string' ? own[field] : '';
+  return out;
+}
+
+/**
+ * The template and layout a send renders with, each in `language` if that part
+ * has a usable translation, else English (the owner's per-part rule). `english`
+ * is both parts in English, for when a translation turns out unusable at send
+ * time. A null template means there is nothing to send with: no snapshot, no
+ * live row for the kind, or a layout that is not in the snapshot. A template
+ * whose layout is missing is not sent unframed: it goes the failure path.
+ */
+function resolve(snap, kind, language) {
+  const none = { template: null, layout: null };
+  const action = actionFor(kind);
+  if (!action || !snap || !snap.templates || !Object.hasOwn(snap.templates, kind)) return none;
+  const template = snap.templates[kind];
+  const family = template.layout_family_id;
+  const layout = family == null ? null : (snap.layouts && Object.hasOwn(snap.layouts, family) ? snap.layouts[family] : undefined);
+  if (layout === undefined) return none;
+  const reader = action.englishOnly ? null : language;
+  const translated = {
+    template: inLanguage(template, reader, TEMPLATE_FIELDS, TEMPLATE_NEEDS),
+    layout: layout && inLanguage(layout, reader, LAYOUT_FIELDS, LAYOUT_NEEDS),
+  };
+  return { ...translated, english: { template, layout } };
+}
+
+// ── The sender's copy ──────────────────────────────────────────────────
+//
+// Each server keeps the last snapshot it read, per pool, and serves sends from
+// memory. A complete snapshot is good for SNAPSHOT_FRESH_MS; after that the next
+// send starts a refresh behind it and is served the copy in hand, so an edit
+// reaches mail within about half a minute. A snapshot that is empty or misses a
+// kind is not kept as good: on a fresh database a server that lost the seed lock
+// can read before the winner commits, and a preview's rows arrive after its
+// import, so the next send asks again. A failed or worse read keeps what was in
+// hand: the owner's first rule is that a database problem does not stop mail.
+
+const SNAPSHOT_FRESH_MS = 30 * 1000;
+// A read that has not answered in this long no longer counts as in flight, so
+// one stuck connection cannot stop every later refresh.
+const LOAD_LIMIT_MS = 15 * 1000;
+
+const copies = new WeakMap();
+
+function copyFor(pool) {
+  let copy = copies.get(pool);
+  if (!copy) {
+    copy = { snapshot: null, complete: false, loadedAt: 0, loading: null };
+    copies.set(pool, copy);
+  }
+  return copy;
+}
+
+const hasRows = (snap) => !!snap && Object.keys(snap.templates).length > 0;
+
+// Every action has its live template, and every layout one of them names is there.
+function isComplete(snap) {
+  return Object.keys(ACTIONS).every((kind) => Object.hasOwn(snap.templates, kind))
+    && Object.values(snap.templates).every((row) => row.layout_family_id == null || Object.hasOwn(snap.layouts, row.layout_family_id));
+}
+
+function load(pool, copy, clock) {
+  if (copy.loading) return copy.loading;
+  let timer;
+  const limit = new Promise((_, fail) => {
+    timer = setTimeout(() => fail(new Error(`no answer in ${LOAD_LIMIT_MS} ms`)), LOAD_LIMIT_MS);
+    timer.unref?.();
+  });
+  const loading = Promise.race([snapshot(pool), limit])
+    .then((fresh) => {
+      if (isComplete(fresh)) {
+        Object.assign(copy, { snapshot: fresh, complete: true, loadedAt: clock.now() });
+      } else {
+        if (!copy.complete && hasRows(fresh)) copy.snapshot = fresh;
+        log.error('platform-mail', 'The email templates read are incomplete: asking again on the next send', {
+          templates: Object.keys(fresh.templates).length, kinds: Object.keys(ACTIONS).length,
+        });
+        // A good copy in hand waits its time like a good read before asking again.
+        if (copy.complete) copy.loadedAt = clock.now();
+      }
+    }, (err) => {
+      log.error('platform-mail', 'Could not load the email templates: keeping the last copy', { message: err && err.message });
+      if (copy.complete) copy.loadedAt = clock.now();
+    })
+    .finally(() => {
+      clearTimeout(timer);
+      if (copy.loading === loading) copy.loading = null;
+    });
+  copy.loading = loading;
+  return loading;
+}
+
+/**
+ * The templates to send with, or null when none can be had. Memory first; the
+ * first read races READ_PATIENCE_MS, the patience a mail gives its translation,
+ * so a slow database costs this mail its templates (the failure path) and not a
+ * login. Never rejects. Called at server start so a cold server has a copy.
+ */
+async function getSnapshot(pool, clock = Date) {
+  try {
+    if (!pool) return null;
+    const copy = copyFor(pool);
+    if (copy.complete) {
+      if (clock.now() - copy.loadedAt >= SNAPSHOT_FRESH_MS) load(pool, copy, clock);
+      return copy.snapshot;
+    }
+    const { READ_PATIENCE_MS } = require('./language');
+    let timer;
+    const patience = new Promise((done) => {
+      timer = setTimeout(done, READ_PATIENCE_MS);
+      timer.unref?.();
+    });
+    try {
+      await Promise.race([load(pool, copy, clock), patience]);
+    } finally {
+      clearTimeout(timer);
+    }
+    return copy.snapshot;
+  } catch (err) {
+    log.error('platform-mail', 'Could not read the email templates', { message: err && err.message });
+    return null;
+  }
+}
+
+// A process with no database configured at all (a test or a script that sends
+// with only a transport) has no store to read or to have lost. It words its mail
+// from the first templates in memory, in English, as a fresh database would hold
+// them: the send still happens, as it always has without a database. A process
+// whose database is configured but unreachable never comes here; it goes the
+// owner's failure order.
+let seeded;
+function seededSnapshot() {
+  if (seeded === undefined) {
+    try {
+      const { SEEDS, englishTemplate } = require('../../db/email-template-seeds');
+      const layouts = {};
+      const families = new Map(SEEDS.layouts.map((layout, i) => [layout.name, i + 1]));
+      SEEDS.layouts.forEach((layout, i) => { layouts[i + 1] = { family_id: i + 1, name: layout.name, html: layout.html, text: layout.text, translations: {} }; });
+      const templates = {};
+      for (const kind of Object.keys(ACTIONS)) {
+        const { name, layout, ...fields } = englishTemplate(kind);
+        templates[kind] = { action: kind, name, layout_family_id: layout ? families.get(layout) : null, translations: {}, ...fields };
+      }
+      seeded = { templates, layouts };
+    } catch (err) {
+      log.error('platform-mail', 'Could not build the first email templates in memory', { message: err && err.message });
+      seeded = null;
+    }
+  }
+  return seeded;
+}
+
+/** Resolves once no load is in flight for `pool` (tests). */
+async function settled(pool) {
+  const copy = copies.get(pool);
+  while (copy && copy.loading) await copy.loading;
 }
 
 // Every version, archived and deleted included, for the admin's history and
@@ -231,4 +420,12 @@ async function listAll(pool) {
   return { templates: templates.rows, layouts: layouts.rows };
 }
 
-module.exports = { snapshot, saveTemplate, saveLayout, deleteTemplate, deleteLayout, restoreTemplate, saveTranslation, listAll };
+module.exports = {
+  snapshot,
+  resolve,
+  getSnapshot,
+  seededSnapshot,
+  settled,
+  SNAPSHOT_FRESH_MS,
+  LOAD_LIMIT_MS,
+  saveTemplate, saveLayout, deleteTemplate, deleteLayout, restoreTemplate, saveTranslation, listAll };

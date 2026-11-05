@@ -14,7 +14,8 @@
 // read as template text, so nothing in one can reach the layout's placeholders.
 
 const { actionFor } = require('./actions');
-const { render } = require('./template-language');
+const log = require('../logger');
+const { render, escapeHtml } = require('./template-language');
 const { englishFrom, englishTexts } = require('../push-text');
 
 const RAW_IN_LAYOUT = ['content', 'why', 'preheader'];
@@ -74,4 +75,42 @@ function renderMessage(kind, { template, layout }, payload = {}, t, { readerHasL
   };
 }
 
-module.exports = { renderMessage };
+// The values a mail exists to carry. Its translation must carry every one the
+// English does, or the English goes instead (templates.js keepsWhatItCarries,
+// with this renderer's escaping).
+function keepsWhatItCarries(payload, inEnglish, translated) {
+  const carried = [payload.code, payload.url, payload.confirmUrl, payload.statusUrl, payload.unsubscribeUrl, ...Object.values(payload.mobile || {})];
+  return carried.every((value) => {
+    if (value == null || value === '') return true;
+    const plain = String(value);
+    const marked = escapeHtml(plain);
+    return (!inEnglish.text.includes(plain) || translated.text.includes(plain))
+      && (!inEnglish.html.includes(marked) || translated.html.includes(marked));
+  });
+}
+
+/**
+ * One send's message from what the store resolved: `{ template, layout, english,
+ * t, readerHasLanguage }`. A translated part is used only if the result still
+ * carries the code and links the English does, and renders at all; otherwise the
+ * English goes. `t` (the translator for the words built in code) is used only
+ * with a translated template, so an English body never gets translated words.
+ * Throws when the English itself cannot render, for the caller's failure path.
+ */
+function renderResolved(kind, { template, layout, english, t, readerHasLanguage = false }, payload) {
+  const options = { readerHasLanguage: !!readerHasLanguage };
+  const base = english || { template, layout };
+  const bodyTranslated = template !== base.template;
+  if (!bodyTranslated && layout === base.layout) return renderMessage(kind, base, payload, undefined, options);
+  const inEnglish = renderMessage(kind, base, payload, undefined, options);
+  try {
+    const translated = renderMessage(kind, { template, layout }, payload, bodyTranslated ? t || undefined : undefined, options);
+    if (keepsWhatItCarries(payload, inEnglish, translated)) return translated;
+    log.warn('platform-mail', 'A mail\'s translation lost what it carries: sending the English', { kind });
+  } catch (err) {
+    log.warn('platform-mail', 'A mail\'s translation could not be used', { kind, message: err.message });
+  }
+  return inEnglish;
+}
+
+module.exports = { renderMessage, renderResolved, keepsWhatItCarries };
