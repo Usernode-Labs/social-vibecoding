@@ -748,9 +748,12 @@ async function bellPushes(db, changed) {
       moment: row.bell, said, appName: f.name || f.slug, appSlug: f.slug, issueNumber: row.issueNumber,
       requestTitle: f.issue_title || null, ...(reason ? { reason } : {}),
     });
+    // Its push goes out from the row (notifications_enqueue_mobile_push_
+    // deliveries); "ready to try" also owes the email that stands in for the
+    // push when no phone can take it (activity-mail.js noticeMailTargets).
     const { rows: rang } = await db.query(
-      `INSERT INTO notifications (user_id, conversation_id, source_user_id, kind, detail, app_id)
-       SELECT $1, $2, $3, $4, $5, $6
+      `INSERT INTO notifications (user_id, conversation_id, source_user_id, kind, detail, app_id, mailed_at)
+       SELECT $1, $2, $3, $4::text, $5, $6, CASE WHEN $4::text = 'build_ready' THEN NULL ELSE NOW() END
         WHERE NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_user_id = $3)
        RETURNING id`,
       [userId, f.conversation_id || null, f.bot_id, BELL_KINDS[row.bell], detail, row.appId],

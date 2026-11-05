@@ -236,4 +236,75 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.deepEqual([...byNumber.keys()].sort(), [5, 6]);
     assert.equal(byNumber.get(6).stage, 'live');
   });
+
+  // Decision 7: the requester's bell rings from the stage, with no message
+  // behind it. Its push goes out from the row; "ready to try" owes the email
+  // that stands in for the push (activity-mail.js noticeMailTargets).
+  await t.test('the bell: a stage change rings its requester, and "ready" owes its email', async () => {
+    const mail = require('../src/services/activity-mail');
+    const rows = async (who) => (await pool.query(
+      `SELECT kind, detail, source_user_id, conversation_message_id, mailed_at, app_id FROM notifications
+        WHERE user_id = $1 AND kind LIKE 'build_%' ORDER BY id`, [who.id])).rows;
+    await ask(20, ada, 'Swap by post');
+    const up = await change(bot, 520, [20], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await run(20, 'ready', { buildOk: true, proposalSessionId: up.id });
+    const changed = await ws.refresh(pool, [req(20)]);
+    assert.deepEqual([changed[0].state.stage, changed[0].bell], ['up_for_vote', 'ready']);
+    const pushes = await ws.pushesOf(pool, changed);
+    assert.deepEqual(pushes.map((p) => p.data.type), ['work_state', 'notifications_changed']);
+    assert.deepEqual(pushes[1].routing, { userId: ada.id });
+    const [ready] = await rows(ada);
+    assert.equal(ready.kind, 'build_ready');
+    assert.equal(Number(ready.source_user_id), bot.id, 'from Homeroom bot');
+    assert.equal(Number(ready.app_id), app.id, 'filed under its project');
+    assert.equal(ready.conversation_message_id, null, 'no message behind it');
+    assert.equal(ready.mailed_at, null, 'its email is owed');
+    const said = require('../src/services/homeroom-bot-notify-copy').parseBotDetail(ready.detail);
+    assert.deepEqual([said.moment, said.issueNumber, said.appSlug], ['ready', 20, 'ws-seeds']);
+    // The notice clock takes it, and words its email from the detail, with
+    // a link to the request's page.
+    const { items } = await mail.noticeMailTargets(pool);
+    const target = items.find((it) => it.target.startsWith('notification:'));
+    assert.ok(target, 'owed to the notice clock');
+    const sent = [];
+    const real = mail.emailIfNoPush;
+    mail.emailIfNoPush = async (_pool, args) => { sent.push(args); return 'sent'; };
+    try {
+      const out = await mail.mailNotice(pool, target.input.notificationId, { once: (_k, fn) => fn() });
+      assert.deepEqual(out, { said: 'sent' });
+    } finally { mail.emailIfNoPush = real; }
+    assert.deepEqual([sent[0].kind, sent[0].userId, sent[0].appSlug, sent[0].issueNumber], ['build_ready', ada.id, 'ws-seeds', 20]);
+    assert.equal(sent[0].detail, ready.detail);
+    assert.ok((await rows(ada))[0].mailed_at, 'sent once');
+    assert.equal((await mail.noticeMailTargets(pool)).items.length, 0);
+    // The same stage again rings nothing.
+    assert.deepEqual(await ws.pushesOf(pool, await ws.refresh(pool, [req(20)])), []);
+
+    // Closed without going live: it stopped, and rings, owing no email.
+    await pool.query("UPDATE chat_sessions SET status = 'closed' WHERE id = $1", [up.id]);
+    const stopped = await ws.refresh(pool, [req(20)]);
+    assert.deepEqual([stopped[0].state.stage, stopped[0].bell], ['stopped', 'stopped']);
+    await ws.pushesOf(pool, stopped);
+    const after = await rows(ada);
+    assert.deepEqual(after.map((r) => r.kind), ['build_ready', 'build_stopped']);
+    assert.ok(after[1].mailed_at, 'no email for a stop');
+
+    // A first version has its own news in its maker's chat: no stage bell.
+    await ask(21, bob, 'First version of Seed swap');
+    await pool.query('UPDATE homeroom_bot_requesters SET first_version = TRUE WHERE app_id = $1 AND issue_number = 21', [app.id]);
+    const fv = await change(bot, 521, [21], 'merged', { promotedAt: new Date(), liveAt: new Date() });
+    await run(21, 'ready', { buildOk: true, proposalSessionId: fv.id });
+    const fvChanged = await ws.refresh(pool, [req(21)]);
+    assert.deepEqual([fvChanged[0].state.stage, fvChanged[0].bell], ['live', 'live']);
+    assert.deepEqual((await ws.pushesOf(pool, fvChanged)).map((p) => p.data.type), ['work_state']);
+    assert.deepEqual(await rows(bob), []);
+
+    // Somebody who blocked the bot is not rung.
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [bob.id, bot.id]);
+    await ask(22, bob, 'Seed photos');
+    const theirs = await change(bot, 522, [22], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await run(22, 'ready', { buildOk: true, proposalSessionId: theirs.id });
+    await ws.pushesOf(pool, await ws.refresh(pool, [req(22)]));
+    assert.deepEqual(await rows(bob), []);
+  });
 });

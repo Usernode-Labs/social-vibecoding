@@ -311,15 +311,28 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
   );
   assert.equal(unread, said.length, 'the quiet ones are still there, unread');
 
-  // A change to a project with others in it is "your change to" it.
-  await dm.sendDm(pool, {
+  // A change to a project with others in it is "your change to" it. 5 Nov
+  // 2026 (docs/plans/bot-one-model.md, step 4): its news is not a message in
+  // Ben's chat with the bot; his bell rings from its stage
+  // (services/work-state.js bellPushes), in the same words.
+  assert.equal(await dm.sendDm(pool, {
     bot, userId: ben.id, content: 'It\'s built.', idempotencyKey: 'sc-1',
     metadata: { kind: 'proposal', appSlug: supper.slug, appName: supper.name, issueNumber: 4 },
-  });
-  await dm.sendDm(pool, {
-    bot, userId: ben.id, content: 'It\'s live now.', idempotencyKey: 'sc-2',
-    metadata: { kind: 'merged', appSlug: supper.slug, appName: supper.name, issueNumber: 4 },
-  });
+  }), null, 'not sent');
+  const workState = require('../src/services/work-state');
+  const { rows: [sc] } = await pool.query('SELECT id FROM apps WHERE slug = $1', [supper.slug]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 4, $2, 'Dark mode')`, [sc.id, ben.id]);
+  const { rows: [scChange] } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, promoted_at, check_state, checks_commit_sha, reviewed_head_sha)
+     VALUES ($1, $2, 'promoted', '{4}', NOW(), 'passing', 'abc', 'abc') RETURNING id`, [sc.id, bot.id]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, proposal_session_id)
+     VALUES ($1, 4, 'live', 'ready', TRUE, $2)`, [sc.id, scChange.id]);
+  const stage = async () => workState.pushesOf(pool, await workState.refresh(pool, [{ appId: sc.id, issueNumber: 4 }]));
+  await stage();
+  await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [scChange.id]);
+  await stage();
   const { rows: benRang } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id', [ben.id]);
   assert.deepEqual(moments(benRang), ['ready/ready_group:Supper Club', 'live/live:Supper Club']);
 

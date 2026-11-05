@@ -422,16 +422,31 @@ function isBotNewsRow(row) {
 
 /**
  * Pure (5 Nov 2026, docs/plans/bot-one-model.md step 4): whether a message
- * of the bot's, by its metadata, is a request's news: REQUEST_NEWS below, as
- * a test of one message about to be sent. Such a message is no longer sent
+ * of the bot's, by its metadata, is a request's news (REQUEST_NEWS_KINDS
+ * below), as a test of one message about to be sent. Such a message is no longer sent
  * at all (homeroom-bot-dm.js sendDm): a request's news is said on its own
  * page, and its requester's bell rings from its stage (services/work-state.js).
  * A first version's news is not one: it has no request page yet.
  */
+// The kinds of the bot's messages that report how a request is going, as
+// its senders stamp them: the posts relayed from its thread (homeroom-bot-
+// live.js post kinds), its activity card and quiet step lines, its plan card
+// for a complicated request, and the notes on its change (a preview that
+// failed, a look owed, merged) and on the request (closed by somebody
+// else's change, taken by a person). Anything else is the conversation: a
+// reply to what the person said or tapped (`closing`, `ack`, …), a hello, a
+// notice about their account (`allowance`, `paused`). Named, not inferred
+// from an issue number: a reply about a request is still a reply.
+const REQUEST_NEWS_KINDS = new Set([
+  'activity', 'step', 'plan', 'plan_stopped', 'looking', 'question', 'spec', 'proposal', 'checks',
+  'build_failed', 'followup_failed', 'followup_person', 'blocked', 'empty', 'person', 'live',
+  'preview_failed', 'needs_look', 'merged', 'request_closed', 'request_taken',
+]);
+
 function isRequestNewsMeta(meta) {
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
-  if (meta.moment === 'reply' || meta.firstVersion === true || BOT_CONVERSATION_KINDS.has(meta.kind)) return false;
-  return /^[1-9][0-9]{0,9}$/.test(String(meta.issueNumber ?? '')) || meta.kind === 'activity';
+  if (meta.moment === 'reply' || meta.firstVersion === true) return false;
+  return REQUEST_NEWS_KINDS.has(String(meta.kind || ''));
 }
 
 /** The cards a main-stream page of this conversation carries: all of them, but in the chat with the bot. */
@@ -2608,6 +2623,7 @@ module.exports = {
   isBotNewsRow,
   BOT_CONVERSATION_KINDS,
   isRequestNewsMeta,
+  REQUEST_NEWS_KINDS,
   ALSO_IN_CHAT,
   REQUEST_NEWS,
   PLUS_THREAD_OPENER,
