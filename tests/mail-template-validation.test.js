@@ -136,7 +136,7 @@ test('every branch of the conditions renders to safe HTML', () => {
   hasError(validateTemplate('project_opened', opened('<title>x{{#if hasApp}}</title><iframe>{{/if}}</title>'), LAYOUT), 'html', /./);
   hasError(validateTemplate('project_opened', opened('<a href="https://x.example/{{#if hasApp}}a{{/if}}">x</a>'), LAYOUT), 'html', /condition/);
   const { branchProblem } = require('../src/services/mail/template-validation');
-  assert.match(branchProblem('{{#if a}}<style>{{/if}}<p>x</p>{{#unless a}}</style>{{/unless}}@import "y";'), /@import/);
+  assert.match(branchProblem('{{#if a}}<style>{{/if}}<p>x</p>{{#unless a}}</style>{{/unless}}@import "y";'), /@import|style/);
   assert.equal(branchProblem('{{#if a}}<p>{{a}}</p>{{else}}<i>none</i>{{/if}}'), null);
   hasError(validateLayout({ name: 'L', html: '{{content}}{{#if why}}<style>{{/if}}', text: '{{content}}' }, []), 'html', /style/);
 });
@@ -211,4 +211,29 @@ test('the framed mail is checked on every path, not only the sample', () => {
   const many = ['a', 'b', 'c', 'd', 'e'].map((n) => `{{#if ${n}}}x{{/if}}`).join('');
   const more = ['f', 'g', 'h', 'i'].map((n) => `{{#if ${n}}}x{{/if}}`).join('');
   assert.match(framedPathsProblem({ html: many, why: more, preheader: '' }, L2), /more than 8/);
+});
+
+test('probe p7: character references, hiding containers and unbalanced parts', () => {
+  const t = (o) => ({ name: 'n', subject: 's', preheader: '', why: '', ...o });
+  const STD = { html: '<div>{{#if preheader}}<div style="display:none">{{preheader}}</div>{{/if}}{{content}}<div>Homeroom<br>{{why}}</div></div>', text: '{{content}}\n{{why}}' };
+  const L = (h) => validateLayout({ name: 'l', html: h, text: '{{content}}' }, []);
+  hasError(validateTemplate('otp', t({ html: '<p>Your code: &#{{code}}</p>', text: '{{code}}' }), STD), 'html', /&/);
+  hasError(validateTemplate('otp', t({ html: '<p>Your code: &#x{{code}}</p>', text: '{{code}}' }), STD), 'html', /&/);
+  hasError(validateTemplate('otp', t({ html: '<p>&amp{{code}}</p>', text: '{{code}}' }), STD), 'html', /&/);
+  hasError(L('&#{{content}}'), 'html', /&/);
+  assert.deepEqual(validateTemplate('otp', t({ html: '<p>Code &amp; more: {{code}}</p>', text: '{{code}}' }), STD), { ok: true });
+  hasError(validateTemplate('project_opened', t({ html: '<p>Hi</p><template>', why: '<a href="{{unsubscribeUrl}}">Unsubscribe</a>', text: '{{unsubscribeUrl}}' }), STD), 'html', /template/);
+  hasError(L('<template>{{why}}</template>{{content}}'), 'html', /template/);
+  hasError(validateTemplate('otp', t({ html: '<p>{{code}}</p><select>', text: '{{code}}' }), STD), 'html', /select/);
+  hasError(validateTemplate('otp', t({ preheader: '</div><p>visible</p>', html: '<p>{{code}}</p>', text: '{{code}}' }), STD), 'preheader', /did not open/);
+  hasError(validateTemplate('otp', t({ preheader: 'x<div style="display:none">', html: '<p>{{code}}</p>', text: '{{code}}' }), STD), 'preheader', /open/);
+  hasError(L('{{#if why}}<a href="https://a.test/">{{/if}}{{content}}'), 'html', /<a>/);
+});
+
+test('the required check sees the code as a reader would, references decoded', () => {
+  const { requiredOnEveryPath } = require('../src/services/mail/template-validation');
+  const { actionFor } = require('../src/services/mail/actions');
+  const fields = { subject: 's', preheader: '', why: '', html: '<p>&#{{code}}</p>', text: '{{code}}' };
+  assert.match(requiredOnEveryPath(actionFor('otp'), fields, null).message, /\{\{code\}\}/);
+  assert.equal(requiredOnEveryPath(actionFor('otp'), { ...fields, html: '<p>{{code}}</p>' }, null), null);
 });

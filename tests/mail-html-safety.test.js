@@ -136,3 +136,15 @@ test('openAtEnd names a part that leaves the parser outside ordinary text', () =
     assert.equal(openAtEnd(part), null, part);
   }
 });
+
+test('openAtEnd: a part closes every element it opens, and none it did not', () => {
+  const { openAtEnd } = require('../src/services/mail/html-safety');
+  assert.match(openAtEnd('x<div style="display:none">'), /leaves <div> open/);
+  assert.match(openAtEnd('</div><p>visible</p>'), /did not open/);
+  assert.match(openAtEnd('<a href="https://a.test/"><b>x</a></b>'), /still open/);
+  assert.equal(openAtEnd('<p>a<br><img src="https://a.test/x.png"></p><!--[if mso]><table><![endif]-->'), null);
+});
+
+test('template, select and their kin are not allowed', () => {
+  for (const name of ['template', 'select', 'option', 'optgroup', 'datalist']) refused(`<p>x</p><${name}>`, new RegExp(name));
+});

@@ -36,7 +36,13 @@ const BLOCKED_ELEMENTS = new Set([
   // Foreign content: its own parsing rules, and SVG can set a link to a script
   // URL through animation.
   'svg', 'math',
+  // Inert or hiding containers with no use in a mail: what follows an open one
+  // is never shown (a <template>) or shown as a control, not as the mail.
+  'template', 'select', 'option', 'optgroup', 'datalist',
 ]);
+
+// Elements that have no end tag.
+const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 
 // Whose text runs to the matching end tag, unparsed.
 const RAW_TEXT_ELEMENTS = new Set(['style', 'textarea', 'title']);
@@ -67,7 +73,7 @@ const isSpace = (ch) => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' 
 const isLetter = (ch) => (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
 const shown = (name) => (name.length > 40 ? `${name.slice(0, 40)}...` : name);
 
-// One pass of character references, as the browser decodes an attribute value:
+// One pass of character references, as the browser decodes text and attribute values:
 // numeric ones with or without their semicolon, and the named ones above.
 function decodeEntities(text) {
   // Any number of digits, as the HTML parser reads them: `&#0000000106;` is
@@ -233,6 +239,8 @@ function scanInto(s, offset, out, depth) {
       }
       out.tags.push({
         ...tag,
+        // Inside a comment: Outlook's markup, not the mail's structure.
+        inComment: depth > 0,
         start: tag.start + offset,
         end: tag.end + offset,
         attributes: tag.attributes.map((a) => ({ ...a, start: a.start + offset, valueStart: a.valueStart + offset, valueEnd: a.valueEnd + offset })),
@@ -295,7 +303,24 @@ function scanHtml(html) {
  */
 function openAtEnd(html) {
   const scan = scanHtml(html);
-  return scan.ok && scan.open ? `The HTML ends ${scan.open}, so what follows it would be read as part of it.` : null;
+  if (!scan.ok) return null;
+  if (scan.open) return `The HTML ends ${scan.open}, so what follows it would be read as part of it.`;
+  // Every element a part opens it closes, and it closes none it did not open,
+  // so the next part is never inside one of its elements (a hidden div, a
+  // link) and never breaks out of the layout's.
+  const stack = [];
+  for (const tag of scan.tags) {
+    if (tag.inComment || VOID_ELEMENTS.has(tag.name)) continue;
+    if (!tag.closing) { stack.push(tag.name); continue; }
+    if (stack[stack.length - 1] !== tag.name) {
+      return stack.length
+        ? `The HTML closes </${tag.name}> while <${stack[stack.length - 1]}> is still open. Close each element in the order it was opened.`
+        : `The HTML closes </${tag.name}>, which it did not open, so it would close part of the layout around it.`;
+    }
+    stack.pop();
+  }
+  if (stack.length) return `The HTML leaves <${stack[stack.length - 1]}> open, so what follows it would be inside it. Close every element it opens.`;
+  return null;
 }
 
 /** `{ ok: true }` or `{ ok: false, reason }`, a sentence for the admin. */
@@ -308,4 +333,4 @@ function validateEmailHtml(html) {
   return scan.ok ? { ok: true } : scan;
 }
 
-module.exports = { validateEmailHtml, scanHtml, openAtEnd, MAX_EMAIL_HTML_BYTES, URL_ATTRIBUTES };
+module.exports = { validateEmailHtml, scanHtml, openAtEnd, decodeEntities, MAX_EMAIL_HTML_BYTES, URL_ATTRIBUTES };

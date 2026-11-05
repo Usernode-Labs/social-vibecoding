@@ -23,7 +23,7 @@
 const log = require('../logger');
 const { actionFor } = require('./actions');
 const { parse, render } = require('./template-language');
-const { validateEmailHtml, scanHtml, openAtEnd, URL_ATTRIBUTES, MAX_EMAIL_HTML_BYTES } = require('./html-safety');
+const { validateEmailHtml, scanHtml, openAtEnd, decodeEntities, URL_ATTRIBUTES, MAX_EMAIL_HTML_BYTES } = require('./html-safety');
 
 const LAYOUT_PLACEHOLDERS = {
   content: { description: 'Where each email\'s own HTML or text goes', kind: 'html' },
@@ -103,6 +103,9 @@ function placementProblems(field, source, info, raw) {
   const problems = [];
   const add = (message) => problems.push({ field, message });
   if (/<[!/?]?\{\{/.test(source)) add('A tag cannot start with a placeholder or condition. Put the condition around the whole tag.');
+  // After "&", "&#", "&#x" or "&name", a value would finish a character
+  // reference: `&#{{code}}` turns the six digits into one character.
+  if (/&(?:#[xX]?)?[A-Za-z0-9]*\{\{/.test(source)) add('A placeholder or condition cannot come right after "&": it would join a character reference and could vanish. Write "&amp;" or put a space between.');
   const scan = scanHtml(source);
   if (!scan.ok) return problems;
   const re = /\{\{([^}]*)\}\}/g;
@@ -207,9 +210,9 @@ function rawTextTagsInBranches(field, source) {
 const MAX_BRANCH_NAMES = 8;
 
 // What a placeholder prints while the branches are checked. An empty value, a
-// hyphen and a space are the ones that can change how text around them reads
-// (a comment's end, a word joined to the next).
-const VALUE_VARIANTS = ['x', '', '-', ' '];
+// hyphen, a space and digits are the ones that can change how text around them
+// reads (a comment's end, a word joined to the next, a character reference).
+const VALUE_VARIANTS = ['x', '', '-', ' ', '482913'];
 
 /**
  * Renders `source` once for each true/false combination of the names its
@@ -278,7 +281,12 @@ function guardsFor(action, name) {
   return guards;
 }
 
-const MARK = (name) => `zq${name}qz`;
+// Two markers per value: letters, and digits only, as a code is, so a value
+// that a character reference would swallow is found missing either way.
+const MARKERS = [
+  (name) => `zq${name}qz`,
+  (name, index) => `90817263${String(index).padStart(3, '0')}54637281`,
+];
 
 // The finished mail on every path through its conditions, with each required
 // value and the flags that mean it forced true (a mail without its code has no
@@ -305,7 +313,9 @@ function requiredOnEveryPath(action, text, layout) {
   if (free.length > MAX_BRANCH_NAMES) {
     return `This email tests more than ${MAX_BRANCH_NAMES} different conditions across its parts (${free.join(', ')}), too many to check that it always carries ${required.map((n) => `{{${n}}}`).join(', ')}. Use fewer.`;
   }
-  for (let mask = 0; mask < 2 ** free.length; mask++) {
+  const order = [...vars];
+  for (let mask = 0; mask < 2 ** free.length; mask++) for (const marker of MARKERS) {
+    const MARK = (name) => marker(name, order.indexOf(name));
     const values = {};
     for (const name of vars) values[name] = MARK(name);
     for (const name of forced) values[name] = vars.has(name) ? MARK(name) : true;
@@ -329,7 +339,8 @@ function requiredOnEveryPath(action, text, layout) {
     }
     for (const form of ['html', 'text']) {
       for (const name of action.required[form]) {
-        if (out[form].includes(MARK(name))) continue;
+        // The html as a reader sees it, references decoded.
+        if ((form === 'html' ? decodeEntities(out.html) : out.text).includes(MARK(name))) continue;
         const when = free.filter((_, i) => mask & (1 << i)).map((n) => `{{${n}}}`);
         return {
           field: form,
@@ -563,4 +574,4 @@ function validateLayout(fields, liveTemplates = []) {
   return errors.length ? { ok: false, errors, templates: broken } : { ok: true };
 }
 
-module.exports = { validateTemplate, validateLayout, validateTranslation, branchProblem, framedPathsProblem, LAYOUT_PLACEHOLDERS };
+module.exports = { validateTemplate, validateLayout, validateTranslation, branchProblem, framedPathsProblem, requiredOnEveryPath, LAYOUT_PLACEHOLDERS };

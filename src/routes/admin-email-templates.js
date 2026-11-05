@@ -183,7 +183,10 @@ function emailTemplateAdminRoutes(pool, config) {
     const layout = layoutFields(fields);
     if (!Object.hasOwn(snap.templates, kind)) throw invalid([{ field: 'action', message: LIVE_ONLY_MESSAGE }]);
     const template = store.inReaderLanguage(snap.templates[kind], reader, 'template');
-    return { kind, template, layout, validation: validateLayout({ html: layout.html, text: layout.text }, []) };
+    // The live template it is shown with must still work inside it, on every
+    // path, as it would have to for the layout to be saved.
+    const validation = validateLayout({ html: layout.html, text: layout.text }, [{ ...template, action: kind }]);
+    return { kind, template, layout, validation };
   }
 
   async function preview(what, req, res) {

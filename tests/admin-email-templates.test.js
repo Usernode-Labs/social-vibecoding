@@ -359,6 +359,15 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     assert.equal(layoutTest.status, 200, JSON.stringify(layoutTest.body));
     assert.equal(layoutTest.body.outcome.status, 'sent');
     assert.match(buildMessage(sent.at(-1).kind, sent.at(-1)).html, /^<main>[\s\S]*<\/main>$/);
+    // The live template shown in an unsaved layout must still work in it:
+    // project_opened keeps its unsubscribe link in its why line, which this
+    // layout does not print.
+    assert.match((await live('project_opened')).why, /unsubscribeUrl/);
+    const before = sent.length;
+    const breaking = await call('POST', '/api/admin/email-layouts/test', { action: 'project_opened', fields: { html: '<main>{{content}}</main>', text: '{{content}}' } });
+    assert.equal(breaking.status, 400, JSON.stringify(breaking.body));
+    assert.ok(breaking.body.errors.some((e) => e.message.includes('{{unsubscribeUrl}}')));
+    assert.equal(sent.length, before, 'nothing sent');
     await pool.query('UPDATE users SET email = NULL WHERE id = $1', [user.id]);
     const nowhere = await call('POST', '/api/admin/email-templates/test', { action: 'otp', fields: otpBody(current) });
     assert.equal(nowhere.status, 400);
