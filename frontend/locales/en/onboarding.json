@@ -1785,10 +1785,10 @@
   },
   "tour.step.meetBot.title": {
     "text": "Meet Homeroom bot",
-    "description": "Title of the Home tour's stop pointing at the Messages tab, where Homeroom bot's conversation is the first row. \"Homeroom bot\" is the name of Homeroom's assistant that builds changes; keep \"Homeroom\" as it is."
+    "description": "Title of the Home tour's stop pointing at the Homeroom bot tab in the main navigation, which opens the person's chat with it. \"Homeroom bot\" is the name of Homeroom's assistant that builds changes; keep \"Homeroom\" as it is."
   },
   "tour.step.meetBot.body": {
-    "text": "Your AI assistant to build a change, file an idea or fix a bug for you. Find it in Messages.",
-    "description": "Fifth card of the welcome tour on the Home screen, under the title \"Meet Homeroom bot\", pointing at the Messages tab. The sentence describes Homeroom bot; \"Messages\" is the tab's name."
+    "text": "Your AI assistant to build a change, file an idea or fix a bug for you. Find it in the Homeroom bot tab.",
+    "description": "Fifth card of the welcome tour on the Home screen, under the title \"Meet Homeroom bot\", pointing at the Homeroom bot tab. The sentence describes Homeroom bot; \"Homeroom bot\" is the tab's name in the main navigation, so word it as that tab is shown."
   }
 }
