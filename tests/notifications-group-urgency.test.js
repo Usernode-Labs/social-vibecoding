@@ -232,7 +232,7 @@ test('the reason follows what the server said, and claims no cause it does not k
 });
 
 test('a toned row draws its label as one chip, first on the row; a plain row keeps grey words', () => {
-  const html = (n) => renderToHtml(createElement(sheet.ScreenRow, { view: N._rowView(n), touch: false }));
+  const html = (n) => renderWithoutWindow([N._rowView(n)]);
   const blocked = html(row(1, 1, { kind: 'stale_pr', detail: 'blocked', prTitle: 'Dark mode' }));
   assert.match(blocked, /<span data-notif-tone="blocked" class="[^"]*rounded-full[^"]*bg-red-500\/15[^"]*">Approved, can&#x27;t go live yet<\/span>/);
   assert.ok(blocked.indexOf('data-notif-tone') < blocked.indexOf('Dark mode'), 'before the title');
@@ -248,9 +248,12 @@ test('a toned row draws its label as one chip, first on the row; a plain row kee
 });
 
 test('a folded toned row says its count inside the chip: one pill on the row', () => {
-  const view = { ...N._rowView(row(1, 1, { kind: 'stale_pr', detail: 'blocked', prTitle: 'x' })), count: 3, groupIds: [1, 2, 3] };
-  const html = renderToHtml(createElement(sheet.ScreenRow, { view, touch: false }));
-  assert.equal((html.match(/rounded-full/g) || []).filter(Boolean).length >= 1, true);
+  const html = renderWithoutWindow([
+    row(1, 1, { kind: 'stale_pr', detail: 'blocked', prTitle: 'x' }),
+    row(2, 2, { kind: 'stale_pr', detail: 'blocked', prTitle: 'y' }),
+    row(3, 3, { kind: 'stale_pr', detail: 'blocked', prTitle: 'z' }),
+  ].map(N._rowView));
+  assert.match(html, /data-notif-group-size="3"/);
   assert.match(html, /data-notif-tone="blocked"[^>]*>[^<]*<span class="ms-1\.5" aria-label="3 notifications">3<\/span><\/span>/);
   assert.doesNotMatch(html, /min-w-\[1\.5rem\]/, 'no count pill beside it');
 });

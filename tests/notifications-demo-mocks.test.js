@@ -186,7 +186,7 @@ test('staging + ?demo=1: twenty-one mock rows prepend, and only the unread ones 
       assert.equal(n.appId, 0, 'in the demo project');
     }
     assert.ok(
-      mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed'].includes(n.kind))
+      mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed', 'vote_digest'].includes(n.kind))
         .every((n) => /^staging-demo(?:-|$)/.test(n.appSlug) && /^Staging demo /.test(n.appName)),
       'obviously-fake app attribution on every APP-scoped row',
     );
