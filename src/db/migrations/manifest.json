@@ -140,6 +140,11 @@
       "id": "change-ask-head",
       "sha256": "ab256176d5c248421ea9217b01b5a90fde6bbbea7158886f3f0b1c9da3c51564",
       "schemaSha256": "911318d8ac4b1f57f4a780ee0ef794fc1d4655abc8c3f8f982c590d96f86be2a"
+    },
+    {
+      "id": "work-states",
+      "sha256": "fe0a044ab853f9f6dc655fdfb28ed6ed4092824b316f19cc5e20cca375b39a7e",
+      "schemaSha256": "89d75cdab04a98bb39c08dabe5d92aabfec1d527969de7e8f41b1e5c8a05090f"
     }
   ]
 }
