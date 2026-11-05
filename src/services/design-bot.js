@@ -25,6 +25,7 @@
 // #6260), and still cannot file or post anything from here. What becomes
 // public is always the person's own tap.
 
+const botTools = require('./bot-tools');
 const log = require('./logger');
 const turnEngine = require('./homeroom-bot-turn-engine');
 const { withoutEmDashes } = require('./em-dashes');
@@ -382,41 +383,9 @@ const TOOLS = Object.freeze([
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'list_source',
-      description: 'The files in the project\'s code on main: paths and sizes. Narrow it with dir (a folder, like "public") '
-        + 'and match (words in the path, like "css"). For how its screens are built, their classes and their words.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project: { type: 'string', description: 'Another project they can build on, by name; leave it out for this design\'s.' },
-          dir: { type: 'string', description: 'Only files under this folder.' },
-          match: { type: 'string', description: 'Only paths containing all of these words (case does not matter).' },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'read_source',
-      description: 'One file of the project\'s code on main, with line numbers, a few thousand characters at a time. '
-        + 'For a long file, nextLine says where to go on: call again with fromLine.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project: { type: 'string', description: 'Another project they can build on, by name; leave it out for this design\'s.' },
-          path: { type: 'string', description: 'The file\'s path, from list_source.' },
-          fromLine: { type: 'integer', description: 'The first line to read (1 by default).' },
-        },
-        required: ['path'],
-        additionalProperties: false,
-      },
-    },
-  },
+  // The project's code on main, defined once (src/services/bot-tools/source.js):
+  // a design reads its own project's unless it names another.
+  ...botTools.toolsFor(['list_source', 'read_source'], 'design'),
   {
     type: 'function',
     function: {
@@ -1436,13 +1405,7 @@ async function answer(pool, config, {
         } else if (lateRead) {
           result = { ok: false, error: READING_OVER_ERROR };
         } else if (name === 'list_source' || name === 'read_source') {
-          const named = typeof args.project === 'string' && args.project.trim() ? args.project : project?.slug;
-          if (!named) result = { ok: false, error: 'This design is for a new project, which has no code yet. Name a project they can build on to read its code.' };
-          else if (name === 'list_source') {
-            result = await mayor.listSource(pool, { user, project: named, dir: args.dir, match: args.match, deps });
-          } else {
-            result = await mayor.readSource(pool, { user, project: named, path: args.path, fromLine: args.fromLine, deps });
-          }
+          result = await botTools.run(name, args, { pool, user, scope: 'design', app: project || null, deps: { ...deps, mayor } });
         } else if (name === 'list_requests' || name === 'get_request') {
           result = await boardRead(pool, config, { user, project, args, name, deps, state: board });
         } else if (name === 'read_plan') {

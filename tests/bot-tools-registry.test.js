@@ -92,3 +92,29 @@ test('a platform read runs through the surface\'s own client', async () => {
   assert.deepEqual(await tools.run('get_app', {}, ctx), { error: 'get_app is not offered here.' }, 'Main\'s alone');
   assert.match((await tools.run('get_change', { changeId: 1 }, { scope: 'thread' })).error, /not available/);
 });
+
+test('every surface offers the one definition, never a copy of its own', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const surfaces = {
+    'src/services/homeroom-bot-mayor.js': 'main',
+    'src/services/homeroom-bot-voice.js': 'thread',
+    'src/services/design-bot.js': 'design',
+    'src/services/homeroom-bot-already-done.js': 'thread',
+  };
+  for (const [file, scope] of Object.entries(surfaces)) {
+    const src = read(file);
+    assert.doesNotMatch(src, /name: 'list_source'|name: 'read_source'|fn\('list_source'|fn\('read_source'/, `${file} declares no source tool of its own`);
+    assert.match(src, new RegExp(`botTools\\.toolsFor\\(\\['list_source', 'read_source'\\], '${scope}'\\)`), `${file} offers them in its scope`);
+  }
+  const voice = read('src/services/homeroom-bot-voice.js');
+  assert.doesNotMatch(voice, /fn\('get_change'|fn\('get_discussion'|fn\('list_requests'/, 'the voice\'s platform reads are the connector\'s');
+  assert.match(voice, /botTools\.toolsFor\(PLATFORM_READS, 'thread'\)/);
+  assert.match(read('src/services/homeroom-bot-mayor.js'), /botTools\.toolsFor\(PLATFORM_TOOLS\.filter\(/);
+  // And what the voice offers is exactly the registry's.
+  const voiceTools = require('../src/services/homeroom-bot-voice').toolsFor({ type: 'issue', ref: 1 }, { platform: true });
+  for (const name of ['list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']) {
+    assert.deepEqual(voiceTools.find((t) => t.function.name === name), tools.toolsFor([name], 'thread')[0], name);
+  }
+});

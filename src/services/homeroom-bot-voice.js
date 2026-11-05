@@ -54,6 +54,7 @@
 // the fixed notes it had. Never a reason anything else fails: every entry
 // point is best-effort and never throws.
 
+const botTools = require('./bot-tools');
 const log = require('./logger');
 const repoRef = require('./repo-ref');
 const replyRules = require('../workflow/rules/bot-replies.ts');
@@ -1064,6 +1065,9 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
 
 // ── Tools ────────────────────────────────────────────────────────────────
 
+// The platform reads a project's thread offers (bot-tools/platform.js).
+const PLATFORM_READS = Object.freeze(['get_change', 'get_discussion', 'list_requests']);
+
 function fn(name, description, properties = {}, required = []) {
   return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } };
 }
@@ -1180,23 +1184,11 @@ function toolsFor(place, {
   tools.push(fn('read_message', 'Read one message of this thread in full, by its #id, when its line says it was cut.', {
     id: { type: 'integer' },
   }, ['id']));
-  tools.push(fn('list_source', 'Files in the project\'s code on main, by folder or name.', {
-    dir: { type: 'string' }, match: { type: 'string' },
-  }));
-  tools.push(fn('read_source', 'Read one file of the project\'s code on main.', {
-    path: { type: 'string' }, fromLine: { type: 'integer' },
-  }, ['path']));
-  if (platform) {
-    tools.push(fn('get_change', 'A change on this project: title, description (what people vote on), plan version, whether the description is out of date, status, checks with failing names, votes, preview.', {
-      changeId: { type: 'integer' },
-    }, ['changeId']));
-    tools.push(fn('get_discussion', 'Read a discussion on this project (threadType issue, session, or channel).', {
-      threadType: { type: 'string', enum: ['issue', 'session', 'channel', 'message'] }, ref: { type: 'integer' },
-    }, ['threadType']));
-    tools.push(fn('list_requests', 'This project\'s open requests, optionally matching a query.', {
-      query: { type: 'string' },
-    }));
-  }
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 2): the project's code
+  // and the platform's reads, each defined once (src/services/bot-tools/):
+  // the reads with the web connector's own schemas, about this project only.
+  tools.push(...botTools.toolsFor(['list_source', 'read_source'], 'thread'));
+  if (platform) tools.push(...botTools.toolsFor(PLATFORM_READS, 'thread'));
   return tools;
 }
 
@@ -1712,15 +1704,17 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         };
       }
       case 'list_source':
-        return await mayor.listSource(pool, { user, project: app.slug, dir: args.dir, match: args.match, deps });
       case 'read_source':
-        return await mayor.readSource(pool, { user, project: app.slug, path: args.path, fromLine: args.fromLine, deps });
+        return await botTools.run(name, args, { pool, user, scope: 'thread', app, deps: { ...deps, mayor } });
       case 'get_change':
       case 'get_discussion':
       case 'list_requests':
         if (!platform) return { error: 'That lookup is not available right now.' };
         {
-          const out = await scopedPlatformCall(pool, platform, app, name, args);
+          const out = await botTools.run(name, args, {
+            pool, user, scope: 'thread', app, deps,
+            platformCall: (tool, given) => scopedPlatformCall(pool, platform, app, tool, given),
+          });
           if (name === 'get_change' && !out?.error) ctx.readChanges.add(Number(args.changeId));
           return out;
         }

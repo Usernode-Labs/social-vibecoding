@@ -82,6 +82,7 @@
 // every "my proposals" list leaves them out. What this needs is the bot's
 // own ledger, scoped to one person, which is a handful of queries here.
 
+const botTools = require('./bot-tools');
 const log = require('./logger');
 const crypto = require('node:crypto');
 const { withoutEmDashes } = require('./em-dashes');
@@ -758,43 +759,8 @@ const TOOLS = [
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'list_source',
-      description: 'The files in a project\'s code on main, for a project they can build on: paths and sizes, at most '
-        + `${SOURCE_MAX_PATHS}. Narrow it with dir (a folder, like "src/services") and match (words in the path, like "mail"). `
-        + '`more` says how many matching paths were left out.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project: { type: 'string', description: 'The project\'s name or short name.' },
-          dir: { type: 'string', description: 'Only files under this folder.' },
-          match: { type: 'string', description: 'Only paths containing all of these words (case does not matter).' },
-        },
-        required: ['project'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'read_source',
-      description: 'One file of a project\'s code on main, for a project they can build on, with line numbers, '
-        + `about ${SOURCE_CHUNK_CHARS} characters at a time. For a long file, nextLine says where to go on: call again with fromLine.`,
-      parameters: {
-        type: 'object',
-        properties: {
-          project: { type: 'string', description: 'The project\'s name or short name.' },
-          path: { type: 'string', description: 'The file\'s path, from list_source.' },
-          fromLine: { type: 'integer', description: 'The first line to read (1 by default).' },
-        },
-        required: ['project', 'path'],
-        additionalProperties: false,
-      },
-    },
-  },
+  // A project's code on main, defined once (src/services/bot-tools/source.js).
+  ...botTools.toolsFor(['list_source', 'read_source'], 'main'),
   {
     type: 'function',
     function: {
@@ -3331,8 +3297,9 @@ async function runTool(pool, ctx, name, args) {
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'start_project_thread': return await startProjectThread(pool, ctx, args);
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
-      case 'list_source': return await listSource(pool, { user, project: args.project, dir: args.dir, match: args.match, deps });
-      case 'read_source': return await readSource(pool, { user, project: args.project, path: args.path, fromLine: args.fromLine, deps });
+      case 'list_source':
+      case 'read_source':
+        return await botTools.run(name, args, { pool, user, scope: 'main', deps: { ...deps, mayor: module.exports } });
       case 'answer_question': {
         const dm = dmModule(deps);
         let filter = {};
@@ -3953,10 +3920,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       log.warn('homeroom-bot-mayor', 'Platform tools unavailable for a DM turn', { userId: user.id, err: err.message });
     }
     try {
+      // The platform's reads this turn's grant serves, with the web
+      // connector's own schemas (src/services/bot-tools/platform.js).
       const platformTools = platform
-        ? require('./openrouter-mayor').toChatTools(
-          (platform.modelTools || []).filter((tool) => PLATFORM_TOOLS.includes(tool.name)),
-        )
+        ? botTools.toolsFor(PLATFORM_TOOLS.filter((name) => (platform.modelTools || []).some((tool) => tool.name === name)), 'main')
         : [];
       // Homeroom bot parity (P1-P9): the thread tools this turn has
       // (homeroom-bot-thread-tools/), between its own and the platform's.
@@ -4091,7 +4058,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           sayDoing(pool, ctx, name, args);
           const onPlatform = platform && PLATFORM_TOOLS.includes(name);
           const result = onPlatform
-            ? await platformCall(platform, name, args, pictures)
+            ? await botTools.run(name, args, {
+              pool, user: ctx.user, scope: 'main', deps,
+              platformCall: (tool, given) => platformCall(platform, tool, given, pictures),
+            })
             : await runTool(pool, ctx, name, args);
           if (!onPlatform) noteRequests(ctx, result);
           // P1: what it read, for the reply's "Looked at" line.
