@@ -14,7 +14,7 @@
 //
 // What this pins:
 //   1. Needs you's order: the Needs you feed, the bot's plans waiting to be
-//      reviewed and the requests it handed back (Say what's next, Restart
+//      reviewed and the requests it handed back (Needs Reply, Restart
 //      build), then private threads; each thread is listed once.
 //   2. In progress and Waiting: what goes in each, in what order, and the
 //      words each row says, the bot's stages and claims among them.
@@ -78,7 +78,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
     'plan:7',
     'private:91', 'private:92',
   ], '#390 is the question owed above, so its plan is not listed again; nothing waiting on others is here');
-  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Vote', 'Choose a version', 'Answer it', 'Vote', 'Review plan', null, null]);
+  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Vote', 'Choose a version', 'Needs Reply', 'Vote', 'Review plan', null, null]);
   assert.equal(owedCount(rows), 5, 'the heading counts what asks for you, not your private threads');
   // B17: on a project that is just yours, your yes alone approves it, and
   // the row says so as its card and the project's Needs you do.
@@ -95,7 +95,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(words(rows[3].sub), 'Garden club');
   assert.deepEqual([rows[4].title, words(rows[4].sub), rows[4].href], ['A reminder email', 'Garden club · #410', '#app/garden/dev/issues/410']);
   // #6210 (3 Nov 2026): its Build it is on the plan on the request's page,
-  // so the row opens that page, as a Vote or Say what's next row for it
+  // so the row opens that page, as a Vote or Needs Reply row for it
   // would. B06's way to Main Chat at the plan is gone.
   assert.equal(rows[4].plan, undefined);
   const index = read('frontend/src/features/ai/index.tsx');
@@ -498,7 +498,7 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   ]);
   // Every id is one whole literal, so the inventory can check it exists.
   assert.ok(!read(MODEL).includes('messages:ai.short.${'));
-  // Handed back by the bot: Say what's next, Restart build and Retry the fix,
+  // Handed back by the bot: Needs Reply, Restart build and Retry the fix,
   // each with its reason.
   const work = {
     private: [], next: [], live: [],
@@ -509,7 +509,7 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   const rows = needsYou(bots, work);
   assert.deepEqual(rows.map((r) => [r.key, r.pill && message(r.pill.id), words(r.sub)]), [
     ['need:proposal:1', 'Vote', 'Garden club · #600 · Your vote helps free a build slot'],
-    ['decide:7', "Say what's next", 'Garden club · #410 · Homeroom bot says a person needs to decide'],
+    ['decide:7', 'Needs Reply', 'Garden club · #410 · Homeroom bot says a person needs to decide'],
     ['stopped:8', 'Restart build', 'Garden club · #411 · Homeroom bot\'s build stopped'],
     ['fix_stopped:10', 'Retry the fix', 'Garden club · #413 · Checks failing · Homeroom bot stopped'],
   ]);
@@ -544,7 +544,7 @@ test('#6306: a request the bot found already works says so, and offers Confirm i
   };
   const rows = needsYou([], work);
   assert.deepEqual(rows.map((r) => r.key), ['works:7', 'works:8', 'decide:9']);
-  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Confirm it works', 'Confirm it works', "Say what's next"]);
+  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Confirm it works', 'Confirm it works', 'Needs Reply']);
   assert.deepEqual(rows.map((r) => words(r.sub)), [
     'Garden club · #410 · Already works: Visitors get the lobby and play as a guest.',
     'Garden club · #411 · Already works',

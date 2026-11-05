@@ -513,7 +513,7 @@ export function AiScreen(): ReactNode {
   // A request, a change or a decision: its page, in the column on a wide
   // window, its own page anywhere else. Every row goes to its own place
   // (#6210): a ▷ plan row to its request's page, where its plan and Build
-  // it are, the same place a Vote or Say what's next row for it opens.
+  // it are, the same place a Vote or Needs Reply row for it opens.
   const openPage = (href: string | null, app: AiApp | null, title: string | null, about: AboutItem | null) => {
     how.current = 'row';
     const route = routeOf(href);

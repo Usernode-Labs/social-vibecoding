@@ -840,16 +840,16 @@
     "description": "Line under a request's title on a Done row of the activity drawer of the chat with Homeroom bot: its change was closed without going live."
   },
   "bot.strip.action.answer": {
-    "text": "Answer it",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the bot's question."
+    "text": "Needs Reply",
+    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: the bot asked a question and needs the person's reply; opens the request's thread at that question."
   },
   "bot.strip.action.buildIt": {
     "text": "Review plan",
     "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the bot's plan, where Build it is the button. A verb."
   },
   "bot.strip.action.decide": {
-    "text": "Say what's next",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at what needs deciding, where the person says what happens next. A verb."
+    "text": "Needs Reply",
+    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: the request was handed back for a person's decision and needs their reply; opens the request's thread at what needs deciding. A short label, not a verb."
   },
   "bot.strip.action.tryAgain": {
     "text": "Restart build",
@@ -5048,16 +5048,16 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a pick between competing changes. A verb."
   },
   "ai.pill.answer": {
-    "text": "Answer it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: Homeroom bot asked the person a question about it. A verb."
+    "text": "Needs Reply",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: Homeroom bot asked the person a question about it and needs their reply. A short label, not a verb."
   },
   "ai.pill.buildIt": {
     "text": "Review plan",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: a plan is ready to build; it opens the plan, where Build it is the button. A verb."
   },
   "ai.pill.decide": {
-    "text": "Say what's next",
-    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first. Opens the request, where the person says what happens next. A verb."
+    "text": "Needs Reply",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first, and the bot needs their reply about what happens next. Opens the request. A short label, not a verb."
   },
   "ai.pill.proposeClose": {
     "text": "Confirm it works",
