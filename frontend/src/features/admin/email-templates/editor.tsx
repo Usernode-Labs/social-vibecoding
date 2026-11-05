@@ -1,12 +1,12 @@
 'use strict';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
-  errorsFor, FailureNotice, FieldErrors, liveLayouts, liveTemplate, PlaceholderList, readFailure, request,
-  type Failure, type TemplateRow, type TemplatesPayload,
+  confirmDiscard, errorsFor, FailureNotice, FieldErrors, isDirty, keepDraft, keptDraft, liveLayouts, liveTemplate,
+  PlaceholderList, readFailure, request, useUnloadGuard, type Failure, type TemplateRow, type TemplatesPayload,
 } from './shared';
 
 // The template editor: what the email is for, its name, the layout it wears,
@@ -229,12 +229,33 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   onSaved: (row: TemplateRow) => void;
   onReload: () => void;
 }) {
-  const [draft, setDraft] = useState<TemplateDraft>(() => {
+  // What the editor opened with: unsaved edits are measured against it.
+  const [opened] = useState<TemplateDraft>(() => {
     const live = liveTemplate(payload, action);
     if (live && !isNew) return draftFrom(live);
     const first = liveLayouts(payload)[0];
     return BLANK(action, first ? first.family_id : null);
   });
+  const [draft, setDraft] = useState<TemplateDraft>(() => {
+    // Edits kept when the console last switched away mid-edit come back.
+    const k = keptDraft();
+    if (k && k.kind === 'template' && k.action === action && k.isNew === isNew) { keepDraft(null); return k.draft; }
+    return opened;
+  });
+  const dirty = isDirty(draft, opened);
+  useUnloadGuard(dirty);
+  // Set once the editor is left on purpose (saved, or edits discarded), so
+  // unmounting then keeps nothing.
+  const settled = useRef(false);
+  const latest = useRef({ draft, dirty });
+  latest.current = { draft, dirty };
+  useEffect(() => () => {
+    // The console tore the section down while edits were unsaved: it gives
+    // no way to ask first, so keep them for the section to offer back.
+    if (settled.current || !latest.current.dirty) return;
+    const name = latest.current.draft.name || payload.actions.find((a) => a.action === action)?.label || 'this email';
+    keepDraft({ kind: 'template', action, isNew, label: name, draft: latest.current.draft });
+  }, [action, isNew, payload]);
   const [tab, setTab] = useState<BodyTab>('html');
   const [failure, setFailure] = useState<Failure | null>(null);
   const [saving, setSaving] = useState(false);
@@ -256,7 +277,7 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     setFailure(null);
     const res = await request('/api/admin/email-templates', 'POST', { ...draft, expectedLiveId });
     setSaving(false);
-    if (res.ok && res.data && res.data.template) { onSaved(res.data.template); return; }
+    if (res.ok && res.data && res.data.template) { settled.current = true; onSaved(res.data.template); return; }
     const refused = readFailure(res.status, res.data);
     setFailure(refused);
     if (refused.kind === 'fields') {
@@ -266,13 +287,24 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     }
   };
 
+  const leave = async () => {
+    if (dirty && !(await confirmDiscard('Your changes to this email are not saved. Leave and lose them?'))) return;
+    settled.current = true;
+    onDone();
+  };
+  const reload = async () => {
+    if (dirty && !(await confirmDiscard('Reload discards your changes and shows the version saved now.', 'Reload'))) return;
+    settled.current = true;
+    onReload();
+  };
+
   const fields = {
     name: draft.name, subject: draft.subject, preheader: draft.preheader, why: draft.why,
     html: draft.html, text: draft.text, layoutFamilyId: draft.layoutFamilyId,
   };
   return (
     <TemplateForm payload={payload} draft={draft} isNew={isNew} canWrite={canWrite} tab={tab} failure={failure}
-      saving={saving} onChange={change} onTab={setTab} onSave={save} onCancel={onDone} onReload={onReload} onRetry={save}
+      saving={saving} onChange={change} onTab={setTab} onSave={save} onCancel={leave} onReload={reload} onRetry={save}
       preview={(
         <PreviewPane base="/api/admin/email-templates" body={{ action: draft.action, fields }} mode={tab}
           languages={payload.languages} englishOnly={!!(info && info.englishOnly)} canWrite={canWrite}

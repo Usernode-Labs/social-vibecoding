@@ -23,7 +23,8 @@
 //   POST   /api/admin/email-templates/preview    render unsaved fields, store nothing
 //   POST   /api/admin/email-templates/test       send unsaved fields to yourself
 //   POST   /api/admin/email-templates/:id/restore
-//   DELETE /api/admin/email-templates/:id        body { replacementId } for a live one
+//   DELETE /api/admin/email-templates/:id        body { replacementId } for a live one, and
+//                                                { expectedLiveId } to refuse a stale delete
 // and the same under /api/admin/email-layouts, where DELETE takes the layout's
 // family id (a layout is deleted as a whole) and `replacementId` is a family id.
 
@@ -91,6 +92,12 @@ function optionalId(body, field) {
   const id = toId(value);
   if (id === null) throw invalid([{ field, message: `${field} must be a whole number.` }]);
   return id;
+}
+
+// A delete checks the live version the admin saw only when the body names one
+// (null meaning "there was none"), so an older caller without it still works.
+function expected(body) {
+  return Object.hasOwn(body, 'expectedLiveId') ? { expectedLiveId: optionalId(body, 'expectedLiveId') } : {};
 }
 
 const str = (value) => (typeof value === 'string' ? value : '');
@@ -305,8 +312,9 @@ function emailTemplateAdminRoutes(pool, config) {
     try {
       const id = toId(req.params.id);
       if (!id) throw Object.assign(new Error('That template does not exist'), { code: 'not_found' });
-      const replacementId = optionalId(req.body || {}, 'replacementId');
-      const result = await store.deleteTemplate(pool, id, { replacementId }, req.user.id, {
+      const body = req.body || {};
+      const replacementId = optionalId(body, 'replacementId');
+      const result = await store.deleteTemplate(pool, id, { replacementId, ...expected(body) }, req.user.id, {
         check: async ({ row: version, layout }) => refuseUnless(validateTemplate(version.action, version, layout)),
       });
       const { rows: [gone] } = await pool.query('SELECT action FROM email_templates WHERE id = $1', [id]);
@@ -382,8 +390,9 @@ function emailTemplateAdminRoutes(pool, config) {
     try {
       const familyId = toId(req.params.id);
       if (!familyId) throw Object.assign(new Error('That layout does not exist'), { code: 'not_found' });
-      const replacementFamilyId = optionalId(req.body || {}, 'replacementId');
-      const result = await store.deleteLayout(pool, familyId, { replacementFamilyId }, req.user.id, {
+      const body = req.body || {};
+      const replacementFamilyId = optionalId(body, 'replacementId');
+      const result = await store.deleteLayout(pool, familyId, { replacementFamilyId, ...expected(body) }, req.user.id, {
         // Every template that moves must still work inside the replacement.
         check: async ({ templates, layout }) => {
           const errors = [];

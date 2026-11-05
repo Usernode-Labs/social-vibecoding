@@ -1,6 +1,6 @@
 'use strict';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from '../admin-console.js';
 import { FailureNotice, isLive, type Failure, type TemplateRow, type TemplatesPayload } from './shared';
@@ -39,7 +39,7 @@ export function layoutReplacements(payload: TemplatesPayload, familyId: number):
 }
 
 export function ReplaceDialog({
-  title, intro, choices, required, emptyText, confirmLabel, busy, failure, onConfirm, onCancel,
+  title, intro, choices, required, emptyText, confirmLabel, busy, failure, onConfirm, onCancel, onReload,
 }: {
   title: string;
   intro: string;
@@ -53,14 +53,35 @@ export function ReplaceDialog({
   failure: Failure | null;
   onConfirm: (replacementId: number | null) => void;
   onCancel: () => void;
+  // Offered when the server says the list was stale (a conflict).
+  onReload?: () => void;
 }) {
   const [picked, setPicked] = useState<number | null>(null);
+  const panel = useRef<HTMLDivElement | null>(null);
+  // Read by the key handler, which is bound once.
+  const state = useRef({ busy, onCancel });
+  state.current = { busy, onCancel };
+  useEffect(() => {
+    // Focus lands on the first choice that can be taken, else on the panel,
+    // so a keyboard user starts inside the dialog. Escape closes it unless a
+    // delete is already on its way.
+    const first = panel.current?.querySelector<HTMLInputElement>('input[type="radio"]:not(:disabled)');
+    (first || panel.current)?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || state.current.busy) return;
+      e.preventDefault();
+      state.current.onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   const usable = choices.filter((c) => !c.disabledReason);
   const ready = !busy && (!required || (picked !== null && usable.some((c) => c.id === picked)));
   return (
     <div className={AdminUI.dialogOverlay} role="presentation"
       onClick={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
-      <div className={AdminUI.dialogPanel} role="dialog" aria-modal="true" aria-labelledby="email-replace-title">
+      <div ref={panel} tabIndex={-1} className={`${AdminUI.dialogPanel} outline-none`} role="dialog" aria-modal="true"
+        aria-labelledby="email-replace-title" id="email-replace-dialog">
         <h3 id="email-replace-title" className={AdminUI.cardTitle}>{title}</h3>
         <p className={`${AdminUI.muted} mt-2`}>{intro}</p>
         {required ? (
@@ -83,7 +104,12 @@ export function ReplaceDialog({
             </fieldset>
           ) : <p className="mt-3 text-sm text-amber-800 dark:text-amber-300">{emptyText}</p>
         ) : null}
-        {failure ? <div className="mt-3"><FailureNotice failure={failure} /></div> : null}
+        {failure ? (
+          <div className="mt-3">
+            <FailureNotice failure={failure} onReload={onReload}
+              onRetry={() => onConfirm(required ? picked : null)} />
+          </div>
+        ) : null}
         <div className="flex flex-wrap justify-end gap-2 mt-4">
           <button type="button" className={AdminUI.btn.outline} disabled={busy} onClick={onCancel}>Cancel</button>
           <button type="button" className={AdminUI.btn.destructive} disabled={!ready}

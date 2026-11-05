@@ -1,12 +1,13 @@
 'use strict';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
-  editedLabel, errorsFor, FailureNotice, FieldErrors, isLive, languagesLabel, liveTemplate, PlaceholderList,
-  readFailure, request, type Failure, type LayoutRow, type TemplatesPayload,
+  confirmDiscard, editedLabel, errorsFor, FailureNotice, FieldErrors, isDirty, isLive, keepDraft, keptDraft,
+  languagesLabel, liveTemplate, PlaceholderList, readFailure, request, useUnloadGuard,
+  type Failure, type LayoutRow, type TemplatesPayload,
 } from './shared';
 
 // Layouts: the header and footer an email is wrapped in. Each email picks one
@@ -140,7 +141,34 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
   onReload: () => void;
 }) {
   const live = familyId == null ? null : payload.layouts.find((l) => l.family_id === familyId && isLive(l)) || null;
-  const [draft, setDraft] = useState<LayoutDraft>(() => (live ? { name: live.name, html: live.html, text: live.text } : STARTER));
+  // What the editor opened with: unsaved edits are measured against it.
+  const [opened] = useState<LayoutDraft>(() => (live ? { name: live.name, html: live.html, text: live.text } : STARTER));
+  const [draft, setDraft] = useState<LayoutDraft>(() => {
+    const k = keptDraft();
+    if (k && k.kind === 'layout' && k.familyId === familyId) { keepDraft(null); return k.draft; }
+    return opened;
+  });
+  const dirty = isDirty(draft, opened);
+  useUnloadGuard(dirty);
+  // As in the template editor: set when left on purpose, so unmounting with
+  // unsaved edits otherwise keeps them for the section to offer back.
+  const settled = useRef(false);
+  const latest = useRef({ draft, dirty });
+  latest.current = { draft, dirty };
+  useEffect(() => () => {
+    if (settled.current || !latest.current.dirty) return;
+    keepDraft({ kind: 'layout', familyId, label: latest.current.draft.name || 'a new layout', draft: latest.current.draft });
+  }, [familyId]);
+  const leave = async () => {
+    if (dirty && !(await confirmDiscard('Your changes to this layout are not saved. Leave and lose them?'))) return;
+    settled.current = true;
+    onDone();
+  };
+  const reload = async () => {
+    if (dirty && !(await confirmDiscard('Reload discards your changes and shows the version saved now.', 'Reload'))) return;
+    settled.current = true;
+    onReload();
+  };
   const [tab, setTab] = useState<'html' | 'text'>('html');
   const [failure, setFailure] = useState<Failure | null>(null);
   const [saving, setSaving] = useState(false);
@@ -161,7 +189,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
       familyId, name: draft.name, html: draft.html, text: draft.text, expectedLiveId: live ? live.id : null,
     });
     setSaving(false);
-    if (res.ok && res.data && res.data.layout) { onSaved(res.data.layout); return; }
+    if (res.ok && res.data && res.data.layout) { settled.current = true; onSaved(res.data.layout); return; }
     const refused = readFailure(res.status, res.data);
     setFailure(refused);
     if (refused.kind === 'fields') {
@@ -181,10 +209,10 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <button type="button" className={AdminUI.btn.ghost} onClick={onDone}>‹ All layouts</button>
+        <button type="button" className={AdminUI.btn.ghost} onClick={leave}>‹ All layouts</button>
         {canWrite ? (
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={AdminUI.btn.outline} disabled={saving} onClick={onDone}>Cancel</button>
+            <button type="button" className={AdminUI.btn.outline} disabled={saving} onClick={leave}>Cancel</button>
             <button type="button" id="email-layout-save" className={AdminUI.btn.primary} disabled={saving} onClick={save}>
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -196,7 +224,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
           Editing needs full admin access. You can read this layout and preview it.
         </p>
       )}
-      <FailureNotice failure={failure} shownFields={SHOWN} onReload={onReload} onRetry={save} />
+      <FailureNotice failure={failure} shownFields={SHOWN} onReload={reload} onRetry={save} />
       <div className="grid gap-4 lg:grid-cols-2">
         <div className={`${AdminUI.card} p-4 space-y-3 min-w-0`}>
           <div>

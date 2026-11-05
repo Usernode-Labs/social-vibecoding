@@ -1,5 +1,7 @@
 'use strict';
 
+import { useEffect } from 'react';
+
 import { AdminUI } from '../admin-console.js';
 
 // What the Email templates section's parts share: the shapes the admin
@@ -222,6 +224,58 @@ export function PlaceholderList({ action, placeholders, required }: {
           ))}
         </ul>
       ) : <p className={`${AdminUI.muted} mt-2`}>This email takes no placeholders.</p>}
+    </div>
+  );
+}
+
+// ── Unsaved edits ──────────────────────────────────────────────────────
+
+/** Whether a draft differs from what the editor opened with. */
+export function isDirty(draft: object, opened: object): boolean {
+  return JSON.stringify(draft) !== JSON.stringify(opened);
+}
+
+// Asks before throwing edits away, through the console's own dialog.
+export async function confirmDiscard(message: string, confirmLabel = 'Discard changes'): Promise<boolean> {
+  const consoleApi = typeof window !== 'undefined' ? (window as any).AdminConsole : null;
+  if (!consoleApi || typeof consoleApi._confirm !== 'function') return true;
+  return !!(await consoleApi._confirm({ title: 'Discard your changes?', message, confirmLabel, destructive: true }));
+}
+
+// While there are unsaved edits, closing or reloading the tab asks first.
+export function useUnloadGuard(dirty: boolean) {
+  useEffect(() => {
+    if (!dirty || typeof window === 'undefined') return undefined;
+    const onUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, [dirty]);
+}
+
+// An editor left with unsaved edits by a way it cannot stop: the console
+// switching section, which tears the section down at once and offers no way
+// to ask. The draft is kept here, for this tab only, and the section offers
+// it back the next time it opens.
+export type KeptDraft =
+  | { kind: 'template'; action: string; isNew: boolean; label: string; draft: any }
+  | { kind: 'layout'; familyId: number | null; label: string; draft: any };
+
+let kept: KeptDraft | null = null;
+export const keptDraft = (): KeptDraft | null => kept;
+export const keepDraft = (next: KeptDraft | null) => { kept = next; };
+
+/** Says an editor was left with unsaved edits, and offers them back. */
+export function KeptDraftNotice({ draft, onOpen, onDiscard }: {
+  draft: KeptDraft | null; onOpen: () => void; onDiscard: () => void;
+}) {
+  if (!draft) return null;
+  return (
+    <div id="email-templates-kept" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300" role="status">
+      <span>{`You left unsaved changes to ${draft.label}. They are kept until you close this tab.`}</span>
+      <span className="flex gap-2">
+        <button type="button" className={AdminUI.btn.outlineSm} onClick={onOpen}>Continue editing</button>
+        <button type="button" className={AdminUI.btn.outlineSm} onClick={onDiscard}>Discard</button>
+      </span>
     </div>
   );
 }

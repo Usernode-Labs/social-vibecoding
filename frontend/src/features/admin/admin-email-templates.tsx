@@ -10,8 +10,8 @@ import { LayoutEditor, LayoutList } from './email-templates/layouts';
 import { layoutReplacements, ReplaceDialog, templateReplacements } from './email-templates/replace-dialog';
 import { PreviewView } from './email-templates/preview';
 import {
-  FailureNotice, liveTemplate, PlaceholderList, readFailure, request, isLive,
-  type Failure, type LayoutRow, type TemplateRow, type TemplatesPayload,
+  FailureNotice, isDirty, keepDraft, keptDraft, KeptDraftNotice, liveTemplate, PlaceholderList, readFailure, request, isLive,
+  type Failure, type KeptDraft, type LayoutRow, type TemplateRow, type TemplatesPayload,
 } from './email-templates/shared';
 
 // Admin > Email templates (#admin/email-templates): every email Homeroom
@@ -46,6 +46,20 @@ const confirm = async (opts: { title: string; message: string; confirmLabel: str
   return consoleApi ? !!(await consoleApi._confirm({ ...opts, destructive: true })) : false;
 };
 
+// What a delete did, named from the snapshot reloaded after it: which
+// version of the email is live now, or where a layout's emails went.
+function deletedText(kind: 'template' | 'layout', gone: TemplateRow | LayoutRow, result: any, fresh: TemplatesPayload | null): string {
+  if (kind === 'template') {
+    const liveId = result && typeof result.liveId === 'number' ? result.liveId : null;
+    const now = fresh && liveId != null ? fresh.templates.find((t) => t.id === liveId) : null;
+    if (now) return `${gone.name} v${gone.version} was deleted. ${now.name} v${now.version} is now live.`;
+    return `${gone.name} v${gone.version} was deleted.`;
+  }
+  const movedTo = result && typeof result.movedTo === 'number' ? result.movedTo : null;
+  const to = fresh && movedTo != null ? fresh.layouts.find((l) => l.family_id === movedTo && isLive(l)) : null;
+  return to ? `The layout ${gone.name} was deleted. Its emails now use ${to.name}.` : `The layout ${gone.name} was deleted.`;
+}
+
 function EmailTemplatesSection() {
   const write = canWrite();
   const [payload, setPayload] = useState<TemplatesPayload | null>(null);
@@ -59,6 +73,14 @@ function EmailTemplatesSection() {
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogFailure, setDialogFailure] = useState<Failure | null>(null);
   const [banner, setBanner] = useState<Banner>(null);
+  // Edits an editor was holding when the console last switched away.
+  const [kept, setKept] = useState<KeptDraft | null>(() => keptDraft());
+  // Where focus goes back to when the delete dialog closes: the button that
+  // opened it, or the banner that says what the delete did.
+  const opener = useRef<HTMLElement | null>(null);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
+  const [focusBanner, setFocusBanner] = useState(0);
+  useEffect(() => { if (focusBanner) bannerRef.current?.focus(); }, [focusBanner]);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -97,13 +119,14 @@ function EmailTemplatesSection() {
   };
 
   const deleteArchivedTemplate = async (row: TemplateRow) => {
+    const live = payload ? liveTemplate(payload, row.action) : null;
     const sure = await confirm({
       title: `Delete ${row.name} v${row.version}?`,
       message: 'This earlier version will no longer be offered to restore or as a replacement. The live version is not affected.',
       confirmLabel: 'Delete',
     });
     if (!sure || !alive.current) return;
-    run(`/api/admin/email-templates/${row.id}`, 'DELETE', {}, `${row.name} v${row.version} was deleted.`,
+    run(`/api/admin/email-templates/${row.id}`, 'DELETE', { expectedLiveId: live ? live.id : null }, `${row.name} v${row.version} was deleted.`,
       () => deleteArchivedTemplate(row));
   };
 
@@ -114,7 +137,27 @@ function EmailTemplatesSection() {
       `${row.name} v${row.version} is live again.`, () => restoreLayout(row));
   };
 
-  const openDialog = (next: Dialog) => { setDialogFailure(null); setDialogBusy(false); setDialog(next); };
+  const openDialog = (next: Dialog) => {
+    opener.current = typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null;
+    setDialogFailure(null);
+    setDialogBusy(false);
+    setDialog(next);
+  };
+
+  const closeDialog = () => {
+    setDialog(null);
+    const back = opener.current;
+    opener.current = null;
+    if (back && back.isConnected) back.focus();
+  };
+
+  // A conflict in the dialog means the list was stale: close it and reload,
+  // so the admin decides again on what is live now.
+  const reloadFromDialog = async () => {
+    setDialog(null);
+    opener.current = null;
+    await reload();
+  };
 
   const confirmDialog = async (replacementId: number | null) => {
     if (!dialog) return;
@@ -124,14 +167,21 @@ function EmailTemplatesSection() {
       ? `/api/admin/email-templates/${dialog.live.id}`
       // A layout is deleted as a whole, by its family id.
       : `/api/admin/email-layouts/${dialog.live.family_id}`;
-    const res = await request(url, 'DELETE', replacementId == null ? {} : { replacementId });
+    // The live version this dialog was opened on, so a delete from a stale
+    // list is refused instead of deleting something else.
+    const body: Record<string, unknown> = { expectedLiveId: dialog.live.id };
+    if (replacementId != null) body.replacementId = replacementId;
+    const res = await request(url, 'DELETE', body);
     if (!alive.current) return;
     setDialogBusy(false);
     if (!res.ok) { setDialogFailure(readFailure(res.status, res.data)); return; }
-    const name = dialog.live.name;
+    const gone = dialog.live;
     setDialog(null);
-    await load();
-    setBanner({ kind: 'ok', text: dialog.kind === 'template' ? `${name} was deleted, and the version you chose is live.` : `The layout ${name} was deleted.` });
+    opener.current = null;
+    const fresh = await load();
+    if (!alive.current) return;
+    setBanner({ kind: 'ok', text: deletedText(dialog.kind, gone, res.data, fresh) });
+    setFocusBanner((n) => n + 1);
   };
 
   const dialogNode = (() => {
@@ -143,7 +193,7 @@ function EmailTemplatesSection() {
           choices={templateReplacements(payload, dialog.live)} required
           emptyText="There is no earlier version to put live instead, so this one cannot be deleted. Save a new version instead."
           confirmLabel="Delete and put the chosen version live" busy={dialogBusy} failure={dialogFailure}
-          onConfirm={confirmDialog} onCancel={() => setDialog(null)} />
+          onConfirm={confirmDialog} onCancel={closeDialog} onReload={reloadFromDialog} />
       );
     }
     const using = payload.actions.filter((a) => {
@@ -158,7 +208,7 @@ function EmailTemplatesSection() {
         choices={layoutReplacements(payload, dialog.live.family_id)} required={using > 0}
         emptyText="There is no other layout to move them to. Make one first, or give each email another layout (or None) in its editor."
         confirmLabel={using ? 'Move them and delete' : 'Delete layout'} busy={dialogBusy} failure={dialogFailure}
-        onConfirm={confirmDialog} onCancel={() => setDialog(null)} />
+        onConfirm={confirmDialog} onCancel={closeDialog} onReload={reloadFromDialog} />
     );
   })();
 
@@ -207,14 +257,23 @@ function EmailTemplatesSection() {
             onClick={() => { setTab(key); setBanner(null); }}>{label}</button>
         ))}
       </div>
-      {banner && banner.kind === 'ok' ? (
-        <p className="rounded-lg bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300" role="status">
-          {banner.text}
-        </p>
-      ) : null}
-      {banner && banner.kind === 'failure'
-        ? <FailureNotice failure={banner.failure} onReload={reload} onRetry={banner.retry} />
-        : null}
+      <div ref={bannerRef} tabIndex={-1} className="outline-none space-y-2" id="email-templates-banner">
+        {banner && banner.kind === 'ok' ? (
+          <p className="rounded-lg bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300" role="status">
+            {banner.text}
+          </p>
+        ) : null}
+        {banner && banner.kind === 'failure'
+          ? <FailureNotice failure={banner.failure} onReload={reload} onRetry={banner.retry} />
+          : null}
+      </div>
+      <KeptDraftNotice draft={kept} onDiscard={() => { keepDraft(null); setKept(null); }}
+        onOpen={() => {
+          if (!kept) return;
+          setKept(null);
+          if (kept.kind === 'template') { setTab('templates'); setView({ kind: 'template', action: kept.action, isNew: kept.isNew }); }
+          else { setTab('layouts'); setView({ kind: 'layout', familyId: kept.familyId }); }
+        }} />
       {tab === 'templates' ? (
         <TemplateList payload={payload} canWrite={write} showArchived={showArchived} now={now}
           onToggleArchived={() => setShowArchived((s) => !s)}
@@ -259,4 +318,5 @@ if (typeof window !== 'undefined') (window as any).AdminEmailTemplates = AdminEm
 export {
   AdminEmailTemplates, EmailTemplatesSection, TemplateList, TemplateForm, draftFrom, LayoutList, ReplaceDialog,
   templateReplacements, layoutReplacements, PreviewView, FailureNotice, PlaceholderList, readFailure,
+  deletedText, isDirty, KeptDraftNotice,
 };

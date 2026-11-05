@@ -199,6 +199,37 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     assert.equal((await call('DELETE', '/api/admin/email-templates/999999', {})).status, 404);
   });
 
+  await t.test('a delete from a stale screen is 409 and changes nothing', async () => {
+    // The screen saw `seen` live with `other` archived. Someone restores
+    // `other` before the delete arrives.
+    const other = await live('otp');
+    const saved = await call('POST', '/api/admin/email-templates', otpBody(other, { subject: 'Seen on the stale screen' }));
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    const seen = saved.body.template;
+    const restored = await call('POST', `/api/admin/email-templates/${other.id}/restore`, { expectedLiveId: seen.id });
+    assert.equal(restored.status, 200, JSON.stringify(restored.body));
+    const before = (await pool.query("SELECT id, status, deleted_at FROM email_templates WHERE action = 'otp' ORDER BY id")).rows;
+    const stale = await call('DELETE', `/api/admin/email-templates/${seen.id}`, { replacementId: other.id, expectedLiveId: seen.id });
+    assert.equal(stale.status, 409, JSON.stringify(stale.body));
+    assert.equal(stale.body.code, 'conflict');
+    assert.match(stale.body.error, /reload/i);
+    // Even without expectedLiveId, a replacement named for a row that is no
+    // longer live is the same stale belief.
+    const unnamed = await call('DELETE', `/api/admin/email-templates/${seen.id}`, { replacementId: other.id });
+    assert.equal(unnamed.status, 409);
+    assert.deepEqual((await pool.query("SELECT id, status, deleted_at FROM email_templates WHERE action = 'otp' ORDER BY id")).rows, before, 'nothing deleted');
+    // With the live id it saw, the same delete works and says what is live.
+    const fresh = await call('DELETE', `/api/admin/email-templates/${other.id}`, { replacementId: seen.id, expectedLiveId: other.id });
+    assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+    assert.equal(fresh.body.liveId, seen.id);
+    assert.equal((await live('otp')).id, seen.id);
+
+    const layout = await liveLayout();
+    const staleLayout = await call('DELETE', `/api/admin/email-layouts/${layout.family_id}`, { expectedLiveId: layout.id + 1000 });
+    assert.equal(staleLayout.status, 409);
+    assert.equal((await liveLayout()).id, layout.id, 'the layout is still live');
+  });
+
   await t.test('layout edit dropping {{content}} is 400', async () => {
     const layout = await liveLayout();
     const res = await call('POST', '/api/admin/email-layouts', { familyId: layout.family_id, name: layout.name, html: '<div>No slot</div>', text: layout.text, expectedLiveId: layout.id });

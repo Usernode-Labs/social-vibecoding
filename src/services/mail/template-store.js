@@ -67,7 +67,6 @@ async function liveLayout(client, familyId, exclusive = false) {
     : await client.query("SELECT * FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR SHARE", [familyId]);
   return rows[0] || null;
 }
-const assertLiveLayout = async (client, familyId, exclusive = false) => !!(await liveLayout(client, familyId, exclusive));
 
 // The live templates that wear a layout family, for a check.
 async function wearers(client, familyId) {
@@ -135,13 +134,27 @@ async function saveLayout(pool, input, userId, { check = noCheck } = {}) {
 // Deleting the live version needs an archived version of the same action to
 // take its place, so an action is never left without a template by accident.
 // Deleting an archived version needs nothing.
-async function deleteTemplate(pool, id, { replacementId = null } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
+//
+// `expectedLiveId`, when given (null included), is the live version the caller
+// saw. If another save, restore or delete has changed it since, the delete is
+// a conflict: otherwise a stale screen could delete what is now an archived
+// row, drop its chosen replacement and report it as live. Left undefined, it
+// is not checked, for callers that act on what they just read.
+async function deleteTemplate(pool, id, { replacementId = null, expectedLiveId } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
   return inTransaction(pool, async (client) => {
     const { rows: [peek] } = await client.query('SELECT action FROM email_templates WHERE id = $1', [id]);
     if (!peek) throw fail('not_found', 'That template does not exist');
     await lock(client, 'email_templates', peek.action);
     const { rows: [row] } = await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
     if (!row) throw fail('not_found', 'That template does not exist');
+    if (expectedLiveId !== undefined) {
+      const { rows: [liveRow] } = await client.query(
+        "SELECT id FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL", [row.action]);
+      checkExpected(liveRow, expectedLiveId);
+    }
+    // A replacement only makes sense for the live version: a caller naming one
+    // for an archived row believed it was live, so it saw an older state.
+    if (row.status !== 'live' && replacementId != null) throw fail('conflict', 'Another version was saved first');
     let replacement = null;
     if (row.status === 'live') {
       if (replacementId == null) throw fail('replacement_required', 'Choose a version to put live instead');
@@ -164,10 +177,14 @@ async function deleteTemplate(pool, id, { replacementId = null } = {}, userId, {
 
 // A layout is deleted as a whole family. While live templates use it, they are
 // moved to the replacement family so none is left pointing at a deleted layout.
-async function deleteLayout(pool, familyId, { replacementFamilyId = null } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
+// `expectedLiveId` is the live version of the family the caller saw, checked
+// as in deleteTemplate when given.
+async function deleteLayout(pool, familyId, { replacementFamilyId = null, expectedLiveId } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
   return inTransaction(pool, async (client) => {
     await lock(client, 'email_layouts', familyId);
-    if (!(await assertLiveLayout(client, familyId, true))) throw fail('not_found', 'That layout does not exist');
+    const live = await liveLayout(client, familyId, true);
+    if (!live) throw fail('not_found', 'That layout does not exist');
+    if (expectedLiveId !== undefined) checkExpected(live, expectedLiveId);
     const { rows: [{ n }] } = await client.query(
       "SELECT count(*)::int AS n FROM email_templates WHERE layout_family_id = $1 AND status = 'live' AND deleted_at IS NULL", [familyId]);
     if (n > 0 && replacementFamilyId == null) throw fail('replacement_required', 'Choose a layout for the templates that use this one');

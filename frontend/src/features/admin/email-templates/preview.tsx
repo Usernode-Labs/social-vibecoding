@@ -39,9 +39,12 @@ function testHeadline(outcome: any, to: string): TestResult {
 
 export function PreviewView({
   result, loading, failure, mode, locale, languages, englishOnly, canWrite, testing, testResult, onLocale, onSendTest,
-  extra,
+  extra, stale = false,
 }: {
   result: PreviewResult | null;
+  // The last preview that rendered, kept on screen after a newer draft was
+  // refused: dimmed and labelled so it is not read as the current draft.
+  stale?: boolean;
   loading: boolean;
   failure: Failure | null;
   mode: 'html' | 'text';
@@ -72,7 +75,8 @@ export function PreviewView({
       {englishOnly ? <p className="text-xs text-zinc-500 dark:text-zinc-400">This email is sent in English only.</p> : null}
       {failure ? <FailureNotice failure={failure} /> : null}
       {result ? (
-        <>
+        <div className={stale ? 'opacity-50 space-y-3' : 'space-y-3'} data-email-preview-stale={stale ? '' : undefined}>
+          {stale ? <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Last good preview, before your latest change</p> : null}
           <div className="text-sm">
             <span className="text-zinc-500 dark:text-zinc-400">Subject: </span>
             <span className="font-medium break-words">{result.subject}</span>
@@ -92,7 +96,7 @@ export function PreviewView({
               </ul>
             </div>
           ) : null}
-        </>
+        </div>
       ) : null}
       {canWrite ? (
         <div>
@@ -144,12 +148,15 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   // not replace a newer one.
   const latest = useRef(0);
   const key = JSON.stringify(body);
+  // An email sent in English only is previewed and tested in English, whatever
+  // the picker was left on for another email.
+  const sentLocale = englishOnly ? 'en' : locale;
 
   useEffect(() => {
     const mine = ++latest.current;
     const timer = setTimeout(async () => {
       setLoading(true);
-      const res = await request(`${base}/preview`, 'POST', { ...body, locale });
+      const res = await request(`${base}/preview`, 'POST', { ...body, locale: sentLocale });
       if (!alive.current || mine !== latest.current) return;
       setLoading(false);
       if (res.ok && res.data) {
@@ -161,18 +168,19 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
           problems: Array.isArray(res.data.problems) ? res.data.problems : [],
         });
       } else {
+        // The previous render stays, marked as the last good one (see stale).
         setFailure(readFailure(res.status, res.data));
       }
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, key, locale]);
+  }, [base, key, sentLocale]);
 
   const sendTest = async () => {
     if (testing) return;
     setTesting(true);
     setTestResult(null);
-    const res = await request(`${base}/test`, 'POST', { ...body, locale });
+    const res = await request(`${base}/test`, 'POST', { ...body, locale: sentLocale });
     if (!alive.current) return;
     setTesting(false);
     if (res.ok && res.data) { setTestResult(testHeadline(res.data.outcome, String(res.data.to || 'you'))); return; }
@@ -182,7 +190,7 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   };
 
   return (
-    <PreviewView result={result} loading={loading} failure={failure} mode={mode} locale={locale}
+    <PreviewView result={result} stale={!!failure && !!result} loading={loading} failure={failure} mode={mode} locale={locale}
       languages={languages} englishOnly={englishOnly} canWrite={canWrite} testing={testing}
       testResult={testResult} onLocale={setLocale} onSendTest={sendTest} extra={extra} />
   );

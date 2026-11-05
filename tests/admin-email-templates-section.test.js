@@ -328,3 +328,108 @@ test('layouts list each live layout, the emails using it, and the deleted case',
   assert.deepEqual(layoutReplacements(data, 1).map((o) => o.id), [3], 'another live layout, by family');
   assert.deepEqual(layoutReplacements(data, 3).map((o) => o.id), [1]);
 });
+
+// ── Fix round 1 ─────────────────────────────────────────────────────────
+
+test('a delete sends the live version it was opened on, and says which version is live from the reloaded list', () => {
+  const src = read(SECTION);
+  assert.match(src, /const body: Record<string, unknown> = \{ expectedLiveId: dialog\.live\.id \};/);
+  assert.match(src, /setBanner\(\{ kind: 'ok', text: deletedText\(dialog\.kind, gone, res\.data, fresh\) \}\)/);
+  assert.match(src, /DELETE', \{ expectedLiveId: live \? live\.id : null \}/, 'an archived version is deleted against the live one too');
+  assert.ok(!/the version you chose is live/.test(src), 'it never claims a choice went live without reading it back');
+
+  const { deletedText } = load();
+  const data = payload();
+  const gone = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
+  const v1 = { ...data.templates[0], id: 77, version: 1, name: 'Sign-in code, first' };
+  const fresh = { ...data, templates: [...data.templates, v1] };
+  assert.equal(deletedText('template', gone, { deletedId: gone.id, liveId: 77 }, fresh),
+    'Sign-in code (OTP) v3 was deleted. Sign-in code, first v1 is now live.');
+  assert.equal(deletedText('template', gone, { deletedId: gone.id, liveId: null }, fresh), 'Sign-in code (OTP) v3 was deleted.',
+    'no live version named when the server put none live');
+  const layout = data.layouts[0];
+  const plain = { ...layout, id: 9, family_id: 9, name: 'Plain' };
+  assert.equal(deletedText('layout', layout, { familyId: 1, movedTo: 9 }, { ...data, layouts: [plain] }),
+    'The layout Homeroom standard was deleted. Its emails now use Plain.');
+});
+
+test('a conflict in the delete dialog offers Reload, and a busy database Try again', () => {
+  const html = render('ReplaceDialog', {
+    title: 'Delete?', intro: 'Choose.', choices: [{ id: 1, title: 'v1' }], required: true, confirmLabel: 'Delete',
+    busy: false, failure: load().readFailure(409, { code: 'conflict' }), onConfirm() {}, onCancel() {}, onReload() {},
+  });
+  assert.match(html, /Someone else changed this/);
+  assert.match(html, /<button[^>]*>Reload<\/button>/);
+  const busy = render('ReplaceDialog', {
+    title: 'Delete?', intro: 'Choose.', choices: [{ id: 1, title: 'v1' }], required: true, confirmLabel: 'Delete',
+    busy: false, failure: load().readFailure(409, { code: 'retry' }), onConfirm() {}, onCancel() {}, onReload() {},
+  });
+  assert.match(busy, /<button[^>]*>Try again<\/button>/);
+  assert.match(read(SECTION), /onCancel=\{closeDialog\} onReload=\{reloadFromDialog\}/);
+});
+
+test('the delete dialog takes focus, closes on Escape unless busy, and gives focus back', () => {
+  const html = render('ReplaceDialog', {
+    title: 'Delete?', intro: 'Choose.', choices: [], required: false, confirmLabel: 'Delete',
+    busy: false, failure: null, onConfirm() {}, onCancel() {},
+  });
+  assert.match(html, /<div tabindex="-1"[^>]*role="dialog"/i, 'the panel can take focus');
+  const src = read('frontend/src/features/admin/email-templates/replace-dialog.tsx');
+  assert.match(src, /querySelector<HTMLInputElement>\('input\[type="radio"\]:not\(:disabled\)'\);\s*\(first \|\| panel\.current\)\?\.focus\(\);/);
+  assert.match(src, /if \(e\.key !== 'Escape' \|\| state\.current\.busy\) return;/);
+  assert.match(src, /document\.removeEventListener\('keydown', onKey\)/);
+  const section = read(SECTION);
+  assert.match(section, /opener\.current = typeof document !== 'undefined' \? document\.activeElement/);
+  assert.match(section, /if \(back && back\.isConnected\) back\.focus\(\);/, 'Cancel returns focus to the button that opened it');
+  assert.match(section, /bannerRef\.current\?\.focus\(\)/, 'a finished delete moves focus to what it did');
+});
+
+test('unsaved edits are not lost without asking', () => {
+  const { isDirty } = load();
+  assert.equal(isDirty({ a: 1, b: 'x' }, { a: 1, b: 'x' }), false);
+  assert.equal(isDirty({ a: 1, b: 'y' }, { a: 1, b: 'x' }), true);
+
+  for (const file of ['editor.tsx', 'layouts.tsx']) {
+    const src = read(`frontend/src/features/admin/email-templates/${file}`);
+    assert.match(src, /const dirty = isDirty\(draft, opened\);\s*useUnloadGuard\(dirty\);/, `${file}: closing the tab asks while dirty`);
+    assert.match(src, /if \(dirty && !\(await confirmDiscard\('[^']+'\)\)\) return;\s*settled\.current = true;\s*onDone\(\);/, `${file}: Back and Cancel ask`);
+    assert.match(src, /if \(dirty && !\(await confirmDiscard\('Reload discards your changes[^']*', 'Reload'\)\)\) return;/, `${file}: Reload asks`);
+    assert.match(src, /keepDraft\(\{ kind: '(template|layout)'/, `${file}: a draft the console tore down is kept`);
+    assert.ok(!/onClick=\{onDone\}|onCancel=\{onDone\}/.test(src), `${file}: nothing leaves without the check`);
+  }
+  const shared = read('frontend/src/features/admin/email-templates/shared.tsx');
+  assert.match(shared, /window\.addEventListener\('beforeunload', onUnload\)/);
+  assert.match(shared, /consoleApi\._confirm\(/, 'it asks through the console dialog');
+
+  const kept = render('KeptDraftNotice', {
+    draft: { kind: 'template', action: 'otp', isNew: false, label: 'Sign-in code (OTP)', draft: {} },
+    onOpen() {}, onDiscard() {},
+  });
+  assert.match(kept, /You left unsaved changes to Sign-in code \(OTP\)/);
+  assert.match(kept, />Continue editing</);
+  assert.match(kept, />Discard</);
+  assert.equal(render('KeptDraftNotice', { draft: null, onOpen() {}, onDiscard() {} }), '');
+});
+
+test('the preview asks in English for an English-only email, and dims the last good render after a refusal', () => {
+  const src = read('frontend/src/features/admin/email-templates/preview.tsx');
+  assert.match(src, /const sentLocale = englishOnly \? 'en' : locale;/);
+  assert.equal(count(src, /locale: sentLocale/g), 2, 'both the preview and the test send');
+  assert.ok(!/\{ \.\.\.body, locale \}/.test(src));
+
+  const html = render('PreviewView', {
+    result: { subject: 'Old', html: '<p>old</p>', text: 'old', problems: [] }, stale: true,
+    loading: false, failure: load().readFailure(400, { code: 'invalid', errors: [{ field: 'html', message: 'Does not parse.' }] }),
+    mode: 'html', locale: 'en', languages: payload().languages, englishOnly: false, canWrite: true,
+    testing: false, testResult: null, onLocale() {}, onSendTest() {},
+  });
+  assert.match(html, /class="opacity-50 space-y-3" data-email-preview-stale=""/);
+  assert.match(html, /Last good preview/);
+  assert.match(html, /Does not parse\./);
+  const fresh = render('PreviewView', {
+    result: { subject: 'New', html: '<p>new</p>', text: 'new', problems: [] },
+    loading: false, failure: null, mode: 'html', locale: 'en', languages: payload().languages, englishOnly: false,
+    canWrite: true, testing: false, testResult: null, onLocale() {}, onSendTest() {},
+  });
+  assert.ok(!/Last good preview|opacity-50/.test(fresh));
+});
