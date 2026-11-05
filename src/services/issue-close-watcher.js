@@ -124,7 +124,7 @@ function closeTwinRows({ pool, appId, prNumber, numbers, strict = false }) {
         WHERE app_id = $1 AND kind = 'general' AND status = 'open'
           AND github_issue_number = ANY($2::int[])`,
       [appId, numbers]
-    )).then(() => {}, (err) => {
+    )).then(() => require('./work-state').touched(pool, numbers.map((n) => ({ appId, issueNumber: n }))).then(() => {}), (err) => {
       if (strict) throw err;
       log.warn('issue-close-watcher', 'Closing request twin rows failed', {
         pr: prNumber, issues: numbers, err: err.message,

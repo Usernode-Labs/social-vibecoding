@@ -124,4 +124,4 @@ function placeholdersIn(source) {
   return names;
 }
 
-module.exports = { parse, render, placeholdersIn, TemplateSyntaxError };
+module.exports = { parse, render, placeholdersIn, escapeHtml, TemplateSyntaxError };

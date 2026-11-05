@@ -465,7 +465,7 @@ async function ensureFixtures(pool, user) {
 const BOT_DM_LEGACY_ID = 910005;
 const BOT_DM_QUESTION_KEY = 'staging-hrbot-question';
 const BOT_DM_OFFER_KEY = 'staging-hrbot-offer';
-// B3: the action id the demo offer's buttons name. No homeroom_bot_dm_actions
+// B3: the action id the demo offer's buttons name. No bot_cards
 // row stands behind it: the action endpoint answers the demo without one.
 const BOT_DM_DEMO_ACTION_ID = 990001;
 const BOT_DM_ASK_KEY = 'staging-hrbot-ask';

@@ -304,7 +304,7 @@ test('a move offer records what became of it on the run, and the week counts the
 
   const summaryPool = {
     async query(sql) {
-      if (/FROM homeroom_bot_dm_actions\s+WHERE kind = 'move_request'/.test(sql)) {
+      if (/FROM bot_cards\s+WHERE kind = 'move_request'/.test(sql)) {
         return { rows: [{ sent: 4, moved: 2, kept: 1, open: 1, failed: 0 }] };
       }
       return { rows: [

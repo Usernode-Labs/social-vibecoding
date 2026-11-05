@@ -54,7 +54,7 @@ function sayPool() {
     async query(sql) {
       const s = String(sql);
       this.queries.push(s);
-      if (/INSERT INTO homeroom_bot_voice_offers/.test(s)) return { rows: [{ id: 5 }] };
+      if (/INSERT INTO bot_cards/.test(s)) return { rows: [{ id: 5 }] };
       return { rows: [] };
     },
   };

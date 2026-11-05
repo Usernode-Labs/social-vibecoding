@@ -67,34 +67,32 @@ test('#6228: a stored reply reads as waiting to be read, for the track and the b
     assert.equal(state.stage, 'reading');
     assert.equal(state.reply, true);
     assert.equal(state.waiting, true);
-    // The track draws it as the existing planning state, with its own line.
-    const job = track.jobOfRow(row, { stageOf: progress.stageOf, outcomeOf: () => null });
-    assert.equal(job.reply, true);
-    const t2 = track.trackOf({ job });
-    assert.equal(t2.state, 'planning');
-    assert.equal(t2.why, 'reply');
+    // The track draws its stored work state: reading, its line the reply.
+    const tracks = await track.tracksForRequests(pool, { appId: app.id, numbers: [6228] });
+    assert.deepEqual([tracks.get(6228).work.stage, tracks.get(6228).work.line], ['reading', { code: 'reply' }]);
   });
 
-  await t.test('the bot page\'s facts say Reading the reply, not Decide', async () => {
-    const facts = await ai.requestFacts(pool, [{ app_id: app.id, number: 6228, slug: 'homeroom' }], evan.id, {
-      settings: { mode: 'on' },
-    });
-    const f = facts.get('homeroom#6228');
-    assert.equal(f.replyWaits, true);
-    assert.equal(f.handedBack, true);
-    const row = { state: 'open', kind: 'request', number: 6228, request_state: 'open', request_at: new Date().toISOString(), created_at: new Date().toISOString() };
-    assert.equal(ai.standing(row, evan.id, new Date(), null, null, f).what, 'reading_reply');
+  // 5 Nov 2026: the bot page reads the request's stored work state
+  // (services/work-state.js), refreshed from the same records.
+  const ws = require('../src/services/work-state');
+  const thread = () => ({ state: 'open', kind: 'request', number: 6228, request_id: 1, request_state: 'open', own: true,
+    request_at: new Date().toISOString(), created_at: new Date().toISOString() });
+  const stored = async () => {
+    await ws.refresh(pool, [{ appId: app.id, issueNumber: 6228 }]);
+    return (await ws.forRequests(pool, app.id, [6228])).get(6228);
+  };
+
+  await t.test('the stored state says Reading your reply, not Decide', async () => {
+    const state = await stored();
+    assert.deepEqual([state.stage, state.line], ['reading', { code: 'reply' }]);
+    assert.equal(ai.standing(thread(), evan.id, new Date(), null, state, { decides: true }).group, 'next');
   });
 
   await t.test('a reply older than the window with no queue row goes back to Decide', async () => {
     await pool.query('DELETE FROM chat_messages WHERE thread_type = $1', ['issue']);
     await reply(3);
-    const facts = await ai.requestFacts(pool, [{ app_id: app.id, number: 6228, slug: 'homeroom' }], evan.id, {
-      settings: { mode: 'on' },
-    });
-    const f = facts.get('homeroom#6228');
-    assert.equal(f.replyWaits, false);
-    const row = { state: 'open', kind: 'request', number: 6228, request_state: 'open', request_at: new Date().toISOString(), created_at: new Date().toISOString() };
-    assert.equal(ai.standing(row, evan.id, new Date(), null, null, f).what, 'decide');
+    const state = await stored();
+    assert.deepEqual([state.stage, state.why], ['waiting_for_you', 'decide']);
+    assert.equal(ai.standing(thread(), evan.id, new Date(), null, state, { decides: true }).group, 'needs');
   });
 });

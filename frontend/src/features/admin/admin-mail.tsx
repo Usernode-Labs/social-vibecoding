@@ -117,6 +117,7 @@ function statusClass(status?: string): string {
   if (status === 'failed') return 'text-rose-700 dark:text-rose-400';
   if (status === 'suppressed_rate_limit') return 'text-amber-800 dark:text-amber-400';
   if (status === 'no_transport') return 'text-amber-800 dark:text-amber-400';
+  if (status === 'no_template') return 'text-rose-700 dark:text-rose-400';
   if (status === 'skipped_staging') return 'text-sky-700 dark:text-sky-400';
   return 'text-zinc-500 dark:text-zinc-400';
 }
@@ -130,6 +131,7 @@ function outcomeHeadline(outcome: Outcome): string {
     case 'skipped_staging': return 'Rendered to the platform log. Staging never delivers mail.';
     case 'failed': return 'The provider refused the message.';
     case 'no_transport': return 'Nothing was sent: no mail transport is configured.';
+    case 'no_template': return 'Nothing was sent: no email template could be loaded or rendered.';
     case 'suppressed_bounce': return 'Nothing was sent: this address has bounced or reported spam.';
     case 'suppressed_rate_limit': return 'Held back by the outbound throttle.';
     case 'invalid_recipient': return 'Nothing was sent: that address could not be used.';

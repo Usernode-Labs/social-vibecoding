@@ -277,38 +277,43 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.equal(second.metadata.homeroomBot.actions, undefined);
   });
 
-  await t.test('somebody else hears hello above their first request\'s card, once', async () => {
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's card no
+  // longer goes to their chat with the bot, so the hello it led is said on
+  // its own (dm.sayMemberHello), once, pointing at the request's page.
+  const memberHellos = async (who) => (await pool.query(
+    `SELECT m.content, m.metadata FROM conversation_messages m
+      WHERE m.sender_id = $1 AND m.metadata->'homeroomBot'->>'kind' = 'member'
+        AND m.conversation_id IN (SELECT conversation_id FROM conversation_members WHERE user_id = $2)
+      ORDER BY m.id`, [bot.id, who.id])).rows;
+  await t.test('somebody else hears hello with their first request, once, on its own', async () => {
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text) VALUES
          ($1, 4, $2, 'Sunday host reminder', 'Remind the host on Sunday'), ($1, 5, $2, 'Menu', 'A menu page')`,
       [supper.id, ben.id],
     );
-    const card = await activity.startCard(pool, { inDm: true,
+    assert.equal(await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 4, requester: await dm.requesterOf(pool, supper.id, 4), bot, jobKey: 'hello-1', settings, queued: true,
-    });
-    const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [card.messageId]);
-    assert.match(msg.content, /^Hi, I'm Homeroom bot\. I build the changes people in Supper Club ask for\. Here's yours:\n\n\*\*Supper Club\*\* · request #4/);
+    }), null, 'no card in his chat with the bot');
+    const [msg] = await memberHellos(ben);
+    assert.equal(msg.content, 'Hi, I\'m Homeroom bot. I build the changes people in Supper Club ask for. I\'m on yours now, and where it stands shows on its page.');
+    assert.equal(msg.content, dm.memberHelloAlone('Supper Club'));
     const meta = msg.metadata.homeroomBot;
-    assert.equal(meta.kind, 'activity');
-    assert.equal(meta.hello, 'Hi, I\'m Homeroom bot. I build the changes people in Supper Club ask for. Here\'s yours:');
+    assert.deepEqual([meta.kind, meta.issueNumber, meta.hello], ['member', 4, msg.content]);
     assert.deepEqual(meta.actions.map((a) => a.label), ['What else can I ask for?', 'How long will this take?']);
-    const next = await activity.startCard(pool, { inDm: true,
+    assert.equal(await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 5, requester: await dm.requesterOf(pool, supper.id, 5), bot, jobKey: 'hello-2', settings, queued: true,
-    });
-    const { rows: [plain] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [next.messageId]);
-    assert.match(plain.content, /^\*\*Supper Club\*\* · request #5/);
-    assert.equal(plain.metadata.homeroomBot.hello, undefined);
+    }), null);
+    assert.equal((await memberHellos(ben)).length, 1, 'once');
 
     // The maker's own requests never carry the member hello.
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6, $2, 'Sides')`,
       [supper.id, maya.id],
     );
-    const own = await activity.startCard(pool, { inDm: true,
+    assert.equal(await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 6, requester: await dm.requesterOf(pool, supper.id, 6), bot, jobKey: 'hello-3', settings, queued: true,
-    });
-    const { rows: [ownMsg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [own.messageId]);
-    assert.equal(ownMsg.metadata.homeroomBot.hello, undefined);
+    }), null);
+    assert.deepEqual(await memberHellos(maya), []);
   });
 
   await t.test('WP-F: somebody who joins by a link hears hello once, only when the bot builds for them and is on', async () => {
@@ -446,11 +451,11 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
        VALUES ($1, 7, $2, 'Desserts', 'A dessert list')`, [supper.id, asking.id],
     );
-    const card = await activity.startCard(pool, { inDm: true,
+    await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 7, requester: await dm.requesterOf(pool, supper.id, 7), bot, jobKey: 'hello-4897', settings, queued: true,
     });
-    const { rows: [carded] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [card.messageId]);
-    assert.equal(carded.metadata.homeroomBot.hello, dm.memberHello('Supper Club'), 'a member\'s');
+    const [said] = await memberHellos(asking);
+    assert.equal(said?.metadata.homeroomBot.hello, dm.memberHelloAlone('Supper Club'), 'a member\'s');
     assert.equal(await helloOf(asking.id), 'member');
     await mode('off');
   });

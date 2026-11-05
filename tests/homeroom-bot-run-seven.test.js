@@ -249,7 +249,7 @@ test('the made screen\'s answers go ahead with planShown: false, through the car
       if (/SELECT id FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 12 }] };
       if (/SELECT a\.\* FROM homeroom_bot_dm_messages/.test(s)) return { rows: [action] };
       if (/SELECT run_id, conversation_id FROM homeroom_bot_dm_messages/.test(s)) return { rows: [{ run_id: 12, conversation_id: 4 }] };
-      if (/UPDATE homeroom_bot_dm_actions SET status = 'done'/.test(s)) return { rows: [{ id: 30 }] };
+      if (/UPDATE bot_cards SET status = 'done'/.test(s)) return { rows: [{ id: 30 }] };
       return { rows: [] };
     },
   };

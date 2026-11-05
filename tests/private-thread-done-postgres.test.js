@@ -14,9 +14,9 @@ const path = require('node:path');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/postgres';
 
-const trayId = require.resolve('../src/services/homeroom-bot-tray');
+const workChangedId = require.resolve('../src/services/bot-work-changed');
 const changed = [];
-require.cache[trayId] = { id: trayId, filename: trayId, loaded: true, exports: { noteWorkChanged(userId) { changed.push(userId); } } };
+require.cache[workChangedId] = { id: workChangedId, filename: workChangedId, loaded: true, exports: { noteWorkChanged(userId) { changed.push(userId); } } };
 
 const privateThreads = require('../src/services/private-threads');
 const aiWork = require('../src/services/ai-work');

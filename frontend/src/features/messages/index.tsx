@@ -37,13 +37,12 @@ import { isReadyMessage } from './bot-ready';
 import {
   alsoInChat, botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
 } from './bot-shared';
-import { POLL_MS } from './bot-activity-store';
-import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, WORK_CHANGED_EVENT } from './bot-work';
+import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
 import {
   PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, privateThreadTitle, privateThreadWords, usePrivateThread,
 } from './private-thread-bar';
 import { requestPageOf } from './request-page';
-import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
+import { RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
 import { isPlusThreadOpener, isRequestNews, requestKey } from './bot-request';
@@ -885,31 +884,16 @@ function ConversationList({ drawer = false }: {
   const asksForYou = (entry: { kind: string; key: string }) => agentAsksForYou(entry, bySession, byMayor);
 
   // 16 Oct 2026: what the Homeroom bot's row says. What waits on you and
-  // what it is doing, in the words of its chat's own activity bar
-  // (./bot-strip.tsx summaryParts: "1 needs you · 2 in progress"), read
-  // from the same store once this list is up; its last message until then.
-  // #5392: the row stays current, the same live reads the DM's strip runs
-  // (./bot-work.tsx): again whenever the list opens and the bot's work
-  // moves (its news lands, the work-changed event), and every POLL_MS while
-  // it has work in hand and the page is in view.
+  // what it is doing ("1 needs you · 2 in progress", ./bot-strip.tsx
+  // summaryParts), counted from your requests' tracks once this list is up;
+  // its last message until then. #5392: the row stays current: read again
+  // whenever the list opens and a request's stage moves (./bot-work.tsx).
   const botWork = useBotWork();
   const botConversation = snap.conversations.find((item) => item.homeroomBot && item.kind !== 'channel') || null;
   useEffect(() => {
     if (mounted && botConversation) loadBotWork();
   }, [mounted, botConversation?.id, botConversation?.lastActivityAt]);
-  useEffect(() => {
-    if (!botConversation) return undefined;
-    const changed = () => loadBotWork();
-    window.addEventListener(WORK_CHANGED_EVENT, changed);
-    return () => window.removeEventListener(WORK_CHANGED_EVENT, changed);
-  }, [botConversation]);
-  useEffect(() => {
-    if (!botConversation || !botWork.work?.now.length || document.visibilityState === 'hidden') return undefined;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') loadBotWork();
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [botConversation, botWork.work?.now.length]);
+  useWorkChanged(!!botConversation);
   const botLine = useMemo(() => {
     if (!botWork.work) return null;
     const parts = summaryParts(stripGroups(botWork.work));
@@ -2340,8 +2324,6 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   return (
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined} {...drop.handlers}>
       {embedded ? null : <ThreadHeader />}
-      {/* One request, one story: "Your requests", pinned under the bot's header. */}
-      {botDm && !embedded ? <BotStrip /> : null}
       <InvitationBanner />
       {botDm ? <BotWorkSync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
       {/* #3736: and keeps the activity cards in its transcript current. */}

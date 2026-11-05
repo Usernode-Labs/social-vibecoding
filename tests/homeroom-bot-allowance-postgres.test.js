@@ -148,11 +148,64 @@ test('weekly building time against the full PostgreSQL schema', { timeout: 18000
     assert.deepEqual(q, { held_until: null, payer_user_id: ben.id, priority: 0, reason: 'dm_start' });
   });
 
+  const { rows: [bot] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic)
+     VALUES ('homeroom_bot', 'x', TRUE, TRUE) RETURNING id`,
+  );
+  const lowLines = async (n) => (await pool.query(
+    `SELECT content, metadata FROM conversation_messages m
+      WHERE m.metadata->'homeroomBot'->>'appSlug' = $1
+        AND (m.metadata->'homeroomBot'->>'issueNumber')::int = $2
+        AND m.metadata->'homeroomBot'->>'step' = 'allowance_low'`,
+    [app.slug, n],
+  )).rows;
+  const spend = (n, usd) => pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id, cost_usd)
+     VALUES ($1, $2, 'live', 'ready', TRUE, $3, $4)`,
+    [app.id, n, ada.id, usd],
+  );
+
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): only a first version's
+  // card is still sent to its maker's chat, so the card here is a first
+  // version's.
   await t.test('#6133: a look at an existing card says the week is nearly spent, before it spends it', async () => {
-    const { rows: [bot] } = await pool.query(
-      `INSERT INTO users (username, password, has_platform_access, is_synthetic)
-       VALUES ('homeroom_bot', 'x', TRUE, TRUE) RETURNING id`,
+    const requester = {
+      userId: ada.id, username: 'ada', issueTitle: 'First version of Plant Pal', firstVersion: true, hasPlatformAccess: true,
+    };
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version)
+       VALUES ($1, 13, $2, 'First version of Plant Pal', TRUE)`,
+      [app.id, ada.id],
     );
+    const settings = await homeroomBot.readSettings(pool);
+    // Its card first, made before any of the week is spent: the new-card path.
+    const card = await activity.startCard(pool, {
+      app, issueNumber: 13, requester, bot, jobKey: 'week-card', settings,
+    });
+    assert.ok(card?.messageId);
+    assert.deepEqual(await lowLines(13), [], 'nothing said yet');
+
+    // 85% of the default 5000-cent week spent: under a fifth is left.
+    await spend(13, 42.50);
+    await activity.startCard(pool, { app, issueNumber: 13, requester, bot, jobKey: 'week-look-1', settings });
+    const first = await lowLines(13);
+    assert.equal(first.length, 1);
+    assert.equal(first[0].content, 'You\'re close to this week\'s building time.');
+    assert.equal(first[0].metadata.homeroomBot.step, 'allowance_low');
+
+    // The same week, another look: still one line (its key).
+    await activity.startCard(pool, { app, issueNumber: 13, requester, bot, jobKey: 'week-look-2', settings });
+    assert.equal((await lowLines(13)).length, 1);
+
+    // The week is spent: no "close to" line (the hold says it is used up).
+    await spend(13, 7.50);
+    assert.equal(await require('../src/services/homeroom-bot-dm').overWeeklyAllowance(pool, settings, ada.id), true);
+    await activity.startCard(pool, { app, issueNumber: 13, requester, bot, jobKey: 'week-look-3', settings });
+    assert.equal((await lowLines(13)).length, 1);
+  });
+
+  await t.test('#6133: an ordinary request\'s look still says the week is nearly spent', async () => {
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND payer_user_id = $2', [app.id, ada.id]);
     const requester = {
       userId: ada.id, username: 'ada', issueTitle: 'Quota warning', firstVersion: false, hasPlatformAccess: true,
     };
@@ -162,44 +215,25 @@ test('weekly building time against the full PostgreSQL schema', { timeout: 18000
       [app.id, ada.id],
     );
     const settings = await homeroomBot.readSettings(pool);
-    // Its card first, made before any of the week is spent: the new-card path.
-    const card = await activity.startCard(pool, {
-      app, issueNumber: 12, requester, bot, jobKey: 'week-card', settings,
-    });
-    assert.ok(card?.messageId);
-    const lowLines = async () => (await pool.query(
-      `SELECT content, metadata FROM conversation_messages m
-        WHERE m.metadata->'homeroomBot'->>'appSlug' = $1
-          AND (m.metadata->'homeroomBot'->>'issueNumber')::int = 12
-          AND m.metadata->'homeroomBot'->>'step' = 'allowance_low'`,
-      [app.slug],
-    )).rows;
-    assert.deepEqual(await lowLines(), [], 'nothing said yet');
-
-    // 85% of the default 5000-cent week spent: under a fifth is left.
-    await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id, cost_usd)
-       VALUES ($1, 12, 'live', 'ready', TRUE, $2, 42.50)`,
-      [app.id, ada.id],
-    );
-    await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'week-look-1', settings });
-    const first = await lowLines();
-    assert.equal(first.length, 1);
-    assert.equal(first[0].content, 'You\'re close to this week\'s building time.');
-    assert.equal(first[0].metadata.homeroomBot.step, 'allowance_low');
-
-    // The same week, another look: still one line (its key).
-    await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'week-look-2', settings });
-    assert.equal((await lowLines()).length, 1);
-
-    // The week is spent: no "close to" line (the hold says it is used up).
-    await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id, cost_usd)
-       VALUES ($1, 12, 'live', 'ready', TRUE, $2, 7.50)`,
-      [app.id, ada.id],
-    );
-    assert.equal(await require('../src/services/homeroom-bot-dm').overWeeklyAllowance(pool, settings, ada.id), true);
-    await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'week-look-3', settings });
-    assert.equal((await lowLines()).length, 1);
+    // 5 Nov 2026 (step 4): its card is its news, said on its page, so none is sent.
+    assert.equal(await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'quota-card', settings }), null);
+    // 85% of the week spent: the warning that rode on the card, or on a line
+    // under it, still reaches her before the look spends more, as the
+    // account notice it is (dm.noteAllowanceLow: kind 'allowance', `low`),
+    // once a week.
+    const notices = async () => (await pool.query(
+      `SELECT m.content FROM conversation_messages m
+        WHERE m.sender_id = $1 AND m.metadata->'homeroomBot'->>'kind' = 'allowance'
+          AND (m.metadata->'homeroomBot'->>'low')::boolean IS TRUE
+          AND m.conversation_id IN (SELECT conversation_id FROM conversation_members WHERE user_id = $2)`,
+      [bot.id, ada.id])).rows;
+    await spend(12, 42.50);
+    await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'quota-look-1', settings });
+    const said = await notices();
+    assert.equal(said.length, 1, 'she hears that the week is nearly spent');
+    assert.equal(said[0].content, 'You\'re close to this week\'s building time.');
+    assert.deepEqual(await lowLines(12), [], 'not as a line under a card');
+    await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'quota-look-2', settings });
+    assert.equal((await notices()).length, 1, 'once a week');
   });
 });

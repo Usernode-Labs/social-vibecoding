@@ -310,8 +310,8 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
   // tag (Waiting on you's) is not said twice; the tone asks for the viewer
   // only when the track does.
   const bot = b.botTrack || null;
-  const botStep = bot && !first ? (bot.state === 'held' ? trackShort(bot) : trackLine(bot)) : null;
-  const botStepTone = bot && (bot.state === 'waiting' || (bot.state === 'checks' && bot.why === 'handed_over'))
+  const botStep = bot && !first ? (bot.held ? trackShort(bot) : trackLine(bot)) : null;
+  const botStepTone = bot && (bot.work.stage === 'waiting_for_you' || bot.work.stage === 'stopped')
     ? 'warn' : 'run';
   // #6145: a bot row opens like every row: in the side panel beside the
   // Workshop (onOpen), else at its href, the request's page, which carries

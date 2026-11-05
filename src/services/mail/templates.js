@@ -17,6 +17,8 @@ const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const tracking = require('./tracking');
 const log = require('../logger');
 const { englishFrom, englishTexts } = require('../push-text');
+const { actionFor } = require('./actions');
+const { renderResolved } = require('./render');
 
 // Minimal HTML escaping — these bodies interpolate an email address, a
 // six-digit code and platform-built URLs, and, since content_report, free
@@ -872,7 +874,61 @@ function wordedTemplate(kind, template) {
   };
 }
 
+// The plain message of the owner's failure order: when no stored template can
+// be had or rendered, a mail that carries a code or a link still goes, as just
+// that, undesigned. The one email text left in code. Only a plain http(s) link
+// is sent, and a mail that must carry an unsubscribe link (activity mail) never
+// goes plain. Null when there is nothing to send.
+function plainMessage(kind, payload) {
+  const action = actionFor(kind);
+  if (!action || action.required.html.includes('unsubscribeUrl')) return null;
+  const code = payload.code == null || payload.code === '' ? null : String(payload.code);
+  const links = [payload.url, payload.confirmUrl, payload.statusUrl].map(tracking.destination).filter(Boolean);
+  if (!code && !links.length) return null;
+  return {
+    subject: BRAND_NAME,
+    text: [BRAND_NAME, ...(code ? [code] : []), ...links].join('\n\n'),
+    html: [...(code ? [codeBlock(code)] : []), ...links.map((line) => p(link(line)))].join(''),
+    headers: action.headers ? action.headers(payload) : null,
+  };
+}
+
+function noTemplate(kind, reason) {
+  const err = new Error(`No email template to send ${kind} with: ${reason}`);
+  err.code = 'no_template';
+  return err;
+}
+
+// A send's message from the stored templates (`payload.resolved`, from send()).
+// Never the code templates above: with no template, or one that will not render,
+// the owner's failure order applies. A plain message says why in `plainBecause`,
+// for send() to log; a mail that cannot go plain throws `no_template`.
+function fromStored(kind, payload) {
+  if (!actionFor(kind)) throw new Error(`unknown mail kind: ${kind}`);
+  const { resolved } = payload;
+  const attributed = tracking.attributedPayload(kind, payload);
+  let reason = 'none could be loaded';
+  if (resolved && resolved.template) {
+    try {
+      const { why, preheader, headers, ...message } = renderResolved(kind, resolved, attributed); // eslint-disable-line no-unused-vars
+      return tracking.decorate(kind, { ...message, ...(headers ? { headers } : {}) }, payload);
+    } catch (err) {
+      reason = `it did not render (${err.message})`;
+    }
+  }
+  const plain = plainMessage(kind, attributed);
+  if (!plain) throw noTemplate(kind, reason);
+  const { headers, ...message } = plain;
+  return { ...tracking.decorate(kind, { ...message, ...(headers ? { headers } : {}) }, payload), plainBecause: reason };
+}
+
+/**
+ * The message for `kind`. With `payload.resolved` (every real send), from the
+ * stored template it names; without it, from the code templates above, which
+ * tests and the seed's equivalence proof still compare against.
+ */
 function buildMessage(kind, payload = {}) {
+  if (payload.resolved !== undefined) return fromStored(kind, payload);
   const template = Object.prototype.hasOwnProperty.call(TEMPLATES, kind)
     ? wordedTemplate(kind, TEMPLATES[kind])
     : null;
@@ -891,4 +947,4 @@ function buildMessage(kind, payload = {}) {
 // that want to assert the set didn't quietly shrink.
 const KINDS = Object.keys(TEMPLATES);
 
-module.exports = { buildMessage, KINDS, ENGLISH_ONLY_KINDS };
+module.exports = { buildMessage, plainMessage, KINDS, ENGLISH_ONLY_KINDS };

@@ -134,7 +134,7 @@ test('why queued requests wait, and the move offers, against the full PostgreSQL
     const offered = await run(notes, 20, { verdict: 'person', about_platform: true });
     await move.noteMoveOffer(pool, offered, 'sent');
     await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title, source_issue_number, status)
+      `INSERT INTO bot_cards (user_id, app_id, kind, title, source_issue_number, status)
        VALUES ($1, $2, 'move_request', 'The header', 20, 'done'), ($1, $2, 'move_request', 'Invites', 21, 'declined')`,
       [ada, notes],
     );

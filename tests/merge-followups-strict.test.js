@@ -58,17 +58,27 @@ test('homeroom-bot-chat noteRequestStatus: strict throws; otherwise it resolves 
   await assert.rejects(chat.noteRequestStatus(down(), { appId: 2, issueNumber: 7, status: 'live', deps: { strict: true } }), /db down/);
 });
 
-test('homeroom-bot-chat noteRequestStatus strict: the chip write itself failing throws too', async () => {
+// The room's status chip is gone (5 Nov 2026): there is no chip write left to fail.
+test('homeroom-bot-chat noteRequestStatus strict: the requester\'s card is pushed again, and the message is not written', async () => {
   const chat = require('../src/services/homeroom-bot-chat');
+  const asked = [];
   const pool = {
     async query(sql) {
+      asked.push(String(sql));
       if (/FROM chat_bot_requests r JOIN apps a/.test(String(sql))) {
         return { rows: [{ kind: 'filed', chat_message_id: 3, app_id: 2, app_slug: 'shop', requester_id: 1, issue_number: 7 }] };
       }
-      if (/UPDATE chat_messages/.test(String(sql))) throw new Error('db down');
       return { rows: [] };
     },
   };
-  assert.equal(await chat.noteRequestStatus(pool, { appId: 2, issueNumber: 7, status: 'live' }), 1, 'never throws without strict');
-  await assert.rejects(chat.noteRequestStatus(pool, { appId: 2, issueNumber: 7, status: 'live', deps: { strict: true } }), /db down/);
+  const pushed = [];
+  const deps = {
+    strict: true,
+    dm: { botAccount: async () => null, typicalMinutes: async () => null },
+    workState: { ensure: async () => {}, forRequests: async () => new Map([[7, { stage: 'live', line: null }]]) },
+    ws: { pushToUser: (userId, frame) => pushed.push([userId, frame.type, frame.card.messageId]) },
+  };
+  assert.equal(await chat.noteRequestStatus(pool, { appId: 2, issueNumber: 7, status: 'live', deps }), 1);
+  assert.deepEqual(pushed, [[1, 'bot_request_card', 3]], 'its requester alone, on the message it was asked in');
+  assert.ok(!asked.some((sql) => /UPDATE chat_messages/.test(sql)), 'nothing written on the message');
 });

@@ -79,20 +79,28 @@ const row = (over = {}) => ({
 const ASK = 'drop the second credit line';
 
 test('#6282: a change being updated is In progress, never the vote it would owe', () => {
+  const at = '2026-11-04T11:00:00.000Z';
+  const revising = { stage: 'building', why: null, reason: null, line: { code: 'revising' }, since: at };
+  const queued = { stage: 'up_for_vote', why: null, reason: null, line: { code: 'update_queued' }, since: at };
   // The viewer (7) still owes the vote the feed would have asked for.
   assert.deepEqual(standing(row({ update_coming: 'running', update_ask: ASK }), 7, NOW), {
-    group: 'next', what: 'updating', at: '2026-11-04T11:00:00.000Z', ask: ASK,
+    group: 'next', work: revising, at, ask: ASK,
   });
   // A turn with nobody's ask behind it says only that it is updating.
-  assert.deepEqual(standing(row({ update_coming: 'running', update_ask: null }), 7, NOW), {
-    group: 'next', what: 'updating', at: '2026-11-04T11:00:00.000Z',
-  });
+  assert.deepEqual(standing(row({ update_coming: 'running', update_ask: null }), 7, NOW), { group: 'next', work: revising, at });
   // An ask waiting its turn is Waiting, Update queued.
   assert.deepEqual(standing(row({ update_coming: 'queued', update_ask: ASK }), 7, NOW), {
-    group: 'waiting', what: 'update_queued', at: '2026-11-04T11:00:00.000Z', ask: ASK,
+    group: 'waiting', work: queued, at, ask: ASK,
   });
   // With no update coming it is the Needs you feed's again (nothing here).
   assert.equal(standing(row({ update_coming: null }), 7, NOW), null);
+  // The stored state says the same (services/work-state.js derive).
+  const { derive } = require('../src/services/work-state');
+  const facts = { app_id: 1, issue_number: 6250, mode: 'live', verdict: 'ready', build_ok: true, run_at: '2026-11-04T09:00:00Z',
+    proposal_session_id: 42, proposal_status: 'promoted', check_state: 'passing', proposal_at: '2026-11-04T10:00:00Z' };
+  assert.deepEqual([derive({ ...facts, update_coming: 'running' }).stage, derive({ ...facts, update_coming: 'running' }).line],
+    ['building', { code: 'revising' }]);
+  assert.deepEqual(derive({ ...facts, update_coming: 'queued' }).line, { code: 'update_queued' });
 });
 
 test('#6282: the ask is one line of at most 80 characters', () => {
@@ -107,34 +115,29 @@ test('#6282: the ask is one line of at most 80 characters', () => {
 
 test('#6282: it is listed for who would vote and for its own people, not a voter from the thread', () => {
   const update = { update_coming: 'running', update_ask: ASK };
+  const stage = (r) => r && `${r.work.stage}:${r.work.line?.code}`;
   // Its author (7) asked for it: In progress, even having voted.
-  assert.equal(standing(row({ ...update, change_user: 7 }), 7, NOW).what, 'updating');
-  assert.equal(standing(row({ ...update, change_user: 7, voted: true, my_vote: 'yes' }), 7, NOW).what, 'updating');
+  assert.equal(stage(standing(row({ ...update, change_user: 7 }), 7, NOW)), 'building:revising');
+  assert.equal(stage(standing(row({ ...update, change_user: 7, voted: true, my_vote: 'yes' }), 7, NOW)), 'building:revising');
   // Someone who only follows it (own) sees it too.
-  assert.equal(standing(row({ ...update, own: true, voted: true }), 7, NOW).what, 'updating');
+  assert.equal(stage(standing(row({ ...update, own: true, voted: true }), 7, NOW)), 'building:revising');
   // Somebody who already voted and only wrote in the thread gets no row.
   assert.equal(standing(row({ ...update, voted: true, my_vote: 'yes' }), 7, NOW), null);
 });
 
-test('#6282: a more particular stage of the bot\'s still wins, and Revising reads Updating', () => {
-  // The bot's own stage for the requester: Revising was this exact update, and
-  // now says what it is doing.
-  assert.deepEqual(
-    standing(row({ update_coming: 'running', update_ask: ASK, change_user: 7 }), 7, NOW, 99,
-      { stage: 'revising', since: '2026-11-04T11:30:00Z' }),
-    { group: 'next', what: 'updating', at: '2026-11-04T11:30:00.000Z', ask: ASK });
-  assert.equal(
-    standing(row({ update_coming: 'queued', update_ask: ASK, change_user: 7 }), 7, NOW, 99,
-      { stage: 'followup_queued', since: '2026-11-04T11:30:00Z' }).what,
-    'update_queued');
-  // Fixing and a queued fix say something more particular than Updating.
-  assert.equal(
-    standing(row({ update_coming: 'running', update_ask: ASK, change_user: 7 }), 7, NOW, 99,
-      { stage: 'fixing', since: '2026-11-04T11:30:00Z' }).what,
-    'fixing');
+test('#6282: a more particular stage of the bot\'s still wins', () => {
+  const at = '2026-11-04T11:30:00Z';
+  // Fixing its tests says something more particular than an update.
+  const fixing = { stage: 'building', why: null, reason: null, line: { code: 'fixing' }, since: at, requesterId: 7 };
+  assert.equal(standing(row({ update_coming: 'running', update_ask: ASK, change_user: 7 }), 7, NOW, 99, fixing).work.line.code, 'fixing');
+  // The stored state keeps the bot's own stage over an update (derive applies one only to a vote or its checks).
+  const { derive } = require('../src/services/work-state');
+  const facts = { app_id: 1, issue_number: 6250, mode: 'live', verdict: 'ready', build_ok: true, run_at: '2026-11-04T09:00:00Z',
+    proposal_session_id: 42, proposal_status: 'promoted', check_state: 'failing', fix_queue_id: null };
+  assert.notEqual(derive({ ...facts, update_coming: null }).line?.code, 'revising');
 });
 
-test('#6282: Updating sorts with Revising and Update queued with a follow-up', () => {
+test('#6282: an update sorts with the work being fixed, and a queued one with the votes', () => {
   const base = {
     state: 'open', kind: 'request', request_state: 'open', slug: 'garden', name: 'Garden',
     icon_url: null, icon_emoji: null, repo_url: null,
@@ -145,38 +148,44 @@ test('#6282: Updating sorts with Revising and Update queued with a follow-up', (
     check_state: 'passing', voted: false, by_agent: false, own: false,
     promoted_at: '2026-11-04T10:00:00Z', ...extra,
   });
-  const bots = new Map([
-    ['garden#1', { stage: 'fixing', since: '2026-11-04T08:00:00Z' }],
-    ['garden#3', { stage: 'followup_queued', since: '2026-11-04T08:00:00Z' }],
+  const ws = (stage, line) => ({ stage, why: null, reason: null, line, since: '2026-11-04T08:00:00Z', requesterId: 7 });
+  const states = new Map([
+    ['garden#1', ws('building', { code: 'fixing' })],
+    ['garden#3', ws('reading', { code: 'queued', place: 1 })],
   ]);
   const lists = arrange([
     owed(2, { update_coming: 'running', update_ask: ASK, last_activity_at: '2026-11-04T11:00:00Z' }),
-    { ...base, number: 1, own: true },
+    { ...base, number: 1, request_id: 1, own: true },
     owed(4, { update_coming: 'queued', update_ask: ASK, last_activity_at: '2026-11-04T11:00:00Z' }),
-    { ...base, number: 3, own: true },
-  ], 7, NOW, 99, bots);
-  assert.deepEqual(lists.next.map((r) => [r.number, r.what]), [[1, 'fixing'], [2, 'updating']]);
-  assert.deepEqual(lists.waiting.map((r) => [r.number, r.what]), [[3, 'followup_queued'], [4, 'update_queued']]);
+    { ...base, number: 3, request_id: 3, own: true },
+  ], 7, NOW, 99, states);
+  const code = (r) => [r.number, r.work.line?.code];
+  assert.deepEqual(lists.next.map(code), [[1, 'fixing'], [2, 'revising']]);
+  assert.deepEqual(lists.waiting.map(code), [[4, 'update_queued'], [3, 'queued']], 'an update waits nearer to live than a read in line');
 });
 
-test('#6282: the AI tab says Updating and Update queued, with what was asked', () => {
-  const { nextWords, shortWords } = loadTsx('frontend/src/features/ai/model.ts');
-  const words = (p) => message(p.id, p.values);
-  const app = { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null };
-  const thread = (what, extra = {}) => ({
-    threadId: 1, number: 12, kind: 'change', title: 'Bigger buttons', app, change: { id: 42, number: 12 },
-    href: '#app/garden/dev/changes/12', group: 'next', what, at: null, ...extra,
+test('#6282: the AI tab says an update on its way in the stage words, with what was asked', () => {
+  const { nextWords, shortWords, threadWhy } = loadTsx('frontend/src/features/ai/model.ts');
+  const words = (p) => message(p.id, {
+    ...p.values,
+    ...Object.fromEntries(Object.entries(p.nested || {}).map(([k, q]) => [k, words(q)])),
   });
-  assert.equal(words(nextWords(thread('updating', { ask: ASK }))), `Garden · #12 · Updating: ${ASK}`);
-  assert.equal(words(nextWords(thread('updating', { ask: null }))), 'Garden · #12 · Updating the change');
-  assert.equal(words(nextWords(thread('update_queued', { ask: ASK }))), `Garden · #12 · Update queued: ${ASK}`);
-  assert.equal(words(nextWords(thread('update_queued', { ask: null }))), 'Garden · #12 · Update queued');
+  const app = { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null };
+  const thread = (work, extra = {}) => ({
+    threadId: 1, number: 12, kind: 'change', title: 'Bigger buttons', app, change: { id: 42, number: 12 },
+    href: '#app/garden/dev/changes/12', group: 'next', work, at: null, ...extra,
+  });
+  const revising = { stage: 'building', line: { code: 'revising' } };
+  const queued = { stage: 'up_for_vote', line: { code: 'update_queued' } };
+  assert.equal(words(nextWords(thread(revising, { ask: ASK }))), 'Garden · #12 · Building · Updating the change');
+  assert.equal(words(nextWords(thread(queued))), 'Garden · #12 · Up for a vote · An update is on its way');
+  assert.equal(words(threadWhy(thread(revising, { ask: ASK }))), `Asked: ${ASK}`, 'what was asked is its second line');
   // On GitHub the change's number is written PR, not #.
   const onGithub = { ...app, changesOnGithub: true };
-  assert.equal(words(nextWords(thread('updating', { ask: ASK, app: onGithub }))), `Garden · PR 12 · Updating: ${ASK}`);
-  assert.equal(words(nextWords(thread('update_queued', { ask: ASK, app: onGithub }))), `Garden · PR 12 · Update queued: ${ASK}`);
-  assert.equal(words(shortWords(thread('updating'))), 'Updating');
-  assert.equal(words(shortWords(thread('update_queued'))), 'Update queued');
+  assert.equal(words(nextWords(thread(revising, { app: onGithub }))), 'Garden · PR 12 · Building · Updating the change');
+  assert.equal(words(nextWords(thread(queued, { app: onGithub }))), 'Garden · PR 12 · Up for a vote · An update is on its way');
+  assert.equal(words(shortWords(thread(revising))), 'Building');
+  assert.equal(words(shortWords(thread(queued))), 'Up for a vote');
 });
 
 // ── the Votes card ──────────────────────────────────────────────────────
