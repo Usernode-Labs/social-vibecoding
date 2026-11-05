@@ -759,6 +759,10 @@
     "text": "Waiting its turn",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: it waits in Homeroom bot's line on its project."
   },
+  "work.line.firstVersionWait": {
+    "text": "Waiting for the first version to go live",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, a request's page, a project's chat, the bell). The second line under Not started yet: the request was filed while its project's first version is not live yet, and Homeroom bot starts on it as soon as that version goes live."
+  },
   "work.line.queuedAt": {
     "text": "Number {{place}} in line",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: its place in Homeroom bot's line on its project. {{place}} is a number, 1 for next."

@@ -92,7 +92,7 @@ test('the merge wakes the loop for what waited, and its pick-up moves the chat r
   assert.match(src, /log\.info\('homeroom-bot', 'A project\\'s first version is live; what waited for it is picked up now', \{\s*sessionId: Number\(merged\.id\), appId, issueNumber: Number\(firstVersion\[0\]\.issue_number\),\s*\}\);\s*refresh = true;\s*\}\s*if \(refresh\) await \(deps\.platform \|\| platform\(\)\)\.botRefresh\(appId\)/);
   // The look, picking the request up: noteRequestStatus pushes the
   // requester's cards again (followCards).
-  assert.match(src, /await activity\(\)\.startCard\(pool, \{[\s\S]*?deps: \{ dm: deps\.dm \},\s*\}\);\s*\/\/ B9: [^\n]*\n\s*await require\('\.\/homeroom-bot-chat'\)\.noteRequestStatus\(pool, \{ appId: app\.id, issueNumber, status: 'reading' \}\);/);
+  assert.match(src, /await activity\(\)\.startCard\(pool, \{[\s\S]*?deps: \{ dm: deps\.dm \},\s*\}\);\s*\/\/ B9: [^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*await require\('\.\/homeroom-bot-chat'\)\.noteRequestStatus\(pool, \{ appId: app\.id, issueNumber \}\);/);
 });
 
 test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {

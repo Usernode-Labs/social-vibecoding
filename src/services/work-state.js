@@ -142,7 +142,19 @@ function fromStage(s, row) {
  * bot's records for it, its change, its claim, a private thread holding it).
  * Never null: a request nothing is happening to waits to be read.
  */
-function derive(row, { now = new Date() } = {}) {
+function derive(row, opts = {}) {
+  const out = deriveFacts(row, opts);
+  // 5 Oct 2026 (Page Turners), kept: a request filed or queued while its
+  // project's first version is not live waits for it, and says so
+  // (`held_first_version`, the bot's own rule: homeroom-bot.js
+  // heldForFirstVersion, read by refresh).
+  if (row.held_first_version === true && out.stage === 'reading' && NOT_STARTED.has(out.line?.code)) {
+    return { ...out, line: { code: 'first_version_wait' } };
+  }
+  return out;
+}
+
+function deriveFacts(row, { now = new Date() } = {}) {
   const status = row.proposal_status || null;
   // Its change is live (REQUEST_RECORD_COLUMNS reads a merged change that is
   // not live yet as 'merging').
@@ -328,6 +340,7 @@ const WORDS = Object.freeze({
   'work.reason.changeClosed': 'Stopped: its change was closed',
   'work.reason.stalled': "Stopped: the build didn't start",
   'work.line.queued': 'Waiting its turn',
+  'work.line.firstVersionWait': 'Waiting for the first version to go live',
   'work.line.queuedAt': 'Number {{place}} in line',
   'work.line.heldBuilds': "Waiting for one of the project's builds to finish",
   'work.line.heldWaiting': 'Waiting for changes up for a vote to be decided',
@@ -352,7 +365,7 @@ const WORDS = Object.freeze({
 
 // A request in the reading stage nobody has started on yet, and one ready to
 // build that waits its turn, are said so (the same stages, in plainer words).
-const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold']);
+const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'first_version_wait']);
 const READY = new Set(['queued', 'held_builds', 'held_waiting']);
 
 const camel = (s) => String(s).replace(/_([a-z])/g, (_m, c) => c.toUpperCase());
@@ -556,6 +569,15 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
     const list = [...requests.values()];
     const { rows } = await db.query(REQUEST_FACTS_SQL, [list.map((r) => r.appId), list.map((r) => r.issueNumber)]);
     rows.sort((a, b) => Number(a.app_id) - Number(b.app_id) || Number(a.issue_number) - Number(b.issue_number));
+    // Which of them wait for their project's first version, by the bot's
+    // own rule (as its read lane and a project chat's card read it).
+    const bot = require('./homeroom-bot');
+    const holds = await bot.firstVersionHolds(db, [...new Set(rows.map((r) => Number(r.app_id)))]).catch(() => new Map());
+    for (const row of rows) {
+      row.held_first_version = bot.heldForFirstVersion(holds, {
+        appId: row.app_id, issueNumber: row.issue_number, firstVersion: row.first_version === true, reason: row.queue_reason || null,
+      });
+    }
     for (const row of rows) {
       const next = { ...derive(row, { now }), requesterId: row.requester_id == null ? null : Number(row.requester_id) };
       const sessionId = Number(row.proposal_session_id || row.build_session_id || row.lc_id) || null;

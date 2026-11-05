@@ -32,7 +32,7 @@ const STEP_OF_STAGE = Object.freeze({
   up_for_vote: 'vote', going_live: 'live', live: 'live', stopped: null, closed: null,
 });
 // A line that says nobody is at it yet, or that it waits its turn.
-const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold']);
+const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'first_version_wait']);
 const READY = new Set(['queued', 'held_builds', 'held_waiting']);
 
 // The limits a request can be held at. `builds`: the project's builds

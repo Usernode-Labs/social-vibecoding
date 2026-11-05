@@ -125,3 +125,18 @@ test('an instance key names what it is about', async () => {
   assert.deepEqual(await ws.itemsOf(db, { machine: 'app-delivery', key: 'app:4' }), [{ appId: 4, issueNumber: 12 }]);
   assert.deepEqual(await ws.itemsOf(db, { machine: 'bot-dm', key: 'user:3' }), [], 'a machine that moves no request');
 });
+
+// 5 Oct 2026 (Page Turners), kept in the stored stage on 5 Nov: a request
+// filed or queued while its project's first version is not live waits for
+// it, by the bot's own rule (homeroom-bot.js heldForFirstVersion, which
+// refresh reads), and its second line says so on every screen.
+test('a request waiting for its project\'s first version says so', () => {
+  const held = derive({ queue_id: 3, enqueued_at: ago(5), queue_place: 2, verdict: null, run_at: null, mode: null, held_first_version: true });
+  assert.deepEqual([held.stage, held.line], ['reading', { code: 'first_version_wait' }]);
+  assert.equal(ws.stageSays(held), 'Not started yet');
+  assert.equal(ws.lineSays(held), 'Waiting for the first version to go live');
+  // Once it is being read, the hold is over.
+  const reading = derive({ queue_id: 3, started_at: ago(1), enqueued_at: ago(5), verdict: null, run_at: null, mode: null, held_first_version: true });
+  assert.equal(reading.stage, 'reading');
+  assert.notDeepEqual(reading.line, { code: 'first_version_wait' });
+});
