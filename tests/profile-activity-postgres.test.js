@@ -38,7 +38,8 @@ test('the week against the full PostgreSQL schema', { timeout: 180000 }, async (
   const user = async (username) => (await pool.query(
     `INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id`, [username])).rows[0].id;
   const app = async (slug) => (await pool.query(
-    `INSERT INTO apps (name, slug, repo_url) VALUES ($1, $1, 'https://github.com/acme/' || $1) RETURNING id`, [slug])).rows[0].id;
+    `INSERT INTO apps (name, slug, repo_url) VALUES ($1, $2, $3) RETURNING id`,
+    [slug, slug, `https://github.com/acme/${slug}`])).rows[0].id;
   const me = await user('activity_me');
   const someone = await user('activity_someone');
   const [notes, runs, chess, old] = await Promise.all(['notes', 'runs', 'chess', 'old'].map(app));
@@ -65,9 +66,6 @@ test('the week against the full PostgreSQL schema', { timeout: 180000 }, async (
   await opened(notes, me, `${dayAgo(1)}T12:00:00Z`); // counted once with its time
   await opened(old, me, `${dayAgo(7)}T23:59:59Z`); // a second too old
   await opened(old, someone, `${today}T00:00:00Z`); // somebody else
-  await pool.query(
-    `INSERT INTO events (user_id, app_id, event_type, metadata) VALUES ($1, $2, 'not_an_open', '{}'::jsonb)`,
-    [me, old]).catch(() => {}); // the type may be constrained; either way it does not count
 
   const read = async (id) => profile.shapeActivity(
     (await pool.query(profile.SUMMARY_ACTIVITY_DAYS_SQL, [id])).rows,
