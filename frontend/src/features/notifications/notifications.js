@@ -1380,11 +1380,11 @@ const Notifications = {
       return;
     }
     // #5404: the Monday count of the changes you voted on that were decided
-    // names no change and no project; Your votes lists them.
+    // names no change and no project; the Homeroom bot tab's History lists
+    // them, narrowed to votes (it was Me › Your votes until 5 Nov 2026).
     if (item.kind === 'voted_digest') {
       Notifications._dismissSheetForNav();
-      if (typeof App !== 'undefined' && App.navigateToProfileProposals) return App.navigateToProfileProposals('votes');
-      window.location.hash = '#profile/your-votes';
+      window.location.hash = '#homeroom-bot/history?kind=vote';
       return;
     }
     if (item.appSlug) {

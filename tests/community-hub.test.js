@@ -147,26 +147,27 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole; #4417: and so is each topic's channel.
   assert.match(LANDER, /\{isChannelPlace\(tab\) \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
-  // The Workshop tab, in three titled parts (After-Workshop-B): OVERVIEW,
-  // All items with See all, where the open work is and the approval rule as
-  // its last line (no notices panel since the #4698 follow-up); WHAT'S
-  // HAPPENING, your work (its
-  // first three, #852 review) and what is new for you; WHAT HAPPENED, this
-  // week and a row for each week before it.
+  // The Workshop tab (After-Workshop-B): OVERVIEW, All items with See all,
+  // where the open work is and the approval rule as its last line (no
+  // notices panel since the #4698 follow-up); then YOUR WORK, one row that
+  // opens the Homeroom bot tab narrowed to the project (5 Nov 2026: it was
+  // What's happening, your work and what is new for you); WHAT HAPPENED,
+  // this week and a row for each week before it, its new requests nobody has
+  // picked up ending with Build it.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   // #4457: a week's page replaces the tab's body.
-  const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<ApprovalLine', 'data-ws-part="happening"',
-    'data-ws-mine=""', 'data-ws-fresh=""', 'data-ws-happened-head=""', 'data-ws-part="happened"', 'data-ws-happened=""', '<ThisWeek', '<WeekRow'].map(w);
+  const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<ApprovalLine', '<YourWorkCard',
+    'data-ws-happened-head=""', 'data-ws-part="happened"', 'data-ws-happened=""', '<ThisWeek', '<WeekRow'].map(w);
   assert.ok(wsOrder.every((n) => n >= 0), `every section is on the tab: ${JSON.stringify(wsOrder)}`);
   assert.deepEqual([...wsOrder].sort((a, b) => a - b), wsOrder,
-    'Overview (All items and the rule), What\'s happening (your work, then what is new for you), then What happened');
+    'Overview (All items and the rule), Your work, then What happened');
   assert.ok(!/<WorkshopNotices|data-ws-notices/.test(ws), 'and no Lately in this project panel');
   assert.ok(!/data-ws-since=""|data-ws-weeks=""|<ApprovalRules/.test(ws), 'Since your last visit, Week by week and the rules card are gone');
-  assert.match(ws, /\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
-  assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
-  assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
-  assert.match(ws, /\(freshAll \? freshRows : freshRows\.slice\(0, WORKSHOP_WORK_FIRST\)\)/, 'and so does what is new for you');
+  assert.match(ws, /\{slug && v\.mine && v\.mine\.viewer \? <YourWorkCard slug=\{slug\} name=\{projectName\} \/> : null\}/,
+    'your work is one row, for a signed-in viewer');
+  assert.ok(!/data-ws-mine=|data-ws-fresh|data-ws-part="happening"/.test(ws), 'and What\'s happening is gone');
+  assert.match(ws, /act=\{freshAct\}/, 'What happened\'s new requests end with Build it');
   assert.equal(message('project:workshop.allItems.title'), 'All items');
   assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // The Overview label opens the Workshop page, All items straight under it;

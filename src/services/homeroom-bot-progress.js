@@ -95,8 +95,8 @@ function replyLateralSql({
  * (newest by id, any mode) waits: live, ready, nothing built from it, not
  * held by a limit, on a request still open. Null otherwise. The aliases are
  * the caller's, as replyLateralSql's are, so the bot page (ai-work.js
- * FACTS_SQL) and the Workshop (workshop-waiting.js PLANS_SQL) ask the same
- * question one way. planWaits below mirrors it field by field.
+ * FACTS_SQL) and anything else that asks the same question asks it one way.
+ * planWaits below mirrors it field by field.
  */
 function planWaitingSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
   return `(SELECT CASE WHEN run.mode = 'live' AND run.verdict = 'ready'

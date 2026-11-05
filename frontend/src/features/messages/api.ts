@@ -1219,13 +1219,12 @@ export async function setMessageSaved(
  * so), with the version it is at now.
  */
 /**
- * #5452: a saved Yes belongs in Your votes and the Kudos My history tab.
- * Both listen on the window bridge, so this says the vote landed without
- * this chunk importing the profile screen. Optional at every link: neither
- * listener needs to be up for the Yes itself to be counted.
+ * #5452: a saved Yes belongs in the Kudos My history tab. It listens on the
+ * window bridge, so this says the vote landed without this chunk importing
+ * that screen. Optional: the listener need not be up for the Yes itself to
+ * be counted.
  */
 function announceApprovalVote() {
-  (window as any).UsernodeReact?.profileProposals?.voted?.();
   (window as any).Leaderboard?.invalidateHistory?.();
 }
 

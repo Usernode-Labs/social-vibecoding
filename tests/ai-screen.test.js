@@ -1695,8 +1695,12 @@ test('one column state: where each row goes, the row it lights, its address and 
   // The page reads it once; nothing else keeps a copy.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /: panelRoute \? \{ at: 'page', route: panelRoute \}/);
-  assert.match(src, /showAddress\(columnAddress\(columnShown\)\);/);
-  assert.equal((src.match(/showAddress\(/g) || []).length, 2, 'one writer of the address, besides its definition');
+  // 5 Nov 2026: the column's address carries the filter the chips set
+  // (./filter-address.ts), and the chips write it back in place: two writers,
+  // the column's and the filter's, besides its definition.
+  assert.match(src, /showAddress\(withFilter\(columnAddress\(columnShown\), \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
+  assert.match(src, /showAddress\(withFilter\(window\.location\.hash, \{ projects: next\.picked, kind: next\.historyKind \}\)\);/);
+  assert.equal((src.match(/showAddress\(/g) || []).length, 3, 'the column\'s writer and the filter\'s, besides its definition');
   assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(row\) === lit,/);
   assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(th\) === lit,/);
 });

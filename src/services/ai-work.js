@@ -80,6 +80,11 @@ function threadsInSql(viewer) {
                WHERE b.user_id = ${viewer}
     UNION ALL SELECT thread_id, TRUE FROM chat_sessions
                WHERE user_id = ${viewer} AND thread_id IS NOT NULL AND is_headless = FALSE
+    -- A request they pressed Claim on this week is theirs to build, as the
+    -- Workshop counted it (AppView._issueIsMine), even with no change yet.
+    UNION ALL SELECT t.id, TRUE FROM issue_claims ic
+                JOIN threads t ON t.app_id = ic.app_id AND t.number = ic.github_issue_number
+               WHERE ic.user_id = ${viewer} AND ic.claimed_at > NOW() - make_interval(days => ${CLAIM_DAYS})
     UNION ALL SELECT s.thread_id, FALSE FROM pr_votes v JOIN chat_sessions s ON s.id = v.session_id
                WHERE v.user_id = ${viewer} AND s.thread_id IS NOT NULL
     UNION ALL SELECT i.thread_id, FALSE FROM issue_votes v JOIN issues i ON i.id = v.issue_id
@@ -110,7 +115,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        req.id AS request_id, req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
-       ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
+       ch.voted, ch.my_vote, ch.by_agent, ch.check_state, ch.needs_fix,
        -- #6282: an update on its way holds the vote the change would ask for.
        ch.update_coming, ch.update_ask,
        dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
@@ -149,6 +154,14 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
                AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch
              LIMIT 1) AS my_vote,
            (cs.external_agent IS NOT NULL) AS by_agent,
+           -- Waits on its author for a fix, as the Workshop's Waiting on you
+           -- read it (AppView._workshopNeedsFix): its checks failed, its
+           -- preview did not build, or a merge attempt hit a conflict that
+           -- a person has to resolve. Not a checks run the platform could
+           -- not finish: that is nobody's to fix.
+           (cs.check_state = 'failing'
+            OR (cs.staging_url IS NULL AND cs.check_state = 'error' AND cs.check_error_detail IS NOT NULL)
+            OR cs.merge_conflict_state = 'failed') AS needs_fix,
            -- #6282: 'running' while a turn updates it, 'queued' while an
            -- ask waits its turn, and what was asked, for the row's words.
            ${updateComingSql('cs')} AS update_coming,
@@ -236,7 +249,19 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
        m.metadata->'homeroomBot'->>'projectIdea' AS project_idea,
        m.metadata->'homeroomBot'->>'draftTitle' AS draft_title,
        (SELECT MAX(r.created_at) FROM conversation_messages r
-         WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL) AS last_at
+         WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL) AS last_at,
+       -- Filed (or posted) as a request that has finished: live for longer
+       -- than Live this week keeps it, or closed with nothing merged. It is
+       -- History's then (services/ai-history.js reads it by the same rule),
+       -- not a Needs you row with nothing left to do.
+       (p.state IN ('filed', 'posted') AND p.result_ref > 0 AND (
+          EXISTS (SELECT 1 FROM chat_sessions cs
+                   WHERE cs.app_id = p.app_id AND p.result_ref = ANY(cs.linked_issues) AND cs.status = 'merged'
+                     AND cs.live_at <= NOW() - make_interval(days => $4))
+          OR EXISTS (SELECT 1 FROM requests r
+                      WHERE r.app_id = p.app_id AND r.number = p.result_ref AND r.state = 'closed'
+                        AND NOT EXISTS (SELECT 1 FROM chat_sessions m
+                                         WHERE m.app_id = r.app_id AND r.number = ANY(m.linked_issues) AND m.status = 'merged')))) AS result_done
   FROM conversations c
   JOIN conversation_members mine ON mine.conversation_id = c.id AND mine.user_id = $1
   JOIN conversation_members bot ON bot.conversation_id = c.id AND bot.user_id = $2
@@ -438,6 +463,13 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null, fac
     // agent submitted it for them: their yes is a tap (governance-rules.ts).
     if (!row.voted && (!theirs || row.by_agent)) return null;
     if (!own) return null;
+    // Their own change (not Homeroom bot's, whose fixes are its own) that
+    // waits on them: checks that failed, a preview that did not build, a
+    // conflict to resolve. Needs you, with Fix it, not "Waiting for checks",
+    // which it would wait on forever.
+    if (theirs && row.needs_fix === true) {
+      return { group: 'needs', what: 'fix_yours', at: iso(row.last_activity_at || row.promoted_at) };
+    }
     // Checks that have not passed hold it: a vote cannot merge it yet, so the
     // row names the checks, not the votes (#6060).
     if (row.check_state !== 'passing' && row.check_state !== 'skipped') {
@@ -814,6 +846,8 @@ function shapePrivate(row) {
     ...(Number(row.result_ref) > 0 ? { resultRef: Number(row.result_ref) } : {}),
     // #6271: the day it was closed, for Live this week.
     ...(row.done_at ? { doneAt: iso(row.done_at) } : {}),
+    // Filed as a request that has finished: History's, not Needs you's.
+    ...(row.result_done === true ? { resultDone: true } : {}),
   };
 }
 
@@ -838,11 +872,54 @@ function unfiledPrivate(privates, listed) {
   return (privates || []).filter((p) => {
     // #6271: a done thread is closed; it is not Needs you's, but Live's.
     if (p.state === 'done') return false;
+    // Filed as a request that has finished: History's.
+    if (p.resultDone === true) return false;
     const key = filedKey(p);
     if (!key || folded.has(key)) return true;
     folded.add(key);
     return !listed.has(key);
   });
+}
+
+// $1 viewer, $2 the app. The threads of one project the viewer is in, by
+// the same rule the lists above read them (threadsInSql), less the ones they
+// muted: what All items' Yours filter keeps (public/js/app-view.js
+// _devCardIsYours). Each with its request's number, its changes' ids and its
+// decisions' ids, which is how the board's cards are named.
+const YOURS_SQL = `
+WITH mine AS (${threadsInSql('$1')})
+SELECT t.number, t.kind,
+       ARRAY(SELECT cs.id FROM chat_sessions cs WHERE cs.thread_id = t.id) AS sessions,
+       ARRAY(SELECT i.id FROM issues i WHERE i.thread_id = t.id) AS issues
+  FROM threads t
+  JOIN mine ON mine.thread_id = t.id
+ WHERE t.app_id = $2 AND t.merged_into IS NULL
+   AND NOT EXISTS (SELECT 1 FROM thread_followers f
+                    WHERE f.thread_id = t.id AND f.user_id = $1 AND f.muted_at IS NOT NULL)`;
+
+/**
+ * Pure: one project's threads of the viewer's, as the board names its cards:
+ * request numbers, change (session) ids and decision (governance issue) ids.
+ */
+function yoursOf(rows) {
+  const requests = new Set();
+  const sessions = new Set();
+  const decisions = new Set();
+  for (const row of rows || []) {
+    if (row.kind === 'decision') {
+      for (const id of row.issues || []) if (Number(id) > 0) decisions.add(Number(id));
+    } else if (row.number != null && Number(row.number) > 0) {
+      requests.add(Number(row.number));
+    }
+    for (const id of row.sessions || []) if (Number(id) > 0) sessions.add(Number(id));
+  }
+  return { requests: [...requests], sessions: [...sessions], decisions: [...decisions] };
+}
+
+/** The viewer's threads on one project, for All items' Yours filter. */
+async function yoursOn(pool, { user, appId }) {
+  const { rows } = await pool.query(YOURS_SQL, [user.id, appId]);
+  return yoursOf(rows);
 }
 
 /**
@@ -897,6 +974,7 @@ const NEED_SAYS = Object.freeze({
   already_works: 'already works, so Homeroom bot offered to close it (Propose to close)',
   build_stopped: 'Homeroom bot\'s build of it stopped: it waits for them to ask it to try again',
   fix_stopped: 'its checks are failing, and Homeroom bot stopped fixing them: it waits for them to let it try again',
+  fix_yours: 'their own change waits for their fix: its checks failed, its preview did not build, or it conflicts',
 });
 
 /** What an In progress or Waiting row says, by what it waits on (the tab's tooltips, model.ts nextWords). */
@@ -1047,7 +1125,16 @@ async function pageLists(pool, { user, showSelfHosted = false, deps = {} }) {
 }
 
 module.exports = {
+  // Shared with services/ai-history.js, which reads the same threads once they are finished.
+  appOf,
+  hrefOf,
+  firstLine,
+  VISIBLE_APP_WHERE,
+  CLAIM_DAYS,
   THREADS_SQL,
+  YOURS_SQL,
+  yoursOf,
+  yoursOn,
   PRIVATE_SQL,
   FACTS_SQL,
   threadsInSql,

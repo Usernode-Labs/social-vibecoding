@@ -121,10 +121,11 @@ import { PageBack } from './page-back';
 import { BotSlotsDoor, BotSlotsPage, warmBotSlots } from './bot-slots';
 import { readAskStream } from './ask-stream';
 import {
-  ActButton, ActRow, WorkList, primaryAct, rowWords, topicRef, type CardRow as WorkCardRow, type TopicRef,
+  ActButton, WorkList, primaryAct, topicRef, type CardRow as WorkCardRow, type TopicRef,
 } from './work-row';
 import { TopicSidePanel } from './side-panel';
-import { HappenedRow, ThisWeek, WEEKS_FIRST, WEEKS_STEP, WeekPage, WeekRow, catchUp, weekDate } from './week-pages';
+import { ThisWeek, WEEKS_FIRST, WEEKS_STEP, WeekPage, WeekRow, weekDate } from './week-pages';
+import { YourWorkCard } from './your-work';
 import {
   commitDistance,
   swipeAxis,
@@ -138,9 +139,6 @@ import {
 export type SortKey = 'people' | 'activity' | 'open';
 // #4417: the page's places — a channel is `c:<handle>` (./places.ts).
 type TabKey = PlaceKey;
-
-/** Your work on the Workshop tab: its first rows, the rest behind a reveal. */
-export const WORKSHOP_WORK_FIRST = 3;
 
 /** The since list with nothing in it: a first visit's, which still has weeks. */
 const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
@@ -156,12 +154,14 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
  * can do (Open app, Invite, the ⋯, Joined), how lively it has been, what
  * landed since you were last here, Needs you, the discussion's last two
  * messages, your work, and Start a new change. DISCUSSION is its channel,
- * whole. NEEDS YOU is one decision per screen. The WORKSHOP is three titled
- * parts: OVERVIEW, All items' numbers (whose See all opens ALL ITEMS, the
- * whole board), where most of the open work is, and the approval rule every
- * change goes through; WHAT'S HAPPENING, your work in full and what is new
- * for you since your last visit; WHAT HAPPENED, this week row by row and a
- * row for each week before it. All items is the one page, with its way back
+ * whole. NEEDS YOU is one decision per screen. The WORKSHOP is OVERVIEW,
+ * All items' numbers (whose See all opens ALL ITEMS, the whole board), where
+ * most of the open work is, and the approval rule every change goes
+ * through; YOUR WORK, one row that opens the Homeroom bot tab narrowed to
+ * this project (5 Nov 2026: it was What's happening, your work in full and
+ * what was new for you); WHAT HAPPENED, this week row by row, its new
+ * requests ending with Build it, and a row for each week before it. All
+ * items is the one page, with its way back
  * to the Workshop, and the Workshop tab stays lit over it.
  *
  * The tabs came back as a BAND in the community's colour, continuing the
@@ -2650,105 +2650,6 @@ voteSavedStore.subscribe(() => {
 
 
 /**
- * A part's head in What's happening's card: What happened's week head
- * (./week-pages.tsx ThisWeek), the part's name in This week's weight and its
- * count beside it, muted, or in the accent when the count asks for the
- * viewer (`ask`), as This week's "5 new" does.
- */
-function PartHead({ title, count, ask = false, action = null }: {
-  title: string;
-  count: string | null;
-  ask?: boolean;
-  /** Optional control at the head's right end, as New for you's Mark all seen (#5056). */
-  action?: ReactNode;
-}): ReactNode {
-  return (
-    <div className="dev-ws-hweek-head">
-      <span className="dev-ws-week-head">
-        <b>{title}</b>
-        {count ? <span className={ask ? 'dev-ws-week-fresh' : undefined}>{count}</span> : null}
-      </span>
-      {action}
-    </div>
-  );
-}
-
-/** The viewer's own work in What happened's one-line rows, ending with where each stands. */
-function MineLines({ rows, slug, openKey, onOpen }: {
-  rows: WorkCardRow[];
-  slug: string;
-  openKey: string | null;
-  onOpen: (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
-}): ReactNode {
-  return (
-    <ul className="dev-ws-hlist">
-      {rows.map((r) => {
-        const ref = topicRef(r.card);
-        return (
-          <HappenedRow
-            key={r.key}
-            row={r}
-            fresh={!!r.fresh}
-            slug={slug}
-            on={!!openKey && !!ref && openKey === `${ref.kind}:${ref.id}`}
-            onOpen={onOpen}
-            standing
-          />
-        );
-      })}
-    </ul>
-  );
-}
-
-/**
- * #4772: one part of the viewer's own work in What's happening's card
- * (Waiting on you, Yours, up for a vote, Going live): its head over its
- * rows, its first WORKSHOP_WORK_FIRST and the rest behind Show N more.
- * Waiting on you and Going live are one line a row (MineLines); Yours, up
- * for a vote keeps the shared two-line work row (./work-row.tsx, variant
- * `line`), whose first line ends with the vote's pill and Vote. The caller
- * leaves out a part with no rows.
- */
-function MineSection({ section, title, count, ask = false, rows, slug, openKey, onOpen }: {
-  section: 'waiting' | 'vote' | 'live' | 'next';
-  title: string;
-  count: string;
-  ask?: boolean;
-  rows: WorkCardRow[];
-  slug: string;
-  openKey: string | null;
-  onOpen: (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
-}): ReactNode {
-  const t = useMessages('project');
-  const [all, setAll] = useState(false);
-  const shown = all ? rows : rows.slice(0, WORKSHOP_WORK_FIRST);
-  return (
-    <div className="dev-ws-hpart" data-ws-mine-section={section}>
-      <PartHead title={title} count={count} ask={ask} />
-      <div className="dev-ws-lane" data-ws-lane={`mine-${section}`}>
-        {section === 'vote' ? (
-          <WorkList rows={shown} slug={slug} openKey={openKey} onOpen={onOpen} variant="line" />
-        ) : (
-          <MineLines rows={shown} slug={slug} openKey={openKey} onOpen={onOpen} />
-        )}
-        {rows.length > WORKSHOP_WORK_FIRST ? (
-          <button
-            type="button"
-            className="dev-ws-reveal touch-target-32"
-            data-ws-mine-section-more={section}
-            aria-expanded={all}
-            onClick={() => setAll(!all)}
-          >
-            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-            {all ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: rows.length - WORKSHOP_WORK_FIRST })}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-/**
  * The grouping strip — "By category" / "By stage".
  *
  * THE PANE HEAD'S FIRST ROW, at every width (#852). From 768px up it used to
@@ -3199,15 +3100,10 @@ export function DevWorkshop(): ReactNode {
   // tab, by its Monday (sinceWeekStateKey), or null for the tab itself.
   const [weeksShown, setWeeksShown] = useState(WEEKS_FIRST);
   const [openWeek, setOpenWeek] = useState<string | null>(null);
-  // New for you's rows past its first WORKSHOP_WORK_FIRST, put out in place.
-  const [freshAll, setFreshAll] = useState(false);
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
   const sideWide = useMediaFlag(SIDE_QUERY);
-  // Whether the Workshop tab's Your work shows every row or its first
-  // WORKSHOP_WORK_FIRST.
-  const [mineAll, setMineAll] = useState(false);
   // Which of the three tabs is up. Seeded from the publish so a `?ws=` deep
   // link paints the right one on the FIRST frame rather than showing Current
   // status and then swapping — the same reason `openThemes` is seeded from
@@ -3451,7 +3347,6 @@ export function DevWorkshop(): ReactNode {
   // and republishes): what was new is then in its week, a tap away (#2183).
   const clearSince = () => {
     if (!v.since) return;
-    setFreshAll(false);
     callAppView('_workshopClearSince', slug, v.since.through);
   };
 
@@ -3506,7 +3401,6 @@ export function DevWorkshop(): ReactNode {
     setSideItem(null);
     setOpenWeek(null);
     setWeeksShown(WEEKS_FIRST);
-    setFreshAll(false);
   }, [v.slug]);
   // A deep link that names a row (the ?shot= captures): open its theme and
   // unfold it once, on the publish that carries it.
@@ -3528,7 +3422,7 @@ export function DevWorkshop(): ReactNode {
   // the same note).
   // A week's presses are part of it (#3524): each one mounts rows the
   // fillers have not seen, so the count, not only which weeks, goes in.
-  const openSig = `${Object.values(openRows).join('|')}|work:${mineAll}:${freshAll}`;
+  const openSig = Object.values(openRows).join('|');
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -3765,54 +3659,20 @@ export function DevWorkshop(): ReactNode {
   // first. A first visit has no baseline and so nothing new, but the weeks
   // and their figures are still the history, so they are drawn without the
   // card's own controls.
-  // #4772: the viewer's own work, by section (AppView._workshopView files
-  // each row's `group`): what waits on them, then their work in flight, then
-  // theirs up for a vote, then what is going live. `extra` is what Homeroom
-  // bot waits on them for on items that are not otherwise theirs.
-  const mineCards = (v.mine ? v.mine.rows : []).filter((r): r is WorkCardRow => r.t === 'card');
-  const mineIn = (group: NonNullable<WorkCardRow['group']>) => mineCards.filter((r) => (r.group || 'work') === group);
-  const waitingRows = [...mineIn('waiting'), ...((v.mine && v.mine.extra) || []).filter((r): r is WorkCardRow => r.t === 'card')];
-  const workRows = mineIn('work');
-  const voteRows = mineIn('vote');
-  const liveRows = mineIn('live');
-  // Up next, soonest first: going live, then up for a vote.
-  const nextRows = [...liveRows, ...voteRows];
-  const anyMine = waitingRows.length + workRows.length + voteRows.length + liveRows.length > 0;
-  // Your work stays when the viewer has nothing anywhere (#2182: it says so);
-  // with something in another section, an empty Your work is left out.
-  const showWork = !!v.mine && (workRows.length > 0 || (!anyMine && !!v.mine.viewer));
-  // A merged change of the viewer's still going live is Going live's until
-  // it is live, and then What happened's news like anyone's: while it is
-  // here, What happened and its weeks leave it out, so it is listed once.
-  const rowKey = (r: WorkCardRow): string => {
-    const ref = topicRef(r.card);
-    return ref ? `${ref.kind}:${ref.id}` : r.key;
-  };
-  const goingLiveKeys = new Set(liveRows.map(rowKey));
-  const notGoingLive = (r: { t: string }): boolean => r.t !== 'card' || !goingLiveKeys.has(rowKey(r as WorkCardRow));
-  const sinceAll = v.since || EMPTY_SINCE;
-  const sinceList = goingLiveKeys.size ? { ...sinceAll, rows: sinceAll.rows.filter(notGoingLive) } : sinceAll;
+  // 5 Nov 2026: the whole of the project's story, your own work in it too.
+  // It used to leave out your work in flight and your merges still going
+  // live, because What's happening listed them; your work is the Homeroom
+  // bot tab's now (the Your work card opens it), and here it is news like
+  // anyone's, marked You.
+  const sinceList = v.since || EMPTY_SINCE;
   const weeks = tab === 'workshop' ? sinceWeeks(sinceList, v.dashboard ? v.dashboard.weeks : null, Date.now()) : [];
   const thisWeek = weeks.length && weeks[0].live ? weeks[0] : null;
   const pastWeeks = thisWeek ? weeks.slice(1) : weeks;
   const firstWeek = v.dashboard ? v.dashboard.firstWeek : null;
   // #4457: the week whose page is open, while it is still in the list.
   const weekUp = openWeek ? weeks.find((w) => sinceWeekStateKey(w) === openWeek) || null : null;
-  // Own ongoing work is already in What's happening. Once it merges, its
-  // outcome belongs in catch-up too: it no longer appears in that ongoing
-  // list. #4538: so is a bot change built from the viewer's request — What's
-  // happening has it while it is in flight, and the bot remains its maker
-  // either way. (week-pages.tsx `catchUp`, which files the dots and "N new"
-  // the same way.) #4772: `sinceList` has already left out what is going
-  // live, which is Going live's until it is live.
   const sinceRows = (v.since ? sinceList.rows : [])
-    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && catchUp(r.brief));
-  // NEW FOR YOU: of what moved since your last visit, the requests filed
-  // since, newest first. Your own are Your work's. A vote waiting on yours is
-  // Needs you's (#4716): it was here too, a second Vote for the same vote,
-  // whose press only opened Needs you on it.
-  const freshRows = sinceRows.filter((r) => !!r.brief && !r.brief.mine && !r.brief.requested
-    && r.brief.kind === 'request' && !!r.fresh);
+    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief);
   const openWeekPage = (key: string) => {
     setOpenWeek(key);
     // A week further back than the since-list's capped rows draws nothing on
@@ -3828,16 +3688,15 @@ export function DevWorkshop(): ReactNode {
     callAppView('closeWorkshopWeek');
     scrollToHead(hostRef.current);
   };
-  // New for you's rows: lit while their page is open beside the list, as
-  // WorkList lights its own.
-  const rowOn = (r: WorkCardRow): boolean => {
-    const ref = topicRef(r.card);
-    return !!sideKey && !!ref && sideKey === `${ref.kind}:${ref.id}`;
-  };
-  // New for you's: Build it, the request card's own act when that act is
-  // building it (asking Homeroom bot, or yourself). 1 Nov 2026: or Work on
-  // it, where the card's act is Work on this with Homeroom bot.
-  const freshAct = (r: WorkCardRow): ReactNode => {
+  // What happened's new requests nobody has picked up (New for you's, until
+  // 5 Nov 2026, folded in here: the same rows were in both): Build it, the
+  // request card's own act when that act is building it (asking Homeroom
+  // bot, or yourself). 1 Nov 2026: or Work on it, where the card's act is
+  // Work on this with Homeroom bot. Never on your own, or on one already
+  // somebody's.
+  const freshAct = (r: CardRow): ReactNode => {
+    const b = r.brief;
+    if (!b || b.mine || b.requested || b.kind !== 'request') return null;
     const a = primaryAct(r.card);
     if (a && a.act && (a.act.fn === 'askBotToBuild' || a.act.fn === 'chooseIssueWork')) {
       return <ActButton a={a} label={t('project:workshop.fresh.buildIt')} />;
@@ -4039,14 +3898,13 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
 
-      {/* ── THE WORKSHOP TAB, in three titled parts (After-Workshop-B) ──
+      {/* ── THE WORKSHOP TAB (After-Workshop-B; 5 Nov 2026) ──
           OVERVIEW: All items' numbers, where most of the open work is, and
           the approval rule in one line (whose See all opens All items, the
-          page under this tab), then the notices panel when it has notices.
-          WHAT'S HAPPENING: one card, your own work in flight, then what is
-          new for you since your last visit and asks something of you, in
-          parts headed and divided as What happened's weeks are. WHAT HAPPENED:
-          this week, row by row, then each week before it as one row. */}
+          page under this tab). YOUR WORK: one row, opening the Homeroom bot
+          tab narrowed to this project. WHAT HAPPENED: this week, row by
+          row, its new requests nobody has picked up ending with Build it,
+          then each week before it as one row. */}
       {/* ── A WEEK'S OWN PAGE, inside the Workshop tab (#4457) ──
           This week's "All of this week", or an earlier week's row, opens it,
           with "‹ Workshop" back; the tab stays lit. See ./week-pages.tsx. */}
@@ -4057,8 +3915,8 @@ export function DevWorkshop(): ReactNode {
             ? {
                 loading: v.week.loading,
                 failed: v.week.failed,
-                fresh: v.week.fresh.filter((r): r is WorkCardRow => r.t === 'card' && notGoingLive(r)),
-                seen: v.week.seen.filter((r): r is WorkCardRow => r.t === 'card' && notGoingLive(r)),
+                fresh: v.week.fresh.filter((r): r is WorkCardRow => r.t === 'card'),
+                seen: v.week.seen.filter((r): r is WorkCardRow => r.t === 'card'),
               }
             : null}
           slug={slug}
@@ -4134,158 +3992,15 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── WHAT'S HAPPENING ── what is yours, then what is new for you, in
-          ONE card (After-Workshop-C, Oct 2026). Its parts are headed and
-          divided the way What happened's weeks are: the part's name in This
-          week's weight with its count beside it, a hairline over every row
-          and a hairline between parts. They were a card each (#4772), five
-          rounded boxes in a column with the same title over each, and each
-          one's two-line rows made a short list read as a long one. */}
-      {anyMine || showWork || freshRows.length ? (
-        <>
-        <SectionHeader className="px-1.5 pb-0 pt-3.5" data-ws-part="happening">{t('project:workshop.part.happening')}</SectionHeader>
-        <section className="dev-ws-strip" data-ws-happening="">
-          {/* ── Waiting on you ── (#4772) what needs the viewer's answer
-              before it can move: Homeroom bot's plan for their request
-              waiting for Build it, its question to them, and a change of
-              theirs that needs a fix. One line each; its count asks for the
-              viewer, so it is in the accent. */}
-          {waitingRows.length ? (
-            <MineSection
-              section="waiting"
-              title={t('project:workshop.waiting.title')}
-              count={t('project:workshop.waiting.count', { count: waitingRows.length })}
-              ask
-              rows={waitingRows}
-              slug={slug}
-              openKey={sideKey}
-              onOpen={openItem}
-            />
-          ) : null}
-          {/* ── Your work ──
-              A returning member's own work in flight that waits on nobody's
-              vote and none of their answers (#4772: those are the parts
-              around it): their requests and their changes being made
-              (AppView._workshopView), in What happened's one-line row
-              (./week-pages.tsx HappenedRow, `standing`): the glyph, the
-              title, and at the line's end where it stands. A request your
-              change addresses is drawn as that change. Its first
-              WORKSHOP_WORK_FIRST, the rest behind Show N more. */}
-          {v.mine && showWork ? (
-            <div className="dev-ws-hpart" data-ws-mine="">
-              <PartHead
-                title={t('project:workshop.mine.title')}
-                count={workRows.length ? t('project:workshop.mine.open', { count: workRows.length }) : null}
-              />
-              <div className="dev-ws-lane" data-ws-lane="mine">
-                {/* #2182: the part does not leave when the viewer has nothing
-                    underway. It says so, and names the way in: asking
-                    Homeroom bot where it builds for this viewer (`mine.bot`),
-                    Build it now under the hub's ⋯ elsewhere, and nothing to
-                    press for a read-only viewer or under the start-here
-                    banner. */}
-                {!workRows.length ? (
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                    {actions.readOnly || startHere
-                      ? t('project:workshop.mine.empty')
-                      : v.mine.bot
-                        ? t('project:workshop.mine.emptyBot')
-                        : t('project:workshop.mine.emptyBuild')}
-                  </p>
-                ) : (
-                  <MineLines
-                    rows={workRows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST)}
-                    slug={slug}
-                    openKey={sideKey}
-                    onOpen={openItem}
-                  />
-                )}
-                {workRows.length > WORKSHOP_WORK_FIRST ? (
-                  <button
-                    type="button"
-                    className="dev-ws-reveal touch-target-32"
-                    data-ws-mine-more=""
-                    aria-expanded={mineAll}
-                    onClick={() => setMineAll(!mineAll)}
-                  >
-                    <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                    {mineAll ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: workRows.length - WORKSHOP_WORK_FIRST })}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {/* ── Up next ── (#6019 follow-up; plan v3's Up next, which
-              replaced #4772's "Yours, up for a vote" and "Going live") the
-              viewer's own work moving without them, soonest first: what is
-              going live, then what is up for a vote and needs nothing from
-              them. One line a row, each ending with where it stands. A change
-              going live is left out of What happened meanwhile
-              (`goingLiveKeys`), and is its news once live, so it is listed
-              once at any point. */}
-          {nextRows.length ? (
-            <MineSection
-              section="next"
-              title={t('project:workshop.upNext.title')}
-              count={t('project:workshop.upNext.count', { count: nextRows.length })}
-              rows={nextRows}
-              slug={slug}
-              openKey={sideKey}
-              onOpen={openItem}
-            />
-          ) : null}
-          {/* ── New for you ──
-              Since your last visit, the requests filed since, whose Build it
-              is the request card's own next step (ask Homeroom bot, or build
-              it yourself). The votes waiting on yours are Needs you's
-              (#4716). Not on a first visit, which has no last visit, and not
-              when there is none. */}
-          {freshRows.length ? (
-            <div className="dev-ws-hpart" data-ws-fresh="">
-              <PartHead
-                title={t('project:workshop.fresh.title')}
-                count={t('project:workshop.fresh.count', { count: freshRows.length })}
-                action={(
-                  <button
-                    type="button"
-                    className="dev-ws-since-clear un-touch-target"
-                    data-ws-fresh-clear=""
-                    onClick={clearSince}
-                  >
-                    {t('project:workshop.fresh.markAllSeen')}
-                  </button>
-                )}
-              />
-              <div className="dev-ws-wlist">
-                {(freshAll ? freshRows : freshRows.slice(0, WORKSHOP_WORK_FIRST)).map((r) => (
-                  <ActRow
-                    key={r.key}
-                    row={r}
-                    slug={slug}
-                    sub={rowWords(r.brief!, { lead: t('project:workRow.state.newRequest'), replies: true })}
-                    act={freshAct(r)}
-                    on={rowOn(r)}
-                    onOpen={openItem}
-                  />
-                ))}
-              </div>
-              {freshRows.length > WORKSHOP_WORK_FIRST ? (
-                <button
-                  type="button"
-                  className="dev-ws-reveal touch-target-32"
-                  data-ws-fresh-more=""
-                  aria-expanded={freshAll}
-                  onClick={() => setFreshAll(!freshAll)}
-                >
-                  <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                  {freshAll ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: freshRows.length - WORKSHOP_WORK_FIRST })}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
-        </>
-      ) : null}
+      {/* ── YOUR WORK ── (5 Nov 2026) one row, a card of its own under
+          Overview: how much of yours there is here, in the Homeroom bot
+          tab's own words, opening the tab narrowed to this project
+          (./your-work.tsx). It replaced What's happening's Waiting on you,
+          Your work and Up next, which listed the same work a second time
+          from the board's buckets; New for you is What happened's now (its
+          new requests nobody has picked up end with Build it). Not for a
+          visitor, who has no work here. */}
+      {slug && v.mine && v.mine.viewer ? <YourWorkCard slug={slug} name={projectName} /> : null}
 
       {/* ── WHAT HAPPENED ──
           One card for what was Since your last visit and Week by week:
@@ -4321,6 +4036,7 @@ export function DevWorkshop(): ReactNode {
                 openKey={sideKey}
                 onOpen={openItem}
                 onAll={() => openWeekPage(sinceWeekStateKey(thisWeek))}
+                act={freshAct}
               />
             ) : null}
             {pastWeeks.length ? (

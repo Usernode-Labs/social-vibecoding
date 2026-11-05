@@ -5067,6 +5067,14 @@
     "text": "{{project}} · #{{number}} · Checks failing · Homeroom bot stopped",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a change of the person's whose checks failed after Homeroom bot stopped at its own limit of fixes, so somebody may let it try again."
   },
+  "ai.row.fixYours": {
+    "text": "{{project}} · #{{number}} · Your change needs a fix",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of a change the person made themselves that waits on them: its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
+  },
+  "ai.row.fixYoursPr": {
+    "text": "{{project}} · PR {{number}} · Your change needs a fix",
+    "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\"). Its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
+  },
   "ai.row.voteFreesSlot": {
     "text": "{{project}} · #{{number}} · Your vote helps free a build slot",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a vote on one of Homeroom bot's changes while a request of the person's waits for one of its slots on that project; deciding the change frees one."
@@ -5138,6 +5146,10 @@
   "ai.pill.letTryAgain": {
     "text": "Retry the fix",
     "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester or an admin may let it try once more. A verb."
+  },
+  "ai.pill.fixIt": {
+    "text": "Fix it",
+    "description": "The AI tab's main view, Needs you: the pill on a change the person made themselves whose checks failed, whose preview did not build, or that conflicts. Opens the change, where its Testing card says what failed. A verb."
   },
   "ai.pill.needsYou": {
     "text": "Take a look",
@@ -5626,6 +5638,134 @@
   "ai.why.fixStopped": {
     "text": "Checks failing · Homeroom bot stopped",
     "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a change whose checks failed after Homeroom bot stopped at its own limit of fixes."
+  },
+  "ai.why.fixYours": {
+    "text": "Checks failed, its preview did not build, or it conflicts",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a change the person made themselves that waits on their fix."
+  },
+  "ai.history.title": {
+    "text": "History",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Its heading, small caps over the card."
+  },
+  "ai.history.kind.label": {
+    "text": "Show one kind of work",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Accessible name, read by a screen reader, of its row of filter chips (All, Changes, Requests, Votes, Only you)."
+  },
+  "ai.history.kind.all": {
+    "text": "All",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip, the first: every kind of work."
+  },
+  "ai.history.kind.change": {
+    "text": "Changes",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip: only changes (code changes to an app) the person built, or Homeroom bot built from their request. A noun, plural."
+  },
+  "ai.history.kind.request": {
+    "text": "Requests",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip: only requests the person filed (things they asked to have built or fixed) that somebody else built or that were closed. A noun, plural."
+  },
+  "ai.history.kind.vote": {
+    "text": "Votes",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip: only changes and group decisions the person voted on or opened, once decided. A noun, plural."
+  },
+  "ai.history.kind.solo": {
+    "text": "Only you",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip: only the person's private threads with Homeroom bot, which nobody else can see."
+  },
+  "ai.history.live": {
+    "text": "Live {{date}}",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change that went live (people using the app have it). {{date}} is the day, short, as \"Oct 24\"."
+  },
+  "ai.history.closed": {
+    "text": "Closed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change closed without being merged, or a request closed with nothing built."
+  },
+  "ai.history.shipped": {
+    "text": "Shipped",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a request of the person's that somebody else built, and that is live now."
+  },
+  "ai.history.passed": {
+    "text": "Passed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a group decision the person opened (a rename, a new picture, …) that the group voted through."
+  },
+  "ai.history.withdrawn": {
+    "text": "Withdrawn",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a group decision the person opened and then withdrew."
+  },
+  "ai.history.done": {
+    "text": "Done",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a private thread with Homeroom bot that the person marked done."
+  },
+  "ai.history.putAway": {
+    "text": "Put away",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a private thread with Homeroom bot that the person put away without filing it."
+  },
+  "ai.history.filedShipped": {
+    "text": "Filed #{{number}} · shipped",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a private thread with Homeroom bot that the person filed as a request, which then went live. {{number}} is the request's number."
+  },
+  "ai.history.filedClosed": {
+    "text": "Filed #{{number}} · closed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a private thread with Homeroom bot that the person filed as a request, which was then closed with nothing built. {{number}} is the request's number."
+  },
+  "ai.history.yesMerged": {
+    "text": "You: yes · merged",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a change the person voted Yes on, which was merged."
+  },
+  "ai.history.noMerged": {
+    "text": "You: no · merged",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a change the person voted No on, which was merged anyway."
+  },
+  "ai.history.yesClosed": {
+    "text": "You: yes · closed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a change or decision the person voted Yes on, which was closed without going through."
+  },
+  "ai.history.noClosed": {
+    "text": "You: no · closed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a change or decision the person voted No on, which was closed without going through."
+  },
+  "ai.history.yesPassed": {
+    "text": "You: yes · passed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a group decision the person voted Yes on, which the group voted through."
+  },
+  "ai.history.noPassed": {
+    "text": "You: no · passed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a group decision the person voted No on, which the group voted through anyway."
+  },
+  "ai.history.yesWithdrawn": {
+    "text": "You: yes · withdrawn",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a group decision the person voted Yes on, which its author withdrew."
+  },
+  "ai.history.noWithdrawn": {
+    "text": "You: no · withdrawn",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a group decision the person voted No on, which its author withdrew."
+  },
+  "ai.history.wherePr": {
+    "text": "{{project}} · PR {{number}}",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). A row's tooltip, for a change on a project whose code is on GitHub, where its number is its pull request's. {{project}} is the project's name."
+  },
+  "ai.history.left": {
+    "text": "You left",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Beside a project's name over its rows, for a private community the person is no longer in: only what they made there stays listed."
+  },
+  "ai.history.earlier": {
+    "text": "Earlier months",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Button under the card: shows the months before the ones listed."
+  },
+  "ai.history.empty": {
+    "text": "Nothing finished yet.",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Shown in the card when none of the person's work has finished (or none of the kind and projects picked)."
+  },
+  "ai.history.loading": {
+    "text": "Loading your history",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Accessible name, read by a screen reader, of the placeholder bars shown while the card's rows load."
+  },
+  "ai.history.failed": {
+    "text": "Your history could not be read.",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Shown in the card when its rows could not be loaded, above a Try again button. Plain, not an alarm."
+  },
+  "ai.filter.emptyProject": {
+    "text": "Nothing of yours in {{project}} right now.",
+    "description": "The Homeroom bot tab, Needs you, when the project chips are narrowed to one project and nothing of the person's is under way or waiting there. {{project}} is the project's name."
   },
   "ai.why.voteFreesSlot": {
     "text": "Your vote helps free a build slot",

@@ -90,11 +90,6 @@ const App = {
   _inMessages: false,
   // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
   _inAgentSession: false,
-  // "Your proposals" (#5310): every proposal-carrying dev session the viewer
-  // has ever started, across every project, grouped by status. A drill-in
-  // from Profile's own rows, not a rail root — set by
-  // navigateToProfileProposals() / _exitProfileProposals() / navigateHome().
-  _inProfileProposals: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -2746,14 +2741,6 @@ const App = {
       const messages = window.UsernodeReact?.messages;
       if (messages?.showing?.()) messages.resync?.();
 
-      // Your work (#5453): a vote cast on a slow link is missing from the
-      // saved copy of Your votes the screen opened with. Re-read whichever
-      // view is up through its own loader, the same way the Communities
-      // screen corrects itself. `return`: this screen holds no app view to
-      // fall through to, like the Workshop branch below.
-      const work = window.UsernodeReact?.profileProposals;
-      if (visible('profile-proposals-screen') && work?.isOpen?.()) { work.reload?.(); return; }
-
       // The Communities screen (#5164): its counts and Needs you feed are
       // the workshop controller's own quiet reads. When the worker corrected
       // one of them after a slow first answer, re-run it here — the same
@@ -2768,18 +2755,6 @@ const App = {
       // it was first drawn with (polish board #3).
       const workshop = window.UsernodeReact?.workshop;
       if (workshop?.isOpen?.() && !App.currentApp) { workshop.refreshNeeds?.(); return; }
-
-      // Your work (#5456): Your changes, Your requests and Your votes read
-      // once per open, on the ordinary deadline. When the worker corrected
-      // that read after serving its saved copy (a vote cast a moment before,
-      // still missing), re-run the controller's own reload, the same loader
-      // Try again uses. `return`: the screen holds no app view to fall
-      // through to.
-      const profileProposals = window.UsernodeReact?.profileProposals;
-      if (visible('profile-proposals-screen') && profileProposals?.isOpen?.()) {
-        profileProposals.reload?.();
-        return;
-      }
 
       // The app record itself is in the service worker's zero-deadline boot
       // lane. If its cached `creating` snapshot is corrected after first
@@ -5436,7 +5411,6 @@ const App = {
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
-        else if (App._inProfileProposals) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -5465,8 +5439,7 @@ const App = {
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings || App._inBrowse
           || App._inAgentSession
-          || App._inMessages || App._inWorkshop
-          || App._inProfileProposals) {
+          || App._inMessages || App._inWorkshop) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -5543,13 +5516,17 @@ const App = {
         return;
       }
       if (parts[0] === 'profile' && App.PROFILE_WORK[parts[1]]) {
-        // Your work (UI overhaul): Your changes (#profile/your-changes, and
-        // #profile/proposals, its address as "Your proposals" #5310), Your
-        // requests and Your votes — drill-ins from Profile's own rows, not
-        // usernames (see PROFILE_WORK). Must come before the generic profile branch below,
-        // which otherwise treats parts[1] as a username to view.
-        App.setChromeless(false);
-        App.navigateToProfileProposals(App.PROFILE_WORK[parts[1]]);
+        // Your work's old addresses (UI overhaul): Your changes
+        // (#profile/your-changes, and #profile/proposals, its address as
+        // "Your proposals" #5310), Your requests and Your votes. 5 Nov 2026:
+        // that screen is the Homeroom bot tab's History now, which lists the
+        // same work and what Homeroom bot built for you, so a bookmark, an
+        // email or a bell row that names one lands there, on that kind,
+        // swapped in place (see PROFILE_WORK). Must come before the generic
+        // profile branch below, which otherwise treats parts[1] as a
+        // username to view.
+        try { history.replaceState(null, '', App._rootUrl(App.profileWorkAddress(parts[1]))); } catch (_) { return; }
+        App.restoreFromHash();
         return;
       }
       if (parts[0] === 'profile') {
@@ -6000,7 +5977,6 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
-        if (App._inProfileProposals) App._exitProfileProposals();
             App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -6062,7 +6038,6 @@ const App = {
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
             if (App._inWorkshop) App._exitWorkshop();
-            if (App._inProfileProposals) App._exitProfileProposals();
         App._showOnlyScreen('home-screen');
         App.setHeaderTitle('Homeroom');
         // Home has no Improve target: clear whatever screen published one, or
@@ -6323,7 +6298,7 @@ const App = {
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen',
-    'agent-session-screen', 'profile-proposals-screen', 'ai-screen'],
+    'agent-session-screen', 'ai-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and publish the incoming screen's default back slot.
@@ -6922,7 +6897,6 @@ const App = {
     'workshop-screen': 'communities',
     'leaderboard-screen': 'challenges',
     'profile-screen': 'profile',
-    'profile-proposals-screen': 'my_proposals',
     'settings-screen': 'settings',
     'messages-screen': 'messages',
     'agent-session-screen': 'agent_session',
@@ -7401,9 +7375,6 @@ const App = {
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
     'workshop-screen',
-    // Your proposals (#5310). React-owned end to end, same as Workshop —
-    // features/profile/my-proposals.tsx takes useVisibilityHiddenClass.
-    'profile-proposals-screen',
     // The AI tab's main view (#6019 follow-up): features/ai/index.tsx takes
     // useVisibilityHiddenClass from its first commit, same seam.
     'ai-screen',
@@ -7580,7 +7551,6 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
     const screen = document.getElementById('leaderboard-screen');
@@ -7737,7 +7707,6 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('profile-screen');
     App._inProfile = true;
     // Loads into the still-hidden root BEFORE the transition, as the Workshop
@@ -7784,66 +7753,22 @@ const App = {
     if (window.Profile?.close) Profile.close();
   },
 
-  // Show the Your work screen (UI overhaul; it was "Your proposals", #5310)
-  // on one of its three views — Your changes, Your requests or Your votes. Reached from Profile's #profile-row-proposals row
-  // (frontend/src/features/profile/account-panel.tsx), a drill-in exactly
-  // like navigateToLeaderboard, so it follows that method's shape: exit
-  // every sibling root screen, then hand off to the screen's own
-  // Workshop-style controller (window.UsernodeReact.profileProposals),
-  // registered inline by frontend/src/features/profile/my-proposals.tsx.
-  // The addresses of Profile's "Your work" rows, and the view each opens.
-  // Hyphenated because a username is [A-Za-z0-9_] (services/usernames.js),
-  // so none of these can be somebody's #profile/<username> page, which a
-  // bare "votes" or "requests" could have been. `proposals` is the old
-  // address of Your changes, which a person named that has lost since #5310.
+  // The old addresses of Profile's "Your work" rows, and the kind of the
+  // Homeroom bot tab's History each lands on (5 Nov 2026; History's kinds,
+  // features/ai/filter-address.ts). Hyphenated because a username is
+  // [A-Za-z0-9_] (services/usernames.js), so none of these can be somebody's
+  // #profile/<username> page. `proposals` is the old address of Your
+  // changes, from before #5310.
   PROFILE_WORK: {
-    proposals: 'changes',
-    'your-changes': 'changes',
-    'your-requests': 'requests',
-    'your-votes': 'votes',
+    proposals: 'change',
+    'your-changes': 'change',
+    'your-requests': 'request',
+    'your-votes': 'vote',
   },
-  // Message ids, read when the screen is named.
-  PROFILE_WORK_TITLES: {
-    changes: 'shell:title.yourChanges', requests: 'shell:title.yourRequests', votes: 'shell:title.yourVotes',
-  },
-
-  navigateToProfileProposals(kind = 'changes') {
-    const view = App.PROFILE_WORK_TITLES[kind] ? kind : 'changes';
-    // The guard stops only the duplicate dispatch (popstate + hashchange in
-    // one tick, #979): the same view re-entered while it is on screen with
-    // no app open. Opening an app from a row leaves both flags set, so a
-    // return trip must take the full entry below and read the list again
-    // (#5454) — navigateToWorkshop documents the same trap.
-    if (App._inProfileProposals && !App.currentApp && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
-      return;
-    }
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    const leavingApp = !!App.currentApp;
-    App.currentApp = null;
-    if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inProfile) App._exitProfile();
-    if (App._inAdmin) App._exitAdminConsole();
-    if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
-    if (App._inWorkshop) App._exitWorkshop();
-    const screen = document.getElementById('profile-proposals-screen');
-    // Already on the screen, on another of its views: a change of list, not
-    // an entry, so there is nothing to slide in.
-    const switching = App._inProfileProposals;
-    App._inProfileProposals = true;
-    window.UsernodeReact?.profileProposals?.open?.(view);
-    PlatformUI.transition(() => {
-      if (leavingApp) AppView.close();
-      App._showOnlyScreen('profile-proposals-screen');
-      App._enterScreenChrome();
-      App.setHeaderTitle(PlatformI18n.t(App.PROFILE_WORK_TITLES[view]));
-    }, { type: App._entryTransition(switching || fromIframe ? 'none' : 'push', screen) });
-  },
-
-  // State-only (#979) — see _exitLeaderboard.
-  _exitProfileProposals() {
-    App._inProfileProposals = false;
-    window.UsernodeReact?.profileProposals?.close?.();
+  /** The History address an old Your work address lands on: `#homeroom-bot/history?kind=<kind>`. */
+  profileWorkAddress(segment) {
+    const kind = App.PROFILE_WORK[segment];
+    return kind ? `#homeroom-bot/history?kind=${kind}` : '#homeroom-bot/history';
   },
 
   // Show the browse-all-apps screen (#apps). Sibling to
@@ -7874,7 +7799,6 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
@@ -7940,7 +7864,6 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inMessages) App._exitMessages();
-    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('workshop-screen');
     App._inWorkshop = true;
     // Loads into the still-hidden root: the island renders nothing remote
@@ -7974,7 +7897,6 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inMessages) App._exitMessages();
-    if (App._inProfileProposals) App._exitProfileProposals();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('ai-screen');
     PlatformUI.transition(() => {
@@ -8263,7 +8185,6 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
     // Renders into the still-hidden screen; `chrome: false` holds its
@@ -8315,7 +8236,6 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
     // Renders every section into the still-hidden screen — invisible, so
@@ -8377,7 +8297,6 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('messages-screen');
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
@@ -8551,7 +8470,6 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('agent-session-screen');
     App._inAgentSession = true;
@@ -9218,7 +9136,6 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on
@@ -9363,7 +9280,6 @@ const App = {
     'leaderboard-screen': ['arrow', '#profile'],
     'settings-screen': ['arrow', '#profile'],
     'admin-screen': ['arrow', '#profile'],
-    'profile-proposals-screen': ['arrow', '#profile'],
   },
 
   // ── A newcomer's way out ─────────────────────────────────────────────

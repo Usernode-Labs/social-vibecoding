@@ -384,6 +384,46 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.equal(afterLists.liveThisWeek.some((r) => r.title === 'An older finished idea'), false);
   assert.equal(afterLists.counts.liveThisWeek, afterLists.liveThisWeek.length, 'the heading\'s count includes it');
 
+  // A request of Bob's she pressed Claim on is hers to build, though she
+  // never filed it, wrote in it or started a change: the Workshop listed it
+  // as her work (AppView._issueIsMine), and the tab does too.
+  await request(app, 50, bob, 'Seed labels');
+  await pool.query('INSERT INTO issue_claims (app_id, github_issue_number, user_id) VALUES ($1, 50, $2)', [app.id, ada.id]);
+  // Her own change whose checks failed waits on her fix: Needs you's, with
+  // Fix it, never "Waiting for checks". One whose preview did not build is
+  // too; Homeroom bot's change with failing checks is the bot's to fix.
+  await request(app, 51, ada, 'Frost alerts');
+  await change(app, 52, ada, 51, 'promoted', { promotedAt: new Date(), checkState: 'failing' });
+  await request(app, 53, ada, 'Rain gauge');
+  const broken = await change(app, 54, ada, 53, 'promoted', { promotedAt: new Date(), checkState: 'error' });
+  await pool.query(`UPDATE chat_sessions SET staging_url = NULL, check_error_detail = 'image did not boot' WHERE id = $1`, [broken.id]);
+  await request(app, 55, ada, 'Bot fixes its own');
+  await change(app, 56, bot, 55, 'promoted', { promotedAt: new Date(), checkState: 'failing' });
+  const fixes = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
+  const claimedBySelf = [...fixes.next, ...fixes.waiting].find((r) => r.title === 'Seed labels');
+  assert.deepEqual([claimedBySelf && claimedBySelf.what, claimedBySelf && claimedBySelf.by], ['building', 'you'],
+    'her claim on Bob\'s request is her work');
+  assert.deepEqual(fixes.needs.filter((r) => r.what === 'fix_yours').map((r) => r.title).sort(), ['Frost alerts', 'Rain gauge']);
+  const everything = [...fixes.needs, ...fixes.next, ...fixes.waiting];
+  assert.ok(!everything.some((r) => r.title === 'Bot fixes its own' && r.what === 'fix_yours'), 'the bot\'s change is the bot\'s to fix');
+  assert.ok(!everything.some((r) => r.title === 'Frost alerts' && r.what === 'checking'), 'not "Waiting for checks"');
+  const fixLists = await aiWork.pageLists(pool, { user: { id: ada.id }, deps: { bot } });
+  assert.match(fixLists.needsYou.find((r) => r.title === 'Frost alerts').says, /waits for their fix/,
+    'Homeroom bot\'s answer says the same');
+
+  // All items' Yours filter (5 Nov 2026): the same threads, on one project,
+  // as the board names its cards. Hers (asked for), one she claimed, one she
+  // only wrote in, a decision she voted on; never one she muted, nor
+  // another project's.
+  const yours = await aiWork.yoursOn(pool, { user: { id: ada.id }, appId: app.id });
+  for (const n of [1, 2, 10, 50]) assert.ok(yours.requests.includes(n), `#${n} is hers`);
+  assert.ok(!yours.requests.includes(11), 'not the one she muted');
+  assert.ok(yours.requests.includes(4), 'a thread she voted in counts too');
+  assert.ok(yours.decisions.includes(votedOn.id), 'a decision she voted on');
+  assert.ok(yours.sessions.length > 0, 'the changes in her threads, by id');
+  const elsewhere = await aiWork.yoursOn(pool, { user: { id: ada.id }, appId: hidden.id });
+  assert.deepEqual(elsewhere.requests, [1], 'one project at a time');
+
   // The route: signed in only.
   const httpApp = express();
   httpApp.use((req, _res, next) => { req.user = req.get('x-test-user') ? { id: Number(req.get('x-test-user')) } : null; next(); });
@@ -395,6 +435,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.ok(Array.isArray(body.private) && Array.isArray(body.needs) && Array.isArray(body.next) && Array.isArray(body.waiting) && Array.isArray(body.live));
+  assert.equal((await fetch(`${base}/api/apps/aw-seeds/threads/yours`)).status, 401);
 });
 
 test('#6246: a waiting plan stays in Needs you past the 25-request window and a reply', { timeout: 120000 }, async (t) => {
@@ -479,8 +520,9 @@ test('the demo rows are obviously fake, and staging-only', () => {
   assert.equal(new Set(rows.filter((r) => feedSlugs.has(r.app.slug)).map((r) => r.app.slug)).size, 2);
   assert.equal(new Set(rows.map((r) => r.app.slug)).size, 6, 'three chips and "3 more"');
   assert.ok(rows.every((r) => /^staging-demo-/.test(r.app.slug)), 'on demo projects only');
-  // #6284: the bot stopped at its own limit on a change's checks.
-  assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped', 'fix_stopped']);
+  // #6284: the bot stopped at its own limit on a change's checks; and a
+  // change of the person's own whose checks failed, which waits on their fix.
+  assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped', 'fix_stopped', 'fix_yours']);
   assert.ok(demo.next.some((r) => r.claimedBy === 'staging-demo-partner'), 'a claim');
 });
 

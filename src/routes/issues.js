@@ -2639,26 +2639,6 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
-      // #4772: what Homeroom bot waits on this viewer for here (its plans
-      // waiting for their Build it and its open questions to them), for the
-      // Workshop's Waiting on you. A back and forth with it is not listed
-      // (#5229). Best-effort: services/workshop-waiting.js never throws. The
-      // staging demo shows one of each on the mock requests.
-      const workshopWaiting = require('../services/workshop-waiting');
-      const waitingOnYou = IS_STAGING && req.query.demo === '1'
-        ? workshopWaiting.demoWaiting()
-        : await workshopWaiting.waitingOnViewer(pool, { appId: app.id, userId: req.user.id });
-
-      // #5385: what Homeroom bot has in hand for this viewer on THIS
-      // project, and where it needs them, as the Activity drawer's tracks
-      // (services/homeroom-bot-tray.js workFor, already keyed to the signed-
-      // in person), so the Workshop's What's happening draws the work as it
-      // happens and cannot disagree with the drawer. The staging demo shows
-      // the two mock requests' rows.
-      const homeroomBotWork = IS_STAGING && req.query.demo === '1'
-        ? workshopWaiting.demoBotWork(app)
-        : await workshopWaiting.botWorkOnApp(pool, { app, user: req.user });
-
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2672,8 +2652,6 @@ function issueRoutes(config) {
         myRemaining,
         limit: WEEKLY_BOUNTY_LIMIT,
         ...(botDoor ? { homeroomBot: botDoor } : {}),
-        waitingOnYou,
-        homeroomBotWork,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });

@@ -57,6 +57,8 @@ export interface AiPrivate {
   resultRef?: number | null;
   /** #6271: the day it was marked done, for Live this week (absent from an older server). */
   doneAt?: string | null;
+  /** Filed (or posted) as a request that has since finished: History's, not Needs you's. */
+  resultDone?: boolean;
 }
 
 export interface AiThread {
@@ -70,6 +72,8 @@ export interface AiThread {
   group: 'needs' | 'next' | 'waiting' | 'live';
   what:
     | 'plan' | 'decide' | 'already_works' | 'build_stopped' | 'fix_stopped'
+    /** Their own change waits on their fix: failed checks, a preview that did not build, a conflict. */
+    | 'fix_yours'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'updating' | 'building' | 'reading' | 'reading_reply'
     | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'update_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'retrying_plan' | 'on_hold'
     | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
@@ -337,6 +341,23 @@ export function rankProjects(rows: WorkRow[], progress: AiThread[], waiting: AiT
 }
 
 /**
+ * Pure (5 Nov 2026): the ranking, then any project it does not name, once
+ * each and in their order, needing nothing: History's projects, and one a
+ * link picked (#homeroom-bot?project=…) that no list names yet. Their chips
+ * come after the rest, under More; a picked one leads the rail (railProjects).
+ */
+export function withProjects(ranked: ProjectTally[], apps: readonly (AiApp | null | undefined)[]): ProjectTally[] {
+  const out = [...ranked];
+  const seen = new Set(ranked.map((p) => p.app.slug));
+  for (const app of apps) {
+    if (!app || !app.slug || seen.has(app.slug)) continue;
+    seen.add(app.slug);
+    out.push({ app, needs: 0, progress: 0, waiting: 0, live: 0 });
+  }
+  return out;
+}
+
+/**
  * Pure: the projects the rail shows as chips: any picked from More, then the
  * first few of the ranking. A pick from More comes first, beside All, so
  * what the lists are narrowed to is on screen even where a phone's rail
@@ -360,6 +381,7 @@ const PILLS: Record<string, string> = {
   already_works: 'messages:ai.pill.proposeClose',
   build_stopped: 'messages:ai.pill.tryAgain',
   fix_stopped: 'messages:ai.pill.letTryAgain',
+  fix_yours: 'messages:ai.pill.fixIt',
 };
 
 /**
@@ -494,7 +516,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   for (const t of work?.needs || []) {
     if (isOwed(owed, t)) continue;
     rows.push({
-      key: `${t.what === 'decide' ? 'decide' : t.what === 'already_works' ? 'works' : t.what === 'build_stopped' ? 'stopped' : t.what === 'fix_stopped' ? 'fix_stopped' : 'plan'}:${t.threadId}`,
+      key: `${t.what === 'decide' ? 'decide' : t.what === 'already_works' ? 'works' : t.what === 'build_stopped' ? 'stopped' : t.what === 'fix_stopped' ? 'fix_stopped' : t.what === 'fix_yours' ? 'fix_yours' : 'plan'}:${t.threadId}`,
       title: t.title || '',
       app: t.app,
       who: 'all',
@@ -515,7 +537,9 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
           ? { id: 'messages:ai.row.buildStopped', values: where(t.app, t.number) }
           : t.what === 'fix_stopped'
             ? { id: 'messages:ai.row.fixStopped', values: where(t.app, t.number) }
-            : whereLine(t.app, t.number),
+            : t.what === 'fix_yours'
+              ? { id: prWord('messages:ai.row.fixYours', changeOnGithub(t)), values: where(t.app, t.number) }
+              : whereLine(t.app, t.number),
       pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
       href: t.href,
       rootId: null,
@@ -526,6 +550,8 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   for (const p of work?.private || []) {
     // #6159: a done thread is the only one left out (the server leaves it out too).
     if (p.state === 'done') continue;
+    // 5 Nov 2026: and one filed as a request that has finished: History's.
+    if (p.resultDone) continue;
     const key = filedKey(p);
     if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
     // 1 Nov 2026: a thread about a request or a change is drawn by it, its
@@ -582,6 +608,8 @@ const WHY: Record<string, string> = {
   'messages:ai.row.alreadyWorksPlain': 'messages:ai.why.alreadyWorksPlain',
   'messages:ai.row.buildStopped': 'messages:ai.why.buildStopped',
   'messages:ai.row.fixStopped': 'messages:ai.why.fixStopped',
+  'messages:ai.row.fixYours': 'messages:ai.why.fixYours',
+  'messages:ai.row.fixYoursPr': 'messages:ai.why.fixYours',
   'messages:ai.row.voteFreesSlot': 'messages:ai.why.voteFreesSlot',
 };
 
@@ -750,6 +778,7 @@ const PR_TWIN: Record<string, string> = {
   'messages:ai.up.operator': 'messages:ai.up.operatorPr',
   'messages:ai.up.awaitingPlan': 'messages:ai.up.awaitingPlanPr',
   'messages:ai.live.row': 'messages:ai.live.rowPr',
+  'messages:ai.row.fixYours': 'messages:ai.row.fixYoursPr',
 };
 
 /** Whether a row names a change on a project whose code is on GitHub. */

@@ -631,10 +631,6 @@
     "text": "Overview",
     "description": "Small-caps label over the first part of the Workshop tab of a project's page: the All items card with its figures, where the open work is, and the approval rule."
   },
-  "workshop.part.happening": {
-    "text": "What's happening",
-    "description": "Small-caps label over the second part of the Workshop tab of a project's page: the viewer's own work in flight and what is new for them since their last visit."
-  },
   "workshop.part.happened": {
     "text": "What happened",
     "description": "Small-caps label over the last part of the Workshop tab of a project's page: this week's changes and requests row by row, then one row for each week before it."
@@ -743,81 +739,41 @@
     "text": "{{count}} landed this week, the same as the week before.",
     "description": "Sentence of the fallback summary on a project's Workshop tab: as many changes were merged this week ({{count}}) as the week before."
   },
-  "workshop.mine.title": {
+  "workshop.desk.title": {
     "text": "Your work",
-    "description": "Heading of the section on a project's Workshop tab that lists this person's own requests, sessions and proposals in the project."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's title."
   },
-  "workshop.mine.open_one": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Your work\" heading on the Workshop tab of a project's page: how many pieces of the viewer's own work are still open. {{count}} is that number."
+  "workshop.desk.open": {
+    "text": "Opens Homeroom bot, showing your work in {{project}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's tooltip. {{project}} is the project's name."
   },
-  "workshop.mine.open_other": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Your work\" heading on the Workshop tab of a project's page: how many pieces of the viewer's own work are still open. {{count}} is that number."
+  "workshop.desk.both": {
+    "text": "Needs you: <0>{{needs}}</0> · In progress: {{progress}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end, in the Homeroom bot tab's own words: how many things wait on the person, and how many are being worked on. <0></0> marks the number that asks for them, drawn in the accent."
   },
-  "workshop.mine.empty": {
-    "text": "You have no work going on.",
-    "description": "Line in the Your work section on a project's Workshop tab when this person has nothing in progress and cannot start anything from here."
+  "workshop.desk.needs": {
+    "text": "Needs you: <0>{{needs}}</0>",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when things wait on the person and nothing else is being worked on. <0></0> marks the number, drawn in the accent."
   },
-  "workshop.mine.emptyBot": {
-    "text": "You have no work going on. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu.",
-    "description": "Line in the Your work section on a project's Workshop tab when this person has nothing in progress, on a project where Homeroom bot (the platform's own building agent, a name) makes the changes. \"Suggest an improvement\" is a row in the Homeroom menu; Homeroom is the product's name."
+  "workshop.desk.progress": {
+    "text": "In progress: {{progress}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when nothing waits on the person but some of their work is being worked on."
   },
-  "workshop.mine.emptyBuild": {
-    "text": "You have no work going on. Pick up an open item in All items, or press ⋯ on the hub and use Build it now.",
-    "description": "Line in the Your work section on a project's Workshop tab when this person has nothing in progress. All items is the page with the whole board; ⋯ is the More button on the project's Hub and \"Build it now\" a row of its menu."
+  "workshop.desk.waiting": {
+    "text": "Waiting: {{waiting}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when the person's work only waits on somebody else (votes, a free builder)."
   },
-  "workshop.mine.showLess": {
-    "text": "Show less",
-    "description": "Button under the Your work list on a project's Workshop tab: folds the list back to its first three rows."
+  "workshop.desk.next": {
+    "text": "Next: {{title}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line: the first thing that waits on the person. {{title}} is its title, written by a person."
   },
-  "workshop.mine.showMore_one": {
-    "text": "Show {{count}} more",
-    "description": "Button under the Your work list on a project's Workshop tab: shows the rest of this person's items. {{count}} is how many are hidden."
+  "workshop.desk.empty": {
+    "text": "Nothing of yours here right now.",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line when none of the person's work is under way or waiting in this project."
   },
-  "workshop.mine.showMore_other": {
-    "text": "Show {{count}} more",
-    "description": "Button under the Your work list on a project's Workshop tab: shows the rest of this person's items. {{count}} is how many are hidden."
-  },
-  "workshop.waiting.title": {
-    "text": "Waiting on you",
-    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's items that need their answer before they can move (a plan waiting for Build it, a question from Homeroom bot, a conversation with Homeroom bot, a change of theirs that needs a fix)."
-  },
-  "workshop.waiting.count_one": {
-    "text": "{{count}} to answer",
-    "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
-  },
-  "workshop.waiting.count_other": {
-    "text": "{{count}} to answer",
-    "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
-  },
-  "workshop.upNext.title": {
-    "text": "Up next",
-    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). The section's heading."
-  },
-  "workshop.upNext.count_one": {
-    "text": "{{count}} moving",
-    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
-  },
-  "workshop.upNext.count_other": {
-    "text": "{{count}} moving",
-    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
-  },
-  "workshop.fresh.title": {
-    "text": "New for you",
-    "description": "Heading of a card on the Workshop tab of a project's page: requests filed since the viewer's last visit."
-  },
-  "workshop.fresh.count_one": {
-    "text": "{{count}} since your last visit",
-    "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
-  },
-  "workshop.fresh.count_other": {
-    "text": "{{count}} since your last visit",
-    "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
-  },
-  "workshop.fresh.markAllSeen": {
-    "text": "Mark all seen",
-    "description": "Button beside the \"New for you\" heading on the Workshop tab of a project's page: marks everything new since the viewer's last visit as seen, which empties the card."
+  "hub.workshop.sub": {
+    "text": "What happened, and every item",
+    "description": "On a phone, the Workshop row of a project's Hub (For you): opens the project's Workshop, which shows what happened week by week and All items, the whole board. Not the person's own work, which has its own row (Your work)."
   },
   "workshop.fresh.buildIt": {
     "text": "Build it",
@@ -1090,10 +1046,6 @@
   "workRow.replies_other": {
     "text": "{{count}} comments",
     "description": "One fact on a Workshop row's line, after who made it: how many comments the item has. {{count}} is that number."
-  },
-  "workRow.state.newRequest": {
-    "text": "New request",
-    "description": "First fact on a row of the \"New for you\" card on a project's Workshop tab: the request was filed since the viewer's last visit."
   },
   "needsYou.fact.approvals_one": {
     "text": "{{yes}} of {{count}} approval",
@@ -1835,14 +1787,6 @@
     "text": "<0>{{count}} requests nobody has picked up</0>",
     "description": "Quiet line on the Hub of a project that has only one person in it, when some requests (filed issues) have nobody working on them. The whole line, inside <0></0>, is a link that opens the Needs you tab. {{count}} is the number of such requests."
   },
-  "hub.work.title": {
-    "text": "Your work",
-    "description": "Heading of the card on a project's Hub that lists the changes and requests this person started in the project."
-  },
-  "hub.work.empty": {
-    "text": "No work in progress.",
-    "description": "Shown on the Your work card of a project's Hub when this person has nothing under way in the project."
-  },
   "hub.people.active_one": {
     "text": "{{count}} active this week",
     "description": "Top of a project's Hub, beside the faces of the people active there: how many people took part in the project in the last seven days (talked in its channel, started a change or voted)."
@@ -1882,14 +1826,6 @@
   "hub.forYou.needs.firstAndMore_other": {
     "text": "{{title}}, and {{count}} more",
     "description": "Second line of the Needs you row on a project's Hub: the title of the first change waiting on this person's vote, then how many more are waiting. {{title}} is that change's title."
-  },
-  "hub.forYou.work.inProgress_one": {
-    "text": "{{count}} in progress",
-    "description": "Right end of the Your work row on a project's Hub: how many of this person's own requests and changes are in flight in the project."
-  },
-  "hub.forYou.work.inProgress_other": {
-    "text": "{{count}} in progress",
-    "description": "Right end of the Your work row on a project's Hub: how many of this person's own requests and changes are in flight in the project."
   },
   "hub.forYou.discussion.title": {
     "text": "Discussion <0>#{{handle}}</0>",
@@ -4799,9 +4735,9 @@
     "text": "Assigned to you",
     "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and proposals: shows only the items assigned to the viewer."
   },
-  "filters.quick.createdByYou": {
-    "text": "Created by you",
-    "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and proposals: shows only the items the viewer started."
+  "filters.quick.yours": {
+    "text": "Yours",
+    "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and changes (All items): shows only the person's own work as the Homeroom bot tab reads it: everything they filed, built, claimed, voted on, wrote in or chose Notify me on."
   },
   "filters.search.placeholder": {
     "text": "Search requests, changes, comments or #",

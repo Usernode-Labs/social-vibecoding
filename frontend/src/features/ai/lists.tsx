@@ -60,14 +60,15 @@ import { Chip } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
-  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon,
+  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
+  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, WarningTriangleIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { getDateLocale } from '../../lib/i18n/runtime';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  GROUP_FIRST, NOT_MOVING, byProject, changeOnGithub, freshByProject, freshCount, freshFirst, groupRows, holdOrder, nextWords, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf,
+  GROUP_FIRST, NOT_MOVING, byProject, changeOnGithub, freshByProject, freshCount, freshFirst, groupRows, holdOrder, nextWords, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -76,6 +77,8 @@ import { rowKey } from './column';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
+import { HISTORY_KINDS, type HistoryKind } from './filter-address';
+import { byMonth, historyGlyph, historyTooltip, historyWords, monthName, type HistoryRow, type HistoryState } from './history';
 
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
@@ -106,6 +109,8 @@ interface Line {
   open: () => void;
   /** #6159: a private thread's row: its ⋯ has Mark done. */
   done?: { rootId: number; mark: () => void } | null;
+  /** History: a row in a private community the person left (its project's name says so). */
+  left?: boolean;
 }
 
 const G = 'h-[18px] w-[18px]';
@@ -119,6 +124,7 @@ function needGlyph(row: WorkRow): ReactNode {
   if (kind === 'works') return <CheckIcon className={G} />;
   if (kind === 'stopped') return <ArrowPathIcon className={G} />;
   if (kind === 'fix_stopped') return <ArrowPathIcon className={G} />;
+  if (kind === 'fix_yours') return <WarningTriangleIcon className={G} />;
   if (kind === 'private') return <LockIcon className={G} />;
   return <BallotIcon className={G} />;
 }
@@ -393,6 +399,9 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
                 {/* A private idea in no project yet goes under Only you, with a lock. */}
                 {g.app ? <SmallTile app={g.app} size="head" /> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" />}
                 <span className="truncate">{g.app ? g.app.name || g.app.slug : t('messages:ai.short.private')}</span>
+                {g.items.some((line) => line.left) ? (
+                  <span className="shrink-0 font-normal text-zinc-500 dark:text-zinc-400" data-ai-left="">· {t('messages:ai.history.left')}</span>
+                ) : null}
                 {freshHere > 0 ? (
                   <span className="ms-auto shrink-0 rounded-full bg-violet-600/10 px-2 py-0.5 text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-500/20 dark:text-violet-300" data-ai-fresh="">
                     {t('messages:ai.work.fresh', { count: freshHere })}
@@ -581,7 +590,10 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
   );
 }
 
-export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone }: {
+export function AiLists({
+  hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
+  picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
+}: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
@@ -608,16 +620,38 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
   openThread: (t: AiThread) => void;
   /** #6159: a private thread's row was marked done from its ⋯: it leaves the lists at once. */
   onDone?: (rootId: number) => void;
+  /**
+   * The projects the chips narrow every list to (none: All). The page keeps
+   * them, in its address (./filter-address.ts), so a link can open the tab
+   * narrowed to a project: a project's Workshop and Hub do.
+   */
+  picked?: readonly string[];
+  onPick?: (slugs: string[]) => void;
+  /** A project the lists do not name (one picked by a link), for its chip. */
+  appFor?: (slug: string) => AiApp | null;
+  /** The History card's rows (./history.ts useHistory); none, no card. */
+  history?: HistoryState | null;
+  historyKind?: HistoryKind | null;
+  onHistoryKind?: (kind: HistoryKind | null) => void;
+  openHistory?: (row: HistoryRow) => void;
+  /** The card itself, which #homeroom-bot/history scrolls to. */
+  historyRef?: React.Ref<HTMLDivElement>;
 }): ReactNode {
   const t = useMessages('messages');
   const say = (p: Phrase | null) => (p ? t(p.id, p.values) : null);
   // The projects in any list, the ones that need you most first; the ones
   // picked; the chips the rail shows; and More, open under its chip.
-  const [only, setOnly] = useState<string[]>([]);
+  // 5 Nov 2026: History's projects too, after the rest, and any project a
+  // link picked that no list names (its chip is there, and the lists say
+  // there is nothing of yours in it, rather than falling back to All).
   const [more, setMore] = useState<DOMRect | null>(null);
   const phone = usePhone();
-  const ranked = rankProjects(rows, progress, waiting, live);
-  const picked = only.filter((slug) => ranked.some((p) => p.app.slug === slug));
+  const ranked = withProjects(rankProjects(rows, progress, waiting, live), [
+    ...(history?.rows || []).map((row) => row.app),
+    ...pickedIn.map((slug) => appFor?.(slug) || null),
+  ]);
+  const picked = pickedIn.filter((slug) => ranked.some((p) => p.app.slug === slug));
+  const setOnly = (slugs: string[]) => onPick?.(slugs);
   const rail = railProjects(ranked, picked);
   const past = ranked.length - rail.length;
   const shows = (app: AiApp | null) => !picked.length || (!!app && picked.includes(app.slug));
@@ -715,6 +749,39 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     };
   });
   const liveBehind = liveLines.some((line) => line.owe);
+  // A project picked with nothing of yours on any list: Needs you says so,
+  // by its name, rather than the lists quietly showing every project.
+  const onlyApp = picked.length === 1 ? ranked.find((p) => p.app.slug === picked[0])?.app || null : null;
+  const nothingHere = !!onlyApp && !needLines.length && !busyLines.length && !stillLines.length && !liveLines.length;
+  // HISTORY (5 Nov 2026, ./history.ts): what has finished, by month, then by
+  // project, in the quiet rows Live this week draws. Narrowed by the chips
+  // above, as every list is; its own chips pick a kind.
+  const locale = getDateLocale();
+  const historyLines = (history?.rows || []).filter((row) => shows(row.app)).map((row): Line & { at: string | null } => {
+    const glyph = historyGlyph(row);
+    return {
+      key: row.key,
+      kind: `history-${row.kind}`,
+      app: row.app,
+      glyph: glyph === 'live' ? <CheckIcon className={G} />
+        : glyph === 'closed' ? <XIcon className={G} />
+          : glyph === 'request' ? <ChatBubbleTailIcon className={G} />
+            : glyph === 'vote' ? <BallotIcon className={G} />
+              : <LockIcon className={G} />,
+      number: row.number,
+      pr: !!row.change && !!row.app?.changesOnGithub,
+      title: row.title || '',
+      right: say(historyWords(row, locale))!,
+      tooltip: say(historyTooltip(row))!,
+      why: null,
+      owe: false,
+      lit: !!lit && rowKey({ rootId: row.rootId ?? null, href: row.href }) === lit,
+      open: () => openHistory?.(row),
+      left: !!row.left,
+      at: row.at,
+    };
+  });
+  const historyMonths = byMonth(historyLines);
   const owedShown = picked.length ? needLines.filter((line) => line.owe).length : owed;
   // One project picked: its chip names it, so its name is not said again over every section.
   const heads = picked.length !== 1;
@@ -723,9 +790,10 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
     <div className="flex flex-col gap-3 pt-4" data-ai-lists="">
       <div className={`${PLANE} pt-1`} data-ai-sheet="head">
         {hero}
-        {ranked.length > 1 ? (
+        {ranked.length > 1 || picked.length ? (
           // More stands outside the rail, at its end, so a phone's narrow
-          // rail never scrolls it out of reach.
+          // rail never scrolls it out of reach. Drawn too whenever a link
+          // picked a project, however few there are, so All is a tap away.
           <div className="flex items-start" data-ai-project-filter="">
             <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1">
               <Chip size="bar" className={`px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
@@ -778,7 +846,11 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
           owe={owedShown > 0}
           lines={needLines}
           note={failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
-          empty={ready ? <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.work.empty')}</p> : (
+          empty={ready ? (
+            <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty={nothingHere ? 'project' : ''}>
+              {nothingHere && onlyApp ? t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug }) : t('messages:ai.work.empty')}
+            </p>
+          ) : (
             // L06 (overnight audit, 2 Nov 2026): until the lists are read the
             // card said nothing at all, an empty card that read as final.
             // Two rows' lines at the one-line row's spacing instead: two
@@ -831,6 +903,69 @@ export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry,
               </button>
             </div>
           ) : null}
+        </div>
+      ) : null}
+      {history ? (
+        <div ref={historyRef} className={`${PLANE} pb-2 scroll-mt-4`} data-ai-sheet="history">
+          <section className="pb-1" data-ai-list="history">
+            <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
+              <SectionHeader className="px-0 pt-0 pb-0">{t('messages:ai.history.title')}</SectionHeader>
+            </div>
+            <div role="group" aria-label={t('messages:ai.history.kind.label')} className="flex gap-1.5 overflow-x-auto px-4 pt-1.5 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-ai-history-kinds="">
+              <Chip size="bar" className={`h-8 px-3 text-[13px] ${CHIP_EDGE}`} selected={!historyKind} onClick={() => onHistoryKind?.(null)} data-ai-history-kind="all">
+                {t('messages:ai.history.kind.all')}
+              </Chip>
+              {HISTORY_KINDS.map((kind) => (
+                <Chip key={kind} size="bar" className={`h-8 px-3 text-[13px] ${CHIP_EDGE}`} selected={historyKind === kind} onClick={() => onHistoryKind?.(kind)} data-ai-history-kind={kind}>
+                  {kind === 'change' ? t('messages:ai.history.kind.change')
+                    : kind === 'request' ? t('messages:ai.history.kind.request')
+                      : kind === 'vote' ? t('messages:ai.history.kind.vote')
+                        : t('messages:ai.history.kind.solo')}
+                </Chip>
+              ))}
+            </div>
+            <div className="px-4">
+              {!history.ready ? (
+                <SkeletonGroup label={t('messages:ai.history.loading')} className="flex flex-col gap-8 py-4" data-ai-history-loading="">
+                  <Skeleton className="w-1/2" />
+                  <Skeleton className="w-2/5" />
+                </SkeletonGroup>
+              ) : null}
+              {history.ready && history.failed && !historyLines.length ? (
+                <div className="py-3" role="status" data-ai-history-failed="">
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.history.failed')}</p>
+                  <button
+                    type="button"
+                    className="mt-1 inline-flex min-h-[44px] md:min-h-0 items-center py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+                    onClick={history.retry}
+                  >
+                    {t('core:common.tryAgain')}
+                  </button>
+                </div>
+              ) : null}
+              {history.ready && !history.failed && !historyLines.length && !history.next ? (
+                <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-history-empty="">{t('messages:ai.history.empty')}</p>
+              ) : null}
+              {historyMonths.map((month) => (
+                <div key={month.key} data-ai-history-month={month.key}>
+                  <h3 className="m-0 pt-4 text-[13px] font-bold text-zinc-900 dark:text-zinc-100">{monthName(month.at, locale)}</h3>
+                  <GroupList lines={month.rows} quiet heads={heads} first={GROUP_FIRST.live} />
+                </div>
+              ))}
+              {history.ready && history.next ? (
+                <button
+                  type="button"
+                  className="flex w-full min-h-[44px] md:min-h-0 items-center justify-start gap-1 py-2 text-[13px] font-semibold text-violet-700 hover:text-violet-800 disabled:opacity-60 dark:text-violet-300 dark:hover:text-violet-200"
+                  onClick={history.more}
+                  disabled={history.loading}
+                  data-ai-history-more=""
+                >
+                  {t('messages:ai.history.earlier')}
+                  <ChevronDownIcon className="h-4 w-4" aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          </section>
         </div>
       ) : null}
     </div>
