@@ -25,6 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -132,6 +133,15 @@ test('each row says one short thing: no step numbers, no timings', () => {
   assert.equal(stripTitle(job({ title: 'Dark mode', issueNumber: 4 })), 'Dark mode', 'no "Plant Pal #4:" prefix');
   assert.equal(stripTitle(job({ firstVersion: true, title: null })), 'Plant Pal, first version');
   assert.equal(stripTitle(job({ title: null, issueNumber: 9 })), 'Request #9');
+
+  // #6349: one act, one name. The drawer's buttons say what the person does,
+  // in the same words the AI tab's Needs you pills use.
+  assert.deepEqual(
+    ['answer', 'buildIt', 'decide', 'tryAgain'].map((key) => message(`messages:bot.strip.action.${key}`)),
+    ['Answer it', 'Review plan', "Say what's next", 'Restart build'],
+  );
+  assert.equal(said({ outcome: 'first_version_failed' }).action, 'messages:bot.strip.action.tryAgain',
+    'a new project\'s first version that could not start is a stopped build too');
 });
 
 test('a Needs you row opens on a tap and has ONE action; a Ready row Try it and, when their yes counts, Approve', () => {
@@ -148,7 +158,7 @@ test('a Needs you row opens on a tap and has ONE action; a Ready row Try it and,
   const needs = html.slice(html.indexOf('data-bot-strip-group="needs"'), html.indexOf('data-bot-strip-group="ready"'));
   assert.equal((needs.match(/data-bot-strip-act=/g) || []).length, 1, 'one action on the row');
   assert.match(needs, /<button type="button" class="flex min-w-0 flex-1 items-center gap-2 text-start" data-bot-strip-open="">/, 'the row itself opens it');
-  assert.match(needs, /<button type="button" class="[^"]*bg-violet-600[^"]*" data-bot-strip-act="open">Answer<\/button>/);
+  assert.match(needs, /<button type="button" class="[^"]*bg-violet-600[^"]*" data-bot-strip-act="open">Answer it<\/button>/);
   assert.match(needs, /Which night\?/);
   const ready = html.slice(html.indexOf('data-bot-strip-group="ready"'));
   assert.match(ready, /data-bot-strip-act="try">Try it<\/button><button type="button" class="[^"]*bg-violet-600[^"]*" data-bot-strip-act="approve">Approve<\/button>/);

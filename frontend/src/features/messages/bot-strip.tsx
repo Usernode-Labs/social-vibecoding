@@ -279,7 +279,7 @@ function jobOfTrack(track: BotTrack, jobs: Map<string, HomeroomBotJob>): Homeroo
  * place each (services/homeroom-bot-track.js decides the state, once), and
  * this is the ONE place it is decided: the row, the bar, the drawer and the
  * chat's news rows all read it. Needs you is what waits on the person: a
- * question, a plan for Build it, more detail, a look, and a change whose
+ * question, a plan to review, more detail, a look, and a change whose
  * yes is theirs (drawn with its Try it and Approve). Ready to try is a
  * change up for a vote where it is the group's turn, not theirs. Work under
  * way, In progress, a limit's hold among it ("On hold · …") and a change
