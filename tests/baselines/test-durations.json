@@ -311,6 +311,7 @@
 "tests/bot-build-crash-budget.test.js":[1.3,1],
 "tests/bot-build-crash-postgres.test.js":[158,0.7],
 "tests/bot-cards-file-many.test.js":[1.3,1],
+"tests/bot-cards-postgres.test.js":[1.3,1],
 "tests/bot-cards-private-project.test.js":[0.6,0.5],
 "tests/bot-config-paths.test.js":[0.5,1.8],
 "tests/bot-configs-later-postgres.test.js":[3.4,0.2],
@@ -343,6 +344,7 @@
 "tests/bot-requested-by.test.js":[2.9,0.2],
 "tests/bot-review-resume.test.js":[0.5,0.7],
 "tests/bot-review.test.js":[0.5,1.8],
+"tests/bot-tools-registry.test.js":[1.3,1],
 "tests/bounties-service.test.js":[0.2,1.2],
 "tests/bp-request.test.js":[0.5,2],
 "tests/bridge-platform-mark.test.js":[0.2,1.2],
@@ -1454,6 +1456,7 @@
 "tests/nav-workshop-return.test.js":[0.2,1.1],
 "tests/needs-auto-advance.test.js":[0.1,1.1],
 "tests/needs-ballot.test.js":[2,0.5],
+"tests/needs-bot-questions-postgres.test.js":[1.3,1],
 "tests/needs-bot-questions.test.js":[2.2,0.5],
 "tests/needs-feed-advisory.test.js":[2.7,0.5],
 "tests/needs-feed-saved-vote.test.js":[0.9,0.5],
@@ -1791,6 +1794,7 @@
 "tests/report-snapshots.test.js":[0.4,1.4],
 "tests/request-bot-plan.test.js":[1.7,0.5],
 "tests/request-bot-work-postgres.test.js":[5.8,0.2],
+"tests/request-news-kinds.test.js":[1.3,1],
 "tests/request-shots.test.js":[0.3,1],
 "tests/request-similarity.test.js":[0.1,1],
 "tests/request-specs.test.js":[0.2,1.1],
@@ -2395,4 +2399,4 @@
 "tests/ws-validate-thread-merged.test.js":[0.6,0.6],
 "tests/ws-workflow-relay.test.js":[1.4,0.5],
 "tests/x-link.test.js":[0.5,0.5],
-"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/app-role-reconciliation.test.js","tests/bot-build-crash-budget.test.js","tests/bot-cards-file-many.test.js","tests/homeroom-bot-done-close-offer.test.js","tests/homeroom-bot-failure-repeat-postgres.test.js","tests/homeroom-bot-file-many-offer.test.js","tests/homeroom-bot-file-many-postgres.test.js","tests/homeroom-bot-file-many-tap.test.js","tests/homeroom-bot-fixes-stopped-seed-postgres.test.js","tests/homeroom-bot-lift-suggestions.test.js","tests/homeroom-bot-live-stage-cap-postgres.test.js","tests/homeroom-bot-reply-guards.test.js","tests/homeroom-bot-revision-limit.test.js","tests/homeroom-bot-turn-engine.test.js","tests/main-failure-lead.test.js","tests/work-state-postgres.test.js","tests/work-state.test.js"]}
+"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/app-role-reconciliation.test.js","tests/bot-build-crash-budget.test.js","tests/bot-cards-file-many.test.js","tests/bot-cards-postgres.test.js","tests/bot-tools-registry.test.js","tests/homeroom-bot-done-close-offer.test.js","tests/homeroom-bot-failure-repeat-postgres.test.js","tests/homeroom-bot-file-many-offer.test.js","tests/homeroom-bot-file-many-postgres.test.js","tests/homeroom-bot-file-many-tap.test.js","tests/homeroom-bot-fixes-stopped-seed-postgres.test.js","tests/homeroom-bot-lift-suggestions.test.js","tests/homeroom-bot-live-stage-cap-postgres.test.js","tests/homeroom-bot-reply-guards.test.js","tests/homeroom-bot-revision-limit.test.js","tests/homeroom-bot-turn-engine.test.js","tests/main-failure-lead.test.js","tests/needs-bot-questions-postgres.test.js","tests/request-news-kinds.test.js","tests/work-state-postgres.test.js","tests/work-state.test.js"]}

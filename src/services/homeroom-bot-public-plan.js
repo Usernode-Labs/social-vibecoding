@@ -152,7 +152,7 @@ async function buildPlan(pool, { app, issueNumber, user, runId = null, answers =
     // Their own card, when it is still open: decided once, everywhere.
     const { rows: [action] = [] } = await pool.query(
       `SELECT a.* FROM homeroom_bot_dm_messages d
-         JOIN homeroom_bot_dm_actions a ON a.message_id = d.message_id
+         JOIN bot_cards a ON a.message_id = d.message_id
         WHERE d.run_id = $1 AND d.kind = 'plan' AND d.user_id = $2 AND a.kind = 'build_plan' AND a.status = 'open'
         ORDER BY d.message_id DESC LIMIT 1`,
       [run.id, user.id],

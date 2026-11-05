@@ -276,7 +276,7 @@ const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reje
 async function readFacts(tx: Tx, event: Event<any>): Promise<Facts> {
   if (event.type !== 'Tapped') return NO_FACTS;
   const { rows: [action] } = await tx.query(
-    'SELECT id, user_id, status, kind FROM homeroom_bot_dm_actions WHERE id = $1 FOR UPDATE', [Number(event.payload?.actionId)]);
+    "SELECT id, user_id, status, kind FROM bot_cards WHERE id = $1 AND place = 'dm' FOR UPDATE", [Number(event.payload?.actionId)]);
   return { action: action || null };
 }
 

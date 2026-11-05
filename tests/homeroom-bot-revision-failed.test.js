@@ -188,7 +188,7 @@ test('"Ask for changes" is true: it drafts for the change, Post it posts there a
   // #6019: from the private chat it is a draft; said in a project's chat,
   // in public, it is sent to the change at once.
   assert.match(revise, /if \(ctx\.inPublic\) \{\s+const posted = await dm\.postOnProposal\(pool, \{/);
-  assert.match(revise, /ctx\.offer = \{\s+kind: 'post_reply', app, issueNumber, sessionId: Number\(session\.id\), title: 'revise'/);
+  assert.match(revise, /if \(!addOffer\(ctx, \{\s+kind: 'post_reply', app, issueNumber, sessionId: Number\(session\.id\), title: 'revise'/);
   const tap = mayor.slice(mayor.indexOf('async function decidePost('), mayor.indexOf('async function offerPost('));
   assert.match(tap, /posted = await dm\.postOnProposal\(pool, \{/);
   assert.match(read('src/services/homeroom-bot-chat.js'), /inPublic: true,/);

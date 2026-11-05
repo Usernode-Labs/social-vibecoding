@@ -1340,7 +1340,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       [app.id],
     );
     await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
        VALUES ($1, $2, $3, 5001, 'file_request', 'Plant photos', 'done', $4)`,
       [ada.id, conversationId, app.id, reply.message.id],
     );
@@ -1350,7 +1350,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const planned = await conversations.getMessage(pool, viewer, conversationId, plan.messageId);
     assert.equal(planned.threadRootId, null, 'the plan is in Main, not under the card');
     assert.equal(planned.metadata.homeroomBot.kind, 'plan');
-    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5001', [ada.id]);
+    await pool.query('DELETE FROM bot_cards WHERE user_id = $1 AND issue_number = 5001', [ada.id]);
 
     // Every other piece of news that quotes where a request started does the
     // same: a request with no card of its own, started from a message under
@@ -1361,7 +1361,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       [app.id, ada.id],
     );
     await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
        VALUES ($1, $2, $3, 5004, 'file_request', 'Plant labels', 'done', $4)`,
       [ada.id, conversationId, app.id, reply.message.id],
     );
@@ -1378,7 +1378,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const inOwn = await conversations.sendMessage(pool, viewer, conversationId, { content: 'labels please', thread_root_id: own.messageId });
     assert.deepEqual(await dm.outsideCardThread(pool, inOwn.message.id), {}, 'a thread that is no card\'s keeps it');
     assert.deepEqual(await dm.outsideCardThread(pool, null), {});
-    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5004', [ada.id]);
+    await pool.query('DELETE FROM bot_cards WHERE user_id = $1 AND issue_number = 5004', [ada.id]);
 
     // A plan for a request she started in a thread of her own is said there,
     // and its doors find it there (waitingPlan); one started under a card is
@@ -1388,7 +1388,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       [app.id, ada.id],
     );
     await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
        VALUES ($1, $2, $3, 5005, 'file_request', 'Plant tags', 'done', $4)`,
       [ada.id, conversationId, app.id, inOwn.message.id],
     );
@@ -1403,7 +1403,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const waiting5005 = await dm.waitingPlan(pool, { userId: ada.id, appId: app.id, issueNumber: 5005 });
     assert.deepEqual([waiting5005.messageId, waiting5005.threadRootId], [ownPlan.messageId, own.messageId],
       'Review the plan opens it there');
-    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5005', [ada.id]);
+    await pool.query('DELETE FROM bot_cards WHERE user_id = $1 AND issue_number = 5005', [ada.id]);
 
     // A request from before threads has no card: the chat opens its story on
     // its oldest message, and a reply written there is about it all the same.

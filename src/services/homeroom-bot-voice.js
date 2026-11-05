@@ -860,9 +860,7 @@ async function replyOf(pool, { app, place, bot, turnKey }) {
   );
   if (!m) return null;
   const offerId = Number(m.metadata?.homeroomBot?.offer?.id);
-  if (offerId) {
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL', [offerId, m.id]);
-  }
+  if (offerId) await tieOffer(pool, offerId, m.id);
   return { id: Number(m.id), through: Number(m.metadata?.homeroomBot?.turn?.through) || null };
 }
 
@@ -2054,13 +2052,45 @@ function offerActions(kind, offerId) {
  * is posted (tieThreadOffer). Resolves { id, metadata } in the shape say()
  * builds, or null. Never throws.
  */
+// ── Offers, in one store (5 Nov 2026, docs/plans/bot-one-model.md, step 2) ──
+//
+// A thread's offers are Homeroom bot's cards (bot_cards, place 'thread',
+// their message in chat_message_id). Those said before stay in
+// homeroom_bot_voice_offers until they are answered or 14 days old. Every
+// card's id is above every older offer's (migration bot-cards), so an id
+// names one row: a thread card when bot_cards has it, else an older offer.
+// Read through OFFERS_SQL, in the older table's own words.
+const OFFERS_SQL = `(
+  SELECT id, app_id, chat_message_id AS message_id, kind, args, user_id AS for_user_id, status, result,
+         created_at, decided_at, decided_key, expires_at, 'cards' AS store
+    FROM bot_cards WHERE place = 'thread'
+  UNION ALL
+  SELECT id, app_id, message_id, kind, args, for_user_id, status, result,
+         created_at, decided_at, decided_key, created_at + INTERVAL '14 days' AS expires_at, 'voice' AS store
+    FROM homeroom_bot_voice_offers
+)`;
+const OFFER_TABLES = Object.freeze({ cards: 'bot_cards', voice: 'homeroom_bot_voice_offers' });
+
+/** A new offer in a project's thread, open, before its message: its id. */
+async function newOffer(db, { appId, kind, args = {}, forUserId = null }) {
+  const { rows: [row] } = await db.query(
+    `INSERT INTO bot_cards (place, app_id, kind, args, user_id) VALUES ('thread', $1, $2, $3, $4) RETURNING id`,
+    [Number(appId), String(kind), JSON.stringify(args || {}), forUserId || null],
+  );
+  return row ? Number(row.id) : null;
+}
+
+/** Name the message an offer was said on (a new card; or, after a restart, an older offer not yet tied). */
+async function tieOffer(db, offerId, messageId) {
+  await db.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = \'thread\' AND chat_message_id IS NULL',
+    [Number(offerId), Number(messageId)]);
+  await db.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
+    [Number(offerId), Number(messageId)]);
+}
+
 async function threadOffer(pool, { app, kind, forUserId, args = {} }) {
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [Number(app.id), String(kind), JSON.stringify(args || {}), forUserId || null],
-    );
-    const id = Number(rows[0]?.id);
+    const id = await newOffer(pool, { appId: app.id, kind, args, forUserId });
     if (!id) return null;
     return {
       id,
@@ -2077,14 +2107,13 @@ async function threadOffer(pool, { app, kind, forUserId, args = {} }) {
 
 /** #6311: tie a thread offer to the note's message, so decideOffer finds it. */
 async function tieThreadOffer(pool, offerId, messageId) {
-  await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
-    [Number(offerId), Number(messageId)])
+  await tieOffer(pool, offerId, messageId)
     .catch((err) => log.warn('homeroom-bot-voice', 'Could not tie an offer to its note', { offerId, messageId, err: err.message }));
 }
 
 /** #6311: the note could not be posted: its offer is dropped. */
 async function dropThreadOffer(pool, offerId) {
-  await pool.query('DELETE FROM homeroom_bot_voice_offers WHERE id = $1 AND message_id IS NULL', [Number(offerId)])
+  await pool.query('DELETE FROM bot_cards WHERE id = $1 AND place = \'thread\' AND chat_message_id IS NULL', [Number(offerId)])
     .catch((err) => log.warn('homeroom-bot-voice', 'Could not drop an offer for an unposted note', { offerId, err: err.message }));
 }
 
@@ -2110,11 +2139,8 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
   }
   let offerRow = null;
   if (offer) {
-    const { rows } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [app.id, offer.kind, JSON.stringify(offer.args || {}), offer.forUserId || null],
-    );
-    offerRow = rows[0];
+    const id = await newOffer(pool, { appId: app.id, kind: offer.kind, args: offer.args, forUserId: offer.forUserId });
+    offerRow = id ? { id } : null;
   }
   // A request's or a change's discussion may end in buttons to tap: only the
   // people it answered see them, and an offer keeps its own Yes/No instead.
@@ -2151,7 +2177,7 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
   if (offerRow) {
     // Without it the buttons decide nothing (decideOffer finds the offer by
     // its message): a failure here is the turn's, and retried.
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [offerRow.id, sent.id]);
+    await pool.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = \'thread\'', [offerRow.id, sent.id]);
   }
   // A newer word from the bot in this thread retires the suggested replies
   // on its older messages there, as a newer word in its chat does.
@@ -2193,9 +2219,15 @@ async function decideOffer(pool, config, { app, user: viewer, messageId, choice,
     return { ok: false, status: 400, error: 'Tick at least one project.' };
   }
   const { rows: [offer] } = await pool.query(
-    'SELECT id FROM homeroom_bot_voice_offers WHERE message_id = $1 AND app_id = $2', [Number(messageId), app.id],
+    `SELECT o.id, o.status, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
+      WHERE o.message_id = $1 AND o.app_id = $2 ORDER BY o.id DESC LIMIT 1`, [Number(messageId), app.id],
   );
   if (!offer) return { ok: false, status: 404, error: 'Nothing to decide here.' };
+  // 14 days and it is no longer an offer: its buttons go.
+  if (offer.expired && offer.status === 'open') {
+    await markOfferMessage(pool, { app, messageId: Number(messageId), status: 'expired', deps });
+    return { ok: false, status: 410, error: 'That offer has expired.' };
+  }
   return workflowModule(deps).tapVoiceOffer({
     appId: Number(app.id), offerId: Number(offer.id), messageId: Number(messageId), userId: Number(viewer.id), choice,
     ...(Array.isArray(rows) ? { rows } : {}),
@@ -2215,13 +2247,15 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
   const deps = { ...given, actKey: key };
   const { rows: [offer] } = await pool.query(
     `SELECT o.*, m.thread_type, m.thread_ref, m.id AS msg_id, a.slug AS app_slug
-       FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id JOIN apps a ON a.id = o.app_id
-      WHERE o.id = $1`,
+       FROM ${OFFERS_SQL} o JOIN chat_messages m ON m.id = o.message_id JOIN apps a ON a.id = o.app_id
+      WHERE o.id = $1
+      ORDER BY o.store LIMIT 1`,
     [Number(offerId)],
   );
   if (!offer) return { decision: 'gone' };
+  const table = OFFER_TABLES[offer.store] || OFFER_TABLES.voice;
   const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_voice_offers SET status = 'deciding', decided_key = $2
+    `UPDATE ${table} SET status = 'deciding', decided_key = $2
       WHERE id = $1 AND (status = 'open' OR (status = 'deciding' AND decided_key = $2)) RETURNING id`,
     [offer.id, String(key)],
   );
@@ -2248,7 +2282,7 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
   const messageId = Number(offer.msg_id);
   const settle = async (status, result, said) => {
     await pool.query(
-      `UPDATE homeroom_bot_voice_offers SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`,
+      `UPDATE ${table} SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`,
       [offer.id, status, JSON.stringify({ ...(result || {}), ...(said ? { said } : {}) })],
     );
     await markOfferMessage(pool, { app, messageId, status, deps });
@@ -2748,7 +2782,7 @@ async function voiceSummary(pool) {
       ),
       pool.query(
         `SELECT kind, status, COUNT(*)::int AS n
-           FROM homeroom_bot_voice_offers
+           FROM ${OFFERS_SQL} o
           WHERE created_at >= date_trunc('week', NOW())
           GROUP BY kind, status`,
       ),

@@ -94,7 +94,7 @@ async function noteFor(parsed, { openVotes = [], last = null, posted = { message
     async query(sql, params) {
       const s = String(sql);
       queries.push({ sql: s, params });
-      if (/INSERT INTO homeroom_bot_voice_offers/.test(s)) return { rows: [{ id: 77 }] };
+      if (/INSERT INTO bot_cards/.test(s)) return { rows: [{ id: 77 }] };
       if (/kind = 'close_issue'/.test(s)) return { rows: openVotes };
       return { rows: [] };
     },
@@ -121,7 +121,7 @@ async function noteFor(parsed, { openVotes = [], last = null, posted = { message
     Object.assign(live, { post: real.post, advanceSeen: real.advanceSeen, mentionTargets: real.mentionTargets });
     Object.assign(addressed, { shouldSpeak: real.shouldSpeak, lastNoteText: real.lastNoteText });
   }
-  return { says, queries, offers: queries.filter((q) => /INSERT INTO homeroom_bot_voice_offers/.test(q.sql)) };
+  return { says, queries, offers: queries.filter((q) => /INSERT INTO bot_cards/.test(q.sql)) };
 }
 
 for (const verdict of ['person', 'empty']) {
@@ -144,7 +144,7 @@ for (const verdict of ['person', 'empty']) {
     assert.equal(offers[0].params[1], 'close_request');
     assert.deepEqual(JSON.parse(offers[0].params[2]), { issueNumber: 7, title: 'Open the library', why: REASON });
     assert.equal(offers[0].params[3], null);
-    assert.ok(queries.some((q) => /UPDATE homeroom_bot_voice_offers SET message_id/.test(q.sql) && q.params[1] === 500), 'tied to the note');
+    assert.ok(queries.some((q) => /UPDATE bot_cards SET chat_message_id/.test(q.sql) && q.params[1] === 500), 'tied to the note');
   });
 
   test(`a done ${verdict} note adds no buttons while a close vote is open, and keeps its words`, async () => {
@@ -164,7 +164,7 @@ for (const verdict of ['person', 'empty']) {
 
   test(`a done ${verdict} note that could not be posted drops its offer`, async () => {
     const { queries } = await noteFor({ verdict }, { posted: null });
-    assert.ok(queries.some((q) => /DELETE FROM homeroom_bot_voice_offers/.test(q.sql) && q.params[0] === 77));
+    assert.ok(queries.some((q) => /DELETE FROM bot_cards/.test(q.sql) && q.params[0] === 77));
   });
 }
 
@@ -270,10 +270,12 @@ test('#6321: a tap under the note, by any member, once', { timeout: 180000 }, as
       `SELECT id, content, metadata FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND user_id = $3 ORDER BY id LIMIT 1`,
       [app.id, number, bot.id],
     );
-    const { rows: [offer] } = await pool.query('SELECT * FROM homeroom_bot_voice_offers WHERE message_id = $1', [note.id]);
+    const { rows: [offer] } = await pool.query("SELECT *, user_id AS for_user_id FROM bot_cards WHERE place = 'thread' AND chat_message_id = $1", [note.id]);
     return { note, offer };
   };
-  const offerRow = async (id) => (await pool.query('SELECT status, result FROM homeroom_bot_voice_offers WHERE id = $1', [id])).rows[0];
+  // A thread's offers are Homeroom bot's cards (bot_cards); one made before is still in its old table.
+  const offerRow = async (id) => (await pool.query(
+    'SELECT status, result FROM bot_cards WHERE id = $1 UNION ALL SELECT status, result FROM homeroom_bot_voice_offers WHERE id = $1 LIMIT 1', [id])).rows[0];
   const closeVotes = async (number) => (await pool.query(
     `SELECT created_by FROM issues WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
     [app.id, number],

@@ -160,7 +160,7 @@ test('the File it promise is kept, or not promised at all', { timeout: 180000 },
     'SELECT content, metadata FROM conversation_messages WHERE id = $1', [messageId],
   )).rows[0];
   const actionOf = async (person) => (await pool.query(
-    'SELECT kind, title, status, message_id FROM homeroom_bot_dm_actions WHERE user_id = $1 ORDER BY id DESC LIMIT 1',
+    'SELECT kind, title, status, message_id FROM bot_cards WHERE user_id = $1 ORDER BY id DESC LIMIT 1',
     [person.id],
   )).rows[0] || null;
   const lastTurnFailures = async (person) => (await pool.query(

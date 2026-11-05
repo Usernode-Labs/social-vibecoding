@@ -435,7 +435,7 @@ test('the plan card warns that the lists would show empty, and offers to write t
   const sent = [];
   const pool = {
     async query(sql) {
-      if (/INSERT INTO homeroom_bot_dm_actions/.test(String(sql))) return { rows: [{ id: 5 }] };
+      if (/INSERT INTO bot_cards/.test(String(sql))) return { rows: [{ id: 5 }] };
       return { rows: [] };
     },
   };

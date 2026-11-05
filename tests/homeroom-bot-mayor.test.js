@@ -951,7 +951,7 @@ function chatTurn(chat, { extra = {}, message = {} } = {}) {
         };
       }
       // The offer's own row, which a real send needs for its card's action.
-      if (/INSERT INTO homeroom_bot_dm_actions/.test(s)) return { rows: [{ id: 5 }] };
+      if (/INSERT INTO bot_cards/.test(s)) return { rows: [{ id: 5 }] };
       return { rows: [] };
     },
   };

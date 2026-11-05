@@ -616,7 +616,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
   const oldPlanCard = async (runId) => {
     const opened = await conversations.ensureAdmittedDirect(pool, homeroomBot.id, maya.id);
     const { rows: [action] } = await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title) VALUES ($1, $2, 'build_plan', 'The plan for Chores') RETURNING id`,
+      `INSERT INTO bot_cards (user_id, app_id, kind, title) VALUES ($1, $2, 'build_plan', 'The plan for Chores') RETURNING id`,
       [maya.id, app.id],
     );
     const meta = {
@@ -628,7 +628,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
        VALUES ($1, $2, $3, jsonb_build_object('homeroomBot', $4::jsonb)) RETURNING id`,
       [opened.conversationId, homeroomBot.id, dm.planCardText({ appName: app.name, plan: SHOWN, issueNumber: 12 }), JSON.stringify(meta)],
     );
-    await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1', [action.id, m.id, opened.conversationId]);
+    await pool.query('UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1', [action.id, m.id, opened.conversationId]);
     await pool.query(
       `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
        VALUES ($1, $2, $3, $4, 12, 'plan', $5)`,
@@ -655,7 +655,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     // change's plan is request news, said on its page, not in the DM.
     const sent = await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: first, plan: SHOWN, bot: homeroomBot });
     assert.deepEqual(sent, { messageId: null, stop: 'on_request' }, 'nothing sent: it waits on its request, tried no more');
-    const { rows: tried } = await pool.query("SELECT 1 FROM homeroom_bot_dm_actions WHERE kind = 'build_plan'");
+    const { rows: tried } = await pool.query("SELECT 1 FROM bot_cards WHERE kind = 'build_plan'");
     assert.equal(tried.length, 0, 'no offer row written for a card that never goes');
     assert.equal(await planMessage(first), undefined);
     const { rows: said } = await pool.query('SELECT 1 FROM conversation_messages WHERE sender_id = $1', [homeroomBot.id]);

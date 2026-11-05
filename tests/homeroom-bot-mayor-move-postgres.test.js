@@ -191,7 +191,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     return conversations.getMessage(pool, ada, opened.conversationId, sent.messageId);
   }
   const actionOf = async (messageId) => (await pool.query(
-    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [messageId],
+    'SELECT * FROM bot_cards WHERE message_id = $1', [messageId],
   )).rows[0];
   const tap = (action, choice, who = ada) => mayor.decideOfferTap(pool, CONFIG, {
     user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test', replies },
@@ -258,7 +258,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.equal(original.status, 'closed');
     const { rows: votes } = await pool.query('SELECT id FROM issues WHERE kind = \'close_issue\'');
     assert.equal(votes.length, 0, 'no vote needed');
-    const decided = await pool.query('SELECT status, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    const decided = await pool.query('SELECT status, issue_number FROM bot_cards WHERE id = $1', [action.id]);
     assert.deepEqual(decided.rows[0], { status: 'done', issue_number: 901 });
     const { rows: [ack] } = await pool.query(
       'SELECT content FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
@@ -408,7 +408,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     });
     assert.deepEqual([told.quiet, told.messageId], [true, null], 'nothing in her chat with the bot');
     const { rows: dmOffers } = await pool.query(
-      `SELECT 1 FROM homeroom_bot_dm_actions WHERE kind = 'move_request' AND source_issue_number = 13`,
+      `SELECT 1 FROM bot_cards WHERE kind = 'move_request' AND source_issue_number = 13`,
     );
     assert.equal(dmOffers.length, 0);
 
@@ -434,7 +434,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.equal(gh.created.length, before + 1, 'filed once');
     assert.equal(gh.created.at(-1).repo, 'usernode-2d5619', 'on Homeroom\'s own repository');
     assert.equal(gh.created.at(-1).title, 'Invite message wording');
-    const { rows: [decided] } = await pool.query('SELECT status, result FROM homeroom_bot_voice_offers WHERE id = $1', [offer.id]);
+    const { rows: [decided] } = await pool.query('SELECT status, result FROM bot_cards WHERE id = $1', [offer.id]);
     assert.equal(decided.status, 'done');
     assert.equal(Number(decided.result.issueNumber), 900 + gh.created.length);
     assert.match(said.at(-1).content, /^Moved to Homeroom's own board as request \[#\d+\]\(.+\), with a link to it left here\. /,
@@ -482,7 +482,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
       dm: { reason: 'It is there already: open Profile, then Your votes.', done: true },
     });
     const offers = async () => (await pool.query(
-      `SELECT * FROM homeroom_bot_dm_actions WHERE kind = 'close_request' AND source_issue_number = 14`,
+      `SELECT * FROM bot_cards WHERE kind = 'close_request' AND source_issue_number = 14`,
     )).rows;
     // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
     // not relayed to its requester's DM. The "already works" note and its
@@ -500,7 +500,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
         { id: 'missing', label: 'Tell me what\'s missing', style: 'secondary', type: 'reply' }],
     };
     const { rows: [action] } = await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title, details, source_issue_number)
+      `INSERT INTO bot_cards (user_id, app_id, kind, title, details, source_issue_number)
        VALUES ($1, $2, 'close_request', 'Show my votes', $3, 14) RETURNING id`,
       [ada.id, ears.id, 'It is there already: open Profile, then Your votes.'],
     );
@@ -511,7 +511,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
         JSON.stringify({ ...offerMeta, actionId: Number(action.id) })],
     );
     await pool.query(
-      'UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1',
+      'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
       [action.id, told.id, opened.conversationId],
     );
     const [offer] = await offers();

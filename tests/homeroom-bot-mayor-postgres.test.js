@@ -305,7 +305,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   );
 
   await t.test('schema: a turn records its cost, not its words, and offers are private', async () => {
-    for (const table of ['homeroom_bot_dm_turns', 'homeroom_bot_dm_actions']) {
+    for (const table of ['homeroom_bot_dm_turns', 'bot_cards']) {
       const { rows: [c] } = await pool.query(`SELECT obj_description('${table}'::regclass, 'pg_class') AS comment`);
       assert.equal(c.comment, 'staging:private', table);
     }
@@ -687,7 +687,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const tap = await say('Not now', { reply_to_id: offered.messageId });
     const ack = await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} });
     assert.equal((await read(ack)).content, 'OK, I won\'t file it.');
-    const { rows: [action] } = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    const { rows: [action] } = await pool.query('SELECT status FROM bot_cards WHERE message_id = $1', [offered.messageId]);
     assert.equal(action.status, 'declined');
     assert.equal(created.length, 1);
 
@@ -717,7 +717,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
       { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
     ], 'the buttons travel with the message');
-    const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    const { rows: [action] } = await pool.query('SELECT id FROM bot_cards WHERE message_id = $1', [offered.messageId]);
     assert.equal(meta.actionId, Number(action.id), 'and name what a tap decides');
 
     const before = created.length;
@@ -738,7 +738,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // passes, and the request it filed is found, not filed twice.
     await mayor.actOnTap(pool, CONFIG, { userId: ada.id, actionId: action.id, choice: 'yes', key: `action:${action.id}`, deps: { bot } });
     assert.equal(created.length, before + 1, 'still filed once');
-    const { rows: [filed] } = await pool.query('SELECT issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    const { rows: [filed] } = await pool.query('SELECT issue_number FROM bot_cards WHERE id = $1', [action.id]);
     tapFiled = Number(filed.issue_number);
   });
 
@@ -799,7 +799,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [['offer_request', { project: 'note-board', title: 'CSV export', details: 'Export notes as CSV.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Want me to file this?' }]],
     ]));
-    const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    const { rows: [action] } = await pool.query('SELECT id FROM bot_cards WHERE message_id = $1', [offered.messageId]);
     const realBot = require('../src/services/homeroom-bot');
     let tries = 0;
     const botSvc = {
@@ -813,11 +813,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const before = created.length;
     const act = () => mayor.actOnTap(pool, CONFIG, { userId: ada.id, actionId: action.id, choice: 'yes', key: `action:${action.id}`, deps: { bot, botSvc } });
     await assert.rejects(act(), /ECONNRESET/, 'thrown to the work, which tries again');
-    const { rows: [claimed] } = await pool.query('SELECT status, decided_key, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    const { rows: [claimed] } = await pool.query('SELECT status, decided_key, issue_number FROM bot_cards WHERE id = $1', [action.id]);
     assert.deepEqual([claimed.status, claimed.decided_key, claimed.issue_number], ['done', `action:${action.id}`, null], 'its claim kept, not failed');
     assert.deepEqual(await act(), { done: true, why: null });
     assert.equal(created.length, before + 1, 'filed once');
-    const { rows: [after] } = await pool.query('SELECT status, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    const { rows: [after] } = await pool.query('SELECT status, issue_number FROM bot_cards WHERE id = $1', [action.id]);
     assert.equal(after.status, 'done');
     const { rows: queued } = await pool.query('SELECT id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [notes.id, after.issue_number]);
     assert.equal(queued.length, 1, 'and queued');
@@ -843,13 +843,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     });
     const first = await run();
     // Its process went after the send, before it noted the message.
-    await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = NULL WHERE message_id = $1', [first.messageId]);
+    await pool.query('UPDATE bot_cards SET message_id = NULL WHERE message_id = $1', [first.messageId]);
     const second = await run();
     assert.equal(second.messageId, first.messageId, 'the same message');
     const { rows } = await pool.query(
-      `SELECT id, message_id FROM homeroom_bot_dm_actions WHERE user_id = $1 AND title = 'Sort by size' ORDER BY id`, [ada.id]);
+      `SELECT id, message_id FROM bot_cards WHERE user_id = $1 AND title = 'Sort by size' ORDER BY id`, [ada.id]);
     assert.deepEqual(rows.map((r) => r.message_id), [first.messageId], 'one offer, under its message');
-    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1', [rows[0].id]);
+    await pool.query('DELETE FROM bot_cards WHERE id = $1', [rows[0].id]);
   });
 
   await t.test('B3: a tap on Not now sends nothing, and the buttons give way to the choice', async () => {
@@ -857,7 +857,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [['offer_request', { project: 'note-board', title: 'Print notes', details: 'Print the board.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'File it?' }]],
     ]));
-    const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    const { rows: [action] } = await pool.query('SELECT id FROM bot_cards WHERE message_id = $1', [offered.messageId]);
     const { rows: [{ n: messagesBefore }] } = await pool.query(
       'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
     );
@@ -867,7 +867,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
     );
     assert.equal(messagesAfter, messagesBefore, 'the line under the buttons says it; no reply is sent');
-    const { rows: [decided] } = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    const { rows: [decided] } = await pool.query('SELECT status FROM bot_cards WHERE id = $1', [action.id]);
     assert.equal(decided.status, 'declined');
     const after = (await read(offered)).metadata.homeroomBot;
     assert.deepEqual([after.status, after.answer, after.chosen], ['answered', 'Not now', 'no']);
@@ -2161,11 +2161,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     );
     const { rows: offerCards } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [offered.messageId]);
     assert.deepEqual(offerCards.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${photos}`], 'the proposal, to open before deciding');
-    const { rows: [action] } = await pool.query('SELECT kind, session_id, status, title FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    const { rows: [action] } = await pool.query('SELECT kind, session_id, status, title FROM bot_cards WHERE message_id = $1', [offered.messageId]);
     assert.deepEqual(action, { kind: 'withdraw_proposal', session_id: photos, status: 'open', title: 'Plant photos' });
 
     // "File it" typed is no decision on it; "Withdraw it" tapped is.
-    await pool.query(`UPDATE homeroom_bot_dm_actions SET status = 'declined' WHERE user_id = $1 AND kind = 'file_request' AND status = 'open'`, [ada.id]);
+    await pool.query(`UPDATE bot_cards SET status = 'declined' WHERE user_id = $1 AND kind = 'file_request' AND status = 'open'`, [ada.id]);
     const typed = await say('file it');
     assert.deepEqual(
       await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: typed, deps: { sessionLifecycle } }),
@@ -2210,7 +2210,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const tap = await say('Withdraw it', { reply_to_id: late.messageId });
     assert.equal((await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: { sessionLifecycle } }))).content,
       'I couldn\'t withdraw it: it was approved, so it is being merged or is already live.');
-    const { rows: [failed] } = await pool.query('SELECT status, error FROM homeroom_bot_dm_actions WHERE message_id = $1', [late.messageId]);
+    const { rows: [failed] } = await pool.query('SELECT status, error FROM bot_cards WHERE message_id = $1', [late.messageId]);
     assert.deepEqual(failed, { status: 'failed', error: 'approved' });
     assert.deepEqual(archives, []);
     await asKernel((c) => c.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [share]));
@@ -2239,8 +2239,10 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(samCtx.offer.kind, 'withdraw_proposal');
     const adaCtx = withdrawCtx(ada);
     assert.equal((await mayor.withdrawProposal(pool, adaCtx, { proposal: share, reason: 'x' })).ok, true, 'the project\'s owner');
-    // One per turn, and never beside another offer.
-    assert.match((await mayor.withdrawProposal(pool, adaCtx, { proposal: share, reason: 'x' })).error, /^You already put one thing under this reply/);
+    // The same offer twice is one card (up to three under one reply, 5 Nov 2026).
+    assert.equal((await mayor.withdrawProposal(pool, adaCtx, { proposal: share, reason: 'x' })).error,
+      'That is already under this reply for them to decide.');
+    assert.equal(adaCtx.moreOffers, undefined);
     assert.match((await mayor.withdrawProposal(pool, withdrawCtx(ada, { withdrew: { proposal: 1 } }), { proposal: share, reason: 'x' })).error,
       /^One withdrawal per turn\.$/);
     assert.deepEqual(archives, [], 'an offer withdraws nothing');

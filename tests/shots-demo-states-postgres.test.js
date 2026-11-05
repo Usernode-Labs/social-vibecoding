@@ -564,7 +564,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(ask.sender.id, member);
   assert.equal(offered.reply.id, ask.id);
   const { rows: [action] } = await pool.query(
-    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.id]);
+    'SELECT * FROM bot_cards WHERE message_id = $1', [offered.id]);
   assert.deepEqual([action.kind, action.status, action.source_issue_number, action.user_id],
     ['close_request', 'open', 900001, member]);
   const why = 'You said dark mode now stays on after a refresh, so this request looks done.';
@@ -593,7 +593,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(fileOffer.reply.id, fileAsk.id);
   assert.equal(chat.latestMessage.id, fileOffer.id);
   const { rows: [fileAction] } = await pool.query(
-    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [fileOffer.id]);
+    'SELECT * FROM bot_cards WHERE message_id = $1', [fileOffer.id]);
   assert.deepEqual([fileAction.kind, fileAction.status, fileAction.user_id],
     ['file_request', 'open', member]);
   assert.equal(fileAction.details, 'Show insights week by week, not only as a total.');

@@ -1317,7 +1317,7 @@ const STATES = [
         'duration_ms', 'created_at', 'plan', 'awaiting_go_at', 'live_build_waiting_at', 'plan_send_attempts'],
       homeroom_bot_dm_messages: ['message_id', 'user_id', 'conversation_id', 'app_id', 'issue_number', 'kind',
         'run_id', 'created_at'],
-      homeroom_bot_dm_actions: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
+      bot_cards: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
         'status', 'created_at', 'decided_at'],
     },
     free: async (client, ctx) => {
@@ -1370,8 +1370,9 @@ const STATES = [
           JSON.stringify({ ...plan, chosen })]
       );
       const { rows: [action] } = await client.query(
-        `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, status, created_at, decided_at)
-         VALUES ($1, $2, $3, 'build_plan', $4, 'done', NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '5 minutes')
+        `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, status, created_at, decided_at, expires_at)
+         VALUES ($1, $2, $3, 'build_plan', $4, 'done', NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '5 minutes',
+                 NOW() - INTERVAL '8 minutes' + INTERVAL '14 days')
          RETURNING id`,
         [ctx.member.id, chat.conversationId, appId, `The plan for ${name}`]
       );
@@ -1384,7 +1385,7 @@ const STATES = [
           status: 'answered', chosen: 'build', answer: 'Build it', choices: chosen.map((c) => c.answer),
         },
       });
-      await client.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, planMessage]);
+      await client.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, planMessage]);
       const thanks = await insertBotDm(client, ctx, chat, {
         appId, issueNumber: 1, kind: 'activity', minutesAgo: 5, key: `hrbot-activity-run-${run.id}`,
         content: activity.thanksText(name),
@@ -1431,7 +1432,7 @@ const STATES = [
         'joined_at', 'last_read_message_id'],
       conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
         'metadata', 'created_at'],
-      homeroom_bot_dm_actions: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
+      bot_cards: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
         'details', 'status', 'source_issue_number', 'created_at'],
     },
     free: botChatFree,
@@ -1451,9 +1452,9 @@ const STATES = [
       );
       // As offer() writes it: the action, then the message whose buttons name it.
       const { rows: [action] } = await client.query(
-        `INSERT INTO homeroom_bot_dm_actions
-           (user_id, conversation_id, app_id, kind, title, details, source_issue_number, created_at)
-         VALUES ($1, $2, $3, 'close_request', $4, $5, $6, NOW() - INTERVAL '2 minutes')
+        `INSERT INTO bot_cards
+           (user_id, conversation_id, app_id, kind, title, details, source_issue_number, created_at, expires_at)
+         VALUES ($1, $2, $3, 'close_request', $4, $5, $6, NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '2 minutes' + INTERVAL '14 days')
          RETURNING id`,
         [ctx.member.id, chat.conversationId, ctx.appId, title, why, number]
       );
@@ -1466,7 +1467,7 @@ const STATES = [
         [chat.conversationId, chat.botId, mayor.closeOfferText({ name, issueNumber: number, title, why }), ask.id,
           JSON.stringify({ homeroomBot: metadata })]
       );
-      await client.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
+      await client.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
       await client.query('UPDATE conversations SET updated_at = NOW() - INTERVAL \'2 minutes\' WHERE id = $1',
         [chat.conversationId]);
       await client.query(
@@ -1503,7 +1504,7 @@ const STATES = [
         'joined_at', 'last_read_message_id'],
       conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
         'metadata', 'created_at'],
-      homeroom_bot_dm_actions: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
+      bot_cards: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
         'details', 'status', 'created_at'],
       conversation_message_attachments: ['id', 'conversation_id', 'message_id', 'user_id', 'kind', 'filename',
         'content_type', 'size_bytes', 'meta', 'data'],
@@ -1536,9 +1537,9 @@ const STATES = [
       );
       // As offer() writes it: the action, then the message whose buttons name it.
       const { rows: [action] } = await client.query(
-        `INSERT INTO homeroom_bot_dm_actions
-           (user_id, conversation_id, app_id, kind, title, details, created_at)
-         VALUES ($1, $2, $3, 'file_request', $4, $5, NOW() - INTERVAL '2 minutes')
+        `INSERT INTO bot_cards
+           (user_id, conversation_id, app_id, kind, title, details, created_at, expires_at)
+         VALUES ($1, $2, $3, 'file_request', $4, $5, NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '2 minutes' + INTERVAL '14 days')
          RETURNING id`,
         [ctx.member.id, chat.conversationId, ctx.appId, title, details]
       );
@@ -1563,7 +1564,7 @@ const STATES = [
          RETURNING id`,
         [chat.conversationId, chat.botId, content, ask.id, JSON.stringify({ homeroomBot: metadata })]
       );
-      await client.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
+      await client.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
       // The picture the person attached to their own message, as the real
       // turn keeps it: their row in the chat, which offer_request names in
       // attachmentIds and files copies into the request's own store.

@@ -197,22 +197,31 @@ The first-version line in a project's channel stays.
 
 ### The card store: `bot_cards`
 
-- One table for every new offer and card: `kind` (file_request, file_many,
-  close_request, withdraw, move_request, copy_request, post_reply,
-  build_plan, post_design, make_project, try_again, admin_confirm, options,
-  questions), `for_user_id` (null: anybody the kind allows), `app_id`, where
-  it was said (`conversation_message_id` or `chat_message_id`), `payload`,
-  `status` (open, done, declined, expired), `choice`, `decided_by`,
-  `decided_at`, `expires_at` (14 days; admin confirm 15 minutes).
-- One tap handler, `botCards.decide(pool, { cardId, choice, user })`: it
-  checks the card is open, unexpired and the tapper's, claims it with one
-  UPDATE, and calls the kind's settle function (the ones each store's route
-  calls today). Every existing tap route looks the card up here first, by
-  the `cardId` its message's metadata carries, and falls back to its old
-  store for cards made before.
-- At most 3 cards on one reply, across kinds; a fourth is not offered.
-- The old stores are written no more; their rows stay answerable until
-  answered or 14 days old.
+Built 5 Nov 2026 (migration `bot-cards`, `src/services/bot-cards.js`):
+
+- The chat's offer table is the store, renamed to `bot_cards`, so its rows,
+  open or decided, carry on as they were and nothing is copied. `place` says
+  where a card was said: `dm` (a conversation message, `message_id`) or
+  `thread` (a project thread's chat message, `chat_message_id`).
+- A thread's new offers (file a request, file on many, withdraw, close,
+  copy, move, try again) are cards too. Those said before stay answerable in
+  `homeroom_bot_voice_offers` until answered or 14 days old: the voice reads
+  both (`OFFERS_SQL`), and every card's id is above every older offer's, so
+  an id names one row. A later cleanup drops that table.
+- The old name `homeroom_bot_dm_actions` is a view of the chat's cards for
+  one release, so a pod of the build before reads and writes the same rows
+  while this one starts; the cleanup drops it.
+- A card is open 14 days (`expires_at`); a tap after that is refused (410)
+  and its buttons go, in the chat (`decideOfferTap`) and in a thread
+  (`decideOffer`).
+- Up to 3 offers under one reply in Main (`MAX_OFFERS`): the first rides on
+  the reply, the others follow as cards of their own, and the same offer
+  twice is one. The voice still makes one offer per reply.
+- Taps keep their durable paths: the person's bot-dm machine for a chat
+  card, the place's bot-voice machine for a thread's.
+- Not moved: admin confirm cards (their own 15-minute store), the cards a
+  thread tool draws in message metadata, suggestion prompts, and private
+  threads' File it / Post it, which are not offers of the bot's.
 
 ### One change-ask queue
 

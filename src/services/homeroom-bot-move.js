@@ -425,10 +425,10 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
     fallbackTitle: action.title, settings, deps,
   });
   if (!moved.ok) {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(moved.code, 300)]);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(moved.code, 300)]);
     return ack(moved.code === 'file_failed' ? 'I couldn\'t move it just now. Try again in a minute.' : `I couldn't move it: ${moved.error}`);
   }
-  await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, moved.issueNumber]);
+  await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, moved.issueNumber]);
   const line = dmModule(deps).requestLine({ appName: moved.target.name || moved.target.slug, issueNumber: moved.issueNumber, issueTitle: moved.title });
   return ack(
     `${line}\n\nMoved. It's on Homeroom's own board now, with a link to it left on the original. `
@@ -531,11 +531,11 @@ async function decideCopy(pool, config, { user, settings, action, yes, ack, deps
     filed = { ok: false, code: 'file_failed', error: err.message };
   }
   if (!filed.ok) {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1',
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1',
       [action.id, clip(filed.error || filed.code, 300)]);
     return ack(`I couldn't file it there: ${filed.error}`);
   }
-  await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
+  await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
   const name = filed.target.name || filed.target.slug;
   const line = dmModule(deps).requestLine({ appName: name, issueNumber: filed.issueNumber, issueTitle: filed.title });
   return ack(
@@ -608,7 +608,7 @@ async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
             COUNT(*) FILTER (WHERE status = 'declined')::int AS kept,
             COUNT(*) FILTER (WHERE status = 'open')::int AS open,
             COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
-       FROM homeroom_bot_dm_actions
+       FROM bot_cards
       WHERE kind = 'move_request' AND created_at > NOW() - make_interval(days => $1)`,
     [days],
   );
@@ -620,7 +620,7 @@ async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
         AND r.created_at > NOW() - make_interval(days => $1)
         AND r.move_offer IS DISTINCT FROM 'sent'
         AND (r.move_offer IS NOT NULL OR NOT EXISTS (
-          SELECT 1 FROM homeroom_bot_dm_actions x
+          SELECT 1 FROM bot_cards x
            WHERE x.kind = 'move_request' AND x.app_id = r.app_id AND x.source_issue_number = r.issue_number))
       ORDER BY r.id DESC`,
     [days],
@@ -673,7 +673,7 @@ async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason =
       return null;
     }
     const { rows: before } = await pool.query(
-      `SELECT 1 FROM homeroom_bot_dm_actions
+      `SELECT 1 FROM bot_cards
         WHERE user_id = $1 AND app_id = $2 AND kind = $4 AND source_issue_number = $3
           AND status IN ('open', 'done')
        UNION ALL
@@ -687,7 +687,7 @@ async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason =
       return null;
     }
     const { rows: [action] } = await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title, details, source_issue_number)
+      `INSERT INTO bot_cards (user_id, app_id, kind, title, details, source_issue_number)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
       [userId, app.id, kind, clip(title || `Request #${n}`, MAX_TITLE_CHARS), reason ? clip(reason, 600) : null, n],
     );
@@ -715,12 +715,12 @@ async function foldedOfferSent(pool, offer, sent) {
   if (!offer) return;
   try {
     if (!sent?.messageId || sent.duplicate) {
-      await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [offer.actionId]);
+      await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [offer.actionId]);
       if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, sent?.duplicate ? 'already_offered' : 'not_sent');
       return;
     }
     await pool.query(
-      'UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1',
+      'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
       [offer.actionId, sent.messageId, sent.conversationId],
     );
     if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, 'sent');

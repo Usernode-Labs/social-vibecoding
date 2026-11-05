@@ -204,6 +204,32 @@ const PLATFORM_TOOLS = Object.freeze([
 ]);
 const PLATFORM_GRANT_SECONDS = 300;
 
+// 5 Nov 2026 (docs/plans/bot-one-model.md, decision 2): up to three offers
+// under one reply (bot-cards.js MAX_PER_REPLY). The first rides on the reply
+// itself; the others are said as cards of their own right after it.
+const MAX_OFFERS = require('./bot-cards').MAX_PER_REPLY;
+const OFFERS_FULL = `You already put ${MAX_OFFERS} things under this reply for them to decide, the most one reply holds.`;
+/** Whether this turn may put one more offer under its reply. */
+function offerRoom(ctx) {
+  return !ctx.offer || (ctx.moreOffers || []).length < MAX_OFFERS - 1;
+}
+const SAME_OFFER = 'That is already under this reply for them to decide.';
+/** Pure: what makes two offers the same one: its kind and what it is about. */
+function offerKey(o) {
+  return [o.kind || 'file_request', o.app?.id ?? '', o.sessionId ?? '', o.issueNumber ?? '', String(o.title || '').trim().toLowerCase()].join('|');
+}
+/**
+ * Put an offer under this turn's reply: the first, or one more after it.
+ * False for one already there: the same offer twice is one card.
+ */
+function addOffer(ctx, o) {
+  const key = offerKey(o);
+  if ([ctx.offer, ...(ctx.moreOffers || [])].some((x) => x && offerKey(x) === key)) return false;
+  if (!ctx.offer) ctx.offer = o;
+  else (ctx.moreOffers || (ctx.moreOffers = [])).push(o);
+  return true;
+}
+
 const FILE_IT = 'File it';
 const NOT_NOW = 'Not now';
 // #11 (WP3): the answers under an offer to withdraw one of its proposals.
@@ -233,7 +259,7 @@ const POST_PLAN = 'Post it as a plan';
 const NOT_YET = 'Not yet';
 const NEW_REQUEST = 'New request';
 const ADD_TO_EXISTING = 'Add to an existing request…';
-// The answers under each kind of offer (homeroom_bot_dm_actions.kind), the
+// The answers under each kind of offer (bot_cards.kind), the
 // one that does it first.
 const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
@@ -831,7 +857,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_request',
-      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. One offer per turn; to file the same request on several projects, pass them all in projects: one card files them all.',
+      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all.',
       parameters: {
         type: 'object',
         properties: {
@@ -903,7 +929,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_move_request',
-      description: 'Offer to move one of their requests that is about Homeroom itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), not the project\'s code, to Homeroom\'s own board. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Move it to Homeroom and Keep it here; nothing moves unless they tap Move it to Homeroom. Then it is filed on Homeroom\'s board with a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. One offer per turn.',
+      description: 'Offer to move one of their requests that is about Homeroom itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), not the project\'s code, to Homeroom\'s own board. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Move it to Homeroom and Keep it here; nothing moves unless they tap Move it to Homeroom. Then it is filed on Homeroom\'s board with a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. Up to three offers under one reply.',
       parameters: {
         type: 'object',
         properties: {
@@ -920,7 +946,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_copy_request',
-      description: 'Offer to file a request on Homeroom\'s own board as well, without moving it: the original stays open here. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Put it on Homeroom\'s board and Keep it here only; nothing is filed unless they tap. One offer per turn.',
+      description: 'Offer to file a request on Homeroom\'s own board as well, without moving it: the original stays open here. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Put it on Homeroom\'s board and Keep it here only; nothing is filed unless they tap. Up to three offers under one reply.',
       parameters: {
         type: 'object',
         properties: {
@@ -937,7 +963,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_close_request',
-      description: 'Offer to open a vote on closing one open request on one of their projects, when they ask for it to be closed or say it is done and can be closed. They see it under your reply with Propose to close and Keep it open; nothing happens unless they tap Propose to close, and then the request\'s group votes on closing it, so never say it was closed. One offer per turn.',
+      description: 'Offer to open a vote on closing one open request on one of their projects, when they ask for it to be closed or say it is done and can be closed. They see it under your reply with Propose to close and Keep it open; nothing happens unless they tap Propose to close, and then the request\'s group votes on closing it, so never say it was closed. Up to three offers under one reply.',
       parameters: {
         type: 'object',
         properties: {
@@ -3323,13 +3349,13 @@ async function runTool(pool, ctx, name, args) {
         // it (decidePost).
         const text = clip(ctx.userText, 3500);
         if (!text) return { ok: false, error: 'Their message has no words to pass on.' };
-        if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was drafted.' };
+        if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL} Nothing was drafted.` };
         const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [target.app_id]);
         if (!app) return { ok: false, error: 'No such project.' };
-        ctx.offer = {
+        if (!addOffer(ctx, {
           kind: 'post_reply', app, issueNumber: Number(target.issue_number), title: 'dm_answer', details: text,
           targetMessageId: target.message_id || null,
-        };
+        })) return { ok: false, error: SAME_OFFER };
         return {
           ok: true,
           drafted: `their answer, for ${app.name || app.slug} request #${Number(target.issue_number)}'s public discussion`,
@@ -3340,7 +3366,7 @@ async function runTool(pool, ctx, name, args) {
       case 'withdraw_proposal': return await withdrawProposal(pool, ctx, args);
       case 'report_problem': return await reportProblem(pool, ctx, args);
       case 'offer_request': {
-        if (ctx.offer) return { ok: false, error: 'One offer per turn.' };
+        if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL}` };
         const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
         const details = clip(args.details, MAX_DETAILS_CHARS);
         if (title.length < 3) return { ok: false, error: 'The title is too short.' };
@@ -3385,10 +3411,10 @@ async function runTool(pool, ctx, name, args) {
           ctx.card = {
             type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id), title, details, rows,
           };
-          ctx.offer = {
+          if (!addOffer(ctx, {
             kind: 'file_many', rows, title, details, extras: baseExtras,
             projects: rows.filter((r) => r.match === 'exact').map((r) => r.slug),
-          };
+          })) return { ok: false, error: SAME_OFFER };
           return {
             ok: true,
             shown: `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`,
@@ -4193,8 +4219,15 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
   const toolCard = ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? ctx.card : null;
   const extra = { ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}) };
-  // 2 Nov 2026: a reply that ends in an offer keeps both.
-  if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps, extra });
+  // 2 Nov 2026: a reply that ends in an offer keeps both. Up to two more
+  // offers follow it as cards of their own (MAX_OFFERS), each said once.
+  if (ctx.offer) {
+    const sent = await offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps, extra });
+    for (const [i, more] of (ctx.moreOffers || []).slice(0, MAX_OFFERS - 1).entries()) {
+      await offer(pool, { bot, user, conversationId, message, text: null, offer: more, deps, keySuffix: `-${i + 2}` });
+    }
+    return sent;
+  }
   // A card that cannot be read never costs the answer. #4097: the model's
   // cards first, then the requests its words name that it did not list.
   const named = namedCards(text, ctx);
@@ -4371,7 +4404,7 @@ async function offerSingle(pool, { ctx, user, deps, args, title, details, extras
   // #4501: a name they wrote that is not exactly this project's is a
   // guess, and a guess is confirmed on the card before anything files.
   const guess = guessedProject(args.named, app);
-  ctx.offer = { app, title, details, extras: allExtras, ...(guess ? { guess } : {}) };
+  if (!addOffer(ctx, { app, title, details, extras: allExtras, ...(guess ? { guess } : {}) })) return { ok: false, error: SAME_OFFER };
   // A request already on its board that looks like this one is said,
   // so their words can go on it instead (request-similarity.js).
   const similar = await require('./request-similarity').openSimilar(app, title, { github: ctx.deps?.github });
@@ -4498,7 +4531,7 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
 
-async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps, extra = null }) {
+async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps, extra = null, keySuffix = '' }) {
   const dm = dmModule(deps);
   // #6305: one request on several projects. It has no one project, no
   // dm_actions row and nothing to settle: its card is the whole offer, and
@@ -4516,7 +4549,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       bot,
       userId: user.id,
       content: body,
-      idempotencyKey: `hrbot-mayor-${message.id}`,
+      idempotencyKey: `hrbot-mayor-${message.id}${keySuffix}`,
       replyToId: message.threadRootId || message.thread_root_id ? null : message.id,
       ...(message.threadRootId || message.thread_root_id ? { threadRootId: message.threadRootId || message.thread_root_id } : {}),
       metadata: {
@@ -4547,7 +4580,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   const post = o.kind === 'post_reply';
   const kind = withdraw || move || copy || close || post ? o.kind : 'file_request';
   const { rows: [action] } = await pool.query(
-    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number,
+    `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number,
                                           target_message_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
     [user.id, conversationId, o.app.id, kind, o.title, o.details || null,
@@ -4594,7 +4627,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     bot,
     userId: user.id,
     content: body,
-    idempotencyKey: `hrbot-mayor-${message.id}`,
+    idempotencyKey: `hrbot-mayor-${message.id}${keySuffix}`,
     // It quotes the message it answers, and that quote is where the
     // request's later news finds what it started from (#3707,
     // homeroom-bot-dm.js requestStart); in a draft's thread, Main's line
@@ -4628,14 +4661,14 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   if (sent?.messageId && sent.duplicate) {
     // Offered already, by an attempt a restart cut short: that offer is
     // the one under the message; this one was never shown.
-    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [action.id]);
+    await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [action.id]);
     await pool.query(
-      `UPDATE homeroom_bot_dm_actions a SET message_id = $1
-        WHERE a.id = (SELECT id FROM homeroom_bot_dm_actions WHERE user_id = $2 AND conversation_id = $3 AND message_id IS NULL ORDER BY id DESC LIMIT 1)
-          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_dm_actions WHERE message_id = $1)`,
+      `UPDATE bot_cards a SET message_id = $1
+        WHERE a.id = (SELECT id FROM bot_cards WHERE user_id = $2 AND conversation_id = $3 AND message_id IS NULL ORDER BY id DESC LIMIT 1)
+          AND NOT EXISTS (SELECT 1 FROM bot_cards WHERE message_id = $1)`,
       [sent.messageId, user.id, conversationId]);
   } else if (sent?.messageId) {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
+    await pool.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
     // #6251: the pictures that go with the request show on the draft, the
     // same thumbnails as any picture in a chat message. Only on the new
     // message: an offer said already keeps the ones it had.
@@ -4689,7 +4722,7 @@ async function draftExtrasOf(pool, messageId) {
 // posting anything itself. A plan's card is an offer (kind 'post_design'):
 // its tap posts the design as a plan through settleOffer. A new project's
 // card has one client button, Make the project ('make', bot-question.tsx),
-// which opens the make sheet; homeroom_bot_dm_actions needs a project, and
+// which opens the make sheet; bot_cards needs a project, and
 // this one is not made yet.
 
 const MAKE_PROJECT = 'Make the project';
@@ -4838,7 +4871,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     : `Tap New request to file a request on ${name} with version ${v} as its plan, publicly, under your name, `
       + 'or add it to a request you name.';
   const { rows: [action] } = await pool.query(
-    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, source_issue_number,
+    `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, source_issue_number,
                                           private_thread_id, design_version)
      VALUES ($1, $2, $3, 'post_design', $4, $5, $6, $7) RETURNING id`,
     [user.id, conversationId, app.id, clip(design.title, MAX_TITLE_CHARS) || 'Design', n, design.threadId, v],
@@ -4868,9 +4901,9 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
   });
   if (sent?.messageId && sent.duplicate) {
     // Offered already, by an attempt a restart cut short: that card stands.
-    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [action.id]);
+    await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [action.id]);
   } else if (sent?.messageId) {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
+    await pool.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
   }
   return sent;
 }
@@ -4883,7 +4916,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
 async function decidePostDesign(pool, config, { user, action, yes, ack, key = null, deps = {} }) {
   if (!yes) return ack('OK, not yet. Tell me when it looks right and I\'ll offer it again.');
   const failed = async (error, text) => {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
     return ack(text);
   };
   const { rows: [thread] } = await pool.query(
@@ -4907,7 +4940,7 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
       : String(posted.error || 'it was refused').replace(/[.!]+$/, '');
     return failed(posted.code || posted.error || 'refused', `I couldn't post it: ${why}. Nothing was posted.`);
   }
-  await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, posted.number]);
+  await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, posted.number]);
   return { posted: true, number: posted.number, state: posted.state };
 }
 
@@ -4992,7 +5025,7 @@ async function decideTyped(pool, config, { bot, user, settings, conversationId, 
   const decision = typedDecision(message?.content);
   if (!decision) return null;
   const { rows: found } = await pool.query(
-    `SELECT a.* FROM homeroom_bot_dm_actions a
+    `SELECT a.* FROM bot_cards a
        JOIN conversation_messages m ON m.id = a.message_id AND m.deleted_at IS NULL
       WHERE a.user_id = $1 AND a.conversation_id = $2 AND a.status = 'open'
         AND a.created_at > NOW() - make_interval(mins => $3)
@@ -5035,7 +5068,7 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
   let action = typed?.action || null;
   if (!action) {
     const { rows } = await pool.query(
-      'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1 AND user_id = $2',
+      'SELECT * FROM bot_cards WHERE message_id = $1 AND user_id = $2',
       [quoted, user.id],
     );
     action = rows[0];
@@ -5066,7 +5099,7 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
   }
   const id = Number(actionId);
   if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false, status: 404, error: 'No such choice' };
-  const { rows } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1 AND user_id = $2', [id, user.id]);
+  const { rows } = await pool.query('SELECT * FROM bot_cards WHERE id = $1 AND user_id = $2 AND place = \'dm\'', [id, user.id]);
   const action = rows[0];
   const plan = action?.kind === 'build_plan';
   if (!action || (!plan && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
@@ -5074,6 +5107,15 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
     return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no' };
   }
   if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, decision 3): a card is open 14
+  // days (bot_cards.expires_at), then it is no longer an offer.
+  if (!require('./bot-cards').stillOpen(action)) {
+    await pool.query("UPDATE bot_cards SET status = 'expired' WHERE id = $1 AND status = 'open'", [id]);
+    await dmModule(deps).setQuestionState(pool, Number(action.message_id), { status: 'closed', expired: true }, {
+      ws: deps.ws || null, conversationId: action.conversation_id, userId: user.id,
+    }).catch(() => {});
+    return { ok: false, status: 410, error: 'expired' };
+  }
   const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
     userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });
@@ -5091,14 +5133,14 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
  * Throws on a failure a retry can cure. Resolves what it did.
  */
 async function actOnTap(pool, config, { userId, actionId, choice, answers = [], key, gaveUp = false, deps = {} }) {
-  const { rows: [action] } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1 AND user_id = $2', [Number(actionId), Number(userId)]);
+  const { rows: [action] } = await pool.query('SELECT * FROM bot_cards WHERE id = $1 AND user_id = $2 AND place = \'dm\'', [Number(actionId), Number(userId)]);
   if (!action) return { done: false, why: 'gone' };
   const dm = dmModule(deps);
   // The act failed for good (its work exhausted): what it claimed, or never
   // got to, is settled as failed and said, once, under the tap's own ack.
   if (gaveUp) {
     const { rows: failed } = await pool.query(
-      `UPDATE homeroom_bot_dm_actions SET status = 'failed', error = 'gave_up', decided_at = COALESCE(decided_at, NOW()), decided_key = $2
+      `UPDATE bot_cards SET status = 'failed', error = 'gave_up', decided_at = COALESCE(decided_at, NOW()), decided_key = $2
         WHERE id = $1 AND (status = 'open' OR decided_key = $2) AND issue_number IS NULL RETURNING id`, [action.id, String(key)]);
     if (!failed.length) return { done: false, why: 'decided' };
     const bot = deps.bot || await dm.botAccount(pool);
@@ -5178,7 +5220,7 @@ async function settleOffer(pool, config, {
   // restart passes its own claim and carries the act on.
   const key = claimKey || deps.workKey || null;
   const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_dm_actions SET status = $3, decided_at = COALESCE(decided_at, NOW()), decided_key = $4
+    `UPDATE bot_cards SET status = $3, decided_at = COALESCE(decided_at, NOW()), decided_key = $4
       WHERE id = $1 AND user_id = $2
         AND (status = 'open' OR ($4::text IS NOT NULL AND decided_key = $4 AND status = $3)) RETURNING id`,
     [action.id, user.id, yes ? 'done' : 'declined', key],
@@ -5226,7 +5268,7 @@ async function settleOffer(pool, config, {
   );
   const app = apps[0];
   if (!app || !(await canFile(pool, app, user))) {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_allowed']);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_allowed']);
     return ack('I couldn\'t file it: you need to be a member of that project first. You can join it from its page.');
   }
   try {
@@ -5239,7 +5281,7 @@ async function settleOffer(pool, config, {
       user, app, title: action.title, details: action.details, settings, deps, askedText, fileKey: `dm-action:${action.id}`,
       extras, conversationId: action.conversation_id,
     });
-    await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
+    await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
     await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'filed', ref: filed.issueNumber });
     // 31 Oct 2026: the draft's card says what it became. It kept saying "not
     // filed yet" after File it filed it as #6071: the number went to the
@@ -5292,7 +5334,7 @@ async function settleOffer(pool, config, {
     log.warn('homeroom-bot-mayor', 'Could not file a request from a DM', { app: app.slug, userId: user.id, err: err.message });
     // A failure a retry can cure: the act's work tries again, its claim kept.
     if (retryAct(err, key)) throw err;
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(err.message, 300)]);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(err.message, 300)]);
     return ack('I couldn\'t file it just now. Try again, or post it on the project\'s page.');
   }
 }
@@ -5649,14 +5691,14 @@ async function commentOnRequest(pool, ctx, args) {
   }
   // #6019: this chat is private. What would go on the request is drafted
   // under the reply, and posted only when they tap Post it (decidePost).
-  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was drafted.' };
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL} Nothing was drafted.` };
   const dm = dmModule(deps);
   const open = await dm.newestOpenQuestion(pool, user.id, { appId: app.id, issueNumber: n });
   const text = commentText(ctx.userText, comment);
-  ctx.offer = {
+  if (!addOffer(ctx, {
     kind: 'post_reply', app, issueNumber: n, title: 'dm_comment', details: clip(text, 3500),
     targetMessageId: open?.message_id || null,
-  };
+  })) return { ok: false, error: SAME_OFFER };
   return {
     ok: true,
     drafted: `for ${name} request #${n}'s public discussion, under their name: ${text}`,
@@ -5973,10 +6015,10 @@ async function reviseProposal(pool, ctx, args) {
   // #6019: this chat is private. The revision is drafted under the reply,
   // and posted in the change's discussion, which is what queues it, only
   // when they tap Post it (decidePost).
-  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was drafted.' };
-  ctx.offer = {
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL} Nothing was drafted.` };
+  if (!addOffer(ctx, {
     kind: 'post_reply', app, issueNumber, sessionId: Number(session.id), title: 'revise', details: clip(text, 3500),
-  };
+  })) return { ok: false, error: SAME_OFFER };
   return {
     ok: true,
     proposal: { proposal: Number(session.id), project: app.slug, projectName: name, number: issueNumber, title: session.title || null },
@@ -6213,7 +6255,7 @@ async function withdrawProposal(pool, ctx, args) {
   const { user, deps } = ctx;
   const bot = ctx.bot;
   if (ctx.withdrew) return { ok: false, error: 'One withdrawal per turn.' };
-  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was withdrawn.' };
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL} Nothing was withdrawn.` };
   if (!bot?.id) return { ok: false, error: 'That lookup failed.' };
   const id = Number(args.proposal);
   if (!Number.isInteger(id) || id <= 0) {
@@ -6239,11 +6281,11 @@ async function withdrawProposal(pool, ctx, args) {
       note: 'A short note saying so is on the request\'s discussion.',
     };
   }
-  ctx.offer = {
+  if (!addOffer(ctx, {
     kind: 'withdraw_proposal', app: gate.app, sessionId: id,
     title: clip(String(gate.session.title || `Proposal ${id}`).replace(/\s+/g, ' '), MAX_TITLE_CHARS),
     details: clip(String(args.reason || '').replace(/\s+/g, ' '), 600) || null,
-  };
+  })) return { ok: false, error: SAME_OFFER };
   return {
     ok: true,
     proposal,
@@ -6258,7 +6300,7 @@ async function withdrawProposal(pool, ctx, args) {
  */
 async function offerMoveRequest(pool, ctx, args) {
   const { user, deps } = ctx;
-  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was moved.' };
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL} Nothing was moved.` };
   const app = await findApp(pool, args.project);
   if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
   ctx.appIds.add(Number(app.id));
@@ -6270,11 +6312,11 @@ async function offerMoveRequest(pool, ctx, args) {
   if (!(await canFile(pool, target, user))) {
     return { ok: false, error: 'They are not a member of Homeroom\'s own community, so they cannot file there. They can join it from its page. Nothing was moved.' };
   }
-  ctx.offer = {
+  if (!addOffer(ctx, {
     kind: 'move_request', app, issueNumber: gate.issueNumber,
     title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
     details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
-  };
+  })) return { ok: false, error: SAME_OFFER };
   return {
     ok: true,
     request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
@@ -6289,7 +6331,7 @@ async function offerMoveRequest(pool, ctx, args) {
  */
 async function offerCopyRequest(pool, ctx, args) {
   const { user, deps } = ctx;
-  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was filed.' };
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL} Nothing was filed.` };
   const app = await findApp(pool, args.project);
   if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
   ctx.appIds.add(Number(app.id));
@@ -6301,11 +6343,11 @@ async function offerCopyRequest(pool, ctx, args) {
   if (!(await canFile(pool, target, user))) {
     return { ok: false, error: 'They are not a member of Homeroom\'s own community, so they cannot file there. They can join it from its page. Nothing was filed.' };
   }
-  ctx.offer = {
+  if (!addOffer(ctx, {
     kind: 'copy_request', app, issueNumber: gate.issueNumber,
     title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
     details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
-  };
+  })) return { ok: false, error: SAME_OFFER };
   return {
     ok: true,
     request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
@@ -6360,17 +6402,17 @@ async function closeGate(pool, { app, issueNumber, user, deps = {} }) {
  */
 async function offerCloseRequest(pool, ctx, args) {
   const { user, deps } = ctx;
-  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was proposed.' };
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL} Nothing was proposed.` };
   const app = await findApp(pool, args.project);
   if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
   ctx.appIds.add(Number(app.id));
   const gate = await closeGate(pool, { app, issueNumber: args.number, user, deps });
   if (!gate.ok) return { ok: false, error: `${gate.error} Nothing was proposed.` };
-  ctx.offer = {
+  if (!addOffer(ctx, {
     kind: 'close_request', app, issueNumber: gate.issueNumber,
     title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
     details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
-  };
+  })) return { ok: false, error: SAME_OFFER };
   return {
     ok: true,
     request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
@@ -6400,7 +6442,7 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
     return ack('OK, it stays here in our chat. Nothing was posted.');
   }
   const failed = async (error, text) => {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
     await keepPlan();
     return ack(text);
   };
@@ -6503,7 +6545,7 @@ async function offerPost(pool, { bot, user, conversationId, message, target, tex
 async function decideClose(pool, { user, action, yes, ack, deps = {} }) {
   if (!yes) return ack('OK, I\'ll leave it open.');
   const failed = async (error, text) => {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
     return ack(text);
   };
   const closed = 'I couldn\'t propose closing it just now. Try again in a minute.';
@@ -6551,7 +6593,7 @@ async function decideClose(pool, { user, action, yes, ack, deps = {} }) {
 async function decideWithdraw(pool, { bot, user, action, yes, ack, deps = {} }) {
   if (!yes) return ack('OK, I\'ll leave it up.');
   const failed = async (error, text) => {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
     return ack(text);
   };
   const gate = await withdrawGate(pool, { bot, user, sessionId: Number(action.session_id), deps });
@@ -6781,6 +6823,9 @@ module.exports = {
   KEY_TEXT,
   PLAIN_NOTE,
   TOOLS,
+  MAX_OFFERS,
+  offerRoom,
+  addOffer,
   PLATFORM_TOOLS,
   platformRules,
   revisionText,

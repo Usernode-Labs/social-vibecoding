@@ -434,7 +434,7 @@ async function backfillFiledDraftCards(pool) {
       `UPDATE conversation_messages m
           SET metadata = jsonb_set(m.metadata, '{homeroomBot}',
                 (m.metadata->'homeroomBot') || jsonb_build_object('issueNumber', a.issue_number, 'issueTitle', a.title))
-         FROM homeroom_bot_dm_actions a
+         FROM bot_cards a
         WHERE a.message_id = m.id AND a.kind = 'file_request' AND a.status = 'done' AND a.issue_number IS NOT NULL
           AND jsonb_typeof(m.metadata->'homeroomBot') = 'object'
           AND m.metadata->'homeroomBot'->>'kind' = 'confirm'
@@ -1833,8 +1833,9 @@ async function seedStagingBotWaitingRows(pool) {
       if (copyNote.rows.length) {
         const messageId = Number(copyNote.rows[0].id);
         const { rows: [offer] } = await pool.query(
-          `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id)
-           VALUES ($1, 'copy_request', $2, $3, $4) RETURNING id`,
+          // A thread's offer is one of Homeroom bot's cards (bot_cards, 5 Nov 2026).
+          `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id)
+           VALUES ('thread', $1, 'copy_request', $2, $3, $4) RETURNING id`,
           [appId, JSON.stringify({ issueNumber: 9103, title: 'Staging demo: the signed-out page sends a person to the authorize page' }), userId, messageId],
         );
         const offerId = Number(offer.id);
@@ -1946,12 +1947,13 @@ async function seedStagingBotAlreadyWorks(pool) {
     // to the note.
     if (noteId != null) {
       const tied = await pool.query(
-        'SELECT 1 FROM homeroom_bot_voice_offers WHERE message_id = $1 LIMIT 1', [noteId],
+        `SELECT 1 FROM bot_cards WHERE place = 'thread' AND chat_message_id = $1
+          UNION ALL SELECT 1 FROM homeroom_bot_voice_offers WHERE message_id = $1 LIMIT 1`, [noteId],
       );
       if (!tied.rows.length) {
         const { rows: [offer] } = await pool.query(
-          `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id)
-           VALUES ($1, 'close_request', $2, NULL, $3) RETURNING id`,
+          `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id)
+           VALUES ('thread', $1, 'close_request', $2, NULL, $3) RETURNING id`,
           [appId, JSON.stringify({ issueNumber: number, title, why: reason }), noteId],
         );
         const offerId = Number(offer.id);
@@ -2341,14 +2343,17 @@ async function seedStagingBotFixesStopped(pool) {
     const stopText = 'I stopped after 3 tries at getting this change past its checks. 1 check is still failing. '
       + 'The person who asked for it or an admin can let me try once more.';
     let offer = (await pool.query(
-      `SELECT id FROM homeroom_bot_voice_offers
+      `SELECT id FROM bot_cards
+        WHERE place = 'thread' AND app_id = $1 AND kind = 'try_again' AND args->>'sessionId' = $2
+       UNION ALL
+       SELECT id FROM homeroom_bot_voice_offers
         WHERE app_id = $1 AND kind = 'try_again' AND args->>'sessionId' = $2 LIMIT 1`,
       [appId, String(sessionId)],
     )).rows[0];
     if (!offer) {
       offer = (await pool.query(
-        `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
-         VALUES ($1, 'try_again', $2::jsonb, $3) RETURNING id`,
+        `INSERT INTO bot_cards (place, app_id, kind, args, user_id)
+         VALUES ('thread', $1, 'try_again', $2::jsonb, $3) RETURNING id`,
         [appId, JSON.stringify({ sessionId: Number(sessionId) }), memberId],
       )).rows[0];
     }
@@ -2382,7 +2387,7 @@ async function seedStagingBotFixesStopped(pool) {
     )).rows[0]?.id;
     if (messageId) {
       await pool.query(
-        'UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
+        "UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = 'thread' AND chat_message_id IS NULL",
         [offer.id, messageId],
       );
     }
@@ -10979,7 +10984,7 @@ async function seedStagingDiscussionContext(pool, config) {
 // that turn, so the state a fresh clone needs is written here: the shots'
 // member (usernode-capture) asks the bot to propose closing a request, and
 // the bot's reply in a reply thread under it carries the open offer — its
-// buttons in metadata and its homeroom_bot_voice_offers row, so a tap
+// buttons in metadata and its card (bot_cards, place thread), so a tap
 // decides it through the ordinary route. The member is put in the self
 // app's community, since membership gates taking part, not reading. Idem-
 // potent on the open close_request offer row; strictly a no-op outside
@@ -11015,7 +11020,9 @@ async function seedStagingBotCloseOffer(pool, config) {
     }
     const { rows: open } = await pool.query(
       // Its own, the member's: #6321's already-works note carries one for nobody.
-      `SELECT id FROM homeroom_bot_voice_offers WHERE app_id = $1 AND kind = 'close_request' AND status = 'open' AND for_user_id = $2 LIMIT 1`,
+      `SELECT id FROM bot_cards WHERE place = 'thread' AND app_id = $1 AND kind = 'close_request' AND status = 'open' AND user_id = $2
+       UNION ALL
+       SELECT id FROM homeroom_bot_voice_offers WHERE app_id = $1 AND kind = 'close_request' AND status = 'open' AND for_user_id = $2 LIMIT 1`,
       [app.id, memberId]
     );
     if (open.length) return;
@@ -11030,8 +11037,8 @@ async function seedStagingBotCloseOffer(pool, config) {
       [app.id, memberId, ask]
     );
     const { rows: [offerRow] } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
-       VALUES ($1, 'close_request',
+      `INSERT INTO bot_cards (place, app_id, kind, args, user_id)
+       VALUES ('thread', $1, 'close_request',
                '{"issueNumber": 1, "title": "Staging demo request", "why": "It is done"}'::jsonb,
                $2)
        RETURNING id`,
@@ -11054,7 +11061,7 @@ async function seedStagingBotCloseOffer(pool, config) {
         'Thanks. If request #1 is done, it can go: tap Propose to close below to open a vote on closing it. Nothing happens until you do, and it closes only if the group votes for it.',
         offerRow.id, memberId, askRow.id]
     );
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [offerRow.id, replyRow.id]);
+    await pool.query("UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = 'thread'", [offerRow.id, replyRow.id]);
     log.info('db', 'Staging bot close-offer fixture seeded', { appId: app.id, offerId: offerRow.id, replyId: replyRow.id });
   } catch (err) {
     log.warn('db', 'Staging bot close-offer seeding failed', { message: err.message });

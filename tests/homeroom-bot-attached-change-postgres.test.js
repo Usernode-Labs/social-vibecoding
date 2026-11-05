@@ -297,7 +297,7 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     const { rows: objects } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [answer.id]);
     assert.deepEqual(objects.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${pending.id}`]);
     assert.equal(await turnsOf(sam), 0, 'decided without the model');
-    const { rows: offers } = await pool.query('SELECT kind FROM homeroom_bot_dm_actions WHERE user_id = $1', [sam.id]);
+    const { rows: offers } = await pool.query('SELECT kind FROM bot_cards WHERE user_id = $1', [sam.id]);
     assert.deepEqual(offers.map((o) => o.kind), ['post_reply'], 'the draft, and no new request offered');
   });
 

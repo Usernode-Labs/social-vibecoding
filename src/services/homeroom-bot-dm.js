@@ -1161,7 +1161,7 @@ function wantsStoryTitle(metadata) {
 async function requestStart(pool, { userId, appId, issueNumber }) {
   const { rows } = await pool.query(
     `SELECT COALESCE(o.reply_to_id, root.reply_to_id) AS reply_to_id
-       FROM homeroom_bot_dm_actions a
+       FROM bot_cards a
        JOIN conversation_messages o ON o.id = a.message_id
        LEFT JOIN conversation_messages root ON root.id = o.thread_root_id
       WHERE a.user_id = $1 AND a.app_id = $2 AND a.issue_number = $3 AND a.status = 'done'
@@ -2354,7 +2354,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   const name = app.name || app.slug;
   const questions = (plan.questions || []).slice(0, 2);
   const { rows: [action] } = await pool.query(
-    `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title)
+    `INSERT INTO bot_cards (user_id, app_id, kind, title)
      VALUES ($1, $2, 'build_plan', $3) RETURNING id`,
     [requester.userId, app.id, clip(`The plan for ${name}`, 200)],
   );
@@ -2393,11 +2393,11 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     ...await outsideCardThread(pool, planStarted),
   });
   if (!sent?.messageId) {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_sent']);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_sent']);
     return null;
   }
   await pool.query(
-    'UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1',
+    'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
     [action.id, sent.messageId, sent.conversationId],
   ).catch(() => {});
   if (sent.duplicate) return sent;
@@ -2406,7 +2406,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     for (const card of await planCards(pool, { userId: requester.userId, appId: app.id, issueNumber })) {
       if (Number(card.message_id) === Number(sent.messageId) || card.meta?.status === 'answered' || card.meta?.replaced) continue;
       await pool.query(
-        'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = \'replaced\' WHERE message_id = $1 AND status = \'open\'',
+        'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = \'replaced\' WHERE message_id = $1 AND status = \'open\'',
         [card.message_id],
       );
       await setQuestionState(pool, Number(card.message_id), { status: 'closed', replaced: true }, {
@@ -2451,7 +2451,7 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
     let sender = bot;
     for (const row of rows) {
       await pool.query(
-        'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = $2 WHERE message_id = $1 AND status = \'open\'',
+        'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = $2 WHERE message_id = $1 AND status = \'open\'',
         [row.message_id, stopped ? 'stopped' : 'closed'],
       );
       await setQuestionState(pool, Number(row.message_id), stopped ? { status: 'closed', stopped: true } : { status: 'closed' }, {
@@ -2509,7 +2509,7 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
   // own state, so a plan gone ahead with already is not built twice).
   const key = claimKey || deps.workKey || null;
   const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_dm_actions SET status = 'done', decided_at = COALESCE(decided_at, NOW()), decided_key = $3
+    `UPDATE bot_cards SET status = 'done', decided_at = COALESCE(decided_at, NOW()), decided_key = $3
       WHERE id = $1 AND user_id = $2 AND (status = 'open' OR ($3::text IS NOT NULL AND decided_key = $3 AND status = 'done'))
       RETURNING id`,
     [action.id, user.id, key],
@@ -2528,7 +2528,7 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
     if (run) went = { ok: true, appId: Number(run.app_id), issueNumber: Number(run.issue_number), chosen: Array.isArray(run.chosen) ? run.chosen : [] };
   }
   if (!went.ok) {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'plan_gone']);
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'plan_gone']);
     return { ok: false, status: 409, error: 'plan_gone' };
   }
   await setQuestionState(pool, Number(action.message_id), {
@@ -2586,7 +2586,7 @@ async function buildFromAnswers(pool, { appId, issueNumber, runId = null, userId
   if (!run) return null;
   const { rows: [action] } = await pool.query(
     `SELECT a.* FROM homeroom_bot_dm_messages d
-       JOIN homeroom_bot_dm_actions a ON a.message_id = d.message_id
+       JOIN bot_cards a ON a.message_id = d.message_id
       WHERE d.run_id = $1 AND d.kind = $2 AND d.user_id = $3 AND a.kind = 'build_plan' AND a.status = 'open'
       ORDER BY d.message_id DESC LIMIT 1`,
     [run.id, PLAN_KIND, userId],
@@ -2663,7 +2663,7 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
   // "Build it" (or "yes") written under the plan is its button.
   if (isPlanGoWord(text)) {
     const { rows: [action] } = await pool.query(
-      'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1 AND user_id = $2 AND kind = \'build_plan\'',
+      'SELECT * FROM bot_cards WHERE message_id = $1 AND user_id = $2 AND kind = \'build_plan\'',
       [target.message_id, user.id],
     );
     if (action?.status === 'open') {
@@ -2709,7 +2709,7 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
     [target.run_id, clip(text, 3000)],
   );
   await pool.query(
-    'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = \'changed\' WHERE message_id = $1 AND status = \'open\'',
+    'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = \'changed\' WHERE message_id = $1 AND status = \'open\'',
     [target.message_id],
   );
   await setQuestionState(pool, Number(target.message_id), { status: 'closed', changing: true }, {
@@ -2786,7 +2786,7 @@ async function notePlanChanged(pool, { user, target, app, deps = {} }) {
       [target.run_id],
     );
     await pool.query(
-      'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = \'changed\' WHERE message_id = $1 AND status = \'open\'',
+      'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = \'changed\' WHERE message_id = $1 AND status = \'open\'',
       [target.message_id],
     );
     // Papote #3: its row on the request says a new plan follows.
@@ -2815,7 +2815,7 @@ async function markPlanBuilt(pool, runId, { chosen = [], ws = null } = {}) {
     );
     for (const row of rows) {
       await pool.query(
-        'UPDATE homeroom_bot_dm_actions SET status = \'done\', decided_at = NOW() WHERE message_id = $1 AND status = \'open\'',
+        'UPDATE bot_cards SET status = \'done\', decided_at = NOW() WHERE message_id = $1 AND status = \'open\'',
         [row.message_id],
       );
       await setQuestionState(pool, Number(row.message_id), {
@@ -2859,7 +2859,7 @@ async function buildWaitingPlan(pool, { user, appId, issueNumber, deps = {} }) {
   if (!run?.complicated) return { ok: false, why: 'gone' };
   const { rows: [action] = [] } = await pool.query(
     `SELECT a.* FROM homeroom_bot_dm_messages d
-       JOIN homeroom_bot_dm_actions a ON a.message_id = d.message_id
+       JOIN bot_cards a ON a.message_id = d.message_id
       WHERE d.run_id = $1 AND d.kind = $2 AND d.user_id = $3 AND a.kind = 'build_plan' AND a.status = 'open'
       ORDER BY d.message_id DESC LIMIT 1`,
     [run.id, PLAN_KIND, user.id],
@@ -2887,7 +2887,7 @@ async function waitingPlan(pool, { userId, appId, issueNumber }) {
             m.thread_root_id
        FROM homeroom_bot_dm_messages d
        JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
-       JOIN homeroom_bot_dm_actions a ON a.message_id = d.message_id AND a.status = 'open'
+       JOIN bot_cards a ON a.message_id = d.message_id AND a.status = 'open'
       WHERE d.user_id = $1 AND d.app_id = $2 AND d.issue_number = $3 AND d.kind = $4
       ORDER BY d.message_id DESC LIMIT 1`,
     [userId, appId, issueNumber, PLAN_KIND],
@@ -4052,7 +4052,7 @@ async function messageThread(pool, { userId, conversationId, message }) {
             (p.holds_bot AND p.hold_lifted_at IS NULL) AS holding,
             (SELECT r.metadata->'homeroomBot'->>'changeKind' FROM conversation_messages r
               WHERE r.id = p.root_message_id) AS change_kind,
-            (SELECT d.title FROM homeroom_bot_dm_actions d
+            (SELECT d.title FROM bot_cards d
                JOIN conversation_messages m ON m.id = d.message_id
               WHERE m.thread_root_id = p.root_message_id AND d.user_id = p.user_id
               ORDER BY d.id DESC LIMIT 1) AS title

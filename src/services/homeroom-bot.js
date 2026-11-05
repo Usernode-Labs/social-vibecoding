@@ -6253,9 +6253,10 @@ async function runChecksFix(pool, config, {
         ? await dmModule.requesterOf(pool, app.id, issueNumber).catch(() => null)
         : null;
       offerFor = who?.userId ? Number(who.userId) : null;
+      // A thread's offer is one of Homeroom bot's cards (bot_cards, 5 Nov 2026).
       const { rows: offerRows } = await pool.query(
-        `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
-         VALUES ($1, 'try_again', $2, $3) RETURNING id`,
+        `INSERT INTO bot_cards (place, app_id, kind, args, user_id)
+         VALUES ('thread', $1, 'try_again', $2, $3) RETURNING id`,
         [app.id, JSON.stringify({ sessionId: Number(session.id) }), offerFor],
       ).catch(() => ({ rows: [] }));
       offer = offerRows[0] || null;
@@ -6292,8 +6293,8 @@ async function runChecksFix(pool, config, {
     // (homeroom-bot-voice.decideOffer finds the offer by its message).
     if (offer && posted?.postId) {
       await pool.query(
-        `UPDATE homeroom_bot_voice_offers o SET message_id = p.thread_message_id
-           FROM homeroom_bot_posts p WHERE o.id = $1 AND p.id = $2 AND p.thread_message_id IS NOT NULL`,
+        `UPDATE bot_cards o SET chat_message_id = p.thread_message_id
+           FROM homeroom_bot_posts p WHERE o.id = $1 AND o.place = 'thread' AND p.id = $2 AND p.thread_message_id IS NOT NULL`,
         [offer.id, posted.postId],
       ).catch(() => {});
     }
