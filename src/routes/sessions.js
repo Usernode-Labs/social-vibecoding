@@ -3996,6 +3996,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (req.path.endsWith('/details')) {
         detail.bot_fix = await require('../services/homeroom-bot-progress')
           .changeBotFix(pool, session.id, { viewer: req.user }).catch(() => null);
+        // #6116: what it has cost so far at list price, for its author or an
+        // admin only, as the dev chat's meter (services/session-cost.js).
+        detail.cost_total_cents = await sessionCost.sessionCostForViewer(pool, session, req.user);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).

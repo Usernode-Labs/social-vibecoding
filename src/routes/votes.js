@@ -5129,6 +5129,10 @@ function voteRoutes(config) {
         // null for any change of a person's.
         proposal.bot_fix = await require('../services/homeroom-bot-progress')
           .changeBotFix(pool, proposal.id, { viewer: req.user }).catch(() => null);
+        // #6116: what it has cost so far at list price, for its author or an
+        // admin only, as the dev chat's meter (services/session-cost.js).
+        proposal.cost_total_cents = await require('../services/session-cost')
+          .sessionCostForViewer(pool, proposal, req.user);
         // #4479: the plan it was built from, for the page's plan card.
         proposal.plan = await require('./sessions')
           .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);
