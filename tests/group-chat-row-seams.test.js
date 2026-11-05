@@ -168,6 +168,14 @@ test('the module derives the ref from metadata, then from the row text', () => {
   });
   assert.deepEqual(parsed.voteRef, { sessionId: '', prNumber: '7' });
 
+  // #6322: a vote on closing a request names no change, so there is no card.
+  const closeVote = view({
+    id: 8, userId: 2, username: 'snait', content: 'snait voted up on close proposal for issue #436',
+    msgType: 'vote', createdAt: '2026-07-20T12:00:00.000Z', metadata: {},
+  });
+  assert.equal(closeVote.kind, 'vote');
+  assert.equal(closeVote.voteRef, null, 'nothing for the card to name or open');
+
   const chat = view({
     id: 7, userId: 2, username: 'bob', content: 'hi',
     msgType: 'message', createdAt: '2026-07-20T12:00:00.000Z',

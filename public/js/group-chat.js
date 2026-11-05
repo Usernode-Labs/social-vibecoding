@@ -1343,7 +1343,10 @@ const GroupChat = {
       // data-vote-pr, which refreshVoteControls reads back to resolve the
       // row against the vote snapshot and patch `vote` below.
       voteRef: isVote || aboutChange
-        ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
+        // #6322: a vote line that names no change (a vote on closing a
+        // request or on a setting, governance-proposal/machine.ts) has
+        // nothing for the card to name or open, so it gets no card.
+        ? (([sessionId, prNumber]) => (sessionId || prNumber ? { sessionId, prNumber } : null))(GroupChat._voteRef(msg))
         : null,
       // #6236: where the change's vote and checks stand, for the vote card
       // (features/group-chat/vote-card.tsx) — resolved here when the
