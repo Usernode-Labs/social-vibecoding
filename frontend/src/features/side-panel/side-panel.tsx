@@ -36,6 +36,9 @@
  * button"): ‹ Main Chat, which gives Main its place back, and the project the
  * page is in, which opens it; no title, Expand, Close, Back or divider, and
  * the page in it leaves out its own "‹ Workshop" (controller BESIDE_AI_CLASS).
+ * When the page was opened from inside a private thread, the chip says ‹
+ * Thread instead, since closing the page shows that thread rather than Main
+ * (5 Nov 2026, store `backTo`).
  * Both rows are always rendered and app.css shows the one that applies
  * (`body:has(#ai-screen:not(.hidden))`), so the prerender is one markup.
  *
@@ -116,6 +119,9 @@ export function SidePanel(): ReactNode {
   const rootRef = useRef<HTMLElement | null>(null);
   const backRef = useRef<HTMLButtonElement | null>(null);
   const loadingRef = useRef<HTMLDivElement | null>(null);
+  // The chip names where it goes: the private thread behind the page, if there
+  // is one, else Main (5 Nov 2026).
+  const toThread = s.backTo === 'thread';
 
   useHiddenClass(rootRef, !(s.open && !!s.frameSrc));
   useHiddenClass(backRef, !s.canBack);
@@ -189,11 +195,11 @@ export function SidePanel(): ReactNode {
         <button
           type="button"
           className="side-panel-main dev-topic-back un-touch-target"
-          aria-label={t('agent:sidePanel.mainLabel')}
+          aria-label={toThread ? t('agent:sidePanel.threadLabel') : t('agent:sidePanel.mainLabel')}
           onClick={() => controller.close()}
         >
           <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-          <span>{t('agent:sidePanel.main')}</span>
+          <span>{toThread ? t('agent:sidePanel.thread') : t('agent:sidePanel.main')}</span>
         </button>
         <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} />
         <PanelMore route={s.route} />
