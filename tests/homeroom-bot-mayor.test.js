@@ -922,3 +922,165 @@ test('#6251: the filed body carries the pictures, Done when, Related and Where, 
   assert.ok(long.length <= 65536, 'inside GitHub\'s limit');
   assert.match(long, /^x+…\n\n\*\*Done when\*\*/);
 });
+
+// ── #6346: the chat turn's last round, stand-in answers and read cap ─────
+//
+// A chat turn answered "placeholder" after spending all sixteen rounds
+// reading the code. These run the real DM turn with a scripted model: the
+// last round is warned and must pick a turn-ending tool, a stand-in gets one
+// more round before the fallback line, and source reads are capped.
+
+const realDm = require('../src/services/homeroom-bot-dm');
+
+const callOf = (id, name, args = {}) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
+const ENDING = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+
+function chatTurn(chat, { extra = {}, message = {} } = {}) {
+  const sent = [];
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      queries.push({ sql: s, params });
+      if (/FROM apps\b/.test(s) && /LIMIT 1/.test(s)) {
+        return {
+          rows: [{
+            id: 1, slug: 'gym', name: 'Gym Tracker',
+            collab_visibility: 'public', view_visibility: 'public', community_id: null, repo_url: null,
+          }],
+        };
+      }
+      // The offer's own row, which a real send needs for its card's action.
+      if (/INSERT INTO homeroom_bot_dm_actions/.test(s)) return { rows: [{ id: 5 }] };
+      return { rows: [] };
+    },
+  };
+  const deps = {
+    chat, apiKey: 'sk-test', openMcp: async () => null, seesImages: false, sleep: async () => {},
+    dmSvc: {
+      ...realDm,
+      async sendDm(_pool, args) { sent.push(args); return { messageId: 900 + sent.length, conversationId: 41 }; },
+    },
+    ...extra,
+  };
+  const run = mayor.runDmTurn(pool, {}, {
+    bot: { id: 2, username: 'homeroom_bot' },
+    user: { id: 9, username: 'evan' },
+    settings: { mode: 'live', perPerson: 2 },
+    conversationId: 41,
+    message: { id: 70, content: 'What are all the verbs in Needs you?', ...message },
+    deps,
+  });
+  return { run, sent, queries };
+}
+
+function saying(steps) {
+  let i = 0;
+  return async (req) => {
+    const step = steps(i, req);
+    i += 1;
+    return { content: step.content || '', toolCalls: step.calls || [] };
+  };
+}
+
+// A request's messages are read later, after the turn has pushed more (the
+// loop keeps one array), so a kept request takes a copy of them.
+const snapshot = (req) => ({ ...req, messages: (req.messages || []).map((m) => ({ ...m })) });
+
+test('#6346: a chat turn that reads every round is warned and answers on its last round', async () => {
+  const seen = [];
+  const chat = saying((i, req) => {
+    seen.push(snapshot(req));
+    if (req.toolChoice === 'required') {
+      return { content: '', calls: [callOf(`reply${i}`, 'reply', { text: 'The words are Vote, Build it, Answer and Decide.' })] };
+    }
+    return { content: '', calls: [callOf(`r${i}`, 'my_projects')] };
+  });
+  const turn = chatTurn(chat);
+  await turn.run;
+  const last = seen.at(-1);
+  assert.equal(last.toolChoice, 'required', 'the last round must pick a turn-ending tool');
+  assert.ok(last.messages.some((m) => m.role === 'user' && /This is your last round\./.test(String(m.content))),
+    'the last round is warned');
+  assert.ok(last.tools.every((tl) => ENDING(tl.function.name)), 'only turn-ending tools are offered');
+  assert.ok(last.tools.some((tl) => tl.function.name === 'reply'), 'it can still answer');
+  assert.ok(last.tools.some((tl) => tl.function.name === 'offer_request'), 'or offer the draft they asked for');
+  assert.equal(turn.sent.length, 1);
+  assert.equal(turn.sent[0].content, 'The words are Vote, Build it, Answer and Decide.');
+});
+
+
+test('#6346: a "placeholder" reply gets one more round, and the real answer is sent', async () => {
+  const seen = [];
+  const chat = saying((i, req) => {
+    seen.push(snapshot(req));
+    if (i === 0) return { content: '', calls: [callOf('r0', 'my_projects')] };
+    if (i === 1) return { content: '', calls: [callOf('r1', 'reply', { text: 'placeholder' })] };
+    return { content: '', calls: [callOf('r2', 'reply', { text: 'The words come from one list: Vote, Build it, Answer, Decide.' })] };
+  });
+  const turn = chatTurn(chat);
+  await turn.run;
+  assert.ok(seen[2].messages.some((m) => /stand-in, not an answer/.test(String(m.content))),
+    'the retry is told why');
+  assert.equal(turn.sent.length, 1);
+  assert.equal(turn.sent[0].content, 'The words come from one list: Vote, Build it, Answer, Decide.');
+  assert.ok(turn.queries.some((q) => JSON.stringify(q.params).includes('stand_in')), 'the refusal is recorded');
+});
+
+test('#6346: "placeholder" twice, the second on the last round, gets one extra round then the fallback', async () => {
+  const seen = [];
+  const chat = saying((i, req) => {
+    seen.push(snapshot(req));
+    if (req.toolChoice === 'required') return { content: '', calls: [callOf(`bad${i}`, 'reply', { text: 'placeholder' })] };
+    return { content: '', calls: [callOf(`r${i}`, 'my_projects')] };
+  });
+  const turn = chatTurn(chat);
+  await turn.run;
+  const required = seen.filter((req) => req.toolChoice === 'required');
+  assert.equal(required.length, 2, 'the stand-in got one more round past the last');
+  assert.ok(required[1].messages.some((m) => /stand-in, not an answer/.test(String(m.content))),
+    'the extra round is told why');
+  assert.equal(turn.sent.length, 1);
+  assert.notEqual(String(turn.sent[0].content).trim(), 'placeholder');
+  assert.match(String(turn.sent[0].content), /couldn't answer just now|answer this here|Sorry/);
+  assert.ok(turn.queries.some((q) => JSON.stringify(q.params).includes('stand_in')), 'the refusal is recorded');
+});
+
+test('#6346: a chat turn stops reading source after eight and still answers', async () => {
+  const seen = [];
+  const chat = saying((i, req) => {
+    seen.push(snapshot(req));
+    if (i < 9) return { content: '', calls: [callOf(`read${i}`, 'read_source', { project: 'gym', path: `src/${i}.js` })] };
+    return { content: '', calls: [callOf('answer', 'reply', { text: 'It saves each set in src/db.js.' })] };
+  });
+  const turn = chatTurn(chat);
+  await turn.run;
+  const ninth = seen[9];
+  assert.ok(ninth.messages.some((m) => m.role === 'tool' && /Your reading for this turn is done\./.test(String(m.content))),
+    'the ninth read is refused with the reading-done note');
+  assert.ok(seen.slice(1, 9).every((req) => !req.messages.some((m) => m.role === 'tool' && /Your reading for this turn is done\./.test(String(m.content)))),
+    'the first eight reads are answered');
+  assert.equal(turn.sent[0].content, 'It saves each set in src/db.js.');
+});
+
+test('#6346: an offer on the chat\'s last round is the answer, with no fallback', async () => {
+  const seen = [];
+  const chat = saying((i, req) => {
+    seen.push(snapshot(req));
+    if (req.toolChoice === 'required') {
+      return {
+        content: '',
+        calls: [callOf('offer', 'offer_request', {
+          project: 'gym', title: 'Show every verb in Needs you', details: 'List them with their words.',
+          doneWhen: ['The verbs are listed in one place'],
+        })],
+      };
+    }
+    return { content: '', calls: [callOf(`r${i}`, 'my_projects')] };
+  });
+  const turn = chatTurn(chat, { message: { id: 70, content: 'What are all the verbs in Needs you?', threadRootId: 5 } });
+  await turn.run;
+  assert.equal(turn.sent.length, 1);
+  assert.match(String(turn.sent[0].content), /new request/i, 'the offer card is sent');
+  assert.doesNotMatch(String(turn.sent[0].content), /couldn't answer just now/);
+});

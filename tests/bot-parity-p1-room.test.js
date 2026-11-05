@@ -149,7 +149,11 @@ function botTurn(chat, { extra = {}, text = 'How does Gym Tracker save a workout
 test('a turn that looks things up for sixteen rounds never sends more than 100 messages, and still replies', async () => {
   const seen = [];
   const chat = scripted((i, req) => {
-    if (typeof req.toolChoice === 'object') return { calls: [callOf(`reply${i}`, 'reply', { text: 'It saves each set as you finish it.' })] };
+    // #6346: the last round is a required choice of the turn-ending tools,
+    // not a forced reply.
+    if (req.toolChoice === 'required' || typeof req.toolChoice === 'object') {
+      return { calls: [callOf(`reply${i}`, 'reply', { text: 'It saves each set as you finish it.' })] };
+    }
     return { calls: Array.from({ length: 8 }, (_, c) => callOf(`r${i}c${c}`, 'my_projects')) };
   }, seen);
   const turn = botTurn(chat);
@@ -159,7 +163,14 @@ test('a turn that looks things up for sixteen rounds never sends more than 100 m
   for (const req of seen) assert.ok(req.messages.length <= mayor.MAX_MESSAGES, `${req.messages.length} messages`);
   assert.ok(seen.some((req) => req.messages.some((m) => typeof m.content === 'string' && m.content.startsWith(mayor.COMPACT_LEAD))),
     'its oldest lookups were folded to make room');
-  assert.deepEqual(seen.at(-1).toolChoice, { type: 'function', function: { name: 'reply' } }, 'the last round replies');
+  // #6346: the last round is told so, and must pick a tool that ends the turn.
+  const last = seen.at(-1);
+  assert.equal(last.toolChoice, 'required', 'the last round picks a turn-ending tool');
+  assert.ok(last.messages.some((m) => m.role === 'user' && /This is your last round\./.test(String(m.content))),
+    'the last round is warned');
+  const ending = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+  assert.ok(last.tools.every((tl) => ending(tl.function.name)), 'only turn-ending tools are offered');
+  assert.ok(last.tools.some((tl) => tl.function.name === 'reply'), 'it can still answer');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, 'It saves each set as you finish it.');
   assert.ok(seen.every((req) => req.maxOutputTokens === mayor.MAX_OUTPUT_TOKENS), '4000 tokens a round');

@@ -57,6 +57,7 @@
 const log = require('./logger');
 const repoRef = require('./repo-ref');
 const replyRules = require('../workflow/rules/bot-replies.ts');
+const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
 
 // A burst is one turn (the bot-voice machine settles it): its rule's.
 const { SETTLE_MS, SETTLE_CAP_MS } = replyRules;
@@ -82,14 +83,11 @@ const MAX_READS_PER_TURN = 4;
 const READ_TOOLS = Object.freeze([
   'list_source', 'read_source', 'request_detail', 'read_message', 'get_change', 'get_discussion', 'list_requests',
 ]);
-const READING_DONE = 'Your reading for this turn is done. Answer with what you know, or queue the change with update_change.';
+const READING_DONE = readingDoneNote('queue the change with update_change');
 // What the last round offers: a read tool cannot be picked there.
 const LAST_ROUND_TOOLS = Object.freeze(['reply', 'stay_quiet', 'update_change']);
-const LAST_ROUND_NOTE = 'This is your last round. Answer now with what you have, or queue the change they asked for with update_change. You cannot read anything more.';
-const STAND_IN_NOTE = 'That reply is a stand-in, not an answer. Write the real answer to what they said now, or queue the change with update_change.';
-// #6270: words a model writes when it has nothing to say, and text with no
-// letters at all ("...", "???"). A short real answer ("No.", "Yes.") passes.
-const STAND_IN_WORDS = Object.freeze(['placeholder', 'todo', 'tbd', 'text', 'reply']);
+const LAST_ROUND_NOTE = lastRoundNote('queue the change they asked for with update_change');
+const STAND_IN_NOTE = standInNote('queue the change with update_change');
 // #6268: a person's coding agent posts for them through the connector
 // (`posted_via = 'agent'`). On these places it is heard as the person's own
 // message; on a channel it is not answered, as before.
@@ -2460,18 +2458,6 @@ function notDoneYet(text) {
   const rest = String(text).slice(m[0].length);
   if (!rest) return 'Got it.';
   return `Got it${/[.!]/.test(m[1]) ? '. ' : ', '}${rest}`;
-}
-
-/**
- * Pure: whether a reply is a stand-in rather than an answer (#6270): a dummy
- * word the model writes when it has nothing ("placeholder", "TODO", "[TBD]",
- * "text", "reply"), or text with no letter at all ("...", "???", ""). A short
- * real answer such as "No." or "Yes." is not one.
- */
-function isStandIn(text) {
-  const raw = String(text ?? '').trim();
-  if (!/\p{L}/u.test(raw)) return true;
-  return STAND_IN_WORDS.includes(raw.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''));
 }
 
 /**
