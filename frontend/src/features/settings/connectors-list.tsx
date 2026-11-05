@@ -1,11 +1,11 @@
 /**
- * `#connectors-list` — the connected chat clients, as the only React writer
- * below that host.
+ * A tool's status word and its connections, on its card in Settings > Connectors.
  *
- * The host is STATIC in the React tree (sections/connectors.tsx), so this is a
- * plain child component rather than a portal. settings.js keeps the fetch, the
- * DELETE, the status line and the three sibling blocks whose visibility
- * follows which client families are connected; this file keeps the markup.
+ * Two leaves, each the only writer below its host in sections/connectors.tsx
+ * (`[data-connector-status]` in the card's top row, `[data-connector-connections]`
+ * under it). The rest of the card is static markup settings.js writes into, so
+ * no state lives above these. settings.js keeps the fetch, the DELETE, the
+ * status line and the blocks whose visibility follows what is connected.
  *
  * `Settings._disconnectConnector` is called BY NAME on `window.Settings`, for
  * the reason ./grants-list.tsx gives — and it already owns its own
@@ -13,65 +13,94 @@
  * hands it the id and the button and forgets.
  */
 
-import { GroupedList, ListRow } from '@/components/ui/grouped-list';
+import { ListRow } from '@/components/ui/grouped-list';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { connectorsStore } from './connectors-store.js';
 
-type ConnectorView = { id: string; title: string; detail: string };
-
-type ConnectorsState = {
-  phase: 'idle' | 'loading' | 'ready';
-  connectors: ConnectorView[];
-};
+type ToolKey = 'claude' | 'chatgpt' | 'codex' | 'generic';
+type StatusKey = 'working' | 'unused' | 'attention' | 'none';
+type ConnectionView = { id: string; title: string; detail: string; capabilities: string | null };
+type ToolView = { key: ToolKey; status: StatusKey; connections: ConnectionView[] };
+type ConnectorsState = { phase: 'idle' | 'loading' | 'ready'; tools: ToolView[] };
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Settings : null) || null;
 }
 
-export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
+const STATUS_WORD: Record<StatusKey, string> = {
+  working: 'settings:connectors.tool.status.working',
+  unused: 'settings:connectors.tool.status.unused',
+  attention: 'settings:connectors.tool.status.attention',
+  none: 'settings:connectors.tool.status.none',
+};
+
+/**
+ * Plain grey words, not a pill: a settled state gets no fill. The amber dot is
+ * the one mark on the card, and only for the state that is asking for something.
+ */
+export function ToolStatusView({ status }: { status: StatusKey }) {
   const t = useMessages('settings');
-  if (phase === 'idle') return null;
-  // Bare text nodes, as the two `list.textContent = …` writes produced.
-  if (phase === 'loading') return <>{t('settings:connectors.list.loading')}</>;
-  if (!connectors.length) {
-    return (
-      <p className="px-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-400">
-        {t('settings:connectors.list.empty')}
-      </p>
-    );
-  }
-  // #2370: one grouped card, in the language the rest of the pane wears now
-  // — was a bordered 12px card per connection. Disconnect stays its OWN button
-  // and the row is not a control: a destructive action never gets a whole
-  // row's width, where a stray thumb finds it.
   return (
-    <GroupedList className="mx-0">
-      {connectors.map((connector) => (
+    <span className="flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
+      {status === 'attention' ? (
+        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+      ) : null}
+      {t(STATUS_WORD[status])}
+    </span>
+  );
+}
+
+/**
+ * Disconnect stays its OWN button and the row is not a control: a destructive
+ * action never gets a whole row's width, where a stray thumb finds it.
+ */
+export function ToolConnectionsView({ connections }: { connections: ConnectionView[] }) {
+  const t = useMessages('settings');
+  return (
+    <>
+      {connections.map((connection) => (
         <ListRow
-          key={connector.id}
+          key={connection.id}
           inset="text"
           chevron={false}
-          title={connector.title}
+          title={connection.title}
           titleClassName="font-medium"
-          subtitle={connector.detail}
+          subtitle={(
+            <>
+              <span className="block">{connection.detail}</span>
+              {connection.capabilities ? <span className="mt-0.5 block">{connection.capabilities}</span> : null}
+            </>
+          )}
           subtitleClassName="whitespace-normal"
           trailing={(
             <button
               type="button"
               className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
-              onClick={(e) => controller()?._disconnectConnector?.(connector.id, e.currentTarget)}
+              onClick={(e) => controller()?._disconnectConnector?.(connection.id, e.currentTarget)}
             >
               {t('settings:connectors.list.disconnect')}
             </button>
           )}
         />
       ))}
-    </GroupedList>
+    </>
   );
 }
 
-export function ConnectorsList() {
-  return <ConnectorsListView {...useStoreState<ConnectorsState>(connectorsStore)} />;
+function useTool(tool: ToolKey): ToolView | null {
+  const { phase, tools } = useStoreState<ConnectorsState>(connectorsStore);
+  if (phase !== 'ready') return null;
+  return tools.find((entry) => entry.key === tool) || null;
+}
+
+export function ToolStatus({ tool }: { tool: ToolKey }) {
+  const view = useTool(tool);
+  return view ? <ToolStatusView status={view.status} /> : null;
+}
+
+export function ToolConnections({ tool }: { tool: ToolKey }) {
+  const view = useTool(tool);
+  return view && view.connections.length ? <ToolConnectionsView connections={view.connections} /> : null;
 }

@@ -84,8 +84,8 @@ test('the shared module is the only place the two walkthroughs are written', () 
     // Nor wires the steps' own messages: those ids belong to the shared module.
     assert.doesNotMatch(src, /settings:connectors\.(claudeSteps|chatgptSteps)\./, `${name} renders the module, not its messages`);
   }
-  assert.match(SETTINGS_SECTION, /<ClaudeSetupSteps \/>/);
-  assert.match(SETTINGS_SECTION, /<ChatgptSetupSteps \/>/);
+  assert.match(SETTINGS_SECTION, /<ClaudeSetupSteps track="claude" \/>/);
+  assert.match(SETTINGS_SECTION, /<ChatgptSetupSteps track="chatgpt" \/>/);
   assert.match(INLINE, /from '\.\.\/settings\/connector-setup-steps'/);
 });
 
@@ -346,4 +346,49 @@ test('the card states the fact that sends people back thinking it failed', () =>
 test('the lead tells the two cases apart, because the count spans every account', () => {
   assert.match(cardHtml({ connected: false }), /once per account/);
   assert.match(cardHtml({ connected: true }), /connector on another account/);
+});
+
+// ── #6136: the ticks and the step's Copy are Settings' alone ───────────
+
+test('the launchpad card and the hand-off render no ticks and no new Copy', () => {
+  const html = cardHtml({ product: 'ChatGPT' }) + cardHtml({ product: 'Claude' });
+  assert.doesNotMatch(html, /data-connector-step-tick/);
+  assert.doesNotMatch(html, /data-connector-progress/);
+  assert.doesNotMatch(html, /connector-chatgpt-url-copy/);
+  for (const [name, source] of [['the inline card', INLINE], ['the hand-off', HANDOFF]]) {
+    assert.doesNotMatch(source, /\btrack\b/, `${name} does not ask for ticks`);
+  }
+});
+
+test('Settings renders a tick per step and an empty, hidden progress line per guide', () => {
+  const { ConnectorsSection } = loadTsx('frontend/src/features/settings/sections/connectors.tsx');
+  const html = renderToHtml(createElement(ConnectorsSection));
+  const ticks = (guide) => (html.match(new RegExp(`data-connector-step-tick="${guide}:\\d"`, 'g')) || []).length;
+  assert.deepEqual(
+    ['claude', 'chatgpt', 'codex', 'generic'].map(ticks),
+    [6, 4, 3, 4],
+    'the counts the summaries advertise',
+  );
+  assert.equal((html.match(/aria-pressed="false"/g) || []).length, 17, 'every tick ships not done');
+  assert.doesNotMatch(html, /aria-pressed="true"/);
+  for (const [guide, total] of [['claude', 6], ['chatgpt', 4], ['codex', 3], ['generic', 4]]) {
+    assert.match(
+      html,
+      new RegExp(`<p data-connector-progress="${guide}" data-total="${total}" hidden=""[^>]*></p>`),
+      `${guide}'s line is empty and hidden until settings.js writes it`,
+    );
+  }
+  assert.equal((html.match(/id="connector-chatgpt-url-copy"/g) || []).length, 1, 'one Copy, in ChatGPT');
+});
+
+test('the steps module stays stateless: the ticks are settings.js\'s DOM state', () => {
+  assert.doesNotMatch(stripComments(STEPS), /useState|useEffect|useReducer|useRef/);
+  // The done look is read off aria-pressed, so nothing writes a class at runtime.
+  assert.match(STEPS, /group-aria-pressed:bg-violet-600/);
+  const ticks = SETTINGS_JS.slice(
+    SETTINGS_JS.indexOf('    _wireConnectorStepTicks() {'),
+    SETTINGS_JS.indexOf('    async _disconnectConnector(id, button) {'),
+  );
+  assert.ok(ticks.length > 200, 'located the tick code');
+  assert.doesNotMatch(ticks, /classList|className|innerHTML/);
 });

@@ -210,6 +210,7 @@
     _localAgents: [],
     _connectors: [],
     _connectorLoadId: 0,
+    _connectorSteps: null,
     _githubLink: null,
     _openRouterModels: [],
     _openRouterSelectedModelId: '',
@@ -489,14 +490,18 @@
     // id's last segment). Per device, like Messages' folded sections
     // (usernode:messages-folded): a convenience, not an account setting.
     PINNED_KEY: 'usernode:settings-pinned',
+    // #6136: the setup steps a person has ticked, on this device, by account:
+    // { "<user id>": { "chatgpt": [1, 2] } }. A convenience, like the two keys
+    // here: Homeroom cannot see what happens inside another product.
+    CONNECTOR_STEPS_KEY: 'usernode:connector-steps',
     FOLDED_KEY: 'usernode:settings-folded',
 
     // #5995: how much is set up behind a row, said in words at its trailing
     // edge ("2 linked"), keyed by page: [message, the counts summed]. The
     // counts come from the lists the pages already load when Settings opens
     // (_setNavStatus); a count never reported, or a zero, shows nothing.
-    // Connectors & CLI counts the connected chat apps alone: that list is
-    // active grants only, while the CLI list is paged credential history
+    // Connectors & CLI counts the connected chat apps alone: that list's live
+    // rows are active grants, while the CLI list is paged credential history
     // (revoked and expired rows included), so it cannot give a whole count.
     STATUS: {
       'linked-accounts': ['settings:nav.status.linked', ['socialIdentities']],
@@ -619,6 +624,8 @@
         },
       });
 
+      this._wireConnectorStepCopy();
+
       // Test the connector: this site's MCP server and this account's own
       // connection. Read-only, and beside Copy rather than replacing it —
       // Copy is the thing the user came here to do.
@@ -700,6 +707,7 @@
       }
 
       this._wireConnectorNameSpelling();
+      this._wireConnectorStepTicks();
 
       // #5281: the Account page's sign-in rows. Each row's Change opens its
       // own form under it and Cancel closes it; one is open at a time.
@@ -2411,8 +2419,13 @@
       // the field shows, filled here the way the Codex blocks below are:
       // the prerendered interior ships a fill-in placeholder, and a fork or
       // a config change cannot leave a stale host behind.
-      const stepUrl = document.querySelector('[data-connector-step-url]');
+      const stepUrl = document.querySelector('#connectors-section [data-connector-step-url]');
       if (stepUrl) stepUrl.textContent = connectorUrl;
+
+      // The ticks answer from this device alone, so they do not wait on the
+      // fetch, and a failed one cannot leave another account's ticks showing.
+      this._connectorSteps = this._connectorStepsRead() || this._connectorSteps;
+      this._renderConnectorProgress();
 
       // #1607: the "set it up in <product>" links open a new chat pre-loaded
       // with the job. Built HERE, from the same derived origin the field
@@ -2455,7 +2468,7 @@
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
-      this._publishConnectors({ phase: 'loading', connectors: [] });
+      this._publishConnectors({ phase: 'loading', tools: [] });
       status.classList.add('hidden');
 
       try {
@@ -2480,18 +2493,94 @@
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
-        this._setNavStatus('connectors', data.connectors.length);
+        // Live connections only: an expired row is news on its card, not
+        // something this account has connected.
+        this._setNavStatus('connectors', data.connectors.filter((c) => this._connectorIsLive(c)).length);
         this._connectorHint = data.hint || null;
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
         // A failed reload says nothing rather than an old count.
         this._setNavStatus('connectors', null);
-        this._publishConnectors({ phase: 'idle', connectors: [] });
+        this._publishConnectors({ phase: 'idle', tools: [] });
         status.textContent = err.message || tr('settings:connectors.load.failed');
         status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
         status.classList.add('text-red-700', 'dark:text-red-400');
       }
+    },
+
+    // A connection still working, as opposed to one whose sign-in ran out and
+    // that the server lists so its tool's card can say so (#6134).
+    _connectorIsLive(connector) {
+      return connector.status !== 'expired';
+    },
+
+    // Which card a connection sits on (#6134). Like _connectorFamilies below,
+    // this reads a name the client chose, so it only decides where to DRAW a
+    // row. Codex has its own card here and stays in the ChatGPT family there:
+    // the family decides advice about permission prompts, which Codex shares.
+    _connectorTool(name) {
+      const lower = String(name || '').toLowerCase();
+      if (/claude|anthropic/.test(lower)) return 'claude';
+      if (/codex/.test(lower)) return 'codex';
+      if (/chatgpt|openai/.test(lower)) return 'chatgpt';
+      return 'generic';
+    },
+
+    // What a connection was approved for, from the two scopes consent offers
+    // (services/mcp-connect-constants.js). An expired one says what it COULD do.
+    _connectorCapabilities(connector, expired) {
+      const scopes = Array.isArray(connector.scopes) ? connector.scopes : [];
+      const read = scopes.includes('usernode:apps:read');
+      const write = scopes.includes('usernode:proposals:write');
+      if (expired) {
+        if (read && write) return tr('settings:connectors.capabilities.expiredReadWrite');
+        if (read) return tr('settings:connectors.capabilities.expiredRead');
+        return write ? tr('settings:connectors.capabilities.expiredWrite') : null;
+      }
+      if (read && write) return tr('settings:connectors.capabilities.readWrite');
+      if (read) return tr('settings:connectors.capabilities.read');
+      return write ? tr('settings:connectors.capabilities.write') : null;
+    },
+
+    // One connection's row on its card: one whole line per case of what is
+    // known, in the date format this page uses everywhere.
+    _connectorRowView(connector) {
+      const stamp = (value) => (value && Number.isFinite(Date.parse(value))
+        ? new Date(value).toLocaleString() : null);
+      const expired = !this._connectorIsLive(connector);
+      const connected = stamp(connector.connected_at);
+      const lastUsed = stamp(connector.last_used_at);
+      const ranOut = stamp(connector.expired_at);
+      let detail;
+      if (expired) {
+        detail = ranOut
+          ? tr('settings:connectors.row.expired', { when: ranOut })
+          : tr('settings:connectors.row.expiredUnknownDate');
+      } else if (lastUsed) detail = tr('settings:connectors.row.lastActive', { lastUsed });
+      else if (connected) detail = tr('settings:connectors.row.notUsedYet', { connected });
+      else detail = tr('settings:connectors.row.unknownDate');
+      return {
+        id: String(connector.id),
+        title: connector.client_name || tr('settings:connectors.row.unnamedClient'),
+        detail,
+        capabilities: this._connectorCapabilities(connector, expired),
+      };
+    },
+
+    // The four cards, in the page's order. A card says its best state: one
+    // working connection beside an expired one still reads Working, and the
+    // expired row carries its own line.
+    _connectorToolViews(connectors) {
+      return ['claude', 'chatgpt', 'codex', 'generic'].map((key) => {
+        const held = connectors.filter((c) => this._connectorTool(c.client_name) === key);
+        const live = held.filter((c) => this._connectorIsLive(c));
+        let status = 'none';
+        if (live.some((c) => c.last_used_at)) status = 'working';
+        else if (live.length) status = 'unused';
+        else if (held.length) status = 'attention';
+        return { key, status, connections: held.map((c) => this._connectorRowView(c)) };
+      });
     },
 
     // Which of the three "stop the prompts" cases apply to what is actually
@@ -2592,10 +2681,9 @@
       line.classList.remove('hidden');
     },
 
-    // Publish the connector cards. Was a `document.createElement` tree per
-    // connection — card, top row, title, metadata, Disconnect and its listener
-    // — and is ./connectors-list.tsx's markup now. The two date formats and
-    // the "never used" fallback are resolved here, where the payload is.
+    // Publish the connector cards. The markup is ./connectors-list.tsx's; the
+    // date formats and the sorting onto cards are resolved here, where the
+    // payload is.
     _publishConnectors(next) {
       const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
         ? window.UsernodeReact.settingsConnectors : null;
@@ -2603,35 +2691,126 @@
     },
 
     _renderConnectors() {
-      const connectors = this._connectors || [];
-      // Two SIBLINGS of the list host, both still this module's: the static
-      // "stop the prompts" prose blocks, whose visibility follows which client
-      // families are connected, and the read-only tip status.
+      const all = this._connectors || [];
+      const connectors = all.filter((c) => this._connectorIsLive(c));
+      // Two SIBLINGS of the cards, both still this module's: the static "stop
+      // the prompts" prose blocks, whose visibility follows which client
+      // families are connected, and the read-only tip status. Both are about
+      // what is connected now, so an expired row counts for neither.
       this._renderConnectorCases(connectors);
       this._renderConnectorHint(connectors);
-      this._publishConnectors({
-        phase: 'ready',
-        connectors: connectors.map((connector) => {
-          // One whole line per combination of what is known: when it was
-          // connected, and whether it was ever used.
-          const connected = Number.isFinite(Date.parse(connector.connected_at))
-            ? new Date(connector.connected_at).toLocaleString() : null;
-          const lastUsed = connector.last_used_at
-            && Number.isFinite(Date.parse(connector.last_used_at))
-            ? new Date(connector.last_used_at).toLocaleString()
-            : null;
-          let detail;
-          if (connected && lastUsed) detail = tr('settings:connectors.row.connectedUsed', { connected, lastUsed });
-          else if (connected) detail = tr('settings:connectors.row.connectedNeverUsed', { connected });
-          else if (lastUsed) detail = tr('settings:connectors.row.unknownDateUsed', { lastUsed });
-          else detail = tr('settings:connectors.row.unknownDateNeverUsed');
-          return {
-            id: String(connector.id),
-            title: connector.client_name || tr('settings:connectors.row.unnamedClient'),
-            detail,
-          };
-        }),
+      this._publishConnectors({ phase: 'ready', tools: this._connectorToolViews(all) });
+    },
+
+    // ── Ticking off the setup steps (#6136) ──────────────────────────────
+    //
+    // The tick buttons and progress lines are static markup React rendered once
+    // (connector-setup-steps.tsx, sections/connectors.tsx), and this module owns
+    // their `aria-pressed`, `hidden` and text. Nothing here writes a class: the
+    // done look is `group-aria-pressed:` on a constant class string.
+    //
+    // this._connectorSteps is what the buttons show. Storage only follows it, so
+    // ticks still work for the visit where storage throws or nobody is signed in.
+
+    // The stored map, cleaned: positive whole step numbers under the four
+    // guides. Unparseable JSON is empty; null means storage itself refused.
+    _connectorStepsRead() {
+      let raw;
+      try { raw = localStorage.getItem(Settings.CONNECTOR_STEPS_KEY); } catch { return null; }
+      const clean = Object.create(null);
+      let parsed = null;
+      try { parsed = JSON.parse(raw); } catch { /* treated as empty */ }
+      if (!parsed || typeof parsed !== 'object') return clean;
+      for (const account of Object.keys(parsed)) {
+        const guides = parsed[account];
+        if (!guides || typeof guides !== 'object') continue;
+        const kept = Object.create(null);
+        for (const guide of ['claude', 'chatgpt', 'codex', 'generic']) {
+          if (!Array.isArray(guides[guide])) continue;
+          const steps = [...new Set(guides[guide])].filter((n) => Number.isInteger(n) && n > 0);
+          if (steps.length) kept[guide] = steps;
+        }
+        if (Object.keys(kept).length) clean[account] = kept;
+      }
+      return clean;
+    },
+
+    _connectorStepsWrite(map) {
+      try {
+        if (Object.keys(map).length) localStorage.setItem(Settings.CONNECTOR_STEPS_KEY, JSON.stringify(map));
+        else localStorage.removeItem(Settings.CONNECTOR_STEPS_KEY);
+      } catch { /* storage unavailable: the ticks last this visit */ }
+    },
+
+    // Whose ticks these are. With nobody signed in they live under '' for the
+    // visit and are never saved.
+    _connectorStepsAccount() {
+      const id = typeof App !== 'undefined' && App.user ? App.user.id : null;
+      return id == null ? '' : String(id);
+    },
+
+    // #6136: the MCP server URL again, from the ChatGPT step that asks for it.
+    // Read at click time because _loadConnectors fills the step after this runs.
+    _wireConnectorStepCopy() {
+      const stepUrl = () => document.querySelector('#connectors-section [data-connector-step-url]');
+      this._wireCopyControl('connector-chatgpt-url-copy', {
+        read: () => {
+          const code = stepUrl();
+          return code ? code.textContent : null;
+        },
+        successMessage: 'settings:connectors.copy.urlCopied',
+        failureMessage: 'settings:connectors.copy.urlFailed',
+        selectOnFail: () => {
+          const code = stepUrl();
+          const selection = window.getSelection && window.getSelection();
+          if (!code || !selection) return;
+          const range = document.createRange();
+          range.selectNodeContents(code);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        },
       });
+    },
+
+    _wireConnectorStepTicks() {
+      const section = document.getElementById('connectors-section');
+      if (!section) return;
+      section.addEventListener('click', (event) => {
+        const tick = event.target && event.target.closest
+          ? event.target.closest('[data-connector-step-tick]') : null;
+        if (!tick) return;
+        const [guide, number] = tick.getAttribute('data-connector-step-tick').split(':');
+        const step = Number(number);
+        const account = this._connectorStepsAccount();
+        const map = this._connectorSteps || (this._connectorSteps = Object.create(null));
+        const guides = map[account] || (map[account] = Object.create(null));
+        const steps = guides[guide] || [];
+        const next = steps.includes(step) ? steps.filter((n) => n !== step) : [...steps, step];
+        if (next.length) guides[guide] = next;
+        else delete guides[guide];
+        if (!Object.keys(guides).length) delete map[account];
+        if (account) this._connectorStepsWrite(map);
+        this._renderConnectorProgress();
+      });
+    },
+
+    // Paint every tick and progress line for the account on this device. A
+    // stored step above a guide's current total counts for nothing, so a guide
+    // that loses a step cannot read "7 of 6".
+    _renderConnectorProgress() {
+      const guides = (this._connectorSteps || {})[this._connectorStepsAccount()] || {};
+      for (const tick of document.querySelectorAll('[data-connector-step-tick]')) {
+        const [guide, number] = tick.getAttribute('data-connector-step-tick').split(':');
+        const done = (guides[guide] || []).includes(Number(number));
+        tick.setAttribute('aria-pressed', done ? 'true' : 'false');
+      }
+      for (const line of document.querySelectorAll('[data-connector-progress]')) {
+        const total = Number(line.getAttribute('data-total')) || 0;
+        const done = (guides[line.getAttribute('data-connector-progress')] || [])
+          .filter((n) => n <= total).length;
+        line.hidden = done === 0;
+        line.textContent = done ? tr('settings:connectors.progress.done', { done, total }) : '';
+      }
     },
 
     async _disconnectConnector(id, button) {
@@ -7190,6 +7369,7 @@
       repaint(() => Settings._normalizeOpenRouterCopy());
       repaint(() => Settings._renderBody());
       repaint(() => { if (Settings._connectors.length) Settings._renderConnectors(); });
+      repaint(() => Settings._renderConnectorProgress());
       repaint(() => { if (Settings._githubLink) Settings._renderGithubLink(); });
       repaint(() => { if (Settings._cliTokens.length) Settings._renderCliTokens(); });
       repaint(() => {

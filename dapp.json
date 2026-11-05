@@ -4228,8 +4228,14 @@
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
       "path": "/?demo=1#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden):has(#connector-url) #connector-tool-claude",
       "expectText": "Claude (claude.ai)"
+    },
+    {
+      "name": "A tool whose sign-in ran out says Needs attention on its card (#6134)",
+      "path": "/?demo=connectors-attention#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-tool-chatgpt summary [data-connector-status=\"chatgpt\"]:not(:empty)",
+      "expectText": "Needs attention"
     },
     {
       "name": "Connector setup offers Claude web and ChatGPT web as named routes with their step counts (#1289, #2370)",
