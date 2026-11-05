@@ -4732,7 +4732,7 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   // goes to the turn below, whose draw_screen hands the design bot version 1.
   const design = await (deps.designThreads || require('./design-threads')).threadOf(pool, { userId: user.id, conversationId, message });
   if (design) {
-    return (deps.designBot || require('./design-bot')).answer(pool, config, { bot, user, settings, conversationId, message, design, deps });
+    return require('./thread-bot').answer(pool, config, { kind: 'design', bot, user, settings, conversationId, message, design, deps });
   }
   const thread = await threadRequest(pool, { userId: user.id, conversationId, message });
   if (thread && !quoted) {
@@ -4787,7 +4787,11 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
     if (revised) return revised;
   }
   if (settings.dmChat !== false) {
-    return mayor.runDmTurn(pool, config, { bot, user, settings, conversationId, message, deps: turnDeps });
+    // Its kind's profile, run by the one entry (thread-bot.js, step 5).
+    return require('./thread-bot').answer(pool, config, {
+      kind: require('./bot-profiles').kindInChat(turnDeps), bot, user, settings, conversationId, message,
+      deps: { ...turnDeps, mayor },
+    });
   }
   // A quote of anything but a question is not an answer to some other open
   // question (MIRRORED_KINDS): without the model, it gets the help text.

@@ -25,6 +25,8 @@
 // #6260), and still cannot file or post anything from here. What becomes
 // public is always the person's own tap.
 
+// Its limits are a design thread's (bot-profiles.js, step 5).
+const { DESIGN_LIMITS } = require('./bot-profiles');
 const botTools = require('./bot-tools');
 const log = require('./logger');
 const turnEngine = require('./homeroom-bot-turn-engine');
@@ -35,29 +37,29 @@ const { STEPS: TRACK_STEPS, NOT_STARTED: TRACK_NOT_STARTED, standingOf } = requi
 // person is asked to capture a smaller part of the screen.
 const MAX_DESIGN_CHARS = 120_000;
 // The thread's newest messages it reads.
-const MAX_HISTORY = 16;
+const MAX_HISTORY = DESIGN_LIMITS.history;
 // 1 Nov 2026: 4 → 6, room to read the code, draw, and grow what it drew.
 // #6142: 12 for a first drawing; #6144: 12 for every design turn, since
 // "build a dedicated home screen" is an edit only in name. A small edit still
 // ends in two or three rounds: the limit only matters while it keeps reading.
-const MAX_ROUNDS = 12;
+const MAX_ROUNDS = DESIGN_LIMITS.rounds;
 // #6142: a first drawing (handed a screen, or a thread with no version yet)
 // with nothing drawn by round 8 draws in it (write_screen), leaving 9 to 11
 // for edit_design and 12 to reply.
-const DRAW_BY_ROUND = 8;
+const DRAW_BY_ROUND = DESIGN_LIMITS.drawByRound;
 // #6144: the rounds it may read the project's code in (list_source,
 // read_source); from the next one on it is offered ACT_TOOLS alone.
-const READ_UNTIL = 7;
+const READ_UNTIL = DESIGN_LIMITS.readUntilRound;
 // The app's entry page, up front in a first drawing's prompt: its <body>,
 // scripts left out, at most this long (a read_source answer's size).
 const ENTRY_BODY_CHARS = 12_000;
-const MAX_EDITS = 16;
+const MAX_EDITS = DESIGN_LIMITS.editsPerCall;
 const MAX_FIND_CHARS = 4000;
 const MAX_REPLACE_CHARS = 40_000;
 // An edit's pairs and its words fit in this: room for a reasoning model's
 // thinking and the edit after it (the transport's own ceiling).
-const DESIGN_OUTPUT_TOKENS = 4096;
-const MAX_REPLY_CHARS = 1500;
+const DESIGN_OUTPUT_TOKENS = DESIGN_LIMITS.outputTokens;
+const MAX_REPLY_CHARS = DESIGN_LIMITS.replyChars;
 const MAX_SCREEN_TITLE = 120;
 
 // The project's stylesheets a drawn screen is given (sheetsFor): the native

@@ -82,6 +82,8 @@
 // every "my proposals" list leaves them out. What this needs is the bot's
 // own ledger, scoped to one person, which is a handful of queries here.
 
+// Its limits are its thread kind's (bot-profiles.js, step 5).
+const { CHAT_LIMITS } = require('./bot-profiles');
 const botTools = require('./bot-tools');
 const log = require('./logger');
 const crypto = require('node:crypto');
@@ -93,19 +95,19 @@ const turnEngine = require('./homeroom-bot-turn-engine');
 const { GITHUB_ISSUE_BODY_MAX } = require('./issue-body-limit');
 const { labelledAsPullRequest } = require('./request-mentions');
 
-const MAX_HISTORY = 24;
+const MAX_HISTORY = CHAT_LIMITS.history;
 // Homeroom bot parity, P1 (room to answer): a conversation with the bot gets
 // the room a coding agent's chat has, on the same cheap model. Sixteen
 // rounds of lookups (the transport's limit on messages is kept by compacting
 // the turn's oldest lookups, compactRounds), and room for a long, structured
 // answer when they ask for one. It was 6 rounds and 900 tokens.
-const MAX_ROUNDS = 16;
+const MAX_ROUNDS = CHAT_LIMITS.rounds;
 // #6346: a chat turn spent all its rounds reading project code and answered
 // with a stand-in word. It reads at most this many source files a turn; after
 // that a read is refused and it answers from what it found. The last round is
 // told so, offers only the tools that end a turn, and a stand-in answer is
 // refused once before the fallback line speaks (the voice's own guards).
-const MAX_SOURCE_READS_PER_TURN = 8;
+const MAX_SOURCE_READS_PER_TURN = CHAT_LIMITS.readsPerTurn;
 const SOURCE_READ_TOOLS = Object.freeze(['list_source', 'read_source']);
 // What the last round offers: a tool that ends the turn, never a lookup. An
 // offer alone is the turn's answer, as it is today.
@@ -113,11 +115,11 @@ const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen' || 
 const CHAT_LAST_ROUND_NOTE = lastRoundNote('offer the draft they asked for');
 const CHAT_STAND_IN_NOTE = standInNote('offer the draft they asked for');
 const CHAT_READING_DONE = readingDoneNote('offer the draft they asked for');
-const MAX_OUTPUT_TOKENS = 4000;
+const MAX_OUTPUT_TOKENS = CHAT_LIMITS.outputTokens;
 // A round cut off at its output limit is asked again with this much room: a
 // reasoning model spends its thinking from the same allowance, and a long
 // answer about their work is where it ran out.
-const RETRY_OUTPUT_TOKENS = 8000;
+const RETRY_OUTPUT_TOKENS = CHAT_LIMITS.retryOutputTokens;
 // #3733: a failed model request is asked again on a fresh route (a new
 // provider session), up to MAX_ATTEMPTS times in all, while the turn is
 // RETRY_WITHIN_MS young (retryPlan). These are the failures of a provider
@@ -134,7 +136,7 @@ const RETRY_WITHIN_MS = 240_000;
 // #3772: one model request's clock. The transport's default 25 seconds timed
 // a whole reasoning answer out on 2 October. P1: a long answer of 4000
 // tokens, streamed or not, takes this long at worst.
-const REQUEST_TIMEOUT_MS = 90_000;
+const REQUEST_TIMEOUT_MS = CHAT_LIMITS.requestTimeoutMs;
 // The longest a provider's Retry-After is waited for within a turn.
 const MAX_RETRY_AFTER_WAIT_MS = 20_000;
 // #3772: a turn no model request could answer is asked again on its own,
@@ -169,10 +171,10 @@ const MAX_FAILURES_RECORDED = 20;
 const PROGRESS_QUESTION = /\b(how far|progress|status|how('s| is| are) (it|things|that|my \w+) going|how long|(done|ready|finished|built|live) yet|eta|what are you (doing|working on|up to)|where are (you|we|things)|any (news|updates?)|still (working|building|setting))\b/i;
 // Generous: a back-and-forth about a plan runs to dozens of messages, and
 // running out of building time never stops the chat (answer).
-const MAX_TURNS_PER_HOUR = 120;
+const MAX_TURNS_PER_HOUR = CHAT_LIMITS.turnsPerHour;
 // #3772: the share of a weekly allowance left under which it is worth saying.
 const ALLOWANCE_LOW_SHARE = 0.2;
-const MAX_CARDS = 3;
+const MAX_CARDS = CHAT_LIMITS.cards;
 // The follow-ups a reply offers to tap, and the longest one: a button's
 // label (the client keeps 60 characters of one).
 const MAX_SUGGESTIONS = 3;
@@ -207,7 +209,7 @@ const PLATFORM_GRANT_SECONDS = 300;
 // 5 Nov 2026 (docs/plans/bot-one-model.md, decision 2): up to three offers
 // under one reply (bot-cards.js MAX_PER_REPLY). The first rides on the reply
 // itself; the others are said as cards of their own right after it.
-const MAX_OFFERS = require('./bot-cards').MAX_PER_REPLY;
+const MAX_OFFERS = CHAT_LIMITS.offers;
 const OFFERS_FULL = `You already put ${MAX_OFFERS} things under this reply for them to decide, the most one reply holds.`;
 /** Whether this turn may put one more offer under its reply. */
 function offerRoom(ctx) {

@@ -54,6 +54,9 @@
 // the fixed notes it had. Never a reason anything else fails: every entry
 // point is best-effort and never throws.
 
+const profiles = require('./bot-profiles');
+// Its limits are its thread kinds' (bot-profiles.js, step 5).
+const { THREAD_LIMITS } = profiles;
 const botTools = require('./bot-tools');
 const log = require('./logger');
 const repoRef = require('./repo-ref');
@@ -73,15 +76,15 @@ const MAX_LINE_CHARS = 700;
 // read whole, up to this: the most a chat message can hold.
 const MAX_WHOLE_CHARS = 8000;
 // A message older than this before its turn is not answered by it.
-const ANSWER_WINDOW_MINUTES = 60;
+const ANSWER_WINDOW_MINUTES = THREAD_LIMITS.answerWindowMinutes;
 // The next message after the bot's own in a reply thread, this soon after
 // it, is to the bot.
-const CONTINUE_MINUTES = 30;
-const MAX_ROUNDS = 8;
+const CONTINUE_MINUTES = THREAD_LIMITS.continueMinutes;
+const MAX_ROUNDS = THREAD_LIMITS.rounds;
 // #6270: a turn that spent every round reading the code answered with a
 // stand-in word. It may look things up this many times, and its last round is
 // told so and can only answer or queue the change.
-const MAX_READS_PER_TURN = 4;
+const MAX_READS_PER_TURN = THREAD_LIMITS.readsPerTurn;
 const READ_TOOLS = Object.freeze([
   'list_source', 'read_source', 'request_detail', 'read_message', 'get_change', 'get_discussion', 'list_requests',
 ]);
@@ -108,11 +111,11 @@ const CONNECTOR_REASONS = Object.freeze(['connector', 'connector_loop', 'connect
 const CONNECTOR_NOTE = 'Homeroom bot doesn\'t answer this message; @ it in your own words to ask it.';
 // Homeroom bot parity (P1): the voice keeps the chat's old room per request (homeroom-bot-mayor.js
 // raised its own for private conversations), so a public reply stays short and quick.
-const VOICE_OUTPUT_TOKENS = 900;
-const VOICE_REQUEST_TIMEOUT_MS = 45_000;
-const MAX_REPLY_CHARS = 2000;
+const VOICE_OUTPUT_TOKENS = THREAD_LIMITS.outputTokens;
+const VOICE_REQUEST_TIMEOUT_MS = THREAD_LIMITS.requestTimeoutMs;
+const MAX_REPLY_CHARS = THREAD_LIMITS.replyChars;
 // A place that keeps the bot busy is a place something is wrong with.
-const MAX_TURNS_PER_PLACE_HOUR = 30;
+const MAX_TURNS_PER_PLACE_HOUR = THREAD_LIMITS.turnsPerHour;
 const MAX_FACTS_CHARS = 6000;
 // A change asked for and not yet made is tried this many times.
 const MAX_ASK_TRIES = 2;
@@ -464,80 +467,102 @@ async function changeRow(pool, sessionId) {
   return rows[0] || null;
 }
 
-/**
- * Whether the person who wrote `row` in `place` wrote to the bot: the
- * place's rule, as the header says. Resolves { speak, why }. `ctx` carries
- * what the caller has read already ({ bot, settings, speaker }).
- */
-async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }) {
-  const no = (why) => ({ speak: false, why });
-  if (!app || !place || !row || !bot) return no('unknown');
-  if (!voiceOn(settings, place)) return no('switched_off');
-  if ((settings.pausedApps || []).includes(app.slug)) return no('paused');
-  if (!speaker || speaker.isSynthetic || Number(speaker.id) === Number(bot.id)) return no('not_a_person');
-  if (row.msg_type !== 'message' || row.deleted_at) return no('not_a_message');
+// When the bot speaks on a project's thread (5 Nov 2026,
+// docs/plans/bot-one-model.md, step 5): each kind's rules, in its profile's
+// order (bot-profiles.js speaks), run here one by one. A rule decides ({
+// speak, why }) or passes (null); the first to decide does. The common
+// checks come first; who the message was to (`addressed`: a mention, a
+// reply to the bot's message, or one that followed its post) is read once
+// they pass, before the place's own rules. Nothing decided: not addressed.
+const no = (why) => ({ speak: false, why });
+const yes = (why) => ({ speak: true, why });
+const SPEAK_RULES = Object.freeze({
+  switched_on: (s) => (voiceOn(s.settings, s.place) ? null : no('switched_off')),
+  not_paused: (s) => ((s.settings.pausedApps || []).includes(s.app.slug) ? no('paused') : null),
+  a_person: (s) => (!s.speaker || s.speaker.isSynthetic || Number(s.speaker.id) === Number(s.bot.id) ? no('not_a_person') : null),
+  a_plain_message: (s) => (s.row.msg_type !== 'message' || s.row.deleted_at ? no('not_a_message') : null),
   // #6268: a person's agent posting for them is heard as the person is on a
   // request, a change and a reply thread; a channel keeps today's rule. The
   // loop guard decides before the place's own rules get to speak.
-  if (row.posted_via === 'agent' && !CONNECTOR_PLACES.includes(place.type)) return no('connector');
-  if (isRelay(row.content)) return no('relayed');
-  if (!dmModule(deps).hasBot(settings, speaker)) return no('not_let_in');
-  if (row.posted_via === 'agent') {
-    const looped = await connectorGuard(pool, {
-      appId: app.id, place, botId: bot.id, quote: row.metadata?.quote, beforeId: row.id, at: row.created_at,
+  connector_place: (s) => (s.row.posted_via === 'agent' && !CONNECTOR_PLACES.includes(s.place.type) ? no('connector') : null),
+  not_relayed: (s) => (isRelay(s.row.content) ? no('relayed') : null),
+  has_the_bot: (s) => (dmModule(s.deps).hasBot(s.settings, s.speaker) ? null : no('not_let_in')),
+  connector_loop: async (s) => {
+    if (s.row.posted_via !== 'agent') return null;
+    const looped = await connectorGuard(s.pool, {
+      appId: s.app.id, place: s.place, botId: s.bot.id, quote: s.row.metadata?.quote, beforeId: s.row.id, at: s.row.created_at,
     });
-    if (looped) return no(looped);
-  }
-  const mentioned = mentionsBot(row.content);
-  const replied = mentioned ? false : await quotesBot(pool, row, bot.id);
-  let addressed = mentioned ? 'mentioned' : replied ? 'replied' : null;
-  if (place.type === 'session' || place.type === 'issue') {
-    // Words a DM, a chat or a No vote passed on as a change to make are the
-    // follow-up's, which answers them when it has made it.
-    if (await queuedAsAsk(pool, row.id)) return no('queued_as_ask');
-  }
-  if (place.type === 'session') {
-    const change = await changeRow(pool, place.ref);
-    const own = change && Number(change.user_id) === Number(bot.id) && !change.is_headless
-      && change.status === 'promoted';
-    if (own) return { speak: true, why: addressed || 'own_change' };
-    return addressed ? { speak: true, why: addressed } : no('not_addressed');
-  }
-  if (place.type === 'issue') {
-    // A request whose change the bot built is up for a vote: what people say
-    // there is about that change, as on the change itself.
-    const open = await liveModule(deps).openBotProposal(pool, bot.id, app.id, place.ref).catch(() => null);
-    if (open?.status === 'promoted') return { speak: true, why: addressed || 'own_change' };
-    // #6311: the requester or a project admin writing straight after one of
-    // the bot's posts is answering it, with no @ and no Reply needed.
-    if (!addressed
-      && await followsBotPost(pool, { app, place, row, bot })
-      && await require('./homeroom-bot-move').asksForRequest(pool, { app, issueNumber: place.ref, user: speaker })) {
-      addressed = 'followed';
+    return looped ? no(looped) : null;
+  },
+  // Words a DM, a chat or a No vote passed on as a change to make are the
+  // follow-up's, which answers them when it has made it.
+  not_queued_as_ask: async (s) => ((await queuedAsAsk(s.pool, s.row.id)) ? no('queued_as_ask') : null),
+  // The bot's own change, up for a vote: what anybody says there is to it.
+  own_change: async (s) => {
+    const change = await changeRow(s.pool, s.place.ref);
+    const own = change && Number(change.user_id) === Number(s.bot.id) && !change.is_headless && change.status === 'promoted';
+    return own ? yes(s.addressed || 'own_change') : null;
+  },
+  // A request whose change the bot built is up for a vote: what people say
+  // there is about that change, as on the change itself.
+  own_change_up: async (s) => {
+    const open = await liveModule(s.deps).openBotProposal(s.pool, s.bot.id, s.app.id, s.place.ref).catch(() => null);
+    return open?.status === 'promoted' ? yes(s.addressed || 'own_change') : null;
+  },
+  // #6311: the requester or a project admin writing straight after one of
+  // the bot's posts is answering it, with no @ and no Reply needed.
+  followed_a_post: async (s) => {
+    if (!s.addressed
+      && await followsBotPost(s.pool, { app: s.app, place: s.place, row: s.row, bot: s.bot })
+      && await require('./homeroom-bot-move').asksForRequest(s.pool, { app: s.app, issueNumber: s.place.ref, user: s.speaker })) {
+      s.addressed = 'followed';
     }
-    if (!addressed) return no('not_addressed');
-    // Before that, the request is its build's to read: a message after the
-    // question the bot asked there is the answer, and the build reads it and
-    // says what it makes of it (homeroom-bot-addressed.js).
-    if (await answersQuestion(pool, { app, issueNumber: place.ref, bot, row })) return no('answers_question');
-    return { speak: true, why: addressed };
-  }
-  if (place.type === 'message') {
-    if (addressed) return { speak: true, why: addressed };
-    // The next message after the bot's own reply in a reply thread is to it.
-    const { rows } = await pool.query(
+    return null;
+  },
+  addressed_or_stop: (s) => (s.addressed ? null : no('not_addressed')),
+  // Before that, the request is its build's to read: a message after the
+  // question the bot asked there is the answer, and the build reads it and
+  // says what it makes of it (homeroom-bot-addressed.js).
+  not_an_answer: async (s) => ((await answersQuestion(s.pool, { app: s.app, issueNumber: s.place.ref, bot: s.bot, row: s.row }))
+    ? no('answers_question') : null),
+  speak_addressed: (s) => yes(s.addressed),
+  addressed: (s) => (s.addressed ? yes(s.addressed) : null),
+  // The next message after the bot's own reply in a reply thread is to it.
+  continued: async (s) => {
+    const { rows } = await s.pool.query(
       `SELECT m.user_id, m.created_at FROM chat_messages m
         WHERE m.app_id = $1 AND m.thread_type = 'message' AND m.thread_ref = $2 AND m.id < $3
           AND m.deleted_at IS NULL
         ORDER BY m.id DESC LIMIT 1`,
-      [app.id, place.ref, row.id],
+      [s.app.id, s.place.ref, s.row.id],
     );
     const before = rows[0];
     const recent = before && Date.now() - new Date(before.created_at).getTime() < CONTINUE_MINUTES * 60 * 1000;
-    if (before && Number(before.user_id) === Number(bot.id) && recent) return { speak: true, why: 'continued' };
-    return no('not_addressed');
+    return before && Number(before.user_id) === Number(s.bot.id) && recent ? yes('continued') : null;
+  },
+});
+
+/**
+ * Whether the person who wrote `row` in `place` wrote to the bot: the
+ * place's rules (its kind's profile, bot-profiles.js), as the header says.
+ * Resolves { speak, why }. `ctx` carries what the caller has read already
+ * ({ bot, settings, speaker }).
+ */
+async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }) {
+  if (!app || !place || !row || !bot) return no('unknown');
+  const kind = profiles.profileOfPlace(place);
+  if (!kind) return no('unknown');
+  const s = { pool, app, place, row, bot, settings, speaker, deps, addressed: undefined };
+  for (const name of kind.speaks) {
+    if (s.addressed === undefined && !profiles.THREAD_CHECKS.includes(name)) {
+      const mentioned = mentionsBot(row.content);
+      const replied = mentioned ? false : await quotesBot(pool, row, bot.id);
+      s.addressed = mentioned ? 'mentioned' : replied ? 'replied' : null;
+    }
+    const decided = await SPEAK_RULES[name](s);
+    if (decided) return decided;
   }
-  return addressed ? { speak: true, why: addressed } : no('not_addressed');
+  return no('not_addressed');
 }
 
 // ── Hearing ──────────────────────────────────────────────────────────────
@@ -2851,6 +2876,7 @@ module.exports = {
   MAX_ASK_TRIES,
   MAX_ROUNDS,
   MAX_READS_PER_TURN,
+  SPEAK_RULES,
   isStandIn,
   OFFER_WORDS,
   SORRY_TEXT,

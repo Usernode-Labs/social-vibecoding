@@ -252,3 +252,19 @@ Built 5 Nov 2026 (migration `bot-cards`, `src/services/bot-cards.js`):
   rule (mention, reply, followed, the 30-minute continue window).
 - The routes and machines that hear a message (`heardInDm`, `insertHeard`,
   project chat) call `threadBot.answer`; nothing else picks a surface.
+
+Built 5 Nov 2026:
+
+- `src/services/bot-profiles.js`: seven kinds and their profiles. A project
+  thread's kind comes from its place type (issue, session, chat or
+  category, message); a message in the chat is Main, private (a private
+  thread, or a request card's thread from before) or design.
+- The surfaces read their limits from their profile (the values did not
+  change), and no surface offers a tool its profile does not list
+  (`tests/bot-profiles.test.js`).
+- The voice's `gate()` runs each kind's `speaks` rules in order
+  (`SPEAK_RULES`), the common checks first, so the rules are data.
+- `src/services/thread-bot.js answer`: the chat's routing (after what needs
+  no model) and the bot-voice machine's turn call it; it runs the kind on
+  its surface.
+
