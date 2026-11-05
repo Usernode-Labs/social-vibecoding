@@ -153,3 +153,12 @@ test('the toolbar offers what the brief lists, labelled, with Image waiting for 
   assert.doesNotMatch(readOnly, /aria-label="Bold"/);
   assert.doesNotMatch(readOnly, /contenteditable=&quot;true&quot;/);
 });
+
+test('going back to what was opened draws the frame again, even when its document is the same as before', () => {
+  // A frame handed the srcdoc it already has keeps its edited DOM, so Revert
+  // would show edits that are gone. Each redraw remounts the frame instead.
+  const src = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
+  assert.match(src, /<iframe key=\{drawn\.count\}/);
+  assert.match(src, /count: d\.count \+ 1/);
+  assert.match(src, /onClick=\{\(\) => \{ setNotice\(null\); onChange\(opened\); \}\}/);
+});

@@ -195,7 +195,11 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
   const allowed = insertable.map((p) => p.name);
   const [first] = useState(() => openModel(source));
   const model = useRef<VisualModel>(first);
-  const [srcDoc, setSrcDoc] = useState(() => decorate(source, { editable: !readOnly }));
+  // The frame's document, and a count that remounts the frame whenever it is
+  // drawn again: going back to what was opened draws the same document as
+  // the first time, and a frame given the same srcdoc keeps its edited DOM.
+  const [drawn, setDrawn] = useState(() => ({ doc: decorate(source, { editable: !readOnly }), count: 0 }));
+  const redraw = (next: string) => setDrawn((d) => ({ doc: decorate(next, { editable: !readOnly }), count: d.count + 1 }));
   const frame = useRef<HTMLIFrameElement | null>(null);
   const baseline = useRef<string[]>([]);
   const current = useRef<number | null>(null);
@@ -211,7 +215,8 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
   useEffect(() => {
     if (source === model.current.source) return;
     model.current = openModel(source);
-    setSrcDoc(decorate(source, { editable: !readOnly }));
+    redraw(source);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, readOnly]);
 
   const doc = () => (frame.current && frame.current.contentDocument) || null;
@@ -383,7 +388,7 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
         setNotice(null);
         // The button is new structure, so the frame is drawn again from it.
         emit(openModel(next));
-        setSrcDoc(decorate(next, { editable: true }));
+        redraw(next);
       } catch (err) {
         setNotice(err instanceof EditRefused || err instanceof Error ? err.message : String(err));
       }
@@ -464,8 +469,8 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
         Click any text to retype it. Outlined parts depend on a condition; change those, and the layout, in the HTML tab.
       </p>
-      <iframe ref={frame} title="Visual editor" sandbox="allow-same-origin" srcDoc={srcDoc} onLoad={wire}
-        className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white" style={{ height }} />
+      <iframe key={drawn.count} ref={frame} title="Visual editor" sandbox="allow-same-origin" srcDoc={drawn.doc} onLoad={wire}
+        className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white" style={{ width: '100%', height }} />
     </div>
   );
 }
