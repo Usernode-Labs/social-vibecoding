@@ -1222,7 +1222,7 @@ test('the box posts every picture first, then its title, Kudos and the page\'s p
   const out = await post.postComment(full);
   assert.deepEqual(out, {
     ok: true, botWillBuild: false, url: 'https://github.com/o/r/issues/4490', title: 'Bigger Join button',
-    bounty: { placed: true, remaining: 4, error: undefined },
+    bounty: { placed: true, remaining: 4, error: undefined }, droppedPictures: 0,
   });
   assert.deepEqual(calls.slice(0, 3).map((c) => c.init.body), [blob, imageA, imageB], 'the page first, then the person\'s own');
   assert.deepEqual(JSON.parse(calls[3].init.body), {
