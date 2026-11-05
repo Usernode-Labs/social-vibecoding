@@ -93,6 +93,14 @@ function door(t, pool, extra = {}) {
     },
   };
 }
+// The patience timers are unref'd, as a live server needs nothing else to stay
+// up. A test waiting on one, with a read that never answers, does: with only that
+// timer the event loop empties and node:test cancels the rest of the file
+// (Node 22, the platform's). So such a test holds this for as long as it runs.
+function keepAlive(t) {
+  const timer = setInterval(() => {}, 50);
+  t.after(() => clearInterval(timer));
+}
 const errorsLogged = (t) => t.mock.method(log, 'error', () => {});
 const messagesOf = (spy) => spy.mock.calls.map((call) => call.arguments[1]);
 
@@ -336,6 +344,7 @@ test('the words built in code come from the catalog through the translator, for 
 });
 
 test('a translator read that never answers costs its words only, within the patience', async (t) => {
+  keepAlive(t);
   t.mock.method(languageCache, 'readSource', () => SOURCE);
   const pool = poolWith();
   pool.db.templates = pool.db.templates.map(frenchBuildReady);
@@ -427,6 +436,7 @@ test('getSnapshot: memory first, and after 30 seconds an edit is on the very nex
 });
 
 test('getSnapshot: a refresh that does not answer in time sends the copy in hand, within the patience', async (t) => {
+  keepAlive(t);
   t.mock.method(log, 'error', () => {});
   const pool = poolWith();
   let now = 1000;
@@ -458,6 +468,7 @@ test('getSnapshot: a load that goes wrong past its own handlers is never an unha
 });
 
 test('getSnapshot: no pool, a failed first read and a hung first read are null, never a rejection', async (t) => {
+  keepAlive(t);
   assert.equal(await store.getSnapshot(null), null);
   t.mock.method(log, 'error', () => {});
   const down = poolWith();
