@@ -270,9 +270,21 @@ async function noteVersionMessage(pool, { threadId, version, messageId }) {
   ).catch((err) => log.warn('design-threads', 'Could not note a version\'s message', { err: err.message }));
 }
 
+/** Pure: a note without a leading "Version N:", which the thread line adds. */
+function bareNote(note) {
+  let said = String(note ?? '').trim();
+  for (;;) {
+    const next = said.replace(/^\s*version\s+\d+\s*[:.\-–]\s*/i, '').trim();
+    if (next === said) return said;
+    said = next;
+  }
+}
+
 /** Pure: what a version's message says. */
 function versionLine(version, note) {
-  const said = note ? clip(note, MAX_NOTE) : '';
+  const said = note
+    ? clip(String(note).split('; ').map(bareNote).filter(Boolean).join('; '), MAX_NOTE)
+    : '';
   return said ? `Version ${version}: ${said}${/[.!?…]$/.test(said) ? '' : '.'}` : `Version ${version}.`;
 }
 
@@ -740,6 +752,7 @@ module.exports = {
   versionOf,
   addVersion,
   noteVersionMessage,
+  bareNote,
   versionLine,
   startDesign,
   pinFor,

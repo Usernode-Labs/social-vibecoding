@@ -4708,6 +4708,30 @@ function checkProjectOffer({ design, args = {} }) {
 }
 
 /**
+ * Pure: the line above a card, from the model's own words (sendDesignOffer).
+ * Sentences naming a request other than the card's own (`issueNumber`) are
+ * dropped whole, so a card's sentence can never name a request its button
+ * does not post to; with no request, any sentence naming one is dropped. The
+ * sentences kept are rejoined, and `fallback` says it when none is left.
+ */
+function cardSentence(text, { issueNumber = null, fallback = '' } = {}) {
+  const own = Number(issueNumber) > 0 ? Number(issueNumber) : null;
+  const keeps = (sentence) => {
+    const named = [];
+    for (const m of sentence.matchAll(/#\s?(\d+)/g)) named.push(Number(m[1]));
+    for (const m of sentence.matchAll(/\brequests?\s+#?(\d+)/gi)) named.push(Number(m[1]));
+    return !named.length || (!!own && named.every((named_) => named_ === own));
+  };
+  const kept = String(text || '')
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.split(/(?<=[.!?…])\s+/).filter(keeps).join(' ').trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+  return kept || fallback;
+}
+
+/**
  * The turn's answer when it offered a design (design-bot.js): its words
  * with the card under them, in the thread, under `key`. `version` is the
  * version the card offers: the newest, after any edit of the same turn.
@@ -4720,7 +4744,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     return dm.sendDm(pool, {
       bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
       content: [
-        text || `Want to make ${o.name} from this design?`,
+        cardSentence(text, { issueNumber: null, fallback: `Want to make ${o.name} from this design?` }),
         '',
         `**${o.name}** · a new project, from version ${v} of ${design.title}`,
       ].join('\n'),
@@ -4735,6 +4759,12 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
   const app = o.app;
   const name = app.name || app.slug;
   const n = Number(o.issueNumber) > 0 ? Number(o.issueNumber) : null;
+  // The card's own words: a version and the request its button posts to,
+  // never a request the model's sentence happened to name (#6355).
+  const fallback = n
+    ? `Tap the card to post version ${v} on request #${n} as its plan, publicly, under your name.`
+    : `Tap New request to file a request on ${name} with version ${v} as its plan, publicly, under your name, `
+      + 'or add it to a request you name.';
   const { rows: [action] } = await pool.query(
     `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, source_issue_number,
                                           private_thread_id, design_version)
@@ -4744,7 +4774,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
   const sent = await dm.sendDm(pool, {
     bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
     content: [
-      text || (n ? `Want me to post this as your plan on request #${n}?` : `Want me to post this as a plan on ${name}?`),
+      cardSentence(text, { issueNumber: n, fallback }),
       '',
       n ? `**${name}** · a plan on request #${n}: version ${v} of ${design.title}` : `**${name}** · a plan: version ${v} of ${design.title}`,
     ].join('\n'),
@@ -6651,6 +6681,7 @@ module.exports = {
   startProjectThread,
   projectThreadLine,
   checkProjectOffer,
+  cardSentence,
   sendDesignOffer,
   decidePostDesign,
   noteProjectMade,
