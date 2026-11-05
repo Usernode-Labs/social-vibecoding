@@ -855,13 +855,13 @@ test('Opened recently: the app you just left joins a list drawn before it was pa
     Browse.recentChanged();
     assert.deepEqual(state.rows.map((row) => row.slug), ['left']);
 
-    // Nothing to redraw with the switch off, or with the screen shut.
+    // Nothing to redraw with the screen shut, or on an app's detail page.
     let renders = 0;
     const render = Browse.render;
     Browse.render = () => { renders += 1; render(); };
-    Browse._only = [];
+    Browse._slug = 'left';
     Browse.recentChanged();
-    Browse._only = ['recent'];
+    Browse._slug = null;
     Browse.close();
     Browse.recentChanged();
     assert.equal(renders, 0);
@@ -1628,6 +1628,74 @@ test('metaLine: a zero aggregate is dropped, not rendered as "0"', () => {
   assert.equal(Browse.metaLine(quiet, 'merged'), '2 users');
   assert.match(Browse.metaLine(app({ merged_prs: 1 }), 'merged'), /1 change live/,
     'and the one that is there is pluralised');
+});
+
+test('metaLine: an app you opened on this device says when, in place of Updated (#4025)', () => {
+  withRecentStore((store) => {
+    const { Browse } = makeBrowse();
+    const ago = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+    const a = app({
+      slug: 'opened', active_users: 4, merged_prs: 12, merged_prs_recent: 3,
+      last_deploy_at: ago(1), created_at: ago(3),
+    });
+    Browse._recentEntries = () => store.recentAppEntries('ana');
+    assert.equal(Browse.metaLine(a, 'recommended'), '4 users · Updated 1h ago', 'never opened: unchanged');
+
+    store.rememberRecentApp({ slug: 'opened', name: 'Opened' }, 'ana', ago(2));
+    assert.equal(message('discover:row.meta.lastOpened'), 'Last opened {{when}}');
+    assert.equal(Browse.metaLine(a, 'recommended'), '4 users · Last opened 2h ago');
+    assert.equal(Browse.metaLine(a, 'users'), '4 users · Last opened 2h ago');
+    assert.equal(Browse.metaLine(a, 'active'), '4 users · 3 live in 30d · Last opened 2h ago');
+    assert.equal(Browse.metaLine(a, 'merged'), '4 users · 12 changes live · Last opened 2h ago');
+    assert.equal(Browse.metaLine(a, 'new'), '4 users · Created 3h ago', 'Newest keeps the figure it ranks by');
+    assert.equal(Browse.metaLine({ ...a, status: 'error' }, 'recommended'), '4 users · Last opened 2h ago · Error');
+    assert.equal(Browse.metaLine(app({ slug: 'other', active_users: 4, last_deploy_at: ago(1) }), 'recommended'),
+      '4 users · Updated 1h ago', 'another row is not touched');
+
+    // Another account on this device has none of it.
+    store.recentAppsStore.set({ apps: [] });
+    Browse._recentEntries = () => store.recentAppEntries('bo');
+    assert.equal(Browse.metaLine(a, 'recommended'), '4 users · Updated 1h ago');
+  });
+});
+
+test('metaLine: only a known, recent, past time says Last opened (#4025)', () => {
+  const { Browse } = makeBrowse();
+  const iso = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  const a = app({ slug: 'x', active_users: 1, last_deploy_at: iso(1) });
+  const says = (entries) => {
+    Browse._recentEntries = () => entries;
+    return Browse.metaLine(a, 'recommended');
+  };
+  assert.equal(says([{ slug: 'x', at: '' }]), '1 user · Updated 1d ago', 'a seeded parked app has no time');
+  assert.equal(says([{ slug: 'x', at: 'not a time' }, null]), '1 user · Updated 1d ago');
+  assert.equal(says([{ slug: 'x', at: iso(-1) }]), '1 user · Updated 1d ago', 'a time ahead of the clock');
+  assert.equal(says([{ slug: 'x', at: iso(31) }]), '1 user · Updated 1d ago', 'past the switch\'s window');
+  assert.equal(says([{ slug: 'x', at: iso(5) }, { slug: 'x', at: iso(2) }, { slug: 'x', at: iso(9) }]),
+    '1 user · Last opened 2d ago', 'the list can hold a slug twice: the later time');
+  Browse._recentEntries = null;
+  assert.equal(Browse.metaLine(a, 'recommended'), '1 user · Updated 1d ago', 'nothing planted: the prerender and old tests');
+});
+
+test('rows: a list render reads the device list once, and a row you just left redraws with the switch off (#4025)', () => {
+  withRecentStore((store) => {
+    const { Browse, state } = makeBrowse();
+    Browse._load = () => {};
+    let reads = 0;
+    Browse._recentEntries = () => { reads += 1; return store.recentAppEntries('ana'); };
+    Browse._apps = [app({ slug: 'left', name: 'Left' }), app({ slug: 'other', name: 'Other' }), app({ slug: 'third', name: 'Third' })];
+    // The order App.navigateToBrowse runs them in: open, then park.
+    Browse.open(null);
+    assert.doesNotMatch(rowFor(state, 'left').meta, /Last opened/);
+    reads = 0;
+    Browse.render();
+    assert.equal(reads, 1, 'not once a row');
+
+    store.rememberRecentApp({ slug: 'left', name: 'Left' }, 'ana');
+    Browse.recentChanged();
+    assert.match(rowFor(state, 'left').meta, /Last opened just now/);
+    assert.doesNotMatch(rowFor(state, 'other').meta, /Last opened/);
+  });
 });
 
 test('metaLine: the rows carry the line the store says they were sorted with', () => {

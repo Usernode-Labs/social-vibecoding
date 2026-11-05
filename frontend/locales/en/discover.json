@@ -459,6 +459,10 @@
     "text": "Updated {{when}}",
     "description": "Fact on the grey line under an app's name in Discover: when the app's latest version went live. {{when}} is a short relative time such as \"3d ago\" or \"just now\"."
   },
+  "row.meta.lastOpened": {
+    "text": "Last opened {{when}}",
+    "description": "Fact on the grey line under an app's name in Discover, in place of \"Updated …\", for an app the viewer used on this device in the last 30 days. {{when}} is a short relative time such as \"2h ago\" or \"just now\", counted from when they left the app."
+  },
   "row.meta.pair": {
     "text": "{{first}} · {{second}}",
     "description": "Joins two short facts on one line of an app's row or a contributor's row (\"12 users · Updated 3d ago\"). {{first}} is everything said so far and {{second}} the next fact. Keep a separator your language uses for such a run of facts."
