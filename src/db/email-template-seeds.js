@@ -565,6 +565,14 @@ const untouched = (rows) => (rows.length === 1 && rows[0].version === 1 && rows[
 
 const sameFields = (row, want, fields) => fields.every((field) => row[field] === want[field]);
 
+// An admin pressed Translate on this version (services/mail/template-translate.js):
+// its translations are theirs now, as an edit makes the English theirs, so the
+// catalog no longer rewrites or removes them.
+async function translatedHere(client, kind, id) {
+  const { rows } = await client.query('SELECT 1 FROM email_translation_jobs WHERE kind = $1 AND version_id = $2', [kind, id]);
+  return rows.length > 0;
+}
+
 async function refreshUntouched(client, source, translations, families, seeded) {
   const out = { templates: [], layouts: 0, busy: 0 };
   for (const layout of SEEDS.layouts) {
@@ -575,6 +583,7 @@ async function refreshUntouched(client, source, translations, families, seeded) 
       'SELECT id, name, version, status, created_by, deleted_at, html, text FROM email_layouts WHERE family_id = $1 FOR UPDATE', [family]);
     const row = untouched(rows);
     if (!row || row.name !== layout.name || sameFields(row, layout, ['html', 'text'])) continue;
+    if (await translatedHere(client, 'layout', row.id)) continue;
     await client.query('UPDATE email_layouts SET html = $2, text = $3 WHERE id = $1', [row.id, layout.html, layout.text]);
     out.layouts += 1;
   }
@@ -586,6 +595,7 @@ async function refreshUntouched(client, source, translations, families, seeded) 
          FROM email_templates WHERE action = $1 FOR UPDATE`, [kind]);
     const row = untouched(rows);
     if (!row) continue;
+    if (await translatedHere(client, 'template', row.id)) continue;
     let changed = false;
     const english = englishTemplate(kind, { source });
     if (!sameFields(row, english, ['name', ...FIELDS])) {
@@ -606,7 +616,7 @@ async function refreshUntouched(client, source, translations, families, seeded) 
         `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'machine')
          ON CONFLICT (template_id, locale) DO UPDATE SET subject = EXCLUDED.subject, preheader = EXCLUDED.preheader,
-           why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, updated_at = NOW()
+           why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, unusable = NULL, updated_at = NOW()
          WHERE email_template_translations.origin = 'machine'`,
         [row.id, locale, words.subject, words.preheader, words.why, words.html, words.text]);
       changed = true;
