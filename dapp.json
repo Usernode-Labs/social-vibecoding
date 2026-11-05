@@ -2468,7 +2468,7 @@
       "name": "With room on the line the strip keeps them, and Filters does not offer them",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-filter-row [data-quick-filter=\"assignedToMe\"] ~ [data-quick-filter=\"yours\"]",
-      "expectText": "Created by you"
+      "expectText": "Yours"
     },
     {
       "name": "The board person filter lives in the Filters dialog (matches assignees or authors, #1404)",
