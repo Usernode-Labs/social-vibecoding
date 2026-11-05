@@ -182,6 +182,8 @@ type ScreenRowView = NotificationRowView & {
   appName?: string | null;
   /** #5929: the row waits on the reader (rowView): its project's group comes first on Unread. */
   needsYou?: boolean;
+  /** #5929: where an unread row stands (rowView): its label is drawn as this tone's chip. */
+  tone?: RowTone;
   /** #5877: that project's icon, so its bot row wears the project's tile. */
   appIconUrl?: string | null;
   appIconEmoji?: string | null;
@@ -192,6 +194,8 @@ type ScreenRowView = NotificationRowView & {
   /** #5580: set on a card standing for one story's notifications (foldStories), newest first. */
   story?: { members: ScreenRowView[] } | null;
 };
+
+type RowTone = 'needs' | 'blocked' | 'hold';
 
 type Tab = 'all' | 'unread';
 
@@ -341,7 +345,7 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
   const [busy, setBusy] = useState(false);
   return (
     <div className="flex items-center gap-2 px-4 pt-4 pb-1.5" data-notif-app-group={groupKey}>
-      <span className="flex-1 min-w-0 truncate text-xs font-medium text-zinc-500 dark:text-zinc-500">
+      <span className="flex-1 min-w-0 truncate text-xs font-medium text-zinc-500 dark:text-zinc-400">
         {label}
       </span>
       {onShowLess ? (
@@ -994,7 +998,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
             heading over nothing is worse than either line alone. */}
         {view.segments.length ? (
           <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
-            {view.label}
+            <RowLabel view={view} />
           </span>
         ) : null}
         {/* WHICH ONE — the PR's title, the conversation, the message. The
@@ -1357,7 +1361,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
       </span>
       <span className="flex-1 min-w-0">
         <span className="flex items-baseline gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-          <span className="flex-1 min-w-0 truncate">{view.segments.length ? view.label : null}</span>
+          <span className="flex-1 min-w-0 truncate">{view.segments.length ? <RowLabel view={view} hideCount={closedTop} /> : null}</span>
           {view.saved ? (
             <BookmarkSolidIcon aria-hidden="true" className="h-3 w-3 shrink-0 self-center text-violet-700 dark:text-violet-400" />
           ) : null}
@@ -1421,6 +1425,39 @@ function subjectOf(view: ScreenRowView): ReactNode {
   )) : view.label;
 }
 
+/**
+ * #5929 item 4: a row's status, first on the row. A row with a tone wears its
+ * label as a chip: amber waits on the reader, red is stuck, grey is on hold.
+ * There is no green: a settled state gets no fill. A row with no tone keeps
+ * its label as the plain grey words. The chip is the row's one pill, so a
+ * folded row's count goes inside it instead of beside it (RunCount).
+ */
+const ROW_TONE_CLASSES: Record<RowTone, string> = {
+  needs: 'bg-amber-500/15 text-amber-800 dark:text-amber-300',
+  blocked: 'bg-red-500/15 text-red-700 dark:text-red-300',
+  hold: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+};
+
+function RowLabel({ view, hideCount = false }: { view: ScreenRowView; hideCount?: boolean }): ReactNode {
+  const t = useMessages('notifications');
+  if (!view.tone) return view.label;
+  const count = !hideCount && view.count && view.count > 1 && !view.groupLabelled ? view.count : 0;
+  return (
+    <span
+      data-notif-tone={view.tone}
+      className={'inline-block max-w-full truncate align-middle rounded-full px-2 py-0.5 text-[11px] font-semibold '
+        + ROW_TONE_CLASSES[view.tone]}
+    >
+      {view.label}
+      {count ? (
+        <span className="ms-1.5" aria-label={t('notifications:row.runCount', { count })}>
+          {count > 99 ? '99+' : count}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /*
  * A collapsed conversation run says how many it stands for. Only ever
  * rendered above 1, so an ordinary row is unchanged — and it is a COUNT, not
@@ -1430,7 +1467,7 @@ function subjectOf(view: ScreenRowView): ReactNode {
  */
 function RunCount({ view }: { view: ScreenRowView }): ReactNode {
   const t = useMessages('notifications');
-  if (!view.count || view.count < 2 || view.groupLabelled) return null;
+  if (!view.count || view.count < 2 || view.groupLabelled || view.tone) return null;
   return (
     <span
       className={'shrink-0 min-w-[1.5rem] px-2 h-6 rounded-full text-[11px] font-semibold '

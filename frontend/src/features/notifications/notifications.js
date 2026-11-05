@@ -2720,6 +2720,17 @@ function parseBotDetail(detail) {
     threadRootId: null,
   };
 }
+// #5929 item 5: why a request is on hold, by which of the moment's words the
+// server chose (homeroom-bot-notify-copy.js, SAID_BY_MOMENT.on_hold, and its
+// thread copy for each). Only `allowance` is about this week's building time,
+// so the reason follows `said`; a row from before `said` was written says none.
+const BOT_ON_HOLD_NOTE_IDS = {
+  allowance: 'notifications:row.bot.onHoldNote.allowance',
+  paused: 'notifications:row.bot.onHoldNote.paused',
+  slots: 'notifications:row.bot.onHoldNote.slots',
+  builds: 'notifications:row.bot.onHoldNote.builds',
+  taken: 'notifications:row.bot.onHoldNote.taken',
+};
 function isBotMomentDetail(detail) {
   const d = parseBotDetail(detail);
   return !!d && d.moment !== 'reply';
@@ -2797,7 +2808,9 @@ function botMomentLine(detail, message) {
   // #5929: a needs-you asks the reader for something, except the one that
   // says it waits on somebody else.
   const needsYou = d.moment === 'needs_you' && d.said !== 'decide_others';
-  return { label, subject, meta, needsYou };
+  const noteId = d.moment === 'on_hold' && Object.prototype.hasOwnProperty.call(BOT_ON_HOLD_NOTE_IDS, d.said)
+    ? BOT_ON_HOLD_NOTE_IDS[d.said] : null;
+  return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
 }
 
 // A whole message with one emphasised part, as a row's segments: the catalog
@@ -2873,7 +2886,27 @@ function storyRefOf(n) {
   return { number, title: n.storyTitle || (bot && bot.requestTitle) || null };
 }
 
+// #5929 item 4: where an unread row stands, which the sheet draws as a chip
+// first on the row (RowLabel): 'needs' it waits on the reader, 'blocked' its
+// votes are met and its merge stands still, 'hold' the bot has put it on
+// hold. A read row has none: a vote cast or a merge decided reads the row
+// (DECIDED_ASK_KINDS, change-notifications.ts), so on a read row the colour
+// could be saying what is no longer so.
+function rowTone(n, view) {
+  if (n.readAt) return null;
+  if (view.needsYou) return 'needs';
+  if (n.kind === 'stale_pr' && n.detail === 'blocked') return 'blocked';
+  const bot = view.botMoment ? parseBotDetail(n.detail) : null;
+  return bot && bot.moment === 'on_hold' ? 'hold' : null;
+}
+
 function rowView(n) {
+  const view = rowWords(n);
+  const tone = rowTone(n, view);
+  return tone ? { ...view, tone } : view;
+}
+
+function rowWords(n) {
   // #103: keep the violet left line on every row, read or unread, so a
   // notification never "loses its line" when read. Only the background
   // tint stays unread-conditional (the unread dot below is the other cue).
@@ -3024,6 +3057,7 @@ function rowView(n) {
         appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
         needsYou: !!bot.needsYou,
+        ...(bot.note ? { note: bot.note } : {}),
         // Run six: the row wears the bot's own face (the sheet's AvatarChip),
         // never a letter tile of its handle — unless it is about a project,
         // which then wears that project's tile (#5877).
@@ -3275,6 +3309,10 @@ function rowView(n) {
     return {
       ...base,
       icon: '⏳',
+      // #5929 item 5: the server knows the votes are met and the merge has
+      // stood still (machine.ts staleWarned), not why, so this names no cause
+      // as the cause. It can also be shots not ready or a variable with no value.
+      ...(n.detail === 'blocked' ? { note: t('notifications:row.stale.blockedNote') } : {}),
       ...headline(t(n.detail === 'blocked' ? 'notifications:row.stale.blocked' : 'notifications:row.stale.label'),
         prLabel || n.sessionTitle || t('notifications:row.stale.yourChange')),
     };
@@ -3530,7 +3568,9 @@ function rowView(n) {
       icon: '\u{1F5F3}\uFE0F',
       ...headline(
         t('notifications:row.voteDigest.label'),
-        t('notifications:row.voteDigest.count', { count }),
+        n.appName
+          ? t('notifications:row.voteDigest.countIn', { count, project: n.appName })
+          : t('notifications:row.voteDigest.count', { count }),
       ),
     };
   }
