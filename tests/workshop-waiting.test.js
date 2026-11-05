@@ -84,13 +84,14 @@ test('the plan is the request\'s NEWEST run waiting for Build it, from one share
   assert.match(fragment, /ORDER BY run\.id DESC LIMIT 1/);
   assert.match(fragment, /github_issue_number = q\.issue_number/);
   assert.match(fragment, /homeroom_bot_closed_requests/);
-  // One definition: both sources call it, and the bot page reads the same one.
+  // One definition: the Workshop calls it, and the bot page reads the stored
+  // work state (services/work-state.js), whose decider reads the same wait
+  // (homeroom-bot-progress.js planWaits, the fragment's twin) through stageOf.
   assert.ok(read('src/services/workshop-waiting.js')
     .includes("planWaitingSql({ appId: 'q.app_id', issueNumber: 'q.issue_number' })"));
-  const aiWork = require('../src/services/ai-work');
-  assert.ok(aiWork.FACTS_SQL.includes(progress.planWaitingSql({ appId: 'w.app_id', issueNumber: 'w.number' })),
-    'the bot page reads the same fragment');
-  assert.ok(read('src/services/ai-work.js').includes("planWaitingSql({ appId: 'w.app_id', issueNumber: 'w.number' })"));
+  assert.match(read('src/services/ai-work.js'), /workState\.ensure\(pool, /);
+  assert.match(read('src/services/work-state.js'), /const step = progress\.stageOf\(row, \{ now \}\);/);
+  assert.match(read('src/services/homeroom-bot-progress.js'), /if \(planWaits\(row\)\) \{/);
 });
 
 test('a question is one asked of the viewer that is still open', () => {

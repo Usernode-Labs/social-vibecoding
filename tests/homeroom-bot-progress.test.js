@@ -422,9 +422,12 @@ test('#6219: a plan waiting for Build it wins over a question left open from bef
   assert.equal(stage({ ...waiting, question_at: ago(90) }).stage, 'plan', 'a question older than the run');
   assert.equal(stage({ ...waiting, question_at: ago(45) }).stage, 'question', 'the plan\'s own look asked it');
   assert.equal(stage({ ...waiting }).stage, 'plan');
-  // The bot page lists a plan under Needs you; a question it leaves to the feed.
-  const { BOT_STANDING } = require('../src/services/ai-work');
-  assert.deepEqual(BOT_STANDING.plan, { group: 'needs', what: 'plan' });
+  // Every page lists a plan as waiting for you (services/work-state.js),
+  // which the bot page puts under Needs you; a question it leaves to the feed.
+  const ws = require('../src/services/work-state');
+  const plan = ws.fromStage({ stage: 'plan' }, {});
+  assert.deepEqual([plan.stage, plan.why], ['waiting_for_you', 'plan']);
+  assert.equal(ws.placeFor(plan, { requester: true }), 'needs');
 });
 
 // #6246 (4 Nov 2026): #6149's and #6081's plans waited for Build it but
@@ -628,8 +631,10 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   assert.deepEqual(stage({ ...open, started_at: ago(4), queue_reason: 'checks_failing' }),
     { stage: 'fixing', since: ago(4), doing: 'fixing what its tests found' });
   assert.equal(stage({ ...open, queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }).stage, 'fix_queued');
-  const { BOT_STANDING } = require('../src/services/ai-work');
-  assert.deepEqual(BOT_STANDING.fixing, { group: 'next', what: 'fixing' });
-  assert.deepEqual(BOT_STANDING.fix_queued, { group: 'waiting', what: 'fix_queued' });
+  const ws = require('../src/services/work-state');
+  const fixing = ws.fromStage({ stage: 'fixing' }, {});
+  assert.deepEqual([fixing.stage, fixing.line, ws.placeFor(fixing, { own: true })], ['building', { code: 'fixing' }, 'next']);
+  const queued = ws.fromStage({ stage: 'fix_queued' }, {});
+  assert.deepEqual([queued.stage, queued.line, ws.placeFor(queued, { own: true })], ['up_for_vote', { code: 'update_queued' }, 'waiting']);
   assert.equal(require('../src/services/homeroom-bot-track').fromStage('fixing').why, 'fixing');
 });

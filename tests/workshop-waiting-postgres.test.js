@@ -130,11 +130,19 @@ test('#6246: a plan waiting for Build it is listed on both screens, whatever sit
   )).rows[0].id;
 
   const deps = { bot, liveSvc: { isStaging: () => false }, settings: { mode: 'live' } };
+  // The writes below go straight to the bot's tables; on the platform the
+  // machine or route that makes them refreshes the stored work state the bot
+  // page reads (services/work-state.js), as this does.
+  const workState = require('../src/services/work-state');
   const listed = async () => {
+    await workState.refresh(pool, [{ appId, issueNumber: 40 }]);
     const { plans } = await waiting.waitingOnViewer(pool, { appId, userId: ada });
     const work = await aiWork.workFor(pool, { user: { id: ada }, deps });
-    const plan = work.needs.find((n) => n.number === 40 && n.app && n.app.slug === 'previews-6246');
-    return { workshop: plans.map((p) => p.number), page: plan ? plan.what : null };
+    // The page's plan row: another hand-back of the same request (a newer
+    // run that found nothing to build asks its requester for more detail) is
+    // not the plan.
+    const plan = work.needs.find((n) => n.number === 40 && n.app && n.app.slug === 'previews-6246' && n.work.why === 'plan');
+    return { workshop: plans.map((p) => p.number), page: plan ? plan.work.why : null };
   };
   const both = async (why) => {
     const now = await listed();

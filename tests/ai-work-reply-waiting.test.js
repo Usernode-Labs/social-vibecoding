@@ -1,46 +1,54 @@
 'use strict';
 
 // #6228 (3 Nov 2026): a person's reply on a request the bot handed back
-// leaves Needs you (Decide) the moment it is stored, both for the requester
-// (the bot's own stages, botStages) and for anyone else reading the thread
-// (the request's facts). What the bot decides and when it reads do not move.
+// leaves Needs you (Decide) the moment it is stored. #6245, #6246, #6313:
+// a plan is timed from when it began waiting, wins over a reply, and a read
+// queued after a plan that failed is retrying the plan.
+//
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 3): these are decided once,
+// by the stored work state (services/work-state.js derive, from the shared
+// per-request facts), and the Homeroom bot page places that state for the
+// viewer (services/ai-work.js standing). Both halves are pinned here.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { standing } = require('../src/services/ai-work');
+const { standing, listsOf } = require('../src/services/ai-work');
+const { derive } = require('../src/services/work-state');
 
 const NOW = new Date('2026-11-03T17:00:00Z');
 const row = {
-  state: 'open', kind: 'request', number: 6209, request_state: 'open',
+  state: 'open', kind: 'request', number: 6209, request_id: 1, request_state: 'open', own: true,
   request_at: '2026-11-03T15:00:00Z', created_at: '2026-11-03T15:00:00Z',
 };
+// A request's facts row (work-state.js REQUEST_FACTS_SQL), as derive reads it.
+const facts = (extra = {}) => ({
+  app_id: 1, issue_number: 6209, request_closed: false, request_at: '2026-11-03T15:00:00Z', ...extra,
+});
+const stored = (extra) => ({ ...derive(facts(extra), { now: NOW }), requesterId: 7 });
+const handedBack = { mode: 'live', verdict: 'person', run_at: '2026-11-03T15:00:00Z' };
 
-test('#6228: the bot\'s own stage for a reply it will read is In progress, not Decide', () => {
-  const reply = { stage: 'reading', reply: true, since: '2026-11-03T16:52:00Z' };
-  assert.deepEqual(standing(row, 7, NOW, 99, reply, null), {
-    group: 'next', what: 'reading_reply', at: '2026-11-03T16:52:00.000Z',
+test('#6228: a reply the bot will read is Reading your reply, In progress, not Decide', () => {
+  const reading = stored({ ...handedBack, queue_id: 3, started_at: '2026-11-03T16:52:00Z', reply_at: '2026-11-03T16:50:00Z' });
+  assert.deepEqual([reading.stage, reading.line], ['reading', { code: 'reply' }]);
+  assert.deepEqual(standing(row, 7, NOW, 99, reading), {
+    group: 'next', work: { stage: 'reading', why: null, reason: null, line: { code: 'reply' }, since: '2026-11-03T16:52:00.000Z' },
+    at: '2026-11-03T16:52:00.000Z',
   });
   // A plain read of the request is unchanged.
-  assert.equal(standing(row, 7, NOW, 99, { stage: 'reading', since: '2026-11-03T16:52:00Z' }, null).what, 'reading');
+  const plain = stored({ ...handedBack, queue_id: 3, started_at: '2026-11-03T16:52:00Z' });
+  assert.deepEqual([plain.stage, plain.line], ['reading', null]);
 });
 
-test('#6228: another viewer\'s facts say Reading the reply as soon as it is stored', () => {
-  const facts = {
-    handled: true,
-    handedBack: true, replyWaits: true,
-    run: { verdict: 'person', held: false, capSuppressed: null, createdAt: '2026-11-03T15:00:00Z' },
-    viewerDecides: true,
-  };
-  assert.deepEqual(standing(row, 8, NOW, 99, null, facts), {
-    group: 'next', what: 'reading_reply', at: '2026-11-03T15:00:00.000Z', quietDays: 0,
-  });
-  // Past the window with no queue row, it is back to Decide.
-  assert.equal(standing(row, 8, NOW, 99, null, { ...facts, replyWaits: false }).what, 'decide');
-  // A reply on a request that was not handed back leaves the row alone.
-  assert.equal(standing(row, 8, NOW, 99, null, {
-    ...facts, handedBack: false, run: { verdict: 'ready', held: false, capSuppressed: null, createdAt: '2026-11-03T15:00:00Z' },
-  }).what, 'not_picked_up');
+test('#6228: a reply stored with its read queued leaves Decide at once, for every viewer', () => {
+  const waits = stored({ ...handedBack, queue_id: 3, enqueued_at: '2026-11-03T16:58:00Z', reply_at: '2026-11-03T16:57:00Z' });
+  assert.notEqual(waits.why, 'decide', 'no longer the requester\'s to decide');
+  assert.equal(standing(row, 8, NOW, 99, waits, { decides: true }).group === 'needs', false);
+  // With no reply and no queue row, it is the requester's to decide.
+  const back = stored(handedBack);
+  assert.deepEqual([back.stage, back.why], ['waiting_for_you', 'decide']);
+  assert.equal(standing(row, 8, NOW, 99, back, { decides: true }).group, 'needs');
+  assert.equal(standing(row, 8, NOW, 99, back, { decides: false }).group, 'waiting', 'anyone else waits on that person');
 });
 
 // #6245 (4 Nov 2026): what the bot waits on you for is timed from when it
@@ -48,64 +56,51 @@ test('#6228: another viewer\'s facts say Reading the reply as soon as it is stor
 // view bumps that), so the row keeps its place in Needs you.
 test('#6245: a plan or a hand-back is timed from when it began waiting on you', () => {
   const touched = { ...row, last_activity_at: '2026-11-03T16:59:00Z' };
-  for (const stage of ['plan', 'decide', 'build_stopped']) {
-    assert.deepEqual(standing(touched, 7, NOW, 99, { stage, since: null }, null), {
-      ...(stage === 'plan' ? { group: 'needs', what: 'plan' } : { group: 'needs', what: stage }),
-      at: '2026-11-03T15:00:00.000Z',
-    }, `${stage}: the request's own time, not the activity`);
-  }
-  // Its own waiting time wins where the bot knows it.
-  assert.equal(standing(touched, 7, NOW, 99, { stage: 'plan', since: '2026-11-03T16:30:00Z' }, null).at,
-    '2026-11-03T16:30:00.000Z');
-  // A stage that is not Needs you keeps the activity fallback, so In
-  // progress and Waiting order as they do today.
-  assert.deepEqual(standing(touched, 7, NOW, 99, { stage: 'reading', since: null }, null),
-    { group: 'next', what: 'reading', at: '2026-11-03T16:59:00.000Z' });
+  const plan = stored({ mode: 'live', verdict: 'ready', run_at: '2026-11-03T15:00:00Z', plan_waiting_at: '2026-11-03T16:30:00Z' });
+  assert.deepEqual([plan.stage, plan.why], ['waiting_for_you', 'plan']);
+  assert.equal(standing(touched, 7, NOW, 99, plan).at, '2026-11-03T16:30:00.000Z', 'its own waiting time');
+  const back = stored(handedBack);
+  assert.equal(standing(touched, 7, NOW, 99, back).at, '2026-11-03T15:00:00.000Z', 'when the bot handed it back, not the activity');
+  const stopped = stored({ mode: 'live', verdict: 'ready', build_ok: false, build_error: 'turn timed out', run_at: '2026-11-03T15:00:00Z' });
+  assert.deepEqual([stopped.stage, standing(touched, 7, NOW, 99, stopped).at], ['stopped', '2026-11-03T15:00:00.000Z']);
 });
 
 // #6246 (4 Nov 2026): a plan waiting for Build it is Needs you's even when a
-// reply waits to be read beside it. The facts path and the bot's own stage
-// both say plan; a read on a request the bot handed back is unchanged.
+// reply waits to be read beside it.
 test('#6246: a waiting plan wins over a reply being read', () => {
-  const planFacts = {
-    planWaits: true, planAt: '2026-11-03T16:40:00Z',
-    replyWaits: true, handedBack: false,
-    run: { verdict: 'ready', held: false, capSuppressed: null, createdAt: '2026-11-03T16:30:00Z' },
-    viewerDecides: true,
-  };
-  assert.deepEqual(standing(row, 8, NOW, 99, null, planFacts), {
-    group: 'needs', what: 'plan', at: '2026-11-03T16:40:00.000Z', quietDays: 0,
+  const plan = stored({
+    mode: 'live', verdict: 'ready', run_at: '2026-11-03T16:30:00Z', plan_waiting_at: '2026-11-03T16:40:00Z',
+    reply_at: '2026-11-03T16:50:00Z', queue_id: 3, enqueued_at: '2026-11-03T16:51:00Z',
   });
-  // The bot's own stage says plan too, when it fits.
-  assert.deepEqual(standing(row, 7, NOW, 99, { stage: 'plan', since: '2026-11-03T16:40:00Z' }, null), {
-    group: 'needs', what: 'plan', at: '2026-11-03T16:40:00.000Z',
+  assert.deepEqual([plan.stage, plan.why], ['waiting_for_you', 'plan']);
+  assert.deepEqual(standing(row, 7, NOW, 99, plan), {
+    group: 'needs', work: { stage: 'waiting_for_you', why: 'plan', reason: null, line: null, since: '2026-11-03T16:40:00.000Z' },
+    at: '2026-11-03T16:40:00.000Z',
   });
-  // #6228 stays: a read on a request the bot handed back still reads the reply.
-  assert.equal(standing(row, 7, NOW, 99, { stage: 'reading', reply: true, since: '2026-11-03T16:52:00Z' }, null).what,
-    'reading_reply');
-  // Facts without a waiting plan are unchanged.
-  assert.equal(standing(row, 8, NOW, 99, null, { ...planFacts, planWaits: false, replyWaits: false }).what,
-    'not_picked_up');
 });
 
 // #6313 (4 Nov 2026): a request queued for another read after Homeroom bot
 // could not write its plan says it is retrying the plan, not that it waits
-// for a free builder. The word is the same in the tab (shortWords) and in
-// the bot's answer (THREAD_SAYS, listsOf); once a read starts, the plain
-// reading line returns.
+// for a free builder; once a read starts, the plain reading line returns.
 test('#6313: a read queued after a plan that could not be written is retrying the plan', () => {
-  const queued = { stage: 'queued', retry: 'plan', since: '2026-11-03T16:58:00Z' };
-  assert.deepEqual(standing(row, 7, NOW, 99, queued, null), {
-    group: 'waiting', what: 'retrying_plan', at: '2026-11-03T16:58:00.000Z',
-  });
+  const failedPlan = {
+    mode: 'live', verdict: 'ready', build_ok: false, build_error: 'no plan could be written', run_at: '2026-11-03T16:50:00Z',
+    queue_id: 3, enqueued_at: '2026-11-03T16:58:00Z',
+  };
+  const queued = stored(failedPlan);
+  const words = require('../src/services/work-state').says(queued);
+  assert.deepEqual([queued.stage, queued.line], ['planning', { code: 'retry_plan' }]);
+  assert.equal(standing(row, 7, NOW, 99, queued).group, 'waiting');
+  assert.equal(words, 'Planning · Trying the plan again');
   // A queued read after some other failure is the plain queue.
-  assert.equal(standing(row, 7, NOW, 99, { stage: 'queued', since: '2026-11-03T16:58:00Z' }, null).what, 'queued');
+  const other = stored({ ...failedPlan, build_error: 'turn timed out' });
+  assert.deepEqual([other.stage, other.line.code], ['reading', 'queued']);
   // A read under way is reading the request, whatever failed before.
-  assert.equal(standing(row, 7, NOW, 99, { stage: 'reading', retry: 'plan', since: '2026-11-03T16:59:00Z' }, null).what, 'reading');
-  // The bot's own answer names it, and orders it with the queue.
-  const lists = require('../src/services/ai-work').listsOf([], {
-    private: [], needs: [], live: [],
-    waiting: [{ ...standing(row, 7, NOW, 99, queued, null), app: { slug: 'homeroom' }, number: 6209, title: 'T', threadId: 5 }],
+  assert.deepEqual(stored({ ...failedPlan, started_at: '2026-11-03T16:59:00Z' }).stage, 'reading');
+  // The bot's own answer names it in the stage words the page shows.
+  const lists = listsOf([], {
+    private: [], needs: [], live: [], next: [],
+    waiting: [{ ...standing(row, 7, NOW, 99, queued), app: { slug: 'homeroom' }, number: 6209, title: 'T', threadId: 5 }],
   }, { botUsername: 'homeroom-bot' });
-  assert.match(lists.waiting[0].says, /trying the plan again/);
+  assert.equal(lists.waiting[0].says, words);
 });

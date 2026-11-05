@@ -298,9 +298,11 @@ test('a private thread about a request or a change, and the hold, against the fu
     const { rows } = await pool.query(aiWork.THREADS_SQL, [ada.id, false, false, aiWork.THREADS_MAX, aiWork.LIVE_DAYS]);
     const row18 = rows.find((r) => Number(r.number) === 18);
     assert.equal(row18.awaiting_plan, true);
-    const shaped = aiWork.arrange([{ ...row18, change_status: null }], ada.id, new Date(), botUser.id, null);
-    assert.equal(shaped.waiting[0].what, 'awaiting_plan');
-    assert.equal(aiWork.threadSays(shaped.waiting[0]), 'waiting for their plan: they are working on it with Homeroom bot in a private thread');
+    // Its stored work state says the same (services/work-state.js: planHoldSql).
+    const stored = await aiWork.statesFor(pool, [row18]);
+    const shaped = aiWork.arrange([{ ...row18, change_status: null }], ada.id, new Date(), botUser.id, stored);
+    assert.deepEqual([shaped.waiting[0].work.stage, shaped.waiting[0].work.line], ['planning', { code: 'planning_with_you' }]);
+    assert.equal(aiWork.threadSays(shaped.waiting[0]), 'Planning · Planning it with you in a private thread');
 
     // What she is told when she asks how far along it is.
     await pool.query(`INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 18, $2, 'Dark mode')`, [app.id, ada.id]);

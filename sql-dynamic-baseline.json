@@ -1025,13 +1025,6 @@
       "preview": "THREADS_SQL"
     },
     {
-      "source": "src/services/ai-work.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "a3d9bd6f2e3b8315d3af",
-      "count": 1,
-      "preview": "FACTS_SQL"
-    },
-    {
       "source": "src/services/app-access.js",
       "kind": "structural-template",
       "fingerprint": "6561e538add1baf3f707",

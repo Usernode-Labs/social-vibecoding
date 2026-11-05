@@ -516,7 +516,9 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // Needs you's, and says so in its stage's words.
       sub: stageLine(t),
       pill: { id: NEED_PILLS[kind] || 'messages:ai.pill.needsYou' },
-      why: lineWords(t.work),
+      // A phone shows it under the title, where nothing hovers: its second
+      // line where it has one (the bot's own reason), else its stage.
+      why: lineWords(t.work) || stageWords(t.work, { yours: true }),
       href: t.href,
       rootId: null,
       threadId: t.threadId,
@@ -726,7 +728,6 @@ export function nextWords(t: AiThread): Phrase {
  * "Not moving" head: not started on, or waiting on somebody else's move.
  */
 export function notMoving(t: AiThread): boolean {
-  if (t.group !== 'waiting') return false;
   return (t.work.stage === 'reading' && t.work.line?.code === 'waiting')
     || t.work.stage === 'waiting_for_you' || t.work.stage === 'stopped';
 }

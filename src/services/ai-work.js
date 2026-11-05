@@ -350,8 +350,18 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   if (decides && state.stage === 'waiting_for_you' && state.why === 'question') return null;
   // Owed by everyone but its author, and by its author too when a coding
   // agent submitted it for them: their yes is a tap (governance-rules.ts).
-  const voteOwed = state.stage === 'up_for_vote' && status === 'promoted' && !row.voted && (!theirs || row.by_agent);
-  const place = workState.placeFor(state, { requester: decides, own, voteOwed });
+  const wouldVote = !row.voted && (!theirs || row.by_agent);
+  // #6282: an update on its way holds the vote. It is listed for its own
+  // people and for the ones who would have been asked to vote; somebody who
+  // already voted and only wrote in it gets no row.
+  const code = state.line?.code;
+  const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued');
+  const voteOwed = state.stage === 'up_for_vote' && !updating && status === 'promoted' && wouldVote;
+  // One they only voted or wrote in is listed while no change of it is in
+  // flight, as Waiting: it asks nothing of them, and nobody is building it.
+  const place = updating
+    ? ((own || wouldVote) ? (code === 'revising' ? 'next' : 'waiting') : null)
+    : workState.placeFor(state, { requester: decides, own, voteOwed }) || (!own && !inFlight(state) ? 'waiting' : null);
   if (!place) return null;
   const out = { group: place, work: stored, at };
   if (state.stage === 'building' && !state.line) {
@@ -370,17 +380,32 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   return out;
 }
 
+// A change of it is being made, checked, voted on or put live.
+const READY_LINES = new Set(['queued', 'held_builds', 'held_waiting']);
+function inFlight(state) {
+  if (state.stage === 'building') return !READY_LINES.has(state.line?.code);
+  return state.stage === 'checking' || state.stage === 'up_for_vote' || state.stage === 'going_live';
+}
+
 /**
  * Pure: a thread's state before its stored row exists (it is made on the
  * read, workFor; this covers a read that failed): its change's, or waiting
  * to be read. Null for a thread with neither a request nor a change.
  */
 function fallbackState(row) {
-  if (row.change_id && row.change_status) {
-    return workState.deriveChange({
+  if (row.change_status) {
+    const change = workState.deriveChange({
       status: row.change_status, check_state: row.check_state, promoted_at: row.promoted_at,
       merged_at: row.merged_at, live_at: row.live_at, last_activity_at: row.last_activity_at,
     });
+    // #6282: an update on its way holds the vote (work-state.js derive says the same).
+    if (row.update_coming && row.change_status === 'promoted') {
+      const since = iso(row.last_activity_at || row.promoted_at);
+      return row.update_coming === 'running'
+        ? { stage: 'building', why: null, reason: null, line: { code: 'revising' }, since }
+        : { stage: 'up_for_vote', why: null, reason: null, line: { code: 'update_queued' }, since };
+    }
+    return change;
   }
   if (row.request_state === 'open' || row.number != null) {
     return { stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, since: iso(row.request_at || row.created_at) };
@@ -401,7 +426,8 @@ function waitingRank(t) {
   const { stage, line } = t.work;
   const code = line && line.code;
   if (stage === 'up_for_vote') return code === 'update_queued' ? 1 : 0;
-  if (stage === 'checking' || stage === 'planning') return 0;
+  if (stage === 'checking' || (stage === 'planning' && code !== 'retry_plan')) return 0;
+  if (stage === 'planning') return 4;
   if (stage === 'building') return code === 'queued' ? 2 : 3;
   if (stage === 'reading') return code === 'queued' ? 4 : code === 'on_hold' ? 5 : 6;
   return 6;

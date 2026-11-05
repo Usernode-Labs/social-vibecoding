@@ -161,6 +161,23 @@ function derive(row, { now = new Date() } = {}) {
   }
   if (out) return out;
 
+  // A change somebody made for it, when Homeroom bot has none of its own:
+  // that is where it stands, whatever an older look of the bot's said.
+  if (!status && row.lc_status) {
+    const change = deriveChange({
+      status: row.lc_status, check_state: row.lc_check_state, checks_at: row.lc_checks_at,
+      promoted_at: row.lc_promoted_at, merged_at: row.lc_merged_at, live_at: row.lc_live_at,
+      last_activity_at: row.lc_last_activity_at, created_at: row.lc_created_at,
+    }, { now });
+    // #6282: an update on its way holds its vote too.
+    if (row.lc_update_coming && (change.stage === 'up_for_vote' || change.stage === 'checking')) {
+      return row.lc_update_coming === 'running'
+        ? state('building', { since: change.since, line: { code: 'revising' } })
+        : state('up_for_vote', { since: change.since, line: { code: 'update_queued' } });
+    }
+    return change;
+  }
+
   // Nothing in progress: what its newest look came to.
   const back = progress.handedBack(row);
   const reason = row.run_reason ? firstSentence(row.run_reason, 140) : null;
@@ -231,7 +248,8 @@ function placeFor(item, viewer = {}) {
       // Waiting its turn, or held: Waiting. Under way: In progress.
       const code = item.line && item.line.code;
       const waiting = code === 'queued' || code === 'held_builds' || code === 'held_waiting' || code === 'on_hold'
-        || code === 'waiting' || code === 'update_queued' || code === 'planning_with_you' || item.stage === 'checking';
+        || code === 'waiting' || code === 'update_queued' || code === 'planning_with_you' || code === 'retry_plan'
+        || item.stage === 'checking';
       return waiting ? 'waiting' : 'next';
     }
   }
@@ -381,6 +399,9 @@ const REQUEST_FACTS_SQL = `
          cl.username AS claimed_by, cl.claimed_at,
          ${require('../workflow/rules/bot-loop.ts').planHoldSql('it.app_id', 'it.issue_number', 'NULL::int')} AS awaiting_plan,
          CASE WHEN cs.id IS NULL THEN NULL ELSE ${progress.updateComingSql('cs')} END AS update_coming,
+         lc.id AS lc_id, lc.status AS lc_status, lc.check_state AS lc_check_state, lc.checks_checked_at AS lc_checks_at,
+         lc.promoted_at AS lc_promoted_at, lc.merged_at AS lc_merged_at, lc.live_at AS lc_live_at,
+         lc.last_activity_at AS lc_last_activity_at, lc.created_at AS lc_created_at, lc.update_coming AS lc_update_coming,
          CASE WHEN q.id IS NOT NULL AND q.started_at IS NULL THEN (
            SELECT COUNT(*)::int FROM homeroom_bot_queue q2
             WHERE q2.app_id = it.app_id AND q2.started_at IS NULL AND q2.enqueued_at <= q.enqueued_at
@@ -401,7 +422,24 @@ const REQUEST_FACTS_SQL = `
          AND u.is_synthetic IS NOT TRUE
        ORDER BY ic.claimed_at DESC
        LIMIT 1
-    ) cl ON TRUE`;
+    ) cl ON TRUE
+    -- The change somebody made for it (it says it closes it), as the
+    -- request's thread lists one (ai-work.js THREADS_SQL): what it stands at
+    -- when Homeroom bot has no change of its own for it. A posted plan is
+    -- no change, and neither is a draft nobody has shared.
+    LEFT JOIN LATERAL (
+      SELECT c.id, c.status, c.check_state, c.checks_checked_at, c.promoted_at, c.merged_at, c.live_at,
+             c.last_activity_at, c.created_at,
+             CASE WHEN c.status = 'promoted' THEN ${progress.updateComingSql('c')} END AS update_coming
+        FROM chat_sessions c
+       WHERE c.app_id = it.app_id AND it.issue_number = ANY(c.linked_issues)
+         AND c.is_headless = FALSE
+         AND NOT (c.source IS NOT DISTINCT FROM 'request_spec' AND c.branch_name IS NULL)
+         AND c.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
+         AND (c.status NOT IN ('active', 'paused') OR c.shared_at IS NOT NULL)
+       ORDER BY CASE c.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END, c.id DESC
+       LIMIT 1
+    ) lc ON TRUE`;
 
 /** One row per change named by $1 (session ids) that has no request of its own. */
 const CHANGE_FACTS_SQL = `
@@ -485,7 +523,7 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
     const { rows } = await db.query(REQUEST_FACTS_SQL, [list.map((r) => r.appId), list.map((r) => r.issueNumber)]);
     for (const row of rows) {
       const next = { ...derive(row, { now }), requesterId: row.requester_id == null ? null : Number(row.requester_id) };
-      const sessionId = Number(row.proposal_session_id || row.build_session_id) || null;
+      const sessionId = Number(row.proposal_session_id || row.build_session_id || row.lc_id) || null;
       const key = { appId: Number(row.app_id), kind: 'request', ref: Number(row.issue_number), issueNumber: Number(row.issue_number), sessionId };
       const wrote = await upsert(db, key, next, { touch });
       if (wrote) changed.push({ ...key, appSlug: row.app_slug || null, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
