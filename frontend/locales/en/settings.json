@@ -1951,6 +1951,102 @@
     "text": "It starts again on your home screen.",
     "description": "Note under the \"Replay the tour\" button in Settings. \"It\" is the welcome tour."
   },
+  "guide.title": {
+    "text": "User guide",
+    "description": "Heading of the page in Settings that explains the places in Homeroom and how a change gets voted in."
+  },
+  "guide.intro": {
+    "text": "Where things are in Homeroom, and how a change goes live.",
+    "description": "Explanation under the User guide heading in Settings."
+  },
+  "guide.places.heading": {
+    "text": "Where things are",
+    "description": "Small label over the card of Settings > User guide that explains the main places in Homeroom."
+  },
+  "guide.place.communities.title": {
+    "text": "Communities",
+    "description": "Row title in Settings > User guide, about communities and the Communities tab. Same word as the tab."
+  },
+  "guide.place.communities.body": {
+    "text": "A community is the people behind a project. It shows as Just you, Private community or Public community, depending on who it is for. The Communities tab takes you to yours, each with a hub, a Workshop for the work going on, and channels to talk in. Joining a community is what lets you propose changes, vote and post there.",
+    "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Workshop\" is the name of a place on a project's page."
+  },
+  "guide.place.apps.title": {
+    "text": "My apps",
+    "description": "Row title in Settings > User guide, about the My apps section of the home screen. Same words as that section's heading."
+  },
+  "guide.place.apps.body": {
+    "text": "Home lists the apps from your communities under My apps. Select one to open it. + New project starts your own: it asks what the app should do and what to call it, then makes a private community you can invite people to.",
+    "description": "Paragraph in Settings > User guide. \"+ New project\" is the tile on the home screen that starts a project."
+  },
+  "guide.place.appMenu.title": {
+    "text": "The Homeroom menu",
+    "description": "Row title in Settings > User guide, about the menu behind the Homeroom logo inside an app."
+  },
+  "guide.place.appMenu.body": {
+    "text": "Inside any app, select the Homeroom logo to open its menu. That is where you suggest an improvement or visit the app's community.",
+    "description": "Paragraph in Settings > User guide about the menu behind the Homeroom logo."
+  },
+  "guide.place.suggest.title": {
+    "text": "Suggest an improvement",
+    "description": "Row title in Settings > User guide. Same words as the button in the Homeroom menu."
+  },
+  "guide.place.suggest.body": {
+    "text": "Use this button in the Homeroom menu to ask for a change to any of your apps or to Homeroom itself. You can start building it, or share a request for someone in the community to pick up.",
+    "description": "Paragraph in Settings > User guide. \"This button\" is Suggest an improvement, named by the row title above it."
+  },
+  "guide.place.bot.title": {
+    "text": "Homeroom bot",
+    "description": "Row title in Settings > User guide, about the AI assistant. The bot's own name."
+  },
+  "guide.place.bot.body": {
+    "text": "Homeroom bot is your AI assistant: ask it to build a change, file an idea or fix a bug. It has its own tab, with Main Chat as the first row. Messages is a separate tab, for your conversations with people.",
+    "description": "Paragraph in Settings > User guide. \"Main Chat\" is the name of the person's main chat with the bot. \"Messages\" is the name of a tab."
+  },
+  "guide.place.you.title": {
+    "text": "You and Settings",
+    "description": "Row title in Settings > User guide, about the You tab and the Settings screen. \"You\" is the name of the tab."
+  },
+  "guide.place.you.body": {
+    "text": "The You tab holds your profile, and Settings is on it. Settings is where you change your account, how Homeroom looks, your language and your notifications, and where you can replay the welcome tour.",
+    "description": "Paragraph in Settings > User guide. \"You\" is the name of a tab."
+  },
+  "guide.vote.heading": {
+    "text": "How a change gets voted in",
+    "description": "Small label over the card of Settings > User guide that explains, in four rows, how a change to an app goes live."
+  },
+  "guide.vote.build.title": {
+    "text": "Someone builds it",
+    "description": "Row title in Settings > User guide: the first step of how a change goes live."
+  },
+  "guide.vote.build.body": {
+    "text": "A change starts when a member builds it, with Homeroom bot or a coding agent. When the bot writes a plan for a request, any member can press Build it, and the bot's building time comes out of that member's week. You can see yours in Settings, under AI usage & models.",
+    "description": "Paragraph in Settings > User guide. \"Build it\" is the button on the bot's plan. \"AI usage & models\" is the name of a page in Settings. \"Week\" means the weekly allowance of the bot's building time."
+  },
+  "guide.vote.up.title": {
+    "text": "It goes up for a vote",
+    "description": "Row title in Settings > User guide: the second step of how a change goes live."
+  },
+  "guide.vote.up.body": {
+    "text": "When it is ready, the change goes up for a vote with a preview you can try. If it is waiting on you, it shows under Needs you in the Communities tab.",
+    "description": "Paragraph in Settings > User guide. \"Needs you\" is the name of a list on the Communities tab of decisions waiting on the person."
+  },
+  "guide.vote.checks.title": {
+    "text": "Checks test it",
+    "description": "Row title in Settings > User guide: the third step of how a change goes live. \"Checks\" are automated tests."
+  },
+  "guide.vote.checks.body": {
+    "text": "Homeroom runs automated checks on the preview. A change can't go live until they pass, however the vote goes.",
+    "description": "Paragraph in Settings > User guide."
+  },
+  "guide.vote.rule.title": {
+    "text": "The project's rule decides",
+    "description": "Row title in Settings > User guide: the last step of how a change goes live. The rule is the project's rule for who has to approve a change."
+  },
+  "guide.vote.rule.body": {
+    "text": "Each project has its own rule for who has to say yes: one person's yes can be enough, or it can take most of the group. Find it under Who can see & change it, in the ⋯ menu on the project's hub. Changing the rule is itself a change, voted on under the current rule. Once the rule is met and the checks pass, the change goes live.",
+    "description": "Paragraph in Settings > User guide. \"Who can see & change it\" is the name of a row in a project's ⋯ menu."
+  },
   "about.title": {
     "text": "About",
     "description": "Heading of the section in Settings that shows version numbers."
@@ -2307,6 +2403,10 @@
     "text": "Welcome tour",
     "description": "Name of a part of Settings: the page that replays the welcome tour. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
+  "nav.part.guide": {
+    "text": "User guide",
+    "description": "Name of a part of Settings: the page that explains the places in Homeroom and how a change gets voted in. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
   "nav.part.usernode": {
     "text": "Homeroom app",
     "description": "Name of a part of Settings: the page about the Homeroom phone app. Homeroom is the product name. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2530,6 +2630,10 @@
   "nav.keywords.tour": {
     "text": "walkthrough help onboarding",
     "description": "Not shown on screen. Extra search words for \"Welcome tour\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
+  "nav.keywords.guide": {
+    "text": "help how manual vote voting explain",
+    "description": "Not shown on screen. Extra search words for \"User guide\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.usernode": {
     "text": "mobile phone native diagnostics block production",
