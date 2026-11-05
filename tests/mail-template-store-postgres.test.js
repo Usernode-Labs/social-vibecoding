@@ -26,6 +26,9 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
   const config = { databaseUrl: String(url), adminUsername: 'tpl-admin', adminPassword: 'only-for-tests', selfAppSlug: 'tpl-platform', platformRepoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
   const { migrate } = require('../src/db/migrate');
   await migrate(config); await migrate(config);
+  // Booting seeds the first templates (src/db/email-template-seeds.js). This
+  // suite is about the store from empty.
+  await pool.query('TRUNCATE email_template_translations, email_layout_translations, email_templates, email_layouts');
   const store = require('../src/services/mail/template-store');
   const { rows: [{ id: userId }] } = await pool.query('SELECT id FROM users ORDER BY id LIMIT 1');
   const live = async (action) => (await pool.query("SELECT * FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL", [action])).rows;

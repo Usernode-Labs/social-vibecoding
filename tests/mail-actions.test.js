@@ -36,6 +36,12 @@ test('otp requires code in both forms, password_reset its link', () => {
   assert.equal(ACTIONS.waitlist_released.label, 'Waitlist release');
 });
 
+test('what a mail exists to carry is required, in html and text', () => {
+  assert.deepEqual(ACTIONS.waitlist_joined.required, { html: ['code'], text: ['code'] });
+  assert.deepEqual(ACTIONS.waitlist_code.required, { html: ['code'], text: ['code'] });
+  assert.deepEqual(ACTIONS.project_invite.required, { html: ['url'], text: ['url'] });
+});
+
 test('activity mails require the unsubscribe link', () => {
   for (const kind of ['build_ready', 'invite_activity', 'project_opened']) {
     assert.deepEqual(ACTIONS[kind].required, { html: ['unsubscribeUrl'], text: ['unsubscribeUrl'] }, kind);
@@ -46,7 +52,35 @@ test('words built in code are marked fromCode', () => {
   assert.equal(ACTIONS.build_ready.placeholders.subject.fromCode, true);
   assert.equal(ACTIONS.build_ready.placeholders.lead.fromCode, true);
   assert.equal(ACTIONS.invite_activity.placeholders.line.fromCode, true);
+  assert.equal(ACTIONS.content_report.placeholders.subject.fromCode, true);
   assert.equal(ACTIONS.otp.placeholders.code.fromCode, undefined);
+});
+
+test('words built in code keep the catalog\'s apostrophes in html, and escape a sender\'s', () => {
+  const { lead, app } = ACTIONS.build_ready.htmlValues({ appName: "O'Brien <b>" });
+  assert.equal(lead, "Ready to try. Try it, and approve it if you're happy.");
+  assert.equal(app, 'O&#39;Brien &lt;b&gt;');
+  assert.equal(ACTIONS.build_ready.htmlValues({ lead: "It's & done" }).lead, 'It&#39;s &amp; done');
+  const french = (id, values) => `Quelqu'un & ${values?.app || ''}`;
+  assert.equal(ACTIONS.invite_activity.htmlValues({ appName: "O'Brien" }, french).line, "Quelqu'un &amp; O&#39;Brien");
+  assert.equal(ACTIONS.invite_activity.htmlValues({ line: "It's" }).line, 'It&#39;s');
+  // The clip counts the same characters either way.
+  const long = "'".repeat(500);
+  assert.equal(ACTIONS.invite_activity.htmlValues({ line: long }).line, '&#39;'.repeat(200));
+  assert.equal(ACTIONS.invite_activity.values({ line: long }).line.length, 200);
+});
+
+test('activity mails carry their unsubscribe headers; nothing else has headers', () => {
+  const unsubscribeUrl = 'https://app.onhomeroom.com/mail/unsubscribe?x=1';
+  for (const kind of ['build_ready', 'invite_activity', 'project_opened']) {
+    assert.deepEqual(ACTIONS[kind].headers({ unsubscribeUrl }), {
+      'List-Unsubscribe': `<${unsubscribeUrl}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    }, kind);
+    assert.equal(ACTIONS[kind].headers({ unsubscribeUrl: 'javascript:x' }), null, kind);
+    assert.equal(ACTIONS[kind].headers({}), null, kind);
+  }
+  assert.equal(Object.entries(ACTIONS).filter(([, a]) => a.headers).length, 3);
 });
 
 test('only admin_test and content_report are English only', () => {
@@ -130,4 +164,6 @@ test('values carry what the templates compute today', () => {
   assert.equal(rep.reporter, '@sam');
   assert.equal(rep.detail, 'None given');
   assert.equal(rep.caseId, '?');
+  assert.equal(rep.subject, 'New report: hate speech · Unknown target');
+  assert.equal(ACTIONS.content_report.values({ reason: 'x'.repeat(300) }).subject.length, 200);
 });

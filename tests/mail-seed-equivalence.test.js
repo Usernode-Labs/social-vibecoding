@@ -23,7 +23,7 @@ const { buildMessage, KINDS, ENGLISH_ONLY_KINDS } = require('../src/services/mai
 const tracking = require('../src/services/mail/tracking');
 const { ACTIONS } = require('../src/services/mail/actions');
 const { renderMessage } = require('../src/services/mail/render');
-const { placeholdersIn } = require('../src/services/mail/template-language');
+const { parse, placeholdersIn } = require('../src/services/mail/template-language');
 const { translator, reset } = require('../src/services/push-language');
 const { translatorFrom } = require('../src/services/push-text');
 const {
@@ -160,6 +160,26 @@ test('the matrix holds no apostrophe, and names every kind', () => {
   assert.ok(!JSON.stringify(MATRIX).includes("'"));
 });
 
+test('the matrix takes every conditional of every seed both ways', () => {
+  const on = (value) => !(value === undefined || value === null || value === false || value === '');
+  for (const kind of KINDS) {
+    const template = englishTemplate(kind);
+    for (const field of ['subject', 'preheader', 'why', 'html', 'text']) {
+      const seen = new Map();
+      const walk = (nodes, values, path) => nodes.forEach((node, index) => {
+        if (node.type !== 'if' && node.type !== 'unless') return;
+        const where = `${path}/${index}:${node.name}`;
+        const taken = on(values[node.name]) === (node.type === 'if');
+        seen.set(where, (seen.get(where) || new Set()).add(taken));
+        walk(taken ? node.then : node.else, values, where);
+      });
+      const { nodes } = parse(template[field]);
+      for (const row of MATRIX[kind]) walk(nodes, ACTIONS[kind].values(row), '');
+      for (const [where, ways] of seen) assert.equal(ways.size, 2, `${kind}.${field} ${where}`);
+    }
+  }
+});
+
 // ── What the two sides produce ───────────────────────────────────────────
 
 function viaSeeds(kind, payload, t) {
@@ -190,6 +210,7 @@ function assertMatrix(language, t, extra = {}) {
 test('English: seeded mail is byte-identical to today', () => {
   const compared = assertMatrix('en');
   assert.ok(compared > 1000);
+  console.log(`payloads per language: ${compared}`);
 });
 
 test('French through the translation pipeline: seeded mail is byte-identical to today', async () => {

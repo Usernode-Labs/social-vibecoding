@@ -16,6 +16,14 @@
 //
 // Every URL goes through the same check the click tracker uses, so a link that
 // is not plain http(s) becomes '' and is never rendered as an address.
+//
+// `htmlValues()`, on the actions that have it, gives the html form of the words
+// built in code, already escaped. The template language would escape every
+// apostrophe in such a value, and those words are partly catalog wording, whose
+// apostrophes have always gone out bare. So what came from a sender keeps the
+// template language's escaping and the catalog's words keep their bytes.
+//
+// `headers()`, where present, gives the extra mail headers a send carries.
 
 const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const { destination } = require('./tracking');
@@ -32,6 +40,19 @@ const clip = (value, max) => str(value).slice(0, max);
 const text = (description, extra) => ({ description, kind: 'text', ...extra });
 const link = (description) => ({ description, kind: 'url' });
 const flag = (description) => ({ description, kind: 'flag' });
+
+// A sender's apostrophes are held as this private-use character (one character
+// for one, so a clip to a length cuts in the same place) while their sentence is
+// built, then become &#39; once the whole of it has been escaped.
+const SENDER_APOSTROPHE = '\uE001';
+const asIs = (value) => value;
+const markSender = (value) => (typeof value === 'string' ? value.replace(/'/g, SENDER_APOSTROPHE) : value);
+const wordsToHtml = (words) => String(words)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .split(SENDER_APOSTROPHE).join('&#39;');
 
 const BOTH = (...names) => ({ html: [...names], text: [...names] });
 const NONE = { html: [], text: [] };
@@ -58,6 +79,39 @@ function activityValues(payload) {
     hasUnsubscribeUrl: !!unsubscribeUrl,
   };
 }
+// RFC 8058: `List-Unsubscribe` with `List-Unsubscribe-Post`.
+function activityHeaders(payload) {
+  const unsubscribeUrl = url(payload.unsubscribeUrl);
+  return unsubscribeUrl ? {
+    'List-Unsubscribe': `<${unsubscribeUrl}>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+  } : null;
+}
+
+function buildReadyWords(payload, t, sender = asIs) {
+  const app = payload.appName ? sender(clip(payload.appName, 80)) : clip(t('email:buildReady.unnamedProject'), 80);
+  const lead = typeof payload.lead === 'string' && payload.lead.trim()
+    ? sender(payload.lead.trim().slice(0, 300))
+    : (payload.notWorking ? t('email:buildReady.lead.notWorking') : t('email:buildReady.lead.ready'));
+  const subject = typeof payload.subject === 'string' && payload.subject.trim()
+    ? payload.subject.trim().slice(0, 200)
+    : (payload.notWorking ? t('email:buildReady.subject.notWorking', { app }) : t('email:buildReady.subject.ready', { app }));
+  return { app, lead, subject };
+}
+
+const INVITE_NOTICES = {
+  first_message: 'email:inviteActivity.firstMessage',
+  member_joined: 'email:inviteActivity.joined',
+  member_joined_someone: 'email:inviteActivity.joinedSomeone',
+};
+function inviteLine(payload, t, sender = asIs) {
+  const app = payload.appName ? clip(payload.appName, 80) : '';
+  // The notice it stands for names its own message; `line` is its English.
+  const noticeId = Object.hasOwn(INVITE_NOTICES, payload.notice?.id) ? INVITE_NOTICES[payload.notice.id] : null;
+  const noticeValues = Object.fromEntries(Object.entries(payload.notice?.values || {}).map(([name, value]) => [name, sender(value)]));
+  const fallback = app ? t('email:inviteActivity.joinedSomeone', { app: sender(app) }) : t('email:inviteActivity.joinedUnnamed');
+  return String((noticeId ? t(noticeId, noticeValues) : '') || sender(payload.line) || fallback).slice(0, 200);
+}
 
 const codeAction = (label, expiry) => ({
   label,
@@ -83,7 +137,7 @@ const ACTIONS = {
       confirmUrl: link('One-click link that confirms the address'),
       hasConfirmUrl: flag('True when the confirmation link is present'),
     },
-    required: NONE,
+    required: BOTH('code'),
     englishOnly: false,
     sample: { code: '123456', confirmUrl: 'https://app.onhomeroom.com/api/public/waitlist/confirm/sample' },
     values: (payload) => ({
@@ -105,7 +159,7 @@ const ACTIONS = {
       statusUrl: link('Where the waitlist status is checked'),
       hasStatusUrl: flag('True when the status link is present'),
     },
-    required: NONE,
+    required: BOTH('code'),
     englishOnly: false,
     sample: { code: '123456', confirmed: false, confirmUrl: 'https://app.onhomeroom.com/api/public/waitlist/confirm/sample', statusUrl: 'https://app.onhomeroom.com/#waitlist-status' },
     values: (payload) => ({
@@ -177,7 +231,7 @@ const ACTIONS = {
     values: (payload) => ({
       provider: payload.provider || 'unknown',
       from: payload.from || '(unset)',
-      sentAt: str(payload.sentAt),
+      sentAt: payload.sentAt || '',
       reference: payload.reference || '(none)',
     }),
   },
@@ -185,6 +239,7 @@ const ACTIONS = {
   content_report: {
     label: 'Content report',
     placeholders: {
+      subject: text('The subject line: the reason and what was reported, at most 200 characters', { fromCode: true }),
       reason: text('The report reason, in words'),
       typeLabel: text('What kind of thing was reported'),
       targetLabel: text('Name of the reported thing, at most 120 characters'),
@@ -197,16 +252,21 @@ const ACTIONS = {
     required: BOTH('url'),
     englishOnly: true,
     sample: { reason: 'spam', targetType: 'app', targetLabel: 'Sample project', reporter: 'sample', caseId: 12, reportId: 34, detail: 'Looks like advertising.', url: 'https://app.onhomeroom.com/#admin/moderation' },
-    values: (payload) => ({
-      reason: String(payload.reason || 'unknown').replace(/_/g, ' '),
-      typeLabel: REPORT_TYPE_LABELS[payload.targetType] || 'Unknown',
-      targetLabel: clip(payload.targetLabel || 'Unknown target', 120),
-      reporter: payload.reporter ? `@${payload.reporter}` : 'Unknown',
-      caseId: payload.caseId != null ? String(payload.caseId) : '?',
-      reportId: payload.reportId != null ? String(payload.reportId) : '?',
-      detail: String(payload.detail || '').trim() || 'None given',
-      url: url(payload.url) || PRODUCTION_ORIGIN,
-    }),
+    values: (payload) => {
+      const reason = String(payload.reason || 'unknown').replace(/_/g, ' ');
+      const targetLabel = clip(payload.targetLabel || 'Unknown target', 120);
+      return {
+        subject: `New report: ${reason} · ${targetLabel}`.slice(0, 200),
+        reason,
+        typeLabel: REPORT_TYPE_LABELS[payload.targetType] || 'Unknown',
+        targetLabel,
+        reporter: payload.reporter ? `@${payload.reporter}` : 'Unknown',
+        caseId: payload.caseId != null ? String(payload.caseId) : '?',
+        reportId: payload.reportId != null ? String(payload.reportId) : '?',
+        detail: String(payload.detail || '').trim() || 'None given',
+        url: url(payload.url) || PRODUCTION_ORIGIN,
+      };
+    },
   },
 
   project_invite: {
@@ -219,7 +279,7 @@ const ACTIONS = {
       url: link('Joins the waitlist with this address'),
       hasUrl: flag('True when the link is present'),
     },
-    required: NONE,
+    required: BOTH('url'),
     englishOnly: false,
     sample: { inviter: 'Sam', project: 'Run Club', url: 'https://app.onhomeroom.com/#waitlist' },
     values: (payload) => ({
@@ -243,16 +303,12 @@ const ACTIONS = {
     required: BOTH('unsubscribeUrl'),
     englishOnly: false,
     sample: { appName: 'Plant Pal', subject: 'Dark mode · Plant Pal: Ready to try', lead: 'Dark mode is ready to try.', url: 'https://app.onhomeroom.com/#app/plant-pal', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
-    values: (payload, t = english) => {
-      const app = clip(payload.appName || t('email:buildReady.unnamedProject'), 80);
-      const lead = typeof payload.lead === 'string' && payload.lead.trim()
-        ? payload.lead.trim().slice(0, 300)
-        : (payload.notWorking ? t('email:buildReady.lead.notWorking') : t('email:buildReady.lead.ready'));
-      const subject = typeof payload.subject === 'string' && payload.subject.trim()
-        ? payload.subject.trim().slice(0, 200)
-        : (payload.notWorking ? t('email:buildReady.subject.notWorking', { app }) : t('email:buildReady.subject.ready', { app }));
-      return { app, subject, lead, ...activityValues(payload) };
+    values: (payload, t = english) => ({ ...buildReadyWords(payload, t), ...activityValues(payload) }),
+    htmlValues: (payload, t = english) => {
+      const { app, lead } = buildReadyWords(payload, t, markSender);
+      return { app: wordsToHtml(app), lead: wordsToHtml(lead) };
     },
+    headers: activityHeaders,
   },
 
   invite_activity: {
@@ -269,17 +325,11 @@ const ACTIONS = {
     sample: { appName: 'Run Club', line: '@sam joined Run Club through your invite.', url: 'https://app.onhomeroom.com/#app/run-club', unsubscribeUrl: 'https://app.onhomeroom.com/mail/unsubscribe?sample=1' },
     values: (payload, t = english) => {
       const app = payload.appName ? clip(payload.appName, 80) : '';
-      const notices = {
-        first_message: 'email:inviteActivity.firstMessage',
-        member_joined: 'email:inviteActivity.joined',
-        member_joined_someone: 'email:inviteActivity.joinedSomeone',
-      };
-      // The notice it stands for names its own message; `line` is its English.
-      const noticeId = Object.hasOwn(notices, payload.notice?.id) ? notices[payload.notice.id] : null;
-      const fallback = app ? t('email:inviteActivity.joinedSomeone', { app }) : t('email:inviteActivity.joinedUnnamed');
-      const line = String((noticeId ? t(noticeId, payload.notice.values) : '') || payload.line || fallback).slice(0, 200);
+      const line = inviteLine(payload, t);
       return { app, hasApp: !!app, line, subject: line.replace(/\.$/, ''), ...activityValues(payload) };
     },
+    htmlValues: (payload, t = english) => ({ line: wordsToHtml(inviteLine(payload, t, markSender)) }),
+    headers: activityHeaders,
   },
 
   project_opened: {
@@ -296,6 +346,7 @@ const ACTIONS = {
       const app = payload.appName ? clip(payload.appName, 80) : '';
       return { app, hasApp: !!app, ...activityValues(payload) };
     },
+    headers: activityHeaders,
   },
 };
 

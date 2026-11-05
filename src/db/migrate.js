@@ -47,6 +47,8 @@ async function migrate(config) {
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool);
   await seedReferenceData(pool);
+  // Never fails a boot, and costs one query once every email has its row.
+  await require('./email-template-seeds').seedEmailTemplates(pool);
   await require('../services/moderation-migration').importLegacyReports(pool);
   await require('../services/moderation').purgeExpired(pool);
   // The verified-identity rule's one-time production rollout: on, with $20
