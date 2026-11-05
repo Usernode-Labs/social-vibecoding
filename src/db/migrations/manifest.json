@@ -135,6 +135,11 @@
       "id": "app-activity-user-date-index",
       "sha256": "a5da296832843e71c0fbae15b3cccca789e4bf2874159c5a296390d9e6eb3cdf",
       "schemaSha256": "9b8b46e89beaca6e658653f11f52fcc8c76a3de1e408b05af072cf31980d9219"
+    },
+    {
+      "id": "change-ask-head",
+      "sha256": "ab256176d5c248421ea9217b01b5a90fde6bbbea7158886f3f0b1c9da3c51564",
+      "schemaSha256": "911318d8ac4b1f57f4a780ee0ef794fc1d4655abc8c3f8f982c590d96f86be2a"
     }
   ]
 }

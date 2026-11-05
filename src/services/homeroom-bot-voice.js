@@ -1256,10 +1256,15 @@ async function recordAsk(pool, {
     if (!text) return null;
     // Once per change and message: a turn asked again after a restart finds
     // the ask it recorded before (homeroom_bot_change_asks_once).
+    // #6348: the head the change was on when the ask was made, so the vote
+    // hold ends once a newer one lands. Imported changes compare their PR
+    // head, as checks and votes do.
     const { rows: [row] } = await pool.query(
       `INSERT INTO homeroom_bot_change_asks
-         (app_id, session_id, issue_number, asker_id, instruction, source, place_type, place_ref, message_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (app_id, session_id, issue_number, asker_id, instruction, source, place_type, place_ref, message_id, asked_head_sha)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+               (SELECT CASE WHEN cs.source = 'imported' THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END
+                  FROM chat_sessions cs WHERE cs.id = $2))
        ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL
          DO UPDATE SET instruction = homeroom_bot_change_asks.instruction
        RETURNING id`,
