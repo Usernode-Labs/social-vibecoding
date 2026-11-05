@@ -98,7 +98,7 @@ const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_fai
 // the mark-read scoping test below sends as a request body.
 const DEMO_KINDS = [...SESSION_KINDS, 'session_stalled'];
 
-test('staging + ?demo=1: eighteen mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: twenty-one mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -108,13 +108,14 @@ test('staging + ?demo=1: eighteen mock rows prepend, and only the unread ones bu
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 18, 'exactly eighteen mock rows injected');
+    assert.equal(mocks.length, 21, 'exactly twenty-one mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
       [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'app_quota_changed', 'build_live', 'build_ready',
-        'pr_proposed', 'issue_opened', 'issue_mention'].sort(),
+        'pr_proposed', 'issue_opened', 'issue_mention', 'vote_digest', 'build_stopped'].sort(),
       'every session-related kind is covered, plus the message row, a platform limit alert, '
-      + 'an app allowance change (#3233), the bot\'s story (#5580) and the older rows\' changes; '
+      + 'an app allowance change (#3233), the bot\'s story (#5580), the older rows\' changes and '
+      + 'a row in each of the status chips\' states (#5929); '
       + 'no kudos row while kudos is parked (#5249)'
     );
     // #5580: Homeroom bot's two rows are one request's story in the demo
@@ -163,8 +164,8 @@ test('staging + ?demo=1: eighteen mock rows prepend, and only the unread ones bu
     // older notifications" button: without one the button does not render at
     // all and the caught-up state is unreachable, so the two things a
     // reviewer is asked to look at are both invisible.
-    assert.equal(mocks.filter((n) => !n.readAt).length, 13,
-      'thirteen unread rows feed the badges');
+    assert.equal(mocks.filter((n) => !n.readAt).length, 16,
+      'sixteen unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
     assert.equal(readMocks.length, 5, 'five already-read rows');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
@@ -266,7 +267,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 18);
+  assert.equal(rows.length, 21);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -280,8 +281,8 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
     // shape closed when they are both set, so a mock carrying them would be
     // describing something the real pipeline never emits.
     assert.equal(r.appName,
-      ['conversation_message', 'platform_limit', 'app_quota_changed'].includes(r.kind)
-        ? null : r.id === 990209 ? 'Staging demo archive' : 'Staging demo app');
+      ['conversation_message', 'platform_limit', 'app_quota_changed', 'vote_digest'].includes(r.kind)
+        ? null : ({ 990209: 'Staging demo archive', 990221: 'Staging demo merges', 990222: 'Staging demo builds' })[r.id] || 'Staging demo app');
     assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
   }
 

@@ -559,6 +559,26 @@
     "text": "On hold",
     "description": "First line of a notification from Homeroom bot: work on the viewer's requests waits until Monday, because this week's building time is used up. The request's title (or how many requests) is on the line below."
   },
+  "row.bot.onHoldNote.allowance": {
+    "text": "Until Monday: this week's building time is used up.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: why the viewer's request or requests wait. It may stand for one request or several, so it has no verb of its own."
+  },
+  "row.bot.onHoldNote.paused": {
+    "text": "Until Monday: Homeroom bot's budget for this week is used up.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: the request waits because the bot itself has used its budget for the week. Homeroom bot is the assistant's name."
+  },
+  "row.bot.onHoldNote.slots": {
+    "text": "Until a slot frees up: all of this project's are in use.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: the request waits because the project already has as many changes waiting for votes as it may have. A slot is one of those places."
+  },
+  "row.bot.onHoldNote.builds": {
+    "text": "Until one of this project's builds is done: it has as many under way as it may have.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: the request waits because the bot is already building as much on this project as it may at once."
+  },
+  "row.bot.onHoldNote.taken": {
+    "text": "Somebody has taken it on, so Homeroom bot is leaving it to them.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: a person took on the request the bot was going to build. Homeroom bot is the assistant's name."
+  },
   "row.bot.label.live": {
     "text": "Live",
     "description": "First line of a notification from Homeroom bot: what the viewer asked for is now part of the running project. The request's title is on the line below."
@@ -895,6 +915,10 @@
     "text": "Approved, can't go live yet",
     "description": "First line of a notification: the viewer's proposed change has enough votes but cannot be merged (a conflict or failing checks), and will be archived if nothing changes. The change's title is on the line below."
   },
+  "row.stale.blockedNote": {
+    "text": "The votes are in, but something is stopping the merge, such as a conflict or a failing check.",
+    "description": "Small line under the title of the \"Approved, can't go live yet\" notification: why the viewer's change is not live. The platform does not record the exact cause, so it only gives examples."
+  },
   "row.stale.yourChange": {
     "text": "your change",
     "description": "Second line of the \"Needs votes\" notification when the change has no title. Lower case: it stands where the title would."
@@ -1088,12 +1112,20 @@
     "description": "First line of a daily reminder notification: proposed changes the viewer has not voted on. How many is on the line below."
   },
   "row.voteDigest.count_one": {
-    "text": "{{count}} change",
+    "text": "{{count}} change to review",
     "description": "Second line of the \"Waiting for your approval\" notification. {{count}} is how many proposed changes still wait for the viewer's vote. \"Change\" is a noun."
   },
   "row.voteDigest.count_other": {
-    "text": "{{count}} changes",
+    "text": "{{count}} changes to review",
     "description": "Second line of the \"Waiting for your approval\" notification. {{count}} is how many proposed changes still wait for the viewer's vote. \"Change\" is a noun."
+  },
+  "row.voteDigest.countIn_one": {
+    "text": "{{count}} change to review in {{project}}",
+    "description": "Second line of the \"Waiting for your approval\" notification when it is about one project. {{count}} is how many proposed changes still wait for the viewer's vote; {{project}} is the project's name. \"Change\" is a noun."
+  },
+  "row.voteDigest.countIn_other": {
+    "text": "{{count}} changes to review in {{project}}",
+    "description": "Second line of the \"Waiting for your approval\" notification when it is about one project. {{count}} is how many proposed changes still wait for the viewer's vote; {{project}} is the project's name. \"Change\" is a noun."
   },
   "row.connector.shared": {
     "text": "Shared by your agent",
