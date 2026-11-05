@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { TemplateList } from './email-templates/list';
-import { draftFrom, TemplateEditor, TemplateForm } from './email-templates/editor';
+import { draftFrom, expectedLiveFor, TemplateEditor, TemplateForm } from './email-templates/editor';
 import { LayoutEditor, LayoutList } from './email-templates/layouts';
 import { layoutReplacements, ReplaceDialog, templateReplacements } from './email-templates/replace-dialog';
 import { PreviewView } from './email-templates/preview';
@@ -27,10 +27,12 @@ import {
 // screens with those controls left out. The server enforces that on its own
 // (requireAdminWrite); hiding them here only saves a refused request.
 
+// `restore` is set only by Continue editing: opening the same editor by hand
+// starts from what is live and leaves the kept draft, and its notice, alone.
 type View =
   | { kind: 'list' }
-  | { kind: 'template'; action: string; isNew: boolean }
-  | { kind: 'layout'; familyId: number | null };
+  | { kind: 'template'; action: string; isNew: boolean; restore?: KeptDraft & { kind: 'template' } }
+  | { kind: 'layout'; familyId: number | null; restore?: KeptDraft & { kind: 'layout' } };
 
 type Dialog =
   | { kind: 'template'; live: TemplateRow }
@@ -98,6 +100,9 @@ function EmailTemplatesSection() {
   const reload = async () => {
     setBanner(null);
     await load();
+    // A restored draft was discarded by the Reload the editor asked about:
+    // reopen on what is live now.
+    setView((v) => (v.kind === 'list' ? v : { ...v, restore: undefined }));
     setEditorKey((k) => k + 1);
   };
 
@@ -234,14 +239,14 @@ function EmailTemplatesSection() {
   if (view.kind === 'template') {
     return (
       <TemplateEditor key={`t-${view.action}-${editorKey}`} payload={payload} action={view.action} isNew={view.isNew}
-        canWrite={write} onDone={back} onReload={reload}
+        restore={view.restore || null} canWrite={write} onDone={back} onReload={reload}
         onSaved={(row) => saved(`${row.name} v${row.version} is live.`)()} />
     );
   }
   if (view.kind === 'layout') {
     return (
       <LayoutEditor key={`l-${view.familyId}-${editorKey}`} payload={payload} familyId={view.familyId}
-        canWrite={write} onDone={back} onReload={reload}
+        restore={view.restore || null} canWrite={write} onDone={back} onReload={reload}
         onSaved={(row) => saved(`${row.name} v${row.version} is live.`)()} />
     );
   }
@@ -270,9 +275,12 @@ function EmailTemplatesSection() {
       <KeptDraftNotice draft={kept} onDiscard={() => { keepDraft(null); setKept(null); }}
         onOpen={() => {
           if (!kept) return;
+          // Taken out of the store as it is handed to the editor, which then
+          // owns it: leaving that editor dirty keeps it again.
+          keepDraft(null);
           setKept(null);
-          if (kept.kind === 'template') { setTab('templates'); setView({ kind: 'template', action: kept.action, isNew: kept.isNew }); }
-          else { setTab('layouts'); setView({ kind: 'layout', familyId: kept.familyId }); }
+          if (kept.kind === 'template') { setTab('templates'); setView({ kind: 'template', action: kept.action, isNew: kept.isNew, restore: kept }); }
+          else { setTab('layouts'); setView({ kind: 'layout', familyId: kept.familyId, restore: kept }); }
         }} />
       {tab === 'templates' ? (
         <TemplateList payload={payload} canWrite={write} showArchived={showArchived} now={now}
@@ -318,5 +326,5 @@ if (typeof window !== 'undefined') (window as any).AdminEmailTemplates = AdminEm
 export {
   AdminEmailTemplates, EmailTemplatesSection, TemplateList, TemplateForm, draftFrom, LayoutList, ReplaceDialog,
   templateReplacements, layoutReplacements, PreviewView, FailureNotice, PlaceholderList, readFailure,
-  deletedText, isDirty, KeptDraftNotice,
+  deletedText, isDirty, KeptDraftNotice, TemplateEditor, LayoutEditor, keepDraft, keptDraft, expectedLiveFor,
 };

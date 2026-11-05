@@ -5,9 +5,9 @@ import { useEffect, useRef, useState } from 'react';
 import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
-  confirmDiscard, editedLabel, errorsFor, FailureNotice, FieldErrors, isDirty, isLive, keepDraft, keptDraft,
+  confirmDiscard, editedLabel, errorsFor, FailureNotice, FieldErrors, isDirty, isLive, keepDraft,
   languagesLabel, liveTemplate, PlaceholderList, readFailure, request, useUnloadGuard,
-  type Failure, type LayoutRow, type TemplatesPayload,
+  type Failure, type KeptDraft, type LayoutRow, type TemplatesPayload,
 } from './shared';
 
 // Layouts: the header and footer an email is wrapped in. Each email picks one
@@ -132,22 +132,26 @@ const STARTER: LayoutDraft = {
  * Edits one layout family (or makes a new one when `familyId` is null). The
  * preview shows a chosen email's live version inside the unsaved layout.
  */
-export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onReload }: {
+export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onReload, restore = null }: {
   payload: TemplatesPayload;
   familyId: number | null;
   canWrite: boolean;
   onDone: () => void;
   onSaved: (row: LayoutRow) => void;
   onReload: () => void;
+  // A draft kept when the console left mid-edit, restored by Continue editing.
+  restore?: (KeptDraft & { kind: 'layout' }) | null;
 }) {
   const live = familyId == null ? null : payload.layouts.find((l) => l.family_id === familyId && isLive(l)) || null;
   // What the editor opened with: unsaved edits are measured against it.
-  const [opened] = useState<LayoutDraft>(() => (live ? { name: live.name, html: live.html, text: live.text } : STARTER));
-  const [draft, setDraft] = useState<LayoutDraft>(() => {
-    const k = keptDraft();
-    if (k && k.kind === 'layout' && k.familyId === familyId) { keepDraft(null); return k.draft; }
-    return opened;
+  const [opened] = useState<LayoutDraft>(() => {
+    if (restore) return restore.opened;
+    return live ? { name: live.name, html: live.html, text: live.text } : STARTER;
   });
+  // The live version this editor opened on, which Save expects: fixed, so
+  // someone else's save in between is a conflict, restored drafts included.
+  const [openedLiveId] = useState<number | null>(() => (restore ? restore.openedLiveId : live ? live.id : null));
+  const [draft, setDraft] = useState<LayoutDraft>(() => (restore ? restore.draft : opened));
   const dirty = isDirty(draft, opened);
   useUnloadGuard(dirty);
   // As in the template editor: set when left on purpose, so unmounting with
@@ -157,8 +161,8 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
   latest.current = { draft, dirty };
   useEffect(() => () => {
     if (settled.current || !latest.current.dirty) return;
-    keepDraft({ kind: 'layout', familyId, label: latest.current.draft.name || 'a new layout', draft: latest.current.draft });
-  }, [familyId]);
+    keepDraft({ kind: 'layout', familyId, label: latest.current.draft.name || 'a new layout', draft: latest.current.draft, opened, openedLiveId });
+  }, [familyId, opened, openedLiveId]);
   const leave = async () => {
     if (dirty && !(await confirmDiscard('Your changes to this layout are not saved. Leave and lose them?'))) return;
     settled.current = true;
@@ -186,7 +190,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
     setSaving(true);
     setFailure(null);
     const res = await request('/api/admin/email-layouts', 'POST', {
-      familyId, name: draft.name, html: draft.html, text: draft.text, expectedLiveId: live ? live.id : null,
+      familyId, name: draft.name, html: draft.html, text: draft.text, expectedLiveId: openedLiveId,
     });
     setSaving(false);
     if (res.ok && res.data && res.data.layout) { settled.current = true; onSaved(res.data.layout); return; }

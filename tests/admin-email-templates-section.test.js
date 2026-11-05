@@ -433,3 +433,79 @@ test('the preview asks in English for an English-only email, and dims the last g
   });
   assert.ok(!/Last good preview|opacity-50/.test(fresh));
 });
+
+// ── Fix round 2 ─────────────────────────────────────────────────────────
+
+test('a restored draft saves against the live version it was opened on, so a save in between is a conflict', () => {
+  const { expectedLiveFor } = load();
+  const data = payload();
+  const nowLive = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
+  // Kept while v2 (id 901) was live; someone has since saved nowLive.
+  assert.equal(expectedLiveFor({ action: 'otp', id: 901 }, 'otp', data), 901, 'the kept id, not the one live now');
+  assert.notEqual(nowLive.id, 901);
+  assert.equal(expectedLiveFor({ action: 'otp', id: 901 }, 'password_reset', data),
+    data.templates.find((t) => t.action === 'password_reset' && t.status === 'live').id,
+    'a new template moved to another email expects that one');
+
+  const editor = read('frontend/src/features/admin/email-templates/editor.tsx');
+  assert.match(editor, /if \(restore\) return \{ action: restore\.action, id: restore\.openedLiveId \};/);
+  assert.match(editor, /keepDraft\(\{ kind: 'template', action, isNew, label: name, draft: latest\.current\.draft, opened, openedLiveId: openedLive\.id \}\)/);
+  assert.match(editor, /request\('\/api\/admin\/email-templates', 'POST', \{ \.\.\.draft, expectedLiveId \}\)/);
+  const layouts = read('frontend/src/features/admin/email-templates/layouts.tsx');
+  assert.match(layouts, /useState<number \| null>\(\(\) => \(restore \? restore\.openedLiveId : live \? live\.id : null\)\)/);
+  assert.match(layouts, /expectedLiveId: openedLiveId,/);
+  assert.match(layouts, /draft: latest\.current\.draft, opened, openedLiveId \}\)/);
+  // The stale save is the route's ordinary 409 (tests/admin-email-templates.test.js
+  // "stale expectedLiveId is 409"), shown with Reload, and Reload drops the restore.
+  assert.match(read(SECTION), /setView\(\(v\) => \(v\.kind === 'list' \? v : \{ \.\.\.v, restore: undefined \}\)\);/);
+
+  // Rendered with a restore, the editor shows the kept words, measured
+  // against what it had opened, not against what is live now.
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { TemplateEditor } = load();
+  const opened = { ...load().draftFrom(nowLive), subject: 'What was live then' };
+  const html = renderToHtml(createElement(TemplateEditor, {
+    payload: data, action: 'otp', isNew: false, canWrite: true, onDone() {}, onSaved() {}, onReload() {},
+    restore: { kind: 'template', action: 'otp', isNew: false, label: 'Sign-in code', opened, openedLiveId: 901,
+      draft: { ...opened, subject: 'My unsaved subject' } },
+  }));
+  assert.match(html, /id="email-template-subject"[^>]*value="My unsaved subject"/);
+});
+
+test('opening an editor by hand leaves the kept draft and its notice alone', () => {
+  const { keepDraft, keptDraft, TemplateEditor, draftFrom } = load();
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const data = payload();
+  const nowLive = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
+  const record = { kind: 'template', action: 'otp', isNew: false, label: 'Sign-in code', opened: draftFrom(nowLive),
+    openedLiveId: nowLive.id, draft: { ...draftFrom(nowLive), subject: 'Kept words' } };
+  keepDraft(record);
+  const html = renderToHtml(createElement(TemplateEditor, {
+    payload: data, action: 'otp', isNew: false, canWrite: true, onDone() {}, onSaved() {}, onReload() {},
+  }));
+  assert.match(html, /id="email-template-subject"[^>]*value="Sign-in code \(OTP\) subject"/, 'it opens on what is live');
+  assert.ok(keptDraft(), 'the kept draft is still there for Continue editing');
+  assert.equal(keptDraft().draft.subject, 'Kept words');
+  assert.ok(!/keptDraft\(\)/.test(read('frontend/src/features/admin/email-templates/editor.tsx')), 'editors never read the store themselves');
+  assert.match(read(SECTION), /keepDraft\(null\);\s*setKept\(null\);\s*if \(kept\.kind === 'template'\)/, 'only Continue editing takes it');
+  keepDraft(null);
+});
+
+test('a kept draft belongs to the account that left it', () => {
+  const { keepDraft, keptDraft, draftFrom } = load();
+  const data = payload();
+  const live = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
+  const prior = globalThis.App;
+  try {
+    globalThis.App = { user: { id: 1 } };
+    keepDraft({ kind: 'template', action: 'otp', isNew: false, label: 'x', opened: draftFrom(live), openedLiveId: live.id, draft: draftFrom(live) });
+    assert.ok(keptDraft(), 'kept for the same account');
+    globalThis.App = { user: { id: 2 } };
+    assert.equal(keptDraft(), null, 'another account signed in: gone');
+    globalThis.App = { user: { id: 1 } };
+    assert.equal(keptDraft(), null, 'and it does not come back');
+  } finally {
+    globalThis.App = prior;
+    keepDraft(null);
+  }
+});

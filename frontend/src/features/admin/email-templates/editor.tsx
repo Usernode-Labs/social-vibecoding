@@ -5,8 +5,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
-  confirmDiscard, errorsFor, FailureNotice, FieldErrors, isDirty, keepDraft, keptDraft, liveLayouts, liveTemplate,
-  PlaceholderList, readFailure, request, useUnloadGuard, type Failure, type TemplateRow, type TemplatesPayload,
+  confirmDiscard, errorsFor, FailureNotice, FieldErrors, isDirty, keepDraft, liveLayouts, liveTemplate,
+  PlaceholderList, readFailure, request, useUnloadGuard, type Failure, type KeptDraft, type TemplateRow, type TemplatesPayload,
 } from './shared';
 
 // The template editor: what the email is for, its name, the layout it wears,
@@ -211,16 +211,28 @@ export function TemplateForm({
   );
 }
 
+/**
+ * The live version a save expects: the one the editor opened on (kept with a
+ * restored draft), or, for a new template moved to another email, that
+ * email's live version in the snapshot.
+ */
+export function expectedLiveFor(openedLive: { action: string; id: number | null }, action: string, payload: TemplatesPayload): number | null {
+  if (action === openedLive.action) return openedLive.id;
+  const live = liveTemplate(payload, action);
+  return live ? live.id : null;
+}
+
 const BLANK = (action: string, layoutFamilyId: number | null): TemplateDraft => ({
   action, name: '', layoutFamilyId, subject: '', preheader: '', why: '', html: '', text: '',
 });
 
 /**
  * Opens on the live version of `action`, or, for a new template, on a blank
- * draft wearing the first layout. Calls `onSaved` with the saved row, and
+ * draft wearing the first layout; or, given `restore`, on a draft kept when
+ * the console left mid-edit. Calls `onSaved` with the saved row, and
  * `onReload` when the admin asks to see someone else's newer version.
  */
-export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSaved, onReload }: {
+export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSaved, onReload, restore = null }: {
   payload: TemplatesPayload;
   action: string;
   isNew: boolean;
@@ -228,20 +240,23 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   onDone: () => void;
   onSaved: (row: TemplateRow) => void;
   onReload: () => void;
+  restore?: (KeptDraft & { kind: 'template' }) | null;
 }) {
-  // What the editor opened with: unsaved edits are measured against it.
+  // What the editor opened with, and the live version that was: unsaved
+  // edits are measured against the first, and Save expects the second.
   const [opened] = useState<TemplateDraft>(() => {
+    if (restore) return restore.opened;
     const live = liveTemplate(payload, action);
     if (live && !isNew) return draftFrom(live);
     const first = liveLayouts(payload)[0];
     return BLANK(action, first ? first.family_id : null);
   });
-  const [draft, setDraft] = useState<TemplateDraft>(() => {
-    // Edits kept when the console last switched away mid-edit come back.
-    const k = keptDraft();
-    if (k && k.kind === 'template' && k.action === action && k.isNew === isNew) { keepDraft(null); return k.draft; }
-    return opened;
+  const [openedLive] = useState<{ action: string; id: number | null }>(() => {
+    if (restore) return { action: restore.action, id: restore.openedLiveId };
+    const live = liveTemplate(payload, action);
+    return { action, id: live ? live.id : null };
   });
+  const [draft, setDraft] = useState<TemplateDraft>(() => (restore ? restore.draft : opened));
   const dirty = isDirty(draft, opened);
   useUnloadGuard(dirty);
   // Set once the editor is left on purpose (saved, or edits discarded), so
@@ -254,17 +269,16 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     // no way to ask first, so keep them for the section to offer back.
     if (settled.current || !latest.current.dirty) return;
     const name = latest.current.draft.name || payload.actions.find((a) => a.action === action)?.label || 'this email';
-    keepDraft({ kind: 'template', action, isNew, label: name, draft: latest.current.draft });
-  }, [action, isNew, payload]);
+    keepDraft({ kind: 'template', action, isNew, label: name, draft: latest.current.draft, opened, openedLiveId: openedLive.id });
+  }, [action, isNew, payload, opened, openedLive]);
   const [tab, setTab] = useState<BodyTab>('html');
   const [failure, setFailure] = useState<Failure | null>(null);
   const [saving, setSaving] = useState(false);
-  // The live version this editor started from. For a new template it is the
-  // action's current live version, which the save replaces.
-  const expectedLiveId = useMemo(() => {
-    const live = liveTemplate(payload, draft.action);
-    return live ? live.id : null;
-  }, [payload, draft.action]);
+  // The live version this editor started from, fixed when it opened (or kept
+  // with a restored draft), so a save over someone else's newer version is a
+  // conflict. A new template switched to another email expects that email's
+  // live version as this snapshot shows it.
+  const expectedLiveId = useMemo(() => expectedLiveFor(openedLive, draft.action, payload), [payload, draft.action, openedLive]);
   const info = payload.actions.find((a) => a.action === draft.action);
 
   const change = (field: keyof TemplateDraft, value: string | number | null) => {

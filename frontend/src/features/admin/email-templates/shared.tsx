@@ -255,14 +255,32 @@ export function useUnloadGuard(dirty: boolean) {
 // An editor left with unsaved edits by a way it cannot stop: the console
 // switching section, which tears the section down at once and offers no way
 // to ask. The draft is kept here, for this tab only, and the section offers
-// it back the next time it opens.
+// it back the next time it opens; only Continue editing restores it.
+//
+// It keeps what the editor had opened (`opened`, to measure edits against)
+// and the live version that was (`openedLiveId`), which a restored draft's
+// Save sends as expectedLiveId: if someone saved meanwhile, that is a
+// conflict with Reload, not a silent overwrite.
+//
+// Signing out leaves this document (settings.js replaces the page), which
+// drops the draft with it; `userId` covers a different account signing in
+// without a reload.
+interface KeptBase { label: string; draft: any; opened: any; openedLiveId: number | null; userId?: number | null }
 export type KeptDraft =
-  | { kind: 'template'; action: string; isNew: boolean; label: string; draft: any }
-  | { kind: 'layout'; familyId: number | null; label: string; draft: any };
+  | (KeptBase & { kind: 'template'; action: string; isNew: boolean })
+  | (KeptBase & { kind: 'layout'; familyId: number | null });
+
+const signedInId = (): number | null => {
+  const user = typeof window !== 'undefined' ? (window as any).App?.user : null;
+  return user && typeof user.id === 'number' ? user.id : null;
+};
 
 let kept: KeptDraft | null = null;
-export const keptDraft = (): KeptDraft | null => kept;
-export const keepDraft = (next: KeptDraft | null) => { kept = next; };
+export const keptDraft = (): KeptDraft | null => {
+  if (kept && (kept.userId ?? null) !== signedInId()) kept = null;
+  return kept;
+};
+export const keepDraft = (next: KeptDraft | null) => { kept = next ? { ...next, userId: signedInId() } : null; };
 
 /** Says an editor was left with unsaved edits, and offers them back. */
 export function KeptDraftNotice({ draft, onOpen, onDiscard }: {
