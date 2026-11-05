@@ -111,6 +111,26 @@
     "text": "Clear search",
     "description": "Tooltip and accessible name of the × button inside Discover's search field: empties the field."
   },
+  "search.recent.heading": {
+    "text": "Recent searches",
+    "description": "Small-caps label over the list of the viewer's last searches, in the menu that opens under Discover's search field while the field is empty."
+  },
+  "search.recent.clear": {
+    "text": "Clear",
+    "description": "Small button beside the \"Recent searches\" label in the menu under Discover's search field: forgets the listed searches on this device."
+  },
+  "search.recent.clearLabel": {
+    "text": "Clear recent searches",
+    "description": "Accessible name of the \"Clear\" button beside the \"Recent searches\" label under Discover's search field."
+  },
+  "search.suggest.heading": {
+    "text": "Suggestions",
+    "description": "Small-caps label over the community names that match what the viewer has typed, in the menu under Discover's search field."
+  },
+  "search.suggest.listLabel": {
+    "text": "Search suggestions",
+    "description": "Accessible name of the list of matching community names in the menu under Discover's search field."
+  },
   "view.groupLabel": {
     "text": "Which apps",
     "description": "Accessible name of the three-way switch at the top of Discover that chooses which apps the list holds: For you, Browse or Joined."
@@ -319,6 +339,10 @@
     "text": "No apps of this type here.",
     "description": "Shown in place of Discover's list when a type chip is pressed and the filter chip above leaves no app of that type (no search text)."
   },
+  "empty.clearFilters": {
+    "text": "Clear filters",
+    "description": "Button under Discover's \"No apps match…\" line when a type or a Show only switch left nothing to show. Turns those off and keeps the search text, the view and the sort order."
+  },
   "list.heading.recommended": {
     "text": "Featured",
     "description": "Heading over the first group of rows in Discover's default list: apps Homeroom's staff picked to feature that the viewer has not joined yet. Not a personal recommendation, so it does not say \"for you\"."
@@ -326,6 +350,14 @@
   "list.heading.moreApps": {
     "text": "More apps",
     "description": "Heading over the rest of Discover's default list, below the \"Featured\" group."
+  },
+  "list.heading.trending": {
+    "text": "Trending this week",
+    "description": "Heading over the section of Discover's default list between \"Featured\" and \"More apps\": the up to three communities people used most in the last 7 days."
+  },
+  "list.why.trending": {
+    "text": "Used most in the last 7 days.",
+    "description": "One line under the \"Trending this week\" heading in Discover's default list, saying how those rows were chosen: by the time people spent in them and the chat messages they sent this week."
   },
   "list.why.recommended": {
     "text": "Picked by Homeroom's staff.",
@@ -394,6 +426,14 @@
   "row.meta.users_other": {
     "text": "{{count}} users",
     "description": "First fact on the small grey line under an app's name in Discover. {{count}} is how many people actively use the app."
+  },
+  "row.meta.members_one": {
+    "text": "{{count}} member",
+    "description": "First fact on the small grey line under an app's name in Discover's \"Trending this week\" section. {{count}} is how many people have joined its community."
+  },
+  "row.meta.members_other": {
+    "text": "{{count}} members",
+    "description": "First fact on the small grey line under an app's name in Discover's \"Trending this week\" section. {{count}} is how many people have joined its community."
   },
   "row.meta.liveRecently_one": {
     "text": "{{count}} live in 30d",

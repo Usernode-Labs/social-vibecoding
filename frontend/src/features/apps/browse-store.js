@@ -55,6 +55,16 @@ export const browseStore = createStore({
    * null is the PRERENDER value: there is no query in the SSG pass.
    */
   make: null,
+  /**
+   * Whether #browse-empty offers Clear filters (#6197): a type or a Show only
+   * switch left the list empty. False is the PRERENDER value.
+   */
+  canClearFilters: false,
+  /**
+   * The search field's Recent searches (#6197). Read from localStorage on
+   * screen entry (Browse.open), never during render: the SSG pass has none.
+   */
+  recent: [],
   /** True after a failed /api/apps read, while the list level is showing. */
   error: false,
   /** null until the detail level is entered; else a detail descriptor. */
