@@ -58,6 +58,21 @@ async function ensureServerBudget(config, pool) {
   }
 }
 
+// The Job is where production seeds the email templates; pods never do. A seed
+// that failed or was skipped (it logs and lets the boot go on) would leave the
+// release sending plain mail or none for a kind, so the Job stops instead: the
+// release does not roll out and the running pods keep sending. A preview seeds
+// after its import, in the background, and is not checked here.
+async function requireEmailTemplates(pool, env = process.env) {
+  if (env.USERNODE_ENV === 'staging') return;
+  const missing = await require('../src/db/email-template-seeds').kindsWithoutTemplate(pool);
+  if (missing.length) {
+    throw new Error(`Email templates are missing, or their layout is not live, for: ${missing.join(', ')}. `
+      + 'The seed did not complete (see "Could not seed email templates" above, or an admin deleted a layout a new kind needs). '
+      + 'The release stops here so the running pods keep sending mail.');
+  }
+}
+
 async function main() {
   const config = loadConfig();
   const pool = getPool(config);
@@ -70,6 +85,7 @@ async function main() {
     // as it was.
     await grants.awaitWebRestrictionReady(pool);
     await migrate(config);
+    await requireEmailTemplates(pool);
     // One transaction, after the schema web's withdrawals use is in place: no
     // login sees a grant half made, and web's writes go last.
     const client = await pool.connect();
@@ -98,4 +114,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { databaseName, ensureTargetDatabase, ensureServerBudget, main };
+module.exports = { databaseName, ensureTargetDatabase, ensureServerBudget, requireEmailTemplates, main };

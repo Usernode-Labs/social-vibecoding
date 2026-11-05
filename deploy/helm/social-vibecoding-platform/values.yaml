@@ -384,9 +384,6 @@ secrets:
   # Bearer token Brevo's mail webhook sends. Supply through SOPS; empty leaves
   # POST /api/mail/webhooks/brevo answering 404.
   brevoMailWebhookToken: ""
-  # Mail kinds sent with a template kept in Brevo, as JSON: '{"project_invite":12}'.
-  # Empty leaves every mail on Homeroom's templates. See docs/mail-brevo.md.
-  brevoMailTemplates: ""
   # The media store's key pair for config.mediaStorage. Supply both through SOPS.
   mediaStorageAccessKey: ""
   mediaStorageSecretKey: ""

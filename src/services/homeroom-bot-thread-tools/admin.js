@@ -446,9 +446,9 @@ function outcomeLine(name, stored) {
       return `Retired @${plainText(s.username) || '?'}${apps ? `, and took down ${apps} ${apps === 1 ? 'app' : 'apps'}` : ''}.`;
     }
     case 'send_test_release_email': {
-      // services/mail: failed, no_transport and suppressed_* mean it did not go.
+      // services/mail: failed, no_transport, no_template and suppressed_* mean it did not go.
       const status = plainText(s.mail?.status) || 'unknown';
-      return /^(failed|no_transport|suppressed|unknown)/.test(status)
+      return /^(failed|no_transport|no_template|suppressed|unknown)/.test(status)
         ? `The release email to ${plainText(s.email)} did not go out (${status.replace(/_/g, ' ')}).`
         : `Sent the release email to ${plainText(s.email)}.`;
     }
