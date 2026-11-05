@@ -147,9 +147,14 @@
       "schemaSha256": "b867ea9d6234ced2f5a410107486d0120a05f9c170c59feadfa48e29e95de3d9"
     },
     {
+      "id": "email-templates",
+      "sha256": "1360f85450e4799aa26224b8329fc6822e8451d7e39801872d74431c8059a2be",
+      "schemaSha256": "a9ef81414d7175de7964c07bdd11aeeea8df43e76eb8d573b515d985fd371fa5"
+    },
+    {
       "id": "app-offline-cache-refusals",
       "sha256": "a3b88252c75232bdb5062d09a02643059224f1b5bebdba4e38efb5847fac9423",
-      "schemaSha256": "5cd57b8f6b2200f9312b1f95543c279ad9b1e3ad306d1c790f685e51d59b1240"
+      "schemaSha256": "8a413119613a6407a4eca30260b3c04309c548ed5eaae66920e2e2967e4277cd"
     }
   ]
 }
