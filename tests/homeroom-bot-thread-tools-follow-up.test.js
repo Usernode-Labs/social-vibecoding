@@ -141,3 +141,19 @@ test('a change already up for a vote is still stored by its session', async () =
   assert.equal(calls[0].issueNumber, null);
   assert.equal(calls[0].event, 'update');
 });
+
+// 5 Nov 2026: a DM follow-up was never recorded as sent: deliver read
+// `sent.id`, and homeroom-bot-dm.js sendDm answers { messageId }.
+test('a follow-up delivered in a DM is recorded by the message id sendDm answers', async () => {
+  const followups = require('../src/services/thread-followups');
+  const sent = [];
+  const dm = {
+    botAccount: async () => ({ id: 900 }),
+    sendDm: async (_pool, opts) => { sent.push(opts); return { conversationId: 4, messageId: 77, duplicate: false }; },
+  };
+  const row = { id: 5, place_type: 'dm', user_id: 7, thread_root_id: 31 };
+  const id = await followups.deliver({}, row, 'It is up for a vote now.', { deps: { dm } });
+  assert.equal(id, 77, 'the id is read off messageId, so the row is marked sent');
+  assert.equal(sent[0].idempotencyKey, 'followup:5');
+  assert.equal(sent[0].threadRootId, 31);
+});

@@ -282,7 +282,8 @@ test('Main Chat draws a screen in place of the screen picker: draw_screen, no Pi
   assert.match(prompt, /\(draw_screen\): your designer draws it from their words/);
   assert.doesNotMatch(prompt, /offer_design|Pick the screen/);
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /while \(rounds < limit && !ctx\.reply && !ctx\.drawScreen\) \{/, 'the turn ends with it');
+  // The chat is a profile on the turn engine: its rounds end with a reply or a screen handed over.
+  assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen,/, 'the turn ends with it');
   assert.match(src, /if \(ctx\.drawScreen\) \{\n(?:\s+\/\/[^\n]*\n)*\s+const where = ctx\.projectThread \? [^\n]+\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{/);
   // B01: drawn in the new project's thread when this turn opened one.
   assert.match(src, /const where = ctx\.projectThread \? \{ \.\.\.deps, threadRootId: ctx\.projectThread\.rootId, threadRequest: null \} : deps;/);

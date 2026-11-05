@@ -146,3 +146,42 @@ test('#6305: an unanswered look leaves its row ticked with no sentence', async (
     assert.equal(row.ticked, true);
   }
 });
+
+// 5 Nov 2026: a look before filing runs on the bot's turn engine, asked
+// through askModel (retried on a fresh route like every turn's requests),
+// and what it costs is counted: with the turn that asked for it, or debited
+// on its own when there is none to count toward.
+const lookChat = async () => ({
+  content: '{"done": false}', toolCalls: [], usage: { inputTokens: 100, outputTokens: 5, costUsd: 0.002 },
+});
+
+test('a look before filing counts its cost toward the turn that asked for it', async () => {
+  const done = require('../src/services/homeroom-bot-already-done');
+  const parent = { usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.001 }, failures: [], message: { id: 12 } };
+  const out = await done.alreadyDoes({}, {
+    user: { id: 7, username: 'ada' }, apps: [{ slug: 'a', name: 'A' }, { slug: 'b', name: 'B' }],
+    title: 'Guests can play', details: 'Without an account.',
+    deps: { chat: lookChat, apiKey: 'sk-test' },
+    ctx: { turn: parent, bot: { id: 900 }, settings: {}, config: {} },
+  });
+  assert.deepEqual(out, { a: { done: false, sentence: null }, b: { done: false, sentence: null } });
+  assert.equal(parent.usage.inputTokens, 201, 'both looks counted with the turn');
+  assert.ok(Math.abs(parent.usage.costUsd - 0.005) < 1e-9);
+});
+
+test('with no turn to count toward, a look before filing is debited on its own', async () => {
+  const done = require('../src/services/homeroom-bot-already-done');
+  const debited = [];
+  await done.alreadyDoes({}, {
+    user: { id: 7, username: 'ada' }, apps: [{ slug: 'a', name: 'A' }],
+    title: 'Guests can play', details: 'Without an account.',
+    deps: {
+      chat: lookChat, apiKey: 'sk-test',
+      managedOpenRouter: { usesIncludedKey: async () => true },
+      limits: { recordSpend: async (_pool, botId, cents) => { debited.push({ botId, cents }); } },
+    },
+    ctx: { bot: { id: 900 }, settings: {}, config: {} },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(debited, [{ botId: 900, cents: 0.2 }]);
+});
