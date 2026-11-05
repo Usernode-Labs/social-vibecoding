@@ -1,6 +1,6 @@
 'use strict';
 
-import { useEffect, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { AdminUI } from '../admin-console.js';
 import {
@@ -54,11 +54,22 @@ function conditionLabel(marker: string): string {
 
 const conditionHtml = (marker: string) => `<span data-hr-cond="${escapeAttr(marker)}" contenteditable="false" class="hr-cond">${escapeText(conditionLabel(marker))}</span>`;
 
-// Puts `attrs` inside an opening tag, before its ">" (or "/>").
-function withAttrs(tag: string, attrs: string): string {
-  const cut = tag.endsWith('/>') ? tag.length - 2 : tag.length - 1;
+// Puts `attrs` into an opening tag right after its name, ahead of the email's
+// own attributes, so where both name one (a title, contenteditable) the
+// browser takes the editor's.
+function withAttrs(tag: string, name: string, attrs: string): string {
+  const cut = 1 + name.length;
   return tag.slice(0, cut) + attrs + tag.slice(cut);
 }
+
+// The conditions open around a point in the source, innermost last.
+interface Condition { name: string; negated: boolean; inElse: boolean }
+
+function conditionsLabel(open: Condition[]): string {
+  return `Shown only when ${open.map((c) => (c.negated !== c.inElse ? `not ${c.name}` : c.name)).join(' and ')}`;
+}
+
+const inConditionAttrs = (label: string) => ` data-hr-in-cond="${escapeAttr(label)}" title="${escapeAttr(label)}"`;
 
 /** Placeholders as chips and conditions as labels, in markup with no blocks marked. */
 export function chipify(html: string): string {
@@ -72,37 +83,57 @@ export function chipify(html: string): string {
 /**
  * The copy of `source` the frame draws: editable blocks marked (and
  * contenteditable when `editable`), structure blocks outlined, placeholders as
- * chips and conditions as labels. undecorate(decorate(s)) === s.
+ * chips and conditions as labels. An editable block inside a condition stays
+ * editable (its markers are outside it) and is outlined and labelled with the
+ * condition it is shown under. undecorate(decorate(s)) === s.
  */
 export function decorate(source: string, { editable }: { editable: boolean }): string {
   const { structure } = findBlocks(source);
   const blocks = editableBlocks(source);
   const blockAt = new Map(blocks.map((b, i) => [b.outerStart, i]));
   const structureAt = new Set(structure.map((b) => b.outerStart));
+  const open: Condition[] = [];
   return tokenize(source).map((t) => {
     if (t.type === 'tag' && !t.closing) {
-      if (blockAt.has(t.start)) return withAttrs(t.html, editableAttrs(blockAt.get(t.start) as number, editable));
-      if (structureAt.has(t.start)) return withAttrs(t.html, STRUCTURE_ATTRS);
+      if (blockAt.has(t.start)) {
+        const attrs = editableAttrs(blockAt.get(t.start) as number, editable) + (open.length ? inConditionAttrs(conditionsLabel(open)) : '');
+        return withAttrs(t.html, t.name, attrs);
+      }
+      if (structureAt.has(t.start)) return withAttrs(t.html, t.name, STRUCTURE_ATTRS);
     }
     if (t.type === 'placeholder') return chipHtml(t.name);
-    if (t.type === 'marker') return conditionHtml(t.html);
+    if (t.type === 'marker') {
+      const body = t.html.slice(2, -2).trim();
+      const m = /^#(if|unless)\s+(\S+)$/.exec(body);
+      if (m) open.push({ name: m[2], negated: m[1] === 'unless', inElse: false });
+      else if (body === 'else') { if (open.length) open[open.length - 1].inElse = true; }
+      else open.pop();
+      return conditionHtml(t.html);
+    }
     return t.html;
   }).join('');
 }
 
-const CHIP = /<span\b[^>]*?\sdata-hr-chip="([^"]*)"[^>]*>[\s\S]*?<\/span>/g;
+// Only a span carrying all of the editor's own markers is a chip; the email's
+// own markup that happens to use data-hr-chip stays markup.
+const CHIP = /<span\b(?=[^>]*\sdata-hr-chip=")([^>]*)>([\s\S]*?)<\/span>/g;
+const isChip = (attrs: string) => /\scontenteditable="false"/.test(attrs) && /\sclass="hr-chip"/.test(attrs);
 const CONDITION = /<span\b[^>]*?\sdata-hr-cond="([^"]*)"[^>]*>[\s\S]*?<\/span>/g;
 
 /** A block's HTML as the frame's DOM gives it back, with every chip its {{name}} again. */
 export function fromEditorHtml(html: string): string {
-  return html.replace(CHIP, (_, name: string) => `{{${unescapeAttr(name)}}}`);
+  return html.replace(CHIP, (whole: string, attrs: string) => {
+    if (!isChip(attrs)) return whole;
+    const name = /\sdata-hr-chip="([^"]*)"/.exec(attrs) as RegExpExecArray;
+    return `{{${unescapeAttr(name[1])}}}`;
+  });
 }
 
 /** Takes off everything decorate added. */
 export function undecorate(html: string): string {
   return fromEditorHtml(html)
     .replace(CONDITION, (_, marker: string) => unescapeAttr(marker))
-    .replace(/ data-hr-block="\d+"( contenteditable="true" role="textbox" aria-label="Email text")?/g, '')
+    .replace(/ data-hr-block="\d+"( contenteditable="true" role="textbox" aria-label="Email text")?( data-hr-in-cond="[^"]*" title="[^"]*")?/g, '')
     .split(STRUCTURE_ATTRS).join('');
 }
 
@@ -148,6 +179,22 @@ export function applyBlockEdit(model: VisualModel, index: number, html: string, 
   return { ...model, source, blocks };
 }
 
+/**
+ * What one input in block `index` does: `{ model }`, moved on by the edit (the
+ * same model when nothing changed), or `{ refused, restore }`: why the edit
+ * cannot be kept, and the block's content to put back, as the source has it.
+ */
+export function blockInput(model: VisualModel, index: number, innerHTML: string, baseline: string, allowed: string[]):
+  { model: VisualModel; refused?: undefined; restore?: undefined } | { model?: undefined; refused: string; restore: string } {
+  if (!model.blocks[index]) return { model };
+  const html = readEdit(innerHTML, baseline, model.opened[index]);
+  try {
+    return { model: applyBlockEdit(model, index, html, allowed) };
+  } catch (err) {
+    return { refused: err instanceof Error ? err.message : String(err), restore: chipify(model.blocks[index].html) };
+  }
+}
+
 /** What a paste puts in: the clipboard's plain text as HTML, lines kept as line breaks. Its HTML is never read. */
 export function pastedHtml(clipboard: { getData: (type: string) => string } | null): string {
   const text = clipboard ? clipboard.getData('text/plain') || '' : '';
@@ -171,6 +218,8 @@ const FRAME_CSS = `
 [data-hr-block][contenteditable="true"]:hover{outline-color:rgba(10,110,224,.5)}
 [data-hr-block][contenteditable="true"]:focus{outline:2px solid ${BRAND_ACCENT}}
 [data-hr-structure]{outline:1px dashed rgba(127,127,127,.7);outline-offset:3px;border-radius:2px}
+[data-hr-block][data-hr-in-cond]{outline:1px dashed rgba(176,128,0,.8);outline-offset:3px;border-radius:2px}
+[data-hr-in-cond]::before{content:attr(data-hr-in-cond);display:block;margin:0 0 2px;font:600 11px/1.6 -apple-system,system-ui,sans-serif;color:#6b4e00;letter-spacing:0;text-transform:none;font-style:normal}
 .hr-chip{display:inline-block;padding:0 6px;border-radius:999px;background:#e6f0fd;color:#0a4fa8;font:600 0.85em/1.5 ui-monospace,Menlo,monospace;letter-spacing:0;text-transform:none;user-select:all;cursor:default}
 .hr-chip::before{content:"{{"}.hr-chip::after{content:"}}"}
 .hr-cond{display:inline-block;margin:2px 4px;padding:0 6px;border-radius:4px;background:#fff3d1;color:#6b4e00;font:600 11px/1.6 -apple-system,system-ui,sans-serif;letter-spacing:0;text-transform:none;cursor:default}
@@ -207,12 +256,15 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
   const [height, setHeight] = useState(320);
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState<LinkForm | null>(null);
-  const latest = useRef({ onChange, allowed });
-  latest.current = { onChange, allowed };
+  const [toInsert, setToInsert] = useState('');
+  const imageNote = useId();
+  const latest = useRef({ onChange, allowed, source });
+  latest.current = { onChange, allowed, source };
 
   // A source changed from outside (the HTML tab, Revert, a reload) is drawn
-  // afresh; one this tab produced is already on screen.
-  useEffect(() => {
+  // afresh; one this tab produced is already on screen. Before paint, so no
+  // input in the old frame is read against the old model.
+  useLayoutEffect(() => {
     if (source === model.current.source) return;
     model.current = openModel(source);
     redraw(source);
@@ -236,18 +288,20 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
   };
 
   const readBlock = (el: HTMLElement) => {
+    // The source moved on from outside and the frame is about to be drawn
+    // again: this input belongs to the old one.
+    if (model.current.source !== latest.current.source) return;
     const index = Number(el.getAttribute('data-hr-block'));
     const m = model.current;
-    if (!Number.isInteger(index) || !m.blocks[index]) return;
-    const html = readEdit(el.innerHTML, baseline.current[index] ?? '', m.opened[index]);
-    try {
-      const next = applyBlockEdit(m, index, html, latest.current.allowed);
-      setNotice(null);
-      if (next !== m) emit(next);
-    } catch (err) {
+    if (!Number.isInteger(index)) return;
+    const result = blockInput(m, index, el.innerHTML, baseline.current[index] ?? '', latest.current.allowed);
+    if (result.refused !== undefined) {
       // Put the block back as the source still has it, and say why.
-      el.innerHTML = chipify(m.blocks[index].html);
-      setNotice(err instanceof Error ? err.message : String(err));
+      el.innerHTML = result.restore;
+      setNotice(result.refused);
+    } else {
+      setNotice(null);
+      if (result.model !== m) emit(result.model);
     }
     fit();
   };
@@ -307,6 +361,14 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
     d.addEventListener('beforeinput', (ev) => {
       const e = ev as InputEvent;
       if (!blockEl(e.target as Node)) return;
+      if (e.isComposing) return;
+      if (e.inputType === 'insertParagraph') {
+        // A phone keyboard's Enter often arrives only here: a new paragraph
+        // is structure, a line break is text.
+        e.preventDefault();
+        d.execCommand('insertLineBreak');
+        return;
+      }
       const deleting = e.inputType.startsWith('delete');
       const replacing = e.inputType.startsWith('insert') && !!d.getSelection() && !d.getSelection()!.isCollapsed;
       if (!deleting && !replacing) return;
@@ -316,7 +378,7 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
     d.addEventListener('keydown', (ev) => {
       const el = blockEl(ev.target as Node);
       if (!el) return;
-      if (ev.key === 'Enter') {
+      if (ev.key === 'Enter' && !ev.isComposing) {
         // A new paragraph is structure; a line break is text.
         ev.preventDefault();
         d.execCommand('insertLineBreak');
@@ -381,6 +443,7 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
     if (form.kind === 'button') {
       const index = current.current;
       const m = model.current;
+      if (m.source !== latest.current.source) return;
       if (index == null || !m.blocks[index]) { setNotice('Click into the text the button goes after first.'); return; }
       try {
         const next = insertAfterBlock(m.source, m.blocks[index], buttonSnippet(href, form.label.trim() || 'Open'));
@@ -424,12 +487,19 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
             onClick={() => setForm({ kind: 'link', href: 'https://', placeholder: '', label: '' })}>Link</button>
           <button type="button" className={tool} aria-label="Button" aria-expanded={form?.kind === 'button'}
             onClick={() => setForm({ kind: 'button', href: 'https://', placeholder: '', label: '' })}>Button</button>
-          <button type="button" className={tool} aria-label="Image" disabled title="Coming in the next part">Image</button>
-          <select className={`${AdminUI.select} w-auto`} aria-label="Insert placeholder" value=""
-            onChange={(ev) => insertPlaceholder(ev.target.value)}>
-            <option value="">Insert placeholder</option>
+          {/* Focusable, so the reason can be reached and read; it does nothing until images land. */}
+          <button type="button" className={`${tool} opacity-50`} aria-label="Image" aria-disabled="true"
+            aria-describedby={imageNote} title="Coming in the next part"
+            onClick={() => setNotice('Images are coming in the next part.')}>Image</button>
+          <span id={imageNote} className="sr-only">Images are coming in the next part.</span>
+          {/* A choice, then Insert: a closed select changes value while it is browsed by keyboard. */}
+          <select className={`${AdminUI.select} w-auto`} aria-label="Placeholder to insert" value={toInsert}
+            onChange={(ev) => setToInsert(ev.target.value)}>
+            <option value="">Choose a placeholder</option>
             {insertable.map((p) => <option key={p.name} value={p.name}>{`{{${p.name}}}`}</option>)}
           </select>
+          <button type="button" className={tool} aria-label="Insert placeholder" disabled={!toInsert}
+            onClick={() => { insertPlaceholder(toInsert); setToInsert(''); }}>Insert</button>
           <button type="button" className={tool} aria-label="Revert to opened" disabled={source === opened}
             title="Undo every change since this email was opened" onClick={() => { setNotice(null); onChange(opened); }}>
             Revert to opened

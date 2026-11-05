@@ -76,7 +76,11 @@ test('chips serialize back to {{name}}', () => {
   // As a browser may hand it back: attributes moved, the chip wrapped in bold,
   // its shown text changed.
   assert.equal(visual.fromEditorHtml('A <b><span class="hr-chip" contenteditable="false" data-hr-chip="code">x</span></b>.'), 'A <b>{{code}}</b>.');
-  assert.equal(visual.fromEditorHtml('<span contenteditable="false" data-hr-chip="a" class="hr-chip">a</span><span data-hr-chip="b">b</span>'), '{{a}}{{b}}');
+  assert.equal(visual.fromEditorHtml('<span contenteditable="false" data-hr-chip="a" class="hr-chip">a</span>'), '{{a}}');
+  // A span is a chip only with the editor's own markers: the email's own
+  // markup that happens to carry data-hr-chip stays markup.
+  assert.equal(visual.fromEditorHtml('<span data-hr-chip="b">b</span>'), '<span data-hr-chip="b">b</span>');
+  assert.equal(visual.fromEditorHtml('<span data-hr-chip="b" class="hr-chip">b</span>'), '<span data-hr-chip="b" class="hr-chip">b</span>');
   // Conditions are labels outside every block; read back, they are the marker.
   const decorated = visual.decorate('{{#if x}}<p>Hi {{name}}</p>{{else}}<p>Bye</p>{{/if}}', { editable: true });
   assert.match(decorated, /Shown only when x/);
@@ -85,6 +89,11 @@ test('chips serialize back to {{name}}', () => {
   // A structure block (a condition inside) is outlined and labelled, never editable.
   const structure = visual.decorate('<p>Hi {{#if x}}there{{/if}}</p>', { editable: true });
   assert.match(structure, /<p data-hr-structure="" title="[^"]+">/);
+  // The editor's attributes come right after the tag name, so they win over
+  // the email's own of the same name.
+  const own = visual.decorate('<p title="mine" contenteditable="false">Hi</p>', { editable: true });
+  assert.match(own, /^<p data-hr-block="0" contenteditable="true" [^>]*title="mine" contenteditable="false">Hi<\/p>$/);
+  assert.equal(visual.undecorate(own), '<p title="mine" contenteditable="false">Hi</p>');
   assert.doesNotMatch(structure, /contenteditable="true"/);
 });
 
@@ -142,10 +151,18 @@ test('the toolbar offers what the brief lists, labelled, with Image waiting for 
     source, opened: source, onChange() {},
     placeholders: [{ name: 'code', description: 'The code' }, { name: 'hasUrl', description: 'flag', kind: 'flag' }, { name: 'url', description: 'link', kind: 'url' }],
   }));
-  for (const label of ['Bold', 'Italic', 'Link', 'Button', 'Image', 'Insert placeholder', 'Revert to opened']) {
+  for (const label of ['Bold', 'Italic', 'Link', 'Button', 'Image', 'Insert placeholder', 'Placeholder to insert', 'Revert to opened']) {
     assert.match(html, new RegExp(`aria-label="${label}"|>${label}<`), label);
   }
-  assert.match(html, /<button[^>]*disabled=""[^>]*title="Coming in the next part"|title="Coming in the next part"[^>]*disabled=""/);
+  // Image stays focusable, and its reason is text a screen reader is pointed at.
+  assert.match(html, /<button[^>]*aria-label="Image"[^>]*aria-disabled="true"[^>]*aria-describedby="([^"]+)"/);
+  const noteId = html.match(/aria-label="Image"[^>]*aria-describedby="([^"]+)"/)[1];
+  assert.match(html, new RegExp(`id="${noteId}"[^>]*>Images are coming in the next part\\.<`));
+  assert.doesNotMatch(html, /aria-label="Image"[^>]*disabled=""/);
+  // Choosing a placeholder does nothing by itself: the Insert button inserts it.
+  assert.match(html, /<select[^>]*aria-label="Placeholder to insert"/);
+  assert.match(html, /<button[^>]*aria-label="Insert placeholder"[^>]*disabled=""/);
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, FILE), 'utf8'), /onChange=\{\(ev\) => insertPlaceholder/);
   assert.match(html, /<option value="code">/);
   assert.doesNotMatch(html, /<option value="hasUrl">/, 'a flag is for conditions, not text');
   assert.match(html, /flex-wrap/, 'the toolbar wraps on a phone');
@@ -161,4 +178,55 @@ test('going back to what was opened draws the frame again, even when its documen
   assert.match(src, /<iframe key=\{drawn\.count\}/);
   assert.match(src, /count: d\.count \+ 1/);
   assert.match(src, /onClick=\{\(\) => \{ setNotice\(null\); onChange\(opened\); \}\}/);
+});
+
+test('a block wholly inside a condition stays editable, outlined and labelled with that condition', () => {
+  const source = '<p>Always</p>{{#if a}}<p>When a</p>{{#unless b}}<p>A, not b</p>{{/unless}}{{else}}<p>Not a</p>{{/if}}<p>After</p>';
+  const decorated = visual.decorate(source, { editable: true });
+  const opening = (text) => decorated.match(new RegExp(`<p [^>]*>${text}<`))[0];
+  assert.doesNotMatch(opening('Always'), /data-hr-in-cond/);
+  assert.match(opening('When a'), /contenteditable="true"/);
+  assert.match(opening('When a'), /data-hr-in-cond="Shown only when a" title="Shown only when a"/);
+  assert.match(opening('A, not b'), /data-hr-in-cond="Shown only when a and not b"/);
+  assert.match(opening('Not a'), /data-hr-in-cond="Shown only when not a"/);
+  assert.doesNotMatch(opening('After'), /data-hr-in-cond/);
+  assert.equal(visual.undecorate(decorated), source);
+  // In the seeds: waitlist_released's account line sits inside {{#if hasAccount}}.
+  const released = visual.decorate(englishTemplate('waitlist_released').html, { editable: true });
+  assert.match(released, /data-hr-in-cond="Shown only when hasAccount"[^>]*>Your account now has access\./);
+  // The frame's stylesheet outlines them and shows the label.
+  const src = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
+  assert.match(src, /\[data-hr-in-cond\]\{outline:1px dashed/);
+  assert.match(src, /\[data-hr-in-cond\]::before\{content:attr\(data-hr-in-cond\)/);
+  for (const [name, seed] of SOURCES) assert.equal(visual.undecorate(visual.decorate(seed, { editable: true })), seed, name);
+});
+
+test('reading a block back: an accepted edit moves the model, a refused one says why and restores the block', () => {
+  const source = seededLayout('Homeroom standard').html;
+  const model = visual.openModel(source);
+  const i = model.blocks.findIndex((b) => b.html === 'Homeroom<br>{{why}}');
+  const shown = visual.chipify(model.blocks[i].html);
+  // Untouched: the same model, nothing to emit.
+  assert.deepEqual(visual.blockInput(model, i, shown, shown, []), { model });
+  // Typed into.
+  const typed = visual.blockInput(model, i, `The ${shown}`, shown, []);
+  assert.equal(typed.model.source, source.replace('>Homeroom<br>{{why}}<', '>The Homeroom<br>{{why}}<'));
+  // The chip deleted some way the guards missed: refused, with the block as the source has it.
+  const refused = visual.blockInput(model, i, 'Homeroom<br>', shown, []);
+  assert.match(refused.refused, /drops \{\{why\}\}/);
+  assert.equal(refused.restore, shown);
+  assert.equal(refused.model, undefined);
+  // The DOM side uses exactly this, and restores with what it returns.
+  const src = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
+  assert.match(src, /const result = blockInput\(m, index, el\.innerHTML, baseline\.current\[index\] \?\? '', latest\.current\.allowed\);/);
+  assert.match(src, /el\.innerHTML = result\.restore;/);
+});
+
+test('the frame\'s editing guards: Enter from any keyboard is a line break, composition is left alone, a stale model never splices', () => {
+  const src = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
+  assert.match(src, /e\.inputType === 'insertParagraph'/);
+  assert.match(src, /if \(e\.isComposing\) return;/);
+  assert.match(src, /ev\.key === 'Enter' && !ev\.isComposing/);
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s*if \(source === model\.current\.source\) return;/);
+  assert.match(src, /if \(model\.current\.source !== latest\.current\.source\) return;/);
 });
