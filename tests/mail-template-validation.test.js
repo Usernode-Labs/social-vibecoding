@@ -377,3 +377,11 @@ test('probe f1/f2: an inline tag before a secret does not break the text, a bloc
   assert.equal(broken.ok, false);
   assert.match(broken.errors[0].message, /one-time secret/);
 });
+
+test('an uploaded image saves, wrapped as the Visual tab inserts it; an http or data image is refused on the HTML field', () => {
+  const image = '<p><img src="https://app.onhomeroom.com/email-images/0123456789abcdef0123456789abcdef" alt="A team photo" width="320" style="display:block;max-width:100%;height:auto;border:0"></p>';
+  assert.deepEqual(validateTemplate('otp', otp({ html: `<p>{{code}}</p>${image}` }), LAYOUT), { ok: true });
+  hasError(validateTemplate('otp', otp({ html: '<p>{{code}}</p><img src="http://x.example/a.png" alt="">' }), LAYOUT), 'html', /https/);
+  hasError(validateTemplate('otp', otp({ html: '<p>{{code}}</p><img src="data:image/gif;base64,R0lGOD" alt="">' }), LAYOUT), 'html', /data/);
+  hasError(validateTemplate('otp', otp({ html: '<p>{{code}}</p><img src="https://x.example/a.png">' }), LAYOUT), 'html', /alt/);
+});

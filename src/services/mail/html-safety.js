@@ -12,7 +12,8 @@
 // code, load another document or stylesheet, or post a form from a mail client
 // or the console's preview: script and its relatives, frames, objects, forms,
 // link/meta/base, inline SVG and MathML (whose parsing differs from HTML's),
-// event-handler attributes, script and data URLs, and @import.
+// event-handler attributes, script and data URLs, and @import. An image is
+// also held to an https address and an alt attribute (imageProblem below).
 //
 // The tokenizer follows the HTML parser's own rules where they decide what is
 // a tag and what is text: names end at whitespace, "/" or ">", attribute values
@@ -157,6 +158,34 @@ function attributeProblem(name, value) {
   return null;
 }
 
+// An image's address: https, or a placeholder (whose value the template
+// validation already limits to a checked link). An uploaded image is served
+// from Homeroom over https, and the seeded emails draw their brand images from
+// the production origin, so any https address is allowed. Plain http is
+// refused because mail clients block or flag it; data: is refused above,
+// because Gmail and Outlook drop it.
+function imageAddressOk(value) {
+  if (/^\s*\{\{/.test(value)) return true;
+  return fold(decodeEntities(value)).startsWith('https://');
+}
+
+// Why an <img> is refused, or null: it needs an https address, in src and in
+// every srcset candidate, and an alt attribute (empty for decoration) so a
+// reader with images off, or with a screen reader, is told what is there.
+function imageProblem(tag) {
+  const attr = (name) => tag.attributes.find((a) => a.name === name);
+  const src = attr('src');
+  if (!src || !imageAddressOk(src.value)) {
+    return 'An image\'s address must start with https://. Upload the image, or use a secure link to it.';
+  }
+  const srcset = attr('srcset');
+  if (srcset && !decodeEntities(srcset.value).split(',').every((c) => !c.trim() || imageAddressOk(c.trim()))) {
+    return 'Every address in an image\'s srcset must start with https://.';
+  }
+  if (!attr('alt')) return 'An image needs an alt attribute, the words shown when images are off. Use alt="" for one that is only decoration.';
+  return null;
+}
+
 // Where a comment that opens at `i` ("<!--") ends, as the browser decides it:
 // "<!-->" and "<!--->" end at once, otherwise the first "-->" or "--!>".
 function commentEnd(s, i) {
@@ -248,6 +277,10 @@ function scanInto(s, offset, out, depth) {
       if (!closing) {
         for (const attr of tag.attributes) {
           const problem = attributeProblem(attr.name, attr.value);
+          if (problem) return reject(problem);
+        }
+        if (tag.name === 'img') {
+          const problem = imageProblem(tag);
           if (problem) return reject(problem);
         }
       }
