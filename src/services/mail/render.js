@@ -39,10 +39,12 @@ function guarded(t) {
 
 /**
  * `t` is the translator of a translated `template`, for the words the action
- * builds in code; left out, those are English. A translation may not add lines
- * or headers to its subject, so a translated subject is cleaned as a whole.
+ * builds in code; left out, those are English. `readerHasLanguage` says the
+ * reader has a language other than English, whether or not it has a row for this
+ * mail. Such a reader's subject is cleaned as a whole, as it has always been, so
+ * that nothing adds lines or headers to it; mail that stays in English is not.
  */
-function renderMessage(kind, { template, layout }, payload = {}, t) {
+function renderMessage(kind, { template, layout }, payload = {}, t, { readerHasLanguage = false } = {}) {
   const action = actionFor(kind);
   if (!action) throw new Error(`unknown mail kind: ${kind}`);
   const words = t ? guarded(t) : undefined;
@@ -63,7 +65,7 @@ function renderMessage(kind, { template, layout }, payload = {}, t) {
     : content;
 
   return {
-    subject: t ? cleanSubject(subject) : subject,
+    subject: (t || readerHasLanguage) && !action.englishOnly ? cleanSubject(subject) : subject,
     html: framed.html,
     text: framed.text,
     why,

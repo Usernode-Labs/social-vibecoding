@@ -30,8 +30,8 @@ const languageCache = require('../services/language-cache');
 const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
 const { ACTIONS } = require('../services/mail/actions');
 const { parse } = require('../services/mail/template-language');
-const { englishTexts } = require('../services/push-text');
-const { translator } = require('../services/push-language');
+const { englishTexts, translatorFrom } = require('../services/push-text');
+const { usableMessages } = require('../services/push-language');
 
 const STANDARD_LAYOUT = 'Homeroom standard';
 
@@ -525,21 +525,29 @@ async function nothingToSeed(pool) {
   return row.layout && row.seeded === Object.keys(SEEDS.templates).length;
 }
 
+// Whether `t` translates any email message at all. A language that does not has
+// no rows, and its reader gets the English template.
+function saysAnything(t, { source } = {}) {
+  return Object.entries(englishTexts(source, 'email')).some(([key, english]) => {
+    const answer = t(`email:${key}`, SELF);
+    return typeof answer === 'string' && answer !== english.replace(/\{\{\s*(\w+)\s*\}\}/g, '{{$1}}');
+  });
+}
+
 // What the catalog and the language cache can say now, per kind, for the
 // languages that say anything at all. Read before the transaction starts, so it
-// holds no connection while the translator's own reads wait for one.
+// holds no connection while these reads wait for one. They go to the cache
+// directly and a failed one throws: the translator a mail asks with would answer
+// English instead, and this seed happens once, so a blip would lose the language
+// for good. Here it rolls the seed back and the next boot tries again.
 async function translationsToSeed(pool, source) {
   const languages = Object.keys(source?.files?.['config.json']?.languages || {}).filter((language) => language !== 'en');
   const inEnglish = englishTexts(source, 'email');
   const out = {};
   for (const language of languages) {
-    const t = await translator(pool, language, { namespace: 'email', source });
-    if (!t) continue;
-    const says = Object.entries(inEnglish).some(([key, english]) => {
-      const answer = t(`email:${key}`, SELF);
-      return typeof answer === 'string' && answer !== english.replace(/\{\{\s*(\w+)\s*\}\}/g, '{{$1}}');
-    });
-    if (!says) continue;
+    const cached = await languageCache.cachedNamespace(pool, language, 'email');
+    const t = translatorFrom(language, usableMessages(language, source, cached, 'email'), inEnglish);
+    if (!saysAnything(t, { source })) continue;
     for (const [kind, action] of Object.entries(ACTIONS)) {
       if (action.englishOnly) continue;
       const template = translatedTemplate(kind, t, { source });
@@ -555,12 +563,22 @@ async function seedInTransaction(client, source, translations) {
 
   const families = {};
   for (const layout of SEEDS.layouts) {
-    const { rows: found } = await client.query(
-      "SELECT family_id, (status = 'live' AND deleted_at IS NULL) AS live FROM email_layouts WHERE name = $1 ORDER BY live DESC, family_id LIMIT 1",
+    // By family: a later version may have another name, and its first keeps this
+    // one. FOR SHARE, as the store's saves do, so deleting it waits for this seed.
+    const { rows: [live] } = await client.query(
+      `SELECT family_id FROM email_layouts
+        WHERE status = 'live' AND deleted_at IS NULL
+          AND family_id IN (SELECT family_id FROM email_layouts WHERE name = $1)
+        ORDER BY family_id LIMIT 1 FOR SHARE`,
       [layout.name],
     );
-    if (found.length) {
-      families[layout.name] = found[0].live ? found[0].family_id : null;
+    if (live) {
+      families[layout.name] = live.family_id;
+      continue;
+    }
+    const { rows: ever } = await client.query('SELECT 1 FROM email_layouts WHERE name = $1 LIMIT 1', [layout.name]);
+    if (ever.length) {
+      families[layout.name] = null;
       continue;
     }
     const { rows: [row] } = await client.query(
@@ -618,7 +636,10 @@ async function seedEmailTemplates(pool, { source = languageCache.readSource() } 
     await client.query('BEGIN');
     const { locked, seeded } = await seedInTransaction(client, source, translations);
     await client.query('COMMIT');
-    if (locked && seeded.length) log.info('email-templates', 'Seeded email templates', { kinds: seeded.length });
+    if (locked && seeded.length) {
+      const languages = new Set(Object.values(translations).flatMap((byLanguage) => Object.keys(byLanguage))).size;
+      log.info('email-templates', 'Seeded email templates', { kinds: seeded.length, languages });
+    }
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
     log.error('email-templates', 'Could not seed email templates', { message: err.message });
@@ -628,5 +649,5 @@ async function seedEmailTemplates(pool, { source = languageCache.readSource() } 
 }
 
 module.exports = {
-  SEEDS, STANDARD_LAYOUT, englishTemplate, translatedTemplate, seededLayout, seedEmailTemplates,
+  SEEDS, STANDARD_LAYOUT, englishTemplate, translatedTemplate, seededLayout, saysAnything, seedEmailTemplates,
 };

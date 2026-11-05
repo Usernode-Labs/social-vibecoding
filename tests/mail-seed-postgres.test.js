@@ -101,6 +101,19 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'password_reset'"), 0);
   });
 
+  await t.test('a renamed layout has not been deleted', async () => {
+    await empty();
+    await seedEmailTemplates(pool, { source: SOURCE });
+    const { layouts } = await store.snapshot(pool);
+    const [v1] = Object.values(layouts);
+    await store.saveLayout(pool, { familyId: v1.family_id, name: 'Our frame', html: v1.html, text: v1.text, expectedLiveId: v1.id }, null);
+    await pool.query("DELETE FROM email_templates WHERE action = 'password_reset'");
+    await seedEmailTemplates(pool, { source: SOURCE });
+    const { rows } = await pool.query("SELECT layout_family_id FROM email_templates WHERE action = 'password_reset'");
+    assert.deepEqual(rows, [{ layout_family_id: v1.family_id }]);
+    assert.equal(await count('SELECT count(DISTINCT family_id)::int AS n FROM email_layouts'), 1);
+  });
+
   await t.test('only the missing kind is added, and an edited one is left alone', async () => {
     await empty();
     await seedEmailTemplates(pool, { source: SOURCE });
@@ -128,7 +141,8 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     assert.equal(seen.length, 1);
   });
 
-  await t.test('a language in the cache gets its rows, a language with nothing gets none', async () => {
+  await t.test('a language in the cache gets its rows, a language with nothing gets none', async (st) => {
+    const info = st.mock.method(log, 'info', () => {});
     await empty();
     reset();
     for (const [key, text] of Object.entries(FRENCH)) {
@@ -143,8 +157,31 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     );
     assert.deepEqual(rows.map((row) => row.action).sort(), [...TRANSLATED].sort());
     assert.ok(rows.every((row) => row.locale === 'fr' && row.origin === 'machine'));
+    assert.deepEqual(info.mock.calls.at(-1).arguments[2], { kinds: KINDS.length, languages: 1 });
     assert.equal(rows.find((row) => row.action === 'otp').subject, FRENCH['otp.subject']);
     assert.match(rows.find((row) => row.action === 'waitlist_joined').html, /Merci d'avoir rejoint/);
+    await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
+    reset();
+  });
+
+  await t.test('a translation read that fails rolls the seed back, and the next boot has the language', async (st) => {
+    const errors = st.mock.method(log, 'error', () => {});
+    st.mock.method(log, 'warn', () => {});
+    await empty();
+    reset();
+    await pool.query(
+      "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', 'otp.subject', $1, $2)",
+      [hash(ENGLISH['otp.subject'].text), FRENCH['otp.subject']],
+    );
+    const failing = {
+      connect: () => pool.connect(),
+      query: (sql, params) => (/FROM language_translations/.test(sql) ? Promise.reject(new Error('read failed')) : pool.query(sql, params)),
+    };
+    await seedEmailTemplates(failing, { source: SOURCE });
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), 0);
+    assert.equal(errors.mock.callCount(), 1);
+    await seedEmailTemplates(pool, { source: SOURCE });
+    assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), TRANSLATED.length);
     await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
     reset();
   });

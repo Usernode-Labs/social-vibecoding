@@ -78,6 +78,16 @@ test('the subject is cleaned when it is translated, and only then, as today', ()
   assert.equal(renderMessage('otp', { template, layout: null }, { code: '1' }, () => '').subject, 'A 1 B');
 });
 
+test('a reader with a language has the subject cleaned with or without a row, and English-only mail never', () => {
+  const template = { ...OTP, subject: 'A  {{code}}\nB ' };
+  const parts = { template, layout: null };
+  assert.equal(renderMessage('otp', parts, { code: '1' }, undefined, { readerHasLanguage: true }).subject, 'A 1 B');
+  assert.equal(renderMessage('otp', parts, { code: '1' }, undefined, { readerHasLanguage: false }).subject, 'A  1\nB ');
+  const report = { template: { ...OTP, subject: 'A  {{reason}}\nB ' }, layout: null };
+  assert.equal(renderMessage('content_report', report, { reason: 'x' }, undefined, { readerHasLanguage: true }).subject, 'A  x\nB ');
+  assert.equal(renderMessage('content_report', report, { reason: 'x' }, () => '').subject, 'A  x\nB ');
+});
+
 test('an unknown kind throws, as buildMessage does', () => {
   assert.throws(() => renderMessage('nope', { template: OTP, layout: null }, {}), /unknown mail kind/);
   assert.throws(() => renderMessage('constructor', { template: OTP, layout: null }, {}), /unknown mail kind/);

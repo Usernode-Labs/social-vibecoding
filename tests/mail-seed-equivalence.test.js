@@ -27,7 +27,7 @@ const { parse, placeholdersIn } = require('../src/services/mail/template-languag
 const { translator, reset } = require('../src/services/push-language');
 const { translatorFrom } = require('../src/services/push-text');
 const {
-  SEEDS, englishTemplate, translatedTemplate, seededLayout,
+  SEEDS, englishTemplate, translatedTemplate, seededLayout, saysAnything,
 } = require('../src/db/email-template-seeds');
 
 const ROOT = path.join(__dirname, '..');
@@ -74,6 +74,9 @@ const URL_AWKWARD = 'https://x.test/a?b=1&c="d"&e=<f>&g={{code}}&h=$&';
 const UNSUBSCRIBE = `${PRODUCTION_ORIGIN}/mail/unsubscribe?t=abc&u=1`;
 const NASTY = 'A  <b>&"{{code}}$&.';
 const LONG = 'L'.repeat(400);
+// A header's worth of line break and a double space, which a translated mail's
+// subject has cleaned out of it and an English one does not.
+const BROKEN = 'A  B\nBcc: x@y.z';
 
 const CODES = ['123456', '<&>"9', 654321];
 
@@ -112,7 +115,7 @@ const MATRIX = {
   content_report: cross({
     reason: [undefined, '', 'hate_speech', 'x_'.repeat(70), NASTY],
     targetType: [undefined, 'app', 'user', 'app_message', 'conversation_message', 'nonsense'],
-    targetLabel: [undefined, NASTY, LONG],
+    targetLabel: [undefined, NASTY, LONG, BROKEN],
     reporter: [undefined, 'sam'],
     caseId: [undefined, 0, 12],
     reportId: [undefined, 0, 34],
@@ -120,12 +123,12 @@ const MATRIX = {
     url: [undefined, URL_AWKWARD],
   }),
   project_invite: cross({
-    inviter: [undefined, '', 'sam', NASTY],
-    project: [undefined, '', 'Run Club', NASTY],
+    inviter: [undefined, '', 'sam', NASTY, BROKEN],
+    project: [undefined, '', 'Run Club', NASTY, BROKEN],
     url: [undefined, '', URL_PLAIN, URL_AWKWARD],
   }),
   build_ready: cross({
-    appName: [undefined, '', 'Plant Pal', NASTY, LONG],
+    appName: [undefined, '', 'Plant Pal', NASTY, LONG, BROKEN],
     lead: [undefined, '', '   ', '  Dark mode is ready.  ', 12, NASTY, LONG],
     subject: [undefined, '  ', ' Dark mode · Plant Pal ', 12, NASTY, LONG],
     notWorking: [undefined, true],
@@ -133,7 +136,7 @@ const MATRIX = {
     unsubscribeUrl: [undefined, '', UNSUBSCRIBE],
   }),
   invite_activity: cross({
-    appName: [undefined, '', 'Run Club', NASTY, LONG],
+    appName: [undefined, '', 'Run Club', NASTY, LONG, BROKEN],
     line: [undefined, '', '@sam joined.', NASTY, LONG],
     notice: [
       undefined,
@@ -149,7 +152,7 @@ const MATRIX = {
     unsubscribeUrl: [undefined, UNSUBSCRIBE],
   }),
   project_opened: cross({
-    appName: [undefined, '', 'Run Club', NASTY, LONG],
+    appName: [undefined, '', 'Run Club', NASTY, LONG, BROKEN],
     url: [undefined, URL_AWKWARD],
     unsubscribeUrl: [undefined, '', UNSUBSCRIBE],
   }),
@@ -182,14 +185,21 @@ test('the matrix takes every conditional of every seed both ways', () => {
 
 // ── What the two sides produce ───────────────────────────────────────────
 
+const said = new WeakMap();
+function says(t) {
+  if (!said.has(t)) said.set(t, saysAnything(t));
+  return said.get(t);
+}
+
 function viaSeeds(kind, payload, t) {
-  // A language the seed refused or has nothing for sends English, as today's
-  // fallback does, and asks no translator for the words built in code.
-  const translated = t && !ENGLISH_ONLY_KINDS.has(kind) ? translatedTemplate(kind, t) : null;
+  // As a real send will find it. A language with nothing to say has no row, and
+  // one the seed refused has none either: both send the English template and ask
+  // no translator for the words built in code, but the reader still has a language.
+  const translated = t && !ENGLISH_ONLY_KINDS.has(kind) && says(t) ? translatedTemplate(kind, t) : null;
   const template = translated || englishTemplate(kind);
   const layout = template.layout ? seededLayout(template.layout) : null;
   const attributed = tracking.attributedPayload(kind, payload);
-  const { why, preheader, headers, ...message } = renderMessage(kind, { template, layout }, attributed, translated ? t : undefined);
+  const { why, preheader, headers, ...message } = renderMessage(kind, { template, layout }, attributed, translated ? t : undefined, { readerHasLanguage: !!t });
   return tracking.decorate(kind, { ...message, ...(headers ? { headers } : {}) }, payload);
 }
 
@@ -223,6 +233,25 @@ test('French through the translation pipeline: seeded mail is byte-identical to 
   }
   assert.deepEqual(Object.keys(FRENCH).sort(), Object.keys(ENGLISH).sort());
   assertMatrix('fr', t);
+});
+
+test('a language with no translations: no row, and byte-identical to today', async () => {
+  const t = await pipelineTranslator('fr', {});
+  assert.equal(typeof t, 'function');
+  assert.equal(saysAnything(t), false);
+  assert.equal(says(t), false);
+  assertMatrix('no translations', t);
+  const payload = { project: BROKEN, url: URL_PLAIN };
+  assert.equal(buildMessage('project_invite', { ...payload, translate: t }).subject, 'Someone invited you to A B Bcc: x@y.z on Homeroom');
+  assert.equal(viaSeeds('project_invite', payload, t).subject, 'Someone invited you to A B Bcc: x@y.z on Homeroom');
+  assert.equal(viaSeeds('project_invite', payload).subject, buildMessage('project_invite', payload).subject);
+  assert.match(viaSeeds('project_invite', payload).subject, /A {2}B\nBcc/);
+});
+
+test('says anything: a language with one translated message does, English does not', async () => {
+  assert.equal(saysAnything(await pipelineTranslator('fr', { 'otp.subject': FRENCH['otp.subject'] })), true);
+  assert.equal(saysAnything(translatorFrom('fr', {}, ENGLISH)), false);
+  assert.equal(saysAnything(hostile), true);
 });
 
 test('a hostile translation stays words, byte-identical to today', () => {
@@ -372,7 +401,8 @@ const WITH_APOSTROPHE = {
 
 test('a value with an apostrophe: the html differs only by &#39;, and subject, text and headers not at all', async () => {
   const french = await pipelineTranslator('fr', FRENCH);
-  for (const t of [undefined, french, hostile]) {
+  const none = await pipelineTranslator('fr', {});
+  for (const t of [undefined, french, hostile, none]) {
     for (const kind of KINDS) {
       const payload = WITH_APOSTROPHE[kind];
       const today = buildMessage(kind, t ? { ...payload, translate: t } : payload);
@@ -389,6 +419,18 @@ test('a catalog apostrophe stays bare beside an escaped value in words built in 
   const payload = { appName: APOSTROPHE, unsubscribeUrl: UNSUBSCRIBE };
   const html = viaSeeds('invite_activity', payload, t).html;
   assert.ok(html.includes('Quelqu\'un a rejoint O&#39;Brien grâce'), html);
+});
+
+test('accepted: a refused translation cleans the subject, where today it goes as English uncleaned', () => {
+  // A send cannot tell a refused language from an empty one, and the real pipeline
+  // refuses such a message before this could happen, so only an injected translator
+  // reaches it.
+  const payload = { project: BROKEN, url: URL_PLAIN };
+  const lost = breaking({ 'projectInvite.text.how': 'Bonjour {{inconnu}}.' });
+  assert.equal(translatedTemplate('project_invite', lost), null);
+  const seeded = viaSeeds('project_invite', payload, lost);
+  assert.equal(seeded.subject, 'Someone invited you to A B Bcc: x@y.z on Homeroom');
+  assert.equal(seeded.html, buildMessage('project_invite', payload).html);
 });
 
 test('accepted: a link that is not plain http(s) is dropped rather than rendered', () => {
