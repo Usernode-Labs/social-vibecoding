@@ -338,7 +338,7 @@ const TOOLS = Object.freeze([
           title: { type: 'string', description: 'The screen\'s name, in a few words ("Settings", "Order history").' },
           size: { type: 'string', enum: ['phone', 'desktop'], description: 'phone: 390 pixels wide; desktop: 1280.' },
           html: { type: 'string', description: 'The whole screen: a full HTML document, or the body\'s markup.' },
-          note: { type: 'string', description: 'What it is, in a few plain words (it names the version).' },
+          note: { type: 'string', description: 'What it is, in a few plain words. Leave out the version number: the thread adds it.' },
         },
         required: ['title', 'size', 'html', 'note'],
         additionalProperties: false,
@@ -368,7 +368,7 @@ const TOOLS = Object.freeze([
               additionalProperties: false,
             },
           },
-          note: { type: 'string', description: 'What changed, in a few plain words (it names the version).' },
+          note: { type: 'string', description: 'What changed, in a few plain words. Leave out the version number: the thread adds it.' },
         },
         required: ['edits', 'note'],
         additionalProperties: false,
@@ -1401,7 +1401,7 @@ async function answer(pool, config, {
               // empty, and a later whole redraw may replace it.
               wrote = { empty: threads.visibleText(threads.screenMarkup(screen.html)).length < EMPTY_SCREEN_CHARS };
               notes.length = 0;
-              notes.push(screen.note);
+              notes.push(threads.bareNote(screen.note));
               result = { ok: true, chars: screen.html.length, saved: 'as the next version when you reply' };
             }
           }
@@ -1414,7 +1414,7 @@ async function answer(pool, config, {
             else if (!threads.validHtml(next)) result = { ok: false, error: 'That makes the design too big.' };
             else {
               html = next;
-              if (args.note) notes.push(clip(args.note, 120));
+              if (args.note) notes.push(threads.bareNote(clip(args.note, 120)));
               result = { ok: true, chars: collapseSheets(html).length };
             }
           }

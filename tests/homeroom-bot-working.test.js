@@ -254,6 +254,7 @@ function designTurn(steps, {
     async versionOf() { return current; },
     async ensureDesign() { return { threadId: 7, title: 'Main screen', app: { slug: 'ear', name: 'Ear Trainer' } }; },
     async addVersion(_pool, args) { versions.push(args.html); return { version: (current?.version || 0) + 1 }; },
+    bareNote: require('../src/services/design-threads').bareNote,
     versionLine: (version, note) => `Version ${version} · ${note}`,
     async noteVersionMessage() {},
   };

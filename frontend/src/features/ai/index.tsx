@@ -364,6 +364,13 @@ export function AiScreen(): ReactNode {
     : blank ? { at: 'new' }
     : openRoot ? { at: 'thread', rootId: openRoot }
     : { at: 'main' };
+  // What the chip above a page opened in the column goes back to (5 Nov 2026):
+  // a private thread that was open there, or Main. A blank "+" thread is not
+  // counted, since `underPanel()` closes it when a page opens.
+  useEffect(() => {
+    const backTo = docked && openRoot ? 'thread' : 'main';
+    if (sidePanelStore.get().backTo !== backTo) sidePanelStore.set({ backTo });
+  }, [docked, openRoot, panel.open, panel.frameKey]);
   const shown = columnKey(column);
   const lit = shown === 'new' ? null : shown;
   // 1 Nov 2026 (C1), one store since #6230: what a thread opened to read
@@ -513,7 +520,7 @@ export function AiScreen(): ReactNode {
   // A request, a change or a decision: its page, in the column on a wide
   // window, its own page anywhere else. Every row goes to its own place
   // (#6210): a ▷ plan row to its request's page, where its plan and Build
-  // it are, the same place a Vote or Decide row for it opens.
+  // it are, the same place a Vote or Needs Reply row for it opens.
   const openPage = (href: string | null, app: AiApp | null, title: string | null, about: AboutItem | null) => {
     how.current = 'row';
     const route = routeOf(href);
