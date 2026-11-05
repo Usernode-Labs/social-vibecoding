@@ -185,10 +185,42 @@ test('on a phone the bar sits under the status bar, where a finger can reach it'
   assert.match(src, /const band = safeTop \+ HEADER_BAND;/);
   assert.match(src, /insetFrame\(size, phone \? INSET_MARGIN_PHONE : INSET_MARGIN, band\)/);
   assert.match(src, /top: safeTop \+ Math\.max\(6, Math\.round\(\(HEADER_BAND - barSize\.height\) \/ 2\)\),/);
-  assert.match(src, /style=\{inset \? \{ top: band \+ 8 \} : \{ bottom: 'calc\(76px \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the first-use note too');
-  assert.match(src, /return inset \? \{ x: at\.x, y: Math\.max\(at\.y, band \+ 8\) \} : at;/, 'and the box and the card');
+  assert.match(src, /style=\{barFrame \? \{ top: band \+ 8 \} : \{ bottom: 'calc\(76px \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the first-use note too');
+  assert.match(src, /return \{ x: at\.x, y: Math\.max\(at\.y, \(inset \? band : safeTop\) \+ 8\) \};/, 'and the box and the card');
   assert.match(src, /: \{ bottom: 'calc\(1rem \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the live-page bar clears the home indicator');
   assert.doesNotMatch(src, /top-\[68px\]|'bottom-4 left-1\/2/);
+});
+
+test('on a phone comment mode keeps the page full size, with the bar in a thumb\'s reach (#5762)', () => {
+  // The screen seemed to shrink like taking a screenshot, with the controls at
+  // its very top. Which screen opens is not what changed: only what it draws.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // No inset picture on a phone, whatever its state; a computer's is as it was.
+  assert.match(src, /const inset = !phone && viewShot && viewShot\.state !== 'failed'\s*\? insetFrame\(size, INSET_MARGIN, band\)/);
+  // `phone` is the shell's own definition, not a width of this module's.
+  assert.match(src, /import \{ KB_OPEN_CLASS, PHONE_QUERY \} from '\.\.\/\.\.\/lib\/keyboard-open';/);
+  assert.match(src, /window\.matchMedia\(PHONE_QUERY\)\.matches/);
+  // The layer still takes every press, and only the first picture holds one
+  // up; a press is the page's own coordinates when nothing is inset.
+  assert.match(src, /id="comment-pin"[\s\S]{0,120}className="absolute inset-0"\s+style=\{\{ cursor: CURSOR, touchAction: 'none' \}\}/);
+  assert.match(src, /if \(shotIntro\) return;\n[\s\S]{0,240}let where = at;\n\s*if \(inset\) \{/);
+  // The pictures do not depend on the inset: the view's goes on being taken
+  // for the close-up, and a pin draws its own for the request.
+  const takeView = src.slice(src.indexOf('const takeViewShot = useCallback'), src.indexOf('// Whether the page is shown as the inset picture'));
+  assert.doesNotMatch(takeView, /\bphone\b|\binset\b/);
+  const draw = src.slice(src.indexOf('const drawPicture = useCallback'), src.indexOf('const pictureFor = useCallback'));
+  assert.doesNotMatch(draw, /\bphone\b|\binset\b/);
+  // At the foot while nothing is open there. The sheet takes the foot and the
+  // keys cover it, so the bar goes to the band while the sheet is up, and the
+  // sheet is capped under it: drawn later, it would lie across Post.
+  assert.match(src, /const sheetUp = phone && !!draft && !!target && \(expanded \|\| draft\.active == null\);/);
+  assert.match(src, /const barFrame = inset \|\| cropFrame \|\| \(sheetUp \? insetFrame\(size, INSET_MARGIN_PHONE, band\) : null\);/);
+  // Its handle stands down there, and the full width has its spacer.
+  assert.match(src, /dark:hover:text-zinc-300\$\{barFrame \? ' hidden' : ''\}`\}/);
+  assert.equal(src.match(/\{barFrame \? <span className="min-w-0 flex-1" \/> : null\}/g).length, 3);
+  assert.doesNotMatch(src, /\{inset \? <span className="min-w-0 flex-1" \/> : null\}/);
+  // A small phone's bar fits: it drops its glyphs.
+  assert.match(src, /const barPlain = shotLabel \|\| phone;/);
 });
 
 test('on a phone the keyboard is not the page moving, and the sheet stays under the bar', () => {
@@ -218,7 +250,7 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   assert.doesNotMatch(src, /^\s+autoFocus$/m, 'autoFocus pans too');
   assert.match(src, /ref=\{focusWithoutPan\}/);
   // The sheet: capped below the band, on the keys with them up, Post at its foot.
-  assert.match(src, /'--comment-band' as string\]: `\$\{inset \? band : safeTop\}px`/);
+  assert.match(src, /'--comment-band' as string\]: `\$\{barFrame \? band : safeTop\}px`/);
   assert.match(src, /`comment-sheet comment-sheet-in platform-kb-sheet absolute inset-x-0 bottom-0 flex flex-col/);
   assert.match(src, /\$\{phone \? ' comment-sheet-actions' : ''\}/);
   const css = read('public/css/app.css');
@@ -479,11 +511,11 @@ test('"Screenshot" leads the bar above the picture, never over the picture (#477
     'a muted label that truncates first, and stays while the bar asks its question on a computer: the picture is still there');
   // On a phone the label takes the place of the mode's chat glyph, so the
   // bar still fits a 390px screen.
-  assert.match(bar, /\$\{shotLabel \? 'hidden sm:inline-flex' : 'inline-flex'\} shrink-0 items-center gap-1\.5 text-sm font-bold text-violet-700/);
+  assert.match(bar, /\$\{barPlain \? 'hidden sm:inline-flex' : 'inline-flex'\} shrink-0 items-center gap-1\.5 text-sm font-bold text-violet-700/);
   // And the Form / Comment switch drops its two glyphs on a phone while the
   // word shows, so "Screenshot" is whole at 390px rather than "Screen…".
-  assert.match(bar, /<DescriptionIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>/);
-  assert.match(bar, /<ChatIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>\s*\{t\('devchat:commentPin\.bar\.comment'\)\}/);
+  assert.match(bar, /<DescriptionIcon className=\{`\$\{barPlain \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>/);
+  assert.match(bar, /<ChatIcon className=\{`\$\{barPlain \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>\s*\{t\('devchat:commentPin\.bar\.comment'\)\}/);
 });
 
 test('the picture leaves the suggest flow\'s own overlays out, so the form never shows in it', () => {

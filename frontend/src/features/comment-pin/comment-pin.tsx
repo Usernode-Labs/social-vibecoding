@@ -20,9 +20,13 @@
  *
  * Over the inset picture the bar is that view's header: the picture leaves
  * a band for it at the top and it sits there, the picture's own width, so
- * nothing floats over the page. When the picture could not be taken, the
- * bar sits at the foot each time comment mode opens, until the person drags
- * its handle somewhere else (only for this visit). The first time comment
+ * nothing floats over the page. A phone has no inset picture (#5762): a page
+ * shrunk into a picture read as a screenshot of itself, so the page stays at
+ * full size under the layer. There, and when the picture could not be taken,
+ * the bar sits at the foot each time comment mode opens, until the person
+ * drags its handle somewhere else (only for this visit); a phone's sheet
+ * takes the foot, so while it is up the bar stands above it, under the status
+ * bar, where the keyboard cannot cover it. The first time comment
  * mode opens on a device, a short note says how it works, and that the Form
  * switch goes back to the form.
  *
@@ -700,7 +704,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   // ── The view picture ────────────────────────────────────────────────
   //
-  // The page as a picture, shown inset so nothing reads as clickable. Taken
+  // The page as a picture, shown inset so nothing reads as clickable (on a
+  // computer: a phone keeps the page full size and only uses it for the
+  // close-up until a comment's own picture lands, #5762). Taken
   // when the mode opens, and 250ms after the last scroll or resize (the
   // redraw above bumps `view` and re-renders for the pins; this redraws the
   // picture). Until a retake lands the last one shows faded and taps wait.
@@ -775,12 +781,16 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // Whether the page is shown as the inset picture, and where it sits. The
   // picture leaves a band at the top for the mode's header, so the bar is
   // part of the view instead of floating over the page. A failed picture
-  // keeps the mode over the live page, untransformed, bar at the foot.
+  // keeps the mode over the live page, untransformed, bar at the foot, and a
+  // phone always has it so (#5762): the screen seemed to shrink into a
+  // screenshot, with the controls at its very top. The layer keeps every
+  // press off the page all the same, and the pictures are still drawn: a
+  // comment's own for its request, this one for the close-up until that lands.
   const phone = isPhone();
   // The band above the picture: under the status bar, then the bar's own 60px.
   const band = safeTop + HEADER_BAND;
-  const inset = viewShot && viewShot.state !== 'failed'
-    ? insetFrame(size, phone ? INSET_MARGIN_PHONE : INSET_MARGIN, band)
+  const inset = !phone && viewShot && viewShot.state !== 'failed'
+    ? insetFrame(size, INSET_MARGIN, band)
     : null;
   // The first picture, nothing drawn yet: the live page stays on show (the
   // mode's layer above it already keeps every press off it) instead of a
@@ -791,6 +801,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // above it whenever the picture is on show: in the bar, never over the
   // picture, where it covered the page's own header (#4774).
   const shotLabel = !!inset && !shotIntro;
+  // The bar drops its glyphs for that word's room, and on a phone for its
+  // own: with them it ran past the screen's edge on a small one (320px).
+  const barPlain = shotLabel || phone;
   // While cropping, the frame the crop happens over: the picture's own inset
   // frame when there is one, else the frame the picture would sit in — a
   // failed view keeps the mode over the live page, and the crop still works
@@ -889,8 +902,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       if (!draft.sending) setExpanded(false);
       return;
     }
+    // Until the first picture lands a press waits, on a phone too: the bar
+    // and the first-use note have not come in yet.
+    if (shotIntro) return;
     // Over the inset picture the press is on the picture, not the page: back
-    // to page coordinates, and nothing where the picture is not.
+    // to page coordinates, and nothing where the picture is not. Over the
+    // live page (a phone's, or a failed picture's) a press is already there.
     let where = at;
     if (inset) {
       if (viewShot?.state === 'drawing') return;
@@ -1285,7 +1302,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // Over the inset picture the bar is that view's header: it sits in the
   // band the picture leaves at the top, the picture's own width, and does
   // not float, so there is no handle to drag it by. Over the live page (a
-  // picture that could not be taken) it is as it always was: at the foot,
+  // phone's, or a picture that could not be taken) it is as it always was: at the foot,
   // centred, each time comment mode opens, until the person drags its
   // handle; then where they put it, for this visit only (a double-click on
   // the handle puts it back). It never moves out of the way on its own:
@@ -1361,8 +1378,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       const y = below + size.height <= vp.height - 8 ? below : Math.max(8, p.y - 40 - size.height);
       at = { x, y };
     }
-    // The header owns the top of the view: the box and a card never slide under it.
-    return inset ? { x: at.x, y: Math.max(at.y, band + 8) } : at;
+    // The header owns the top of the view: the box and a card never slide
+    // under it. Over the live page the status bar does (0 on a computer).
+    return { x: at.x, y: Math.max(at.y, (inset ? band : safeTop) + 8) };
   };
   useLayoutEffect(() => {
     const box = boxRef.current ?? bubbleRef.current;
@@ -1551,7 +1569,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   })() : null;
   // While cropping the bar rides the frame the crop happens over, the way
   // it rides the picture's inset frame otherwise.
-  const barFrame = inset || cropFrame;
+  // And a phone's sheet (or the one row it folds to while waiting for the
+  // next pin) stands at the foot, where the bar would lie over its Post, and
+  // the keys would cover it: while it is up the bar is in the band at the top.
+  const sheetUp = phone && !!draft && !!target && (expanded || draft.active == null);
+  const barFrame = inset || cropFrame || (sheetUp ? insetFrame(size, INSET_MARGIN_PHONE, band) : null);
   // The wait-for-the-next-pin row, as the box shows it and, on a phone, as
   // the whole collapsed sheet while the wait is on.
   const nextPinRow = draft && draft.active == null ? (
@@ -1656,7 +1678,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   return (
     <div
       className={leaving ? 'comment-mode-leaving fixed inset-0' : 'fixed inset-0'}
-      style={{ zIndex: 2147483000, ['--comment-band' as string]: `${inset ? band : safeTop}px` }}
+      style={{ zIndex: 2147483000, ['--comment-band' as string]: `${barFrame ? band : safeTop}px` }}
     >
       {/* Measure the status bar's height and the home indicator's (see `safeTop`). */}
       <div ref={safeRef} aria-hidden="true" className="pointer-events-none invisible absolute start-0 top-0 w-px" style={{ height: 'var(--platform-safe-top, 0px)' }} />
@@ -2236,7 +2258,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           className={[
             'absolute left-1/2 flex w-[340px] max-w-[calc(var(--platform-float-w)-24px)] -translate-x-1/2 flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10',
           ].join(' ')}
-          style={inset ? { top: band + 8 } : { bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
+          style={barFrame ? { top: band + 8 } : { bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
         >
           <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-white">{t('devchat:commentPin.intro.title')}</p>
           <ul className="flex flex-col gap-1 text-[13px] text-zinc-600 dark:text-zinc-300">
@@ -2261,7 +2283,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           aria-label={t('devchat:commentPin.sent.label')}
           data-comment-pin-sent=""
           className="absolute left-1/2 flex w-[340px] max-w-[calc(var(--platform-float-w)-24px)] -translate-x-1/2 flex-col gap-1.5 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
-          style={inset ? { top: band + 8 } : { bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
+          style={barFrame ? { top: band + 8 } : { bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
         >
           <div className="flex items-center gap-2">
             <span className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-violet-600 text-white`} aria-hidden="true"><CheckIcon className="h-3.5 w-3.5" /></span>
@@ -2309,7 +2331,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       {/* Over the picture the bar is the view's header: same width as the
           picture, in the band above it, nothing floating over the page and
           no handle to drag it by. Over the live page it is the floating bar
-          it always was. */}
+          it always was, at the foot, in a thumb's reach on a phone. */}
       <div
         ref={barRef}
         tabIndex={-1}
@@ -2334,8 +2356,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           }
           : barPlace ? { left: barPlace.left, top: barPlace.top } : { bottom: 'calc(1rem + var(--platform-safe-bottom, 0px))' }}
       >
-        {/* The live-page fallback's handle: the crop bar has none, so the
-            grip stands down while the person crops. */}
+        {/* The live page's handle: a bar in the band has none, so the grip
+            stands down while the person crops or a phone's sheet is up. */}
         {!inset ? (
           <button
             type="button"
@@ -2346,7 +2368,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             onPointerUp={onGripUp}
             onPointerCancel={onGripUp}
             onDoubleClick={() => { setBarAt(null); }}
-            className={`grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300${cropping ? ' hidden' : ''}`}
+            className={`grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300${barFrame ? ' hidden' : ''}`}
           >
             <ArrowsMoveIcon className="h-4 w-4" />
           </button>
@@ -2413,7 +2435,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
               {confirm === 'discard' ? t('devchat:commentPin.bar.confirmDiscard') : t('devchat:commentPin.bar.confirmExit')}
             </span>
-            {inset ? <span className="min-w-0 flex-1" /> : null}
+            {barFrame ? <span className="min-w-0 flex-1" /> : null}
             <button
               type="button"
               onClick={() => { setConfirm(null); textRef.current?.focus({ preventScroll: true }); }}
@@ -2431,7 +2453,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           </>
         ) : (
           <>
-            <span className={`${shotLabel ? 'hidden sm:inline-flex' : 'inline-flex'} shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300`}>
+            <span className={`${barPlain ? 'hidden sm:inline-flex' : 'inline-flex'} shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300`}>
               <ChatIcon className="h-[18px] w-[18px]" />
             </span>
             <span className="hidden min-w-0 truncate text-sm font-bold text-violet-700 sm:inline dark:text-violet-300">{hint}</span>
@@ -2440,7 +2462,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 {t('devchat:commentPin.bar.posted', { count: postedCount })}
               </span>
             ) : null}
-            {inset ? <span className="min-w-0 flex-1" /> : null}
+            {barFrame ? <span className="min-w-0 flex-1" /> : null}
             <span className="inline-flex shrink-0 gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label={t('devchat:commentPin.bar.switchLabel')}>
               <button
                 type="button"
@@ -2450,7 +2472,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 onClick={() => { void toForm(); }}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full ps-2 pe-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
               >
-                <DescriptionIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
+                <DescriptionIcon className={`${barPlain ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.form')}
               </button>
               <button
@@ -2460,7 +2482,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 title={t('devchat:commentPin.bar.commentTitle')}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white ps-2 pe-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
               >
-                <ChatIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
+                <ChatIcon className={`${barPlain ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.comment')}
               </button>
             </span>
