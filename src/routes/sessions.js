@@ -6340,7 +6340,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // the client's stop-escalation ladder across reloads.
     res.json({
       busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
-      spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
+      // The running turn's share of the same figure, under the same rule.
+      spend: busy && mayReadCost ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
       resolving: !!sync && sync.reason === 'conflict',

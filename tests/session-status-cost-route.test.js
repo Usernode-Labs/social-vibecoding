@@ -111,3 +111,8 @@ test('a failed read answers the author null, so the meter keeps its figure', asy
   assert.equal(res.body.costTotalCents, null);
   assert.equal(Object.hasOwn(res.body, 'costTotalCents'), true);
 });
+
+test('the running turn\'s spend follows the same rule as the total', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/routes/sessions.js'), 'utf8');
+  assert.match(src, /spend: busy && mayReadCost \? workerProgress\.get\(sessionId\)\?\.spend \|\| null : null,/);
+});
