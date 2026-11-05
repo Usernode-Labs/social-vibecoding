@@ -241,6 +241,9 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
 }) {
   const insertable = placeholders.filter((p) => p.kind !== 'flag' && p.name !== 'content');
   const linkable = placeholders.filter((p) => p.kind === 'url');
+  // A link placeholder goes in only through Link, as a whole href: loose in the
+  // text it is refused (template-validation.js), so it is not offered there.
+  const asText = insertable.filter((p) => p.kind !== 'url');
   const allowed = insertable.map((p) => p.name);
   const [first] = useState(() => openModel(source));
   const model = useRef<VisualModel>(first);
@@ -496,7 +499,7 @@ export function VisualTab({ source, opened, onChange, placeholders, readOnly = f
           <select className={`${AdminUI.select} w-auto`} aria-label="Placeholder to insert" value={toInsert}
             onChange={(ev) => setToInsert(ev.target.value)}>
             <option value="">Choose a placeholder</option>
-            {insertable.map((p) => <option key={p.name} value={p.name}>{`{{${p.name}}}`}</option>)}
+            {asText.map((p) => <option key={p.name} value={p.name}>{`{{${p.name}}}`}</option>)}
           </select>
           <button type="button" className={tool} aria-label="Insert placeholder" disabled={!toInsert}
             onClick={() => { insertPlaceholder(toInsert); setToInsert(''); }}>Insert</button>

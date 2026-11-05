@@ -165,6 +165,8 @@ test('the toolbar offers what the brief lists, labelled, with Image waiting for 
   assert.doesNotMatch(fs.readFileSync(path.join(ROOT, FILE), 'utf8'), /onChange=\{\(ev\) => insertPlaceholder/);
   assert.match(html, /<option value="code">/);
   assert.doesNotMatch(html, /<option value="hasUrl">/, 'a flag is for conditions, not text');
+  const insertSelect = html.match(/<select[^>]*aria-label="Placeholder to insert"[\s\S]*?<\/select>/)[0];
+  assert.doesNotMatch(insertSelect, /<option value="url">/, 'a link goes in through Link, as a whole href, never as loose text');
   assert.match(html, /flex-wrap/, 'the toolbar wraps on a phone');
   const readOnly = renderToHtml(createElement(visual.VisualTab, { source, opened: source, onChange() {}, placeholders: [], readOnly: true }));
   assert.doesNotMatch(readOnly, /aria-label="Bold"/);
