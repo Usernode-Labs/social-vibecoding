@@ -1839,8 +1839,9 @@ const AppView = {
   //   * A way back: the frame must say it opened (the bridge's
   //     `__usernode_offline_cache: 'open'`). Online, a page that never says so
   //     (one that needs the token to load, or loads no bridge) is framed the
-  //     old way on this device for a week. Offline, it gives way to the
-  //     "needs a connection" placeholder.
+  //     old way on this device for a week, and reported: two people on one
+  //     build make it the old way on every device until the app deploys
+  //     again. Offline, it gives way to the "needs a connection" placeholder.
   //
   // Per device and per viewer, like the offline-ready map: dropped with the
   // session (clearOfflineReady).
@@ -1943,9 +1944,29 @@ const AppView = {
       // The page did not open without the token in its query: the old
       // address, on this device, for a while.
       map[slug] = { at: Date.now(), oldAddressUntil: Date.now() + AppView.OFFLINE_CACHE_RETRY_MS };
+      AppView._reportOfflineCacheDidNotOpen(slug);
     }
     AppView._writeOfflineCache(map);
     if (AppView.appData && AppView.appData.slug === slug) AppView.renderAppTab();
+  },
+
+  // Online, and the page never said it opened: tell the platform as well.
+  // Once two people have seen it on the same build, every device frames the
+  // app the old way until it deploys again (`offline_cache` comes back
+  // false; services/offline-cache-refusals.js), instead of each one opening
+  // it signed out first. Best effort: the device's own fallback above
+  // stands either way.
+  _reportOfflineCacheDidNotOpen(slug) {
+    const build = String(AppView.buildFor(slug) || '');
+    if (!slug || !/^[0-9a-f]{40}$/i.test(build)) return;
+    try {
+      fetch(`/api/apps/${encodeURIComponent(slug)}/offline-cache/did-not-open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ build }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch { /* no fetch here: the device's fallback alone */ }
   },
 
   // Bridge -> shell: `{ __usernode_offline_cache: 'open', fresh }`, from the

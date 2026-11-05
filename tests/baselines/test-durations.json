@@ -1513,6 +1513,7 @@
 "tests/notify-ask-postgres.test.js":[6.5,0.1],
 "tests/notify-ask.test.js":[2.9,0.4],
 "tests/offline-apps-cache.test.js":[2,0.6],
+"tests/offline-cache-refusals.test.js":[1.3,1],
 "tests/offline-recovery.test.js":[0.1,1.1],
 "tests/offline-session-boot.test.js":[0.4,1.1],
 "tests/onboarding-postgres.test.js":[1.9,0.6],
@@ -2119,6 +2120,7 @@
 "tests/tier-list-rankings-export.test.js":[1.7,0.5],
 "tests/title-heal.test.js":[0.3,1.2],
 "tests/title-hints.test.js":[1,0.3],
+"tests/token-order-check.test.js":[1.3,1],
 "tests/top-band-taps.test.js":[0.7,0.4],
 "tests/topic-attributes.test.js":[0.9,1.2],
 "tests/topic-figures.test.js":[2.5,0.5],
@@ -2396,4 +2398,4 @@
 "tests/ws-validate-thread-merged.test.js":[0.6,0.6],
 "tests/ws-workflow-relay.test.js":[1.4,0.5],
 "tests/x-link.test.js":[0.5,0.5],
-"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/app-role-reconciliation.test.js","tests/bot-build-crash-budget.test.js","tests/bot-cards-file-many.test.js","tests/homeroom-bot-done-close-offer.test.js","tests/homeroom-bot-failure-repeat-postgres.test.js","tests/homeroom-bot-file-many-offer.test.js","tests/homeroom-bot-file-many-postgres.test.js","tests/homeroom-bot-file-many-tap.test.js","tests/homeroom-bot-fixes-stopped-seed-postgres.test.js","tests/homeroom-bot-lift-suggestions.test.js","tests/homeroom-bot-live-stage-cap-postgres.test.js","tests/homeroom-bot-reply-guards.test.js","tests/homeroom-bot-revision-limit.test.js","tests/homeroom-bot-turn-engine.test.js","tests/main-failure-lead.test.js"]}
+"tests/your-standing.test.js":[1.5,0.4]},"unmeasured":["tests/app-role-reconciliation.test.js","tests/bot-build-crash-budget.test.js","tests/bot-cards-file-many.test.js","tests/homeroom-bot-done-close-offer.test.js","tests/homeroom-bot-failure-repeat-postgres.test.js","tests/homeroom-bot-file-many-offer.test.js","tests/homeroom-bot-file-many-postgres.test.js","tests/homeroom-bot-file-many-tap.test.js","tests/homeroom-bot-fixes-stopped-seed-postgres.test.js","tests/homeroom-bot-lift-suggestions.test.js","tests/homeroom-bot-live-stage-cap-postgres.test.js","tests/homeroom-bot-reply-guards.test.js","tests/homeroom-bot-revision-limit.test.js","tests/homeroom-bot-turn-engine.test.js","tests/main-failure-lead.test.js","tests/offline-cache-refusals.test.js","tests/token-order-check.test.js"]}

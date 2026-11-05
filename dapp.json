@@ -131,6 +131,12 @@
       "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
     },
     {
+      "key": "TOKEN_ORDER_CHECK_MODE",
+      "group": "Platform",
+      "default": "advisory",
+      "description": "The 'Sign-in token read after the bridge' check on app proposals: flags a script the change adds above the bridge tag that reads the token from the address (the app then opens signed out in Homeroom). Reads already on main are never flagged. off: no row. advisory (default): a flag shows but does not stop the merge. blocking: a flag fails the checks. Fails open."
+    },
+    {
       "key": "SMALL_CHANGE_TAG_MODE",
       "group": "Platform",
       "default": "on",
