@@ -327,6 +327,26 @@
     "text": "Request #{{number}}",
     "description": "Title of an item of the Needs you feed that holds competing changes, when the request they are for has no title. {{number}} is the request's number."
   },
+  "reel.pages.note": {
+    "text": "These are waiting on you. Each one is decided on its own page.",
+    "description": "Line above the list on the Communities screen's Needs you when everything waiting is decided on its own page (a group decision, competing changes or a question from Homeroom bot) rather than in the review run."
+  },
+  "reel.pages.governance": {
+    "text": "Group decision in {{project}}",
+    "description": "Second line of a row on the Communities screen's Needs you that opens a group decision's own page. {{project}} is the project's name."
+  },
+  "reel.pages.ballot": {
+    "text": "Competing changes in {{project}}",
+    "description": "Second line of a row on the Communities screen's Needs you that opens a request's page, where competing changes for it are picked from. {{project}} is the project's name."
+  },
+  "reel.pages.question": {
+    "text": "Question from Homeroom bot in {{project}}",
+    "description": "Second line of a row on the Communities screen's Needs you that opens a request's page, where Homeroom bot asked a question. {{project}} is the project's name."
+  },
+  "reel.pages.label": {
+    "text": "Waiting on their own page",
+    "description": "Accessible name of the list on the Communities screen's Needs you whose rows each open the page where that item is decided."
+  },
   "reel.yes": {
     "text": "Yes",
     "description": "Vote button on a proposal in the Needs you feed of the Communities screen: votes for the change going in."
@@ -345,7 +365,7 @@
   },
   "reel.empty": {
     "text": "Nothing is waiting on your vote in any of your projects.",
-    "description": "Shown in place of the Needs you feed on the Communities screen when no proposal or group decision is waiting for this person's vote."
+    "description": "Shown in place of the Needs you feed on the Communities screen only when nothing at all is waiting for this person: no proposal, competing change, question or group decision."
   },
   "reel.done": {
     "text": "Back to your communities",

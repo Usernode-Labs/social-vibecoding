@@ -51,10 +51,12 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { callAppView } from '../dev-board/card/fold';
 import type { NeedsFeedItem } from '../workshop/needs-reel';
 import { filterByVoteType, voteTallies, VoteTypeChips, type VoteFilter, type VoteType } from '../workshop/vote-filter';
@@ -62,8 +64,8 @@ import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
 import {
-  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pictoMarks, screenLine, toReviewItems,
-  type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type Placement, type ReviewItem, type SheetPlate,
+  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, toReviewItems,
+  type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type PageKind, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
 import { dirSign } from '../../lib/i18n/direction';
@@ -153,6 +155,12 @@ const DECISION_LABEL: Record<DecisionKind, string> = {
   rename: 'communities:review.decision.rename',
   secret_change: 'communities:review.decision.secret',
   decision: 'communities:review.decision.other',
+};
+/** What a waiting item on its own page is, under its title. */
+const PAGE_LABEL: Record<PageKind, string> = {
+  governance: 'communities:reel.pages.governance',
+  ballot: 'communities:reel.pages.ballot',
+  question: 'communities:reel.pages.question',
 };
 
 /**
@@ -553,6 +561,10 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
 
   const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
+  // #6344: the items the run cannot draw (a group decision, competing
+  // changes, the bot's question). Each is decided on its own page, so when
+  // nothing else waits they are listed with a way there.
+  const onPage = useMemo(() => (items ? pageItems(items, t) : []), [items, t]);
   useEffect(() => {
     if (!shaped || list) return;
     setList(shaped);
@@ -821,6 +833,36 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     );
   }
   if (!item) {
+    // #6344: the feed is not empty, but everything waiting on you (a group
+    // decision, competing changes, a question) is decided on its own page.
+    // List those rather than say nothing is waiting. A feed that also holds
+    // a change is about to open on it once the run is fixed, so until then it
+    // keeps the frame it drew before.
+    const pagesOnly = list !== null || !shaped?.some((it) => it.kind !== 'governance');
+    if (onPage.length && pagesOnly) {
+      return (
+        <div ref={anchorRef} className="rf-run" data-review-flow="" data-needs-pages={onPage.length}>
+          <p className="rf-feed-note px-4 pt-3 pb-2 text-sm text-zinc-500 dark:text-zinc-400">{t('communities:reel.pages.note')}</p>
+          <GroupedList tone="plane" aria-label={t('communities:reel.pages.label')} data-needs-pages-list="">
+            {onPage.map((p) => (
+              <ListRow
+                key={p.key}
+                as="a"
+                href={p.href}
+                data-needs-page-row={p.key}
+                leading={(
+                  <span className="app-icon-tile workshop-reel-tile" data-icon={appIconKind(p.app as never)} aria-hidden="true">
+                    <AppIconContent app={p.app as never} />
+                  </span>
+                )}
+                title={p.title}
+                subtitle={t(PAGE_LABEL[p.kind], { project: p.app?.name || p.app?.slug || '' })}
+              />
+            ))}
+          </GroupedList>
+        </div>
+      );
+    }
     return <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
   }
 

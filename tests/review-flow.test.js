@@ -81,6 +81,40 @@ test('feed items become review items: plain summary, shaped screens, phone first
   assert.deepEqual(legacy.pair, { before: '/visuals/' + 'c'.repeat(32), after: '/visuals/' + 'd'.repeat(32) });
 });
 
+test('#6344: the decisions, ballots and questions the run cannot draw become rows on their own page', () => {
+  const t = (id, values) => message(id, values);
+  const feed = [
+    feedItem({ kind: 'proposal', id: 1 }),
+    feedItem({ kind: 'governance', id: 9, title: 'Rename the app to Recipe Box', number: null }),
+    feedItem({
+      kind: 'ballot', id: 12, title: 'a ballot has its own title', number: 4,
+      ballot: { number: 3, title: 'Which sign-in screen should go live?', options: [], close: null },
+    }),
+    feedItem({ kind: 'question', id: 15, title: '', number: 7 }),
+    feedItem({ kind: 'governance', id: 20, title: '', number: null }),
+    feedItem({ kind: 'ballot', id: 22, title: '', number: null, ballot: { number: null, title: null, options: [], close: null } }),
+    feedItem({ kind: 'governance', id: 30, title: 'No project here', app: null }),
+  ];
+  const pages = model.pageItems(feed, t);
+  assert.deepEqual(pages.map((p) => p.key), ['governance:9', 'ballot:12', 'question:15', 'governance:20', 'ballot:22'],
+    'the feed order, only the kinds decided on their own page, and none without a project');
+  assert.deepEqual(pages.map((p) => p.href), [
+    '#app/homeroom/dev/governance/9',
+    '#app/homeroom/dev/issues/3',
+    '#app/homeroom/dev/issues/7',
+    '#app/homeroom/dev/governance/20',
+    '#app/homeroom/workshop',
+  ], 'a decision opens its own page; a ballot and a question their request\'s, else the Workshop');
+  assert.deepEqual(pages.map((p) => p.kind), ['governance', 'ballot', 'question', 'governance', 'ballot']);
+  assert.deepEqual(pages.map((p) => p.title), [
+    'Rename the app to Recipe Box',
+    'Which sign-in screen should go live?',
+    message('communities:reel.fallbackTitle.question'),
+    message('communities:reel.fallbackTitle.decision'),
+    message('communities:reel.ballot.fallbackTitle', { number: '' }),
+  ], 'its own title, else the fallback the feed already uses');
+});
+
 test('the title shot crops the after side to what changed, at its own proportions', () => {
   const crop = model.titleCrop(SCREEN, { w: 300, h: 200 });
   // The after box (20,300,240,60) with 24px of room, clamped at the left
@@ -701,6 +735,11 @@ test('on a wide window the run is one column as wide as the page', () => {
   assert.match(css, new RegExp(`\\.rf-page \\{[^}]*width: min\\(100%, ${cap}px\\); margin-inline: auto;`));
   assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-error="">/);
   assert.match(src, /data-needs-empty="" data-review-flow="">/);
+  // #6344: when something waits that the run cannot draw, the same branch
+  // lists it rather than saying nothing does.
+  assert.match(src, /if \(onPage\.length && pagesOnly\) \{/);
+  assert.match(src, /data-needs-pages=\{onPage\.length\}/);
+  assert.match(src, /t\('communities:reel\.pages\.note'\)/);
   assert.match(src, /<div ref=\{anchorRef\} className="rf-run rf-loading" data-review-flow=""/);
 });
 test('a small change inside a close-up is drawn from it, big and sharp; without one it keeps the still\'s size', () => {

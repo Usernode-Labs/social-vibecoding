@@ -1311,6 +1311,31 @@ test('#6276: the Needs you pane draws the review flow instead of the old feed', 
   mod.workshopStore.set({ open: false, tab: 'status', rows: null, feed: null, feedError: false });
 });
 
+test('#6344: a feed of only decisions and questions lists them instead of saying nothing waits', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
+  mod.workshopStore.set({
+    open: true, error: false, tab: 'needs', scopeOpen: false,
+    rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 2 }],
+    feed: [
+      { kind: 'governance', id: 9, title: 'Rename the app to Recipe Box', app: { slug: 'garden', name: 'Garden' } },
+      { kind: 'question', id: 15, title: '', number: 7, app: { slug: 'garden', name: 'Garden' } },
+    ],
+    feedError: false, feedCapped: false,
+  });
+  const out = html();
+  const pane = out.slice(out.indexOf('data-workshop-pane="needs"'));
+  assert.match(pane, /data-needs-pages="2"/, 'both waiting items are drawn');
+  assert.match(pane, /data-needs-page-row="governance:9"/);
+  assert.match(pane, /data-needs-page-row="question:15"/);
+  assert.match(pane, /href="#app\/garden\/dev\/governance\/9"/, 'a group decision opens its own page');
+  assert.match(pane, /href="#app\/garden\/dev\/issues\/7"/, 'a question opens its request\'s page');
+  assert.match(pane, /Group decision in Garden/);
+  assert.match(pane, /Question from Homeroom bot in Garden/);
+  assert.doesNotMatch(pane, /data-needs-empty/, 'it no longer says nothing is waiting');
+  mod.workshopStore.set({ open: false, tab: 'status', rows: null, feed: null, feedError: false });
+});
+
 test('#3270: the controller reads the Needs you feed alongside, and survives losing it', async () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const { workshopController, workshopStore } = mod;

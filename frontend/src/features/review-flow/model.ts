@@ -303,6 +303,53 @@ export function toReviewItems(
   });
 }
 
+/**
+ * The feed's items the run cannot draw: a group decision, competing changes
+ * for one request, and a question Homeroom bot asked. Each is decided on its
+ * own page, so Needs you lists them with a way there instead of skipping them
+ * (#6344). `t` is the caller's translator, so this stays pure.
+ */
+export type PageKind = 'governance' | 'ballot' | 'question';
+
+export type PageItem = {
+  key: string;
+  kind: PageKind;
+  id: number;
+  /** The item's own title, or the fallback sentence the feed already uses. */
+  title: string;
+  app: NeedsFeedItem['app'];
+  href: string;
+};
+
+export function pageItems(
+  items: NeedsFeedItem[],
+  t: (id: string, values?: Record<string, string | number>) => string,
+): PageItem[] {
+  const out: PageItem[] = [];
+  for (const item of items) {
+    const kind = item.kind;
+    if (kind !== 'governance' && kind !== 'ballot' && kind !== 'question') continue;
+    const slug = item.app?.slug;
+    // An item with no project has no page to open.
+    if (!slug) continue;
+    const app = encodeURIComponent(slug);
+    const ballot = kind === 'ballot' ? item.ballot : null;
+    const number = ballot ? (ballot.number ?? item.number) : item.number;
+    const own = kind === 'ballot' ? ballot?.title : item.title;
+    const title = cleanTitle(own || '')
+      || (kind === 'governance' ? t('communities:reel.fallbackTitle.decision')
+        : kind === 'ballot' ? t('communities:reel.ballot.fallbackTitle', { number: number ?? '' })
+        : t('communities:reel.fallbackTitle.question'));
+    // A group decision has its own page; competing changes and the bot's
+    // question are decided on their request's. With no request, the Workshop.
+    const href = kind === 'governance'
+      ? `#app/${app}/dev/governance/${Number(item.id)}`
+      : number ? `#app/${app}/dev/issues/${Number(number)}` : `#app/${app}/workshop`;
+    out.push({ key: `${kind}:${item.id}`, kind, id: item.id, title, app: item.app, href });
+  }
+  return out;
+}
+
 /** A region's box on one side, or a mark line's box (zero height). */
 export function regionBox(r: Region, side: 'before' | 'after'): Box | null {
   const box = side === 'before' ? r.b : r.a;
