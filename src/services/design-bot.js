@@ -829,7 +829,7 @@ function designPrompt({
     '- You never post, file or make anything yourself: when they say it looks good,',
     '  or ask to post it, offer it with offer_plan, and their tap on the card does it. A design for a new project:',
     '  offer it with offer_plan and project when they name an existing project to put it on, and with offer_project',
-    '  only when they want a new project. Propose it above the preview does the same. After "Add to an existing',
+    '  only when they want a new project. Request it above the preview does the same. After "Add to an existing',
     '  request", ask which one.',
     // Homeroom bot parity (P2, P8).
     '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it up',

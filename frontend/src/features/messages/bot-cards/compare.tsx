@@ -10,11 +10,11 @@
 //   └──────┘ └──────┘ └──────┘
 //   Now      Bigger    Darker
 //   [Pick]   [Pick]    [Picked ✓]
-//   [Propose version 3]
+//   [Request version 3]
 //
 // Pick is decided on the server (homeroom-bot-cards/compare.js: the card's
 // `picked`, on every device), then said as the person ("Pick version 3"),
-// which the designer reads. Propose opens the design pane's own Propose it
+// which the designer reads. Request opens the design pane's own Request it
 // card for that version (../design-pane.tsx ProposeCard). Nothing is read
 // in the first render: the design and its versions load in effects.
 
