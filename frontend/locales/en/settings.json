@@ -2044,8 +2044,8 @@
     "description": "Row title in Settings > User guide: the last step of how a change goes live. The rule is the project's rule for who has to approve a change."
   },
   "guide.vote.rule.body": {
-    "text": "Each project has its own rule for who has to say yes: one person's yes can be enough, or it can take most of the group. Find it under Who can see & change it, in the ⋯ menu on the project's hub. Changing the rule is itself a change, voted on under the current rule. Once the rule is met and the checks pass, the change goes live.",
-    "description": "Paragraph in Settings > User guide. \"Who can see & change it\" is the name of a row in a project's ⋯ menu."
+    "text": "Each project has its own rule for who has to say yes: one person's yes can be enough, or it can take most of the group. Whoever manages a project can propose a new rule from Settings & rules in its ⋯ menu, and that goes to a vote under the current rule. Once the rule is met and the checks pass, the change goes live.",
+    "description": "Paragraph in Settings > User guide. \"Settings & rules\" is the name of a row in a project's ⋯ menu."
   },
   "about.title": {
     "text": "About",
