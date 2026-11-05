@@ -158,27 +158,34 @@ function attributeProblem(name, value) {
   return null;
 }
 
-// An image's address: https, or a placeholder (whose value the template
-// validation already limits to a checked link). An uploaded image is served
-// from Homeroom over https, and the seeded emails draw their brand images from
-// the production origin, so any https address is allowed. Plain http is
-// refused because mail clients block or flag it; data: is refused above,
-// because Gmail and Outlook drop it.
+// An image's address: https, written out. An uploaded image is served from
+// Homeroom over https, and the seeded emails draw their brand images from the
+// production origin, so any https address is allowed. Plain http is refused
+// because mail clients block or flag it; data: is refused above, because Gmail
+// and Outlook drop it. A placeholder is never part of one: the mail client
+// fetches an image on open, so a value in its address (a reset link's token)
+// would go to that site unasked (template-validation.js keeps links to href).
+const holdsPlaceholder = (value) => /\{\{|\}\}/.test(value);
+
 function imageAddressOk(value) {
-  if (/^\s*\{\{/.test(value)) return true;
+  if (holdsPlaceholder(value)) return false;
   return fold(decodeEntities(value)).startsWith('https://');
 }
 
 // Why an <img> is refused, or null: it needs an https address, in src and in
-// every srcset candidate, and an alt attribute (empty for decoration) so a
-// reader with images off, or with a screen reader, is told what is there.
+// every srcset candidate, with no placeholder in it, and an alt attribute
+// (empty for decoration) so a reader with images off, or with a screen reader,
+// is told what is there.
 function imageProblem(tag) {
   const attr = (name) => tag.attributes.find((a) => a.name === name);
   const src = attr('src');
+  const srcset = attr('srcset');
+  if ((src && holdsPlaceholder(src.value)) || (srcset && holdsPlaceholder(srcset.value))) {
+    return 'An image\'s address cannot hold a placeholder: the mail client fetches it when the email opens, so the value would be sent to that site. Write the image\'s https address out.';
+  }
   if (!src || !imageAddressOk(src.value)) {
     return 'An image\'s address must start with https://. Upload the image, or use a secure link to it.';
   }
-  const srcset = attr('srcset');
   if (srcset && !decodeEntities(srcset.value).split(',').every((c) => !c.trim() || imageAddressOk(c.trim()))) {
     return 'Every address in an image\'s srcset must start with https://.';
   }

