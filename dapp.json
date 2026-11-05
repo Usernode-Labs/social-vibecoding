@@ -549,6 +549,12 @@
       "description": "Bearer token Brevo's transactional email webhook must send to POST /api/mail/webhooks/brevo. Configure delivered, hardBounce, softBounce, invalid, blocked and spam events in Brevo. Unset leaves the webhook answering 404 and the admin mail reports without delivery counts."
     },
     {
+      "key": "BREVO_MAIL_TEMPLATES",
+      "group": "Platform mail",
+      "required": false,
+      "description": "Mail kinds sent with a template kept in Brevo instead of Homeroom's, as JSON: {\"project_invite\":12}. Used only when PLATFORM_MAIL_PROVIDER is brevo. Empty leaves every mail on Homeroom's templates; a malformed value is logged and ignored. Editing such a template in Brevo takes effect at once, with no vote. See docs/mail-brevo.md."
+    },
+    {
       "key": "PLATFORM_MAIL_MAX_PER_HOUR",
       "group": "Platform mail",
       "default": "300",

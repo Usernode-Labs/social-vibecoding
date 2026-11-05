@@ -34,10 +34,57 @@ sending, whatever is set.
 | `PLATFORM_MAIL_PROVIDER` | no | `brevo` selects this transport. If it is named and `BREVO_API_KEY` is empty, mail is reported as broken rather than falling back. |
 | `BREVO_API_KEY` | yes | Sent as the `api-key` header. Shared with Brevo SMS. |
 | `BREVO_MAIL_WEBHOOK_TOKEN` | yes | Bearer token Brevo's webhook sends. Unset, the webhook answers 404 and the admin reports leave out delivery counts. |
+| `BREVO_MAIL_TEMPLATES` | no | Which kinds use a template kept in Brevo, as JSON: `{"project_invite":12}`. Empty means every mail uses Homeroom's templates. |
 
-On Kubernetes these are `secrets.platformMailProvider`, `secrets.brevoApiKey` and
-`secrets.brevoMailWebhookToken` in the infra repository's SOPS-encrypted values.
+On Kubernetes these are `secrets.platformMailProvider`, `secrets.brevoApiKey`,
+`secrets.brevoMailWebhookToken` and `secrets.brevoMailTemplates` in the infra
+repository's SOPS-encrypted values.
 See the [chart configuration](../deploy/helm/social-vibecoding-platform/README.md).
+
+## Using Brevo's templates
+
+By default every mail is written by `src/services/mail/templates.js`. A kind
+listed in `BREVO_MAIL_TEMPLATES` is sent with that Brevo template instead, using
+its subject and body. Kinds not listed are unchanged, so they can move one at a
+time. The template must use Brevo's New Template Language, and be active.
+
+The sender stays `PLATFORM_MAIL_FROM`, whatever the template says. The kind's tag
+and headers, and the webhook, work as before.
+
+A template reads the values the mail was sent with as `{{ params.<name> }}`. An
+empty value is left out, so `{% if params.code %}` works.
+
+| Kind | Params |
+| --- | --- |
+| `otp`, `account_email`, `username_change` | `code` |
+| `password_reset` | `url` |
+| `waitlist_joined` | `code`, `url`, `confirmUrl` |
+| `waitlist_code` | `code`, `confirmed`, `confirmUrl`, `statusUrl` |
+| `waitlist_released` | `url`, `hasAccount`, `signInLink`, `mobile.ios`, `mobile.android` |
+| `project_invite` | `inviter`, `project`, `url` |
+
+For any other kind, read what its caller passes to `send()` and what its template
+in `templates.js` reads.
+
+**What you give up on a kind you move:**
+
+- **Nothing checks the template.** If it leaves out `params.code` or uses a name
+  that is not there, the mail goes out without it, and nothing on the platform
+  notices. Send one to yourself before relying on it. An activity mail's template
+  must show `params.unsubscribeUrl` itself.
+- **Edits go live at once**, with no proposal or vote. Sign-in codes and password
+  resets are safest left on Homeroom's templates.
+- **No opens or clicks on the platform.** The platform's own link and pixel are in
+  its templates, so a mail sent with a Brevo template is recorded as untracked and
+  reports only delivery. Brevo's open and click events are still not imported.
+- **English only.** Somebody whose language is not English gets Homeroom's
+  template, translated, so they still read it in their own language.
+
+If Brevo refuses a template with a 400 or 404 (deleted, inactive, a wrong id),
+nothing was sent, so that mail goes out with Homeroom's template and the platform
+logs an error. An entry naming an unknown kind or a bad id is logged and ignored,
+and so is the whole setting if it is not a JSON object. `admin_test` cannot be
+moved, so **Send a test** does not exercise a Brevo template.
 
 ## The webhook
 

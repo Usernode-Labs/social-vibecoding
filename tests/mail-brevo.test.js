@@ -73,6 +73,103 @@ test('a refusal throws Brevo\'s bounded complaint, and a success with no readabl
   assert.equal(await transport.send({ kind: 'otp', to: 'a@example.invalid', code: '1' }), undefined);
 });
 
+const TEMPLATED = { BREVO_API_KEY: 'k', BREVO_MAIL_TEMPLATES: '{"otp":12,"project_invite":34}' };
+
+test('a kind with a Brevo template sends its id and values instead of Homeroom\'s words', async (t) => {
+  const calls = stubFetch(t, answered(201, '{"messageId":"<id@relay>"}'));
+  const transport = brevo.create(TEMPLATED, { sender: SENDER });
+  const detail = await transport.send({ kind: 'otp', to: 'a@example.invalid', code: '123456', empty: null, messageId: 'a'.repeat(48), trackingEnabled: false });
+
+  assert.deepEqual(detail, { providerMessageId: 'id@relay' });
+  const { body } = calls[0];
+  assert.equal(body.templateId, 12);
+  assert.deepEqual(body.params, { code: '123456' }, 'the values, without the bookkeeping or an empty one');
+  assert.deepEqual(body.sender, { name: 'Homeroom', email: 'no-reply@onhomeroom.com' });
+  assert.deepEqual(body.tags, ['otp']);
+  for (const own of ['subject', 'htmlContent', 'textContent']) assert.equal(body[own], undefined, own);
+});
+
+test('a kind with no template, and a template kept for English when somebody reads another language, stay Homeroom\'s', async (t) => {
+  const calls = stubFetch(t, answered(201, '{}'));
+  const transport = brevo.create(TEMPLATED, { sender: SENDER });
+  await transport.send({ kind: 'password_reset', to: 'a@example.invalid', url: 'https://example.invalid/r' });
+  assert.equal(calls[0].body.templateId, undefined);
+  assert.ok(calls[0].body.htmlContent);
+
+  const translate = () => null;
+  assert.equal(transport.usesProviderTemplate('otp', { translate }), false);
+  await transport.send({ kind: 'otp', to: 'a@example.invalid', code: '1', translate });
+  assert.equal(calls[1].body.templateId, undefined);
+  assert.ok(calls[1].body.textContent.includes('1'));
+});
+
+test('a template Brevo refuses still delivers Homeroom\'s words, and only a refusal does', async (t) => {
+  const transport = brevo.create(TEMPLATED, { sender: SENDER });
+  for (const status of [400, 404]) {
+    const calls = [];
+    global.fetch = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      calls.push(body);
+      return body.templateId ? answered(status, '{"code":"invalid_parameter"}') : answered(201, '{"messageId":"<own@relay>"}');
+    };
+    t.after(() => { global.fetch = realFetch; });
+    assert.deepEqual(await transport.send({ kind: 'otp', to: 'a@example.invalid', code: '654321' }), { providerMessageId: 'own@relay' });
+    assert.equal(calls.length, 2);
+    assert.ok(calls[1].textContent.includes('654321'));
+  }
+  // A 5xx or a bad key may have sent, or will fail again: one attempt, as ever.
+  for (const status of [401, 502]) {
+    const calls = stubFetch(t, answered(status, 'no'));
+    await assert.rejects(transport.send({ kind: 'otp', to: 'a@example.invalid', code: '1' }), new RegExp(`HTTP ${status}`));
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('the template setting keeps only known kinds and real ids, and the admin test never moves', () => {
+  assert.deepEqual(brevo.parseTemplates({}), {});
+  assert.deepEqual(brevo.parseTemplates({ BREVO_MAIL_TEMPLATES: 'nonsense' }), {});
+  assert.deepEqual(brevo.parseTemplates({ BREVO_MAIL_TEMPLATES: '[12]' }), {});
+  assert.deepEqual(brevo.parseTemplates({
+    BREVO_MAIL_TEMPLATES: '{"otp":12,"made_up":3,"password_reset":"14","account_email":0,"admin_test":5,"__proto__":6}',
+  }), { otp: 12 });
+});
+
+test('send() records a templated mail as untracked, so the reports never wait on its pixel', async (t) => {
+  const mail = require('../src/services/mail');
+  const previous = process.env.PLATFORM_MAIL_TRACKING_SECRET;
+  process.env.PLATFORM_MAIL_TRACKING_SECRET = 'test-only-secret';
+  t.after(() => {
+    if (previous === undefined) delete process.env.PLATFORM_MAIL_TRACKING_SECRET;
+    else process.env.PLATFORM_MAIL_TRACKING_SECRET = previous;
+  });
+  const calls = stubFetch(t, answered(201, '{"messageId":"<id@relay>"}'));
+  const poolModule = require('../src/db/pool');
+  const realGetPool = poolModule.getPool;
+  t.after(() => { poolModule.getPool = realGetPool; });
+  const sendWith = async (env) => {
+    const inserts = [];
+    poolModule.getPool = () => ({
+      query: async (sql, args) => {
+        if (/INSERT INTO mail_deliveries/.test(sql)) { inserts.push(args); return { rows: [{ id: 1 }] }; }
+        return { rows: [] };
+      },
+    });
+    await mail.send({ databaseUrl: 'postgres://unused.invalid/none', mailTransport: brevo.create(env, { sender: SENDER }) },
+      { kind: 'project_invite', to: 'a@example.invalid', inviter: 'ada', project: 'Garden', url: 'https://example.invalid/w' });
+    return inserts[0];
+  };
+
+  const templated = await sendWith(TEMPLATED);
+  assert.equal(calls[0].body.templateId, 34);
+  assert.equal(calls[0].body.params.trackingEnabled, undefined);
+  assert.equal(templated[8], false, 'engagement_tracked');
+
+  const own = await sendWith({ BREVO_API_KEY: 'k' });
+  assert.equal(calls[1].body.templateId, undefined);
+  assert.match(calls[1].body.htmlContent, /\/mail\/o\//, 'Homeroom\'s words still carry the pixel');
+  assert.equal(own[8], true, 'engagement_tracked');
+});
+
 test('the sender parses from either spelling, and an unusable one is not a transport', () => {
   assert.deepEqual(brevo.parseSender('"Home Room" <a@example.invalid>'), { name: 'Home Room', email: 'a@example.invalid' });
   assert.deepEqual(brevo.parseSender('<a@example.invalid>'), { email: 'a@example.invalid' });
@@ -202,6 +299,8 @@ test('the chart can name the provider and supply the webhook token, and naming n
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
   assert.match(values, /^ {2}platformMailProvider: ""$/m);
   assert.match(values, /^ {2}brevoMailWebhookToken: ""$/m);
+  assert.match(secret, /\{\{- with \.Values\.secrets\.brevoMailTemplates \}\}\n\s+BREVO_MAIL_TEMPLATES: \{\{ \. \| quote \}\}\n\s+\{\{- end \}\}/);
+  assert.match(values, /^ {2}brevoMailTemplates: ""$/m);
 });
 
 test('the manifest declares the webhook token as private and optional', () => {
