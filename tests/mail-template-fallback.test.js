@@ -353,15 +353,16 @@ test('resolved never reaches a provider\'s params or a log line', async (t) => {
     posted.push(JSON.parse(init.body));
     return { ok: true, status: 201, text: async () => '{"messageId":"<m@x>"}' };
   });
-  const transport = brevo.create({ BREVO_API_KEY: 'k', BREVO_MAIL_TEMPLATES: '{"otp": 5}' }, { sender: 'Homeroom <a@b.c>' });
+  const transport = brevo.create({ BREVO_API_KEY: 'k' }, { sender: 'Homeroom <a@b.c>' });
   const { config } = door(t, poolWith(), { mailTransport: transport });
   await mail.sendOtpMail(config, 'a@example.com', '123456');
-  assert.equal(posted[0].templateId, 5);
-  assert.deepEqual(Object.keys(posted[0].params), ['code']);
+  assert.equal(posted[0].templateId, undefined);
+  assert.equal(posted[0].params, undefined);
+  assert.doesNotMatch(JSON.stringify(posted[0]), /"resolved"/);
 
   t.mock.method(languageCache, 'readSource', () => SOURCE);
   await mail.send(config, { kind: 'otp', to: 'b@example.com', locale: 'fr', code: '1' });
-  assert.equal(posted[1].templateId, undefined, 'a reader with a language gets Homeroom\'s own');
+  assert.equal(posted[1].templateId, undefined);
 
   const lines = [];
   for (const level of ['info', 'warn', 'error']) t.mock.method(log, level, (...args) => { lines.push(JSON.stringify(args)); });

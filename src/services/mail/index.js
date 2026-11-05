@@ -303,12 +303,9 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
     // transport renders from what it is handed, so the same words reach it:
     // `resolved` travels with the payload, and nothing logs or stores it.
     const worded = { ...payload, resolved: await resolvedFor(config, pool, kind, locale) };
-    // A provider's own template has none of our tracked links or pixel, so
-    // that mail is not recorded as one that could report opens or clicks.
-    const ownWords = !transport.usesProviderTemplate?.(kind, worded);
     let rendered;
     try {
-      rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: ownWords && !!pool && !!tracking.secret() });
+      rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: !!pool && !!tracking.secret() });
     } catch (err) {
       if (err.code !== 'no_template') throw err;
       // The owner's third rule: no template and nothing a plain mail could
