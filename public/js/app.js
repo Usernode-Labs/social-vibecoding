@@ -264,6 +264,14 @@ const App = {
     // …and the Workshop view the tab returns to (#2776), which names the
     // previous account's app and card in the same way.
     App._forgetWorkshopView();
+    // …and Discover's recent searches (#6197): what this account looked for,
+    // which the next account on this device must not be offered. A restored
+    // session (keepUnsent) is the same person and keeps them.
+    if (!keepUnsent) {
+      try {
+        localStorage.removeItem('usernode:browse-recent-searches');
+      } catch (err) { /* nothing stored, or no storage at all */ }
+    }
     // …and what Messages and the Homeroom bot tab kept to draw offline
     // (frontend/src/lib/kept-copies.ts): the conversation list, the newest
     // messages of the last few conversations and the bot tab's lists. The
