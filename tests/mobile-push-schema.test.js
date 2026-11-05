@@ -89,9 +89,11 @@ test('registration lifecycle history is transient and contains no provider secre
 });
 
 test('closed database kind registry matches the reviewed service mapping and defaults', () => {
-  const seed = schema.match(
-    /INSERT INTO mobile_push_kind_categories \(kind, category, default_enabled\) VALUES([\s\S]*?)ON CONFLICT \(kind\)/
-  )?.[1];
+  // Every seed block: the baseline's, and a later migration's for a new kind
+  // (#5404's voted_digest), since the baseline cannot be edited.
+  const seed = [...schema.matchAll(
+    /INSERT INTO mobile_push_kind_categories \(kind, category, default_enabled\) VALUES([\s\S]*?)ON CONFLICT \(kind\)/g
+  )].map((match) => match[1]).join('\n');
   assert.ok(seed, 'closed kind/category seed exists');
   const rows = [...seed.matchAll(/\('([^']+)', '([^']+)', (TRUE|FALSE)\)/g)].map((match) => ({
     kind: match[1], category: match[2], defaultEnabled: match[3] === 'TRUE',
@@ -99,7 +101,8 @@ test('closed database kind registry matches the reviewed service mapping and def
   const expected = CATEGORY_DEFINITIONS.flatMap((category) => category.kinds.map((kind) => ({
     kind, category: category.key, defaultEnabled: category.defaultEnabled,
   })));
-  assert.deepEqual(rows, expected);
+  const byKind = (left, right) => left.kind.localeCompare(right.kind);
+  assert.deepEqual([...rows].sort(byKind), [...expected].sort(byKind));
   // 22 → 27: #1374's five (proposal_vote, pr_merged, vote_digest,
   // issue_opened, app_health); 27 → 29: #1688's two (revision_recheck,
   // weekly_digest); 29 → 31: #2386's two (friend_request, friend_accept).
@@ -129,7 +132,9 @@ test('closed database kind registry matches the reviewed service mapping and def
   // 49 → 50: #6019's change_thread_reply, a message in a change's or a
   // decision's thread you follow (direct_interactions, beside
   // issue_thread_reply).
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 50);
+  // 50 → 51: #5404's voted_digest, the Monday count of the changes you voted
+  // on that were decided (proposal_alerts, a migration's row).
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 51);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });

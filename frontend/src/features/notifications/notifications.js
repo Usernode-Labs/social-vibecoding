@@ -1379,6 +1379,14 @@ const Notifications = {
       window.location.hash = '#communities';
       return;
     }
+    // #5404: the Monday count of the changes you voted on that were decided
+    // names no change and no project; Your votes lists them.
+    if (item.kind === 'voted_digest') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToProfileProposals) return App.navigateToProfileProposals('votes');
+      window.location.hash = '#profile/your-votes';
+      return;
+    }
     if (item.appSlug) {
       // Every path below navigates (the topic sub-branch returns after
       // routing; an invalid topic ref falls through to the chat/proposals
@@ -3571,6 +3579,19 @@ function rowWords(n) {
         n.appName
           ? t('notifications:row.voteDigest.countIn', { count, project: n.appName })
           : t('notifications:row.voteDigest.count', { count }),
+      ),
+    };
+  }
+
+  // #5404: the Monday count. `detail` is the count when it was sent, with no
+  // project on the row (services/voted-digest.js), and a tap opens Your votes.
+  if (n.kind === 'voted_digest') {
+    return {
+      ...base,
+      icon: '\u{1F4CB}',
+      ...headline(
+        t('notifications:row.votedDigest.label'),
+        t('notifications:row.votedDigest.count', { count: Number(n.detail) || 0 }),
       ),
     };
   }

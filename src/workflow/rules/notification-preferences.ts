@@ -221,6 +221,14 @@ export const ACCOUNT_CATEGORY_DEFINITIONS: readonly Category[] = Object.freeze([
     defaultEnabled: true,
     kinds: Object.freeze(['vote_digest']),
   }),
+  // #5404: where the changes you already voted on went, once a week.
+  Object.freeze({
+    key: 'voted_digest',
+    label: 'Weekly summary of changes you voted on',
+    description: 'Once a week, a single message counting the changes you voted on that were decided. Nothing on a quiet week.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['voted_digest']),
+  }),
 ]);
 
 const ALL_DEFINITIONS: readonly Category[] = Object.freeze([
