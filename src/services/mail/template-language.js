@@ -16,13 +16,15 @@ class TemplateSyntaxError extends Error {
   }
 }
 
-// Same escaping as `esc` in templates.js.
+// Like `esc` in templates.js, plus the apostrophe, so a value inside a
+// single-quoted attribute cannot end the attribute early.
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function checkName(name, offset) {

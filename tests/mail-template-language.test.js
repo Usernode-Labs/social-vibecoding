@@ -66,3 +66,8 @@ test('lookups read own properties only', () => {
   assert.equal(render('{{#if toString}}Y{{else}}N{{/if}}', {}, { mode: 'text' }), 'N');
   assert.equal(render('{{constructor}}', { constructor: 'own' }, { mode: 'text' }), 'own');
 });
+
+test('apostrophes are escaped in html and left alone in text', () => {
+  assert.equal(render('{{a}}', { a: "it's" }, { mode: 'html' }), 'it&#39;s');
+  assert.equal(render('{{a}}', { a: "it's" }, { mode: 'text' }), "it's");
+});
