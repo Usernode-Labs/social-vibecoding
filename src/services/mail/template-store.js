@@ -41,9 +41,14 @@ async function inTransaction(pool, work) {
 
 const lock = (client, scope, key) => client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${scope}:${key}`]);
 
-async function assertLiveLayout(client, familyId) {
-  const { rows } = await client.query(
-    "SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR SHARE", [familyId]);
+// A save that points at a layout holds it FOR SHARE until it commits. Deleting
+// a layout takes it FOR UPDATE (`exclusive`), which waits for those saves and so
+// counts and moves them, and which a later save waits behind until it sees the
+// layout deleted.
+async function assertLiveLayout(client, familyId, exclusive = false) {
+  const { rows } = exclusive
+    ? await client.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [familyId])
+    : await client.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR SHARE", [familyId]);
   return rows.length > 0;
 }
 
@@ -114,6 +119,9 @@ async function deleteTemplate(pool, id, { replacementId = null } = {}, userId) {
         "SELECT * FROM email_templates WHERE id = $1 AND action = $2 AND status = 'archived' AND deleted_at IS NULL AND id <> $3 FOR UPDATE",
         [replacementId, row.action, id]);
       if (!found) throw fail('invalid_replacement', 'The replacement must be an archived version of the same action');
+      if (found.layout_family_id != null && !(await assertLiveLayout(client, found.layout_family_id))) {
+        throw fail('invalid_replacement', 'The replacement uses a layout that was deleted');
+      }
       replacement = found;
     }
     await client.query("UPDATE email_templates SET status = 'archived', deleted_at = NOW() WHERE id = $1", [id]);
@@ -127,7 +135,7 @@ async function deleteTemplate(pool, id, { replacementId = null } = {}, userId) {
 async function deleteLayout(pool, familyId, { replacementFamilyId = null } = {}, userId) { // eslint-disable-line no-unused-vars
   return inTransaction(pool, async (client) => {
     await lock(client, 'email_layouts', familyId);
-    if (!(await assertLiveLayout(client, familyId))) throw fail('not_found', 'That layout does not exist');
+    if (!(await assertLiveLayout(client, familyId, true))) throw fail('not_found', 'That layout does not exist');
     const { rows: [{ n }] } = await client.query(
       "SELECT count(*)::int AS n FROM email_templates WHERE layout_family_id = $1 AND status = 'live' AND deleted_at IS NULL", [familyId]);
     if (n > 0 && replacementFamilyId == null) throw fail('replacement_required', 'Choose a layout for the templates that use this one');
@@ -143,19 +151,26 @@ async function deleteLayout(pool, familyId, { replacementFamilyId = null } = {},
   });
 }
 
-// A restored version comes back archived, or live when its action has no live
-// one, so restoring never displaces what is serving mail now.
-async function restoreTemplate(pool, id, userId) { // eslint-disable-line no-unused-vars
+// Puts the chosen version live, so an admin can undo a bad edit: the current
+// live row is archived, and a deleted version comes back (deleted_at cleared).
+// `expectedLiveId` is the live row the caller saw; a different one is a conflict.
+// A version whose layout was deleted cannot go live.
+async function restoreTemplate(pool, id, { expectedLiveId = null } = {}, userId) { // eslint-disable-line no-unused-vars
   return inTransaction(pool, async (client) => {
     const { rows: [peek] } = await client.query('SELECT action FROM email_templates WHERE id = $1', [id]);
     if (!peek) throw fail('not_found', 'That template does not exist');
     await lock(client, 'email_templates', peek.action);
     const { rows: [row] } = await client.query('SELECT * FROM email_templates WHERE id = $1 FOR UPDATE', [id]);
-    if (row.deleted_at == null) return row;
+    if (row.status === 'live' && row.deleted_at == null) return row;
     const { rows: [liveRow] } = await client.query(
-      "SELECT id FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL", [row.action]);
+      "SELECT id FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [row.action]);
+    checkExpected(liveRow, expectedLiveId);
+    if (row.layout_family_id != null && !(await assertLiveLayout(client, row.layout_family_id))) {
+      throw fail('invalid_replacement', 'That version uses a layout that was deleted');
+    }
+    if (liveRow) await client.query("UPDATE email_templates SET status = 'archived' WHERE id = $1", [liveRow.id]);
     const { rows: [restored] } = await client.query(
-      'UPDATE email_templates SET deleted_at = NULL, status = $2 WHERE id = $1 RETURNING *', [id, liveRow ? 'archived' : 'live']);
+      "UPDATE email_templates SET deleted_at = NULL, status = 'live' WHERE id = $1 RETURNING *", [id]);
     return restored;
   });
 }

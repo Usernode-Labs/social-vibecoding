@@ -95,15 +95,26 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
     assert.equal((await live(OTP)).length, 1);
   });
 
-  await t.test('delete is soft, and a deleted version cannot be a replacement; restore brings it back', async () => {
+  await t.test('delete is soft, and a deleted version cannot be a replacement', async () => {
     const [current] = await live(OTP);
     const { rows: [gone] } = await pool.query("SELECT id FROM email_templates WHERE action = $1 AND deleted_at IS NOT NULL LIMIT 1", [OTP]);
     assert.ok(gone, 'the earlier delete kept its row');
     await rejects(store.deleteTemplate(pool, current.id, { replacementId: gone.id }, userId), 'invalid_replacement');
-    const restored = await store.restoreTemplate(pool, gone.id, userId);
-    assert.equal(restored.deleted_at, null); assert.equal(restored.status, 'archived');
-    assert.equal((await live(OTP)).length, 1);
-    await rejects(store.restoreTemplate(pool, 999999, userId), 'not_found');
+  });
+
+  await t.test('restore puts a deleted or archived version live and archives the current one', async () => {
+    const [current] = await live(OTP);
+    const { rows: [gone] } = await pool.query("SELECT id FROM email_templates WHERE action = $1 AND deleted_at IS NOT NULL LIMIT 1", [OTP]);
+    await rejects(store.restoreTemplate(pool, gone.id, { expectedLiveId: current.id + 1000 }, userId), 'conflict');
+    await rejects(store.restoreTemplate(pool, gone.id, {}, userId), 'conflict');
+    const restored = await store.restoreTemplate(pool, gone.id, { expectedLiveId: current.id }, userId);
+    assert.equal(restored.deleted_at, null); assert.equal(restored.status, 'live');
+    assert.deepEqual((await live(OTP)).map((r) => r.id), [gone.id]);
+    assert.equal((await pool.query('SELECT status FROM email_templates WHERE id = $1', [current.id])).rows[0].status, 'archived');
+    assert.equal((await store.restoreTemplate(pool, gone.id, { expectedLiveId: gone.id }, userId)).id, gone.id);
+    const back = await store.restoreTemplate(pool, current.id, { expectedLiveId: gone.id }, userId);
+    assert.equal(back.status, 'live');
+    await rejects(store.restoreTemplate(pool, 999999, {}, userId), 'not_found');
   });
 
   await t.test('layouts version per family and archive the previous version', async () => {
@@ -138,6 +149,39 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
     await rejects(store.deleteLayout(pool, c.family_id, {}, userId), 'not_found');
   });
 
+  await t.test('a version on a deleted layout cannot become live by replacement or restore', async () => {
+    const mk = (n) => store.saveLayout(pool, { familyId: null, name: n, html: 'h', text: 't', expectedLiveId: null }, userId);
+    const F = await mk('F'); const G = await mk('G');
+    const v1 = await save({ action: 'waitlist_joined', layoutFamilyId: F.family_id });
+    const v2 = await save({ action: 'waitlist_joined', layoutFamilyId: G.family_id, expectedLiveId: v1.id });
+    await store.deleteLayout(pool, F.family_id, {}, userId);
+    await rejects(store.deleteTemplate(pool, v2.id, { replacementId: v1.id }, userId), 'invalid_replacement');
+    assert.deepEqual((await live('waitlist_joined')).map((r) => r.id), [v2.id]);
+    await rejects(store.restoreTemplate(pool, v1.id, { expectedLiveId: v2.id }, userId), 'invalid_replacement');
+    assert.deepEqual((await live('waitlist_joined')).map((r) => r.id), [v2.id]);
+  });
+
+  await t.test('deleteLayout waits for an uncommitted save that points at the layout, then moves it', async () => {
+    const mk = (n) => store.saveLayout(pool, { familyId: null, name: n, html: 'h', text: 't', expectedLiveId: null }, userId);
+    const A = await mk('A'); const B = await mk('B');
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR SHARE", [A.family_id]);
+      let settled = false;
+      const deleting = store.deleteLayout(pool, A.family_id, { replacementFamilyId: B.family_id }, userId).then(() => { settled = true; });
+      await new Promise((r) => setTimeout(r, 400));
+      assert.equal(settled, false, 'the delete waits for the share-locked save');
+      await holder.query(
+        "INSERT INTO email_templates (action, name, layout_family_id, version, status, subject, html, text) VALUES ('content_report', 'n', $1, 1, 'live', 's', 'h', 't')", [A.family_id]);
+      await holder.query('COMMIT');
+      await deleting;
+    } finally { holder.release(); }
+    const [moved] = await live('content_report');
+    assert.equal(moved.layout_family_id, B.family_id);
+    await rejects(save({ action: 'content_report', layoutFamilyId: A.family_id, expectedLiveId: moved.id }), 'not_found');
+  });
+
   await t.test('translations belong to one version, upsert, and a new version has none', async () => {
     const [current] = await live('password_reset');
     const fields = { subject: 'Code', preheader: '', why: 'w', html: '<p>x</p>', text: 'x' };
@@ -151,18 +195,20 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
     const snap = await store.snapshot(pool);
     assert.deepEqual(snap.templates.password_reset.translations, {});
     assert.equal(snap.templates.password_reset.id, next.id);
-    const { rows: [layout] } = await pool.query("SELECT id FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL LIMIT 1");
+    const { rows: [layout] } = await pool.query("SELECT id, family_id FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL ORDER BY id LIMIT 1");
+    const layoutFamily = layout.family_id;
     await store.saveTranslation(pool, 'layout', layout.id, 'de', { html: '<i>d</i>', text: 'd' }, 'machine');
-    assert.equal(Object.keys((await store.snapshot(pool)).layouts).length, 1);
+    assert.equal((await store.snapshot(pool)).layouts[layoutFamily].translations.de.html, '<i>d</i>');
   });
 
   await t.test('snapshot reads only live, non-deleted rows with their translations', async () => {
     const snap = await store.snapshot(pool);
     const [otp] = await live(OTP);
     assert.equal(snap.templates[OTP].id, otp.id);
-    assert.deepEqual(Object.keys(snap.templates).sort(), [OTP, 'password_reset']);
-    const fam = Object.values(snap.layouts)[0];
-    assert.equal(fam.status, 'live'); assert.equal(fam.translations.de.html, '<i>d</i>');
+    assert.ok(['password_reset', 'waitlist_joined', 'content_report'].every((a) => snap.templates[a]));
+    assert.ok(Object.values(snap.templates).every((r) => r.status === 'live' && r.deleted_at === null));
+    assert.ok(Object.values(snap.layouts).every((r) => r.status === 'live' && r.deleted_at === null));
+    assert.ok(Object.values(snap.layouts).some((r) => r.translations.de && r.translations.de.html === '<i>d</i>'));
     await store.saveTranslation(pool, 'template', otp.id, 'es', { subject: 's', preheader: '', why: '', html: 'h', text: 't' }, 'machine');
     assert.equal((await store.snapshot(pool)).templates[OTP].translations.es.subject, 's');
   });
