@@ -36,6 +36,8 @@ export interface TemplateRow {
   created_at: string;
   deleted_at: string | null;
   locales: string[];
+  // Of `locales`, those marked unusable: their readers get the English.
+  unusableLocales?: string[];
 }
 
 export interface LayoutRow {
@@ -50,6 +52,8 @@ export interface LayoutRow {
   created_at: string;
   deleted_at: string | null;
   locales: string[];
+  // Of `locales`, those marked unusable: their readers get the English.
+  unusableLocales?: string[];
 }
 
 export interface Language { code: string; label: string }
@@ -173,14 +177,6 @@ export function editedLabel(row: { created_by: number | null; created_at: string
   return String(row.created_at).slice(0, 10);
 }
 
-// How many languages the live version is translated into. It does not say
-// whether a translation is behind the English: nothing tracks that yet.
-export function languagesLabel(locales: string[], englishOnly: boolean): string {
-  const n = englishOnly ? 0 : locales.length;
-  if (!n) return 'English only';
-  return n === 1 ? '1 language' : `${n} languages`;
-}
-
 export const isLive = (row: { status: string; deleted_at: string | null }) => row.status === 'live' && !row.deleted_at;
 
 export function liveTemplate(payload: TemplatesPayload, action: string): TemplateRow | null {
@@ -265,7 +261,11 @@ export function useUnloadGuard(dirty: boolean) {
 // Signing out leaves this document (settings.js replaces the page), which
 // drops the draft with it; `userId` covers a different account signing in
 // without a reload.
-interface KeptBase { label: string; draft: any; opened: any; openedLiveId: number | null; userId?: number | null }
+interface KeptBase {
+  label: string; draft: any; opened: any; openedLiveId: number | null; userId?: number | null;
+  // A language's words being corrected, when that was what was left unsaved.
+  language?: { locale: string; draft: any; opened: any } | null;
+}
 export type KeptDraft =
   | (KeptBase & { kind: 'template'; action: string; isNew: boolean })
   | (KeptBase & { kind: 'layout'; familyId: number | null });

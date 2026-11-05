@@ -26,6 +26,7 @@
 //   DELETE /api/admin/email-templates/:id        body { replacementId } for a live one, and
 //                                                { expectedLiveId } to refuse a stale delete
 //   POST   /api/admin/email-templates/:id/translate          start Translate for that version
+//                                                           ({ overwrite, languages } both optional)
 //                                                           (body { overwrite } to replace an admin's own)
 //   GET    /api/admin/email-templates/:id/translate          its progress, any admin
 //   GET    /api/admin/email-templates/:id/translations       every language of that version
@@ -165,13 +166,24 @@ const LIVE_ONLY_MESSAGE = 'No live template for that action to show the layout w
 function emailTemplateAdminRoutes(pool, config) {
   const router = Router();
 
-  // Locales each version has a translation for, by version id.
+  // Locales each version has a translation for, by version id, and those of
+  // them marked unusable (which send the English until fixed), so the list
+  // can count only the translations that are actually sent.
   async function localesBy(table) {
     const { rows } = table === 'templates'
-      ? await pool.query('SELECT template_id AS id, array_agg(locale ORDER BY locale) AS locales FROM email_template_translations GROUP BY template_id')
-      : await pool.query('SELECT layout_id AS id, array_agg(locale ORDER BY locale) AS locales FROM email_layout_translations GROUP BY layout_id');
-    return new Map(rows.map((r) => [r.id, r.locales]));
+      ? await pool.query(`SELECT template_id AS id, array_agg(locale ORDER BY locale) AS locales,
+          array_agg(locale ORDER BY locale) FILTER (WHERE unusable IS NOT NULL) AS unusable
+          FROM email_template_translations GROUP BY template_id`)
+      : await pool.query(`SELECT layout_id AS id, array_agg(locale ORDER BY locale) AS locales,
+          array_agg(locale ORDER BY locale) FILTER (WHERE unusable IS NOT NULL) AS unusable
+          FROM email_layout_translations GROUP BY layout_id`);
+    return new Map(rows.map((r) => [r.id, { locales: r.locales, unusable: r.unusable || [] }]));
   }
+  const NONE = { locales: [], unusable: [] };
+  const withLocales = (row, map) => {
+    const { locales, unusable } = map.get(row.id) || NONE;
+    return { ...row, locales, unusableLocales: unusable };
+  };
 
   // What a send in `locale` would render these fields with: the reader's
   // language (null for English), the translator for words built in code, and
@@ -300,8 +312,8 @@ function emailTemplateAdminRoutes(pool, config) {
         actions: describeActions(),
         layoutPlaceholders: Object.entries(LAYOUT_PLACEHOLDERS).map(([name, p]) => ({ name, description: p.description })),
         languages: languages(),
-        templates: all.templates.map((row) => ({ ...row, locales: templateLocales.get(row.id) || [] })),
-        layouts: all.layouts.map((row) => ({ ...row, locales: layoutLocales.get(row.id) || [] })),
+        templates: all.templates.map((row) => withLocales(row, templateLocales)),
+        layouts: all.layouts.map((row) => withLocales(row, layoutLocales)),
       });
     } catch (err) {
       sendError(res, err, 'list templates');
@@ -390,7 +402,7 @@ function emailTemplateAdminRoutes(pool, config) {
         languages: languages(),
         layouts: all.layouts.map((row) => ({
           ...row,
-          locales: locales.get(row.id) || [],
+          ...withLocales(row, locales),
           usedBy: row.status === 'live' && !row.deleted_at ? usedBy.get(row.family_id) || [] : [],
         })),
       });
@@ -488,10 +500,22 @@ function emailTemplateAdminRoutes(pool, config) {
     router.post(`/api/admin/${base}/:id/translate`, requireAdminWrite, async (req, res) => {
       try {
         const id = versionId(req, kind);
-        const overwrite = (req.body || {}).overwrite === true;
-        const { started, job } = await translate.startTranslation(pool, kind, id, { overwrite, userId: req.user.id });
+        const body = req.body || {};
+        const overwrite = body.overwrite === true;
+        // `languages` narrows a run to those locales (Retranslate on one
+        // language the sender cannot use); absent, it is every language.
+        let languages = null;
+        if (body.languages !== undefined) {
+          const known = new Set(Object.keys(translate.configuredLanguages()));
+          if (!Array.isArray(body.languages) || !body.languages.length
+            || !body.languages.every((code) => typeof code === 'string' && code !== 'en' && known.has(code))) {
+            throw invalid([{ field: 'languages', message: 'Choose languages from the list of languages Homeroom offers.' }]);
+          }
+          languages = body.languages;
+        }
+        const { started, job } = await translate.startTranslation(pool, kind, id, { overwrite, languages, userId: req.user.id });
         if (started) {
-          await changed(req, { what: kind, change: 'translate', id, overwrite });
+          await changed(req, { what: kind, change: 'translate', id, overwrite, ...(languages ? { languages } : {}) });
           log.warn('admin', 'Admin started Translate for an email', { by: req.user.username, kind, id, overwrite });
         }
         res.status(202).json({ started, ...job });

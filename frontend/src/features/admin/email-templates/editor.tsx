@@ -10,6 +10,9 @@ import {
 } from './shared';
 import { insertAt, UploadImageButton } from './image-panel';
 import { VisualTab } from './visual-tab';
+import {
+  LanguageForm, TEMPLATE_PARTS, useEditorLanguages, type LanguageDraft, type UnusableItem,
+} from './translations';
 
 // The template editor: what the email is for, its name, the layout it wears,
 // subject, preheader and the "why you got this" line, then the body in tabs,
@@ -85,6 +88,7 @@ export const ENGLISH_UNTIL_TRANSLATED = 'Readers in other languages get the Engl
 export function TemplateForm({
   payload, draft, opened, isNew, canWrite, tab, failure, saving, onChange, onTab, onSave, onCancel, onReload, onRetry, preview,
   dirty = false,
+  languagesCard = null,
 }: {
   payload: TemplatesPayload;
   draft: TemplateDraft;
@@ -104,6 +108,8 @@ export function TemplateForm({
   preview: React.ReactNode;
   // The draft differs from what the editor opened on.
   dirty?: boolean;
+  // The language switch and Translate, above the form.
+  languagesCard?: React.ReactNode;
 }) {
   const action = payload.actions.find((a) => a.action === draft.action) || null;
   const layouts = liveLayouts(payload);
@@ -149,6 +155,7 @@ export function TemplateForm({
           Editing needs full admin access. You can read this template and preview it.
         </p>
       )}
+      {languagesCard}
       {canWrite && dirty && action && !action.englishOnly ? (
         <p id="email-template-english-note" className="text-sm text-zinc-600 dark:text-zinc-300">{ENGLISH_UNTIL_TRANSLATED}</p>
       ) : null}
@@ -274,7 +281,8 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   isNew: boolean;
   canWrite: boolean;
   onDone: () => void;
-  onSaved: (row: TemplateRow) => void;
+  // The saved row, and any translations the save left unusable.
+  onSaved: (row: TemplateRow, unusable: UnusableItem[]) => void;
   onReload: () => void;
   restore?: (KeptDraft & { kind: 'template' }) | null;
 }) {
@@ -294,18 +302,37 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   });
   const [draft, setDraft] = useState<TemplateDraft>(() => (restore ? restore.draft : opened));
   const dirty = isDirty(draft, opened);
-  useUnloadGuard(dirty);
+  const info = payload.actions.find((a) => a.action === draft.action);
+  // Languages belong to the saved version this editor opened on; a new
+  // template has none until it is saved.
+  const versionId = isNew ? null : openedLive.id;
+  const english: LanguageDraft = useMemo(() => ({
+    subject: opened.subject, preheader: opened.preheader, why: opened.why, html: opened.html, text: opened.text,
+  }), [opened]);
+  const languages = useEditorLanguages({
+    base: '/api/admin/email-templates', versionId, englishOnly: !!(info && info.englishOnly), englishDirty: dirty,
+    canWrite, english, parts: TEMPLATE_PARTS, languages: payload.languages, initial: restore?.language || null,
+    idPrefix: 'email-template',
+  });
+  const { lang } = languages;
+  const anyDirty = dirty || lang.dirty;
+  useUnloadGuard(anyDirty);
   // Set once the editor is left on purpose (saved, or edits discarded), so
   // unmounting then keeps nothing.
   const settled = useRef(false);
-  const latest = useRef({ draft, dirty });
-  latest.current = { draft, dirty };
+  const latest = useRef({ draft, dirty, lang });
+  latest.current = { draft, dirty, lang };
   useEffect(() => () => {
     // The console tore the section down while edits were unsaved: it gives
-    // no way to ask first, so keep them for the section to offer back.
-    if (settled.current || !latest.current.dirty) return;
-    const name = latest.current.draft.name || payload.actions.find((a) => a.action === action)?.label || 'this email';
-    keepDraft({ kind: 'template', action, isNew, label: name, draft: latest.current.draft, opened, openedLiveId: openedLive.id });
+    // no way to ask first, so keep them for the section to offer back, a
+    // language's words included.
+    const now = latest.current;
+    if (settled.current || !(now.dirty || now.lang.dirty)) return;
+    const name = now.draft.name || payload.actions.find((a) => a.action === action)?.label || 'this email';
+    const language = now.lang.dirty && now.lang.draft && now.lang.opened
+      ? { locale: now.lang.locale, draft: now.lang.draft, opened: now.lang.opened } : null;
+    const label = language ? `${name} (${payload.languages.find((l) => l.code === language.locale)?.label || language.locale})` : name;
+    keepDraft({ kind: 'template', action, isNew, label, draft: now.draft, opened, openedLiveId: openedLive.id, language });
   }, [action, isNew, payload, opened, openedLive]);
   const [tab, setTab] = useState<BodyTab>('visual');
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -315,7 +342,6 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   // conflict. A new template switched to another email expects that email's
   // live version as this snapshot shows it.
   const expectedLiveId = useMemo(() => expectedLiveFor(openedLive, draft.action, payload), [payload, draft.action, openedLive]);
-  const info = payload.actions.find((a) => a.action === draft.action);
 
   const change = (field: keyof TemplateDraft, value: string | number | null) => {
     setDraft((d) => ({ ...d, [field]: value }));
@@ -327,7 +353,11 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     setFailure(null);
     const res = await request('/api/admin/email-templates', 'POST', { ...draft, expectedLiveId });
     setSaving(false);
-    if (res.ok && res.data && res.data.template) { settled.current = true; onSaved(res.data.template); return; }
+    if (res.ok && res.data && res.data.template) {
+      settled.current = true;
+      onSaved(res.data.template, Array.isArray(res.data.unusableTranslations) ? res.data.unusableTranslations : []);
+      return;
+    }
     const refused = readFailure(res.status, res.data);
     setFailure(refused);
     if (refused.kind === 'fields') {
@@ -338,12 +368,12 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   };
 
   const leave = async () => {
-    if (dirty && !(await confirmDiscard('Your changes to this email are not saved. Leave and lose them?'))) return;
+    if (anyDirty && !(await confirmDiscard('Your changes to this email are not saved. Leave and lose them?'))) return;
     settled.current = true;
     onDone();
   };
   const reload = async () => {
-    if (dirty && !(await confirmDiscard('Reload discards your changes and shows the version saved now.', 'Reload'))) return;
+    if (anyDirty && !(await confirmDiscard('Reload discards your changes and shows the version saved now.', 'Reload'))) return;
     settled.current = true;
     onReload();
   };
@@ -352,8 +382,33 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     name: draft.name, subject: draft.subject, preheader: draft.preheader, why: draft.why,
     html: draft.html, text: draft.text, layoutFamilyId: draft.layoutFamilyId,
   };
+
+  if (lang.locale !== 'en' && lang.draft && lang.opened) {
+    const words = lang.draft;
+    // The language's words framed as the English would be, so the preview
+    // and the test send show that language as its readers get it.
+    const languageFields = {
+      name: draft.name, layoutFamilyId: draft.layoutFamilyId,
+      subject: words.subject || '', preheader: words.preheader || '', why: words.why || '', html: words.html || '', text: words.text || '',
+    };
+    return (
+      <LanguageForm language={languages.name} draft={words} opened={lang.opened} english={english} parts={TEMPLATE_PARTS}
+        tab={tab} onTab={setTab} failure={lang.failure} saving={lang.saving} saved={lang.saved} unusable={languages.unusable}
+        canWrite={canWrite} retranslating={languages.retranslating} placeholders={info ? info.placeholders : []}
+        idPrefix="email-translation" backLabel="‹ All templates" onBack={leave} onChange={lang.setField} onSave={lang.save}
+        onRevert={lang.revert} onRetranslate={languages.retranslate} languagesCard={languages.card} languages={payload.languages}
+        preview={(
+          <PreviewPane base="/api/admin/email-templates" body={{ action: draft.action, fields: languageFields }}
+            mode={tab === 'text' ? 'text' : 'html'} languages={payload.languages} englishOnly={false} canWrite={canWrite}
+            onFieldFailure={() => {}} fixedLocale={lang.locale} />
+        )}
+        side={<div className={`${AdminUI.card} p-4`}>{info ? <PlaceholderList action={info} /> : null}</div>} />
+    );
+  }
+
   return (
     <TemplateForm payload={payload} draft={draft} opened={opened} isNew={isNew} canWrite={canWrite} tab={tab} failure={failure}
+      languagesCard={isNew ? null : languages.card}
       saving={saving} onChange={change} onTab={setTab} onSave={save} onCancel={leave} onReload={reload} onRetry={save}
       dirty={dirty}
       preview={(

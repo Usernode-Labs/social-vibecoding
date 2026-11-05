@@ -48,12 +48,15 @@ function testHeadline(outcome: any, to: string): TestResult {
 
 export function PreviewView({
   result, loading, failure, mode, locale, languages, englishOnly, canWrite, testing, testResult, onLocale, onSendTest,
-  extra, stale = false,
+  extra, stale = false, localeLocked = false,
 }: {
   result: PreviewResult | null;
   // The last preview that rendered, kept on screen after a newer draft was
   // refused: dimmed and labelled so it is not read as the current draft.
   stale?: boolean;
+  // True while a language's own words are being edited: the preview shows
+  // that language, and the picker follows the editor's language switch.
+  localeLocked?: boolean;
   loading: boolean;
   failure: Failure | null;
   mode: 'html' | 'text';
@@ -74,7 +77,7 @@ export function PreviewView({
         <label className="block text-xs">
           <span className="text-zinc-500 dark:text-zinc-400">Language</span>
           <select className={`${AdminUI.select} mt-1`} value={englishOnly ? 'en' : locale}
-            disabled={englishOnly} onChange={(e) => onLocale(e.target.value)}>
+            disabled={englishOnly || localeLocked} onChange={(e) => onLocale(e.target.value)}>
             {languages.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
           </select>
         </label>
@@ -138,7 +141,7 @@ const DEBOUNCE_MS = 500;
  * locale. Field problems from a refused test go back to the form through
  * `onFieldFailure`, so they show beside their fields.
  */
-export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite, onFieldFailure, extra }: {
+export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite, onFieldFailure, extra, fixedLocale }: {
   base: string;
   body: { action: string; fields: Record<string, unknown> };
   mode: 'html' | 'text';
@@ -147,8 +150,11 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   canWrite: boolean;
   onFieldFailure: (failure: Failure) => void;
   extra?: React.ReactNode;
+  // The language whose own words `body` holds, when the editor is on one.
+  fixedLocale?: string;
 }) {
-  const [locale, setLocale] = useState('en');
+  const [picked, setLocale] = useState('en');
+  const locale = fixedLocale || picked;
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -205,6 +211,6 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   return (
     <PreviewView result={result} stale={!!failure && !!result} loading={loading} failure={failure} mode={mode} locale={locale}
       languages={languages} englishOnly={englishOnly} canWrite={canWrite} testing={testing}
-      testResult={testResult} onLocale={setLocale} onSendTest={sendTest} extra={extra} />
+      testResult={testResult} onLocale={setLocale} onSendTest={sendTest} extra={extra} localeLocked={!!fixedLocale} />
   );
 }

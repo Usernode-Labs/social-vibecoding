@@ -342,6 +342,33 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
     const read = await call('GET', `/api/admin/email-templates/${row.id}/translations`, undefined, 'view');
     assert.equal(read.status, 200);
     assert.equal(read.body.translations.fr.subject, 'Votre code');
+    // The list counts only usable translations: a marked one is named.
+    await pool.query("UPDATE email_template_translations SET unusable = 'test mark' WHERE template_id = $1 AND locale = 'fr'", [row.id]);
+    const listed = await call('GET', '/api/admin/email-templates', undefined, 'view');
+    const listedRow = listed.body.templates.find((r) => r.id === row.id);
+    assert.ok(listedRow.locales.includes('fr'));
+    assert.deepEqual(listedRow.unusableLocales, ['fr']);
+    assert.ok(listed.body.templates.every((r) => Array.isArray(r.unusableLocales)));
+    assert.ok(listed.body.layouts.every((r) => Array.isArray(r.unusableLocales)));
+    // Retranslate one language, replacing its admin text: only that language runs.
+    assert.equal((await call('POST', `/api/admin/email-templates/${row.id}/translate`, { languages: ['fr'], overwrite: true }, 'view')).status, 403);
+    for (const languages of [['en'], ['xx'], [], 'fr', [3]]) {
+      const refused = await call('POST', `/api/admin/email-templates/${row.id}/translate`, { languages });
+      assert.equal(refused.status, 400, JSON.stringify(languages));
+      assert.equal(refused.body.errors[0].field, 'languages');
+    }
+    const one = await call('POST', `/api/admin/email-templates/${row.id}/translate`, { languages: ['fr'], overwrite: true });
+    assert.equal(one.status, 202, JSON.stringify(one.body));
+    assert.deepEqual(Object.keys(one.body.perLanguage), ['fr']);
+    for (let i = 0; i < 100; i++) {
+      progress = await call('GET', `/api/admin/email-templates/${row.id}/translate`, undefined, 'view');
+      if (progress.body.state !== 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(progress.body.perLanguage.fr, 'saved');
+    const retranslated = (await call('GET', `/api/admin/email-templates/${row.id}/translations`, undefined, 'view')).body.translations.fr;
+    assert.equal(retranslated.origin, 'machine', 'the admin text was replaced, as asked');
+    assert.equal(retranslated.unusable, null);
     const englishOnly = await live('admin_test');
     assert.equal((await call('POST', `/api/admin/email-templates/${englishOnly.id}/translate`, {})).status, 400);
     const layout = await liveLayout();

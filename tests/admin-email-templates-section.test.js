@@ -22,7 +22,7 @@ const { ACTIONS } = require('../src/services/mail/actions');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const SECTION = 'frontend/src/features/admin/admin-email-templates.tsx';
-const PARTS = ['list', 'editor', 'layouts', 'replace-dialog', 'preview', 'shared', 'visual-tab', 'image-panel']
+const PARTS = ['list', 'editor', 'layouts', 'replace-dialog', 'preview', 'shared', 'visual-tab', 'image-panel', 'translations']
   .map((name) => `frontend/src/features/admin/email-templates/${name}.tsx`);
 
 const ADMIN_UI = new Proxy({}, {
@@ -49,6 +49,12 @@ function render(name, props) {
   return renderToHtml(createElement(load()[name], props));
 }
 
+// English and the twelve other languages Homeroom offers.
+const OTHERS = [['fr', 'Français'], ['de', 'Deutsch'], ['es', 'Español'], ['it', 'Italiano'], ['pt-BR', 'Português'],
+  ['nl', 'Nederlands'], ['pl', 'Polski'], ['ja', '日本語'], ['ko', '한국어'], ['zh-CN', '中文'], ['ar', 'العربية'], ['tr', 'Türkçe']]
+  .map(([code, label]) => ({ code, label }));
+const LANGUAGES = [{ code: 'en', label: 'English' }, ...OTHERS];
+
 // The payload GET /api/admin/email-templates answers with, built from the
 // real actions: one live version of each, plus an archived and a deleted one
 // for otp, and two layouts (one deleted).
@@ -69,7 +75,7 @@ function payload() {
       id: ++id, action, name: label, layout_family_id: 1, version: action === 'otp' ? 3 : 1, status: 'live',
       subject: `${label} subject`, preheader: '', why: '', html: '<p>{{code}}</p>', text: '{{code}}',
       created_by: action === 'otp' ? 7 : null, created_at: '2026-11-01T10:00:00Z', deleted_at: null,
-      locales: action === 'otp' ? Array.from({ length: 12 }, (_, i) => `l${i}`) : [],
+      locales: action === 'otp' ? OTHERS.map((l) => l.code) : [],
     });
   }
   templates.push({ ...templates[0], id: 901, version: 2, status: 'archived', name: 'Sign-in code, second try', locales: [] });
@@ -82,7 +88,7 @@ function payload() {
       { name: 'why', description: 'Why the reader got it' },
       { name: 'preheader', description: 'The preview line' },
     ],
-    languages: [{ code: 'en', label: 'English' }, { code: 'fr', label: 'Français' }],
+    languages: LANGUAGES,
     templates,
     layouts: [
       { id: 1, family_id: 1, name: 'Homeroom standard', version: 1, status: 'live', html: '{{content}}', text: '{{content}}', created_by: null, created_at: '2026-11-01T10:00:00Z', deleted_at: null, locales: [] },
@@ -128,8 +134,9 @@ test('lists 13 actions, one row each, with its live version, languages and when 
   });
   assert.equal(count(html, /data-email-action="/g), 13);
   for (const a of data.actions) assert.ok(html.includes(a.label.replace(/&/g, '&amp;').replace(/'/g, '&#x27;')), `${a.action} is listed`);
-  assert.match(html, /data-email-action="otp"[\s\S]*?Sign-in code \(OTP\)[\s\S]*?v3[\s\S]*?Live[\s\S]*?12 languages[\s\S]*?2 days ago/);
-  assert.match(html, /data-email-action="password_reset"[\s\S]*?English only[\s\S]*?Original/);
+  assert.match(html, /data-email-action="otp"[\s\S]*?Sign-in code \(OTP\)[\s\S]*?v3[\s\S]*?Live[\s\S]*?12 of 12[\s\S]*?2 days ago/);
+  assert.match(html, /data-email-action="password_reset"[\s\S]*?0 of 12, 12 need translating[\s\S]*?Original/);
+  assert.match(html, /data-email-action="admin_test"[\s\S]*?English only/, 'an English-only email says so');
   assert.ok(!/out of date|stale/i.test(html), 'the languages column says nothing about staleness');
   assert.match(html, />New template</);
   assert.match(html, /Show archived/);
@@ -335,7 +342,7 @@ test('layouts list each live layout, the emails using it, and the deleted case',
 test('a delete sends the live version it was opened on, and says which version is live from the reloaded list', () => {
   const src = read(SECTION);
   assert.match(src, /const body: Record<string, unknown> = \{ expectedLiveId: dialog\.live\.id \};/);
-  assert.match(src, /setBanner\(\{ kind: 'ok', text: deletedText\(dialog\.kind, gone, res\.data, fresh\) \}\)/);
+  assert.match(src, /setBanner\(\{ kind: 'ok', text: deletedText\(dialog\.kind, gone, res\.data, fresh\), unusable: unusableOf\(res\.data\) \}\)/);
   assert.match(src, /DELETE', \{ expectedLiveId: live \? live\.id : null \}/, 'an archived version is deleted against the live one too');
   assert.ok(!/the version you chose is live/.test(src), 'it never claims a choice went live without reading it back');
 
@@ -392,9 +399,9 @@ test('unsaved edits are not lost without asking', () => {
 
   for (const file of ['editor.tsx', 'layouts.tsx']) {
     const src = read(`frontend/src/features/admin/email-templates/${file}`);
-    assert.match(src, /const dirty = isDirty\(draft, opened\);\s*useUnloadGuard\(dirty\);/, `${file}: closing the tab asks while dirty`);
-    assert.match(src, /if \(dirty && !\(await confirmDiscard\('[^']+'\)\)\) return;\s*settled\.current = true;\s*onDone\(\);/, `${file}: Back and Cancel ask`);
-    assert.match(src, /if \(dirty && !\(await confirmDiscard\('Reload discards your changes[^']*', 'Reload'\)\)\) return;/, `${file}: Reload asks`);
+    assert.match(src, /const dirty = isDirty\(draft, opened\);[\s\S]*?const anyDirty = dirty \|\| lang\.dirty;\s*useUnloadGuard\(anyDirty\);/, `${file}: closing the tab asks while the English or a language is dirty`);
+    assert.match(src, /if \(anyDirty && !\(await confirmDiscard\('[^']+'\)\)\) return;\s*settled\.current = true;\s*onDone\(\);/, `${file}: Back and Cancel ask`);
+    assert.match(src, /if \(anyDirty && !\(await confirmDiscard\('Reload discards your changes[^']*', 'Reload'\)\)\) return;/, `${file}: Reload asks`);
     assert.match(src, /keepDraft\(\{ kind: '(template|layout)'/, `${file}: a draft the console tore down is kept`);
     assert.ok(!/onClick=\{onDone\}|onCancel=\{onDone\}/.test(src), `${file}: nothing leaves without the check`);
   }
@@ -450,12 +457,12 @@ test('a restored draft saves against the live version it was opened on, so a sav
 
   const editor = read('frontend/src/features/admin/email-templates/editor.tsx');
   assert.match(editor, /if \(restore\) return \{ action: restore\.action, id: restore\.openedLiveId \};/);
-  assert.match(editor, /keepDraft\(\{ kind: 'template', action, isNew, label: name, draft: latest\.current\.draft, opened, openedLiveId: openedLive\.id \}\)/);
+  assert.match(editor, /keepDraft\(\{ kind: 'template', action, isNew, label, draft: now\.draft, opened, openedLiveId: openedLive\.id, language \}\)/);
   assert.match(editor, /request\('\/api\/admin\/email-templates', 'POST', \{ \.\.\.draft, expectedLiveId \}\)/);
   const layouts = read('frontend/src/features/admin/email-templates/layouts.tsx');
   assert.match(layouts, /useState<number \| null>\(\(\) => \(restore \? restore\.openedLiveId : live \? live\.id : null\)\)/);
   assert.match(layouts, /expectedLiveId: openedLiveId,/);
-  assert.match(layouts, /draft: latest\.current\.draft, opened, openedLiveId \}\)/);
+  assert.match(layouts, /draft: now\.draft, opened, openedLiveId, language \}\)/);
   // The stale save is the route's ordinary 409 (tests/admin-email-templates.test.js
   // "stale expectedLiveId is 409"), shown with Reload, and Reload drops the restore.
   assert.match(read(SECTION), /setView\(\(v\) => \(v\.kind === 'list' \? v : \{ \.\.\.v, restore: undefined \}\)\);/);
@@ -558,6 +565,233 @@ test('the HTML tab offers Upload image to a full admin, beside the HTML', () => 
   });
   assert.match(form, /<button[^>]*>Upload image<\/button>/);
   assert.ok(form.indexOf('Upload image') > form.indexOf('id="email-template-html"'), 'under the HTML it inserts into');
+});
+
+// ── Translate (Task 13) ─────────────────────────────────────────────────
+
+const noop = () => {};
+
+test('list counts out-of-date languages: usable translations of the live version, and the layout where it differs', () => {
+  const { translationSummary, languagesColumn } = load();
+  assert.equal(translationSummary({ locales: OTHERS.map((l) => l.code) }, 12, false), '12 of 12');
+  assert.equal(translationSummary({ locales: ['fr', 'de', 'es', 'it', 'nl', 'pl', 'ja', 'ko', 'tr'] }, 12, false), '9 of 12, 3 need translating');
+  assert.equal(translationSummary({ locales: OTHERS.map((l) => l.code), unusableLocales: ['fr'] }, 12, false),
+    '11 of 12, 1 needs translating', 'a translation that is not sent is not counted');
+  assert.equal(translationSummary({ locales: [] }, 12, false), '0 of 12, 12 need translating');
+  assert.equal(translationSummary({ locales: ['fr'] }, 12, true), 'English only');
+
+  const data = payload();
+  const otp = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
+  assert.equal(languagesColumn(data, false, otp), '12 of 12; layout: 0 of 12, 12 need translating', 'the layout is named when it says something else');
+  const reset = data.templates.find((t) => t.action === 'password_reset' && t.status === 'live');
+  assert.equal(languagesColumn(data, false, reset), '0 of 12, 12 need translating', 'no layout part when it is the same');
+  assert.equal(languagesColumn(data, false, { ...reset, layout_family_id: null }), '0 of 12, 12 need translating');
+
+  const html = render('TemplateList', {
+    payload: data, canWrite: true, showArchived: false, now: Date.parse('2026-11-03T12:00:00Z'),
+    onToggleArchived: noop, onNew: noop, onEdit: noop, onDelete: noop, onRestore: noop, onDeleteArchived: noop,
+  });
+  assert.match(html, /data-email-action="otp"[\s\S]*?12 of 12; layout: 0 of 12, 12 need translating/);
+  assert.match(html, /data-email-action="admin_test"[\s\S]*?English only/);
+  const layouts = render('LayoutList', {
+    payload: data, canWrite: true, showArchived: false, now: Date.parse('2026-11-03T12:00:00Z'),
+    onToggleArchived: noop, onNew: noop, onEdit: noop, onDelete: noop, onRestore: noop,
+  });
+  assert.match(layouts, /Used by 13 emails · 0 of 12, 12 need translating/);
+});
+
+test('shows per-language progress and failures, in words', () => {
+  const { TranslateProgressView, jobSummary, stateWords } = load();
+  const running = {
+    state: 'running',
+    perLanguage: { fr: 'saved', de: 'pending', es: 'failed: The HTML drops {{code}}', it: 'skipped: admin' },
+    unusable: { ja: 'a link changed' },
+  };
+  const html = render('TranslateProgressView', { status: running, languages: LANGUAGES });
+  assert.match(html, /Translating: 3 of 4 languages done\./);
+  assert.match(html, /data-translate-language="fr"[^>]*>[\s\S]*?Français[\s\S]*?Translated and saved/);
+  assert.match(html, /data-translate-language="de"[^>]*>[\s\S]*?Waiting to be translated/);
+  assert.match(html, /data-translate-language="es"[^>]*>[\s\S]*?Failed: The HTML drops \{\{code\}\}/);
+  assert.match(html, /data-translate-language="it"[^>]*>[\s\S]*?Skipped: an admin edited this language/);
+  assert.match(html, /日本語 is not sent: a link changed\. It sends the English until it is fixed\./);
+  assert.match(html, /aria-live="polite"/, 'progress is announced as it changes');
+  assert.equal(jobSummary({ ...running, state: 'done', perLanguage: { fr: 'saved', de: 'saved', es: 'failed: x', it: 'skipped: admin' } }),
+    'Finished: 2 translated, 1 failed, 1 skipped.');
+  assert.match(jobSummary({ ...running, state: 'stopped' }), /stopped before it finished/);
+  assert.equal(stateWords('failed:  model refused '), 'Failed: model refused');
+  assert.equal(render('TranslateProgressView', { status: { state: 'none', perLanguage: {}, unusable: {} }, languages: LANGUAGES }), '');
+
+  // The polling follows a running job, from the first read: a reload finds it.
+  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
+  assert.match(src, /const res = await request\(`\$\{base\}\/\$\{versionId\}\/translate`\);/);
+  assert.match(src, /if \(res\.data\.state === 'running'\) timer\.current = setTimeout\(poll, POLL_MS\);/);
+  assert.match(src, /useEffect\(\(\) => \{ poll\(\); \}, \[poll\]\);/);
+  assert.match(src, /if \(timer\.current\) clearTimeout\(timer\.current\);/, 'nothing polls after the editor goes');
+});
+
+test('Translate is disabled with its reason, and replacing admin edits is its own confirmed action', () => {
+  const { translateBlocked } = load();
+  assert.equal(translateBlocked({ englishOnly: false, dirty: true, versionId: 5 }), 'Save first, then translate');
+  assert.equal(translateBlocked({ englishOnly: false, dirty: false, versionId: null }), 'Save first, then translate');
+  assert.match(translateBlocked({ englishOnly: true, dirty: false, versionId: 5 }), /English only/);
+  assert.equal(translateBlocked({ englishOnly: false, dirty: false, versionId: 5 }), null);
+
+  const base = { status: null, failure: null, starting: false, canWrite: true, languages: LANGUAGES, onTranslate: noop, onReplace: noop };
+  const dirty = render('TranslateControlsView', { ...base, blocked: 'Save first, then translate' });
+  assert.match(dirty, /<button[^>]*id="email-translate"[^>]*disabled=""[^>]*>Translate<\/button>/);
+  assert.match(dirty, /aria-describedby="email-translate-blocked"/);
+  assert.match(dirty, /id="email-translate-blocked"[^>]*>Save first, then translate</);
+  const ready = render('TranslateControlsView', { ...base, blocked: null });
+  assert.match(ready, /<button[^>]*id="email-translate"[^>]*>Translate<\/button>/);
+  assert.ok(!/id="email-translate"[^>]*disabled/.test(ready));
+  assert.match(ready, />Translate again, replacing admin edits</);
+  assert.match(ready, /into the other 12 languages/);
+  const running = render('TranslateControlsView', { ...base, blocked: null, status: { state: 'running', perLanguage: { fr: 'pending' }, unusable: {} } });
+  assert.match(running, /disabled=""[^>]*>Translating…</);
+  const viewOnly = render('TranslateControlsView', { ...base, canWrite: false, blocked: null, status: { state: 'done', perLanguage: { fr: 'saved' }, unusable: {} } });
+  assert.ok(!/<button/.test(viewOnly), 'a view-only admin sees the progress, not the buttons');
+  assert.match(viewOnly, /Finished: 1 translated\./);
+
+  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
+  assert.match(src, /onReplace=\{async \(\) => \{ if \(await confirmReplace\(\)\) job\.start\(\{ overwrite: true \}\); \}\}/);
+  assert.match(src, /title: 'Replace admin edits\?'/);
+  for (const file of ['editor.tsx', 'layouts.tsx']) {
+    assert.match(read(`frontend/src/features/admin/email-templates/${file}`), /useEditorLanguages\(\{/, `${file} has the languages card`);
+  }
+});
+
+test('save offers translate, after a template save and a layout save, and names translations the save broke', () => {
+  const data = payload();
+  const html = render('SavedBanner', {
+    text: 'Sign-in code v4 is live.', languages: LANGUAGES,
+    translate: { base: '/api/admin/email-templates', versionId: 44 },
+    unusable: [{ templateId: 44, action: 'otp', locale: 'fr', reason: 'x' }, { layoutId: 1, locale: 'de', reason: 'y' }],
+    labelFor: (item) => load().unusableWhere(data, item),
+  });
+  assert.match(html, /Sign-in code v4 is live\./);
+  assert.match(html, /<button[^>]*id="email-translate-offer"[^>]*>Translate the other languages now<\/button>/);
+  assert.match(html, /no longer fit and send the English until they are fixed: Français \(Sign-in code \(OTP\)\), Deutsch \(layout Homeroom standard\)\./);
+  const englishOnly = render('SavedBanner', { text: 'Saved.', languages: LANGUAGES, translate: null });
+  assert.ok(!/Translate the other languages now/.test(englishOnly), 'an English-only email is not offered it');
+
+  const section = read(SECTION);
+  assert.match(section, /englishOnly \? null : \{ base: '\/api\/admin\/email-templates', versionId: row\.id \}/);
+  assert.match(section, /\{ base: '\/api\/admin\/email-layouts', versionId: row\.id \}\)\(\)\} \/>/, 'a layout save offers it too');
+  assert.match(section, /setBanner\(\{ kind: 'ok', text: done, unusable: unusableOf\(res\.data\) \}\);/, 'restores and deletes name them too');
+  for (const file of ['editor.tsx', 'layouts.tsx']) {
+    assert.match(read(`frontend/src/features/admin/email-templates/${file}`),
+      /onSaved\(res\.data\.(template|layout), Array\.isArray\(res\.data\.unusableTranslations\) \? res\.data\.unusableTranslations : \[\]\);/);
+  }
+});
+
+test('a language opens in the same tabs, with the English alongside, and its errors beside its fields', () => {
+  const { LanguageForm, readFailure } = load();
+  const english = { subject: 'Your code', preheader: 'Use it soon', why: 'You asked', html: '<p>Code: {{code}}</p>', text: 'Code: {{code}}' };
+  const draft = { subject: 'Votre code', preheader: '', why: 'Vous l’avez demandé', html: '<p>Code : {{code}}</p>', text: 'Code : {{code}}' };
+  const failure = readFailure(400, { code: 'invalid', errors: [
+    { field: 'subject', message: 'The subject cannot be empty.' },
+    { field: 'html', message: 'The HTML drops {{code}}.' },
+  ] });
+  const props = {
+    language: 'Français', draft, opened: draft, english, parts: ['subject', 'preheader', 'why', 'html', 'text'],
+    tab: 'html', onTab: noop, failure, saving: false, saved: null, unusable: null, canWrite: true, retranslating: false,
+    placeholders: [{ name: 'code', description: 'The code' }], idPrefix: 'email-translation', backLabel: '‹ All templates',
+    onBack: noop, onChange: noop, onSave: noop, onRevert: noop, onRetranslate: noop, languagesCard: null, preview: null, side: null,
+    languages: LANGUAGES,
+  };
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const html = renderToHtml(createElement(LanguageForm, props));
+  assert.match(html, /data-email-language="Français"/);
+  const subject = html.match(/<input[^>]*id="email-translation-subject"[^>]*>/)[0];
+  assert.match(subject, /value="Votre code"/);
+  assert.match(subject, /aria-invalid="true"/);
+  assert.match(subject, /aria-describedby="email-translation-subject-error"/);
+  assert.match(html, /id="email-translation-subject-error"[^>]*>The subject cannot be empty\./);
+  assert.match(html, /id="email-translation-html"[\s\S]*?id="email-translation-html-error"[^>]*>The HTML drops \{\{code\}\}\./);
+  assert.match(html, /role="tab" aria-selected="false" id="email-translation-tab-visual"[^>]*>Visual/);
+  assert.match(html, /id="email-translation-tab-html"[^>]*>HTML/);
+  assert.match(html, /<details open=""[^>]*id="email-translation-english"><summary[^>]*>English<\/summary>[\s\S]*?Your code[\s\S]*?&lt;p&gt;Code: \{\{code\}\}&lt;\/p&gt;/);
+  assert.match(html, /<button[^>]*id="email-translation-save"[^>]*>Save Français<\/button>/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>Undo changes<\/button>/, 'nothing to undo yet');
+  assert.match(html, /Preview in Français/);
+
+  const visual = renderToHtml(createElement(LanguageForm, { ...props, tab: 'visual', failure: null }));
+  assert.match(visual, /role="tab" aria-selected="true" id="email-translation-tab-visual"/, 'the Visual tab works on the translated HTML');
+
+  const viewOnly = renderToHtml(createElement(LanguageForm, { ...props, canWrite: false, failure: null }));
+  assert.ok(!/Save Français/.test(viewOnly));
+  assert.match(viewOnly, /id="email-translation-subject"[^>]*readonly=""/i);
+
+  const saved = renderToHtml(createElement(LanguageForm, { ...props, failure: null,
+    saved: { text: 'Français saved. Its readers get these words from now on.', unusable: [{ templateId: 3, action: 'otp', locale: 'fr', reason: 'x' }] } }));
+  assert.match(saved, /Français saved\. Its readers get these words from now on\./);
+  assert.match(saved, /no longer fit and send the English until they are fixed: Français\./);
+
+  // The editors put a language's words into the preview with its locale.
+  assert.match(read('frontend/src/features/admin/email-templates/editor.tsx'), /fixedLocale=\{lang\.locale\}/);
+  assert.match(read('frontend/src/features/admin/email-templates/layouts.tsx'), /fixedLocale=\{lang\.locale\}/);
+  assert.match(read('frontend/src/features/admin/email-templates/translations.tsx'),
+    /request\(`\$\{base\}\/\$\{versionId\}\/translations\/\$\{encodeURIComponent\(locale\)\}`, 'PUT', draft\)/);
+});
+
+test('an unusable language says why, that it sends the English, and offers Retranslate', () => {
+  const html = render('UnusableLanguageNotice', { language: 'Deutsch', reason: 'A link differs from the English', canWrite: true, busy: false, onRetranslate: noop });
+  assert.match(html, /Deutsch is not sent right now\./);
+  assert.match(html, /Why: A link differs from the English/);
+  assert.match(html, /This language sends the English until it&#x27;s fixed\./);
+  assert.match(html, /<button[^>]*id="email-language-retranslate"[^>]*>Retranslate<\/button>/);
+  const viewOnly = render('UnusableLanguageNotice', { language: 'Deutsch', reason: 'r', canWrite: false, busy: false, onRetranslate: noop });
+  assert.ok(!/Retranslate/.test(viewOnly));
+  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
+  assert.match(src, /await job\.start\(\{ languages: \[lang\.locale\], overwrite: true \}\);/, 'Retranslate runs that one language');
+  assert.match(src, /if \(row && row\.origin === 'admin'\) \{[\s\S]*?_confirm\(/, 'and asks first when an admin wrote it');
+});
+
+test('the language switch names each language state, and waits for the English to be saved', () => {
+  const rows = {
+    fr: { locale: 'fr', html: '', text: '', origin: 'machine', unusable: null },
+    de: { locale: 'de', html: '', text: '', origin: 'admin', unusable: null },
+    es: { locale: 'es', html: '', text: '', origin: 'machine', unusable: 'x' },
+  };
+  const html = render('LanguageSwitch', { locale: 'en', languages: LANGUAGES, rows, blocked: null, onChange: noop, idPrefix: 'email-template' });
+  assert.match(html, /<option value="en" selected="">English \(the original\)<\/option>/);
+  assert.match(html, /<option value="fr">Français: translated<\/option>/);
+  assert.match(html, /<option value="de">Deutsch: edited by an admin<\/option>/);
+  assert.match(html, /<option value="es">Español: not sent, needs fixing<\/option>/);
+  assert.match(html, /<option value="it">Italiano: not translated<\/option>/);
+  assert.equal((html.match(/<option /g) || []).length, 13, 'English and the twelve');
+  const blocked = render('LanguageSwitch', { locale: 'en', languages: LANGUAGES, rows, blocked: 'Save the English first, then edit another language.', onChange: noop, idPrefix: 'email-template' });
+  assert.match(blocked, /<select[^>]*disabled=""[^>]*aria-describedby="email-template-language-blocked"/);
+  assert.match(blocked, /Save the English first, then edit another language\./);
+
+  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
+  assert.match(src, /if \(lang\.dirty && !\(await confirmDiscard\(`Your changes to \$\{name\} are not saved\. Switch and lose them\?`\)\)\) return;/);
+  for (const file of ['editor.tsx', 'layouts.tsx']) {
+    const editor = read(`frontend/src/features/admin/email-templates/${file}`);
+    assert.match(editor, /const language = now\.lang\.dirty && now\.lang\.draft && now\.lang\.opened/, `${file}: a language's unsaved words are kept too`);
+    assert.match(editor, /initial: restore\?\.language \|\| null/, `${file}: and come back with Continue editing`);
+  }
+});
+
+test('the template editor shows the languages card on a saved version and not on a new one', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { TemplateEditor } = load();
+  const data = payload();
+  const saved = renderToHtml(createElement(TemplateEditor, {
+    payload: data, action: 'otp', isNew: false, canWrite: true, onDone: noop, onSaved: noop, onReload: noop,
+  }));
+  assert.match(saved, /id="email-languages"/);
+  assert.match(saved, /id="email-template-language"/);
+  assert.match(saved, /<button[^>]*id="email-translate"/);
+  const fresh = renderToHtml(createElement(TemplateEditor, {
+    payload: data, action: 'otp', isNew: true, canWrite: true, onDone: noop, onSaved: noop, onReload: noop,
+  }));
+  assert.ok(!/id="email-languages"/.test(fresh), 'a template not saved yet has nothing to translate');
+  const englishOnly = renderToHtml(createElement(TemplateEditor, {
+    payload: data, action: 'admin_test', isNew: false, canWrite: true, onDone: noop, onSaved: noop, onReload: noop,
+  }));
+  assert.ok(!/id="email-template-language"/.test(englishOnly), 'no language switch for an English-only email');
+  assert.match(englishOnly, /This email is sent in English only, so there is nothing to translate\./);
 });
 
 // ── Final review ────────────────────────────────────────────────────────
