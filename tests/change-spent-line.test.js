@@ -181,7 +181,7 @@ test('the thread view hands the Testing card its line', () => {
   assert.match(src, /testing: \{ \.\.\.AppView\._changeTestingView\(item\), spent: AppView\._changeSpentView\(kind, item\) \}/);
 });
 
-const HEAD = path.join(ROOT, 'frontend/src/features/dev-board/topic/change-head.tsx');
+const HEAD = 'frontend/src/features/dev-board/topic/change-head.tsx';
 const GATE = {
   name: 'Testing', figure: 'Passed', tone: 'done', done: true, segments: [], label: 'Passed', note: [],
 };
