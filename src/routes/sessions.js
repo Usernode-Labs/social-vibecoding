@@ -6133,12 +6133,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // Same visibility rule as /checks and /details: the progress log, spend,
     // estimate and runner name below are the session's own, so a caller who
     // may not see the session gets the same 404 as for a missing one.
+    let mayReadCost = false;
     try {
       const { rows: seen } = Number.isNaN(sessionId) ? { rows: [] } : await pool.query(
         'SELECT user_id, status, shared_at FROM chat_sessions WHERE id = $1',
         [sessionId]
       );
       if (!canViewSession(seen[0], req.user)) return res.status(404).json({ error: 'Session not found' });
+      // Narrower than seeing the session: what a change cost is for its author
+      // and admins, the rule GET /api/sessions/:id applies to the same figure.
+      mayReadCost = seen[0].user_id === req.user.id || !!req.user.isAdmin;
     } catch (err) {
       log.warn('sessions', 'Status visibility lookup failed', { sessionId, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -6297,13 +6301,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
 
     // #3249: the change's running cost total for the meter, idle or busy.
-    // After the visibility check above, so only a viewer of the session
-    // gets it. `null` when the read failed: the client keeps its figure.
+    // Its author and admins only (mayReadCost above): anyone else who may
+    // view the session gets no such field, and the read does not run. `null`
+    // when the read failed: the client keeps its figure.
     let costTotalCents = null;
-    try {
-      costTotalCents = await sessionCost.sessionCostCents(pool, sessionId);
-    } catch (err) {
-      log.warn('sessions', 'Session cost read failed', { sessionId, err: err.message });
+    if (mayReadCost) {
+      try {
+        costTotalCents = await sessionCost.sessionCostCents(pool, sessionId);
+      } catch (err) {
+        log.warn('sessions', 'Session cost read failed', { sessionId, err: err.message });
+      }
     }
 
     let delivery;
@@ -6324,7 +6331,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
     // estimate, turn ({ startedAt, kind } | null, #4533), costTotalCents
-    // (the change's cost so far in cents | null, #3249)
+    // (the change's cost so far in cents | null, #3249; author and admins only,
+    // absent for anyone else)
     // (+ resolving, sync, status, and `delivery` when asked for, #3177).
     // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
@@ -6332,14 +6340,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // the client's stop-escalation ladder across reloads.
     res.json({
       busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
-      spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
+      // The running turn's share of the same figure, under the same rule.
+      spend: busy && mayReadCost ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
       resolving: !!sync && sync.reason === 'conflict',
       sync,
       status: mergeStatus,
       runner, runnerLabel, localAgent: attached,
-      costTotalCents,
+      ...(mayReadCost ? { costTotalCents } : {}),
       ...(delivery !== undefined ? { delivery } : {}),
     });
   });
