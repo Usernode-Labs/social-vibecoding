@@ -214,10 +214,10 @@ test('staging + ?demo=1: twenty-one mock rows prepend, and only the unread ones 
     );
     // Real rows survive after the mocks; unread bumped by the UNREAD mock
     // count so the client's badge subtraction stays honest. Counting all
-    // eighteen would claim the read rows as unread — inflating the badge by one
+    // twenty-one would claim the read rows as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 13);
+    assert.equal(body.unread, 2 + 16);
     // #18: the unread mock messages are counted apart too, for the bell to
     // leave out (the real row is a mention, which the bell keeps).
     const mockMessages = body.notifications.filter((n) => n.id !== 1 && !n.readAt

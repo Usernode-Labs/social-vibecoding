@@ -378,7 +378,7 @@ test('unexpected events rows say how many, of what, and where to look (#4296)', 
 test('ScreenRow renders kind, subject, meta — in that order', () => {
   const row = SHEET.slice(SHEET.indexOf('function ScreenRow('));
   const body = row.slice(0, row.indexOf('\n}'));
-  const kindAt = body.indexOf('{view.label}');
+  const kindAt = body.indexOf('<RowLabel view={view} />');
   const subjectAt = body.indexOf('view.segments.length ? view.segments.map');
   const metaAt = body.indexOf('view.appLine');
   assert.ok(kindAt > -1 && subjectAt > -1 && metaAt > -1, 'all three lines are drawn');
@@ -386,7 +386,7 @@ test('ScreenRow renders kind, subject, meta — in that order', () => {
     'kind over subject over meta');
   // The kind line is CONDITIONAL and the subject line falls back to it, which
   // is the two-line shape above.
-  assert.match(body, /\{view\.segments\.length \? \(\s*<span[^>]*>\s*\{view\.label\}/,
+  assert.match(body, /\{view\.segments\.length \? \(\s*<span[^>]*>\s*<RowLabel view=\{view\} \/>/,
     'the kind line only renders when there is a subject under it');
   assert.match(body, /\)\) : view\.label\}/,
     'and the label takes the subject line when there is not');
