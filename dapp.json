@@ -460,7 +460,7 @@
       "key": "BREVO_API_KEY",
       "group": "Phone sign-in",
       "private": true,
-      "description": "Brevo API key, sent as the api-key header on POST https://api.brevo.com/v3/transactionalSMS/send. Private: it can send texts and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
+      "description": "Brevo API key, sent as the api-key header on POST https://api.brevo.com/v3/transactionalSMS/send and, when PLATFORM_MAIL_PROVIDER is brevo, on POST https://api.brevo.com/v3/smtp/email. Private: it can send texts and mail and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
     },
     {
       "key": "BREVO_SMS_SENDER_IDS",
@@ -502,7 +502,7 @@
       "key": "PLATFORM_MAIL_PROVIDER",
       "group": "Platform mail",
       "default": "auto",
-      "description": "Which transport sends platform mail: auto (default), gmail, http, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than printing login codes into the log. Naming a provider explicitly means a missing key is reported as broken, not silently downgraded. A staging preview ALWAYS logs instead of delivering, whatever this says."
+      "description": "Which transport sends platform mail: auto (default), gmail, http, brevo, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than logging login codes. Brevo is used only when named here, because BREVO_API_KEY also sends SMS. A named provider with a missing key is reported as broken, not downgraded. A staging preview ALWAYS logs instead of delivering."
     },
     {
       "key": "PLATFORM_MAIL_FROM",
@@ -540,6 +540,19 @@
       "private": true,
       "required": false,
       "description": "Resend webhook signing secret (whsec_...) for POST /api/mail/webhooks/resend. Configure delivered, bounced and complained events in Resend. Unset rejects every webhook; Gmail has no delivery webhooks."
+    },
+    {
+      "key": "BREVO_MAIL_WEBHOOK_TOKEN",
+      "group": "Platform mail",
+      "private": true,
+      "required": false,
+      "description": "Bearer token Brevo's transactional email webhook must send to POST /api/mail/webhooks/brevo. Configure delivered, hardBounce, softBounce, invalid, blocked and spam events in Brevo. Unset leaves the webhook answering 404 and the admin mail reports without delivery counts."
+    },
+    {
+      "key": "BREVO_MAIL_TEMPLATES",
+      "group": "Platform mail",
+      "required": false,
+      "description": "Mail kinds sent with a template kept in Brevo instead of Homeroom's, as JSON: {\"project_invite\":12}. Used only when PLATFORM_MAIL_PROVIDER is brevo. Empty leaves every mail on Homeroom's templates; a malformed value is logged and ignored. Editing such a template in Brevo takes effect at once, with no vote. See docs/mail-brevo.md."
     },
     {
       "key": "PLATFORM_MAIL_MAX_PER_HOUR",

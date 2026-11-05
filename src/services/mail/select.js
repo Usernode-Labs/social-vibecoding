@@ -9,9 +9,11 @@
 //     preview reach a real provider would mail real people from a branch
 //     nobody voted on yet. This is the single-outbound-boundary use of the
 //     staging gate — no feature is disabled, only delivery.
-//  2. An explicit PLATFORM_MAIL_PROVIDER (gmail | http | log) → that one,
+//  2. An explicit PLATFORM_MAIL_PROVIDER (gmail | http | brevo | log) → that one,
 //     or null if it isn't configured. An operator who names a provider
 //     wants to know it's broken, not to be silently downgraded.
+//     Brevo is only ever chosen this way: BREVO_API_KEY also sends SMS, so a
+//     deploy that has it has not thereby asked for its mail to move.
 //  3. auto (the default) → gmail, then http. If neither is configured:
 //     null in production (so mailer's loud "NOT delivered" error fires and
 //     Global Constraints #6 keeps the code out of the production log), and
@@ -26,6 +28,7 @@
 const log = require('../logger');
 const gmail = require('./transports/gmail');
 const httpApi = require('./transports/http-api');
+const brevo = require('./transports/brevo');
 const logTransport = require('./transports/log');
 
 // The single sender address for all platform mail. Committed as the
@@ -34,7 +37,7 @@ const logTransport = require('./transports/log');
 // authorised with the provider before a send succeeds.
 const DEFAULT_FROM = 'Homeroom <no-reply@onhomeroom.com>';
 
-const PROVIDERS = ['gmail', 'http', 'log'];
+const PROVIDERS = ['gmail', 'http', 'brevo', 'log'];
 
 function isStaging(env) {
   return (env && env.USERNODE_ENV) === 'staging';
@@ -87,6 +90,7 @@ function chooseTransport(env) {
   const build = {
     gmail: () => gmail.create(e, opts),
     http: () => httpApi.create(e, opts),
+    brevo: () => brevo.create(e, opts),
     log: () => logTransport.create(),
   };
 
@@ -127,6 +131,7 @@ function chooseTransport(env) {
 function missingFor(provider, env) {
   if (provider === 'gmail') return gmail.missingKeys(env);
   if (provider === 'http') return httpApi.missingKeys(env);
+  if (provider === 'brevo') return brevo.missingKeys(env);
   return [];
 }
 
@@ -139,6 +144,7 @@ function describe(env) {
   const chosen = chooseTransport(e);
   const gmailMissing = gmail.missingKeys(e);
   const httpMissing = httpApi.missingKeys(e);
+  const brevoMissing = brevo.missingKeys(e);
 
   return {
     // "configured" means mail leaves the building. Staging is honestly
@@ -155,10 +161,11 @@ function describe(env) {
     providers: [
       { name: 'gmail', label: 'Gmail API (OAuth2)', configured: gmailMissing.length === 0, missing: gmailMissing },
       { name: 'http', label: 'Generic HTTP mail API', configured: httpMissing.length === 0, missing: httpMissing },
+      { name: 'brevo', label: 'Brevo email API', configured: brevoMissing.length === 0, missing: brevoMissing },
     ],
-    // The union the admin has to fix to get the DEFAULT (gmail) path
-    // working — this is what the amber card lists.
-    missing: gmailMissing,
+    // What the admin has to fix: the provider they named, else the DEFAULT
+    // (gmail) path. This is what the amber card lists.
+    missing: chosen.requested === 'brevo' ? brevoMissing : gmailMissing,
     affectedFlows: [
       'Mobile email login (one-time codes)',
       'Onboarding waitlist confirmations',

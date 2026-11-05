@@ -267,7 +267,10 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
     // transport renders from what it is handed, so the same words reach it.
     const translate = ENGLISH_ONLY_KINDS.has(kind) ? null : await language.translatorFor(pool, locale);
     const worded = translate ? { ...payload, translate } : payload;
-    const rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: !!pool && !!tracking.secret() });
+    // A provider's own template has none of our tracked links or pixel, so
+    // that mail is not recorded as one that could report opens or clicks.
+    const ownWords = !transport.usesProviderTemplate?.(kind, worded);
+    const rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: ownWords && !!pool && !!tracking.secret() });
     const deliveryId = rendered.trackingLinks
       ? await record(pool, { kind, to, messageId, provider, status: 'sending', trackingLinks: rendered.trackingLinks, engagementTracked: true })
       : null;
