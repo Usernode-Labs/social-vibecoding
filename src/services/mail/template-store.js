@@ -216,6 +216,9 @@ async function snapshot(pool) {
   let layouts;
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    // A read stuck behind a lock gives its connection back when the sender stops
+    // waiting for it, instead of holding one of the connections sign-in uses.
+    await client.query("SELECT set_config('statement_timeout', $1, true)", [String(LOAD_LIMIT_MS)]);
     templates = await client.query(`SELECT e.*, (SELECT COALESCE(json_object_agg(t.locale, to_jsonb(t) - 'template_id' - 'locale'), '{}'::json)
                   FROM email_template_translations t WHERE t.template_id = e.id) AS translations
                 FROM email_templates e WHERE e.status = 'live' AND e.deleted_at IS NULL`);
@@ -282,8 +285,9 @@ function resolve(snap, kind, language) {
 //
 // Each server keeps the last snapshot it read, per pool, and serves sends from
 // memory. A complete snapshot is good for SNAPSHOT_FRESH_MS; after that the next
-// send starts a refresh behind it and is served the copy in hand, so an edit
-// reaches mail within about half a minute. A snapshot that is empty or misses a
+// send reads again, waiting for it as long as a first read (READ_PATIENCE_MS),
+// so an edit reaches mail within half a minute even on a process that sent
+// nothing meanwhile. A refresh that is slow or fails sends the copy in hand. A snapshot that is empty or misses a
 // kind is not kept as good: on a fresh database a server that lost the seed lock
 // can read before the winner commits, and a preview's rows arrive after its
 // import, so the next send asks again. A failed or worse read keeps what was in
@@ -336,6 +340,9 @@ function load(pool, copy, clock) {
       log.error('platform-mail', 'Could not load the email templates: keeping the last copy', { message: err && err.message });
       if (copy.complete) copy.loadedAt = clock.now();
     })
+    // Nothing a load does may become an unhandled rejection: a send may not be
+    // waiting for it.
+    .catch(() => {})
     .finally(() => {
       clearTimeout(timer);
       if (copy.loading === loading) copy.loading = null;
@@ -345,19 +352,17 @@ function load(pool, copy, clock) {
 }
 
 /**
- * The templates to send with, or null when none can be had. Memory first; the
- * first read races READ_PATIENCE_MS, the patience a mail gives its translation,
- * so a slow database costs this mail its templates (the failure path) and not a
- * login. Never rejects. Called at server start so a cold server has a copy.
+ * The templates to send with, or null when none can be had. Memory while fresh;
+ * a first read or a due refresh races READ_PATIENCE_MS, the patience a mail
+ * gives its translation, so a slow database costs this mail the newest wording
+ * (the copy in hand) or, with no copy, its templates (the failure path), and
+ * never a login. Never rejects. Called at server start so a cold server has a copy.
  */
 async function getSnapshot(pool, clock = Date) {
   try {
     if (!pool) return null;
     const copy = copyFor(pool);
-    if (copy.complete) {
-      if (clock.now() - copy.loadedAt >= SNAPSHOT_FRESH_MS) load(pool, copy, clock);
-      return copy.snapshot;
-    }
+    if (copy.complete && clock.now() - copy.loadedAt < SNAPSHOT_FRESH_MS) return copy.snapshot;
     const { READ_PATIENCE_MS } = require('./language');
     let timer;
     const patience = new Promise((done) => {
@@ -371,7 +376,9 @@ async function getSnapshot(pool, clock = Date) {
     }
     return copy.snapshot;
   } catch (err) {
-    log.error('platform-mail', 'Could not read the email templates', { message: err && err.message });
+    try {
+      log.error('platform-mail', 'Could not read the email templates', { message: err && err.message });
+    } catch { /* never a rejection, whatever the logger does */ }
     return null;
   }
 }

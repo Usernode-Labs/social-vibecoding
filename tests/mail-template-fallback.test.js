@@ -401,7 +401,7 @@ test('sendTest with no template says so and sends nothing', async (t) => {
 
 // ── getSnapshot ──────────────────────────────────────────────────────────
 
-test('getSnapshot: memory first, and refreshed at most every 30 seconds behind the send', async () => {
+test('getSnapshot: memory first, and after 30 seconds an edit is on the very next send', async () => {
   const pool = poolWith();
   let now = 1000;
   const clock = { now: () => now };
@@ -411,13 +411,43 @@ test('getSnapshot: memory first, and refreshed at most every 30 seconds behind t
   now += 29000;
   assert.equal(await store.getSnapshot(pool, clock), first);
   assert.equal(pool.db.loads, 1);
-  now += 2000;
+  // A quiet process: the first send after the 30 seconds, however long after,
+  // gets the edit when the database answers in time.
+  now += 10 * 60 * 1000;
   pool.db.templates = pool.db.templates.map((row) => (row.action === 'otp' ? { ...row, subject: 'New' } : row));
-  assert.equal(await store.getSnapshot(pool, clock), first, 'a due refresh does not hold up this send');
-  await new Promise((done) => setImmediate(done));
-  assert.equal(pool.db.loads, 2);
-  await store.settled(pool);
   assert.equal((await store.getSnapshot(pool, clock)).templates.otp.subject, 'New');
+  assert.equal(pool.db.loads, 2);
+});
+
+test('getSnapshot: a refresh that does not answer in time sends the copy in hand, within the patience', async (t) => {
+  t.mock.method(log, 'error', () => {});
+  const pool = poolWith();
+  let now = 1000;
+  const clock = { now: () => now };
+  const good = await store.getSnapshot(pool, clock);
+  now += 31000;
+  pool.db.hang = true;
+  const started = Date.now();
+  assert.equal(await store.getSnapshot(pool, clock), good);
+  assert.ok(Date.now() - started < READ_PATIENCE_MS * 5);
+  assert.equal(pool.db.loads, 2);
+  assert.equal(await store.getSnapshot(pool, clock), good, 'and does not start a second read meanwhile');
+  assert.equal(pool.db.loads, 2);
+});
+
+test('getSnapshot: a load that goes wrong past its own handlers is never an unhandled rejection', async (t) => {
+  const unhandled = [];
+  const onUnhandled = (err) => { unhandled.push(err); };
+  process.on('unhandledRejection', onUnhandled);
+  t.after(() => process.off('unhandledRejection', onUnhandled));
+  const logged = t.mock.method(log, 'error', () => { throw new Error('the logger broke'); });
+  const pool = poolWith();
+  pool.db.down = true;
+  assert.equal(await store.getSnapshot(pool), null);
+  await store.settled(pool);
+  await new Promise((done) => setImmediate(done));
+  assert.ok(logged.mock.callCount() >= 1);
+  assert.deepEqual(unhandled, []);
 });
 
 test('getSnapshot: no pool, a failed first read and a hung first read are null, never a rejection', async (t) => {

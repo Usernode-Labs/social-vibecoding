@@ -266,11 +266,15 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     await store.saveTranslation(pool, 'template', otp.id, 'fr',
       { subject: 'Votre code Homeroom', preheader: '', why: 'Pourquoi', html: '<p>{{code}}</p>', text: 'Votre code : {{code}}' }, 'admin');
     const isolation = [];
+    const timeouts = [];
     const spied = { ...pool, query: pool.query.bind(pool), connect: async () => {
       const client = await pool.connect();
       return { query: async (sql, params) => {
         const result = await client.query(sql, params);
-        if (/^SELECT e\.\*/.test(sql)) isolation.push((await client.query('SHOW transaction_isolation')).rows[0].transaction_isolation);
+        if (/^SELECT e\.\*/.test(sql)) {
+          isolation.push((await client.query('SHOW transaction_isolation')).rows[0].transaction_isolation);
+          timeouts.push((await client.query('SHOW statement_timeout')).rows[0].statement_timeout);
+        }
         return result;
       }, release: () => client.release() };
     } };
@@ -279,6 +283,10 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
       const snapshot = await store.getSnapshot(spied);
       assert.deepEqual(Object.keys(snapshot.templates).sort(), [...KINDS].sort());
       assert.deepEqual(isolation, ['repeatable read', 'repeatable read']);
+      // The read's own bound, local to its transaction: the pool's next user gets the default back.
+      assert.deepEqual(timeouts, [`${store.LOAD_LIMIT_MS / 1000}s`, `${store.LOAD_LIMIT_MS / 1000}s`]);
+      const after = await pool.connect();
+      try { assert.equal((await after.query('SHOW statement_timeout')).rows[0].statement_timeout, '0'); } finally { after.release(); }
       const rendered = [];
       const config = { databaseUrl: String(url), mailStagingLogOnly: false, mailTransport: { provider: 'test', async send({ to, kind, ...payload }) { rendered.push(buildMessage(kind, payload)); } } };
       await mail.sendOtpMail(config, 'fr@example.com', '654321', { locale: 'fr' });
