@@ -337,6 +337,110 @@ test('#1771: a preview clone gets a server-enforced ceiling, a fork does not', a
     'must sit above what a healthy preview uses under a full check run');
 });
 
+// A shots run's copies (5 Nov 2026): a copy of Homeroom at full use held the
+// whole preview ceiling (main pool 8, workflow pool 2, bus, locks: 12), so
+// the run's own fixture client was refused with 53300 and the run failed
+// before its shots agent started.
+test('shots: a run\'s copy gets its own ceiling, and a preview keeps its own', async () => {
+  const dbm = require('../src/services/db-manager');
+  const calls = [];
+  const execute = async (sql) => { calls.push(sql); };
+  const saved = { shots: process.env.SHOTS_DB_CONNECTION_LIMIT, staging: process.env.STAGING_DB_CONNECTION_LIMIT };
+  try {
+    delete process.env.SHOTS_DB_CONNECTION_LIMIT;
+    delete process.env.STAGING_DB_CONNECTION_LIMIT;
+    for (const name of ['app_usernode_2d5619_shots_a422bcef20e0_b', 'app_usernode_2d5619_shots_a422bcef20e0_h',
+      'app_recipe_box_evidence_0123456789ab_b']) {
+      assert.equal(await dbm.applyStagingConnectionLimit(name, { execute }), dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT, name);
+    }
+    assert.deepEqual(calls, [
+      `ALTER DATABASE app_usernode_2d5619_shots_a422bcef20e0_b CONNECTION LIMIT ${dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT}`,
+      `ALTER DATABASE app_usernode_2d5619_shots_a422bcef20e0_h CONNECTION LIMIT ${dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT}`,
+      `ALTER DATABASE app_recipe_box_evidence_0123456789ab_b CONNECTION LIMIT ${dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT}`,
+    ]);
+    assert.equal(await dbm.applyStagingConnectionLimit('app_usernode_2d5619_staging_s12699_703c77', { execute }),
+      dbm.DEFAULT_STAGING_DB_CONNECTION_LIMIT, 'a preview\'s ceiling is unchanged');
+    assert.equal(dbm.DEFAULT_STAGING_DB_CONNECTION_LIMIT, 12);
+
+    // Each key turns off only its own ceiling.
+    calls.length = 0;
+    process.env.STAGING_DB_CONNECTION_LIMIT = '0';
+    assert.equal(await dbm.applyStagingConnectionLimit('app_x_shots_0123456789ab_b', { execute }),
+      dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT, 'the preview key leaves a shots copy capped');
+    delete process.env.STAGING_DB_CONNECTION_LIMIT;
+    process.env.SHOTS_DB_CONNECTION_LIMIT = '0';
+    assert.equal(await dbm.applyStagingConnectionLimit('app_x_shots_0123456789ab_b', { execute }), null,
+      '0 disables the shots ceiling');
+    assert.equal(await dbm.applyStagingConnectionLimit('app_x_staging_s1_aaaaaa', { execute }),
+      dbm.DEFAULT_STAGING_DB_CONNECTION_LIMIT, 'and leaves a preview capped');
+    process.env.SHOTS_DB_CONNECTION_LIMIT = '20';
+    assert.equal(await dbm.applyStagingConnectionLimit('app_x_shots_0123456789ab_h', { execute }), 20);
+    assert.equal(calls.at(-1), 'ALTER DATABASE app_x_shots_0123456789ab_h CONNECTION LIMIT 20');
+  } finally {
+    for (const [key, value] of [['SHOTS_DB_CONNECTION_LIMIT', saved.shots], ['STAGING_DB_CONNECTION_LIMIT', saved.staging]]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+// Every connection the platform names (db/connection-options.js
+// connectionName), by whether it can hold a backend on a shots copy. A name
+// added anywhere in src/ fails here until it is placed, so a new dedicated
+// client cannot take the run's fixture client's room again unnoticed.
+const COPY_CONNECTIONS = Object.freeze({
+  // The copy's two pools, sized by its config (counted below from it).
+  main: 'pool',
+  workflow: 'pool',
+  // The copy's dedicated clients, one connection each.
+  bus: 'copy',        // services/ws-bus.js, the LISTEN client
+  locks: 'copy',      // db/session-locks.js
+  presence: 'copy',   // services/process-presence.js, opened while a process holds session records
+  debug: 'copy',      // services/debug-access.js, a read-only pool of one
+  // What the platform opens into a copy as its owner role, one at a time each.
+  shots: 'run',       // services/shots-fixtures.js withClient
+  dbadmin: 'run',     // services/db-manager.js, its per-database client
+  // Never against a copy's ceiling, with the reason.
+  'schema-observer': 'boot only, while the migration runs and before the bus, locks and workflow pool open',
+  census: 'the preview server\'s maintenance database',
+  admin: 'the role provisioner, only with DATABASE_ROLE_SPLIT, which a copy\'s environment does not set',
+  export: 'an app export\'s pg_dump, against the app\'s own database',
+  retention: 'held while this process builds an image, and a copy builds none (services/preview-projects.js)',
+});
+
+test('shots: the ceiling sits above a full copy plus the platform\'s own clients into it', () => {
+  const dbm = require('../src/services/db-manager');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(rel);
+      else if (/\.(js|ts)$/.test(entry.name)) files.push(rel);
+    }
+  };
+  walk('src');
+  const named = new Set();
+  for (const rel of files) {
+    for (const m of read(rel).matchAll(/connectionName\('([a-z-]+)'\)/g)) named.add(m[1]);
+  }
+  assert.ok(named.has('main') && named.has('bus') && named.has('shots'), 'the scan finds the platform\'s named connections');
+  const unplaced = [...named].filter((name) => !(name in COPY_CONNECTIONS));
+  assert.deepEqual(unplaced, [],
+    'place each new named connection in COPY_CONNECTIONS, and if a shots copy can hold it, in DEFAULT_SHOTS_DB_CONNECTION_LIMIT\'s sum (src/services/db-manager.js)');
+  const gone = Object.keys(COPY_CONNECTIONS).filter((name) => !named.has(name));
+  assert.deepEqual(gone, [], 'a connection no longer opened leaves the list');
+
+  const config = loadWith({ USERNODE_ENV: 'staging', STAGING_DB_POOL_MAX: undefined, WF_POOL_MAX: undefined, PROCESS_ROLE: undefined });
+  assert.equal(config.dbPoolMax, 8);
+  assert.equal(config.wfPoolMax, 2);
+  const dedicated = Object.values(COPY_CONNECTIONS).filter((kind) => kind === 'copy').length;
+  const run = Object.values(COPY_CONNECTIONS).filter((kind) => kind === 'run').length;
+  const copy = config.dbPoolMax + config.wfPoolMax + dedicated;
+  assert.equal(copy, 14);
+  assert.ok(dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT > copy + run,
+    `a copy can hold ${copy} and the platform opens ${run} more: the ceiling must leave room above both`);
+});
+
 test('#1771: setting the ceiling never fails a build, and can be turned off', async () => {
   const dbm = require('../src/services/db-manager');
   const boom = async () => { throw new Error('permission denied for database'); };
