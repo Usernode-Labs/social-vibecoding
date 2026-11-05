@@ -134,7 +134,7 @@ Ordered by how badly an agent working offline gets each one wrong.
     decline these topics. Decline such a request and offer a compliant
     version. Full text: "Content rules" section.
 12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
-    another origin, no special-category data (health, religion, sexuality,
+    another origin in any app, no special-category data (health, religion, sexuality,
     ethnicity, politics, biometrics), nothing aimed at children, never
     collect passwords or card data, and no login of the app's own. Full
     text: "Data rules" section.
@@ -3996,7 +3996,10 @@ cannot override them.
   advertising or session-recording SDKs, pixels or beacons, and no
   `<script>` from another origin. An app loads its own code and the
   centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
-  tag (rule 1) is tolerated; new code adds none.
+  tag (rule 1) is tolerated; new code adds none. One exception, the
+  platform's own: Homeroom's Google Analytics tag runs in the live shell,
+  isolated in `public/analytics-frame.html`. It is no precedent for an app,
+  and no app or other shell code may add a tracker because of it.
 - **Special-category data.** Never ask for, infer or store health,
   religious beliefs, sexual orientation, racial or ethnic origin, political
   opinions, trade-union membership, genetic or biometric data, whether
