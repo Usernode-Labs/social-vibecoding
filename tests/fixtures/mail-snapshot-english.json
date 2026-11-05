@@ -1,6 +1,20 @@
 {
  "taken": "buildMessage in src/services/mail/templates.js at b7269a067, English, before its templates were deleted",
- "matrix": "eee697a155c3d424c2e1d8ab7f5c364b2ea87163abf84cad5a5d47056d0b12ea",
+ "matrix": {
+  "otp": "7031aae1e7cd7f1486fcca9e5a731a90408822ac31a7164dfb98ec26e0085ddc",
+  "account_email": "7031aae1e7cd7f1486fcca9e5a731a90408822ac31a7164dfb98ec26e0085ddc",
+  "username_change": "7031aae1e7cd7f1486fcca9e5a731a90408822ac31a7164dfb98ec26e0085ddc",
+  "waitlist_joined": "43b4b9cafb399c01011d0825566492a6bdc9386920056888dc942b2416d4d342",
+  "waitlist_code": "b3fade3c5af56f30077f507f7a78cc417d45ac672da021efe756a6a88e02b3c2",
+  "waitlist_released": "7ea1902b25d90190df55382321eebd21b4dc4ede8ca2897b5ed9efe36ea38d51",
+  "password_reset": "7bc54e157c770b9257e367740b134c70419acade44ae3041645d0d69d91e1b99",
+  "admin_test": "3d2dd0c4f8c1d3f8dbb718ff7ec3fd153b84cd56cb4fd52572f46e50221c72d4",
+  "content_report": "911cb5571890a3b3c1a050cf1f69bf585176238f1acd3e8b7bf8789e0d3671a9",
+  "project_invite": "93ee86449a6b1eb410d149a0ddebd9ac8bd597b71fcc0b1b906978d3e41dfe22",
+  "build_ready": "0ddfdfee521d7a19084dc8ff8e2315384f1dcb7482a0898d1ca7cc1d1204428a",
+  "invite_activity": "261b1320177b204bb251c3eef240b8e80642430c922b9994020b9d3ca3c01bd9",
+  "project_opened": "41112e1ede8b4d9458b47ed54cec91b248a8ef65a6f2fb8f8abadf354d8c0d6f"
+ },
  "rows": 17477,
  "english": {
   "otp": "rvZz0B_sLo7ijPMG1BqMOBlE",

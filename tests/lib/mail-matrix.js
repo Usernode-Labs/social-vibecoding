@@ -3,10 +3,9 @@
 // The payloads every email action is rendered with in
 // tests/mail-seed-equivalence.test.js, and that
 // tests/fixtures/mail-snapshot-english.json was taken with. The snapshot keeps
-// one hash per row in this order, so a row here is never added, removed or
-// reordered: the snapshot can no longer be taken again, since the code it was
-// taken from is gone. The test checks the matrix is still the one it was taken
-// with.
+// one hash per row in this order, so a row of a kind it holds is never added,
+// removed or reordered; the test checks each such kind's rows are still the ones
+// it was taken with. A new kind adds its own entry, or none.
 
 const { PRODUCTION_ORIGIN } = require('../../src/services/cli-auth-constants');
 
@@ -146,7 +145,8 @@ function digest(message) {
   return require('node:crypto').createHash('sha256').update(canonical(message)).digest('base64url').slice(0, 8);
 }
 
-const matrixHash = () => require('node:crypto').createHash('sha256').update(canonical(MATRIX)).digest('hex');
+// One kind's rows, hashed: the snapshot pins each kind's rows it was taken with.
+const matrixHash = (kind) => require('node:crypto').createHash('sha256').update(canonical(MATRIX[kind])).digest('hex');
 
 module.exports = {
   MATRIX, WITH_APOSTROPHE, APOSTROPHE, TRACKING_SECRET, TRACKED,

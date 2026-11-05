@@ -18,7 +18,11 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
-const MARKUP = /<(p|a|table|tr|td|div|br|strong|img|body|html|!doctype)\b/i;
+const MARKUP = /<(p|a|table|tr|td|div|br|strong|img|body|html|!doctype|h[1-6]|span|b|em|ul|li)\b/i;
+// Line and block comments may name tags; only the code is scanned.
+const codeOf = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '');
+const mailFiles = (dir = 'src/services/mail') => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })
+  .flatMap((entry) => (entry.isDirectory() ? mailFiles(`${dir}/${entry.name}`) : entry.name.endsWith('.js') ? [`${dir}/${entry.name}`] : []));
 const EMAIL_ID = /['"`]email:[A-Za-z0-9_.-]+['"`]/g;
 
 const ALLOWED_IDS = [
@@ -36,8 +40,20 @@ test('templates.js renders the stored templates and writes no markup or words of
 });
 
 test('the code that renders and sends has no markup but the plain message\'s', () => {
-  for (const file of ['src/services/mail/render.js', 'src/services/mail/actions.js', 'src/services/mail/index.js']) {
-    assert.ok(!MARKUP.test(read(file)), file);
+  // Tracking's own: the link rewrite reads anchors, and the open pixel is an image,
+  // neither of them words a mail.
+  const ALLOWED = {
+    'src/services/mail/tracking.js': [/\/\(<a\\b\[\^>\]\*\\bhref="\)/, /`<img src="\$\{PRODUCTION_ORIGIN\}\/mail\/o\/[^`]*`/],
+  };
+  const files = [...mailFiles().filter((file) => !file.endsWith('/plain-message.js')), 'src/services/activity-mail.js'];
+  assert.ok(files.includes('src/services/mail/templates.js') && files.includes('src/services/mail/transports/brevo.js'));
+  for (const file of files) {
+    let code = codeOf(read(file));
+    for (const allowed of ALLOWED[file] || []) {
+      assert.match(code, allowed, `${file} still has what it is allowed`);
+      code = code.replace(allowed, '');
+    }
+    assert.ok(!MARKUP.test(code), file);
   }
   const plain = read('src/services/mail/plain-message.js');
   assert.deepEqual(plain.match(EMAIL_ID) || [], [], 'the plain message reads no catalog');

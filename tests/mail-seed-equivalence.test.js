@@ -8,8 +8,21 @@
 // tests/fixtures/mail-snapshot-english.json holds one hash per payload of
 // tests/lib/mail-matrix.js, English and tracked, and mail-snapshot-samples.json
 // whole messages for each action's sample payload and for a value with an
-// apostrophe. A payload is never narrowed and the snapshot is never retaken: a
-// difference is either a bug or an entry in the "accepted differences" tests.
+// apostrophe. A payload is never narrowed: a difference is either a bug or an
+// entry in the "accepted differences" tests.
+//
+// The snapshot covers the 13 kinds that existed when it was taken. A new action
+// needs no entry here (the seed checks below still cover it). A deliberate change
+// to a historical kind's seed wording regenerates that kind's hashes from the new
+// seeds in the same change, saying why in the commit:
+//   node -e "const m=require('./tests/lib/mail-matrix'),{buildMessage}=require('./src/services/mail/templates');
+//     console.log(m.MATRIX['otp'].map((row)=>m.digest(buildMessage('otp',row))).join(''))"
+// (and with PLATFORM_MAIL_TRACKING_SECRET=only-for-tests and m.TRACKED in each row
+// for the tracked hashes), with USERNODE_DOMAIN unset.
+//
+// To reproduce the snapshot itself: check out b7269a067, where templates.js still
+// held the hard-coded mails, and digest the old buildMessage(kind, row) for every
+// row of tests/lib/mail-matrix.js the same way.
 //
 // The seeds are what a fresh database starts from, and what a process with no
 // database renders with (buildMessage without `payload.resolved`).
@@ -33,18 +46,24 @@ const {
 const SNAPSHOT = require('./fixtures/mail-snapshot-english.json');
 const SAMPLES = require('./fixtures/mail-snapshot-samples.json');
 
-test('the matrix is the one the snapshot was taken with, and names every kind', () => {
-  assert.deepEqual(Object.keys(MATRIX).sort(), [...KINDS].sort());
-  assert.equal(matrixHash(), SNAPSHOT.matrix, 'tests/lib/mail-matrix.js changed: the snapshot cannot be retaken');
+// The kinds the snapshot was taken for. Each still exists and still has its rows.
+const HISTORICAL = Object.keys(SNAPSHOT.english);
+
+test('each historical kind\'s rows are the ones the snapshot was taken with', () => {
+  assert.equal(HISTORICAL.length, 13);
+  for (const kind of HISTORICAL) {
+    assert.ok(KINDS.includes(kind), `${kind} is still an action`);
+    assert.equal(matrixHash(kind), SNAPSHOT.matrix[kind], `tests/lib/mail-matrix.js changed ${kind}'s rows`);
+  }
   assert.ok(!JSON.stringify(MATRIX).includes("'"));
-  const rows = Object.values(MATRIX).reduce((n, list) => n + list.length, 0);
+  const rows = HISTORICAL.reduce((n, kind) => n + MATRIX[kind].length, 0);
   assert.equal(rows, SNAPSHOT.rows);
   assert.ok(rows > 1000);
 });
 
 test('the matrix takes every conditional of every seed both ways', () => {
   const on = (value) => !(value === undefined || value === null || value === false || value === '');
-  for (const kind of KINDS) {
+  for (const kind of Object.keys(MATRIX)) {
     const template = englishTemplate(kind);
     for (const field of ['subject', 'preheader', 'why', 'html', 'text']) {
       const seen = new Map();
@@ -74,7 +93,7 @@ function viaSeeds(kind, payload) {
 
 function assertMatrix(hashes, render, extra = {}) {
   let compared = 0;
-  for (const kind of KINDS) {
+  for (const kind of HISTORICAL) {
     const want = hashes[kind];
     assert.equal(want.length, MATRIX[kind].length * 8, kind);
     MATRIX[kind].forEach((row, i) => {
@@ -113,7 +132,7 @@ test('with no stored template in hand, buildMessage renders the seeds', (t) => {
 });
 
 test('each action\'s sample payload renders the snapshot\'s whole message', () => {
-  for (const kind of KINDS) {
+  for (const kind of HISTORICAL) {
     assert.deepEqual(viaSeeds(kind, ACTIONS[kind].sample), SAMPLES.samples[kind], kind);
     assert.deepEqual(buildMessage(kind, ACTIONS[kind].sample), SAMPLES.samples[kind], kind);
   }
@@ -152,7 +171,7 @@ test('the seeds are plain words: no catalog reference is left in them', () => {
 // ── Accepted differences ─────────────────────────────────────────────────
 
 test('a value with an apostrophe: the html differs only by &#39;, and subject, text and headers not at all', () => {
-  for (const kind of KINDS) {
+  for (const kind of HISTORICAL) {
     const today = SAMPLES.apostrophe[kind];
     const seeded = viaSeeds(kind, WITH_APOSTROPHE[kind]);
     assert.match(seeded.html, /&#39;/, kind);

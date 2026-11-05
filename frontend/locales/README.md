@@ -286,8 +286,8 @@ line). It is a server namespace like `push`, read by the same lookup
   carries is thrown away whole. With no template at all, a mail that carries a
   code or a link still goes as just that (`src/services/mail/plain-message.js`).
 - **What stays in English:** what only an admin or an operator receives (the
-  actions marked `englishOnly`: the test email and report notices, whose
-  subject is built in code), and a `build_ready`'s words when they are handed
+  actions marked `englishOnly`: the test email and `content_report`, the one
+  mail whose subject is built in code, from the report), and a `build_ready`'s words when they are handed
   over from the bot's notification copy, which has no catalog of its own and is
   English on the push as well.
 
