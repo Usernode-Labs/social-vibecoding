@@ -231,11 +231,12 @@ test('two rows by default — a cap on what is shown, not on what exists', () =>
   // an eight-row canvas would push them off the bottom of a phone. Each host
   // is rendered by its own component since #1191, so the ids live one file
   // down — the island mounts the two, and the sections carry the hosts.
+  // One Home (#6361): Pinned communities, Challenges and Communities to join.
   const SECTIONS = read('frontend/src/features/home/panels/sections.tsx');
-  for (const key of ['Discover', 'Challenges']) {
-    assert.match(ISLAND, new RegExp(`<${key}Section />`), `the island mounts ${key}`);
+  for (const tag of ['<PinnedCommunities />', '<ChallengesSection />', '<HomeJoin />']) {
+    assert.ok(ISLAND.includes(tag), `the island mounts ${tag}`);
   }
-  assert.match(SECTIONS, /home-discover-section/);
+  assert.doesNotMatch(ISLAND, /<DiscoverSection \/>/);
   assert.match(SECTIONS, /home-challenges-section/);
   // Create is not a third section any more: it is the grid's trailing tile
   // (tests/home-create-tile.test.js), so nothing mounts or hosts it here.

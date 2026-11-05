@@ -574,6 +574,14 @@ export const HashIcon = stroked('HashIcon', 'M7 20l4-16m2 16l4-16M6 9h14M4 15h14
  */
 export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
 
+/** A push pin (One Home, #6361): the sidebar's Recents keeps a pinned row at
+    its top. Drawn outlined; app.css fills it (`.platform-rail-pin[aria-pressed="true"]`)
+    while the row is pinned. */
+export const PushPinIcon = stroked('PushPinIcon', [
+  'M12 17v5',
+  'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z',
+]);
+
 /**
  * A PANEL WITH A RAIL DOWN ITS LEFT — the desktop sidebar's own toggle.
  *

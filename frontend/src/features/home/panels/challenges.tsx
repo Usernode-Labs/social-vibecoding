@@ -27,11 +27,12 @@
  * challenges" link. The Challenges tab, one tap away behind "See all", has
  * the whole list.
  *
- * ── A FLAT COLUMN OF CARDS, and the card is the Challenges tab's ───────
+ * ── A ROW OF CARDS (One Home, #6361; a column until then), and the card
+ *    is the Challenges tab's ─────────────────────────────────────────
  *
- * The cards sit straight on the page ground, in one column under the section
- * heading, with no plate around them (`PanelShell plate="none"`, as
- * Discover): the cards are surfaces of their own. The heading ends on
+ * The cards sit straight on the page ground, in one row under the section
+ * heading that scrolls sideways, with no plate around them (`PanelShell
+ * plate="none"`): the cards are surfaces of their own. The heading ends on
  * `pb-1.5` and the body opens on `pt-2`, a 14px step, and the cards sit
  * `gap-2.5` (10px) apart, the step of the featured apps rail. Nothing is
  * inset: the cards start where the heading's label starts.
@@ -91,16 +92,22 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
 
   return (
     <PanelShell panelKey={view.key} plate="none" stamps={{ rows: view.rows.length }}>
+      {/* ONE HOME (#6361): ONE ROW THAT SCROLLS SIDEWAYS, under Pinned
+          communities. The cards are the same; each is a fixed width so the
+          next one peeks in from the edge and says the row goes on. The row
+          runs to the screen's edges on a phone (`-mx-3 px-3`, the section's
+          own gutter given back) and snaps a card to the gutter. */}
       <div className="home-panel-body pt-2">
-        <div className="home-panel-rows flex flex-col gap-2.5">
+        <div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2.5 overflow-x-auto px-3 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="list">
           {view.rows.map((row) => (
-            <ChallengeCard
-              key={row.id}
-              view={row}
-              className="home-challenge-card"
-              data-challenge-id={row.id}
-              onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
-            />
+            <div key={row.id} role="listitem" className="w-[min(19rem,82vw)] shrink-0 snap-start">
+              <ChallengeCard
+                view={row}
+                className="home-challenge-card h-full"
+                data-challenge-id={row.id}
+                onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
+              />
+            </div>
           ))}
         </div>
       </div>

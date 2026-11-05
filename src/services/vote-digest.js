@@ -51,9 +51,9 @@ const MAX_COUNT = 99;
 /**
  * Users who owe at least one vote, with the count.
  *
- * A stakeholder is one of exactly two things: someone with an
- * app_favorites row for the app, or the app's creator. Nothing else is
- * read. In particular:
+ * A stakeholder is one of exactly two things: a member who keeps the app
+ * on Home, as the app or as its community (the app_stakes view,
+ * one-home-pins.sql), or the app's creator. Nothing else is read. In particular:
  *
  *   - Active users are NOT included. The per-proposal notification
  *     (services/notifications.js) also asks the members active on the app
@@ -82,7 +82,7 @@ const PENDING_SQL = `
   WITH stakeholders AS (
     SELECT a.id AS app_id, f.user_id
       FROM apps a
-      JOIN app_favorites f ON f.app_id = a.id
+      JOIN app_stakes f ON f.app_id = a.id
     UNION
     SELECT a.id AS app_id, a.created_by AS user_id
       FROM apps a WHERE a.created_by IS NOT NULL

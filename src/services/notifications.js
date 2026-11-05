@@ -686,7 +686,7 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
   const { rows: extraRows } = await pool.query(
     `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
      UNION
-     SELECT user_id AS id FROM app_favorites WHERE app_id = $1`,
+     SELECT user_id AS id FROM app_stakes WHERE app_id = $1`,
     [appId]
   );
 

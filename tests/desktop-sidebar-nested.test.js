@@ -36,8 +36,7 @@ const block1024 = () => {
 };
 
 test('which rows: a community you are visiting has one for as long as you are on its page', () => {
-  const { railRows, RAIL_TOPICS } = loadTsx('frontend/src/features/nav/rail-communities.tsx');
-  assert.equal(RAIL_TOPICS, 2);
+  const { railRows } = loadTsx('frontend/src/features/nav/rail-communities.tsx');
   assert.deepEqual(railRows(['a', 'b'], null), ['a', 'b']);
   assert.deepEqual(railRows(['a', 'b'], 'b'), ['a', 'b'], 'one of the five keeps its row');
   // #21 (19 Oct polish board): after the five, so a visit never moves them.
@@ -125,7 +124,7 @@ test('#5693: under Agents the sidebar seats the chats that ask for you only; the
   assert.deepEqual(keys(seats(new Map(), new Map())), ['person:7']);
 });
 
-test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept', () => {
+test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept; none in the sidebar', () => {
   const places = {
     channels: [
       { kind: 'general', handle: 'general', state: 'live', unread: 0 },
@@ -149,20 +148,19 @@ test('the places: the column\'s own list, topics after two behind "Show N more",
   const all = renderComponent('frontend/src/features/dev-board/workshop/project-places.tsx', 'ProjectPlaces', { ...props('status'), fold: undefined });
   assert.match(all, /data-place="c:bugs"/);
   assert.doesNotMatch(all, /data-places-more/);
-  // The sidebar's part is that list, under the community's own row.
+  // One Home (#6361): the sidebar nests no places under a community's row;
+  // the hub lists them, and the header's back returns to Home from it.
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
-  assert.match(rail, /<ProjectPlaces[\s\S]*?fold=\{RAIL_TOPICS\}\s*onPlace=\{\(key\) => \{ openPlace\(slug, key\); \}\}/);
-  assert.match(rail, /const open = sidebarRows && \(onPage === slug \|\| \(onApp === slug && yours\)\);/, 'it opens with the page, or the app of one of yours');
-  assert.match(rail, /<NestSlot open=\{open\} className="platform-rail-nest platform-rail-places" rows="\.dev-ws-place, \.dev-ws-places-head">\s*<RailPlaces slug=\{slug\} onPage=\{onPage === slug\} needs=\{needs\} \/>/);
-  // Open, its votes are Needs you's count, in its app too (audit N04).
-  assert.match(rail, /const needs = c && !c\.unchosen \? Number\(c\.needs\) \|\| 0 : 0;\s*const votes = open \? 0 : needs;/, 'open, its votes are Needs you\'s count');
-  assert.match(rail, /owed=\{here \? place\.owed : needs\}/);
+  assert.doesNotMatch(rail, /<ProjectPlaces|RailPlaces|platform-rail-places/);
+  assert.match(rail, /const open = false;/);
+  assert.match(rail, /const needs = c && !c\.unchosen \? Number\(c\.needs\) \|\| 0 : 0;\s*const votes = open \? 0 : needs;/, 'the row keeps its votes');
 });
 
 test('the markup: the conversations follow Messages, empty in the prerender, and nothing is nested there', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
-  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><a id="platform-tab-ai"/,
-    'Messages, its conversations, then AI (#6019, the rail\'s order: Evan, 29 Oct 2026)');
+  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><div id="platform-rail-pinned"/,
+    'Messages, then its conversations, then Recents (#6019; One Home #6361 put AI above Messages)');
+  assert.ok(html.indexOf('id="platform-tab-ai"') < html.indexOf('id="platform-tab-messages"'), 'AI above Messages');
   assert.doesNotMatch(html, /platform-rail-nest/);
   const src = read('frontend/src/features/nav/rail-conversations.tsx');
   assert.match(src, /const open = sidebarRows && screen === 'messages-screen' && tab === 'messages';/);

@@ -90,9 +90,10 @@ import { SearchIcon } from '@/components/ui/icons';
 import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
-import { ContinueCard } from './continue-card';
 import { CreateCompact } from './create-tile';
-import { ChallengesSection, DiscoverSection } from './panels/sections';
+import { ChallengesSection } from './panels/sections';
+import { HomeJoin } from './home-join';
+import { PinnedCommunities } from './pinned-communities';
 import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
@@ -122,6 +123,11 @@ export function HomeScreen() {
   const grid = useStoreState(gridStore);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
+  // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
+  // member meets their communities first, and the second kind of pin when
+  // they choose it (the app's Pin to Home, the hub's ⋯, "Pin its app too").
+  // Never hidden before the grid's first paint, so the prerender agrees.
+  const noApps = grid.ready && grid.view === 'grid' && !grid.editing && grid.items.length === 0;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
@@ -228,8 +234,8 @@ export function HomeScreen() {
             there.
         */}
         <WidgetStrip />
-        {/* The change you last worked on, or nothing: ./continue-card.tsx. */}
-        <ContinueCard />
+        {/* One Home (#6361): no continue card. The change you last worked on
+            is a row of the bell and of Homeroom bot's list. */}
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────
 
@@ -266,7 +272,7 @@ export function HomeScreen() {
             Home._rectForCell measures those overlay cells to land a committed
             drop. Trim the padding here, never there.
         */}
-        <section id="home-apps-section" className="px-3">
+        <section id="home-apps-section" className="px-3" hidden={noApps}>
           {/*
               The area's label, in the same treatment the two below it use —
               see ./panels/ui.tsx's SectionHeading for why every area on this
@@ -390,7 +396,7 @@ export function HomeScreen() {
             model now feeds both, rather than a second pass copying one to
             the other.
         */}
-        <DiscoverSection />
+        <PinnedCommunities />
         {/*
             A PRIVATE MEMBER'S WAITLIST CARD (./waitlist-card.tsx): an invite
             link let them into their group's apps, and this is where they join
@@ -406,6 +412,7 @@ export function HomeScreen() {
         */}
         <VerifyCard />
         <ChallengesSection />
+        <HomeJoin />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth
             area held one row — an avatar, "Profile", "Your points, settings
