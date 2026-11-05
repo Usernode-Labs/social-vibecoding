@@ -260,13 +260,14 @@ test('in the text version a link placeholder cannot be joined into a longer addr
   const reset = englishTemplate('password_reset');
   const layout = SEEDS.layouts[0];
   const withText = (extra) => ({ ...reset, text: `${reset.text}${extra}` });
-  const joined = /cannot touch a letter, digit or URL character/;
-  for (const bad of ['\nhttps://evil.example/?u={{url}}', '\n?u={{url}}', '\nx{{url}}', '\n{{url}}x', '\n{{url}}/x', '\n{{#if url}}?u={{/if}}{{url}}']) {
+  const joined = /cannot come right after a letter, digit or URL character/;
+  for (const bad of ['\nhttps://evil.example/?u={{url}}', '\n?u={{url}}', '\nx{{url}}', '\n{{#if url}}?u={{/if}}{{url}}']) {
     hasError(validateTemplate('password_reset', withText(bad), layout), 'text', joined);
   }
-  // Text mail fetches nothing, so any character that cannot continue a URL is
-  // fine, as Japanese, Chinese and Korean translations write it.
-  for (const ok of ['\n\u3053\u3061\u3089{{url}}', '\n\u8be6\u60c5\uff1a{{url}}', '\nAgain: {{url}}', '\n({{url}})']) {
+  // Text mail fetches nothing, so any character before it that cannot continue
+  // a URL is fine, as Japanese, Chinese and Korean translations write it; what
+  // follows can only extend our own link.
+  for (const ok of ['\n\u3053\u3061\u3089{{url}}', '\n\u8be6\u60c5\uff1a{{url}}', '\nAgain: {{url}}', '\n({{url}})', '\nOpen it: {{url}}.', '\n{{url}}x']) {
     assert.deepEqual(validateTemplate('password_reset', withText(ok), layout), { ok: true }, ok);
   }
   const invite = englishTemplate('project_invite');

@@ -19,7 +19,7 @@
 //   it goes only in href and only as the whole value (`href="{{url}}"`).
 //   Joined to other text (`https://evil.example/?u={{url}}`) or in an address
 //   the mail client fetches by itself on open (an image's src), it would hand
-//   that secret to another site. In the text version it may not touch a
+//   that secret to another site. In the text version it may not follow a
 //   character that could continue a URL (a letter, a digit, "/", "=", ...).
 // - Wording built in code (`fromCode`) and anything inserted as HTML (an
 //   action's `htmlValues`, a layout's {{content}}, {{why}} and {{preheader}})
@@ -372,8 +372,10 @@ function requiredOnEveryPath(action, text, layout) {
 // printed as a marker, must not join a link placeholder to an address around
 // it. A text mail fetches nothing on open, so the only risk is a reader's
 // client reading `https://evil.example/?u={{url}}` as one address: refused
-// when the character right before or after the link (or another value there)
-// could continue a URL. Any other character is fine, so `こちら{{url}}` and
+// when the character right before the link (or another value there) could
+// continue a URL. What comes after can only extend our own link, never send it
+// elsewhere, so it is not checked (`Open it: {{url}}.` is an ordinary
+// sentence). Any other character before is fine, so `こちら{{url}}` and
 // `详情：{{url}}` pass as the translations write them. Null or a problem.
 function joinedLinkProblem(action, source) {
   const tree = safeTree(source);
@@ -409,10 +411,8 @@ function joinedLinkProblem(action, source) {
     for (const name of used) {
       const marker = mark(name);
       for (let at = out.indexOf(marker); at !== -1; at = out.indexOf(marker, at + marker.length)) {
-        const beforeOk = !continuesUrl(at > 0 ? out[at - 1] : '');
-        const afterOk = !continuesUrl(out.charAt(at + marker.length));
-        if (!beforeOk || !afterOk) {
-          return `{{${name}}} is a link that may carry a one-time secret, so in the text version it cannot touch a letter, digit or URL character such as / ? = & or a dot. Joined to them, it could become part of another site's address.`;
+        if (continuesUrl(at > 0 ? out[at - 1] : '')) {
+          return `{{${name}}} is a link that may carry a one-time secret, so in the text version it cannot come right after a letter, digit or URL character such as / ? = & or a dot. Joined to them, it could become part of another site's address.`;
         }
       }
     }
