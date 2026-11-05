@@ -286,7 +286,8 @@ function scanInto(s, offset, out, depth) {
           const problem = attributeProblem(attr.name, attr.value);
           if (problem) return reject(problem);
         }
-        if (tag.name === 'img') {
+        // A browser reads <image> as <img>, so it is held to the same rule.
+        if (tag.name === 'img' || tag.name === 'image') {
           const problem = imageProblem(tag);
           if (problem) return reject(problem);
         }

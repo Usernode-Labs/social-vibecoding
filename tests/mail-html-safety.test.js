@@ -186,6 +186,10 @@ test('html-safety allows <img src="https://..."> with alt, and refuses data: and
   refused('<img src="/email-images/0123456789abcdef0123456789abcdef" alt="">', /https/);
   refused('<img alt="">', /https/);
   refused('<img src="https://x.example/a.png">', /alt/);
+  // <image> is <img> to a browser: the probe's http pixel is refused the same way.
+  refused('<p>x<image src="http://evil.example/p.gif"></p>', /https/);
+  refused('<p>x<image src="http://evil.example/p.gif"></image></p>', /https/);
+  refused('<image src="{{url}}" alt="">', /cannot hold a placeholder/);
   refused('<img src="https://x.example/a.png" alt="" srcset="https://x.example/a.png 1x, http://x.example/b.png 2x">', /https/);
   // Inside an Outlook conditional comment the same rules hold.
   refused('<!--[if mso]><img src="http://x.example/a.png" alt=""><![endif]-->', /https/);
