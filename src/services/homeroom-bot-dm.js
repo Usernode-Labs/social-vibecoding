@@ -1887,17 +1887,16 @@ async function cardShown(pool, userId, appId, issueNumber) {
  * went to ({ conversationId, messageId, duplicate, userId, username }), or
  * null when nothing reached them.
  */
-// B9: what the bot's news about a request says on the chat message it was
-// asked in, if it was (homeroom-bot-chat.js): building, or stopped.
-const CHAT_STATUS_OF_KIND = Object.freeze({
-  spec: 'building', build_failed: 'stopped', blocked: 'stopped', person: 'stopped', empty: 'stopped',
-});
+// B9: the bot's news that moves a request asked in a project's chat (its
+// build starting, or stopping): its requester's card there is pushed again
+// (homeroom-bot-chat.js noteRequestStatus).
+const MOVES_CHAT_CARD = new Set(['spec', 'build_failed', 'blocked', 'person', 'empty']);
 
 async function relayIssuePost({
   pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm, ready = false, key = null, strict = false,
 }) {
-  if (CHAT_STATUS_OF_KIND[kind] && app?.id) {
-    await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: CHAT_STATUS_OF_KIND[kind] });
+  if (MOVES_CHAT_CARD.has(kind) && app?.id) {
+    await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber });
   }
   if (!dm || !bot?.id) return null;
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news goes
@@ -3048,7 +3047,7 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   }
   // B9: and the chat message it was asked in, if it was, says Try it.
   await require('./homeroom-bot-chat').noteRequestStatus(pool, {
-    appId: run.id, issueNumber: Number(run.issue_number), status: 'ready', sessionId: id, deps: { strict: true },
+    appId: run.id, issueNumber: Number(run.issue_number), deps: { strict: true },
   });
   // Homeroom bot parity P6: a change that was working past a check that is
   // not its own passes now; its card says so (never throws).
@@ -3754,7 +3753,7 @@ function mergedText({ line, appName, live, platform = false, card = true, change
 
 function noteChatLive(pool, run, deps = {}) {
   return require('./homeroom-bot-chat').noteRequestStatus(pool,
-    { appId: run.app_id, issueNumber: Number(run.issue_number), status: 'live', deps: deps.strict ? { strict: true } : {} });
+    { appId: run.app_id, issueNumber: Number(run.issue_number), deps: deps.strict ? { strict: true } : {} });
 }
 
 /**

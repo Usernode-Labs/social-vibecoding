@@ -4049,8 +4049,9 @@ async function runTriage(pool, config, {
           : (look.n ? loopRules.lookCardKey(app.id, issueNumber, look.n) : item.id),
         deps: { dm: deps.dm },
       });
-      // B9: the chat message it was asked in, if it was, says it is read.
-      await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: 'reading' });
+      // B9: its requester's card under the chat message it was asked in, if
+      // it was, is pushed again.
+      await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber });
     }
     // B6: a plan still waiting for Build it is not what the bot thinks once
     // it reads the request again. Its buttons go now, so a tap while this

@@ -74,7 +74,7 @@ used up, until Monday), `reply` (reading your reply), `retry_plan`,
 | build_queued / starting | building · `queued` / `starting` |
 | stalled | stopped · `stalled` |
 | planning | planning |
-| reviewing / proposing / building | building · `reviewing` / `proposing` / — |
+| reviewing / proposing / building | building · `reviewing` / `proposing` / no line |
 | plan / awaiting plan (B6) | waiting_for_you · plan |
 | question | waiting_for_you · question |
 | decide (verdict person) | waiting_for_you · decide |
@@ -152,22 +152,92 @@ The first-version line in a project's channel stays.
 
 ## Step 2: one tool registry, one card store, one change-ask queue
 
-- **`bot-tools/`**: each tool once (name, schema, scope, handler). The chat,
-  voice, design and already-done profiles list tool names. Tools that exist
-  in the web connector (`mcp-tools.js`) take its schema.
-- **`bot_cards`**: one store for new offers and cards (file a request, close,
-  withdraw, move, copy, post a plan, project, admin confirm), one tap handler,
-  up to 3 per reply.
-- **One change-ask queue:** every "change my change" (chat `revise_proposal`,
-  voice `update_change`, project chat revise) goes to
-  `homeroom_bot_change_asks`.
+### What there is today (5 Nov 2026 map)
+
+- Four surfaces build their own tool arrays and dispatch: Main and private
+  threads (`homeroom-bot-mayor.js`, ~25 tools plus the thread tools and ten
+  platform reads), the voice on request, change, channel, topic and reply
+  threads (`homeroom-bot-voice.js`, ~20), design threads (`design-bot.js`,
+  ~14) and the already-done check (`homeroom-bot-already-done.js`, 2).
+- The same tool is declared up to five times with different schemas:
+  `list_source` / `read_source` four times, `reply` five, `tell_me_when`
+  twice with different arguments, `offer_close_request` three shapes.
+- Main's platform reads take the web connector's schemas (`mcp-tools.js`,
+  through the mayor shim); the voice and the design bot hand-write smaller
+  copies of the same reads. The admin thread tools build theirs from the
+  connector's registry already.
+- Offers and cards live in seven places: `homeroom_bot_dm_actions`,
+  `homeroom_bot_voice_offers`, `chat_bot_requests`,
+  `homeroom_bot_admin_actions`, `metadata.homeroomBot.card`,
+  `metadata.homeroomBot.actions`, and `private_threads`. Each has its own tap
+  route. Nothing expires but the admin confirm (15 minutes).
+- "Change my change" reaches `homeroom_bot_change_asks` from the voice's
+  `update_change` at once, and from Main's `revise_proposal`, a No vote with a
+  line, a missed build note and project-chat revise only after they post on
+  the change, and only while the voice is on for changes. With the change
+  voice off, `update_change` still writes an ask nobody takes.
+
+### The registry: `src/services/bot-tools/`
+
+- `registry.js`: `define({ name, description, parameters, scopes, run })`;
+  `toolsFor(names, ctx)` gives the model's tool array for a profile, with a
+  schema that may narrow by scope (a request's thread knows its project, so
+  `list_source` takes no `project` there); `run(name, args, ctx)` dispatches.
+- One module per family: `source.js` (list_source, read_source), `say.js`
+  (reply, stay_quiet), `platform.js` (get_change, get_discussion,
+  list_requests, get_request, get_message and the other reads, their schemas
+  taken from `mcp-tools.js`), `follow-up.js` (tell_me_when), and the rest
+  registered from where their handlers live today.
+- Tool names the model already uses stay, so prompts and the behaviour they
+  teach do not move. Where two surfaces declared one tool differently, the
+  one definition takes the union of their arguments, each optional where a
+  scope fills it.
+- Profiles list names; a surface builds its array with `toolsFor` and runs a
+  call with `run`. A tool is in exactly one module.
+
+### The card store: `bot_cards`
+
+- One table for every new offer and card: `kind` (file_request, file_many,
+  close_request, withdraw, move_request, copy_request, post_reply,
+  build_plan, post_design, make_project, try_again, admin_confirm, options,
+  questions), `for_user_id` (null: anybody the kind allows), `app_id`, where
+  it was said (`conversation_message_id` or `chat_message_id`), `payload`,
+  `status` (open, done, declined, expired), `choice`, `decided_by`,
+  `decided_at`, `expires_at` (14 days; admin confirm 15 minutes).
+- One tap handler, `botCards.decide(pool, { cardId, choice, user })`: it
+  checks the card is open, unexpired and the tapper's, claims it with one
+  UPDATE, and calls the kind's settle function (the ones each store's route
+  calls today). Every existing tap route looks the card up here first, by
+  the `cardId` its message's metadata carries, and falls back to its old
+  store for cards made before.
+- At most 3 cards on one reply, across kinds; a fourth is not offered.
+- The old stores are written no more; their rows stay answerable until
+  answered or 14 days old.
+
+### One change-ask queue
+
+- Every "change my change" records its ask in `homeroom_bot_change_asks`
+  when it is made (`voice.recordAsk`), whichever way it came: Main's
+  `revise_proposal`, a No vote with a line, a missed build note, project-chat
+  revise, the voice's `update_change`. Posting the words on the change stays
+  what each already does.
+- The follow-up takes asks whether or not the voice is on for changes, so
+  none is stranded.
 
 ## Step 5: threads as the unit
 
-- **Thread kinds:** `main`, `private` (ask, draft, idea), `design`, `request`,
-  `change`, `channel`, `reply`.
-- **One entry:** `threadBot.answer(thread, message)` picks the kind's profile
-  (tools, limits, speaking rules, prompt section) and runs it on the turn
-  engine.
-- **Speaking rules unchanged:** the voice's `gate()` rules become profile
-  data.
+- **Thread kinds:** `main`, `private` (ask, draft, idea), `design`,
+  `request`, `change`, `channel` (a project's chat and its topics), `reply`.
+- **One entry:** `threadBot.answer(thread, message, deps)` in
+  `src/services/thread-bot.js` decides the thread's kind and hands it to that
+  kind's profile. A profile (`src/services/bot-profiles/`) is data plus a
+  runner: its tool names, its limits (rounds, reads, tokens, timeouts, turns
+  per hour, cards), its speaking rules, its prompt section, and the
+  surface's turn function it runs on the turn engine.
+- **Speaking rules unchanged:** the voice's `gate()` checks become each
+  profile's `speaks` list, in today's order: the switch for the place, a
+  person's plain message, the connector and loop guards, relayed text, the
+  writer has the bot, words already queued as an ask, then the place's own
+  rule (mention, reply, followed, the 30-minute continue window).
+- The routes and machines that hear a message (`heardInDm`, `insertHeard`,
+  project chat) call `threadBot.answer`; nothing else picks a surface.
