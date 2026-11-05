@@ -431,6 +431,102 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     assert.ok(compared > 30);
   });
 
+  // ── Translate (services/mail/template-translate.js) and the refresh ──────
+
+  const withFrench = async () => {
+    for (const [key, text] of Object.entries(FRENCH)) {
+      await pool.query(
+        "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', $1, $2, $3) ON CONFLICT DO NOTHING",
+        [key, hash(ENGLISH[key].text), text]);
+    }
+  };
+  const frRow = async (id) => (await pool.query("SELECT * FROM email_template_translations WHERE template_id = $1 AND locale = 'fr'", [id])).rows[0];
+  const reseed = async (source) => {
+    await pool.query("DELETE FROM platform_settings WHERE key = 'email_template_seed_fingerprint'");
+    await seedEmailTemplates(pool, { source });
+  };
+  const fresh = async () => {
+    await empty();
+    await pool.query('TRUNCATE email_translation_jobs');
+    reset();
+    await withFrench();
+    await seedEmailTemplates(pool, { source: SOURCE });
+  };
+
+  await t.test('a catalog translation the refresh rewrites is checked inside the layout it is sent in', async (st) => {
+    st.mock.method(log, 'info', () => {});
+    st.mock.method(log, 'warn', () => {});
+    await fresh();
+    const otp = await liveRow('otp');
+    const fr = await frRow(otp.id);
+    assert.ok(fr, 'the catalog gives otp in French');
+    const { rows: [layout] } = await pool.query("SELECT * FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL");
+    const { renderMessage } = require('../src/services/mail/render');
+    const { actionFor } = require('../src/services/mail/actions');
+    const size = (template) => Buffer.byteLength(renderMessage('otp', { template, layout }, actionFor('otp').sample || {}).html, 'utf8');
+    const en = size(otp);
+    const french = size(fr);
+    assert.ok(french - en >= 4, `French is longer (${en} / ${french})`);
+    // An admin's layout, padded so the English otp fits the 100 KB limit and the French does not.
+    const filler = 100 * 1024 - en - 7 - Math.floor((french - en) / 2);
+    const padded = layout.html.replace('{{content}}', `<p>${'x'.repeat(filler)}</p>{{content}}`);
+    const theirs = await store.saveLayout(pool, { name: 'Admin padded', html: padded, text: layout.text }, null);
+    await pool.query('UPDATE email_templates SET layout_family_id = $2 WHERE id = $1', [otp.id, theirs.family_id]);
+    await pool.query("UPDATE email_template_translations SET subject = 'stale' WHERE template_id = $1 AND locale = 'fr'", [otp.id]);
+    await reseed(SOURCE);
+    const after = await frRow(otp.id);
+    assert.equal(after.subject, fr.subject, 'rewritten from the catalog');
+    assert.ok(after.unusable, 'and marked, not sent');
+    const snap = await store.snapshot(pool);
+    assert.equal(store.resolve(snap, 'otp', 'fr').template.subject, otp.subject);
+    // In the standard layout it works again, and the next rewrite clears the mark.
+    await pool.query('UPDATE email_templates SET layout_family_id = $2 WHERE id = $1', [otp.id, layout.family_id]);
+    await pool.query("UPDATE email_template_translations SET subject = 'stale' WHERE template_id = $1 AND locale = 'fr'", [otp.id]);
+    await reseed(SOURCE);
+    assert.equal((await frRow(otp.id)).unusable, null);
+  });
+
+  await t.test('Translate\'s job: a run in progress holds its version, saved languages stay, failed ones do not', async (st) => {
+    st.mock.method(log, 'info', () => {});
+    st.mock.method(log, 'warn', () => {});
+    await fresh();
+    const otp = await liveRow('otp');
+    const catalog = (await frRow(otp.id)).subject;
+    const job = (state, perLanguage, ageSeconds = 0) => pool.query(
+      `INSERT INTO email_translation_jobs (kind, version_id, state, per_language, run_id, updated_at)
+       VALUES ('template', $1, $2, $3::jsonb, gen_random_uuid(), NOW() - make_interval(secs => $4))
+       ON CONFLICT (kind, version_id) DO UPDATE SET state = EXCLUDED.state, per_language = EXCLUDED.per_language, updated_at = EXCLUDED.updated_at`,
+      [otp.id, state, JSON.stringify(perLanguage), ageSeconds]);
+    const stale = () => pool.query("UPDATE email_template_translations SET subject = 'stale' WHERE template_id = $1 AND locale = 'fr'", [otp.id]);
+    const jobs = async () => (await pool.query("SELECT count(*)::int AS n FROM email_translation_jobs WHERE version_id = $1", [otp.id])).rows[0].n;
+
+    // Every language failed: nothing of Translate's to keep, the catalog refreshes.
+    await job('done', { fr: 'failed: the model did not answer' });
+    await stale();
+    await reseed(SOURCE);
+    assert.equal((await frRow(otp.id)).subject, catalog);
+
+    // A saved language on the same English is the admin's ask: it stays.
+    await job('done', { fr: 'saved', es: 'failed: x' });
+    await stale();
+    await reseed(SOURCE);
+    assert.equal((await frRow(otp.id)).subject, 'stale');
+
+    // A run in progress holds the whole version, English included.
+    await job('running', { fr: 'pending' });
+    await reseed(SOURCE_EDITED);
+    assert.equal((await liveRow('otp')).subject, otp.subject);
+    assert.equal((await frRow(otp.id)).subject, 'stale');
+
+    // One gone quiet does not, and new English replaces the machine's words and the job.
+    await job('running', { fr: 'pending' }, 60 * 60);
+    await reseed(SOURCE_EDITED);
+    assert.equal((await liveRow('otp')).subject, 'Your Homeroom sign-in code');
+    const row = await frRow(otp.id);
+    assert.ok(!row || row.subject !== 'stale');
+    assert.equal(await jobs(), 0);
+  });
+
   await t.test('a lost or skipped seed is found: every kind needs a live template on a live layout', async () => {
     assert.deepEqual(await kindsWithoutTemplate(pool), []);
     await pool.query("UPDATE email_templates SET status = 'archived', deleted_at = NOW() WHERE action = 'otp'");

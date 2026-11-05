@@ -69,6 +69,8 @@ test('a translation is compared with its English', () => {
   const img = { html: '<p><img src="https://x.example/a.png" alt="Logo"></p>' };
   assert.equal(translate.englishDifference(img, { html: '<p><img src="https://x.example/a.png" alt="Logotipo"></p>' }), null);
   assert.match(translate.englishDifference(img, { html: '<p><img src="https://x.example/b.png" alt="Logo"></p>' }), /link|tag/);
+  // HTML that does not even scan is a difference, never a skipped comparison.
+  assert.match(translate.englishDifference(img, { html: '<p><img src="https://x.example/a.png" alt="Logo">\u0000</p>' }), /HTML/);
 });
 
 test('email template translation against PostgreSQL', { timeout: 300000 }, async (t) => {
@@ -352,15 +354,31 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
     }
   });
 
-  await t.test('a boot that refreshes the seeds leaves a translated version alone', async () => {
-    const kind = 'project_invite';
-    const row = await live(kind);
-    assert.equal(row.version, 1);
-    await run('template', row.id, fakeModel());
-    const before = await rowsOf(row.id);
-    assert.equal(before.fr.subject.startsWith('[fr] '), true);
-    await pool.query("DELETE FROM platform_settings WHERE key = 'email_template_seed_fingerprint'");
-    await seeds.seedEmailTemplates(pool);
-    assert.equal((await rowsOf(row.id)).fr.subject, before.fr.subject);
+  await t.test('a run taken over as stale stops and writes nothing more', async () => {
+    const row = await freshVersion('otp');
+    const gates = [];
+    const gated = () => {
+      let open;
+      const gate = new Promise((resolve) => { open = resolve; });
+      gates.push(open);
+      return fakeModel(async (language, parts) => { await gate; return faithful(language, parts); });
+    };
+    const deps = (model) => ({ llm: model, limits: fakeLimits(), languages: LANGUAGES, glossary: GLOSSARY });
+    const first = await translate.startTranslation(pool, 'template', row.id, { deps: deps(gated()) });
+    await pool.query("UPDATE email_translation_jobs SET updated_at = NOW() - interval '1 hour' WHERE kind = 'template' AND version_id = $1", [row.id]);
+    assert.equal((await translate.jobStatus(pool, 'template', row.id)).state, 'stopped');
+    const second = await translate.startTranslation(pool, 'template', row.id, { deps: deps(gated()) });
+    assert.equal(second.started, true);
+    gates[0]();
+    await first.done;
+    const during = await translate.jobStatus(pool, 'template', row.id);
+    assert.equal(during.state, 'running', 'the old run did not finish the new one');
+    assert.ok(Object.values(during.perLanguage).every((s) => s === 'pending'), JSON.stringify(during.perLanguage));
+    assert.deepEqual(await rowsOf(row.id), {}, 'the old run saved nothing');
+    gates[1]();
+    await second.done;
+    const after = await translate.jobStatus(pool, 'template', row.id);
+    assert.equal(after.state, 'done');
+    assert.equal(after.perLanguage.fr, 'saved');
   });
 });

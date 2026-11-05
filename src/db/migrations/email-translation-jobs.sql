@@ -3,6 +3,8 @@
 -- and a second press while one runs finds it. `per_language` maps each locale
 -- to 'pending', 'saved', 'failed: <reason>' or 'skipped: admin'. A row is
 -- reused by the next press on the same version once it has finished.
+-- `run_id` names the run that claimed the row: a run whose id is no longer
+-- there (its job was taken over as stale) stops, and writes nothing more.
 -- `version_id` names an email_templates or email_layouts row, by `kind`.
 CREATE TABLE IF NOT EXISTS email_translation_jobs (
   kind         TEXT NOT NULL CHECK (kind IN ('template', 'layout')),
@@ -10,6 +12,7 @@ CREATE TABLE IF NOT EXISTS email_translation_jobs (
   state        TEXT NOT NULL CHECK (state IN ('running', 'done')),
   per_language JSONB NOT NULL DEFAULT '{}'::jsonb,
   overwrite    BOOLEAN NOT NULL DEFAULT FALSE,
+  run_id       UUID NOT NULL,
   started_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
   started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),

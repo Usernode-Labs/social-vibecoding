@@ -17,7 +17,10 @@
 // A job runs per version, one at a time: a second press while one runs gets
 // the running one. Its progress is a row in email_translation_jobs, so it
 // survives a reload, and a job whose process died stops counting as running
-// after STALE_MS. Languages go to the model a few at a time (CHUNK), one
+// after STALE_MS. Each run claims the row with its own `run_id` and writes only
+// while the row still carries it, so a slow run whose job was taken over as
+// stale stops instead of writing over the new one. It touches `updated_at`
+// with every language, so only a run that has gone quiet looks stale. Languages go to the model a few at a time (CHUNK), one
 // request each; a failed request fails only its languages. Spend counts
 // against the system budget, as the interface's translation step does.
 //
@@ -29,6 +32,7 @@
 // than deleting keeps an admin's text for them to fix, and the next press or
 // correction clears it.
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -166,7 +170,8 @@ function difference(english, translated) {
     if (HTML_FIELDS.has(field)) {
       const a = tagsOf(was);
       const b = tagsOf(now);
-      if (a && b) {
+      if (a && !b) return { field, message: `The ${label} does not read as HTML the way the English does.` };
+      if (a) {
         if (!sortedEqual(a.links, b.links)) return { field, message: `The ${label} changes a link or image address the English has.` };
         if (!sortedEqual(a.tags, b.tags)) return { field, message: `The ${label} does not keep the English's tags and attributes exactly.` };
       }
@@ -360,59 +365,68 @@ const jobFrom = (row) => ({
   updatedAt: row.updated_at,
 });
 
-async function setLanguages(pool, kind, id, updates) {
-  await pool.query(
-    'UPDATE email_translation_jobs SET per_language = per_language || $3::jsonb, updated_at = NOW() WHERE kind = $1 AND version_id = $2',
-    [kind, id, JSON.stringify(updates)]);
+// A run was taken over (its job looked stale and was claimed again): it stops.
+class Superseded extends Error {}
+
+// Records outcomes and touches the job, only while this run still owns it.
+async function setLanguages(pool, kind, id, runId, updates) {
+  const { rowCount } = await pool.query(
+    `UPDATE email_translation_jobs SET per_language = per_language || $4::jsonb, updated_at = NOW()
+     WHERE kind = $1 AND version_id = $2 AND run_id = $3`,
+    [kind, id, runId, JSON.stringify(updates)]);
+  if (!rowCount) throw new Superseded('This Translate run was taken over by a newer one');
 }
 
-async function run(pool, kind, id, english, todo, { overwrite, deps }) {
+async function run(pool, kind, id, runId, english, todo, { overwrite, deps }) {
   const model = deps.llm || llm;
   const budget = deps.limits || limits;
   const languages = deps.languages || configuredLanguages();
   const words = deps.glossary || glossary();
   const keys = fieldsOf(kind);
   const parts = pick(english, keys);
+  // Each language's outcome is recorded as soon as it is known.
+  const record = (language, state) => setLanguages(pool, kind, id, runId, { [language]: state });
   for (let start = 0; start < todo.length; start += CHUNK) {
     const chunk = todo.slice(start, start + CHUNK);
     const requests = chunk.map((language) => requestFor(kind, id, language, languages[language] || language, parts, words));
-    const outcome = {};
-    let answers = null;
+    let answers;
     try {
       answers = await model.translateCatalogDirect(requests);
     } catch (err) {
-      for (const language of chunk) outcome[language] = `failed: the model did not answer (${(err && err.message) || 'request failed'})`;
+      for (const language of chunk) await record(language, `failed: the model did not answer (${(err && err.message) || 'request failed'})`);
+      continue;
     }
-    if (answers) {
-      let cents = 0;
-      for (const answer of answers.values()) if (answer && answer.usage) cents += llm.estimateCostCents(answer.usage, sync.MODEL);
-      await budget.recordSystemSpend(pool, cents);
-      for (const request of requests) {
-        const { language } = request;
-        const answer = answers.get(request.customId);
-        if (!answer || answer.error) {
-          outcome[language] = `failed: the model did not answer (${(answer && answer.error) || 'no answer'})`;
-          continue;
-        }
-        const fields = answerParts(answer, keys);
-        if (!fields) {
-          outcome[language] = 'failed: the answer was not a translation of every part';
-          continue;
-        }
-        try {
-          const { translation } = await saveChecked(pool, kind, id, language, fields, 'machine', { overwrite });
-          outcome[language] = translation ? 'saved' : 'skipped: admin';
-        } catch (err) {
-          if (err && err.code === 'invalid') outcome[language] = `failed: ${err.errors[0].message}`;
-          else if (err && (err.code === 'not_found' || err.code === 'retry' || err.code === 'conflict')) outcome[language] = `failed: ${err.message}`;
-          else {
-            log.error('email-templates', 'A translation could not be saved', { kind, id, language, message: err && err.message });
-            outcome[language] = 'failed: it could not be saved; the server logged why';
-          }
+    let cents = 0;
+    for (const answer of answers.values()) if (answer && answer.usage) cents += llm.estimateCostCents(answer.usage, sync.MODEL);
+    await budget.recordSystemSpend(pool, cents);
+    for (const request of requests) {
+      const { language } = request;
+      const answer = answers.get(request.customId);
+      if (!answer || answer.error) {
+        await record(language, `failed: the model did not answer (${(answer && answer.error) || 'no answer'})`);
+        continue;
+      }
+      const fields = answerParts(answer, keys);
+      if (!fields) {
+        await record(language, 'failed: the answer was not a translation of every part');
+        continue;
+      }
+      // Still this run's job, or nothing is saved.
+      await setLanguages(pool, kind, id, runId, {});
+      let state;
+      try {
+        const { translation } = await saveChecked(pool, kind, id, language, fields, 'machine', { overwrite });
+        state = translation ? 'saved' : 'skipped: admin';
+      } catch (err) {
+        if (err && err.code === 'invalid') state = `failed: ${err.errors[0].message}`;
+        else if (err && (err.code === 'not_found' || err.code === 'retry' || err.code === 'conflict')) state = `failed: ${err.message}`;
+        else {
+          log.error('email-templates', 'A translation could not be saved', { kind, id, language, message: err && err.message });
+          state = 'failed: it could not be saved; the server logged why';
         }
       }
+      await record(language, state);
     }
-    await setLanguages(pool, kind, id, outcome);
   }
 }
 
@@ -434,28 +448,36 @@ async function startTranslation(pool, kind, id, { overwrite = false, languages: 
     : await pool.query("SELECT locale FROM email_layout_translations WHERE layout_id = $1 AND origin = 'admin'", [id]);
   const kept = new Set(overwrite ? [] : admins.map((row) => row.locale));
   const perLanguage = Object.fromEntries(locales.map((code) => [code, kept.has(code) ? 'skipped: admin' : 'pending']));
+  const runId = crypto.randomUUID();
   const { rows: [claimed] } = await pool.query(
-    `INSERT INTO email_translation_jobs (kind, version_id, state, per_language, overwrite, started_by)
-     VALUES ($1, $2, 'running', $3::jsonb, $4, $5)
+    `INSERT INTO email_translation_jobs (kind, version_id, state, per_language, overwrite, started_by, run_id)
+     VALUES ($1, $2, 'running', $3::jsonb, $4, $5, $7)
      ON CONFLICT (kind, version_id) DO UPDATE SET state = 'running', per_language = EXCLUDED.per_language,
-       overwrite = EXCLUDED.overwrite, started_by = EXCLUDED.started_by, started_at = NOW(), updated_at = NOW()
+       overwrite = EXCLUDED.overwrite, started_by = EXCLUDED.started_by, run_id = EXCLUDED.run_id, started_at = NOW(), updated_at = NOW()
      WHERE email_translation_jobs.state <> 'running' OR email_translation_jobs.updated_at < NOW() - make_interval(secs => $6)
      RETURNING *`,
-    [kind, id, JSON.stringify(perLanguage), !!overwrite, userId, STALE_MS / 1000]);
+    [kind, id, JSON.stringify(perLanguage), !!overwrite, userId, STALE_MS / 1000, runId]);
   if (!claimed) {
     const { rows: [running] } = await pool.query('SELECT * FROM email_translation_jobs WHERE kind = $1 AND version_id = $2', [kind, id]);
     return { started: false, job: jobFrom(running), done: Promise.resolve() };
   }
   const todo = locales.filter((code) => perLanguage[code] === 'pending');
-  const done = run(pool, kind, id, english, todo, { overwrite, deps })
+  const done = run(pool, kind, id, runId, english, todo, { overwrite, deps })
     .catch(async (err) => {
+      // A newer run owns the job now and reports it; this one only stops.
+      if (err instanceof Superseded) {
+        log.warn('email-templates', 'A Translate run stopped: a newer run took its job over', { kind, id });
+        return;
+      }
       log.error('email-templates', 'Translate stopped', { kind, id, message: err && err.message });
-      const { rows: [now] } = await pool.query('SELECT per_language FROM email_translation_jobs WHERE kind = $1 AND version_id = $2', [kind, id]);
+      const { rows: [now] } = await pool.query('SELECT per_language FROM email_translation_jobs WHERE kind = $1 AND version_id = $2 AND run_id = $3', [kind, id, runId]);
       const left = Object.entries((now && now.per_language) || {}).filter(([, state]) => state === 'pending');
-      await setLanguages(pool, kind, id, Object.fromEntries(left.map(([code]) => [code, 'failed: Translate stopped; the server logged why'])));
+      if (left.length) await setLanguages(pool, kind, id, runId, Object.fromEntries(left.map(([code]) => [code, 'failed: Translate stopped; the server logged why'])));
     })
-    .then(() => pool.query("UPDATE email_translation_jobs SET state = 'done', updated_at = NOW() WHERE kind = $1 AND version_id = $2", [kind, id]))
-    .catch((err) => log.error('email-templates', 'Could not record the end of Translate', { kind, id, message: err && err.message }));
+    .then(() => pool.query("UPDATE email_translation_jobs SET state = 'done', updated_at = NOW() WHERE kind = $1 AND version_id = $2 AND run_id = $3", [kind, id, runId]))
+    .catch((err) => {
+      if (!(err instanceof Superseded)) log.error('email-templates', 'Could not record the end of Translate', { kind, id, message: err && err.message });
+    });
   return { started: true, job: jobFrom(claimed), done };
 }
 
