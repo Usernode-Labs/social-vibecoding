@@ -1143,7 +1143,7 @@ test('a comment is the dialog\'s two requests: the picture, then the request nam
   { status: 200, body: { url: 'u', homeroomBot: { botWillBuild: true } } },
 ], async (calls) => {
   const out = await post.postComment(base);
-  assert.deepEqual(out, { ok: true, botWillBuild: true, url: 'u', title: '', bounty: null });
+  assert.deepEqual(out, { ok: true, botWillBuild: true, url: 'u', title: '', bounty: null, droppedPictures: 0 });
   assert.equal(calls[0].url, '/api/feedback/screenshot');
   assert.equal(calls[0].init.headers['Content-Type'], 'application/octet-stream');
   assert.equal(calls[0].init.body, blob);
@@ -1166,9 +1166,41 @@ test('a picture the server will not take does not cost the words', () => withFet
   { status: 400, body: { error: 'Not a PNG or JPEG' } },
   { status: 200, body: {} },
 ], async (calls) => {
-  assert.deepEqual(await post.postComment(base), { ok: true, botWillBuild: false, url: '', title: '', bounty: null });
+  assert.deepEqual(await post.postComment(base), { ok: true, botWillBuild: false, url: '', title: '', bounty: null, droppedPictures: 1 });
   assert.equal(JSON.parse(calls[1].init.body).screenshotIds, undefined);
 }));
+
+// #6121: "it looked attached, then vanished on save. no error, just gone."
+test('#6121: a post counts the pictures that did not make it, a refused one or one past the limit', () => withFetch([
+  { status: 413, body: { error: 'Screenshot too large' } },
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 429, body: { error: 'Too many' } },
+  { status: 200, body: {} },
+], async (calls) => {
+  const out = await post.postComment({ ...base, shots: [], images: [imageA, imageB, imageA, imageB] });
+  assert.equal(out.ok, true);
+  assert.equal(out.droppedPictures, 3, 'two refused and the fourth, never sent');
+  assert.equal(calls.length, 4);
+  assert.deepEqual(JSON.parse(calls[3].init.body).screenshotIds, ['b'.repeat(32)]);
+}));
+
+test('#6121: the box refuses an image over the server\'s limit up front, and says so', () => {
+  assert.equal(picture.MAX_UPLOAD_BYTES, feedbackRoute.MAX_SCREENSHOT_BYTES, 'the box stops where the server does');
+  assert.equal(picture.fitsUpload({ size: picture.MAX_UPLOAD_BYTES }), true);
+  assert.equal(picture.fitsUpload({ size: picture.MAX_UPLOAD_BYTES + 1 }), false);
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const usable = images\.filter\(fitsUpload\);/);
+  assert.match(src, /if \(usable\.length < images\.length\) \{\s*update\(key, \{ error: t\('devchat:commentPin\.error\.imageTooLarge', \{ megabytes: MAX_UPLOAD_BYTES \/ \(1024 \* 1024\) \}\) \}\);/);
+  assert.equal(message('devchat:commentPin.error.imageTooLarge'), "Images over {{megabytes}} MB can't be attached.");
+});
+
+test('#6121: the toast names the lost pictures and the posted row does not count them', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const postedLine = lost\s*\? \(outcome\.botWillBuild\s*\? t\('devchat:commentPin\.toast\.postedPicturesLostBuilding', \{ count: lost, place: name \}\)\s*: t\('devchat:commentPin\.toast\.postedPicturesLost', \{ count: lost, place: name \}\)\)/);
+  assert.match(src, /pictures: Math\.max\(0, \(post\.shots\?\.length \|\| 0\) \+ \(post\.images\?\.length \|\| 0\) - outcome\.droppedPictures\),/);
+  assert.equal(message('devchat:commentPin.toast.postedPicturesLost_one'), "Posted to {{place}}, but {{count}} picture couldn't attach.");
+  assert.equal(message('devchat:commentPin.toast.postedPicturesLost_other'), "Posted to {{place}}, but {{count}} pictures couldn't attach.");
+});
 
 const imageA = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' });
 const imageB = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1])], { type: 'image/png' });

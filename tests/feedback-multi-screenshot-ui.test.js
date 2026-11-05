@@ -350,6 +350,28 @@ test('an upload the server refuses drops only that thumbnail', async () => {
   assert.match(h.el('feedback-status').textContent, /PNG or JPEG/);
 });
 
+test('#6121: a picture still refused when the request is filed is named on the confirmation', async () => {
+  const h = makeHarness({ uploadPlan: (n) => (n === 2 ? { throws: true } : n === 3 ? { status: 429, body: { error: 'Too many' } } : null) });
+  h.open();
+  await h.pick('sent.png');
+  await h.pick('stuck.png');
+  assert.equal(h.list().length, 2, 'the network failure keeps the thumbnail');
+  h.type('Filed with one of two pictures');
+  await h.submit();
+  assert.deepEqual([...h.filed()[0].screenshotIds], ['1'.repeat(32)]);
+  assert.equal(h.el('feedback-sent-notice').textContent, "1 picture couldn't attach, so it was filed without it.");
+});
+
+test('#6121: a retry that lands says nothing about pictures', async () => {
+  const h = makeHarness({ uploadPlan: (n) => (n === 1 ? { throws: true } : null) });
+  h.open();
+  await h.pick('stuck.png');
+  h.type('Filed with its picture after all');
+  await h.submit();
+  assert.equal(h.filed()[0].screenshotIds.length, 1);
+  assert.doesNotMatch(h.el('feedback-sent-notice').textContent, /picture/);
+});
+
 test('closing the dialog clears every thumbnail, and the next open starts empty', async () => {
   const h = makeHarness();
   h.open();
