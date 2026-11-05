@@ -230,9 +230,9 @@
        ok         — done and good: merged, checks passing, passed —
                     merging shortly, a Yes tally. Green. ("✓ Checks
                     passing" used to inherit the violet Merged colour.)
-       admin      — an admin bypass. Same amber family as attention
-                    but distinguished by an OUTLINE (see
-                    .gc-vote-btn-admin) so hue alone isn't the signal.
+       admin      — an admin bypass. Same amber family as attention,
+                    kept apart by shape where it is drawn so hue alone
+                    isn't the signal.
 
      `-bg` companions are the faint fills; `-fill` the stronger
      proportional-fill wash used inside the tally pill. */
@@ -608,6 +608,9 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    a phone — the same reading the dev session gives, where the session sheet
    sits ON the strip rather than abutting it. */
 .messages-thread-pane {
+  /* #6254: the pane is the thread's drop zone, so its outline (which lies
+     absolute over its parent) frames the whole thread. */
+  position: relative;
   flex-direction: column;
   width: 100%;
   min-width: 0;
@@ -2223,7 +2226,6 @@ form.agent-session-composer:focus-within {
 .messages-emoji-menu .messages-emoji-menu-list button[aria-selected="true"] { background: var(--messages-surface-2); }
 .messages-emoji-option-glyph { flex: none; width: 24px; font-size: 20px; line-height: 24px; text-align: center; }
 .messages-emoji-option-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay,
 .attach-drop-overlay {
   position: absolute;
@@ -2245,6 +2247,11 @@ form.agent-session-composer:focus-within {
    the card is the positioned parent. `#feedback-form` is "Suggest an
    improvement", where the whole form is the drop zone. */
 .attach-drop-overlay { inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--bg-primary) 94%, transparent); }
+/* #6254: the thread's outline frames the whole pane — header, messages and
+   box — since any of them takes the file. The reply thread beside a chat is
+   its own pane and its own zone. */
+.messages-thread-pane > .messages-drop-overlay,
+.messages-reply-pane > .messages-drop-overlay { inset: 8px; }
 .gc-composer-card,
 #gc-form,
 #gc-thread-form,
@@ -5736,11 +5743,15 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   .browse-row + .browse-row::before { content: none; }
   .browse-row,
   .browse-row + .browse-row {
-    /* The widget language separates by figure/ground, so the box is a white
-       surface on the grey page rather than a hairline outline. The border
-       stays declared and transparent so the hover rule below has a width to
-       colour in without the box changing size under the cursor. */
-    border: 1px solid transparent;
+    /* The widget language separates by figure/ground, and the box is still a
+       white surface on the grey page, but the fill alone let the rows run
+       together (#5928 item 11): the wallpaper's pale end is a point or two off
+       white, and in dark the box is near-black on near-black. So at rest it
+       wears the hairline every card wears, the sheets' own --app-sheet-line,
+       which has its dark and more-contrast values. Width is unchanged from
+       when this border was transparent, so the hover rule below only recolours
+       it and the box does not change size under the cursor. */
+    border: 1px solid var(--app-sheet-line);
     background-color: var(--bg-primary);
     border-radius: 1rem;
   }
@@ -8283,22 +8294,9 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    same kind of control as the card's, not as a second neutral chip. */
 .gc-vote-btn-accent { background: var(--accent-tint); border-color: transparent; color: var(--accent); font-weight: 600; }
 .gc-vote-btn-accent:hover { background: var(--accent-tint); border-color: var(--accent-light); color: var(--accent); }
-/* Admin force-merge / force-undo buttons. Amber instead of red so
- * they don't visually dominate the Yes/No pair, but distinct enough
- * from the regular vote buttons that an admin clicking through the
- * row can tell at a glance which one bypasses voting. The
- * ConfirmModal in castAdminMerge/castAdminUndo is the actual
- * misclick guard; the colour is just the affordance hint. */
-.gc-vote-btn-admin {
-  color: var(--state-admin);
-  background: var(--state-admin-bg);
-  border-color: var(--state-admin);
-  /* Distinguished by SHAPE as well as hue: a dashed outline, so an
-     admin bypass never reads as just-another-amber-warning. */
-  border-style: dashed;
-  border-width: 1.5px;
-}
-.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--state-admin); color: var(--state-admin); }
+/* `.gc-vote-btn-admin` — the dashed amber Admin merge button of the chat's
+   vote row — went with that row (#6236): Admin merge is a row of the
+   change's ⋯ menu alone, where the ConfirmModal is the misclick guard. */
 /* The viewer's cast vote: stronger tint + bolder text (color comes from
  * the -yes/-no variant it sits on). */
 /* #1688: the kudos slot spelled out on a fresh proposal — "Thank evan for
@@ -8316,23 +8314,6 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
 .gc-vote-btn-yes.gc-vote-active { background: rgba(34, 197, 94, 0.22); }
 .gc-vote-btn-no.gc-vote-active { background: rgba(239, 68, 68, 0.22); }
-/* Read-only "You voted X" box shown in place of the buttons once the viewer
-   has cast a vote. Tinted by their choice (green = yes, red = no). */
-.gc-vote-voted-box {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  /* Theme-following. This rule used to hard-code an opaque white with
-     no `.dark` counterpart anywhere in the file, so on a dark card it
-     painted a white slab. */
-  background: var(--bg-primary);
-  border: 1.5px solid currentColor;
-}
-.gc-vote-voted-box-yes { color: var(--state-ok); }
-.gc-vote-voted-box-no { color: var(--state-blocked); }
 
 /* #404: a card's action row. Every issue / proposal / governance / merged
  * card routes its buttons through this one container so they all line up the
@@ -8622,46 +8603,58 @@ span.gc-vote-btn-icon { cursor: default; }
 .dev-detail-reason-hard .dev-detail-reason-label { color: var(--state-blocked); }
 .dev-detail-reason-soft .dev-detail-reason-label { color: var(--state-attention); }
 
-/* Inline vote buttons rendered on a "promoted / voted" group-chat
- * activity row. Sits right after the row text; wraps onto its own line
- * on narrow screens. Empty (no buttons) once the PR leaves the votable
- * set, in which case it collapses to nothing. */
-.gc-vote-inline {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  margin-inline-start: 8px;
-  vertical-align: middle;
-}
-.gc-vote-inline:empty { display: none; }
-/* #3288: the same card under a message bubble (the Homeroom bot's proposal
-   post), on its own line below the text rather than trailing it. */
-.gc-vote-inline.gc-vote-inline-block {
+/* #6236: what a chat line about a change offers (features/group-chat/
+   vote-card.tsx), in place of the inline row of old-style vote buttons
+   (`.gc-vote-inline`: tally · Preview · Yes · No · Admin merge) that used to
+   trail a vote row and hang under Homeroom bot's "It's up for a vote" post.
+
+   The CARD, anywhere the change's own section is not on the page: the
+   plane colour, 20px, one hairline, as every card on the shell is drawn
+   (@/components/ui/grouped-list.tsx); 15 over 13 inside it, as a row is;
+   its two pills are the shell's. Under a centred system line it sits
+   centred too, its words starting left. */
+.gc-vote-card {
   display: flex;
-  margin-inline-start: 0;
-  margin-top: 6px;
-}
-.gc-vote-inline.gc-vote-inline-block:empty { display: none; }
-/* V03 (audit, 2 Nov 2026): ONE ACCENT ON THE ROW. Under the bot's "It's up
-   for a vote" message the row was four hues: a purple tally outline, the
-   blue Preview, a green Yes and a red No. Yes and No are the shell's plain
-   filled pills here (the accent on hover, as every .gc-vote-btn), and a
-   tally still short of its threshold is outlined in the muted ink; green
-   stays for a tally that reached it, which is the good news (the pending
-   tally's rule is beside the tally pill's own tones, below). */
-.gc-vote-inline .gc-vote-btn-yes,
-.gc-vote-inline .gc-vote-btn-no {
+  flex-direction: column;
+  gap: 6px;
+  max-width: 480px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: 20px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  text-align: start;
   color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border-color: transparent;
 }
-.gc-vote-inline .gc-vote-btn-yes:hover,
-.gc-vote-inline .gc-vote-btn-no:hover {
-  background: var(--accent-tint);
-  border-color: var(--accent-light);
-  color: var(--accent);
+.gc-msg-system .gc-vote-card { margin-inline: auto; }
+.gc-vote-card-name {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
+.gc-vote-card-facts {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+.gc-vote-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+/* The LINE, on a request's page, where the change's section with its
+   Votes card is below: the change's name and See the vote, in the stream's
+   own small type (.dev-request-event-link is the Try it / Read link). */
+.gc-vote-line {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+.gc-vote-line-name { font-weight: 600; color: var(--text-primary); }
+.gc-msg-system .gc-vote-line { display: block; }
 /* ── The status band, full width ───────────────────────────
    The state bar, the 💬 count, the Closes-#N pills and the metadata chips
    (priority / assignee / category). These used to ride on the title's own
@@ -8739,8 +8732,7 @@ span.gc-vote-btn-icon { cursor: default; }
    On a card the pill is a BAR rather than a capsule: a proportional tally
    reads as a progress bar, where wedged between chips at thumbnail width it
    read as noise. The capsule form (.gc-vote-count without -block) is kept
-   for the detail head and for the group-chat / home surfaces that still call
-   voteCountPill.
+   for the detail head.
 
    It leads the status band and FLEXES instead of taking the whole width, so
    the chips that used to sit on a row of their own can share that row: it
@@ -8808,9 +8800,6 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-count-attention { color: var(--state-attention); }
 .gc-vote-count-blocked { color: var(--state-blocked); }
 .gc-vote-count-ok { color: var(--state-ok); }
-/* V03: in the chat's vote row a tally short of its threshold is the muted
-   ink, not the purple progress tone (see .gc-vote-inline above). */
-.gc-vote-inline .gc-vote-count-pending { color: var(--text-muted); }
 /* Proportional fill bars: Yes grows from the LEFT, No from the RIGHT, both
    the pill's full height, so the gap between them is what is still
    undecided. They used to be half-height lanes stacked one above the other
@@ -9009,17 +8998,6 @@ span.gc-vote-btn-icon { cursor: default; }
   color: var(--state-blocked);
   white-space: nowrap;
 }
-/* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
-   PR lands so the row's voting info stays put. */
-.gc-merged-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--state-ok);
-  white-space: nowrap;
-}
 /* "✓ Checks passing" — its own class rather than borrowing
    .gc-merged-badge, which is what made the passing badge inherit the
    violet Merged colour. Both are `ok` now, but the classes stay
@@ -9213,6 +9191,19 @@ span.gc-vote-btn-icon { cursor: default; }
   + :is(.dc-p, .dc-ul, .dc-ol, .dc-blockquote, .dc-code-block, .dc-table,
         .dc-h3, .dc-h4, .dc-h5) {
   margin-top: 6px;
+}
+
+/* #6308: a link typed into a message (a bare URL, a markdown link) is
+   clickable but wore the body's own ink, so nothing said it could be
+   followed. It wears the platform's link blue and an underline, the pair
+   Messages' markdown and the dev chat's replies already use. No `:hover`
+   variant: the #2464 guard forbids any hover rule naming the inner message
+   box, and Messages' own links have none either. The reference
+   chips are not links in that sense: `#N` / `PR#N` keep their violet or
+   emerald, and `#channel` its accent tint with no underline. */
+.gc-msg-content a:not(.gc-ref):not(.gc-channel-ref) {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 /* "edited" marker shown next to a message's timestamp once it has been
@@ -14846,8 +14837,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-weight: 500;
   color: var(--text-muted);
 }
-/* One line under "Your vote" (VotePicker) and beside the legacy vote rows
-   (AppView._uncountedVoteNoteHtml): a test account's vote on an app a real
+/* One line under "Your vote" (VotePicker): a test account's vote on an app a real
    person made is recorded but not counted, and — #4747 — a viewer outside
    the people who decide on a project that only some decide has an advisory
    vote: recorded and shown, but it does not decide the change. */
@@ -14858,12 +14848,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   color: var(--text-muted);
 }
 .dev-vote-sheet .dev-vote-uncounted { padding: 0 4px 8px; font-size: 14px; }
-.gc-vote-uncounted {
-  display: inline-block;
-  margin-inline-start: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
 .dev-vote-switch {
   display: flex;
   gap: 2px;
@@ -17109,6 +17093,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-gate[data-done="true"] .dev-change-bar-fill[data-state="done"] { background: var(--state-ok); }
 .dev-change-bar-fill[data-state="bad"] { background: var(--state-blocked); }
 .dev-change-gate-note { grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; line-height: 1.4; color: var(--text-muted); }
+.dev-change-gate-facts { grid-column: 1 / -1; margin-top: 8px; display: grid; gap: 2px; font-size: 13px; line-height: 1.4; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.dev-change-gate-facts p { margin: 0; }
+.dev-change-gate-facts [data-change-vote-fact="tally"] { color: var(--text-primary); }
+.dev-change-gate-facts [data-ask="true"] { color: var(--accent); font-weight: 600; }
 .dev-change-gate-link {
   appearance: none;
   border: 0;
@@ -18563,7 +18551,7 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    a word a line. The thread covers the chat, as it does on a phone, and
    lies flat as the chat does. 1 Nov 2026: it is alone in the column, under
    its own head (ReplyThreadPanel `inMain`), with no bar of Main Chat's over
-   it and no way back to it: Main Chat is a row of the list. The phone's
+   it. 4 Nov 2026: it leads with a back arrow to Main Chat. The phone's
    drawer holds the column the same way. */
 .messages-layout[data-main-chat].messages-has-reply-thread > .messages-thread-pane { display: none; }
 .messages-layout[data-main-chat] > .messages-reply-pane {
@@ -20577,10 +20565,15 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    gap). A split figure lists Homeroom over Other projects, each name with
    its number, the number falling under its name where the cell is too
    narrow for both. Colour only for a figure off its target: the attention
-   ink, with its glyph, on the line or on the side that is off. With under
-   560px of room the figures sit two by two, and the bot's grid puts each
-   row's name across its row. Beside a thread it goes where the topic's
-   line goes. */
+   ink, with its glyph, on the value and its line, or on the side that is
+   off. The tiles wrap (#6273): as many at least 170px wide as fit a row,
+   so twelve figures are three rows of readable tiles and never one row of
+   slivers; the card's own fill is the plane colour, and each tile draws
+   the hairline above and before it, so the room a short last row leaves is
+   plain. A value keeps its words whole: it wraps at a space or not at all,
+   never "7 tim / es". With under 560px of room the figures sit two by two,
+   and the bot's grid puts each row's name across its row. Beside a thread
+   it goes where the topic's line goes. */
 .dev-ws-figs { flex: none; margin: 0 0 10px; container-type: inline-size; }
 .dev-ws-figs-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -20591,7 +20584,11 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   border: 1px solid var(--app-sheet-line); border-radius: 20px;
   background: var(--app-sheet-line);
 }
-.dev-ws-figs-tiles { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.dev-ws-figs-tiles {
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0;
+  background: var(--dc-sheet-solid);
+}
+.dev-ws-figs-tiles > .dev-ws-fig { box-shadow: -1px -1px 0 0 var(--app-sheet-line); }
 .dev-ws-fig {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0;
   padding: 12px 16px 14px;
@@ -20610,9 +20607,11 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-fig-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dev-ws-fig-value {
   font-size: 22px; line-height: 28px; font-weight: 650; letter-spacing: -0.01em;
-  color: var(--text-primary); overflow-wrap: anywhere;
+  color: var(--text-primary); white-space: normal; overflow-wrap: normal; word-break: keep-all;
 }
 .dev-ws-fig-value-muted { font-size: 15px; font-weight: 600; letter-spacing: 0; color: var(--text-muted); }
+.dev-ws-fig-value-warn { color: var(--state-attention); }
+.dev-ws-fig-value-warn > .dev-ws-fig-warn { width: 16px; height: 16px; margin: 0 4px 0 0; vertical-align: -1px; }
 .dev-ws-fig-sub { display: inline-flex; align-items: flex-start; gap: 4px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
 .dev-ws-fig-sub-warn { font-weight: 600; color: var(--state-attention); }
 .dev-ws-fig-warn { flex: none; width: 13px; height: 13px; margin-top: 1px; }
@@ -20670,7 +20669,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .gc-channel-empty-about,
 .gc-channel-empty-invite { margin: 0; font-size: 13px; line-height: 18px; }
 @container (max-width: 560px) {
-  .dev-ws-figs-tiles { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dev-ws-figs-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dev-ws-figs-tiles > .dev-ws-fig:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .dev-ws-fig { padding: 10px 12px 12px; }
   .dev-ws-fig-label { font-size: 12px; line-height: 16px; }
@@ -26462,26 +26461,24 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   EXPERIMENTAL: the new Needs you review flow (.rf-*)
+   The Needs you review flow (.rf-*)
    ═══════════════════════════════════════════════════════════════════
 
-   frontend/src/features/review-flow/, behind Settings › Experimental
-   ("New Needs you", kept on the device). One run through the changes
+   frontend/src/features/review-flow/. One run through the changes
    waiting on you: each change's page with its sheet of screens, a screen
    opened in place as a before/after slider, the strip of screens under it
    and the vote sheet. Drawn for the phone first; a wide window shows the
    same column centred. Colours are the shell's own tokens, light and dark. */
 .rf-run, .rf-page-wrap {
-  --rf-page: var(--bg-primary);
-  --rf-sheet: var(--bg-secondary);
+  --rf-page: var(--home-ground);
+  --rf-sheet: var(--dc-sheet-solid);
   --rf-fill: var(--bg-tertiary);
   --rf-ink: var(--text-primary);
   --rf-muted: var(--text-muted);
   --rf-line: var(--app-sheet-line);
-  --rf-black: #1b1b1d;
-  --rf-cream: #fffeea;
+  --rf-black: var(--text-primary);
+  --rf-cream: var(--bg-primary);
 }
-.dark .rf-run, .dark .rf-page-wrap { --rf-page: #0b0d1b; --rf-sheet: #1c1c1e; --rf-fill: #2c2c2e; }
 
 /* The pane under the run: empty while the page is up, the end once it is
    done. One column, never wider than the change page (520px, gutters
@@ -26512,16 +26509,16 @@ body {
 .rf-end-btn-go { background: var(--accent); color: #fff; }
 .rf-end-back { height: 44px; margin-top: 6px; padding: 0 12px; border: 0; background: none; color: var(--rf-muted); font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; }
 
-/* The change page. A change is a detail view: on a phone the page covers the
-   shell's header AND its tab bar (z 30 under this 35), top to bottom, so
-   nothing but the change and its decision is on screen; its own bar is the
-   way back, and the vote bar clears the home indicator itself
-   (.rf-sheet-inner). The tab bar's visibility stays the router's; the page
-   only sits over it. From 768px it starts after the sidebar
-   (--platform-rail-w, 0 on a phone and while the rail is folded), so it
-   centres over the pane's column. */
-.rf-page-wrap { position: fixed; inset-inline-start: var(--platform-rail-w, 0px); inset-inline-end: 0; top: 0; bottom: 0; z-index: 35; pointer-events: none; }
-.rf-page { position: absolute; top: 0; bottom: 0; inset-inline-start: max(0px, calc(50% - 260px)); width: min(100%, 520px); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); pointer-events: auto; -webkit-font-smoothing: antialiased; }
+/* The change page. A change is a detail view drawn inside the tab: below the
+   shell's header, above its tab bar on a phone, in the pane's column on a
+   desktop. Its own bar is the way back, and the vote bar clears the home
+   indicator itself (.rf-sheet-inner). Nothing is drawn over the rest of the
+   screen: no wash, no floating panel. */
+.rf-page-wrap { position: relative; }
+.rf-page { position: relative; width: min(100%, 520px); margin-inline: auto; height: calc(100dvh - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top, 0px) - var(--platform-tabs-h, 0px)); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); -webkit-font-smoothing: antialiased; }
+/* On the Communities tab the page's own bar names the change, so the pane's
+   "Needs you" head steps aside while a change is open. */
+[data-workshop-pane="needs"]:has([data-rf-page]) [data-workshop-needs-head] { display: none; }
 .rf-stage { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .rf-stage-layer { background: var(--rf-page); }
 .rf-stage-leaving { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; z-index: 0; }
@@ -26635,7 +26632,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 /* Each side's caption is printed on its own picture, under a short shade
    that keeps it legible on any shot, and the seam wipes it with the picture. */
 .rf-cap { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; height: 84px; background: linear-gradient(rgba(12,12,14,.62) 0%, rgba(12,12,14,.55) 18%, rgba(12,12,14,.45) 33%, rgba(12,12,14,.35) 46%, rgba(12,12,14,.26) 57%, rgba(12,12,14,.18) 67%, rgba(12,12,14,.11) 76%, rgba(12,12,14,.06) 84%, rgba(12,12,14,.025) 91%, rgba(12,12,14,0) 100%); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
-.rf-cap-line { position: absolute; top: 18px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--rf-cream); text-shadow: 0 1px 2px rgba(12,12,14,.35); white-space: nowrap; }
+.rf-cap-line { position: absolute; top: 18px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: #fffeea; text-shadow: 0 1px 2px rgba(12,12,14,.35); white-space: nowrap; }
 .rf-cap-after .rf-cap-line { inset-inline-end: 22px; }
 .rf-cap-before .rf-cap-line { inset-inline-start: 22px; }
 .rf-cap-dim { opacity: .72; }
@@ -26706,7 +26703,6 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    blue anything dimmer falls under 4.5:1); fixed-width figures, so the pair
    holds still as it counts down. */
 .rf-count { font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
-.dark .rf-morph[data-rf-morph="next"] { background: #0a6ee0; }
 .rf-morph:active { scale: .97; }
 .rf-morph:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rf-morph-in { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; font-size: 17px; font-weight: 600; transition: opacity .2s, transform .3s cubic-bezier(0.22,1,0.36,1); }
@@ -26728,7 +26724,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-facts b { font-size: 15px; font-weight: 600; line-height: 20px; }
 .rf-facts small { font-size: 13px; color: var(--rf-muted); }
 .rf-link { align-self: flex-start; min-height: 44px; display: inline-flex; align-items: center; color: var(--accent); font-size: 15px; font-weight: 500; text-decoration: none; }
-.rf-me { align-self: flex-end; max-width: 80%; padding: 10px 14px; border-start-start-radius: 18px; border-start-end-radius: 18px; border-end-end-radius: 4px; border-end-start-radius: 18px; background: #0a6ee0; color: #fff; font-size: 15px; line-height: 20px; white-space: pre-wrap; }
+.rf-me { align-self: flex-end; max-width: 80%; padding: 10px 14px; border-start-start-radius: 18px; border-start-end-radius: 18px; border-end-end-radius: 4px; border-end-start-radius: 18px; background: var(--accent); color: #fff; font-size: 15px; line-height: 20px; white-space: pre-wrap; }
 .rf-ai { align-self: flex-start; max-width: 88%; display: flex; flex-direction: column; gap: 6px; }
 .rf-ai small { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--rf-muted); }
 .rf-ai small svg { width: 14px; height: 14px; }
@@ -26739,7 +26735,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-ask-form { flex: none; display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 0 8px; }
 .rf-ask-form input { flex: 1; min-width: 0; box-sizing: border-box; border: 0; background: var(--rf-fill); box-shadow: inset 0 0 0 1px var(--rf-line); color: var(--rf-ink); font-size: 16px; line-height: 22px; outline: 0; }
 .rf-ask-form input { height: 44px; padding: 0 16px; border-radius: 999px; }
-.rf-go { flex: none; height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: #0a6ee0; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+.rf-go { flex: none; height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
 .rf-go:disabled { opacity: .5; cursor: default; }
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
@@ -26749,25 +26745,17 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   .rf-claim { animation: none; }
 }
 
-/* From 768px the change page is a panel, not a phone page on a desktop.
-   It starts under the app's header (the shell's own header tokens, as the
-   rail does) and never covers it, 16px clear of it and of the window's
-   foot. It is as tall as what it holds, up to that room, and past it the
-   stage scrolls inside it. The vote sheet is its foot, right under the
-   claim, not pinned to the bottom of the window. The pane behind it is
-   dimmed (.rf-page-dim, not the sidebar or the header); a click there is
-   Back. review-flow.tsx opens the card onto these corners (restRadius).
-   A phone keeps the page above exactly as it was. */
-.rf-page-dim { display: none; }
+/* From 768px the change page is a panel inside the pane. It is as tall as
+   what it holds, up to its room, and past it the stage scrolls inside it.
+   The vote sheet is its foot, right under the claim. Nothing behind it is
+   dimmed: it sits in the page. review-flow.tsx opens the card onto these
+   corners (restRadius). A phone keeps the page above exactly as it was. */
 @media (min-width: 768px) {
   .rf-page-wrap {
-    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
     --rf-room: calc(100dvh - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top, 0px) - var(--platform-tabs-h, 0px) - 32px);
   }
-  .rf-page-dim { display: block; position: absolute; inset: 0; background: rgba(0,0,0,.32); pointer-events: auto; }
   .rf-bar { padding-top: 0; }
-  .dark .rf-page-dim { background: rgba(0,0,0,.56); }
-  .rf-page { top: 16px; bottom: auto; max-height: var(--rf-room); border-radius: 20px; box-shadow: 0 0 0 1px var(--rf-line), 0 24px 64px rgba(0,0,0,.18); }
+  .rf-page { height: auto; max-height: var(--rf-room); border-radius: 20px; box-shadow: 0 0 0 1px var(--rf-line); }
   .rf-stage { flex: 0 1 auto; }
   .rf-sheet { max-height: calc(var(--rf-room) - 52px); border-radius: 0; box-shadow: inset 0 1px 0 var(--rf-line); }
 }

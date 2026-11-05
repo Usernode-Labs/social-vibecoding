@@ -117,7 +117,38 @@ test('a successful push clears the durable record, and a failed rescue prevents 
   t.mock.method(kubernetes, 'deleteWorker', async (_config, id) => deleted.push(id));
   await assert.rejects(worker.evictWorker(71002), /An earlier build's commit def5678/);
   assert.deepEqual(deleted, [], 'failed rescue keeps the checkout');
-  worker._registryForgetForTests(71002);
+  worker._registryForgetForTests(71002);});
+
+// #6267 (run 4536): the branch on GitHub moved past a saved commit (a
+// non-fast-forward rejection). Pushing it again can only fail again and it
+// blocked every later turn, so the record is dropped and the next build goes
+// ahead; nothing is thrown.
+test('a saved commit the branch has moved past is dropped, not re-pushed', async (t) => {
+  withKubernetes(t);
+  const commits = new Map();
+  const pool = { query: async (sql, [id, sha, branchName]) => {
+    if (sql.includes('INSERT INTO session_workers (session_id, unpushed_sha')) commits.set(id, sha ? { sha, branchName } : null);
+    if (sql.includes('UPDATE session_workers SET unpushed_sha = NULL')
+        && commits.get(id)?.sha === sha && commits.get(id)?.branchName === branchName) commits.delete(id);
+    const pending = commits.get(id);
+    if (sql.includes('SELECT sw.unpushed_sha AS sha')) return { rows: pending ? [{ ...pending, active: false }] : [] };
+    return { rows: [{ branch_name: 'dev/evan-4', repo_url: 'https://github.com/Trusted-Owner/stored-repo.git',
+      unpushed_sha: pending?.sha, unpushed_branch_name: pending?.branchName }] };
+  } };
+  t.mock.method(db, 'getPool', () => pool);
+  t.mock.method(require('../src/services/github'), 'checkRepoPublic', async () => ({ ok: true, private: false }));
+  t.mock.method(workerGitPush, 'push', async () => {
+    throw Object.assign(new Error('Trusted Git command failed (1): ... [rejected] (non-fast-forward)'), {
+      code: 'non_fast_forward', permanent: true, userMessage: 'The branch on GitHub has newer work than this commit.',
+    });
+  });
+  t.mock.method(kubernetes, 'execInWorker', async () => ({ stdout: 'abc1234\n', stderr: '' }));
+  worker.adoptWarmWorker(71004, 'sv-worker-s71004');
+  t.after(() => worker._registryForgetForTests(71004));
+  await unpushedCommits.record(pool, 71004, { sha: 'abc1234', branchName: 'dev/evan-4' });
+
+  assert.deepEqual(await worker.rescueUnpushedCommit(71004), { attempted: true, pushed: false, dropped: true });
+  assert.deepEqual(await worker.rescueUnpushedCommit(71004), { attempted: false }, 'the stale record is gone');
 });
 
 test('nothing is rescued from a worker with a durable turn in flight', async (t) => {

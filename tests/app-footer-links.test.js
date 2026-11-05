@@ -106,7 +106,7 @@ test('inside the platform the app menu carries Privacy beside Report app', () =>
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /import \{ waitlistOptions \} from '\.\.\/auth\/waitlist-shared';/);
   const foot = sheet.slice(sheet.indexOf('id="app-menu-legal"'), sheet.indexOf('id="improve-row-report"'));
-  assert.ok(foot.length > 0, 'Privacy comes first in the foot, then Report app');
+  assert.ok(foot.length > 0, 'Terms and Privacy come first in the foot, then Report app');
   assert.match(foot, /id="app-menu-privacy"\s+href=\{privacyHref\}\s+target="_blank"\s+rel="noopener noreferrer"/);
   assert.match(foot, /\{t\('agent:appContext\.privacy'\)\}/);
   assert.match(sheet, /id="app-menu-legal" className="[^"]*\bjustify-center\b/,
@@ -116,12 +116,26 @@ test('inside the platform the app menu carries Privacy beside Report app', () =>
   assert.equal(message('agent:appContext.privacy'), 'Privacy');
 });
 
+test('the app menu reaches Homeroom\'s terms, beside Privacy (#5927)', () => {
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const foot = sheet.slice(sheet.indexOf('id="app-menu-legal"'), sheet.indexOf('id="improve-row-report"'));
+  assert.match(foot, /id="app-menu-terms"\s+href=\{termsHref\}\s+target="_blank"\s+rel="noopener noreferrer"/);
+  assert.match(foot, /\{t\('agent:appContext\.terms'\)\}\s*<ExternalMark /);
+  assert.ok(foot.indexOf('id="app-menu-terms"') < foot.indexOf('id="app-menu-privacy"'), 'Terms, then Privacy');
+  assert.match(foot, /\{termsHref \? \(/, 'no published terms, no link');
+  // The address is the platform's published terms, the one the sign-in
+  // screens link to, never a value from the app's manifest.
+  assert.match(sheet, /if \(options\?\.terms_link\) setTermsHref\(options\.terms_link\);/);
+  assert.match(read('src/routes/public-api.js'), /FROM terms_versions/);
+  assert.equal(message('agent:appContext.terms'), 'Terms');
+});
+
 test('the app menu’s foot, close and rows are readable and reachable (#5927)', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   const legal = sheet.slice(sheet.indexOf('id="app-menu-legal"'), sheet.indexOf("{t('agent:appContext.reportApp')}"));
   assert.match(legal, /className="[^"]*\btext-\[13px\] text-zinc-600 dark:text-zinc-300\b/,
     'the foot is 13px in a lighter ink on dark, not 12px zinc-500');
-  assert.equal((legal.match(/min-h-\[44px\] px-3/g) || []).length, 2, 'each link is a 44px target');
+  assert.equal((legal.match(/min-h-\[44px\] px-3/g) || []).length, 3, 'each link is a 44px target');
   assert.doesNotMatch(legal, /·/, 'no dot between the links: their padding is the gap');
 
   const ring = sheet.match(/const FOCUS_RING = ([^;]+);/);

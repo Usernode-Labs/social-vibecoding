@@ -52,7 +52,7 @@ import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
-import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import type { ChangeGateView, ChangeSpentView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
@@ -208,6 +208,7 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
       data-done={shown.done ? 'true' : 'false'}
       data-tone={shown.tone}
       data-change-fixing={fixing ? '' : undefined}
+      data-change-bot-fix={shown.botFix || undefined}
       role="group"
       aria-label={shown.name}
     >
@@ -228,6 +229,14 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
         </div>
       </div>
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
+      {/* #3800: the repeat at the foot of the page stays one small card. */}
+      {shown.facts?.length && !repeat ? (
+        <div className="dev-change-gate-facts">
+          {shown.facts.map((fact) => (
+            <p key={fact.key} data-change-vote-fact={fact.key} data-ask={fact.ask ? 'true' : undefined}>{fact.text}</p>
+          ))}
+        </div>
+      ) : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}
@@ -236,6 +245,13 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
               {t('project:topic.change.gate.openPage')}
             </button>
           ) : null}
+        </p>
+      ) : null}
+      {shown.mainFailure?.href ? (
+        <p className="dev-change-gate-note">
+          <a className="dev-change-gate-link" href={shown.mainFailure.href} data-change-main-fix="">
+            {shown.mainFailure.label}
+          </a>
         </p>
       ) : null}
       {shown.fix ? <FixRow fix={shown.fix} rerun={rerun} /> : null}
@@ -263,8 +279,19 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
             : note}
         </p>
       ) : null}
+      {/* #6284: the stopped bot's Try again sits under what failed and the
+          line saying it stopped, as Re-run checks does beside Fix it. */}
+      {shown.botFix === 'stopped' && !shown.fix && rerun ? (
+        <div className="dev-change-gate-fix">{rerun}</div>
+      ) : null}
+      {shown.spent ? <ChangeSpentLine spent={shown.spent} /> : null}
     </div>
   );
+}
+
+/** #6116: one quiet line, what the change has cost so far (AppView._changeSpentView). */
+export function ChangeSpentLine({ spent }: { spent: ChangeSpentView }): ReactNode {
+  return <p className="dev-change-gate-note" data-change-spent="" title={spent.title}>{spent.text}</p>;
 }
 
 /**
@@ -367,20 +394,27 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
   const submit = all.find((a) => a.key === 'propose-change');
   const preview = all.find((a) => a.preview);
   const openApp = all.find((a) => a.key === 'open-app');
-  const voteAction = yes && no ? <VoteButton yes={yes} no={no} /> : (submit ? <ActionButton a={submit} /> : null);
+  const vote = yes && no ? <VoteButton yes={yes} no={no} /> : (submit ? <ActionButton a={submit} /> : null);
+  // #6282: an update on its way holds the Vote button: a yes cast now is
+  // cleared when it lands (the card's own note says so).
+  const voteAction = v.votes.hold ? null : vote;
   // With Fix it on the card, the re-run sits beside it, under the line; the
   // card's corner keeps Preview.
   const testingActions = (v.testing.actions || []).map((a) => <ActionButton key={a.key} a={a} />);
   const withFix = !!v.testing.fix;
-  const testAction = (preview || openApp || (!withFix && testingActions.length)) ? (
+  // #6284: a stopped bot change offers Let it try again (and its re-run)
+  // under the line that says the bot stopped, not above the reason, so the
+  // card reads what failed, that it stopped, then the button.
+  const stopped = v.testing.botFix === 'stopped';
+  const testAction = (preview || openApp || (!withFix && !stopped && testingActions.length)) ? (
     <>
-      {withFix ? null : testingActions}
+      {withFix || stopped ? null : testingActions}
       {/* A preview that did not start is the card's own words and its retry. */}
       {openApp ? <ActionButton a={openApp} />
         : (preview && !(v.testing.actions || []).some((a) => a.key === 'retry-preview') ? <ActionButton a={preview} /> : null)}
     </>
   ) : null;
-  return { voteAction, testAction, withFix, testingActions };
+  return { voteAction, testAction, withFix, testingActions, stopped };
 }
 
 /**
@@ -393,11 +427,11 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
  */
 export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean }>(
   function ChangeGates({ id, card, v, ballot = false }, ref) {
-    const { voteAction, testAction, withFix, testingActions } = gateActions(card, v);
+    const { voteAction, testAction, withFix, testingActions, stopped } = gateActions(card, v);
     return (
       <div ref={ref} className="dev-change-pair">
         <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} />
-        <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />
+        <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix || stopped ? testingActions : null} id={id} />
       </div>
     );
   },

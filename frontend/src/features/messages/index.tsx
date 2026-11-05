@@ -46,9 +46,11 @@ import { requestPageOf } from './request-page';
 import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
-import { isRequestNews, requestKey } from './bot-request';
+import { isPlusThreadOpener, isRequestNews, requestKey } from './bot-request';
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
+import { dropOnComposer, useComposerDropReady } from './pane-drop';
+import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
 import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
@@ -91,11 +93,13 @@ import {
   setListCollapsed,
   setSectionFolded,
   FOLDABLE,
+  scopeKey,
   syncChrome,
   followPlatformSlug,
   typingUsers,
   useChannelHandles,
   useMessagesSnapshot,
+  type ComposerScope,
 } from './store';
 import { typingLine } from './typing-line';
 import { BotWorkingCard, typingBesides, workingBot } from './bot-working';
@@ -161,6 +165,17 @@ import type { ConversationDetail, ConversationMessage, ConversationSummary, Disc
 
 function openDialog(name: 'messagesCreate' | 'messagesMembers' | 'messagesShare', payload?: unknown) {
   window.UsernodeReact?.dialogs?.[name]?.open(payload);
+}
+
+/**
+ * #6254: the whole thread pane takes a dropped file, not only the box at its
+ * foot. The composer for this pane's scope owns the upload (./pane-drop), so
+ * the pane asks whether one is drawn — an awaiting or cannot-send thread
+ * shows no outline and drops nothing — and hands the files over.
+ */
+function usePaneDrop(scope: ComposerScope) {
+  const ready = useComposerDropReady(scope);
+  return useFileDrag({ disabled: !ready, onFiles: (files) => { dropOnComposer(scope, files); } });
 }
 
 function conversationPeer(conversation: ConversationSummary) {
@@ -1872,6 +1887,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // Whether this conversation was last drawn as a linked window (#2387).
   const wasWindow = useRef(false);
   const conversationId = snap.route.conversationId;
+  // #6254: a file dropped anywhere on this pane goes to this conversation's
+  // own box, so the header, the transcript and the box are one drop zone.
+  const drop = usePaneDrop(scopeKey(conversationId || 0, null));
   // 1 Nov 2026: the bot's typing is its working card, where its answer will
   // appear (./bot-working.tsx); the status line keeps people's names, and
   // the bot's too while the transcript is a window part-way back.
@@ -2204,6 +2222,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const day = dayKey(message);
     // #6207: Main Chat is the conversation; a request's news is on its page.
     if (botDm && isRequestNews(message)) continue;
+    // #6250: only the line that opens a thread from the bot's "+" is the
+    // thread's own, not Main Chat's; one the bot opened from Main stays.
+    if (botDm && isPlusThreadOpener(message)) continue;
     const asks = asking(message);
     const settled = botDm && isBotNews(message) && !asks && !!newsStatusOf(message, botWork)?.settled;
     if (!settled || (day && day !== previousDay) || (lineAt !== null && message.id >= lineAt && !lineDrawn)) flushRun();
@@ -2317,7 +2338,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   }
   flushRun();
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined}>
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined} {...drop.handlers}>
       {embedded ? null : <ThreadHeader />}
       {/* One request, one story: "Your requests", pinned under the bot's header. */}
       {botDm && !embedded ? <BotStrip /> : null}
@@ -2402,6 +2423,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       </TranscriptOverlay>
       <ChatStatusLine className="messages-typing">{typingLine(t, typing)}</ChatStatusLine>
       <MessageComposer />
+      {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </section>
   );
 }
@@ -2521,8 +2543,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
    * 31 Oct 2026: open in Main Chat's column on the Homeroom bot tab, the
    * only place the chat with the bot is drawn. The thread covers the chat
    * there (app.css `[data-main-chat]`). 1 Nov 2026: alone, under its own
-   * head: its title and "Only you can see this thread", with no ✕ and no way
-   * back to Main Chat, which is a row of the tab's list now.
+   * head: its title and "Only you can see this thread", with no ✕. 4 Nov
+   * 2026: it leads with ‹ Back to Main Chat, which closes it and shows Main
+   * Chat in the column again.
    */
   inMain?: boolean;
   /** A phone's drawer: the back arrow that leads the head, to the list. */
@@ -2533,6 +2556,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const channels = useChannelHandles();
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
+  // #6254: this thread is its own drop area — a file dropped on the reply box
+  // or on the replies around it never goes to the chat beside it.
+  const drop = usePaneDrop(scopeKey(conversationId || 0, rootId));
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
   // 1 Nov 2026: the bot answering here is its working card (./bot-working.tsx).
   const threadTypists = conversationId && rootId ? typingUsers(conversationId, rootId) : [];
@@ -2827,6 +2853,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   return (
     <aside
       ref={paneRef}
+      {...drop.handlers}
       className="messages-reply-pane platform-kb-column dc-lift dc-lift-session"
       style={replyWidth != null ? { '--messages-reply-width': `${replyWidth}px` } as CSSProperties : undefined}
       aria-label={t('messages:replies.paneName')}
@@ -2851,6 +2878,13 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
         {inMain && onBack ? (
           <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
             aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>
+            <ChevronLeftIcon aria-hidden="true" />
+          </button>
+        ) : inMain ? (
+          // 4 Nov 2026: the docked column's thread leads with the way back to
+          // Main Chat, which a phone's onBack takes to the list instead.
+          <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
+            aria-label={t('messages:replies.backToMain')} title={t('messages:replies.backToMain')} onClick={() => closeThread()}>
             <ChevronLeftIcon aria-hidden="true" />
           </button>
         ) : null}
@@ -2892,7 +2926,8 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
         ) : null}
         {/* On a phone the Messages screen's header bar has the way back
             (app.css hides this one there, polish N16). In Main Chat's column
-            the thread is the column's: Main Chat is a row of the list. */}
+            the thread's head leads with ‹ Back to Main Chat instead, so no ✕
+            is drawn. */}
         {inMain ? null : (
           <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
             <XIcon aria-hidden="true" />
@@ -2961,6 +2996,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             text={privateThreadWords(root, replies, meId)}
             where={privateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
+            working={!!threadWorking}
           />
         ) : null}
       </div>
@@ -2972,6 +3008,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
           chat (1 Nov 2026). */}
       <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
       <MessageComposer threadRootId={rootId} />
+      {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </aside>
   );
 }

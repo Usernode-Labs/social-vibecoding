@@ -193,10 +193,10 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     // #4604: new people finished the tour without meeting Homeroom bot, the
-    // thing that builds what they ask for. This stop points at the Messages
-    // tab (the bottom bar on a phone, the rail from 768px up), where the
-    // bot's DM is the first row, and ending the tour is what has the bot
-    // say hello there (homeroom-bot-dm.js greetTourFinisher).
+    // thing that builds what they ask for. This stop points at its own tab
+    // (#6019: the bottom bar on a phone, the rail from 768px up; the bot is
+    // never drawn on the Messages screen), and ending the tour is what has
+    // the bot say hello there (homeroom-bot-dm.js greetTourFinisher).
     //
     // THE STEP THAT LEAVES THE MENU: the step before it points inside the
     // menu, and the tab this one points at is behind it on a phone. Like
@@ -204,7 +204,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     id: 'meet-bot',
     title: 'onboarding:tour.step.meetBot.title',
     body: 'onboarding:tour.step.meetBot.body',
-    targets: ['#platform-tab-messages'],
+    targets: ['#platform-tab-ai'],
     closesPanel: true,
   },
   {

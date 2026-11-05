@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import { useMessages } from '../../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { PlanCardView, type PlanCardState } from '../../messages/bot-plan-view';
 import { WORK_CHANGED_EVENT } from '../../messages/bot-shared';
 import { PlanCrops } from '../../messages/plan-crops';
@@ -62,6 +62,21 @@ export function planFromRead(body: unknown): RequestBotPlan | null {
 export function planCardState(plan: RequestBotPlan): PlanCardState {
   if (plan.state === 'building') return 'built';
   return plan.changing ? 'changing' : 'open';
+}
+
+/**
+ * Pure (#6280, 4 Nov 2026): the line under the plan's title, by what the
+ * plan waits for. While it waits: who it waits for ("Plan for #N · waiting
+ * for you"). Once Build it is pressed: "Plan for #N · building", never
+ * "waiting for you". Null when the plan is no longer waiting or building.
+ */
+export function planSubOf(plan: RequestBotPlan, number: number): { id: string; values: Record<string, string> } | null {
+  const values = { number: String(number) };
+  if (plan.state === 'building') return { id: 'project:topic.request.botPlan.subBuilding', values };
+  if (plan.state !== 'waiting') return null;
+  if (plan.mine) return { id: 'project:topic.request.botPlan.subYours', values };
+  if (plan.requester) return { id: 'project:topic.request.botPlan.subTheirs', values: { ...values, requester: plan.requester } };
+  return { id: 'project:topic.request.botPlan.subAnyone', values };
 }
 
 /** What a refused Build it says, by the server's code. */
@@ -150,11 +165,7 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
     questions: plan.choices,
     complicated: true,
   } as HomeroomBotPlan;
-  const sub = plan.mine
-    ? t('project:topic.request.botPlan.subYours', { number: String(number) })
-    : plan.requester
-      ? t('project:topic.request.botPlan.subTheirs', { number: String(number), requester: plan.requester })
-      : t('project:topic.request.botPlan.subAnyone', { number: String(number) });
+  const sub = planSubOf(plan, number);
   return (
     <div className="dev-request-plan" data-request-plan={planCardState(plan)}>
       <PlanCardView
@@ -167,13 +178,18 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
         onChange={change}
         surface="request"
         request={plan.title || ''}
-        sub={sub}
+        sub={sub ? t(sub.id, sub.values) : null}
         card={{ summary: plan.summary, lines: plan.lines }}
-        planSpec={<PlanCrops html={specHtml} />}
+        planSpec={<PlanCrops html={specHtml} lines={plan.lines} />}
         readWhole={spec ? (
           <button type="button" className="dev-request-plan-read" data-request-plan-read="" onClick={() => { void openRequestSpec(spec); }}>
-            <span>{t('project:topic.request.botPlan.readWhole')}</span>
-            {plan.spec?.chars ? <small>{t('project:topic.request.botPlan.readLength', { chars: (Math.max(1, Math.round(plan.spec.chars / 1000)) * 1000).toLocaleString() })}</small> : null}
+            {plan.spec?.chars ? (
+              <RichMessage
+                id="project:topic.request.botPlan.readWholeLength"
+                values={{ chars: (Math.max(1, Math.round(plan.spec.chars / 1000)) * 1000).toLocaleString() }}
+                components={[<span />, <small />]}
+              />
+            ) : <span>{t('project:topic.request.botPlan.readWhole')}</span>}
           </button>
         ) : null}
         footer={refused ? <p className="messages-bot-answered" role="status" data-request-plan-refused="">{t(refused)}</p> : null}

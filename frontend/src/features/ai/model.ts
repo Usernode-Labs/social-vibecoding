@@ -51,10 +51,12 @@ export interface AiPrivate {
    * #6153: where it went: a design thread stays listed once it is filed as
    * a request, or posted on one as its plan (absent from an older server).
    */
-  /** #6159: `done` once finished; a done thread is not listed. */
+  /** #6159: `done` once finished; #6271: a done thread is Live this week's for a week. */
   state?: 'open' | 'filed' | 'posted' | 'dropped' | 'done';
   /** #6153: the number of the request it was filed as, or posted on. */
   resultRef?: number | null;
+  /** #6271: the day it was marked done, for Live this week (absent from an older server). */
+  doneAt?: string | null;
 }
 
 export interface AiThread {
@@ -67,17 +69,28 @@ export interface AiThread {
   href: string;
   group: 'needs' | 'next' | 'waiting' | 'live';
   what:
-    | 'plan' | 'decide' | 'build_stopped'
-    | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading' | 'reading_reply'
-    | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
+    | 'plan' | 'decide' | 'already_works' | 'build_stopped' | 'fix_stopped'
+    | 'going_live' | 'merging' | 'fixing' | 'revising' | 'updating' | 'building' | 'reading' | 'reading_reply'
+    | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'update_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'retrying_plan' | 'on_hold'
     | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
-    | 'live';
+    | 'live'
+    /** #6271: a private thread marked done this week. */
+    | 'closed';
   at: string | null;
+  /**
+   * #6233: on a Live row, when the change merged and its id, so the tab can
+   * tell whether the build it loaded contains it (the "reload to get it"
+   * wording). Absent on an older server.
+   */
+  mergedAt?: string | null;
+  changeId?: number | null;
   quietDays?: number;
   /** #6158: its place in Homeroom bot's line, or among the project's builds held for a slot (1-based). */
   place?: number;
   /** #6158: Homeroom bot's reason, first line only, on a request it left for a person or found nothing to build in. */
   reason?: string | null;
+  /** #6282: what was asked for, on an Updating or Update queued row (one line, 80 characters at most). */
+  ask?: string | null;
   /** Up for a vote (a change's, or a decision's): how you voted, if you have. */
   myVote?: 'yes' | 'no' | null;
   /** Being made: by Homeroom bot, by you, or by someone else. */
@@ -96,6 +109,13 @@ export interface AiThread {
    * New request), which the row opens: the design and its story are there.
    */
   rootId?: number | null;
+  /**
+   * #6262: how many messages in the thread are new to the viewer (another
+   * person's or Homeroom bot's, since they last opened it). Above zero, its
+   * row gets a blue dot and a bold title. Absent from an older server, which
+   * reads as 0.
+   */
+  unread?: number;
 }
 
 export interface AiWork {
@@ -127,6 +147,9 @@ export interface NeedItem {
    * Approve, as its card and the project's own Needs you do; Vote elsewhere.
    */
   approve?: boolean;
+  /** #6262: the thread its page is, and how many messages in it are new. */
+  threadId?: number | null;
+  unread?: number;
 }
 
 /** Homeroom bot's account: its changes up for a vote hold a project's build slots. */
@@ -181,6 +204,14 @@ export interface WorkRow {
   /** Where the row goes: a page, or a private thread of Main. */
   href: string | null;
   rootId: number | null;
+  /**
+   * #6262: the thread whose page the row opens, where it has one (a private
+   * thread has none: Main Chat's own "N new" covers it), and how many
+   * messages in it are new. Above zero, the row draws a blue dot and a bold
+   * title.
+   */
+  threadId: number | null;
+  unread: number;
 }
 
 /**
@@ -222,14 +253,51 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  * is lifted to just below the first few, so where you are is never hidden.
  * Opened, every row keeps its own place: pressing one past the fold no
  * longer slides it up under the pointer.
+ *
+ * #6262: a row with something new is never folded either. Show more is for
+ * what you have already seen; hiding a new row behind it is what the dot was
+ * meant to stop.
  */
-export function groupRows<T extends { lit?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
-  const drawn = litAt >= first
-    ? [...items.slice(0, first), items[litAt], ...items.slice(first).filter((row) => !row.lit)]
-    : items;
-  const shown = litAt >= first ? first + 1 : first;
+  // Which rows past the first few must still be shown: the fresh ones and
+  // the one you are on. They keep their order; the rest folds away.
+  const lifted = new Set<number>();
+  if (!open) {
+    if (litAt >= first) lifted.add(litAt);
+    items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
+  }
+  const rest = items.slice(first);
+  const drawn = open
+    ? items
+    : [...items.slice(0, first), ...rest.filter((_, k) => lifted.has(first + k)), ...rest.filter((_, k) => !lifted.has(first + k))];
+  const shown = open ? first : first + lifted.size;
   return { items: drawn, shown, hidden: Math.max(0, drawn.length - shown) };
+}
+
+// ── #6262: what is new in a thread ───────────────────────────────────────
+
+/** Pure: rows with something new, for a heading's or the hero's count. */
+export function freshCount(rows: { unread?: number }[]): number {
+  return (rows || []).filter((row) => (Number(row.unread) || 0) > 0).length;
+}
+
+/** Pure: how many new rows each project has, by slug, for its chip. */
+export function freshByProject(rows: { app: AiApp | null; unread?: number }[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of rows || []) {
+    if (!row.app || (Number(row.unread) || 0) <= 0) continue;
+    counts[row.app.slug] = (counts[row.app.slug] || 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * Pure: a group's rows with the new ones first (a stable sort: equally new
+ * rows keep the order they came in), so Needs you opens on what changed.
+ */
+export function freshFirst<T extends { fresh?: boolean }>(lines: T[]): T[] {
+  return [...(lines || [])].sort((a, b) => Number(!!b.fresh) - Number(!!a.fresh));
 }
 
 /** How many projects the filter shows as chips before its More (./lists.tsx). */
@@ -288,7 +356,10 @@ const PILLS: Record<string, string> = {
   bot_question: 'messages:ai.pill.answer',
   plan: 'messages:ai.pill.buildIt',
   decide: 'messages:ai.pill.decide',
+  // #6306: nothing is left to build; the request only needs closing.
+  already_works: 'messages:ai.pill.proposeClose',
   build_stopped: 'messages:ai.pill.tryAgain',
+  fix_stopped: 'messages:ai.pill.letTryAgain',
 };
 
 /**
@@ -415,12 +486,15 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
         : { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
       rootId: null,
+      // #6262: a feed item's thread, and what is new in it.
+      threadId: item.threadId ?? null,
+      unread: Math.max(0, Number(item.unread) || 0),
     });
   }
   for (const t of work?.needs || []) {
     if (isOwed(owed, t)) continue;
     rows.push({
-      key: `${t.what === 'decide' ? 'decide' : t.what === 'build_stopped' ? 'stopped' : 'plan'}:${t.threadId}`,
+      key: `${t.what === 'decide' ? 'decide' : t.what === 'already_works' ? 'works' : t.what === 'build_stopped' ? 'stopped' : t.what === 'fix_stopped' ? 'fix_stopped' : 'plan'}:${t.threadId}`,
       title: t.title || '',
       app: t.app,
       who: 'all',
@@ -431,22 +505,42 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // asking again, so it is here too, with Try again.
       sub: t.what === 'decide'
         ? { id: 'messages:ai.row.decide', values: where(t.app, t.number) }
-        : t.what === 'build_stopped'
+        : t.what === 'already_works'
+          ? (t.reason
+            ? { id: 'messages:ai.row.alreadyWorks', values: { ...where(t.app, t.number), reason: t.reason } }
+            : { id: 'messages:ai.row.alreadyWorksPlain', values: where(t.app, t.number) })
+          : t.what === 'build_stopped'
           ? { id: 'messages:ai.row.buildStopped', values: where(t.app, t.number) }
-          : whereLine(t.app, t.number),
+          : t.what === 'fix_stopped'
+            ? { id: 'messages:ai.row.fixStopped', values: where(t.app, t.number) }
+            : whereLine(t.app, t.number),
       pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
       href: t.href,
       rootId: null,
+      threadId: t.threadId,
+      unread: Math.max(0, Number(t.unread) || 0),
     });
   }
   for (const p of work?.private || []) {
-    // #6159: a done thread is finished (the server leaves it out too).
+    // #6159: a done thread is the only one left out (the server leaves it out too).
     if (p.state === 'done') continue;
     const key = filedKey(p);
     if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
     // 1 Nov 2026: a thread about a request or a change is drawn by it, its
     // number before its title as a request's row is ("#18 Dark mode").
     const about = p.about && p.about.number > 0 && p.app ? p.about : null;
+    // #6250: a filed, posted or put-away thread stays listed and says where
+    // it went. One whose request already has a row was folded above.
+    const project = p.app ? p.app.name || p.app.slug : '';
+    const went: Phrase | null = !p.app
+      ? null
+      : p.state === 'filed' && p.resultRef
+        ? { id: 'messages:ai.row.privateFiled', values: { project, number: p.resultRef } }
+        : p.state === 'posted' && p.resultRef
+          ? { id: 'messages:ai.row.privatePosted', values: { project, number: p.resultRef } }
+          : p.state === 'dropped'
+            ? { id: 'messages:ai.row.privatePutAway', values: { project } }
+            : null;
     rows.push({
       key: `private:${p.rootId}`,
       title: p.title,
@@ -459,12 +553,15 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
             : 'messages:ai.row.privateAbout',
           values: { project: p.app!.name || p.app!.slug, number: about.number },
         }
-        : p.app
-          ? { id: 'messages:ai.row.privateDraft', values: { project: p.app.name || p.app.slug } }
-          : { id: 'messages:ai.row.privateIdea' },
+        : went || (p.app
+          ? { id: 'messages:ai.row.privateDraft', values: { project } }
+          : { id: 'messages:ai.row.privateIdea' }),
       pill: null,
       href: null,
       rootId: p.rootId,
+      // A private thread is not a `threads` row: Main Chat's "N new" counts it.
+      threadId: null,
+      unread: 0,
     });
   }
   return rows;
@@ -478,7 +575,10 @@ export function owedCount(rows: WorkRow[]): number {
 /** The phone's second line for a Needs you row, by the reason its tooltip gives. */
 const WHY: Record<string, string> = {
   'messages:ai.row.decide': 'messages:ai.why.decide',
+  'messages:ai.row.alreadyWorks': 'messages:ai.why.alreadyWorks',
+  'messages:ai.row.alreadyWorksPlain': 'messages:ai.why.alreadyWorksPlain',
   'messages:ai.row.buildStopped': 'messages:ai.why.buildStopped',
+  'messages:ai.row.fixStopped': 'messages:ai.why.fixStopped',
   'messages:ai.row.voteFreesSlot': 'messages:ai.why.voteFreesSlot',
 };
 
@@ -489,7 +589,12 @@ const WHY: Record<string, string> = {
  */
 export function whyOf(row: WorkRow): Phrase | null {
   const id = WHY[row.sub.id];
-  return id ? { id } : null;
+  if (!id) return null;
+  // #6306: an already-done row's reason is the bot's own sentence.
+  if (id === 'messages:ai.why.alreadyWorks') {
+    return { id, values: { reason: row.sub.values?.reason ?? '' } };
+  }
+  return { id };
 }
 
 /** Pure: the same for an In progress or Waiting row: a slot your votes can free. */
@@ -526,10 +631,42 @@ export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[
   });
 }
 
-/** Pure: Live this week; #6153: a request filed from a private thread carries it, as In progress does. */
-export function liveThisWeek(work: AiWork | null): AiThread[] {
+/** How long a done private thread stays under Live this week. */
+const CLOSED_DAYS = 7;
+
+/**
+ * Pure: Live this week; #6153: a request filed from a private thread carries
+ * it, as In progress does. #6271: then the private threads marked done in the
+ * last seven days (newest closed first), each with the thread it opens. One
+ * whose filed request already has a row in any list stays that row, never a
+ * second one (#6153).
+ */
+export function liveThisWeek(work: AiWork | null, now = Date.now()): AiThread[] {
   const filed = filedThreads(work);
-  return (work?.live || []).map((t) => withThread(filed, t));
+  const rows = (work?.live || []).map((t) => withThread(filed, t));
+  const listed = listedKeys(null, work);
+  const closed: AiThread[] = [];
+  for (const p of work?.private || []) {
+    if (p.state !== 'done' || !p.doneAt) continue;
+    const done = new Date(p.doneAt).getTime();
+    if (!Number.isFinite(done) || now - done > CLOSED_DAYS * 86400000) continue;
+    if (p.app && Number(p.resultRef) > 0 && listed.has(`${p.app.slug}#${Number(p.resultRef)}`)) continue;
+    closed.push({
+      threadId: 0,
+      number: null,
+      kind: 'private',
+      title: p.title,
+      app: p.app,
+      change: null,
+      href: '',
+      group: 'live',
+      what: 'closed',
+      at: p.doneAt,
+      rootId: p.rootId,
+    });
+  }
+  closed.sort((a, b) => new Date(b.at as string).getTime() - new Date(a.at as string).getTime());
+  return [...rows, ...closed];
 }
 
 /** The words of an In progress or Waiting row's tooltip, by what it waits on. */
@@ -549,6 +686,8 @@ const THREAD_WORDS: Record<string, string> = {
   held: 'messages:ai.up.held',
   stalled: 'messages:ai.up.stalled',
   queued: 'messages:ai.up.queued',
+  // #6313: queued again after a plan that could not be written.
+  retrying_plan: 'messages:ai.up.retryingPlan',
   on_hold: 'messages:ai.up.onHold',
   not_picked_up: 'messages:ai.up.notPickedUp',
   // #6158: what a request nobody is moving waits on.
@@ -572,6 +711,8 @@ const PR_TWIN: Record<string, string> = {
   'messages:ai.next.merging': 'messages:ai.next.mergingPr',
   'messages:ai.next.fixing': 'messages:ai.next.fixingPr',
   'messages:ai.next.revising': 'messages:ai.next.revisingPr',
+  'messages:ai.next.updating': 'messages:ai.next.updatingPr',
+  'messages:ai.next.updatingBare': 'messages:ai.next.updatingBarePr',
   'messages:ai.next.reading': 'messages:ai.next.readingPr',
   'messages:ai.next.readingReply': 'messages:ai.next.readingReplyPr',
   'messages:ai.next.building': 'messages:ai.next.buildingPr',
@@ -584,6 +725,8 @@ const PR_TWIN: Record<string, string> = {
   'messages:ai.up.voteNo': 'messages:ai.up.voteNoPr',
   'messages:ai.up.fixQueued': 'messages:ai.up.fixQueuedPr',
   'messages:ai.up.followUpQueued': 'messages:ai.up.followUpQueuedPr',
+  'messages:ai.up.updateQueued': 'messages:ai.up.updateQueuedPr',
+  'messages:ai.up.updateQueuedBare': 'messages:ai.up.updateQueuedBarePr',
   'messages:ai.up.buildQueued': 'messages:ai.up.buildQueuedPr',
   'messages:ai.up.held': 'messages:ai.up.heldPr',
   'messages:ai.up.heldTurn': 'messages:ai.up.heldTurnPr',
@@ -648,6 +791,17 @@ function nextWordsBase(t: AiThread): Phrase {
   // #6158: Homeroom bot's own reason, where it gave one.
   if (t.what === 'needs_person' && t.reason) return { id: 'messages:ai.up.needsPersonWhy', values: { ...values, reason: t.reason } };
   if (t.what === 'nothing_to_build' && t.reason) return { id: 'messages:ai.up.nothingToBuildWhy', values: { ...values, reason: t.reason } };
+  // #6282: an update on its way, with what was asked when there is one.
+  if (t.what === 'updating') {
+    return t.ask
+      ? { id: 'messages:ai.next.updating', values: { ...values, ask: t.ask } }
+      : { id: 'messages:ai.next.updatingBare', values };
+  }
+  if (t.what === 'update_queued') {
+    return t.ask
+      ? { id: 'messages:ai.up.updateQueued', values: { ...values, ask: t.ask } }
+      : { id: 'messages:ai.up.updateQueuedBare', values };
+  }
   if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.next.botBuilding', values };
   if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.next.youBuilding', values };
   // Claimed, with no change yet: who has it, not "Nobody is building it yet".
@@ -661,6 +815,9 @@ const SHORT_WORDS: Record<string, string> = {
   merging: 'messages:ai.short.merging',
   fixing: 'messages:ai.short.fixing',
   revising: 'messages:ai.short.revising',
+  // #6282: an update on its way: running, or waiting its turn.
+  updating: 'messages:ai.short.updating',
+  update_queued: 'messages:ai.short.updateQueued',
   reading: 'messages:ai.short.reading',
   reading_reply: 'messages:ai.short.readingReply',
   building: 'messages:ai.short.building',
@@ -670,6 +827,7 @@ const SHORT_WORDS: Record<string, string> = {
   fix_queued: 'messages:ai.short.builder',
   followup_queued: 'messages:ai.short.builder',
   queued: 'messages:ai.short.builder',
+  retrying_plan: 'messages:ai.short.retryPlan',
   build_queued: 'messages:ai.short.turn',
   held: 'messages:ai.short.slot',
   stalled: 'messages:ai.short.stalled',
@@ -715,8 +873,13 @@ export function shortWords(t: AiThread): Phrase {
  * Pure: the hero's line under the bot's name: what needs you, what is in
  * progress. A zero says nothing (Y03, audit 2 Nov 2026): each half is said
  * only above zero, and with neither there is no line ("In progress: 0" was).
+ * #6262: `fresh` is how many of those threads have something new, said
+ * between the two, and only when there is any.
  */
-export function heroWords(needs: number, next: number): Phrase | null {
+export function heroWords(needs: number, next: number, fresh = 0): Phrase | null {
+  const anyFresh = fresh > 0;
+  if (needs > 0 && anyFresh && next > 0) return { id: 'messages:ai.hero.bothFresh', values: { needs, fresh, next, count: fresh } };
+  if (needs > 0 && anyFresh) return { id: 'messages:ai.hero.needsFresh', values: { needs, fresh, count: fresh } };
   if (needs > 0 && next > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
   if (needs > 0) return { id: 'messages:ai.hero.needs', values: { needs } };
   if (next > 0) return { id: 'messages:ai.hero.next', values: { next } };

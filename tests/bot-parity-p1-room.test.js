@@ -468,7 +468,7 @@ test('a reply after a walkthrough written beside a call sends the walkthrough, a
         content: walk,
         toolCalls: [
           callOf('a', 'read_source', { project: 'gym', path: 'public/index.html' }),
-          callOf('b', 'offer_request', { project: 'gym', title: 'Mark today on the main screen', details: 'Mark today and who is next.' }),
+          callOf('b', 'offer_request', { project: 'gym', title: 'Mark today on the main screen', details: 'Mark today and who is next.', doneWhen: ['Today and who is next show on the main screen.'] }),
         ],
       };
     }
@@ -523,7 +523,7 @@ test('a thread tool\'s card stays under a reply that ends in an offer', async ()
   const chat = scripted([
     { calls: [
       callOf('a', 'offer_options', { title: 'Ways to remind', options: [{ title: 'A banner' }, { title: 'A calendar file' }] }),
-      callOf('b', 'offer_request', { project: 'gym', title: 'Add a reminder banner' }),
+      callOf('b', 'offer_request', { project: 'gym', title: 'Add a reminder banner', doneWhen: ['A reminder banner shows on the main screen.'] }),
     ] },
     { calls: [callOf('c', 'reply', { text: 'Two ways; the first is drafted as a request.' })] },
   ]);
@@ -588,6 +588,42 @@ test('the working card shows the answer as it grows, under "Writing"', () => {
   assert.doesNotMatch(thinking, /data-bot-working-draft/);
   assert.equal(card.botDoingLine(catalog, { kind: 'writing', text: 'x' }), 'Writing');
   assert.equal(card.botDraftText({ kind: 'drawing' }), '');
+});
+
+// 4 Nov 2026 (#6302): the card flashed between the answer so far and what the
+// bot was doing next, because each doing event replaced the whole entry. The
+// words are held on the Typist now: a read or a wordless "thinking" leaves
+// them in place, a newer answer replaces them, and they leave with the card.
+test('the answer so far stays on the working card while the bot reads or thinks', () => {
+  const store = loadTsx('frontend/src/features/messages/store.ts');
+  const writing = store.botDoingOf({ kind: 'writing', text: 'A couple of the names you gave' });
+  const first = store.botTypist(undefined, 'Homeroom bot', writing);
+  assert.equal(first.draft, 'A couple of the names you gave');
+
+  const reading = store.botTypist(first, 'Homeroom bot', store.botDoingOf({ kind: 'request', number: 436 }));
+  assert.deepEqual(reading, {
+    name: 'Homeroom bot', unnamed: false, bot: true,
+    doing: { kind: 'request', number: 436 },
+    draft: 'A couple of the names you gave',
+  }, 'held while it reads the request');
+
+  const thinking = store.botTypist(reading, 'Homeroom bot', store.botDoingOf(undefined));
+  assert.equal(thinking.draft, 'A couple of the names you gave', 'and while it thinks, with no doing');
+  assert.deepEqual(thinking.doing, null);
+
+  const more = store.botTypist(thinking, 'Homeroom bot', store.botDoingOf({ kind: 'writing', text: 'So I checked: the list is right' }));
+  assert.equal(more.draft, 'So I checked: the list is right', 'a newer answer replaces the one before it');
+  assert.equal(store.botTypist(undefined, 'Homeroom bot', null).draft, undefined, 'a fresh turn starts with nothing');
+
+  const card = loadTsx('frontend/src/features/messages/bot-working.tsx');
+  const html = renderToHtml(createElement(card.BotWorkingCard, { typist: reading }));
+  assert.match(html, /data-bot-working="request"/);
+  assert.match(html, /<span class="min-w-0 truncate" data-bot-working-doing="">Reading request #436<\/span>/);
+  assert.match(html, /data-bot-working-draft=""/);
+  assert.match(html, /A couple of the names you gave/);
+  const heldThinking = renderToHtml(createElement(card.BotWorkingCard, { typist: thinking }));
+  assert.match(heldThinking, /data-bot-working="thinking"/);
+  assert.match(heldThinking, /data-bot-working-draft=""/, 'the words are still drawn under "Thinking"');
 });
 
 const botMessage = (homeroomBot, extra = {}) => ({

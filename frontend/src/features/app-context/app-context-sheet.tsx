@@ -437,17 +437,24 @@ export function AppsSwitcherSheet(): ReactNode {
   // it once (App._privateNoClose), and no Developer terminal: they suggest
   // changes to Homeroom bot instead.
   const { privateMember } = useStoreState(navStore);
-  // Homeroom's privacy notice, for the foot's Privacy link (#5116): the
-  // address GET /api/public/waitlist/options serves (marketing-links.js
-  // privacyNoticeUrl). Asked for when the sheet first opens, not at boot;
-  // the fetch is shared with every other screen that names the notice. The
-  // link is left out until the address is known.
+  // Homeroom's privacy notice and terms, for the foot's two links (#5116,
+  // #5927): the addresses GET /api/public/waitlist/options serves
+  // (marketing-links.js privacyNoticeUrl; the current terms_versions row's
+  // terms_link). Both are the platform's own, whichever app the menu is on: an
+  // app's manifest names neither. Asked for when the sheet first opens, not at
+  // boot; the fetch is shared with every other screen that names them. Each
+  // link is left out until its address is known, and Terms stays out when no
+  // version is published, which is why the privacy address, always served,
+  // is what says the read is done.
   const [privacyHref, setPrivacyHref] = useState<string | null>(null);
+  const [termsHref, setTermsHref] = useState<string | null>(null);
   useEffect(() => {
     if (!open || privacyHref) return undefined;
     let live = true;
     void waitlistOptions().then((options) => {
-      if (live && options?.privacy_link) setPrivacyHref(options.privacy_link);
+      if (!live) return;
+      if (options?.terms_link) setTermsHref(options.terms_link);
+      if (options?.privacy_link) setPrivacyHref(options.privacy_link);
     });
     return () => { live = false; };
   }, [open, privacyHref]);
@@ -1095,14 +1102,28 @@ export function AppsSwitcherSheet(): ReactNode {
               PRIVACY SITS BESIDE IT (#5116): "Privacy · Report app", the
               same two links the bridge's footer carries on an app opened at
               its own address. Privacy is Homeroom's notice, in a new tab.
+              TERMS COMES FIRST (#5927): Homeroom's terms, also in a new tab,
+              in the order Settings › About lists them.
 
               READABLE AND TAPPABLE (#5927): 13px in the muted ink a row's
               subtitle uses, a step lighter on dark than the 12px zinc-500 it
               was, each link a 44px-tall target with its own side padding, and
               that padding is the gap between them where a "·" stood.
           */}
-          {(slug && canReport) || privacyHref ? (
+          {(slug && canReport) || privacyHref || termsHref ? (
             <div id="app-menu-legal" className="flex flex-wrap items-center justify-center gap-x-1 px-5 pt-2 text-[13px] text-zinc-600 dark:text-zinc-300">
+              {termsHref ? (
+                <a
+                  id="app-menu-terms"
+                  href={termsHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={'inline-flex items-center min-h-[44px] px-3 rounded-lg hover:text-zinc-900 dark:hover:text-zinc-100 hover:underline ' + FOCUS_RING}
+                >
+                  {t('agent:appContext.terms')}
+                  <ExternalMark className="ms-1 w-3.5 h-3.5" />
+                </a>
+              ) : null}
               {privacyHref ? (
                 <a
                   id="app-menu-privacy"

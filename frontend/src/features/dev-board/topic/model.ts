@@ -555,6 +555,8 @@ export interface RequestView {
   titleEditing: { issue: number; initial: string } | null;
   /** The request's words, rendered, without the leading "**Source:**" line. */
   bodyHtml: string;
+  /** #6081: the same words as markdown, what Translate sends to the model. */
+  bodyMarkdown: string;
   /**
    * The author's editor for the words. `source` is the "**Source:**" line
    * the page leaves out, put back in front of what they save.
@@ -627,6 +629,12 @@ export interface ChecksExplainView {
   /** The run: its checks_checked_at. */
   at: string;
   fallback: string | null;
+  /**
+   * #6288: the Testing card's lead when main is already failing these tests,
+   * so the Checks step says whose they are too (it is drawn above the
+   * failure's own words). Null when main is not failing them.
+   */
+  mainLead?: string | null;
   /** The page the first failing check opened on the preview, when it can be reopened. */
   page?: { path: string; stagingUrl: string } | null;
 }
@@ -651,6 +659,12 @@ export interface FixChecksView {
 }
 
 /** #4455: the Votes card or the Testing card under a change's summary. */
+/** A change's cost so far: the line, and what the figure counts as its tooltip. */
+export interface ChangeSpentView {
+  text: string;
+  title: string;
+}
+
 export interface ChangeGateView {
   name: string;
   /** The figure at the right of the name: "Needs 1 more yes", "about 6 min left". */
@@ -664,18 +678,48 @@ export interface ChangeGateView {
   label: string;
   /** The one line under the card, as its sentences. */
   note: string[];
+  /**
+   * #6282: the card asks for no vote while an update to the change is on its
+   * way (AppView._changeVotesView): a yes cast now is cleared when it lands.
+   * Votes only; the card keeps its tally and its note.
+   */
+  hold?: boolean;
+  /**
+   * #3800: Votes only, while a change is up for a vote: its lines under the
+   * bar, worded (AppView._changeVoteFacts). `ask` is the viewer's vote still
+   * being wanted, in the accent.
+   */
+  facts?: { key: 'tally' | 'ends' | 'mine'; text: string; ask?: boolean }[];
   /** Why this status is shown, disclosed beside the note when available. */
   noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */
   actions?: ActionSpec[];
+  /**
+   * #6116, Testing only: what the change has cost so far at list price, for
+   * its author or an admin (AppView._changeSpentView). Null otherwise.
+   */
+  spent?: ChangeSpentView | null;
   /** Testing only: a "See what failed" door into Details. */
   details?: boolean;
   /** Testing only, when its checks failed: what went wrong, in plain words. */
   explain?: ChecksExplainView | null;
+  /**
+   * #6288: while main is already failing this change's tests, the request
+   * main watch filed to fix main. The one thing to read instead of asking
+   * the change's author to fix a failure that is not theirs.
+   */
+  mainFailure?: { href: string; label: string; mixed: boolean } | null;
   /** Testing only, for the change's author: Fix it. */
   fix?: FixChecksView | null;
   /** Testing only, for everybody else: who has to fix it. */
   authorNote?: string | null;
+  /**
+   * #6234: Testing only, on a change Homeroom bot built whose checks failed:
+   * where its own fix of them stands (services/homeroom-bot-progress.js
+   * changeBotFix), carried on the card as `data-change-bot-fix`. The words
+   * are in `authorNote`.
+   */
+  botFix?: 'fixing' | 'queued' | 'handed_off' | 'stopped' | null;
   /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps

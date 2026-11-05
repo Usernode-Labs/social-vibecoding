@@ -278,18 +278,22 @@ export function PrivateThreadNote({ where, rootId = null, onChanged }: {
 }
 
 /** The thread's foot: New project, for an idea in no project yet, and who it is for. */
-export function PrivateThreadDoors({ rootId, text, where, botReplied }: {
+export function PrivateThreadDoors({ rootId, text, where, botReplied, working = false }: {
   rootId: number;
   text: string;
   where: PrivateThreadState | null;
   /** Homeroom bot has answered in the thread. */
   botReplied: boolean;
+  /** Homeroom bot is working in the thread: its working card is its foot. */
+  working?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
   const [door, setDoor] = useState<Door | null>(null);
   const [made, setMade] = useState<{ slug: string; name: string } | null>(null);
 
   useEffect(() => { setDoor(null); setMade(null); }, [rootId]);
+  // The chip, not a form left open, is what comes back when the bot is done.
+  useEffect(() => { if (working) setDoor(null); }, [working]);
 
   if (made) {
     return (
@@ -298,6 +302,8 @@ export function PrivateThreadDoors({ rootId, text, where, botReplied }: {
       </div>
     );
   }
+  // While the bot works, its working card is the thread's one thing at the foot.
+  if (working) return null;
   const doors = doorsFor(where, botReplied);
   if (!where || !doors.length) return null;
   // B04 (audit 2 Nov 2026): a drawn screen is made into its project in

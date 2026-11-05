@@ -35,6 +35,27 @@ function loadGroupChat(userId = 9) {
   return sandbox.window.GroupChat;
 }
 
+// #6321: Propose to close under an "already works" note is offered to no one
+// person, so any signed-in viewer who can take part here gets its buttons.
+test('an offer to nobody in particular is every signed-in viewer\'s, for a close only', () => {
+  const offer = (kind, forUserId) => ({
+    homeroomBot: {
+      kind: 'voice',
+      offer: { id: 1, kind, status: 'open', forUserId },
+      actions: [{ id: 'yes', label: 'Propose to close', style: 'primary' }, { id: 'no', label: 'Keep it open', style: 'secondary' }],
+    },
+  });
+  assert.equal(loadGroupChat(9)._botOfferView(offer('close_request', null)).forMe, true);
+  assert.equal(loadGroupChat(null)._botOfferView(offer('close_request', null)).forMe, false, 'signed out');
+  const readOnly = loadGroupChat(9);
+  readOnly._app = { readOnly: true };
+  assert.equal(readOnly._botOfferView(offer('close_request', null)).forMe, false, 'read-only');
+  assert.equal(loadGroupChat(9)._botOfferView(offer('copy_request', null)).forMe, false, 'no other kind');
+  assert.equal(loadGroupChat(9)._botOfferView(offer('close_request', 9)).forMe, true, 'its one person');
+  assert.equal(loadGroupChat(9)._botOfferView(offer('close_request', 12)).forMe, false, 'somebody else\'s');
+  assert.equal(readOnly._botOfferView(offer('close_request', 9)).forMe, true, 'one person\'s reads as it did');
+});
+
 const view = (over = {}) => ({
   homeroomBot: {
     kind: 'note',
@@ -121,4 +142,50 @@ test('the transcript draws the row only for the person it is for', () => {
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /botSuggest: GroupChat\._botSuggestView\(kind === 'message' && !deleted \? meta : null\)/);
   assert.match(gc, /botSuggest: view\.botSuggest/);
+});
+
+test('#6272: a request-page reply whose text list was lifted shows buttons to the person it answered', async () => {
+  const voice = require('../src/services/homeroom-bot-voice');
+  const sent = [];
+  const pool = {
+    async query(sql) {
+      if (/INSERT INTO homeroom_bot_voice_offers/.test(String(sql))) return { rows: [{ id: 5 }] };
+      return { rows: [] };
+    },
+  };
+  const deps = {
+    ws: {
+      async sendBotMessage(_pool, _appId, args) { sent.push(args); return { id: 900, createdAt: new Date() }; },
+      broadcast() {},
+    },
+    notifications: { async createMentionNotifications() { return []; } },
+  };
+  // The reply the model wrote: its suggestions as a list in the text.
+  const ctx = { app: { id: 1, slug: 'x' }, place: { type: 'issue', ref: 7 }, deps: {} };
+  await voice.runTool(pool, ctx, 'reply', {
+    text: 'Once it is built, the checks run. When they pass, it goes up for a vote.\n\nSuggestions:\n'
+      + '- So once the checks pass I can vote on it?\n- Where do I see the checks?\n',
+  });
+  assert.equal(ctx.reply.text, 'Once it is built, the checks run. When they pass, it goes up for a vote.');
+  await voice.say(pool, {
+    app: { id: 1, slug: 'x' },
+    place: { type: 'issue', ref: 7 },
+    bot: { id: 2, username: 'homeroom_bot' },
+    text: ctx.reply.text,
+    answer: [{ message: { id: 50, content: 'What happens after the plan is built?' }, username: 'evan', userId: 9 }],
+    suggestions: ctx.reply.suggestions,
+    deps,
+  });
+  const { metadata, content } = sent[0];
+  assert.doesNotMatch(content, /Suggestions:/, 'the list is not written into the message');
+  const mine = loadGroupChat(9)._botSuggestView(metadata);
+  assert.equal(mine.status, 'open');
+  assert.equal(mine.forMe, true);
+  assert.deepEqual(mine.actions.map((a) => a.label),
+    ['So once the checks pass I can vote on it?', 'Where do I see the checks?']);
+  assert.equal(loadGroupChat(10)._botSuggestView(metadata).forMe, false, 'someone it did not answer sees none');
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/group-chat/transcript.tsx', 'BotSuggestButtons', { id: 900, suggest: mine });
+  assert.equal((html.match(/<button/g) || []).length, 2);
+  assert.ok(html.includes('>So once the checks pass I can vote on it?</button>'));
 });

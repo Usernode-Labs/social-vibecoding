@@ -695,9 +695,14 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       // root, with its question also shown in the main chat (its quiet
       // lines stay in the thread).
       // Homeroom bot parity (P1-P9): and, after the complicated change's plan,
-      // three private threads' lines in the main chat (their replies, with the
-      // new cards, stay in the threads: tests/bot-parity-staging-seed-postgres.test.js).
-      assert.equal(messages.length, 19, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a complicated change\'s plan, three private threads, a stuck build, a first version live, a ready card and two cards, then a story\'s card and its question, not one per visit');
+      // four private threads' openers as the fixture writes them (their
+      // replies, with the new cards, stay in the threads: tests/bot-parity-
+      // staging-seed-postgres.test.js). #6250: the first of the four is filed
+      // as a request, and Main Chat leaves every opener out (conversations.js
+      // PLUS_THREAD_OPENER); dmStream reads the stream as written.
+      // #6305: after the offer, the same request offered on four projects
+      // from one card, open and then filed, as the demo fixture writes them.
+      assert.equal(messages.length, 22, 'one question, one ask, one offer, the same request on four projects from one card, open and filed, a built plan and its card, a plan and its card, two questions, a complicated change\'s plan, four private threads, a stuck build, a first version live, a ready card and two cards, then a story\'s card and its question, not one per visit');
       const sorted = [...messages].sort((a, b) => a.id - b.id);
       const [storyCard, storyQuestion] = sorted.slice(-2);
       assert.equal(storyCard.metadata.homeroomBot.kind, 'activity');
@@ -707,11 +712,12 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       const storyThread = await conversations.listThread(pool, viewer, first, storyCard.id, {});
       assert.deepEqual(storyThread.messages.slice(0, 2).map((m) => m.content),
         ['You suggested this on Staging demo app\'s page. It\'s request #18.', 'Reading it.']);
-      const [question, ask, offer, built, building, planCard, plan, two, complicated, ...afterPlan] = sorted.slice(0, -2);
-      const threads = afterPlan.slice(0, 3);
-      const [stuck, firstLive, ready, ...cards] = afterPlan.slice(3);
+      const [question, ask, offer, fileMany, fileManyFiled, built, building, planCard, plan, two, complicated, ...afterPlan] = sorted.slice(0, -2);
+      const threads = afterPlan.slice(0, 4);
+      const [stuck, firstLive, ready, ...cards] = afterPlan.slice(4);
       assert.deepEqual(threads.map((m) => [m.content, m.metadata.homeroomBot.kind, m.thread?.replyCount]),
-        [['New thread.', 'opened_thread', 4], ['New thread.', 'opened_thread', 4], ['New thread.', 'opened_thread', 2]]);
+        [['New thread.', 'opened_thread', 2], ['New thread.', 'opened_thread', 4],
+          ['New thread.', 'opened_thread', 4], ['New thread.', 'opened_thread', 2]]);
       assert.deepEqual([complicated.metadata.homeroomBot.kind, complicated.metadata.homeroomBot.firstVersion, complicated.metadata.homeroomBot.plan.complicated],
         ['plan', false, true]);
       assert.match(complicated.content, /^Before I build \*\*Staging demo app\*\* request #17, here's my plan:/);
@@ -755,6 +761,20 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       assert.match(offer.content, /Staging demo, add a dark mode/);
       assert.equal(offer.reply.id, ask.id, 'the offer quotes the ask it answers');
       assert.equal(offer.reply.content, ask.content);
+      assert.deepEqual([fileMany.metadata.homeroomBot.kind, fileMany.metadata.homeroomBot.card.type,
+        fileMany.metadata.homeroomBot.card.state], ['chat', 'file_many', 'open'],
+      '#6305: one request offered on four projects from one card');
+      assert.deepEqual(fileMany.metadata.homeroomBot.card.rows.map((r) => [r.name, r.match, r.done, r.ticked]), [
+        ['Game Corner', 'exact', 'Game Corner already lets guests play today\'s board.', false],
+        ['Block World', 'guess', null, false],
+        ['ViaTales', 'exact', null, true],
+        ['Ear Trainer', 'exact', null, true],
+      ], 'a row per project, with the unclear name and the app that already does it');
+      assert.deepEqual([fileManyFiled.metadata.homeroomBot.kind, fileManyFiled.metadata.homeroomBot.card.state],
+        ['chat', 'filed'], '#6305: and the same card after its one tap');
+      assert.deepEqual(fileManyFiled.metadata.homeroomBot.card.rows.map((r) => [r.name, r.issueNumber || null, r.disabled || null]), [
+        ['Game Corner', 42, null], ['Block World', 43, null], ['World Map', null, 'not_member'],
+      ]);
       const { rows } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1', [viewer.id]);
       assert.equal(rows.length, 0, 'never a question the bot waits on: nothing is posted anywhere');
     } finally {
@@ -1356,6 +1376,38 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const story = await conversations.listThread(pool, viewer, conversationId, storyCard, {});
     assert.equal(story.root.objects.length, 1, 'the story keeps the request\'s card');
     assert.equal(story.messages.find((m) => m.id === ringing).objects.length, 1);
+
+    // #6250: only a private thread started from the bot's "+" stays out of
+    // Main Chat (Evan, 4 Nov). Its opener line and its replies leave the
+    // stream; one the bot opened from Main quotes what was said there, so it
+    // stays, as the way to its row in the list.
+    await conversations.markRead(pool, viewer, conversationId, talk);
+    const opener = async (meta, replyTo = null) => (await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, reply_to_id)
+       VALUES ($1, $2, 'New thread.', $3, $4) RETURNING id`,
+      [conversationId, bot.id, JSON.stringify({ homeroomBot: meta }), replyTo],
+    )).rows[0].id;
+    const plusRoot = await opener({ kind: 'opened_thread', changeKind: 'any' });
+    const mainRoot = await opener({ kind: 'opened_thread', changeKind: 'project' }, talk);
+    const ring = async (threadRoot) => (await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, thread_root_id)
+       VALUES ($1, $2, 'Needs you.', $3, $4) RETURNING id`,
+      [conversationId, bot.id, JSON.stringify({ homeroomBot: { kind: 'question', alsoInChat: true } }), threadRoot],
+    )).rows[0].id;
+    const plusReply = await ring(plusRoot);
+    const mainReply = await ring(mainRoot);
+    const origin = await conversations.listMessages(pool, viewer, conversationId, { limit: 50 });
+    const originIds = origin.messages.map((m) => m.id);
+    assert.ok(!originIds.includes(plusRoot), 'a "+" thread opener is not in Main');
+    assert.ok(!originIds.includes(plusReply), 'nor is its reply');
+    assert.ok(originIds.includes(mainRoot), 'a thread opened from Main keeps its line');
+    assert.ok(originIds.includes(mainReply), 'and its moment');
+    const afterOrigin = await conversations.getConversation(pool, viewer, conversationId);
+    assert.equal(afterOrigin.latestMessage?.id, mainReply, 'Main\'s preview is the Main-started thread\'s reply');
+    assert.equal(afterOrigin.unreadCount, 2, 'only the Main-started thread\'s two lines count');
+    // The client reads the origin off a reply's root (bot-shared.ts alsoInChat).
+    assert.equal((await conversations.getMessage(pool, viewer, conversationId, plusReply)).threadRoot.plusThread, true);
+    assert.equal((await conversations.getMessage(pool, viewer, conversationId, mainReply)).threadRoot.plusThread, undefined);
 
     // People-to-people direct chats keep no threads.
     const people = await conversations.createDirect(pool, ada, sam.id);

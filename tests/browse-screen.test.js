@@ -855,13 +855,13 @@ test('Opened recently: the app you just left joins a list drawn before it was pa
     Browse.recentChanged();
     assert.deepEqual(state.rows.map((row) => row.slug), ['left']);
 
-    // Nothing to redraw with the switch off, or with the screen shut.
+    // Nothing to redraw with the screen shut, or on an app's detail page.
     let renders = 0;
     const render = Browse.render;
     Browse.render = () => { renders += 1; render(); };
-    Browse._only = [];
+    Browse._slug = 'left';
     Browse.recentChanged();
-    Browse._only = ['recent'];
+    Browse._slug = null;
     Browse.close();
     Browse.recentChanged();
     assert.equal(renders, 0);
@@ -1532,12 +1532,15 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   // back when the hairline was a `border-top`.
   assert.match(mdBlock, /\.browse-row \+ \.browse-row::before \{ content: none/,
     'md+: the between-rows hairline is cancelled, not painted over');
-  // What changed with the widget language is what the box is made of — a white
-  // surface on the grey page ground instead of a hairline outline — so the
-  // shorthand is transparent and the separation comes from the fill. It stays
-  // declared so the hover rule has a width to colour in without the box
-  // changing size under the cursor.
-  assert.match(box, /border: 1px solid transparent/);
+  // The box is a white surface on the grey page ground, and #5928 item 11 found
+  // that fill alone let the rows run together, so at rest it also wears the
+  // cards' own hairline. Hover only recolours that same 1px, so the box does
+  // not change size under the cursor, and it must out-rank both resting rules.
+  assert.match(box, /border: 1px solid var\(--app-sheet-line\)/);
+  assert.doesNotMatch(box, /border: 1px solid transparent/);
+  assert.match(box, /\.browse-row:hover,\s*\n\s*\.browse-row \+ \.browse-row:hover \{ border-color: var\(--accent-light\); \}/);
+  assert.doesNotMatch(browseCss.slice(0, browseCss.indexOf('@media (min-width: 768px)')), /^\.browse-row[^{\n]*\{[^}]*\sborder:/m,
+    'below md the rows keep the inset hairline between them, not a box');
   assert.match(box, /background-color: var\(--bg-primary\)/);
   assert.match(box, /border-radius/);
   // One theme token instead of `.dark` variants, which would out-specify
@@ -1628,6 +1631,74 @@ test('metaLine: a zero aggregate is dropped, not rendered as "0"', () => {
   assert.equal(Browse.metaLine(quiet, 'merged'), '2 users');
   assert.match(Browse.metaLine(app({ merged_prs: 1 }), 'merged'), /1 change live/,
     'and the one that is there is pluralised');
+});
+
+test('metaLine: an app you opened on this device says when, in place of Updated (#4025)', () => {
+  withRecentStore((store) => {
+    const { Browse } = makeBrowse();
+    const ago = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+    const a = app({
+      slug: 'opened', active_users: 4, merged_prs: 12, merged_prs_recent: 3,
+      last_deploy_at: ago(1), created_at: ago(3),
+    });
+    Browse._recentEntries = () => store.recentAppEntries('ana');
+    assert.equal(Browse.metaLine(a, 'recommended'), '4 users · Updated 1h ago', 'never opened: unchanged');
+
+    store.rememberRecentApp({ slug: 'opened', name: 'Opened' }, 'ana', ago(2));
+    assert.equal(message('discover:row.meta.lastOpened'), 'Last opened {{when}}');
+    assert.equal(Browse.metaLine(a, 'recommended'), '4 users · Last opened 2h ago');
+    assert.equal(Browse.metaLine(a, 'users'), '4 users · Last opened 2h ago');
+    assert.equal(Browse.metaLine(a, 'active'), '4 users · 3 live in 30d · Last opened 2h ago');
+    assert.equal(Browse.metaLine(a, 'merged'), '4 users · 12 changes live · Last opened 2h ago');
+    assert.equal(Browse.metaLine(a, 'new'), '4 users · Created 3h ago', 'Newest keeps the figure it ranks by');
+    assert.equal(Browse.metaLine({ ...a, status: 'error' }, 'recommended'), '4 users · Last opened 2h ago · Error');
+    assert.equal(Browse.metaLine(app({ slug: 'other', active_users: 4, last_deploy_at: ago(1) }), 'recommended'),
+      '4 users · Updated 1h ago', 'another row is not touched');
+
+    // Another account on this device has none of it.
+    store.recentAppsStore.set({ apps: [] });
+    Browse._recentEntries = () => store.recentAppEntries('bo');
+    assert.equal(Browse.metaLine(a, 'recommended'), '4 users · Updated 1h ago');
+  });
+});
+
+test('metaLine: only a known, recent, past time says Last opened (#4025)', () => {
+  const { Browse } = makeBrowse();
+  const iso = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  const a = app({ slug: 'x', active_users: 1, last_deploy_at: iso(1) });
+  const says = (entries) => {
+    Browse._recentEntries = () => entries;
+    return Browse.metaLine(a, 'recommended');
+  };
+  assert.equal(says([{ slug: 'x', at: '' }]), '1 user · Updated 1d ago', 'a seeded parked app has no time');
+  assert.equal(says([{ slug: 'x', at: 'not a time' }, null]), '1 user · Updated 1d ago');
+  assert.equal(says([{ slug: 'x', at: iso(-1) }]), '1 user · Updated 1d ago', 'a time ahead of the clock');
+  assert.equal(says([{ slug: 'x', at: iso(31) }]), '1 user · Updated 1d ago', 'past the switch\'s window');
+  assert.equal(says([{ slug: 'x', at: iso(5) }, { slug: 'x', at: iso(2) }, { slug: 'x', at: iso(9) }]),
+    '1 user · Last opened 2d ago', 'the list can hold a slug twice: the later time');
+  Browse._recentEntries = null;
+  assert.equal(Browse.metaLine(a, 'recommended'), '1 user · Updated 1d ago', 'nothing planted: the prerender and old tests');
+});
+
+test('rows: a list render reads the device list once, and a row you just left redraws with the switch off (#4025)', () => {
+  withRecentStore((store) => {
+    const { Browse, state } = makeBrowse();
+    Browse._load = () => {};
+    let reads = 0;
+    Browse._recentEntries = () => { reads += 1; return store.recentAppEntries('ana'); };
+    Browse._apps = [app({ slug: 'left', name: 'Left' }), app({ slug: 'other', name: 'Other' }), app({ slug: 'third', name: 'Third' })];
+    // The order App.navigateToBrowse runs them in: open, then park.
+    Browse.open(null);
+    assert.doesNotMatch(rowFor(state, 'left').meta, /Last opened/);
+    reads = 0;
+    Browse.render();
+    assert.equal(reads, 1, 'not once a row');
+
+    store.rememberRecentApp({ slug: 'left', name: 'Left' }, 'ana');
+    Browse.recentChanged();
+    assert.match(rowFor(state, 'left').meta, /Last opened just now/);
+    assert.doesNotMatch(rowFor(state, 'other').meta, /Last opened/);
+  });
 });
 
 test('metaLine: the rows carry the line the store says they were sorted with', () => {
@@ -3220,4 +3291,368 @@ test('Filters is a centred dialog from 768px and a bottom sheet on a phone', () 
   assert.match(src, /className=\{dialog \? undefined : 'px-4 pb-5'\}/);
   assert.match(src, /setAttribute\('aria-labelledby', 'browse-filters-title'\)/);
   assert.match(src, /<h2 id="browse-filters-title"/);
+});
+
+// ── #6197: Trending this week, the search field's menu, Clear filters ────
+
+const busy = (slug, seconds, messages, over) => app({
+  slug, name: slug, total_seconds: String(seconds), message_count: String(messages), ...over,
+});
+
+test('#6197: trendingApps ranks by 7-day use, ties by members, and leaves out what cannot show', () => {
+  const { Browse } = makeBrowse();
+  const picked = Array.from(Browse.trendingApps([
+    busy('quiet', 0, 0, { member_count: 90 }),
+    busy('third', 5, 5, { member_count: 1 }),
+    busy('tied-few', 40, 10, { member_count: 2 }),
+    busy('tied-many', 45, 5, { member_count: 9 }),
+    busy('top', 500, 0),
+    busy('fourth', 1, 1),
+    busy('broken', 900, 0, { directory: { tier: 'more' } }),
+    busy('featured', 800, 0),
+  ], new Set(['featured'])), (a) => a.slug);
+  assert.deepEqual(picked, ['top', 'tied-many', 'tied-few'],
+    'score order, the member-count tie-break, a limit of 3, none idle, none `more`, none excluded');
+  assert.equal(Browse.TRENDING_LIMIT, 3);
+  assert.equal(Browse.trendingScore({ total_seconds: '12', message_count: 3 }), 15, 'the API sends a SUM as a string');
+  assert.equal(Browse.trendingScore({}), 0);
+});
+
+test('#6197: the default list is Featured, Trending, the rest, with no app twice', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    busy('plain', 0, 0),
+    busy('featured-busy', 999, 0, { featured: true }),
+    busy('busy', 50, 0, { member_count: 41 }),
+  ];
+  Browse._loaded = true;
+  Browse.render();
+  assert.deepEqual(slugs(state), ['featured-busy', 'busy', 'plain']);
+  assert.equal(rowFor(state, 'featured-busy').recommended, true);
+  assert.equal(rowFor(state, 'featured-busy').trending, undefined, 'Featured keeps its app');
+  assert.equal(rowFor(state, 'busy').trending, true);
+  assert.equal(rowFor(state, 'plain').trending, undefined);
+  assert.match(rowFor(state, 'busy').meta, /^41 members\b/, 'a trending row says its member count');
+});
+
+test('#6197: Trending shows only on the default list, and not when nothing was used', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [busy('busy', 50, 0), busy('plain', 0, 0)];
+  Browse._loaded = true;
+  const trending = () => (state.rows || []).filter((r) => r.trending).length;
+  Browse.render();
+  assert.equal(trending(), 1, 'the default list');
+  Browse.setView('browse');
+  assert.equal(trending(), 0, 'the Browse view');
+  Browse.setView('foryou');
+  Browse.setSort('users');
+  assert.equal(trending(), 0, 'a metric order');
+  Browse.setSort('recommended');
+  Browse.setQuery('busy', { immediate: true });
+  assert.equal(trending(), 0, 'a search');
+  Browse.setQuery('', { immediate: true });
+  Browse._apps = [busy('plain', 0, 0)];
+  Browse.render();
+  assert.equal(trending(), 0, 'no activity this week');
+});
+
+test('#6197: the trending meta line carries the row facts, members in place of users', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(message('discover:row.meta.members_other'), '{{count}} members');
+  assert.equal(message('discover:row.meta.members_one'), '{{count}} member');
+  const one = Browse.trendingMeta(busy('a', 5, 0, { member_count: 1, active_users: 7, last_deploy_at: null, created_at: null }));
+  assert.equal(one, '1 member', 'the user count is not repeated, and no date means no date');
+  const zero = Browse.trendingMeta(busy('b', 5, 0, { member_count: 0, active_users: 7, last_deploy_at: null, created_at: null, status: 'error' }));
+  assert.equal(zero, message('discover:row.status.error'), 'a zero says nothing; the status word stays');
+});
+
+test('#6197: Trending renders under its own heading, between Featured and More apps', () => {
+  const { createElement, renderToHtml } = require('./lib/render-tsx');
+  const { BrowseRows } = loadTsx('frontend/src/features/apps/browse-list.tsx');
+  const row = (slug, over) => ({
+    app: { slug, name: slug, directory: { tier: 'ready' } }, directoryTier: 'ready',
+    slug, name: slug, meta: 'x', status: '', statusDot: 'running', demo: false, openable: true, added: false, addTitle: 't', ...over,
+  });
+  const order = (html) => Array.from(html.matchAll(/<h2[^>]*>([^<]*)<\/h2>|data-slug="([^"]+)"[^>]*data-directory-state|class="[^"]*browse-row[^"]*"[^>]*data-slug="([^"]+)"/g))
+    .map((m) => m[1] || m[2] || m[3]);
+  assert.equal(message('discover:list.heading.trending'), 'Trending this week');
+  const all = renderToHtml(createElement(BrowseRows, {
+    curated: true,
+    rows: [row('f', { recommended: true }), row('t', { trending: true }), row('r')],
+  }));
+  assert.deepEqual(order(all), ['Featured', 'f', 'Trending this week', 't', 'More apps', 'r']);
+  assert.match(all, /<h2[^>]*>Trending this week<\/h2><p [^>]*>Used most in the last 7 days\.<\/p>/,
+    'its line says how the rows were picked, as the other two sections do');
+  const noFeatured = renderToHtml(createElement(BrowseRows, { curated: true, rows: [row('t', { trending: true }), row('r')] }));
+  assert.deepEqual(order(noFeatured), ['Trending this week', 't', 'More apps', 'r'], 'Trending can lead');
+  const none = renderToHtml(createElement(BrowseRows, { curated: true, rows: [row('r')] }));
+  assert.deepEqual(order(none), ['Apps to try', 'r'], 'with nothing trending the list is what it was');
+});
+
+test('#5967: rememberSearch keeps twelve, newest first, merges repeats and skips what is no search', () => {
+  const { Browse, state, storage } = makeBrowse();
+  assert.equal(Browse.RECENT_SEARCH_LIMIT, 12);
+  for (let n = 1; n <= 13; n += 1) Browse.rememberSearch(`s${n}`);
+  assert.equal(state.recent.length, 12);
+  assert.equal(state.recent[0], 's13');
+  assert.equal(state.recent[11], 's2', 'the oldest goes');
+  Browse.forgetSearches();
+  ['one', 'two', 'three', 'four', 'five', 'six'].forEach((q) => Browse.rememberSearch(q));
+  assert.deepEqual(Array.from(state.recent), ['six', 'five', 'four', 'three', 'two', 'one']);
+  Browse.rememberSearch('  THREE ');
+  assert.deepEqual(Array.from(state.recent), ['THREE', 'six', 'five', 'four', 'two', 'one'], 'a repeat moves, in any case');
+  Browse.rememberSearch('   ');
+  Browse.rememberSearch('example.com');
+  Browse.rememberSearch('https://example.com/a');
+  Browse.rememberSearch('x'.repeat(81));
+  assert.equal(state.recent[0], 'THREE', 'blanks, web addresses and very long text are not kept');
+  assert.deepEqual(JSON.parse(storage[Browse.RECENT_SEARCH_KEY]), Array.from(state.recent));
+  Browse.forgetSearches();
+  assert.deepEqual(Array.from(state.recent), []);
+  assert.deepEqual(Array.from(Browse.recentSearches()), []);
+});
+
+test('#6197: recent searches survive a storage that throws or holds rubbish, and load on entry', () => {
+  const { Browse, state, storage, win } = makeBrowse();
+  storage[Browse.RECENT_SEARCH_KEY] = '{not json';
+  assert.deepEqual(Array.from(Browse.recentSearches()), []);
+  storage[Browse.RECENT_SEARCH_KEY] = '{"a":1}';
+  assert.deepEqual(Array.from(Browse.recentSearches()), []);
+  storage[Browse.RECENT_SEARCH_KEY] = JSON.stringify(['kept', 3, null, '  ']);
+  assert.deepEqual(Array.from(Browse.recentSearches()), ['kept'], 'only real strings come back');
+  Browse.open();
+  assert.deepEqual(Array.from(state.recent), ['kept'], 'Browse.open publishes them');
+
+  const bad = () => { throw new Error('denied'); };
+  win.window.localStorage = { getItem: bad, setItem: bad, removeItem: bad };
+  assert.deepEqual(Array.from(Browse.recentSearches()), []);
+  assert.doesNotThrow(() => Browse.rememberSearch('still fine'));
+  assert.doesNotThrow(() => Browse.forgetSearches());
+});
+
+test('#6197: suggestionsFor is the results search, capped, over what Discover lists', () => {
+  const { Browse, Home } = makeBrowse();
+  Browse._apps = [
+    ...['a', 'b', 'c', 'd', 'e', 'f'].map((x) => app({ slug: `run-${x}`, name: `Run ${x}` })),
+    app({ slug: 'run-flagged', name: 'Run flagged', directory: { flagged: true } }),
+    app({ slug: 'other', name: 'Other' }),
+  ];
+  const got = Browse.suggestionsFor('run');
+  assert.equal(got.length, Browse.SUGGESTION_LIMIT);
+  assert.equal(Browse.SUGGESTION_LIMIT, 5);
+  assert.deepEqual(Array.from(got, (s) => s.slug),
+    Array.from(Home.filterApps(Browse.listedApps(Browse._apps), 'run'), (a) => a.slug).slice(0, 5));
+  assert.ok(!Array.from(Browse.suggestionsFor('flagged')).length, 'a flagged app Discover never lists is not suggested');
+  assert.deepEqual(Array.from(Browse.suggestionsFor('')), []);
+  assert.deepEqual(Array.from(Browse.suggestionsFor('   ')), []);
+  assert.deepEqual(Array.from(Browse.suggestionsFor('example.com')), [], 'a web address offers its site row instead');
+});
+
+test('#6197: opening a result remembers the search; picking a suggestion remembers all that was typed', () => {
+  const { Browse, state, location } = makeBrowse();
+  Browse._apps = [app({ slug: 'run-club', name: 'Run Club' })];
+  Browse.openRow(Browse.rowView(Browse._apps[0]));
+  assert.equal(state.recent, undefined, 'no search, nothing to remember');
+
+  Browse.setQuery('r');
+  Browse.pickSuggestion(Browse.suggestionsFor('ru')[0], 'ru');
+  assert.deepEqual(Array.from(state.recent), ['ru'], 'the words typed, not a prefix the debounce still held');
+  assert.equal(location.hash, '#app/run-club/dev/hub', "the suggestion opens the community's page, as its row does");
+
+  Browse.pickRecentSearch('games');
+  assert.equal(Browse._query, 'games', 'a recent search searches at once');
+  assert.equal(state.recent[0], 'games');
+});
+
+test('#6197: clearNarrowing drops the type and the switches, and keeps the search, the view and the order', () => {
+  const { Browse, state, storage } = makeBrowse();
+  Browse._apps = [typed('chess', 'games'), typed('notes', 'tools')];
+  Browse.setView('browse');
+  Browse.setQuery('chess', { immediate: true });
+  Browse.applyFilters({ only: ['featured'], category: 'tools', sort: 'users' });
+  assert.equal(state.canClearFilters, true);
+  assert.deepEqual(slugs(state), []);
+  Browse.clearNarrowing();
+  assert.deepEqual(Array.from(state.only), []);
+  assert.equal(state.category, 'all');
+  assert.equal(state.sort, 'users', 'the order stays, unlike the Clear all chip');
+  assert.equal(storage[Browse.SORT_STORAGE_KEY], 'users');
+  assert.equal(state.view, 'browse');
+  assert.equal(Browse._query, 'chess');
+  assert.deepEqual(slugs(state), ['chess']);
+  assert.equal(state.canClearFilters, false);
+});
+
+test('#6197: canClearFilters is only for a list a filter emptied', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [typed('chess', 'games')];
+  Browse._loaded = true;
+  Browse.render();
+  assert.equal(state.canClearFilters, false, 'rows, no filter');
+  Browse.applyFilters({ only: [], category: 'games', sort: 'recommended' });
+  assert.equal(state.canClearFilters, false, 'a filter with rows under it offers nothing');
+  Browse.applyFilters({ only: ['featured'], category: 'all', sort: 'recommended' });
+  assert.equal(state.canClearFilters, true, 'a switch emptied it');
+  Browse.setView('joined');
+  Browse.applyFilters({ only: [], category: 'games', sort: 'recommended' });
+  assert.equal(state.canClearFilters, true, 'a type left nothing in the Joined view');
+  Browse.clearNarrowing();
+  Browse.setView('foryou');
+  Browse.setQuery('nothing matches this', { immediate: true });
+  assert.ok(state.empty);
+  assert.equal(state.canClearFilters, false, 'a search emptied it: its Make is the offer');
+  Browse.setQuery('', { immediate: true });
+  Browse.setView('joined');
+  assert.ok(state.empty, "You haven't joined anything yet");
+  assert.equal(state.canClearFilters, false, 'the Joined view is not a filter state');
+});
+
+test('#6197: the empty line draws Clear filters as the quiet pill beside Make, and pressing it clears', () => {
+  assert.equal(message('discover:empty.clearFilters'), 'Clear filters');
+  const off = renderBrowseScreen({ empty: 'No apps match these filters.' });
+  assert.doesNotMatch(off, /browse-empty-clear-filters/);
+  const on = renderBrowseScreen({ empty: 'No apps match these filters.', canClearFilters: true });
+  const btn = on.match(/<button[^>]*id="browse-empty-clear-filters"[^>]*>([^<]*)<\/button>/);
+  assert.ok(btn);
+  assert.equal(btn[1], 'Clear filters');
+  assert.match(btn[0], /rounded-full bg-zinc-100/, 'the neutral pill');
+  assert.match(btn[0], /min-h-\[44px\] md:min-h-0/, 'the tap height Make has');
+  const both = renderBrowseScreen({ empty: 'No match', canClearFilters: true, make: 'plant swap' });
+  assert.match(both, /id="browse-empty-make"[\s\S]*id="browse-empty-clear-filters"/, 'Make first, the louder action');
+
+  const mod = loadTsx('frontend/src/features/apps/browse-screen.tsx', {
+    stubs: { './mount': { browseStore: { get: () => ({}), subscribe: () => () => {} } } },
+  });
+  const calls = [];
+  const prevWindow = globalThis.window;
+  globalThis.window = { Browse: { clearNarrowing: () => calls.push('cleared') } };
+  try {
+    const button = mod.ClearFiltersButton({ label: 'Clear filters', onCleared: () => calls.push('focus') });
+    button.props.onClick();
+    assert.deepEqual(calls, ['cleared', 'focus']);
+  } finally {
+    globalThis.window = prevWindow;
+  }
+});
+
+test('#6197: the search menu lists recents or suggestions, and the field is closed in the prerender', () => {
+  const { createElement, renderToHtml } = require('./lib/render-tsx');
+  const { BrowseSearchMenu } = loadTsx('frontend/src/features/apps/browse-search-menu.tsx');
+  const position = { top: 60, left: 12, width: 300 };
+  const recents = renderToHtml(createElement(BrowseSearchMenu, {
+    position, activeIndex: 1, recent: [{ query: 'games', app: null }, { query: 'recipes', app: null }], suggestions: null,
+    onPickRecent() {}, onPickSuggestion() {}, onClearRecent() {},
+  }));
+  assert.match(recents, />Recent searches<\/h2>/);
+  assert.match(recents, /aria-label="Clear recent searches"[^>]*><svg/, 'an icon button, with a name');
+  assert.equal((recents.match(/role="option"/g) || []).length, 2);
+  assert.match(recents, /id="browse-search-option-1" role="option" aria-selected="true"/, 'the arrow keys show on the row');
+  assert.match(recents, /rounded-\[20px\]/, "Discover's own corners");
+
+  const suggestions = renderToHtml(createElement(BrowseSearchMenu, {
+    position, activeIndex: -1, recent: null,
+    suggestions: [{ slug: 'run-club', name: 'Run Club', app: { slug: 'run-club', name: 'Run Club', icon_emoji: '🏃' } }],
+    onPickRecent() {}, onPickSuggestion() {}, onClearRecent() {},
+  }));
+  assert.match(suggestions, />Suggestions<\/h2>/);
+  assert.match(suggestions, /role="listbox" aria-label="Search suggestions"/);
+  assert.match(suggestions, /Run Club/);
+  assert.doesNotMatch(suggestions, /Recent searches/);
+
+  const prerender = renderBrowseScreen({});
+  assert.doesNotMatch(prerender, /data-browse-search-menu|browse-search-options/, 'closed: nothing new in the shell');
+  assert.match(prerender, /id="browse-search-input"[^>]*role="combobox"[^>]*aria-expanded="false"/);
+  assert.doesNotMatch(prerender, /aria-activedescendant/);
+});
+
+test('#5967: recent searches are two columns of thumbnails, with a plain tile when nothing matches', () => {
+  const { createElement, renderToHtml } = require('./lib/render-tsx');
+  const { BrowseSearchMenu } = loadTsx('frontend/src/features/apps/browse-search-menu.tsx');
+  const picked = [];
+  const props = {
+    position: { top: 60, left: 12, width: 300 }, activeIndex: 0, suggestions: null,
+    onPickRecent: (q) => picked.push(q), onPickSuggestion() {}, onClearRecent() {}, onToggleRecent() {},
+  };
+  const html = renderToHtml(createElement(BrowseSearchMenu, {
+    ...props,
+    recent: [
+      { query: 'run', app: { slug: 'run-club', name: 'Run Club', icon_emoji: '🏃' } },
+      { query: '<b>gone</b>', app: null },
+    ],
+  }));
+  assert.match(html, /role="listbox"[^>]*class="grid grid-cols-2 /, 'two columns, still one listbox');
+  assert.equal((html.match(/role="option"/g) || []).length, 2);
+  assert.match(html, /id="browse-search-option-0" role="option" aria-selected="true" aria-label="run"/);
+  assert.match(html, /aria-label="run"[\s\S]*?app-icon-tile[\s\S]*?🏃/, 'the match lends its icon');
+  assert.match(html, /aria-label="&lt;b&gt;gone&lt;\/b&gt;"[\s\S]*?data-recent-no-match=""/, 'nothing matches: the plain tile');
+  assert.equal((html.match(/app-icon-tile/g) || []).length, 1);
+  assert.doesNotMatch(html, /<b>gone/);
+  assert.doesNotMatch(html, /browse-search-recent-more/, 'no toggle when they all fit');
+
+  assert.equal(message('discover:search.recent.more'), 'More');
+  assert.equal(message('discover:search.recent.less'), 'Less');
+  const tiles = [{ query: 'a', app: null }];
+  const more = renderToHtml(createElement(BrowseSearchMenu, { ...props, recent: tiles, recentToggle: 'more' }));
+  assert.match(more, /id="browse-search-recent-more"[^>]*aria-expanded="false" aria-controls="browse-search-options"[^>]*>More</);
+  const less = renderToHtml(createElement(BrowseSearchMenu, { ...props, recent: tiles, recentToggle: 'less' }));
+  assert.match(less, /id="browse-search-recent-more"[^>]*aria-expanded="true"[^>]*>Less</);
+});
+
+test('#5967: a tile shows the first suggestion for its words, or nothing when no listed app matches', () => {
+  const { Browse } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'run-club', name: 'Run Club' }),
+    app({ slug: 'run-flagged', name: 'Secret', directory: { flagged: true } }),
+  ];
+  const tiles = Array.from(Browse.recentSearchTiles(['run', 'secret', 'zzz']));
+  assert.deepEqual(Array.from(tiles, (t) => t.query), ['run', 'secret', 'zzz'], 'in the order given');
+  assert.equal(tiles[0].app.slug, Browse.suggestionsFor('run')[0].slug);
+  assert.equal(tiles[1].app, null, 'an app Discover never lists lends no icon');
+  assert.equal(tiles[2].app, null);
+  assert.deepEqual(Array.from(Browse.recentSearchTiles([])), []);
+});
+
+test('#5967: two rows until More, and the arrows go past the fold', () => {
+  const { RECENT_FOLDED_TILES } = loadTsx('frontend/src/features/apps/browse-search-menu.tsx');
+  assert.equal(RECENT_FOLDED_TILES, 4);
+  const screen = read('frontend/src/features/apps/browse-screen.tsx');
+  assert.match(screen, /recentExpanded \? recent : recent\.slice\(0, RECENT_FOLDED_TILES\)/);
+  assert.match(screen, /optionCount = query \? suggestions\.length : recentShown\.length/, 'the arrows walk what shows');
+  assert.match(screen, /activeOption === optionCount - 1\) \{\s*setRecentExpanded\(true\);\s*setActiveOption\(optionCount\);/,
+    'a keyboard, whose focus stays in the field, unfolds by going on');
+  assert.match(screen, /recentExpanded && activeOption >= RECENT_FOLDED_TILES\) setActiveOption\(-1\)/, 'Less drops a tile the arrows were on');
+  assert.match(screen, /recentToggle=\{recentCanFold \? \(recentExpanded \? 'less' : 'more'\) : null\}/);
+});
+
+test('#6197: the menu is drawn outside the bar, whose clip-path would cut it off from 768px', () => {
+  const screen = read('frontend/src/features/apps/browse-screen.tsx');
+  assert.match(APP_CSS, /#browse-search-bar \{\s*background: transparent;\s*clip-path: inset\(0\);/,
+    'the clip this placement exists for; if it goes, the card can move back inside the bar');
+  const bar = screen.indexOf('id="browse-search-bar"');
+  const menu = screen.indexOf('<BrowseSearchMenu');
+  const list = screen.indexOf('id="browse-list-level"');
+  assert.ok(bar > 0 && menu > bar && list > menu, 'between the bar and the list');
+  const between = screen.slice(screen.indexOf('</Tabs>'), menu);
+  assert.match(between, /<\/div>\s*<\/div>\s*\{menuShowing && menuAt/, 'after the bar has closed');
+});
+
+test('#6197: the field\'s keys: the menu goes first, then Escape clears as it always did', () => {
+  const screen = read('frontend/src/features/apps/browse-screen.tsx');
+  assert.match(screen, /e\.key === 'Escape' && menuShowing\) \{[\s\S]*?closeMenu\(\);[\s\S]*?e\.key === 'Escape' && e\.currentTarget\.value\) \{[\s\S]*?clear\(false\);/);
+  assert.match(screen, /menuShowing && e\.key === 'Enter' && activeOption >= 0\) \{[\s\S]*?pickOption\(activeOption\);/);
+  assert.match(screen, /rememberSearch\?\.\(e\.currentTarget\.value\)/, 'Enter on plain words remembers them');
+  const menu = read('frontend/src/features/apps/browse-search-menu.tsx');
+  assert.match(menu, /onMouseDown=\{keepFieldFocus\}/, 'a press in the card does not blur the field');
+  assert.equal(message('discover:search.recent.heading'), 'Recent searches');
+  assert.equal(message('discover:search.suggest.heading'), 'Suggestions');
+});
+
+test('#6197: recent searches go on every session sweep, whoever comes next', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const drop = app.slice(app.indexOf('  _dropCachedSession('));
+  const at = drop.indexOf("localStorage.removeItem('usernode:browse-recent-searches')");
+  assert.ok(at > 0, 'the sweep removes them');
+  assert.doesNotMatch(drop.slice(Math.max(0, at - 60), at), /keepUnsent/, 'not only when the token merely changed');
+  const browse = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8');
+  assert.match(browse, /RECENT_SEARCH_KEY: 'usernode:browse-recent-searches'/, 'the sweep names the key the store writes');
 });

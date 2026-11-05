@@ -59,7 +59,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     listPullRequestCommitShas: async () => ({ shas: [], complete: true }),
     compareCommitAncestry: async (owner, repo, base, head) => {
       calls.push(['compare', base, head]);
-      return { status: head === SHA('c') ? 'ahead' : 'diverged' };
+      return { status: [SHA('c'), SHA('9'), SHA('8')].includes(head) ? 'ahead' : 'diverged' };
     },
   });
   const realStaging = require('../src/services/staging');
@@ -105,8 +105,13 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     noteProposalMerged: async (p, s) => { calls.push(['dm', s.id]); return null; },
   });
 
+  // The fixture's apps are inserted `running` but have no runtime, so the
+  // app-health sweep would find them down and redeploy them with the stub's
+  // default build, moving main_sha under the merge this checks (the same
+  // reason the apps are inserted `running` rather than `creating`).
   const config = {
     databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2,
+    appHealIntervalMs: 0,
   };
   const platform = require('../src/workflow/platform.ts');
   t.after(async () => {
@@ -342,6 +347,11 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await until(async () => (await state(s)) === 'delivering', 'waiting for a build that contains it');
     const booted = async () => (await pool.query('SELECT booted_shas FROM apps WHERE id = $1', [own.id])).rows[0].booted_shas;
     const was = process.env.GIT_SHA;
+    // Off Kubernetes (one server, local work): a serving process's boot IS
+    // the whole rollout, so it still makes the change Live (#6233). The
+    // runner may itself be a Pod, so this is said rather than assumed.
+    const wasKube = process.env.KUBERNETES_SERVICE_HOST;
+    delete process.env.KUBERNETES_SERVICE_HOST;
     process.env.GIT_SHA = SHA('c');   // a build that contains the merge
     try {
       // The release's conductor boots first: it runs the workflow and serves
@@ -358,6 +368,54 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       assert.deepEqual((await booted()).map((b) => b.sha), [SHA('c')]);
     } finally {
       if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
+      if (wasKube === undefined) delete process.env.KUBERNETES_SERVICE_HOST; else process.env.KUBERNETES_SERVICE_HOST = wasKube;
+    }
+  });
+
+  await t.test('on Kubernetes a booting build does not make a merge live; the finished rollout does (#6233)', async () => {
+    const { rows: [own] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url)
+       VALUES ('Homeroom', 'homeroom-rollout', $1, TRUE, 'https://github.com/acme/homeroom') RETURNING *`, [author.id]);
+    const wasKube = process.env.KUBERNETES_SERVICE_HOST;
+    const wasSha = process.env.GIT_SHA;
+    process.env.KUBERNETES_SERVICE_HOST = '1';
+    process.env.GIT_SHA = SHA('9');   // a build that contains the merge
+    try {
+      // One server of the rollout boots and serves it, before the merge is
+      // even recorded: it is one of the builds the merge's recovery checks.
+      await platform.releaseServing(pool);
+      const { rows: [s] } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, 'merging', $3, 'Change') RETURNING *`,
+        [own.id, author.id, ++seq]);
+      await confirmed({ sessionId: s.id, appId: own.id, mergeSha: SHA('a') });
+      await until(async () => (await state(s)) === 'delivering', 'waiting for a build that contains it');
+      await quiet();
+      assert.equal(await state(s), 'delivering', 'one Pod booting is not the whole rollout');
+      const r = (await pool.query('SELECT live_at FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
+      assert.equal(r.live_at, null);
+      // The platform-rollout job reads the Deployment complete at that build:
+      // every serving process carries it, so now it is Live.
+      await platform.productionDeployed(own.id, SHA('9'));
+      await until(async () => (await state(s)) === 'live', 'live once the rollout finished');
+      assert.ok((await pool.query('SELECT live_at FROM chat_sessions WHERE id = $1', [s.id])).rows[0].live_at);
+      // A later complete rollout goes back to a build before this merge:
+      // the change is no longer carried, so it is not Live any more (#6233).
+      // The machine clears live_at itself (the workflow guard's own writer).
+      await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, merge_commit_sha, merged_at)
+         VALUES ($1, $2, 'merged', $3, 'Earlier change', $4, '2026-01-01T00:00:00Z')`,
+        [own.id, author.id, ++seq, SHA('5')]);
+      await platform.productionRolledBack(own.id, SHA('5'));
+      await until(async () => (await state(s)) === 'delivering', 'a rolled-back change goes back to going live');
+      assert.equal((await pool.query('SELECT live_at FROM chat_sessions WHERE id = $1', [s.id])).rows[0].live_at, null);
+      // A release that carries it again makes it Live again, and does not
+      // announce it a second time.
+      await platform.productionDeployed(own.id, SHA('8'));
+      await until(async () => (await state(s)) === 'live', 'live again with a release that carries it');
+      assert.ok((await pool.query('SELECT live_at FROM chat_sessions WHERE id = $1', [s.id])).rows[0].live_at);
+    } finally {
+      if (wasKube === undefined) delete process.env.KUBERNETES_SERVICE_HOST; else process.env.KUBERNETES_SERVICE_HOST = wasKube;
+      if (wasSha === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = wasSha;
     }
   });
 
@@ -366,6 +424,12 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url, main_sha)
        VALUES ('Homeroom', 'homeroom-self', $1, TRUE, 'https://github.com/acme/homeroom', $2) RETURNING id`,
       [author.id, SHA('7')]);
+    // The Kubernetes subtest's loops runtime is still up. Settle and stop it
+    // first, as the restart subtests above do, so the first boot starts its
+    // own runtime under its own GIT_SHA instead of reusing this one (and so
+    // that stopWorkflow does not cut off work still in flight).
+    await quiet();
+    await platform.stopWorkflow();
     const was = process.env.GIT_SHA;
     const boot = async (sha) => {
       process.env.GIT_SHA = sha;

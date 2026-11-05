@@ -672,6 +672,59 @@ const Notifications = {
     }
   },
 
+  // #5929 (item 13): mark every unread notification older than `days` whole
+  // days read — the Unread tab's "Mark everything older than a week as
+  // read", which lets a 99+ backlog go while this week's news stays unread.
+  //
+  // The route's `{ all: true, older_than_days }` window (markRead) is the
+  // whole of what the server does: the clear reaches every unread row of
+  // that age the server has, including ones the sheet has not paged in,
+  // and its `unread` figure is the account-wide truth the badge adopts.
+  // Cross-tab refresh is the route's own `notifications_changed` push.
+  //
+  // markAllRead's rule: nothing clears until the server answers, so a failed
+  // request leaves every unread mark where it was and says so with the same
+  // toast. Locally only the rows the window covers flip, by the same cutoff
+  // the server applies (created more than `days` days before now).
+  async markOlderRead(days = 7) {
+    const span = Number.isInteger(days) && days >= 1 && days <= 365 ? days : 7;
+    const cutoff = Date.now() - span * 24 * 60 * 60 * 1000;
+    const inWindow = (n) => !!n && !n.readAt && (Date.parse(n.createdAt) || 0) < cutoff;
+    // Nothing in hand that old (another tab or a refresh got there first):
+    // no request, and the caller's button has nothing to wait on.
+    if (!Notifications.items.some(inWindow)) return false;
+    const failed = () => window.PlatformUI?.toast?.(t('notifications:toast.markAllFailed'));
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true, older_than_days: span }),
+      });
+      if (!res.ok) { failed(); return false; }
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
+      // Flip only what is still unread and old enough: a refresh that landed
+      // while the request was running replaced `items` with the server's
+      // own rows, which already say what is true.
+      const now = new Date().toISOString();
+      for (const n of Notifications.items) {
+        if (inWindow(n)) n.readAt = now;
+      }
+      Notifications._reconcileCompletionTitle();
+      Notifications._renderBadge();
+      Notifications._renderList();
+      // #449's reason: an open group chat may be drawing dots for the
+      // notifications that were just cleared.
+      window.GroupChat?.reconcileDotsFromNotifications?.();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] markOlderRead failed', err);
+      failed();
+      return false;
+    }
+  },
+
   // #5580: what happened on the request or proposal notification `id` is
   // about (GET /api/notifications/:id/history: { steps }, newest first), for
   // the history a card in the sheet opens to. Null when there is none or the
@@ -2150,9 +2203,18 @@ function conversationNotificationHref(n) {
   // detail names (services/homeroom-bot-notify-copy.js); else the message
   // itself, whose permalink lands inside its thread. 1 Nov 2026: on the bot's
   // tab, the chat's only place (features/ai/door.ts botTabAddress).
-  if (BUILD_KIND_MOMENTS[n.kind] || isBotMomentDetail(n.detail)) {
+  // 4 Nov 2026 (#6290): a request's news lives in the request's OWN thread
+  // since #6207, so a moment (or a bot reply) that names a request opens it
+  // there (#homeroom-bot/request/<slug>/<n>, features/ai/door.ts
+  // botItemAddress) rather than landing in Main Chat with nothing about it.
+  if (BUILD_KIND_MOMENTS[n.kind] || isBotMomentDetail(n.detail)
+      || (isBotUsername(n.sourceUsername) && storyIssueOf(n) && n.appSlug)) {
     const root = valid(rootId) ? rootId : (parseBotDetail(n.detail) || {}).threadRootId;
     if (valid(root)) return `#homeroom-bot/thread/${root}`;
+    const detail = parseBotDetail(n.detail) || {};
+    const slug = BOT_SLUG_RE.test(String(n.appSlug || '')) ? String(n.appSlug) : (detail.appSlug || '');
+    const issue = storyIssueOf(n) || detail.issueNumber;
+    if (slug && valid(Number(issue))) return `#homeroom-bot/request/${slug}/${Number(issue)}`;
     if (valid(messageId)) return `#homeroom-bot/main/m/${messageId}`;
     return '#homeroom-bot/main';
   }
@@ -2569,6 +2631,9 @@ function screenViews(items) {
 // tests/homeroom-bot-notify.test.js holds the two together).
 const BOT_DETAIL_PREFIX = 'hrbot2:';
 const BOT_LEGACY_RE = /^hrbot:([a-z_]{1,20}):(.*)$/;
+// A project slug, as features/ai/door.ts reads one (SLUG there): a request's
+// address is `#homeroom-bot/request/<slug>/<n>`, so both parts must be its shape.
+const BOT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,254}$/;
 const BOT_MOMENT_ALIASES = { question: 'needs_you', held: 'on_hold' };
 const BOT_LABEL_IDS = {
   needs_you: 'notifications:row.bot.label.needsYou',
@@ -2634,6 +2699,7 @@ function parseBotDetail(detail) {
       deciders: oneLine(raw.d, 120),
       count: positiveId(raw.c),
       issueNumber: positiveId(raw.i),
+      appSlug: BOT_SLUG_RE.test(String(raw.p || '')) ? String(raw.p) : '',
       threadRootId: positiveId(raw.r),
     };
   }
@@ -2650,9 +2716,21 @@ function parseBotDetail(detail) {
     deciders: '',
     count: null,
     issueNumber: null,
+    appSlug: '',
     threadRootId: null,
   };
 }
+// #5929 item 5: why a request is on hold, by which of the moment's words the
+// server chose (homeroom-bot-notify-copy.js, SAID_BY_MOMENT.on_hold, and its
+// thread copy for each). Only `allowance` is about this week's building time,
+// so the reason follows `said`; a row from before `said` was written says none.
+const BOT_ON_HOLD_NOTE_IDS = {
+  allowance: 'notifications:row.bot.onHoldNote.allowance',
+  paused: 'notifications:row.bot.onHoldNote.paused',
+  slots: 'notifications:row.bot.onHoldNote.slots',
+  builds: 'notifications:row.bot.onHoldNote.builds',
+  taken: 'notifications:row.bot.onHoldNote.taken',
+};
 function isBotMomentDetail(detail) {
   const d = parseBotDetail(detail);
   return !!d && d.moment !== 'reply';
@@ -2730,7 +2808,9 @@ function botMomentLine(detail, message) {
   // #5929: a needs-you asks the reader for something, except the one that
   // says it waits on somebody else.
   const needsYou = d.moment === 'needs_you' && d.said !== 'decide_others';
-  return { label, subject, meta, needsYou };
+  const noteId = d.moment === 'on_hold' && Object.prototype.hasOwnProperty.call(BOT_ON_HOLD_NOTE_IDS, d.said)
+    ? BOT_ON_HOLD_NOTE_IDS[d.said] : null;
+  return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
 }
 
 // A whole message with one emphasised part, as a row's segments: the catalog
@@ -2806,7 +2886,27 @@ function storyRefOf(n) {
   return { number, title: n.storyTitle || (bot && bot.requestTitle) || null };
 }
 
+// #5929 item 4: where an unread row stands, which the sheet draws as a chip
+// first on the row (RowLabel): 'needs' it waits on the reader, 'blocked' its
+// votes are met and its merge stands still, 'hold' the bot has put it on
+// hold. A read row has none: a vote cast or a merge decided reads the row
+// (DECIDED_ASK_KINDS, change-notifications.ts), so on a read row the colour
+// could be saying what is no longer so.
+function rowTone(n, view) {
+  if (n.readAt) return null;
+  if (view.needsYou) return 'needs';
+  if (n.kind === 'stale_pr' && n.detail === 'blocked') return 'blocked';
+  const bot = view.botMoment ? parseBotDetail(n.detail) : null;
+  return bot && bot.moment === 'on_hold' ? 'hold' : null;
+}
+
 function rowView(n) {
+  const view = rowWords(n);
+  const tone = rowTone(n, view);
+  return tone ? { ...view, tone } : view;
+}
+
+function rowWords(n) {
   // #103: keep the violet left line on every row, read or unread, so a
   // notification never "loses its line" when read. Only the background
   // tint stays unread-conditional (the unread dot below is the other cue).
@@ -2957,6 +3057,7 @@ function rowView(n) {
         appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
         needsYou: !!bot.needsYou,
+        ...(bot.note ? { note: bot.note } : {}),
         // Run six: the row wears the bot's own face (the sheet's AvatarChip),
         // never a letter tile of its handle — unless it is about a project,
         // which then wears that project's tile (#5877).
@@ -3208,6 +3309,10 @@ function rowView(n) {
     return {
       ...base,
       icon: '⏳',
+      // #5929 item 5: the server knows the votes are met and the merge has
+      // stood still (machine.ts staleWarned), not why, so this names no cause
+      // as the cause. It can also be shots not ready or a variable with no value.
+      ...(n.detail === 'blocked' ? { note: t('notifications:row.stale.blockedNote') } : {}),
       ...headline(t(n.detail === 'blocked' ? 'notifications:row.stale.blocked' : 'notifications:row.stale.label'),
         prLabel || n.sessionTitle || t('notifications:row.stale.yourChange')),
     };
@@ -3463,7 +3568,9 @@ function rowView(n) {
       icon: '\u{1F5F3}\uFE0F',
       ...headline(
         t('notifications:row.voteDigest.label'),
-        t('notifications:row.voteDigest.count', { count }),
+        n.appName
+          ? t('notifications:row.voteDigest.countIn', { count, project: n.appName })
+          : t('notifications:row.voteDigest.count', { count }),
       ),
     };
   }

@@ -46,7 +46,7 @@ const pool = {
 };
 require('../src/db/pool').getPool = () => pool;
 
-const { mcpBrowserRoutes, demoConnectionTest, readConnectorTestGrants } = require('../src/routes/mcp-remote');
+const { mcpBrowserRoutes, demoConnectionTest, readConnectorTestGrants, readConnectorGrants } = require('../src/routes/mcp-remote');
 const express = require('express');
 
 const CONFIG = { cliAuthEnabled: true, cliAuthOrigin: 'https://social-vibecoding.usernodelabs.org' };
@@ -318,5 +318,97 @@ test('the aggregate counts consents, keeps the newest use, and skips delegated g
       'the newest use (an hour ago), not the older two-day one');
   } finally {
     await client.end();
+  }
+});
+
+// ── The list Settings draws its cards from (#6134) ─────────────────────
+//
+// The query that decides who stays listed, so it gets the real database and the
+// real column type: TEXT[] scopes, which a stubbed pool could not show reading
+// back as NULL through ARRAY_AGG(...)[1].
+
+async function withListSchema(t) {
+  const client = await withSchema(t);
+  if (!client) return null;
+  await client.query(`
+    ALTER TABLE mcp_tokens
+      ADD COLUMN scopes TEXT[] NOT NULL DEFAULT ARRAY['usernode:apps:read', 'usernode:proposals:write'],
+      ADD COLUMN token_hash TEXT NOT NULL DEFAULT 'secret-hash',
+      ADD COLUMN token_hint TEXT NOT NULL DEFAULT 'secret-hint';
+  `);
+  return client;
+}
+
+test('the list keeps live and recently lapsed grants, and hides the rest', async (t) => {
+  const client = await withListSchema(t);
+  if (!client) return;
+  try {
+    await client.query(`
+      INSERT INTO mcp_tokens (grant_id, client_id, user_id, expires_at, revoked_at, last_used_at, scopes, created_at) VALUES
+        -- Live, after a rotation: the old pair revoked, the new one not.
+        ('g-live', 'c-claude', 7, clock_timestamp() + INTERVAL '1 day', clock_timestamp() - INTERVAL '2 days', clock_timestamp() - INTERVAL '3 days', ARRAY['usernode:apps:read'], clock_timestamp() - INTERVAL '4 days'),
+        ('g-live', 'c-claude', 7, clock_timestamp() + INTERVAL '1 day', NULL, clock_timestamp() - INTERVAL '1 hour', ARRAY['usernode:apps:read'], clock_timestamp() - INTERVAL '2 days'),
+        -- The newest pair simply lapsed 14 days ago: that is Needs attention.
+        ('g-lapsed', 'c-chatgpt', 7, clock_timestamp() - INTERVAL '45 days', clock_timestamp() - INTERVAL '44 days', NULL, DEFAULT, clock_timestamp() - INTERVAL '60 days'),
+        ('g-lapsed', 'c-chatgpt', 7, clock_timestamp() - INTERVAL '14 days', NULL, clock_timestamp() - INTERVAL '44 days', DEFAULT, clock_timestamp() - INTERVAL '44 days'),
+        -- Lapsed past the 90-day window: dropped off.
+        ('g-old', 'c-chatgpt', 7, clock_timestamp() - INTERVAL '91 days', NULL, NULL, DEFAULT, clock_timestamp() - INTERVAL '121 days'),
+        -- Disconnected, inside the window: every token revoked by revokeGrant.
+        ('g-disconnected', 'c-claude', 7, clock_timestamp() + INTERVAL '10 days', clock_timestamp() - INTERVAL '1 day', NULL, DEFAULT, clock_timestamp() - INTERVAL '20 days'),
+        -- Killed for refresh reuse after its tokens had lapsed: revoked, and expired.
+        ('g-reused', 'c-claude', 7, clock_timestamp() - INTERVAL '5 days', clock_timestamp() - INTERVAL '1 day', NULL, DEFAULT, clock_timestamp() - INTERVAL '35 days'),
+        -- The platform's own agent, lapsed: still not a connection of theirs.
+        ('g-delegated', 'c-claude', 7, clock_timestamp() - INTERVAL '1 day', NULL, NULL, DEFAULT, clock_timestamp() - INTERVAL '2 days'),
+        -- Another account's lapsed grant.
+        ('g-other', 'c-claude', 8, clock_timestamp() - INTERVAL '1 day', NULL, NULL, DEFAULT, clock_timestamp() - INTERVAL '31 days');
+      INSERT INTO mcp_delegations (grant_id) VALUES ('g-delegated');
+    `);
+
+    const rows = await readConnectorGrants(client, 7);
+    assert.deepEqual(rows.map((row) => row.id), ['g-live', 'g-lapsed'], 'newest consent first; the rest hidden');
+
+    const [live, lapsed] = rows;
+    assert.equal(live.status, 'connected');
+    assert.equal(live.client_name, 'Claude.ai');
+    assert.deepEqual(live.scopes, ['usernode:apps:read'], 'the TEXT[] column comes back as its scopes');
+    assert.equal('expired_at' in live, false);
+
+    assert.equal(lapsed.status, 'expired');
+    assert.deepEqual(lapsed.scopes, ['usernode:apps:read', 'usernode:proposals:write']);
+    const daysAgo = (Date.now() - Date.parse(lapsed.expired_at)) / 86400000;
+    assert.ok(daysAgo > 13.9 && daysAgo < 14.1, 'ran out when the unrevoked pair did, not the older one');
+
+    // Nothing about a token crosses this seam: the row is exactly these fields.
+    assert.deepEqual(Object.keys(lapsed).sort(), [
+      'client_name', 'connected_at', 'expired_at', 'id', 'last_used_at', 'scopes', 'status',
+    ]);
+    assert.doesNotMatch(JSON.stringify(rows), /secret-hash|secret-hint/);
+  } finally {
+    await client.end();
+  }
+});
+
+test('the list query names no token material and still excludes delegated grants', () => {
+  const source = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../src/routes/mcp-remote.js'), 'utf8'
+  );
+  const fn = source.slice(source.indexOf('async function readConnectorGrants'));
+  const query = fn.slice(0, fn.indexOf('LIMIT 50'));
+  assert.doesNotMatch(query, /token_hash|token_hint/);
+  assert.match(query, /NOT EXISTS \(SELECT 1 FROM mcp_delegations d WHERE d\.grant_id = t\.grant_id\)/);
+  assert.match(query, /interval '90 days'/);
+  assert.match(query, /array_to_string\(t\.scopes, ' '\)/);
+});
+
+test('every fixture says what it can do, and the attention one carries its date', () => {
+  const { demoConnectorState } = require('../src/routes/mcp-remote');
+  const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
+  const state = demoConnectorState('connectors-attention');
+  assert.deepEqual(state.connectors.map((row) => row.status), ['connected', 'expired']);
+  assert.ok(Number.isFinite(Date.parse(state.connectors[1].expired_at)));
+  for (const flag of ['1', 'connectors-claude', 'connectors-chatgpt', 'connectors-unknown', 'connectors-attention']) {
+    for (const row of demoConnectorState(flag).connectors) {
+      assert.deepEqual(row.scopes, [READ_SCOPE, WRITE_SCOPE], `${flag}: ${row.id}`);
+    }
   }
 });

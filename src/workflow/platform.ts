@@ -124,18 +124,29 @@ export async function syncSettings(pool: Pool): Promise<void> {
 // statement: the row lock serialises two processes booting at once. Every
 // serving process records it (releaseServing): a merge recovery records late
 // reads it.
+//
+// #6233: each entry also says whether that boot was the WHOLE rollout
+// (`rollout_complete`). Off Kubernetes one server serves, so it is. On
+// Kubernetes a release replaces its servers one at a time and this boot is
+// one of them: production carries the change everywhere only when the
+// Deployment reports the rollout complete (the platform-rollout clock job),
+// so the build alone is not Live there. Reading it off the entry rather than
+// this process's own environment keeps the merge machine's decision in the
+// record it reads, which a test can write.
 async function recordBooted(pool: Pool): Promise<void> {
   const sha = String(process.env.GIT_SHA || '').toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(sha)) return;
+  const whole = !process.env.KUBERNETES_SERVICE_HOST;
   await pool.query(
     `UPDATE apps a SET booted_shas = (
        SELECT COALESCE(jsonb_agg(y.e ORDER BY y.at DESC), '[]'::jsonb) FROM (
          SELECT x.e, x.at FROM (
            SELECT DISTINCT ON (e->>'sha') e, (e->>'at')::timestamptz AS at
-             FROM jsonb_array_elements(jsonb_build_array(jsonb_build_object('sha', $1::text, 'at', now())) || a.booted_shas) e
+             FROM jsonb_array_elements(jsonb_build_array(
+                    jsonb_build_object('sha', $1::text, 'at', now(), 'rollout_complete', $2::boolean)) || a.booted_shas) e
             ORDER BY e->>'sha', (e->>'at')::timestamptz DESC) x
           ORDER BY x.at DESC LIMIT 10) y)
-      WHERE a.self_hosted = TRUE`, [sha]);
+      WHERE a.self_hosted = TRUE`, [sha, whole]);
 }
 
 // What browsers should hear, published on the WebSocket bus's channel in
@@ -317,7 +328,13 @@ export async function releaseServing(pool: Pool): Promise<void> {
   const warn = (what: string) => (err: Error) =>
     (log ?? legacy('services/logger')).warn('workflow', what, { message: err.message });
   await recordBooted(pool).catch(warn('Could not record the booted build'));
-  if (runtime) await releaseBooted(pool).catch(warn('Could not report the running release'));
+  // #6233: on Kubernetes a release replaces its servers one at a time, so
+  // one process booting says nothing about production carrying the change
+  // everywhere. The platform-rollout job marks merges Live once the web
+  // Deployment reports the rollout finished. Off Kubernetes (one server,
+  // local work) this boot is the whole rollout.
+  const onKubernetes = !!process.env.KUBERNETES_SERVICE_HOST;
+  if (runtime && !onKubernetes) await releaseBooted(pool).catch(warn('Could not report the running release'));
 }
 
 // The build this process runs (release/boot.ts): GIT_SHA, or, on a build
@@ -1042,13 +1059,14 @@ function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; er
 
 // A tap under one of the voice's offers (routes/chat.js): decided once in
 // the place its message is in; the act is that place's work.
-export async function tapVoiceOffer(p: { appId: number; offerId: number; messageId: number; userId: number; choice: string }) {
+export async function tapVoiceOffer(p: { appId: number; offerId: number; messageId: number; userId: number; choice: string; rows?: string[] | null }) {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const { rows: [m] } = await kernelPool!.query('SELECT thread_type, thread_ref FROM chat_messages WHERE id = $1 AND app_id = $2', [p.messageId, p.appId]);
   const place = m ? placeOf(m.thread_type ? { type: m.thread_type, ref: m.thread_ref } : null) : null;
   if (!place) return { ok: false, status: 404, error: 'Nothing to decide here.' };
   const out = await runtime.appendAndWait(BOT_VOICE, voiceKey(p.appId, place),
-    { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice } },
+    { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice,
+      ...(Array.isArray(p.rows) ? { rows: p.rows } : {}) } },
     { requestKey: `tap-offer:${p.offerId}:${p.userId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-offer' }, actor: `user:${p.userId}`, appId: p.appId });
   return tapAnswer(out, VOICE_TAP);
 }
@@ -1558,19 +1576,72 @@ export async function parentMerged(p: { sessionId: number; appId: number; parent
       requestKey: `parent-merged:${p.sessionId}:${p.parentId}:${Math.floor(Date.now() / 3600000)}` });
 }
 
-// The platform's own app now runs `sha` (its release booting): every merge
-// of it still waiting to go live hears it, and checks whether that build
-// contains it. (A child app's deploys are app-delivery's, which tells the
-// merges waiting on it.)
-async function productionDeployed(appId: number, sha: string): Promise<void> {
+// The platform's own app now runs `sha` (its whole rollout finished): every
+// merge of it still waiting to go live hears it, and checks whether that
+// build contains it. (A child app's deploys are app-delivery's, which tells
+// the merges waiting on it. Off Kubernetes a single serving process is the
+// whole rollout, so its boot reports this too.)
+export async function productionDeployed(appId: number, sha: string, nonce: string | null = null): Promise<void> {
   if (!runtime || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
+  // `nonce` names this rollout (the Deployment's own transition time): a
+  // second rollout of the same build is a new report, while the job's next
+  // look at the same one is not. Absent (a boot off Kubernetes) it is the
+  // build alone.
+  const key = `deployed:${sha.toLowerCase()}${nonce ? `:${nonce}` : ''}`;
   const { rows } = await kernelPool!.query(
-    `SELECT key FROM wf_instances
-      WHERE machine = $1 AND app_id = $2 AND state IN ('delivering', 'deploy_failed') AND data->>'role' = 'merge'`,
-    [MERGE, appId]);
+    `SELECT w.key FROM wf_instances w
+      WHERE w.machine = $1 AND w.app_id = $2 AND w.state IN ('delivering', 'deploy_failed')
+        AND w.data->>'role' = 'merge'
+        AND NOT EXISTS (SELECT 1 FROM wf_events e
+                         WHERE e.machine = w.machine AND e.key = w.key AND e.request_key = $3
+                           AND (e.status = 'pending' OR e.result <> 'rejected'))`,
+    [MERGE, appId, key]);
   for (const r of rows) {
     await runtime.append(MERGE, r.key, { type: 'Deployed', payload: { sha: sha.toLowerCase() } },
-      { requestKey: `deployed:${sha.toLowerCase()}`, source: { kind: 'system', name: 'deploy' }, appId });
+      { requestKey: key, source: { kind: 'system', name: 'deploy' }, appId });
+  }
+}
+
+// #6233: a complete rollout that no longer carries a Live merge rolled it
+// back. `sha` is the build every serving process now runs; the merges after
+// its merge order (services/release-watch.js mergeOrder) are not in it, and
+// neither are the changes they carried. Each live instance hears RolledBack,
+// and the merge machine clears its live_at: the change says Going live
+// again, rather than staying Live because an earlier release served it.
+// Never throws: the caller logs it.
+export async function productionRolledBack(appId: number, sha: string, nonce: string | null = null): Promise<void> {
+  if (!runtime || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
+  const releaseWatch = legacy('services/release-watch');
+  // A build no merge made has no boundary: nothing can be compared, so
+  // nothing is ruled out (the same reading release-watch takes).
+  const order = await releaseWatch.mergeOrder(kernelPool!, appId, sha);
+  if (!order) return;
+  const key = `rolled-back:${sha.toLowerCase()}${nonce ? `:${nonce}` : ''}`;
+  const { rows } = await kernelPool!.query(
+    `WITH rolled AS (
+       SELECT w.key
+         FROM wf_instances w
+         JOIN chat_sessions cs
+           ON cs.id = NULLIF(substring(w.key from '^session:([0-9]+)$'), '')::int
+        WHERE w.machine = $1 AND w.app_id = $2 AND w.state = 'live'
+          AND (COALESCE(cs.merged_at, cs.created_at), cs.id) > ($3::timestamptz, $4::int)
+     ), candidates AS (
+       SELECT key FROM rolled
+       UNION
+       SELECT w.key
+         FROM wf_instances w
+        WHERE w.machine = $1 AND w.state = 'live'
+          AND NULLIF(w.data->'includedIn'->>'sessionId', '')::int IN (
+            SELECT NULLIF(substring(r.key from '^session:([0-9]+)$'), '')::int FROM rolled r)
+     )
+     SELECT c.key FROM candidates c
+      WHERE NOT EXISTS (SELECT 1 FROM wf_events e
+                         WHERE e.machine = $1 AND e.key = c.key AND e.request_key = $5
+                           AND (e.status = 'pending' OR e.result <> 'rejected'))`,
+    [MERGE, appId, new Date(order.at).toISOString(), order.id, key]);
+  for (const r of rows) {
+    await runtime.append(MERGE, r.key, { type: 'RolledBack', payload: { sha: sha.toLowerCase() } },
+      { requestKey: key, source: { kind: 'system', name: 'deploy' }, appId });
   }
 }
 

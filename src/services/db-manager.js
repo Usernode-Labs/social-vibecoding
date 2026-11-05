@@ -1049,7 +1049,12 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
     // table with a foreign child, or refilled by its own code; row-level
     // security on a private column; an extension the copy cannot make): no
     // retry fixes those, and the author is the one to tell.
-    if (appCaused(err)) {
+    if (err && typeof err === 'object' && err.platformRollout) {
+      // #6149: Homeroom was updating itself when this copy was made, which is
+      // the server's own fault: never the app's, so it keeps the platform-fault
+      // retries instead of becoming an appCaused refusal.
+      err.infrastructure = true;
+    } else if (appCaused(err)) {
       err.appCaused = true;
     } else if (err && typeof err === 'object' && (server === PREVIEW_SERVER || err.previewDatabaseServer)) {
       err.infrastructure = true;
@@ -2228,6 +2233,24 @@ async function roleExists(roleName) {
   } catch {
     return false;
   }
+}
+
+// A release inventories the fleet once. An unreadable catalog is unknown,
+// never an empty list on which to base password resets or role creation.
+async function existingRoles(roleNames, { execute = execInDb } = {}) {
+  const names = [...new Set(roleNames)];
+  if (names.some(name => !SAFE_IDENT.test(name) || OVERLONG_IDENT.test(name))) {
+    throw new Error('Invalid role name in role inventory');
+  }
+  if (!names.length) return new Set();
+  const stdout = await execute(
+    `SELECT rolname FROM pg_catalog.pg_roles WHERE rolname IN (${names.map(name => `'${name}'`).join(', ')}) ORDER BY rolname`,
+    { tuplesOnly: true }
+  );
+  if (typeof stdout !== 'string') throw new Error('Invalid role inventory response');
+  const found = stdout.trim().split(/\r?\n/).filter(Boolean);
+  if (found.some(name => !names.includes(name))) throw new Error('Invalid role inventory response');
+  return new Set(found);
 }
 
 // What node-postgres is given for a server. The main server: its URL, as
@@ -4009,7 +4032,7 @@ module.exports = {
   ensureRoleExists,
   databaseExists,
   databaseSize,
-  roleExists,
+  roleExists, existingRoles,
   truncatePrivateTables,
   scrubPrivateColumns,
   redactPrivateData,

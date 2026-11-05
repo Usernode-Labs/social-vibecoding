@@ -98,6 +98,7 @@ test('it is drawn on every private thread in the bot\'s chat, by the server\'s w
   assert.match(screen.slice(doors - 80, doors), /\{privateRoot && privateMine && root \? \(\s*$/);
   assert.match(screen.slice(doors, doors + 400), /text=\{privateThreadWords\(root, replies, meId\)\}/);
   assert.match(screen.slice(doors, doors + 400), /botReplied=\{replies\.some\(\(message\) => message\.sender\.bot\)\}/);
+  assert.match(screen.slice(doors, doors + 400), /working=\{!!threadWorking\}/, 'the thread\'s working state holds the foot back');
   assert.doesNotMatch(screen, /<PrivateThreadBar\b/, 'no bar of doors over the thread any more');
 });
 
@@ -145,10 +146,12 @@ test('in Main Chat\'s column a thread is alone under its own head, and says it i
   assert.match(screen, /<div className="messages-thread-name min-w-0 truncate" data-reply-title="">\{mainTitle\}<\/div>/);
   assert.match(screen, /<span className="truncate">\{t\('messages:ai\.thread\.sub'\)\}<\/span>/);
   assert.equal(message('messages:ai.thread.sub'), 'Only you can see this thread');
-  // No ✕ and no Back to Main Chat in the column; a phone's arrow goes to the list.
+  // No ✕ in the column: its thread leads with Back to Main Chat. A phone's
+  // arrow still goes to the list.
   assert.match(screen, /\{inMain \? null : \(\s*<button type="button" className="messages-thread-action" data-reply-close=""/);
   assert.match(screen, /\{inMain && onBack \? \(\s*<button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""\s+aria-label=\{t\('messages:ai\.drawer\.back'\)\}/);
-  assert.doesNotMatch(screen, /replies\.backToMain/);
+  assert.match(screen, /\) : inMain \? \([\s\S]*?data-reply-back=""\s+aria-label=\{t\('messages:replies\.backToMain'\)\} title=\{t\('messages:replies\.backToMain'\)\} onClick=\{\(\) => closeThread\(\)\}/);
+  assert.equal(message('messages:replies.backToMain'), 'Back to Main Chat');
   assert.match(screen, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel inMain=\{mainChat\} onBack=\{onBack\} \/> : null\}/);
 });
 
@@ -164,6 +167,10 @@ test('the foot has New project alone: no File it or Post it form, and nothing it
   assert.match(renderComponent(BAR, 'PrivateThreadDoors', {
     rootId: 5, text: 'An idea', where: { state: 'open', kind: 'ask', app: null }, botReplied: true,
   }), /data-private-door="new"[^>]*>New project</);
+  // While the bot works in it, its working card is the foot's one thing: the chip waits.
+  assert.equal(renderComponent(BAR, 'PrivateThreadDoors', {
+    rootId: 5, text: 'An idea', where: { state: 'open', kind: 'ask', app: null }, botReplied: true, working: true,
+  }), '', 'nothing under the working card until the reply lands');
 });
 
 test('the bot offers File it once a request is ready: the foot has none', () => {

@@ -237,6 +237,9 @@ test('an entry a door\'s navigation made is given the tab it opens on, so Forwar
 test('the router reads the entry\'s tab BEFORE it routes and shows it after, and never pushes', () => {
   const calls = [];
   const fakeView = {
+    // #6110: an entry the side panel's address was written on is read as
+    // the page's first, before anything reads the address.
+    _leavePanelAddress: () => calls.push('leave'),
     _historyWorkshopTab: () => ({ slug: 'garden', tab: 'status' }),
     _setWorkshopTab: (t) => calls.push(`remember:${t}`),
     _showHistoryWorkshopTab: (s, t) => calls.push(`show:${s}:${t}`),
@@ -248,12 +251,12 @@ test('the router reads the entry\'s tab BEFORE it routes and shows it after, and
     restoreFromHash() { calls.push('route'); }, _applyRouteShots() { calls.push('shots'); },
     ${liftAppMethod('_routeFromHash()')} }; App`, ctx);
   App._routeFromHash();
-  assert.deepEqual(calls, ['remember:status', 'route', 'show:garden:status', 'shots']);
+  assert.deepEqual(calls, ['leave', 'remember:status', 'route', 'show:garden:status', 'shots']);
 
   calls.length = 0;
   fakeView._historyWorkshopTab = () => null;
   App._routeFromHash();
-  assert.deepEqual(calls, ['route', 'stamp', 'shots'], 'an entry naming no tab is given one, after the route');
+  assert.deepEqual(calls, ['leave', 'route', 'stamp', 'shots'], 'an entry naming no tab is given one, after the route');
 });
 
 test('the page pushes on a press, shows a traversal without pushing, and its doors push nothing', () => {
@@ -445,4 +448,218 @@ test('a topic\'s chip names where its press goes: a step Back to the place left,
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
   assert.match(rail, /place=\{here \? place\.place : \(onItem \? itemReturnPlace\(slug\) as PlaceKey : null\)\}/);
   assert.match(read('frontend/src/features/nav-drawer/nav-drawer.tsx'), /improve\.subTab === 'topic'\s*\? itemReturnPlace\(slug\)/);
+});
+
+// ── 6. The address follows the Workshop's side panel (#6110) ─────────────
+//
+// "tapped copy on a proposal to share it and what pasted was the app home
+// url, not the proposal." On a wide window a row opens its item beside the
+// list (AppView.openTopicInPanel) and the address stayed the Workshop's, so
+// the browser's own Copy or Share handed out the Workshop. While the panel
+// holds an item the address is the item's own, written in place; the page's
+// comes back when the panel closes; a reload of it opens the item's page;
+// Back or Forward onto the entry shows the page it was.
+
+const PANEL_KEY = AppView.PANEL_ADDRESS_STATE_KEY;
+
+// The real address writer, with the router's own helpers.
+function panelApp(win, slug = 'garden') {
+  const ctx = vm.createContext({ location: win.location, AppView, encodeURIComponent, decodeURIComponent, URLSearchParams });
+  return vm.runInContext(`const App = { currentApp: ${JSON.stringify(slug)}, currentTab: 'dev', currentSubTab: 'forum',
+    ${liftAppMethod('_routeSearch(innerPath)')},
+    ${liftAppMethod('_changeNumber(value)')},
+    ${liftAppMethod('_normalizeTab(tab, ref, subTab)')},
+    ${liftAppMethod('_appUrl(slug, tab, ref, subTab, options)')} }; App`, ctx);
+}
+
+function withPanel(win, fn, slug) {
+  const app = panelApp(win, slug);
+  const wasPanel = AppView._devTopicInPanel;
+  const wasAddress = AppView._panelAddress;
+  const wasProposal = AppView._topicProposal;
+  AppView._devTopicInPanel = true;
+  AppView._panelAddress = null;
+  try {
+    return withWindow(win, () => fn(app), app);
+  } finally {
+    AppView._devTopicInPanel = wasPanel;
+    AppView._panelAddress = wasAddress;
+    AppView._topicProposal = wasProposal;
+  }
+}
+
+test('#6110: the panel writes its item\'s own address in place, and the page\'s comes back when it closes', () => {
+  const win = fakeWindow('/app/garden/workshop?ws=needs');
+  win.entries[0].state = { [KEY]: { slug: 'garden', tab: 'needs', from: 'status' }, __unDismissId: 'x:1' };
+  withPanel(win, () => {
+    assert.equal(AppView._followPanelAddress('issue', 12), true);
+    assert.equal(win.entries.length, 1, 'no step for Back');
+    assert.equal(win.entries[0].url.href, `${ORIGIN}/app/garden/dev/issues/12?ws=needs`, 'the request\'s own address, as openTopic writes it');
+    assert.deepEqual(win.entries[0].state[KEY], { slug: 'garden', tab: 'needs', from: 'status' }, 'the entry still names its place');
+    assert.equal(win.entries[0].state.__unDismissId, 'x:1', 'and keeps whatever else it carried');
+    assert.deepEqual(win.entries[0].state[PANEL_KEY], { slug: 'garden', from: '/app/garden/workshop?ws=needs' });
+    assert.deepEqual(AppView._panelAddress, { slug: 'garden', from: '/app/garden/workshop?ws=needs', to: '/app/garden/dev/issues/12?ws=needs' });
+
+    // The page is still the page: a place press pushes its entry.
+    assert.equal(AppView._onProjectPage('garden'), true, 'the panel\'s address is the page\'s');
+    assert.equal(AppView._onProjectPage('other'), false);
+    assert.equal(AppView._historyWorkshopTab()?.tab, 'needs');
+
+    // Another item in the same panel: the page's address is the one kept.
+    AppView._topicProposal = { id: 51, pr_number: 77 };
+    assert.equal(AppView._followPanelAddress('proposal', 51), true);
+    assert.equal(win.entries[0].url.href, `${ORIGIN}/app/garden/dev/changes/77?ws=needs`, '#4367: a change with a pull request by its number');
+    assert.equal(AppView._panelAddress.from, '/app/garden/workshop?ws=needs');
+    assert.equal(win.entries[0].state[PANEL_KEY].from, '/app/garden/workshop?ws=needs');
+
+    // ✕: the page's address, with its ?ws=, and the stamp gone.
+    assert.equal(AppView._restorePanelAddress(), true);
+    assert.equal(win.entries.length, 1);
+    assert.equal(win.entries[0].url.href, `${ORIGIN}/app/garden/workshop?ws=needs`);
+    assert.equal(PANEL_KEY in win.entries[0].state, false);
+    assert.deepEqual(win.entries[0].state[KEY], { slug: 'garden', tab: 'needs', from: 'status' });
+    assert.equal(AppView._panelAddress, null);
+    assert.equal(AppView._restorePanelAddress(), false, 'nothing to put back twice');
+  });
+
+  // Not from anywhere but the page: an item's page, the running app.
+  for (const start of ['/app/garden/dev/issues/4', '/app/garden', '/?demo=1#messages']) {
+    const elsewhere = fakeWindow(start);
+    withPanel(elsewhere, () => {
+      assert.equal(AppView._followPanelAddress('issue', 12), false, start);
+      assert.equal(elsewhere.entries[0].url.href, new URL(start, ORIGIN).href, `${start}: untouched`);
+      assert.equal(AppView._panelAddress, null);
+    });
+  }
+});
+
+test('#6110: an address that moved on is not put back, and a place press while the panel is open still pushes', () => {
+  const win = fakeWindow('/app/garden/workshop');
+  withPanel(win, () => {
+    AppView._followPanelAddress('proposal', 51);
+    assert.equal(win.entries[0].url.pathname, '/app/garden/dev/proposals/51');
+    // A press on Needs you: its entry, on top, at the address on screen;
+    // the entry left behind keeps the panel's stamp with its place.
+    assert.equal(AppView._pushWorkshopTab('garden', 'workshop', 'needs'), true);
+    assert.equal(win.entries.length, 2);
+    assert.deepEqual(win.entries[0].state[KEY], { slug: 'garden', tab: 'workshop', from: null });
+    assert.deepEqual(win.entries[0].state[PANEL_KEY], { slug: 'garden', from: '/app/garden/workshop' });
+    // The panel goes with the tab, and the new entry gets the page's address.
+    assert.equal(AppView._restorePanelAddress(), true);
+    assert.equal(win.entries[1].url.pathname, '/app/garden/workshop');
+    assert.deepEqual(win.entries[1].state[KEY], { slug: 'garden', tab: 'needs', from: 'workshop' });
+  });
+
+  // Leaving for Messages pushed over it: the entry keeps the item's address
+  // for the traversal to read, and nothing is written onto Messages.
+  const left = fakeWindow('/app/garden/workshop');
+  withPanel(left, () => {
+    AppView._followPanelAddress('issue', 12);
+    left.history.pushState(null, '', '/#messages');
+    assert.equal(AppView._restorePanelAddress(), false);
+    assert.equal(left.entries[1].url.href, `${ORIGIN}/#messages`);
+    assert.equal(left.entries[0].url.pathname, '/app/garden/dev/issues/12');
+    assert.equal(AppView._panelAddress, null);
+  });
+});
+
+test('#6110: Back onto the entry shows the page it was; a reload is the item\'s page', () => {
+  const win = fakeWindow('/app/garden/workshop?ws=needs');
+  win.entries[0].state = { [KEY]: { slug: 'garden', tab: 'needs', from: 'status' } };
+  withPanel(win, () => {
+    AppView._followPanelAddress('issue', 12);
+    // A sheet pushed over the open panel, closed with Back: the panel is up
+    // for this very entry, so the address stays the item's.
+    win.history.pushState({ __unDismissId: 'sheet:1' }, '');
+    win.history.back();
+    assert.equal(AppView._leavePanelAddress(), false, 'the panel is still up here');
+    assert.equal(win.entries[0].url.pathname, '/app/garden/dev/issues/12');
+    assert.deepEqual(AppView._panelAddress, { slug: 'garden', from: '/app/garden/workshop?ws=needs', to: '/app/garden/dev/issues/12?ws=needs' });
+    // Leaving for Messages closes the panel (#6145) and pushes over it.
+    win.history.pushState(null, '', '/#messages');
+    AppView._restorePanelAddress();
+    win.history.back();
+    // What App._routeFromHash does first on a traversal.
+    assert.equal(AppView._leavePanelAddress(), true);
+    assert.equal(win.entries[0].url.href, `${ORIGIN}/app/garden/workshop?ws=needs`, 'the page\'s address, in place');
+    assert.equal(win.entries.length, 2, 'nothing pushed');
+    assert.equal(PANEL_KEY in win.entries[0].state, false);
+    assert.deepEqual(AppView._historyWorkshopTab(), { slug: 'garden', tab: 'needs' }, 'at the place the entry names');
+    assert.equal(AppView._leavePanelAddress(), false, 'the second of the popstate + hashchange pair finds nothing');
+  });
+  // An entry with no stamp is left alone: a pasted or followed link.
+  const plain = fakeWindow('/app/garden/dev/issues/12');
+  withPanel(plain, () => {
+    assert.equal(AppView._leavePanelAddress(), false);
+    assert.equal(plain.entries[0].url.pathname, '/app/garden/dev/issues/12');
+  });
+  // A stamp that does not fit its entry (another project's page, an address
+  // that is not an item's) is dropped, and the address kept.
+  for (const [start, from] of [['/app/garden/dev/issues/12', '/app/other/workshop'], ['/app/garden/workshop', '/app/garden/workshop'], ['/app/garden/dev/issues/12', 'https://evil.test/app/garden/workshop']]) {
+    const odd = fakeWindow(start);
+    odd.entries[0].state = { [PANEL_KEY]: { slug: from.includes('other') ? 'other' : 'garden', from } };
+    withPanel(odd, () => {
+      assert.equal(AppView._leavePanelAddress(), false, `${start} ← ${from}`);
+      assert.equal(odd.entries[0].url.href, new URL(start, ORIGIN).href);
+      assert.equal(PANEL_KEY in odd.entries[0].state, false, 'the stamp is dropped');
+    });
+  }
+  // A reload never comes through the traversal: the router opens the item's
+  // page from its address, and the page takes the stamp off its entry.
+  const reload = fakeWindow('/app/garden/dev/issues/12?ws=needs');
+  reload.entries[0].state = { [PANEL_KEY]: { slug: 'garden', from: '/app/garden/workshop?ws=needs' }, [KEY]: { slug: 'garden', tab: 'needs', from: null } };
+  withPanel(reload, () => {
+    assert.equal(AppView._dropPanelAddressStamp(), true);
+    assert.equal(reload.entries[0].url.pathname, '/app/garden/dev/issues/12');
+    assert.deepEqual(reload.entries[0].state, { [KEY]: { slug: 'garden', tab: 'needs', from: null } });
+    assert.equal(AppView._dropPanelAddressStamp(), false);
+  });
+  const route = read('public/js/app.js');
+  assert.match(route, /_routeFromHash\(\) \{\n\s*if \(typeof AppView !== 'undefined'\) AppView\._leavePanelAddress\?\.\(\);/,
+    'before the router reads the address');
+  assert.match(APP_VIEW, /else AppView\._devTopicInPanel = false;\n\s*if \(subTab === 'topic'\) AppView\._dropPanelAddressStamp\(\);/,
+    'a topic page on the panel\'s address (a reload of it) takes the stamp off');
+  assert.match(route, /\} else if \(sec === 'issues' && parts\[4\]\) \{\s*subTab = 'topic';/, 'a reload of dev/issues/<n> is the request\'s page');
+  assert.match(route, /\} else if \(sec === 'changes' && App\._changeNumber\(parts\[4\]\)\) \{\s*subTab = 'topic';/, 'and dev/changes/<N> the change\'s');
+});
+
+test('#6110: the panel\'s address is where the side panel opens and closes, and a page opened from it steps on top of the Workshop', () => {
+  const open = APP_VIEW.slice(APP_VIEW.indexOf('  async openTopicInPanel(kind, id) {'), APP_VIEW.indexOf('  closeTopicPanel(kind, id) {'));
+  assert.match(open, /AppView\._devTopicInPanel = true;\s*AppView\._followPanelAddress\(kind, id\);/, 'once the panel holds the item');
+  assert.match(APP_VIEW, /closeTopicPanel\(kind, id\) \{\s*AppView\._restorePanelAddress\(\);/, 'the page\'s address comes back whatever else the close does');
+  const full = APP_VIEW.slice(APP_VIEW.indexOf('  openTopic(kind, id, options) {'), APP_VIEW.indexOf('  _devTopicInPanel: false,'));
+  assert.match(full, /AppView\._restorePanelAddress\(\);\s*if \(typeof App !== 'undefined' && App\.switchTab\) \{/,
+    '"Open as a page" (and a link inside the panel) writes the page\'s route over the Workshop\'s address, so Back returns to the Workshop');
+  // The same address openTopic writes: App._appUrl with the topic ref.
+  assert.match(APP_VIEW, /_panelItemAddress\(kind, id\) \{[\s\S]*?return App\._appUrl\(App\.currentApp, 'dev', ref, 'topic'\);/);
+  assert.match(APP_VIEW, /const pr = kind === 'proposal' \? Number\(AppView\._findItem\('proposal', id\)\?\.pr_number\) : 0;\s*const ref = Number\.isInteger\(pr\) && pr > 0 \? \{ kind, id, pr \} : \{ kind, id \};\s*return App\._appUrl\(App\.currentApp, 'dev', ref, 'topic'\);/);
+});
+
+test('#6110: a write of the page\'s own address waits while the panel holds an item', () => {
+  // A sheet opening over the Workshop (App._restoreAddressUnderSheet) or a
+  // same-screen dispatch asks updateHash for the page's address, which
+  // would take the item's off the bar while the panel is still open.
+  const win = fakeWindow('/app/garden/workshop?ws=needs');
+  const writes = [];
+  const ctx = vm.createContext({
+    location: win.location, history: win.history, URL, AppView,
+    DevChat: undefined,
+  });
+  const App = vm.runInContext(`const App = { _isRestoring: false, currentApp: 'garden', currentTab: 'dev', currentSubTab: 'forum',
+    chromeless: false, _historyPushes: 0,
+    _appUrl: () => '/app/garden/workshop?ws=needs', _rootUrl: () => '/', _noteWorkshopView() {},
+    ${liftAppMethod('updateHash(options)')} }; App`, ctx);
+  withPanel(win, () => {
+    AppView._followPanelAddress('issue', 12);
+    App.updateHash({ replace: true });
+    assert.equal(win.entries[0].url.pathname, '/app/garden/dev/issues/12', 'the item\'s address stays');
+    App.updateHash();
+    assert.equal(win.entries.length, 1, 'and nothing is pushed over it');
+    assert.equal(win.entries[0].url.pathname, '/app/garden/dev/issues/12');
+    // Closed: the next write is the page's own, as before.
+    AppView._restorePanelAddress();
+    App.updateHash({ replace: true });
+    assert.equal(win.entries[0].url.href, `${ORIGIN}/app/garden/workshop?ws=needs`);
+    assert.equal(writes.length, 0);
+  });
 });

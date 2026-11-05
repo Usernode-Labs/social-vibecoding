@@ -109,52 +109,7 @@ function body(src, start, end) {
   return src.slice(at, src.indexOf(end, at));
 }
 
-test('a Yes swipe votes at once; a No swipe opens the sheet on No, where its reason is picked', () => {
-  const feed = body(WORKSHOP, 'function NeedsFeed(', '\nfunction GroupStrip(');
-  // One vote path. A Yes swipe calls the same `answer` the sheet's Yes
-  // button calls; a No needs its reason first, so it opens the sheet on No
-  // rather than casting a lineless No.
-  assert.match(feed, /commit: \(key, which, settled\) => \{\s*if \(!swipeOk\(key\)\) \{ settled\(\); return; \}[\s\S]*?if \(which === 'no'\) \{\s*settled\(\);\s*setSheet\('vote'\);\s*setVoteSide\('no'\);\s*setVoteLine\(''\);\s*setVoteChoice\(null\);\s*return;\s*\}\s*answer\(which, settled\);/);
-  assert.ok(!/castVote/.test(body(WORKSHOP, 'function useSwipeVote(', '\n/* ── The feed')),
-    'the gesture never calls castVote itself');
-  assert.ok(!/fetch\(/.test(body(WORKSHOP, 'function useSwipeVote(', '\n/* ── The feed')),
-    'nor posts a vote of its own');
-  // `settled` lets the held card go once the vote is on its way (the prompt
-  // closed, with a line or without) or was not cast (the prompt was dismissed).
-  const answer = body(feed, '  const answer = (which', '\n  };\n');
-  assert.match(answer, /const onSend = \(\) => \{\s*setSending\([^;]*;\s*if \(settled\) settled\(\);/);
-  assert.match(answer, /if \(ok === true\) \{\s*setAnswered\([\s\S]*?\}\s*if \(settled\) settled\(\);\s*\}\);$/);
-  // castVote's side: the No's line is asked for first, and a dismissed
-  // prompt returns before anything is sent.
-  const view = read('public/js/app-view.js');
-  const cast = body(view, '  async castVote(sessionId, vote', '\n  },\n');
-  const asks = cast.indexOf('_resolveVoteReason(vote, opts)');
-  const posts = cast.indexOf('AppView._sendVote(sessionId, body)');
-  assert.ok(asks > 0 && posts > asks, 'the reason is resolved before the vote is posted');
-  assert.match(cast, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
-  const ask = body(view, '  async _askVoteReason(vote)', '\n  },\n');
-  assert.match(ask, /if \(answer === null\) return no \? false : null;/, 'a dismissed No prompt is `false`: no vote');
-  // #5809: where the prompt card is the only way to ask, a No still says why.
-  assert.match(ask, /if \(no && !line\) \{\s*if \(typeof pu\.toast === 'function'\) pu\.toast\(PlatformI18n\.t\('changes:vote\.reason\.noNeedsLine'\)\);\s*return false;/,
-    'an empty No line is refused, and the voter is told');
-  assert.match(ask, /return line \|\| null;/, 'a Yes resolves an empty line to none');
-});
 
-test('only a card the viewer can vote on, on a phone, takes the gesture', () => {
-  const can = body(WORKSHOP, 'function canSwipeVote(', '\n}\n');
-  assert.match(can, /return !!\(row\.yes && row\.yes\.act\) && !!\(row\.no && row\.no\.act\);/,
-    'a proposal whose Yes and No both vote; a governance row, which has no pair here, does not');
-  const feed = body(WORKSHOP, 'function NeedsFeed(', '\nfunction GroupStrip(');
-  assert.match(feed, /swipe=\{!wide && canSwipeVote\(r\) && !answered\[r\.key\]\}/,
-    'marked only below the breakpoint, and not once answered here');
-  assert.match(feed, /useSwipeVote\(scrollRef, !wide, swipeHandle\);/, 'the listeners are bound only there too');
-  assert.match(feed, /const swipeOk = \(key: string\) => !!\(row && row\.key === key && canSwipeVote\(row\)\s*&& !answered\[key\] && !sendingRef\.current\.has\(key\)\);/,
-    'and asked again on the press: the card in view, with no vote of its own in flight');
-  const hook = body(WORKSHOP, 'function useSwipeVote(', '\n/* ── The feed');
-  assert.match(hook, /if \(!enabled \|\| !scroller \|\| typeof window === 'undefined'\) return undefined;/);
-  assert.match(hook, /closest<HTMLElement>\('\[data-ws-swipeable\]'\)/);
-  assert.match(hook, /if \(!handleRef\.current\.can\(key\)\) return;/);
-});
 
 test('an upward drag is let go, and a sideways one never also clicks', () => {
   const hook = body(WORKSHOP, 'function useSwipeVote(', '\n/* ── The feed');
@@ -228,13 +183,3 @@ test('the first swipe build\'s styles are gone, so only the live block speaks fo
 });
 
 // ── The declared check ─────────────────────────────────────────────────
-
-test('the declared Needs-you anatomy check also pins that a wide window takes no swipe', () => {
-  // Folded into an existing check on the same route rather than declared as
-  // a new one (dapp.json's check count is pinned and near its ceiling). The
-  // checks run at 1280px, above the breakpoint, where no card is swipeable.
-  const dapp = JSON.parse(read('dapp.json'));
-  const anatomy = dapp.tests.filter((t) => /leads with who and when, then its title, then the sentence a voter reads/.test(t.name));
-  assert.equal(anatomy.length, 1);
-  assert.match(anatomy[0].expectSelector, /\[data-ws-item\]\[data-ws-kind="vote"\]:not\(\[data-ws-swipeable\]\) > \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title/);
-});

@@ -1721,6 +1721,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // leaves 128 slots.
   // 752 → 753: +1 (#6029) the Basic/Advanced switch on Experimental,
   // a settings route with no existing declared check to extend.
+  // 753 → 751: −2 (#6276) the old Needs-you reel's four declared checks
+  // become the review flow's two: a project's Needs you draws it, and its
+  // change page is drawn in place in the pane.
+  // 751 → 752: +1 (#6271) a private thread marked done this week is listed
+  // under Live this week with its lock and the day it closed. Live this week
+  // had no declared check to extend. 752 leaves 128 slots.
+  //
+  // 752 → 753: #6134's Needs attention card. It needs its own ?demo= fixture
+  // (connectors-attention), so it has no check to fold into.
   checkCap.assertPinned(DAPP.tests.length, 753);
 });
 
@@ -1808,14 +1817,15 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');
-  // Two dialogs since the reel redesign: the vote, and the one sheet whose
-  // two tabs are Comments and Ask.
-  for (const kind of ['vote', 'talk']) {
-    assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
-      `the ${kind} dialog carries the deck’s base class`);
-  }
+  // The reel's vote and talk dialogs left with the reel (#6276): the review
+  // flow that replaced it draws its own sheet (`rf-*`), so no Workshop
+  // component wears the deck's full-screen class any more. The geometry
+  // rule stays keyed on that name, so only a sheet that means it can pick
+  // it up.
+  assert.ok(!/className="dev-ws-sheet-modal/.test(WORKSHOP),
+    'no Workshop component carries the deck’s full-screen class');
   assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
-    'and neither carries the fold’s');
+    'and nothing carries the fold’s name as a dialog');
   // The open card keeps the bare name, because two declared checks select it
   // that way — which is also why the deck is the side that moved.
   assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
@@ -1999,12 +2009,11 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
-  // control; a second check pins the item's own order (who and when, then
-  // the title, then the sentence, then the caption) with the same `+`/`~`
-  // direction.
-  assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary"?$/);
+  // The Needs-you deck is the review flow now: one check holds that a
+  // project's own Needs you draws it, and another that its change page is
+  // drawn in place in the pane rather than over the shell.
+  assert.match(byName(/A project's Needs you draws the review flow/).expectSelector, /\[data-rf-project="usernode-2d5619"\] \[data-review-flow\]/);
+  assert.match(byName(/change page in place in the pane/).expectSelector, /body:not\(:has\(> \[data-rf-page\]\)\)[\s\S]*\[data-workshop-pane="needs"\] \[data-rf-page\] \[data-rf-back\]/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

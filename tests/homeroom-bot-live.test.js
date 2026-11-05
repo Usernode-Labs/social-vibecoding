@@ -259,7 +259,7 @@ function postHarness({ claimed = true, githubFails = false } = {}) {
 test('a post goes to both surfaces, scoped to the issue, and is recorded', async () => {
   const h = postHarness();
   const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
-  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true });
+  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
   assert.deepEqual(h.calls.comments, [{ owner: 'usernode-bot', repo: 'rss-reader', n: 12, body: 'Which feed?' }]);
   assert.deepEqual(h.calls.messages[0].thread, { type: 'issue', ref: 12 });
   assert.equal(h.calls.messages[0].msgType, 'system');
@@ -438,7 +438,7 @@ test('a post that names the poster: @handle in the thread only, and one mention 
     ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900,
     text: 'Which feed? @alice said the sports one.', mention: 'evan', senderId: 77, notifications,
   });
-  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true });
+  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
   assert.equal(h.calls.messages[0].content, '@evan Which feed? @alice said the sports one.', 'named in the thread');
   assert.equal(h.calls.comments[0].body, 'Which feed? @alice said the sports one.',
     'never on GitHub: a platform username there would notify whoever owns it (#723)');
@@ -551,9 +551,10 @@ test('what it says: the question, notes that never close, a linked proposal', ()
   assert.match(two, /^Homeroom bot has two questions before it can build this:\n\n1\. What time\?\n2\. How\?\n\n/);
   assert.match(q, /Reply here \(or on the GitHub issue\) and it will look again\./);
   assert.match(live.personText({ reason: 'It changes who can see feeds.' }), /a person needs to decide this one: It changes who can see feeds\./);
-  // #4239: about Homeroom itself, the note says so, and who can move it.
+  // #4239, #6311: about Homeroom itself, the note says so, and who can move
+  // it or file it there too, in plain words.
   const platform = live.personText({ reason: 'The header is drawn by Homeroom.', platform: true, project: 'RSS Reader' });
-  assert.match(platform, /^Homeroom bot thinks this is about Homeroom itself, not RSS Reader: The header is drawn by Homeroom\.\n\nWhoever asked for it, or RSS Reader's creator or admins, can have Homeroom bot move it to Homeroom's own board\.$/);
+  assert.match(platform, /^Homeroom bot thinks this is about Homeroom itself, not RSS Reader: The header is drawn by Homeroom\.\n\nWhoever asked for it, or RSS Reader's creator or admins, can have it filed on Homeroom's own board too, or moved there\.$/);
   assert.doesNotMatch(platform, /\u2014/);
   const empty = live.emptyText({ reason: 'The body is a placeholder.' });
   assert.match(empty, /couldn't find anything to build/);
@@ -830,6 +831,33 @@ test('a refused promotion is reported with the route\'s own words, and the built
   assert.match(out.error, /built but could not be proposed: Session not found/);
   assert.deepEqual(h.calls.closed, [],
     'left paused, so a person can open the session and propose it');
+});
+
+// #6267: GitHub refused one upload while it was having problems, and a
+// finished build was thrown away (run 4530). A temporary refusal keeps the
+// session and its saved commit and waits to push; only a permanent one fails.
+test('a temporary push refusal keeps the build and waits to push it', async () => {
+  const h = buildHarness({ result: { pushOk: false, ahead: 1, sha: 'b'.repeat(40),
+    pushFailed: 'push_failed', pushFailure: { ok: false, code: 'push_failed', permanent: false } } });
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
+  assert.equal(out.ok, false);
+  assert.equal(out.waitingToPush, true);
+  assert.equal(out.sessionId, 5001);
+  assert.equal(out.branchName, 'homeroom_bot/s5001');
+  assert.equal(out.sha, 'b'.repeat(40));
+  assert.equal(out.error, 'waiting to push: couldn\'t push the build\'s commit (push_failed, temporary)');
+  assert.deepEqual(h.calls.promoted, [], 'nothing is proposed until it lands');
+  assert.deepEqual(h.calls.closed, [], 'its worker and the commit in it are kept');
+});
+
+test('a permanent push refusal is a failed build, as it was', async () => {
+  const h = buildHarness({ result: { pushOk: false, ahead: 1, sha: 'b'.repeat(40),
+    pushFailed: 'non_fast_forward', pushFailure: { ok: false, code: 'non_fast_forward', permanent: true } } });
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
+  assert.equal(out.ok, false);
+  assert.equal(out.waitingToPush, undefined);
+  assert.match(out.error, /couldn't push the build's commit \(non_fast_forward, permanent\)/);
+  assert.deepEqual(h.calls.closed, [{ sessionId: 5001, reason: 'bot-failed' }]);
 });
 
 test('a build is held to the same wall clock as a triage turn', async (t) => {

@@ -1467,6 +1467,14 @@
     "text": "Couldn't collect app state, so it was filed without it.",
     "description": "Sentence added to the confirmation after a request was posted, when the app did not hand over its state snapshot. The first \"it\" is the request."
   },
+  "feedback.screenshot.filedWithout_one": {
+    "text": "{{count}} picture couldn't attach, so it was filed without it.",
+    "description": "Sentence added to the confirmation after a request was posted, when a picture that had been waiting to upload still could not be sent. {{count}} is how many. The first \"it\" is the request; the last word is the picture or pictures."
+  },
+  "feedback.screenshot.filedWithout_other": {
+    "text": "{{count}} pictures couldn't attach, so it was filed without them.",
+    "description": "Sentence added to the confirmation after a request was posted, when a picture that had been waiting to upload still could not be sent. {{count}} is how many. The first \"it\" is the request; the last word is the picture or pictures."
+  },
   "feedback.bounty.label": {
     "text": "<0>Put a kudos on this</0> to thank whoever solves it",
     "description": "Label of a checkbox in the \"Suggest an improvement\" dialog: attaches one kudos (a token of thanks, of which a person has a weekly allowance) to the request as a reward. Keep \"kudos\" as the product uses it. The numbered tag makes the first part darker."
@@ -3141,7 +3149,11 @@
   },
   "whoDecides.group.creatorNobody": {
     "text": "Nobody: this project has no creator",
-    "description": "Line under the Creator group on a project with no creator."
+    "description": "Line under the Creator group on a project that has no creator by design, such as Homeroom's own project. Keep it distinct from a creator whose account no longer exists."
+  },
+  "whoDecides.group.creatorGone": {
+    "text": "The account that made this project no longer exists",
+    "description": "Line under the Creator group on the Who can see & change it sheet when the person who made the project deleted their account."
   },
   "whoDecides.group.members": {
     "text": "All members",

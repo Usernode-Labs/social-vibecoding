@@ -221,6 +221,42 @@ test('the prompt: a thread with no screen yet is drawn; one with a version is ed
   assert.match(some, /THE CURRENT VERSION \(version 3\), its whole HTML:\n<p>x<\/p>$/);
 });
 
+// #6257: asked to "work on a design together", the thread drew a generic
+// to-do list before the person had said anything. With nothing to go on, the
+// first drawing asks what the app is for and what the screen should do, and
+// draws nothing until they answer.
+test('#6257: a first drawing with nothing to go on asks first, and quotes a question, not a claim', () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  assert.equal(designBot.askFirst({}), true, 'no version, no pictures, no about, no bot row');
+  assert.equal(designBot.askFirst({ current: { version: 1, html: '<p>x</p>' } }), false, 'the thread holds a version');
+  assert.equal(designBot.askFirst({ pictures: [{ id: 'p1' }] }), false, 'they sent a picture');
+  assert.equal(designBot.askFirst({ added: [{ id: 'a1' }] }), false, 'a picture was added to the design');
+  assert.equal(designBot.askFirst({ about: 'REQUEST #18 Dark mode' }), false, 'the thread is about a request or change');
+  assert.equal(designBot.askFirst({ history: [{ role: 'user', content: 'hi' }] }), true, 'only their words yet');
+  assert.equal(designBot.askFirst({ history: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'Hello.' }] }), false,
+    'the bot has spoken: it asks at most once');
+
+  const asked = designBot.designPrompt({ username: 'ada', surface: 'new', askFirst: true });
+  assert.match(asked, /FIRST SCREEN: Before you draw/);
+  assert.match(asked, /draw nothing: ask one short question/);
+  assert.match(asked, /Never start from a placeholder/);
+  assert.match(asked, /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
+  assert.doesNotMatch(asked, /—/);
+  assert.doesNotMatch(designBot.designPrompt({ username: 'ada', surface: 'new' }), /FIRST SCREEN/,
+    'a drawing with something to go on is unchanged');
+
+  assert.equal(designBot.notDrawnYet('I\'ll draw it for you. What is the app for, and what should this screen do?',
+    { handoff: true, mayAsk: true, mayor }), null, 'the question is the answer');
+  assert.equal(designBot.notDrawnYet('I\'ll draw it for you. What is the app for, and what should this screen do?',
+    { handoff: true, mayor }), 'claimed', 'without the gate it is a claim');
+  assert.equal(designBot.notDrawnYet('Tell me what it is for.', { handoff: true, mayAsk: true, mayor }), 'handoff',
+    'a statement is not a question, even when asking is allowed');
+
+  const prompt = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'design', appSlug: null } } });
+  assert.match(prompt, /your designer asks them in the thread before it draws/);
+  assert.match(prompt, /Put in only what they said of the app and the screen/);
+});
+
 test('their pictures: as pictures for a model that reads them, else in the words a cheap one said', () => {
   const pictures = [{ id: 'p1', messageId: 7, filename: 'sketch.png', mimeType: 'image/png', data: 'AAAA' }];
   const history = [{ role: 'assistant', content: 'Hi' }, { role: 'user', content: 'like this' }];

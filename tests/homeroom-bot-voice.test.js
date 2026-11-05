@@ -66,7 +66,8 @@ test('words a DM or a chat passed on are not answered twice', () => {
 
 // ── The gate, on a pool that answers what it asks ────────────────────────
 
-function gatePool({ quoteOf = null, change = null, posts = [], asks = [], before = null, open = null } = {}) {
+function gatePool({ quoteOf = null, change = null, posts = [], asks = [], before = null, open = null,
+  lastBot = null, previous = null, run = [], follows = null, requested = false } = {}) {
   const asked = [];
   return {
     asked,
@@ -74,11 +75,18 @@ function gatePool({ quoteOf = null, change = null, posts = [], asks = [], before
       const s = String(sql);
       asked.push(s);
       if (/SELECT user_id FROM chat_messages WHERE id = \$1/.test(s)) return { rows: quoteOf == null ? [] : [{ user_id: quoteOf }] };
+      if (/SELECT created_at FROM chat_messages/.test(s)) return { rows: lastBot ? [{ created_at: lastBot }] : [] };
+      if (/SELECT m\.user_id, m\.created_at FROM chat_messages m[\s\S]*m\.thread_type = 'issue'/.test(s)) return { rows: follows ? [follows] : [] };
+      if (/SELECT user_id FROM chat_messages\s+WHERE app_id/.test(s)) return { rows: previous ? [{ user_id: previous }] : [] };
+      if (/m\.posted_via, u\.is_synthetic/.test(s)) return { rows: run };
       if (/FROM homeroom_bot_change_asks WHERE message_id/.test(s)) return { rows: asks.includes(Number(params[0])) ? [{ '?column?': 1 }] : [] };
       if (/FROM chat_sessions cs WHERE cs\.id = \$1/.test(s)) return { rows: change ? [change] : [] };
       if (/FROM homeroom_bot_posts/.test(s)) return { rows: posts };
       if (/m\.thread_type = 'message' AND m\.thread_ref = \$2 AND m\.id < \$3/.test(s)) return { rows: before ? [before] : [] };
       if (/FROM chat_sessions/.test(s) && /linked_issues/.test(s) && open) return { rows: [open] };
+      // #6311: asksForRequest's three reads.
+      if (/FROM homeroom_bot_requesters WHERE app_id/.test(s)) return { rows: requested ? [{ '?column?': 1 }] : [] };
+      if (/FROM issues WHERE app_id = \$1 AND github_issue_number/.test(s)) return { rows: [] };
       return { rows: [] };
     },
   };
@@ -112,13 +120,15 @@ test('the gate: on the bot\'s own change any person\'s message; on anybody else\
   assert.deepEqual(out, { speak: false, why: 'queued_as_ask' });
 });
 
-test('the gate never answers the bot, a connector, a relay, an edit or somebody it does not talk to', async () => {
+test('the gate never answers the bot, a relay, an edit or somebody it does not talk to; a channel ignores a connector', async () => {
   const place = { type: 'chat', ref: null };
   const row = msg({ content: '@Homeroom bot hi' });
   const g = (over) => voice.gate(gatePool(), { app: APP, place, row, bot: BOT, settings: LIVE, speaker: EVAN, deps: deps(), ...over });
   assert.equal((await g({})).speak, true);
   assert.equal((await g({ speaker: { ...EVAN, id: 1 } })).why, 'not_a_person');
   assert.equal((await g({ speaker: { ...EVAN, isSynthetic: true } })).why, 'not_a_person');
+  // #6268: a person's agent is them on a request, a change and a reply
+  // thread; a channel keeps today's rule.
   assert.equal((await g({ row: { ...row, posted_via: 'agent' } })).why, 'connector');
   assert.equal((await g({ row: { ...row, msg_type: 'system' } })).why, 'not_a_message');
   assert.equal((await g({ row: { ...row, content: '@Homeroom bot x\n\n(Sent in a chat with Homeroom bot.)' } })).why, 'relayed');
@@ -126,6 +136,86 @@ test('the gate never answers the bot, a connector, a relay, an edit or somebody 
   assert.equal((await g({ settings: { ...LIVE, pausedApps: ['todo'] } })).why, 'paused');
   assert.equal((await g({ deps: deps({ dmSvc: { hasBot: () => false } }) })).why, 'not_let_in');
   assert.equal((await g({ row: { ...row, content: 'hi all' } })).why, 'not_addressed');
+});
+
+// #6268: a message a person's coding agent posted for them is their own
+// message on a request, a change and a reply thread. Two guards keep an
+// agent and the bot from answering each other forever.
+test('the gate answers a connector message as the person\'s own, and never loops on one', async () => {
+  const session = { type: 'session', ref: 70 };
+  const issue = { type: 'issue', ref: 24 };
+  const theirChange = { id: 70, app_id: 9, user_id: 5, status: 'promoted', is_headless: false };
+  const agent = (over = {}) => msg({ posted_via: 'agent', ...over });
+  const g = (place, pool, row, over = {}) => voice.gate(pool, {
+    app: APP, place, row, bot: BOT, settings: LIVE, speaker: EVAN, deps: deps(), ...over,
+  });
+
+  // Answered: an @ mention on a request is a turn, as the person's own is.
+  assert.deepEqual(await g(issue, gatePool(), agent({ content: '@Homeroom bot, a correction: keep the old title.' })),
+    { speak: true, why: 'mentioned' });
+  // ...and a reply to the bot on a change.
+  assert.deepEqual(await g(session, gatePool({ change: theirChange, quoteOf: 1 }), agent({ metadata: { quote: { refMsgId: 44 } } })),
+    { speak: true, why: 'replied' });
+  // ...and a message on a request whose change the bot built is up for a vote.
+  assert.deepEqual(await g(issue, gatePool(), agent({ content: 'looks good' }),
+    { deps: deps({ open: { id: 70, status: 'promoted' } }) }), { speak: true, why: 'own_change' });
+
+  // Loop-guarded: a reply to the bot 5s after its own last message.
+  const fiveSecsAgo = new Date(Date.now() - 5_000);
+  assert.deepEqual(await g(session, gatePool({ change: theirChange, quoteOf: 1, lastBot: fiveSecsAgo }),
+    agent({ metadata: { quote: { refMsgId: 44 } } })), { speak: false, why: 'connector_loop' });
+  // ...but a reply it writes an hour later is answered.
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  assert.deepEqual(await g(session, gatePool({ change: theirChange, quoteOf: 1, lastBot: hourAgo }),
+    agent({ metadata: { quote: { refMsgId: 44 } } })), { speak: true, why: 'replied' });
+  // ...and in a reply thread, the next message straight after the bot's.
+  assert.deepEqual(await g({ type: 'message', ref: 40 }, gatePool({ previous: 1, lastBot: fiveSecsAgo }),
+    agent({ content: 'and on Sundays?' })), { speak: false, why: 'connector_loop' });
+
+  // Loop-guarded: the third connector message in a row with no person's own
+  // message between them (`run` is what the place holds, newest first).
+  const run = [{ user_id: 2, posted_via: 'agent' }, { user_id: 2, posted_via: 'agent' }];
+  assert.deepEqual(await g(issue, gatePool({ run }), agent({ content: '@Homeroom bot one more thing' })),
+    { speak: false, why: 'connector_run' });
+  // A person's own message between resets the run.
+  assert.deepEqual(await g(issue, gatePool({ run: [{ user_id: 2, posted_via: 'agent' }, { user_id: 2, posted_via: null }] }),
+    agent({ content: '@Homeroom bot one more thing' })), { speak: true, why: 'mentioned' });
+  // The bot's own replies neither count nor reset it.
+  assert.deepEqual(await g(issue, gatePool({ run: [{ user_id: 1, posted_via: null }, { user_id: 2, posted_via: 'agent' }] }),
+    agent({ content: '@Homeroom bot one more thing' })), { speak: true, why: 'mentioned' });
+  // Two in a row is allowed; the third is the one that stops.
+  assert.deepEqual(await g(issue, gatePool({ run: [{ user_id: 2, posted_via: 'agent' }] }),
+    agent({ content: '@Homeroom bot one more thing' })), { speak: true, why: 'mentioned' });
+
+  // Voice off: the connector message is still read, so the skip is recorded.
+  assert.deepEqual(await g(issue, gatePool(), agent({ content: '@Homeroom bot hello' }), { settings: { ...LIVE, voiceIssue: false } }),
+    { speak: false, why: 'switched_off' });
+  // An agent posting for the bot's own account is not a person.
+  assert.deepEqual(await g(issue, gatePool(), agent({ content: '@Homeroom bot hi' }), { speaker: { ...EVAN, id: 1 } }),
+    { speak: false, why: 'not_a_person' });
+});
+
+test('a connector message the bot will still skip says why, decided when it is posted', async () => {
+  const issue = { type: 'issue', ref: 24 };
+  const two = [{ user_id: 2, posted_via: 'agent' }, { user_id: 2, posted_via: 'agent' }];
+  const skip = (pool, thread, content, over = {}) => voice.connectorSkip(pool, {
+    appId: 9, appSlug: 'todo', thread, content, metadata: {}, settings: LIVE, botId: 1, ...over,
+  });
+  // Loop and run are stored whether or not the message mentions the bot.
+  assert.deepEqual(await skip(gatePool({ run: two }), issue, 'one more thing'), { why: 'connector_run' });
+  assert.deepEqual(await skip(gatePool({ lastBot: new Date(Date.now() - 5_000), quoteOf: 1 }),
+    issue, 'the same fix again', { metadata: { quote: { refMsgId: 44 } } }), { why: 'connector_loop' });
+  // Switched off, paused and a channel only when the message is addressed to it.
+  assert.deepEqual(await skip(gatePool(), issue, '@Homeroom bot what now?', { settings: { ...LIVE, voiceIssue: false } }),
+    { why: 'switched_off' });
+  assert.equal(await skip(gatePool(), issue, 'one more thing', { settings: { ...LIVE, voiceIssue: false } }), null);
+  assert.deepEqual(await skip(gatePool(), issue, '@Homeroom bot what now?', { settings: { ...LIVE, pausedApps: ['todo'] } }),
+    { why: 'paused' });
+  assert.deepEqual(await skip(gatePool(), { type: 'category', ref: 4 }, '@Homeroom bot what now?'), { why: 'connector' });
+  // An ordinary agent post nobody was asked to answer stays quiet and clean.
+  assert.equal(await skip(gatePool(), issue, 'Here is the fix I pushed.'), null);
+  // A governance vote has no place in the voice at all.
+  assert.equal(await skip(gatePool(), { type: 'governance', ref: 3 }, '@Homeroom bot hi'), null);
 });
 
 test('the gate on a request: a mention or a reply, but an answer to its question is the build\'s; once its change is up, any message', async () => {
@@ -156,28 +246,49 @@ test('the gate in a reply thread: the next message after the bot\'s own, soon af
   assert.deepEqual(await g({ user_id: 3, created_at: new Date() }), { speak: false, why: 'not_addressed' });
 });
 
+test('#6311: the requester or an admin writing after the bot\'s post in a request is answered', async () => {
+  const place = { type: 'issue', ref: 9 };
+  const recent = { user_id: BOT.id, created_at: new Date(Date.now() - 5 * 60 * 1000) };
+  const g = (pool) => voice.gate(pool, { app: APP, place, row: msg(), bot: BOT, settings: LIVE, speaker: EVAN, deps: deps() });
+  assert.deepEqual(await g(gatePool({ follows: recent, requested: true })), { speak: true, why: 'followed' });
+  // Somebody else's message, or the bot's own post too long ago, is not for it.
+  assert.deepEqual(await g(gatePool({ follows: recent, requested: false })), { speak: false, why: 'not_addressed' });
+  assert.deepEqual(await g(gatePool({ follows: { ...recent, created_at: new Date(Date.now() - 31 * 60 * 1000) }, requested: true })),
+    { speak: false, why: 'not_addressed' });
+  // The message before this one is not the bot's.
+  assert.deepEqual(await g(gatePool({ follows: { user_id: 5, created_at: new Date() }, requested: true })),
+    { speak: false, why: 'not_addressed' });
+  // A message after a question the bot asked is still the build's answer.
+  const question = { kind: 'question', created_at: new Date(Date.now() - 10 * 60 * 1000) };
+  assert.deepEqual(await g(gatePool({ follows: recent, requested: true, posts: [question] })),
+    { speak: false, why: 'answers_question' });
+});
+
 // ── Tools, prompt, words ─────────────────────────────────────────────────
 
 const names = (tools) => tools.map((t) => t.function.name);
 
 test('each place gets the tools that fit it, and nothing that acts without a tap', () => {
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: true })),
-    ['reply', 'stay_quiet', 'update_change', 'offer_withdraw', 'request_detail', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
-    ['reply', 'stay_quiet', 'request_detail', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
+    ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
-    ['reply', 'stay_quiet', 'start_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
   // Papote #3: under its plan waiting for Build it, a change to the plan is asked for here.
   const planned = voice.toolsFor({ type: 'issue', ref: 1 }, { planWaiting: true });
   assert.deepEqual(names(planned),
-    ['reply', 'stay_quiet', 'start_request', 'change_plan', 'offer_close_request', 'request_detail', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'change_plan', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+  // #6264: a request's change may not exist yet, and the promise is about
+  // the request then, so it is offered on the request too.
+  assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })).includes('tell_me_when'));
   const prompt = voice.systemPrompt({ app: { slug: 'papote', name: 'Papote' }, place: { type: 'issue', ref: 3 }, tools: planned });
   assert.match(prompt, /Them saying to build it or go ahead is start_request, which builds the plan as they saw it\. Somebody asking for something in the plan to change is change_plan/);
   assert.match(prompt, /When it gives a link or changeLink, include them as written\./,
     '#6247: a start\'s reply carries the request\'s (and change\'s) link as given');
   assert.doesNotMatch(voice.systemPrompt({ app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }) }), /change_plan/);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
-  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'offer_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
+  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'tell_me_when', 'offer_request', 'offer_close_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
   assert.ok(chat[2].function.parameters.properties.change, 'in a chat it names which change');
   assert.ok(!names(chat).includes('offer_withdraw'), 'withdrawing is offered where the change is');
   const chatClose = chat.find((t) => t.function.name === 'offer_close_request');
@@ -185,6 +296,88 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   const issueClose = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })
     .find((t) => t.function.name === 'offer_close_request');
   assert.ok(!issueClose.function.parameters.properties.number, 'on the request it is the request itself');
+  // #6311: the copy is offered where the request is, and nowhere else.
+  assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })).includes('offer_copy_request'));
+  assert.ok(!names(voice.toolsFor({ type: 'chat', ref: null }, {})).includes('offer_copy_request'));
+  assert.deepEqual(voice.OFFER_WORDS.copy_request, { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' });
+});
+
+test('#6270: a stand-in word is not an answer, and a short real one is', () => {
+  for (const text of ['placeholder', 'TODO', '[TBD]', '...', 'text', 'Reply', '  ???  ', '']) {
+    assert.equal(voice.isStandIn(text), true, JSON.stringify(text));
+  }
+  for (const text of ['No.', 'Yes.', 'Yes: a thread you started from Main still links out.', 'Non, ce n\'est pas le cas.', 'いいえ。']) {
+    assert.equal(voice.isStandIn(text), false, JSON.stringify(text));
+  }
+});
+
+test('#6270: the last round is warned and can queue the change, and reading is capped', () => {
+  assert.equal(voice.MAX_ROUNDS, 8);
+  assert.equal(voice.MAX_READS_PER_TURN, 4);
+  const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true });
+  const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 1 }, tools });
+  assert.match(prompt, /even when they say it partly as a question/);
+  assert.match(prompt, /only if X, should it not do Y\?/);
+  assert.match(prompt, /Queue it first, without reading the code/, 'a correction is queued before it reads anything');
+  assert.doesNotMatch(prompt, /A question about it is not a change: answer it\./);
+  assert.match(prompt, /A question that asks nothing different of the change is not a change: answer it\./,
+    'a question that asks nothing different is still only a question');
+  assert.doesNotMatch(prompt, /—/);
+});
+
+test('#6264: the prompt lets it promise to tell them here when a change is done', () => {
+  const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true });
+  const prompt = voice.systemPrompt({ app: { slug: 'clubs', name: 'Clubs' }, place: { type: 'issue', ref: 1 }, tools });
+  assert.match(prompt, /call tell_me_when with that one moment and say its promise/);
+  assert.match(prompt, /Never tell them you cannot message them later/);
+  assert.match(prompt, /offer to tell them here when it is ready to vote/);
+  assert.match(prompt, /except what tell_me_when stored this turn, whose promise is kept here\./,
+    'the old "nothing brings you back" is narrowed, not dropped');
+  // A place with no promise to make does not tell it about one.
+  const bare = voice.systemPrompt({ app: { slug: 'clubs' }, place: { type: 'session', ref: 1 }, tools: voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false }) });
+  assert.doesNotMatch(bare, /tell_me_when/);
+});
+
+test('get_change gives back the description people vote on, as data, with its version and plan', async () => {
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (/FROM chat_sessions cs WHERE cs\.id/.test(s)) {
+        return { rows: [{
+          id: 7, app_id: 3, user_id: 9, status: 'promoted', is_headless: false,
+          pr_summary_md: 'Adds a dark mode toggle.', pr_body: 'The whole pull request body.',
+          pr_summary_stale: true, pr_summary_input_version: 4,
+        }] };
+      }
+      if (/MAX\(version\)/.test(s)) return { rows: [{ version: 2 }] };
+      return { rows: [] };
+    },
+  };
+  const platform = {
+    async call() {
+      return { isError: false, text: JSON.stringify({ changeId: 7, title: 'A dark mode toggle', status: 'promoted' }) };
+    },
+  };
+  const out = await voice.scopedPlatformCall(pool, platform, { id: 3, slug: 'todo' }, 'get_change', { changeId: 7 });
+  const shaped = JSON.parse(out.result);
+  assert.equal(shaped.description, '<untrusted-content>Adds a dark mode toggle.</untrusted-content>');
+  assert.equal(shaped.pullRequestBody, '<untrusted-content>The whole pull request body.</untrusted-content>');
+  assert.equal(shaped.descriptionStale, true);
+  assert.equal(shaped.descriptionVersion, 4);
+  assert.equal(shaped.planVersion, 2);
+  assert.equal(shaped.title, 'A dark mode toggle', 'the platform read still comes through');
+});
+
+test('#6263: a reply never says what a description contains unless it read it this turn', () => {
+  const said = 'That\'s the earlier wording, from before the update.';
+  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set() }),
+    [{ kind: 'unread_description', said: 'describes what a change\'s description says without reading it in this turn' }]);
+  assert.deepEqual(voice.unreadDescriptionClaims('The description says it adds a toggle.', { readChanges: new Set() }).map((p) => p.kind),
+    ['unread_description']);
+  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set([7]) }), [],
+    'it read the change this turn, so quoting it is allowed');
+  assert.deepEqual(voice.unreadDescriptionClaims('Done: the header is blue now.', { readChanges: new Set() }), []);
+  assert.equal(voice.stripUnreadClaims(`It says a lot. ${said}`, [{ kind: 'unread_description' }]), 'It says a lot.');
 });
 
 test('the prompt says where it is, lists only what it can do, and holds it to what it did', () => {
@@ -196,9 +389,16 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
   assert.match(prompt, /by its number/);
   assert.doesNotMatch(prompt, /update_change|offer_withdraw/);
   assert.match(prompt, /Never say you did something/);
+  assert.match(prompt, /Never say what a change's description, title, plan or any other text says/,
+    '#6263: it never describes text it has not read');
+  assert.match(prompt, /a change's description: get_change/);
   assert.match(prompt, /Credit what was said to the person whose name is on that message\./,
     '#5371: each answer is credited to the person who wrote it, not to whoever filed the request');
   assert.match(prompt, /stay_quiet/);
+  assert.match(prompt, /was shortened by you reading it, not/);
+  assert.match(prompt, /Never tell anyone\s+their message cuts off/);
+  assert.match(prompt, /the limit is\s+yours/);
+  assert.match(prompt, /Read one message of this thread in full \(read_message\)\./);
   assert.match(prompt, /Today is 2026-10-10/);
   assert.doesNotMatch(prompt, /—/, 'no em dashes in what it is told either');
 });
@@ -210,6 +410,34 @@ test('a transcript line says who wrote it, what it replied to, and the bot as "y
   assert.match(voice.transcriptLine({ id: 6, user_id: 1, content: 'Done', msg_type: 'message', created_at: at, metadata: {} }, 1), /you \(Homeroom bot\): Done/);
   assert.match(voice.transcriptLine({ id: 7, user_id: 2, username: 'evan', content: 'thanks', msg_type: 'message', created_at: at, metadata: { quote: { refMsgId: 6, author: 'homeroom_bot', snippet: 'Done' } } }, 1),
     /replying to #6 by @homeroom_bot: "Done"/);
+});
+
+test('a long message is marked where it was cut, and read whole when it is the one answered', () => {
+  const at = new Date('2026-11-04T12:30:00Z');
+  const row = { id: 232063, user_id: 2, username: 'evan', msg_type: 'message', created_at: at, metadata: {} };
+  const text = 'x'.repeat(2207);
+  const line = voice.transcriptLine({ ...row, content: text }, 1);
+  assert.match(line, /\[cut at 700 of 2,207 characters; read_message #232063 for the rest\]$/);
+  assert.equal((line.match(/x/g) || []).length, 700, 'the short form keeps today\'s 700 characters');
+  const whole = voice.transcriptLine({ ...row, content: text }, 1, { whole: true });
+  assert.ok(whole.endsWith(text), 'all 2,207 characters reach the model');
+  assert.doesNotMatch(whole, /cut at/);
+  // Read whole, a message keeps its paragraphs; the short form still squeezes.
+  const para = voice.transcriptLine({ ...row, id: 7, content: 'first\n\nsecond' }, 1, { whole: true });
+  assert.match(para, /: first\n\nsecond$/);
+  const huge = voice.transcriptLine({ ...row, id: 9, content: 'y'.repeat(9000) }, 1, { whole: true });
+  assert.match(huge, /\[cut at 8,000 of 9,000 characters; read_message #9 for the rest\]$/);
+});
+
+test('read_message is offered in every place a turn runs', () => {
+  for (const place of [
+    { type: 'chat', ref: null }, { type: 'category', ref: 3 }, { type: 'message', ref: 9 },
+    { type: 'issue', ref: 1 }, { type: 'session', ref: 2 },
+  ]) {
+    const names = voice.toolsFor(place, { ownChange: true, requestChange: true, openChangeCount: 1 })
+      .map((t) => t.function.name);
+    assert.ok(names.includes('read_message'), place.type);
+  }
 });
 
 test('an offer is two buttons the person it is for taps; the reply quotes what it answers', () => {
@@ -254,6 +482,13 @@ test('an ask is read by the follow-up beside the other replies, saying where it 
   assert.match(prompt, /evan, asked you for a change in the project's chat/);
   assert.match(prompt, /Make the header blue on every page/);
   assert.equal(followup.askAsReply({ source: 'issue', place_type: 'issue', instruction: 'x' }).where, 'issue');
+  // #6266: a long ask reaches the follow-up's prompt whole.
+  const long = `Rewrite the description and fix the checks. ${'Keep every detail. '.repeat(250)}THE LAST FIX.`;
+  const longAsk = followup.askAsReply({
+    id: 4, asker: 'evan', instruction: long, source: 'chat', place_type: 'chat',
+    created_at: new Date('2026-10-10T09:00:00Z'),
+  });
+  assert.ok(followup.followUpPrompt({ seed: 'SEED', replies: [longAsk], canRevise: true }).includes(long));
 });
 
 test('a repeat note is held for a mention the voice answers, but an answer to its question still speaks', () => {
@@ -269,9 +504,15 @@ test('a repeat note is held for a mention the voice answers, but an answer to it
 
 // ── The seams ────────────────────────────────────────────────────────────
 
-test('the room hands every person\'s message to the voice in the statement that stores it, never a connector\'s or a vote\'s', () => {
+test('the room hands every person\'s message to the voice in the statement that stores it; a connector\'s on a request, a change or a reply thread; never a vote\'s', () => {
   const ws = read('src/services/ws.js');
-  assert.match(ws, /const heard = postedVia !== 'agent' && \(!thread \|\| thread\.type !== 'governance'\);/);
+  // #6268: a person's agent writing for them reaches the voice where the
+  // person's own message would; a channel and a governance vote never do.
+  assert.match(ws, /const connectorHeard = !!thread\s*\n\s*&& \(thread\.type === 'issue' \|\| thread\.type === 'session' \|\| thread\.type === 'message'\);/);
+  assert.match(ws, /const heard = \(!thread \|\| thread\.type !== 'governance'\) && \(postedVia !== 'agent' \|\| connectorHeard\);/);
+  // The skip is decided before the row is stored, and rides in its metadata.
+  assert.ok(ws.indexOf('connectorSkip(pool, {') < ws.indexOf('const insertSql ='), 'decided before the insert');
+  assert.match(ws, /metadata\.homeroomBotSkip = \{ why: String\(skip\.why\) \};/);
   assert.match(ws, /\? require\('\.\.\/workflow\/platform\.ts'\)\.insertHeard\(db, insertSql, insertParams, \{ appId: client\.appId, thread: thread \|\| null \}\)/);
   const platform = read('src/workflow/platform.ts');
   const heard = platform.slice(platform.indexOf('export async function insertHeard'));
@@ -341,7 +582,7 @@ test('the chat draws an offer\'s buttons for the person it is for, and takes the
   assert.match(gc, /\/messages\/\$\{Number\(messageId\)\}\/bot-offer/);
   const tx = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(tx, /msg\.botOffer && msg\.botOffer\.forMe && msg\.botOffer\.status === 'open'/);
-  assert.match(tx, /controller\(\)\?\.decideBotOffer\?\.\(id, choice\)/);
+  assert.match(tx, /controller\(\)\?\.decideBotOffer\?\.\(id, choice, many \? picks : undefined\)/);
 });
 
 test('the voice\'s module and its tables say what they are for', () => {
@@ -500,6 +741,26 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
     assert.match(await facts(p, d), /A run on it is going right now\./, what);
     assert.equal(await ask(p, d), true, what);
   }
+});
+
+test('a long ask is stored whole, so the build reads all of it', async () => {
+  const instruction = `Rewrite the description and fix the checks. ${'Keep every detail. '.repeat(300)}THE LAST FIX.`;
+  assert.ok(instruction.length > 5000);
+  let inserted = null;
+  const pool = {
+    async query(sql, params) {
+      if (/INSERT INTO homeroom_bot_change_asks/.test(sql)) { inserted = params; return { rows: [{ id: 9 }] }; }
+      if (/AS busy FROM chat_sessions cs WHERE cs\.id/.test(sql)) return { rows: [{ busy: false }] };
+      if (/FROM chat_sessions cs WHERE cs\.id/.test(sql)) return { rows: [{ id: 70 }] };
+      if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(sql)) return { rows: [{ n: 0 }] };
+      return { rows: [] };
+    },
+  };
+  const deps = { botSvc: { async enqueueFront() { return true; } } };
+  await voice.recordAsk(pool, {
+    appId: 9, sessionId: 70, issueNumber: 12, askerId: 2, instruction, force: true, deps,
+  });
+  assert.equal(inserted[4], instruction, 'not clipped at 2,000 characters');
 });
 
 test("a request's report names it by its number, linked where a chat can tap it", () => {

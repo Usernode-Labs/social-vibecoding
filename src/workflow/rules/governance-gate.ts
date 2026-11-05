@@ -616,6 +616,9 @@ export interface GovernedGate extends Gate {
   creatorYes?: boolean;
   partial?: boolean;
   passedBy?: { group: string; kind: string; n: number | null } | null;
+  // #3800: the rule the proposal's yeses are counted against (evaluateRules'
+  // `shown`), for the Votes card. Null while its group cannot be answered.
+  shownRule?: { kind: string; n: number | null; electorate: number; authorYes: boolean } | null;
   rules?: Array<{ group: string; kind: string; n: number | null; size: number; yes: number; need: number | null; passed: boolean; empty: boolean; min?: number }>;
   // Set (true) only when the first-version rule let it through
   // (applyFirstVersion); absent otherwise.
@@ -862,6 +865,8 @@ export function computeRulesGate(
     creatorYes,
     partial: evaluated.partial,
     passedBy: passedBy ? { group: passedBy.group, kind: passedBy.kind, n: passedBy.n } : null,
+    shownRule: shown.known
+      ? { kind: shown.kind, n: shown.n, electorate: shown.electorate, authorYes: shown.authorYes } : null,
     rules: results.map((r) => ({
       group: r.group, kind: r.kind, n: r.n, size: r.size, yes: r.yes, need: r.need,
       passed: r.passed, empty: r.empty,

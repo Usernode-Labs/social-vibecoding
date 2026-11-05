@@ -49,7 +49,7 @@
 // inside PlatformUI.transition(fn) and the native kit snapshots the DOM before
 // fn returns. `false` is the shipped state: the shell ships this screen hidden.
 
-import { useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
@@ -68,6 +68,10 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
 import { BOX_COLUMNS, BrowseRows, BrowseRowsLoading } from './browse-list';
+import {
+  BrowseSearchMenu, RECENT_FOLDED_TILES, SEARCH_MENU_LISTBOX_ID, searchOptionId,
+  type RecentTile, type SearchMenuPosition,
+} from './browse-search-menu';
 import { openBrowseFilterSheet } from './browse-filter-sheet';
 import { AppsLoadError } from './load-error';
 import { browseStore } from './mount';
@@ -115,6 +119,27 @@ export function MakeFromSearch({ idea, label }: { idea: string; label: string })
   );
 }
 
+/**
+ * The empty line's Clear filters (#6197): the quiet grey pill beside Make, so
+ * Make stays the louder action. No hooks, so a test can call it and press it.
+ */
+export function ClearFiltersButton({ label, onCleared }: { label: string; onCleared?: () => void }) {
+  return (
+    <Button
+      id="browse-empty-clear-filters"
+      type="button"
+      layout="iconRow"
+      variant="pillNeutral"
+      size="sm"
+      ink="neutral"
+      className="min-h-[44px] md:min-h-0"
+      onClick={() => {
+        browse()?.clearNarrowing?.();
+        onCleared?.();
+      }}
+    >{label}</Button>
+  );
+}
 
 // THE PAGE COLUMN (overnight audit W02, 1 Nov 2026): Discover is drawn in
 // the 1024px column Home, Profile, Settings and Challenges share (`max-w-5xl
@@ -139,6 +164,17 @@ export function BrowseScreen() {
   const typeRowRef = useRef<HTMLDivElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'browse-screen', false);
 
+  // The search field's menu (#6197). All of it starts closed, so the prerender
+  // and the first client render agree. `typed` mirrors the field's live value
+  // for the menu alone; the field itself stays uncontrolled. `menuAt` is the
+  // measured place under the field: see ./browse-search-menu.tsx for why the
+  // card cannot simply sit inside the bar.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [activeOption, setActiveOption] = useState(-1);
+  const [recentExpanded, setRecentExpanded] = useState(false);
+  const [menuAt, setMenuAt] = useState<SearchMenuPosition | null>(null);
+
   const state = useStoreState(browseStore) as {
     level: 'list' | 'detail';
     rows: any[] | null;
@@ -158,6 +194,8 @@ export function BrowseScreen() {
     moreExpanded: boolean;
     categories?: Array<{ key: string; label: string }>;
     category?: string;
+    canClearFilters?: boolean;
+    recent?: string[];
   };
   const onDetail = state.level === 'detail';
   const category = state.category || 'all';
@@ -167,11 +205,80 @@ export function BrowseScreen() {
   const typeChips = (state.categories || [])
     .filter((c) => c.key !== 'other' || category === 'other');
 
+  const query = typed.trim();
+  const recent = state.recent || [];
+  const suggestions: Array<{ slug: string; name: string; app: any }> = menuOpen && query && !onDetail
+    ? (browse()?.suggestionsFor?.(typed) || [])
+    : [];
+  const recentCanFold = recent.length > RECENT_FOLDED_TILES;
+  const recentShown = recentExpanded ? recent : recent.slice(0, RECENT_FOLDED_TILES);
+  const optionCount = query ? suggestions.length : recentShown.length;
+  // Each tile runs a search over the directory, so not on every arrow key.
+  const showingRecent = menuOpen && !query && !onDetail;
+  const recentTiles: RecentTile[] = useMemo(
+    () => (showingRecent ? (browse()?.recentSearchTiles?.(recentShown) || []) : []),
+    [state, showingRecent, recentExpanded],
+  );
+  const menuShowing = menuOpen && !onDetail && optionCount > 0 && !!menuAt;
+
+  const measureMenu = () => {
+    const screen = screenRef.current;
+    const input = inputRef.current;
+    if (!screen || !input) return;
+    const s = screen.getBoundingClientRect();
+    const f = input.getBoundingClientRect();
+    setMenuAt({ top: f.bottom - s.top + screen.scrollTop + 4, left: f.left - s.left, width: f.width });
+  };
+  const openMenu = (value: string) => {
+    setTyped(value);
+    setActiveOption(-1);
+    setRecentExpanded(false);
+    setMenuOpen(true);
+    measureMenu();
+  };
+  const closeMenu = () => {
+    setMenuOpen(false);
+    setActiveOption(-1);
+    setRecentExpanded(false);
+  };
+  // The card holds a measured place, so a window that changes width moves it.
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    window.addEventListener('resize', measureMenu);
+    return () => window.removeEventListener('resize', measureMenu);
+  }, [menuOpen]);
+
+  const toggleRecent = () => {
+    // Folding away the tile the arrows were on hands them back to the field.
+    if (recentExpanded && activeOption >= RECENT_FOLDED_TILES) setActiveOption(-1);
+    setRecentExpanded(!recentExpanded);
+  };
+  const clearRecent = () => {
+    setActiveOption(-1);
+    setRecentExpanded(false);
+    browse()?.forgetSearches?.();
+  };
+  const pickRecent = (q: string) => {
+    if (inputRef.current) inputRef.current.value = q;
+    browse()?.pickRecentSearch?.(q);
+    closeMenu();
+  };
+  const pickSuggestion = (suggestion: { slug: string; name: string; app: any }) => {
+    browse()?.pickSuggestion?.(suggestion, typed);
+    closeMenu();
+  };
+  const pickOption = (index: number) => {
+    if (query) pickSuggestion(suggestions[index]);
+    else pickRecent(recent[index]);
+  };
+
   // Escape clears the field and re-filters immediately — the debounce exists
   // to coalesce typing, and a deliberate clear is not typing.
   const clear = (focus: boolean) => {
     const input = inputRef.current;
     if (input) input.value = '';
+    setTyped('');
+    setActiveOption(-1);
     browse()?.setQuery('', { immediate: true });
     if (focus && input) input.focus();
   };
@@ -229,9 +336,45 @@ export function BrowseScreen() {
             autoComplete="off"
             placeholder={t('discover:search.placeholder')}
             aria-label={t('discover:search.label')}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={menuShowing}
+            aria-controls={menuShowing ? SEARCH_MENU_LISTBOX_ID : undefined}
+            aria-activedescendant={menuShowing && activeOption >= 0 ? searchOptionId(activeOption) : undefined}
             className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-300 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
-            onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
+            onInput={(e) => {
+              browse()?.setQuery(e.currentTarget.value);
+              openMenu(e.currentTarget.value);
+            }}
+            onFocus={(e) => openMenu(e.currentTarget.value)}
+            // After Escape closed the menu the field keeps its focus, so a
+            // press on it has no focus event to reopen the menu with.
+            onClick={(e) => { if (!menuOpen) openMenu(e.currentTarget.value); }}
+            onBlur={closeMenu}
             onKeyDown={(e) => {
+              if (menuShowing && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                e.preventDefault();
+                // One step past either end is the field itself (-1).
+                const step = e.key === 'ArrowDown' ? 1 : -1;
+                // Focus stays in the field, so the arrows are a keyboard's way
+                // past the fold: going on from the last tile unfolds the rest.
+                if (!query && step === 1 && !recentExpanded && recentCanFold && activeOption === optionCount - 1) {
+                  setRecentExpanded(true);
+                  setActiveOption(optionCount);
+                  return;
+                }
+                setActiveOption((i) => {
+                  const next = i + step;
+                  if (next >= optionCount) return -1;
+                  return next < -1 ? optionCount - 1 : next;
+                });
+                return;
+              }
+              if (menuShowing && e.key === 'Enter' && activeOption >= 0) {
+                e.preventDefault();
+                pickOption(activeOption);
+                return;
+              }
               // Enter opens the site when the field holds a web address —
               // what a browser's address bar does (#5364). The live value is
               // read, not the debounced one, so Enter does not wait for the
@@ -241,7 +384,14 @@ export function BrowseScreen() {
                 if (site) {
                   e.preventDefault();
                   try { window.open(site.href, '_blank', 'noopener'); } catch (err) { /* ignore */ }
+                } else {
+                  browse()?.rememberSearch?.(e.currentTarget.value);
                 }
+                closeMenu();
+              } else if (e.key === 'Escape' && menuShowing) {
+                // The menu goes first; a second Escape clears, as it always did.
+                e.preventDefault();
+                closeMenu();
               } else if (e.key === 'Escape' && e.currentTarget.value) {
                 e.preventDefault();
                 clear(false);
@@ -378,6 +528,19 @@ export function BrowseScreen() {
           ) : null}
         </div>
       </div>
+      {menuShowing && menuAt ? (
+        <BrowseSearchMenu
+          position={menuAt}
+          activeIndex={activeOption}
+          recent={query ? null : recentTiles}
+          recentToggle={recentCanFold ? (recentExpanded ? 'less' : 'more') : null}
+          suggestions={query ? suggestions : null}
+          onPickRecent={pickRecent}
+          onPickSuggestion={pickSuggestion}
+          onClearRecent={clearRecent}
+          onToggleRecent={toggleRecent}
+        />
+      ) : null}
       {/*
           Level 1: the app-store list. ONE row markup, two layouts, and the
           switch is pure CSS — no matchMedia, no re-render on resize.
@@ -450,9 +613,21 @@ export function BrowseScreen() {
               words already typed in. `make` is null in the prerender, so the
               shipped #browse-empty stays exactly as it was.
           */}
-          {state.empty && state.make ? (
-            <div className="mt-3">
-              <MakeFromSearch idea={state.make} label={t('discover:empty.search.make', { idea: state.make })} />
+          {state.empty && (state.make || state.canClearFilters) ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {state.make ? (
+                <MakeFromSearch idea={state.make} label={t('discover:empty.search.make', { idea: state.make })} />
+              ) : null}
+              {/* #6197: the pill removes itself, so the keyboard moves to the
+                  Filters chip, as it does from the Clear all chip. */}
+              {state.canClearFilters ? (
+                <ClearFiltersButton
+                  label={t('discover:empty.clearFilters')}
+                  onCleared={() => typeRowRef.current
+                    ?.querySelector<HTMLButtonElement>('#browse-filters-btn')
+                    ?.focus()}
+                />
+              ) : null}
             </div>
           ) : null}
         </div>

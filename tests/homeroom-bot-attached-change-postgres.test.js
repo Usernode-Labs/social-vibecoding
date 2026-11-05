@@ -361,7 +361,7 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     // 5 Oct 2026: the shared normaliser (em-dashes.js): a new clause after the dash is a new sentence.
     assert.equal(first.content, 'Good idea. I can file a request for that. Want me to?', 'D: the em dash became a full stop');
     const offered = await turn('Yes please', scripted([
-      [['offer_request', { project: 'Flat 4B Chores', title: 'Swap chore turns', details: 'Let two flatmates swap their turns on a chore.' }]],
+      [['offer_request', { project: 'Flat 4B Chores', title: 'Swap chore turns', details: 'Let two flatmates swap their turns on a chore.', doneWhen: ['It does what was asked.'] }]],
       [['reply', { text: 'Here it is.' }]],
     ]));
     const tapped = await conversations.sendMessage(pool, maya, await chatOf(maya), { content: 'File it', reply_to_id: offered.messageId });

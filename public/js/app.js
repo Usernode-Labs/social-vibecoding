@@ -264,6 +264,14 @@ const App = {
     // …and the Workshop view the tab returns to (#2776), which names the
     // previous account's app and card in the same way.
     App._forgetWorkshopView();
+    // …and Discover's recent searches (#6197): what this account looked for,
+    // which the next account on this device must not be offered. Unlike unsent
+    // messages they carry no owner to check, and a changed session token is not
+    // necessarily the same person, so they go on every sweep. Browse.open reads
+    // them afresh, so no copy outlives this.
+    try {
+      localStorage.removeItem('usernode:browse-recent-searches');
+    } catch (err) { /* nothing stored, or no storage at all */ }
     // …and what Messages and the Homeroom bot tab kept to draw offline
     // (frontend/src/lib/kept-copies.ts): the conversation list, the newest
     // messages of the last few conversations and the bot tab's lists. The
@@ -2547,7 +2555,11 @@ const App = {
     // compare a pushed SHA with, and stands down too.
     if (App.embeddedPanel) return;
     try {
-      const res = await fetch('/api/version');
+      // #6233: name the build this tab loaded, so the answer says which merge
+      // it contains and a Live change it lacks can offer Reload.
+      const have = typeof App.loadedPlatformSha === 'string' && /^[0-9a-f]{40}$/i.test(App.loadedPlatformSha)
+        ? `?have=${encodeURIComponent(App.loadedPlatformSha)}` : '';
+      const res = await fetch('/api/version' + have);
       if (!res.ok) return;
       const info = await res.json();
       const firstVersionAnswer = !App._lastVersionInfo;
@@ -2568,6 +2580,8 @@ const App = {
         const target = typeof PlatformTarget !== 'undefined' ? PlatformTarget : null;
         if (target && target.notifySlug) target.notifySlug();
       } catch {}
+      // #6233: the tab-build store behind "Live · reload to get it".
+      try { window.UsernodeReact?.tabBuild?.publish?.(info, App.loadedPlatformSha); } catch { /* no bundle yet */ }
       // `?shot=platform-updating` / `-ready` pin the row to a state no real
       // answer can produce on demand; a poll landing on top would erase it.
       if (!App._platformUpdateShot) App.renderPlatformVersionPill(info);
@@ -4411,16 +4425,17 @@ const App = {
     }
     // The chat on screen re-reads its vote snapshot for this vote burst
     // (#6109). loadVoteState rewrites AppView.voteState and patches the vote
-    // hosts through GroupChat.refreshVoteControls, so the count changes in
-    // place: no toast, no re-render, no remount, no scroll. Skipped when the
-    // dev path above already read that slug (refreshDevData reads it on the
-    // dev tab's own chat sub-tab), and when no vote row is on screen.
+    // cards' facts through GroupChat.refreshVoteControls, so the words change
+    // in place: no toast, no re-render, no remount, no scroll. Skipped when
+    // the dev path above already read that slug (refreshDevData reads it on
+    // the dev tab's own chat sub-tab), and when no row about a change is on
+    // screen (#6236: a row carries data-vote-session).
     let chatRead = null;
     const chatSlug = typeof GroupChat !== 'undefined' ? GroupChat.appSlug : null;
     if (chatSlug && b.voteSlugs.has(chatSlug)
       && !(App.currentTab === 'dev' && App.currentApp === chatSlug && b.dev)
       && typeof AppView !== 'undefined' && AppView.loadVoteState
-      && document.querySelector('#gc-messages [data-vote-controls], #gc-thread-messages [data-vote-controls]')) {
+      && document.querySelector('#gc-messages [data-vote-session], #gc-thread-messages [data-vote-session]')) {
       try {
         chatRead = AppView.loadVoteState(chatSlug);
       } catch { chatRead = null; }
@@ -4709,7 +4724,13 @@ const App = {
   // restoreFromHash so the many in-app callers that route WITHOUT the
   // address having moved (boot, the auth screens, the alias rewrites) don't
   // drag the shot appliers along.
+  //
+  // #6110: an entry the Workshop's side panel wrote its item's address on
+  // is the page's: a traversal onto it shows the page at its place, as Back
+  // did before the address followed the panel. Rewritten in place, first,
+  // before anything reads the address (AppView._leavePanelAddress).
   _routeFromHash() {
+    if (typeof AppView !== 'undefined') AppView._leavePanelAddress?.(); // #6110
     // Recorded before the router runs, and guarded on a real change: one
     // history traversal fires popstate AND hashchange, so this runs twice in
     // a tick with the address already settled (#1102). Without the guard the
@@ -8721,6 +8742,11 @@ const App = {
       }
       return segs.slice(0, 3).join('/');
     };
+    // #6110: while the Workshop's side panel holds an item the address is
+    // the item's (AppView._followPanelAddress); the page's own address,
+    // which this write would be, waits until the panel closes.
+    const panel = typeof AppView !== 'undefined' && AppView._panelAddress;
+    if (panel && currentFull === panel.to && screenIdOf(newUrl) === screenIdOf(panel.from)) return;
     const sameScreen = screenIdOf(currentFull) === screenIdOf(newUrl);
 
     if (opts.replace || sameScreen) {

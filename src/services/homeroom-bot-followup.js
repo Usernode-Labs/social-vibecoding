@@ -61,12 +61,19 @@
 const log = require('./logger');
 const { parseStopMentioning, failedClaudeTurn, requestRulesLines, localeRule } = require('./homeroom-bot-live');
 const shotsState = require('./shots-state');
+const proposalDescription = require('./proposal-description');
 const { withoutEmDashes } = require('./em-dashes');
 
-// Revisions the bot makes to one proposal on its own. Each one clears the
-// votes the proposal had, so an unbounded loop of "one more tweak" costs the
-// group its review every time. After this many, the turn runs read-only.
+// Revisions the bot makes to one proposal ON ITS OWN (a check fix, a shots
+// fix): updates nobody asked for. Each one clears the votes the proposal
+// had, so an unbounded loop of "one more tweak" costs the group its review
+// every time. After this many, the bot stops and a person may let it try
+// once more (#6284).
 const MAX_REVISIONS = 3;
+// #6284: updates people ASKED for (a thread ask, Main Chat's revise, a No
+// vote's reason) have their own, higher limit. They still clear the votes,
+// so they are capped too, and the cap is said in words.
+const MAX_ASKED_REVISIONS = 10;
 // #3767: the longest name a revision may give its proposal.
 const MAX_TITLE_CHARS = 120;
 
@@ -123,7 +130,10 @@ function newReplies({
 function describeReply(r) {
   const place = r.via === 'ask' ? `asked you for a change ${ASKED_IN[r.askedIn] || 'in Homeroom'}, as you wrote it down when they asked`
     : r.where === 'proposal' ? 'in the proposal\'s discussion' : (r.via === 'github' ? 'on the GitHub issue' : 'in the issue\'s discussion');
-  return `- ${r.author}, ${place} (${String(r.createdAt || '').slice(0, 16)}):\n${clipText(r.body, 2000).split('\n').map((l) => `  ${l}`).join('\n')}`;
+  // A person's ask is passed on whole (up to the chat message limit); other
+  // replies keep the short form.
+  const limit = r.via === 'ask' ? 8000 : 2000;
+  return `- ${r.author}, ${place} (${String(r.createdAt || '').slice(0, 16)}):\n${clipText(r.body, limit).split('\n').map((l) => `  ${l}`).join('\n')}`;
 }
 
 // Where a change asked of the bot was asked (homeroom_bot_change_asks.source).
@@ -257,6 +267,7 @@ function followUpPrompt({
   if (canRevise) {
     lines.push(
       '- "revise": they asked for a clear change to this proposal. Make that change, and only that change, in this working tree. Follow the repository\'s own agent instructions, keep it small, and run the tests that cover it. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again. When the change alters what the proposal does, give it a new `title` that says what it does now (its name on the vote; the old one stays otherwise).'
+        + ' When the revision changes what the change does for people, so the description people vote on no longer describes it (you set a new title or plan), also write the change\'s whole new description between `DESCRIPTION` and `END DESCRIPTION` lines before the JSON block, written the way the first build\'s description is: one or two short paragraphs in plain language, what is different for someone using the app, what they can now do or what stops going wrong, with no file names, code, commit hashes or test results, and no em dashes.'
         + (planFormat
           ? ' When the revision changes what the change does for people, so the spec above no longer describes it, write the whole updated plan in your message before the JSON block, following the plan format below, and set `"plan": true`. A code fix, a test fix or a tweak that the spec still describes keeps `"plan": false`.'
           : ''),
@@ -387,10 +398,21 @@ const CAUSES = new Set(['change', 'not_change', 'unsure']);
  * is no action block at all.
  */
 function planOutOf(text) {
+  return descriptionOut(text).rest;
+}
+
+/**
+ * #6263: the description a revise turn wrote, as the DESCRIPTION block in
+ * the text before its action JSON block (proposal-description.extract), and
+ * the rest of that text with the block taken out. `rest` is the plan, so the
+ * description never becomes part of it.
+ */
+function descriptionOut(text) {
   const raw = String(text || '');
   const block = lastActionBlock(raw);
-  if (!block || block.start <= 0) return '';
-  return raw.slice(0, block.start).trim();
+  const before = block && block.start > 0 ? raw.slice(0, block.start) : '';
+  const { cleanedText, description } = proposalDescription.extract(before);
+  return { description: description || null, rest: cleanedText.trim() };
 }
 
 // ── What it says ─────────────────────────────────────────────────────────
@@ -421,10 +443,11 @@ function personText({ reply }) {
 // One note per update: that earlier votes were cleared is the platform's
 // line in the change's discussion to say (routes/votes.js
 // reconcileNativeReviewedHead), not said again here.
-function revisedText({ summary, reply, planVersion = null }) {
+function revisedText({ summary, reply, planVersion = null, descriptionStale = false }) {
   const lines = [`Homeroom bot updated this change: ${clipText(summary || reply, 600)}`];
   if (summary && reply && reply !== summary) lines.push('', clipText(reply, 2000));
   if (planVersion) lines.push('', `Its plan is updated to match: version ${planVersion} is in the change's discussion.`);
+  if (descriptionStale) lines.push('', 'Its description still describes the earlier version. Ask me here to reword it.');
   return lines.join('\n');
 }
 
@@ -445,11 +468,73 @@ function revisedText({ summary, reply, planVersion = null }) {
 // false) is not one a reply gets updated, so it says so.
 function revisionFailedText({ why, canRevise = true }) {
   if (canRevise === false) {
-    return 'Homeroom bot couldn\'t update this change: it has already updated it as many times as it may on its own, '
-      + 'so a person needs to make this one. The change is as it was.';
+    return `Homeroom bot couldn't update this change: it has already made ${MAX_ASKED_REVISIONS} updates people `
+      + 'asked for on it, as many as it may. A person can make the next one. The change is as it was.';
   }
   const words = require('./homeroom-bot-dm').updateFailedWords(why, 'this change', 'bot');
   return `${words} The change is as it was. Reply here (or on the GitHub issue) and it will try again.`;
+}
+
+/**
+ * #6284: what the record says about this change's revisions: the bot's own
+ * rounds (`own`, which the three-round limit counts), the rounds people
+ * asked for (`asked`, with their own higher limit), how many grants have
+ * been used, and the open grant's id if somebody may still spend one.
+ * Never throws: a grants table that is not there yet reads as no grants.
+ */
+async function revisionCounts(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return { own: 0, asked: 0, grants: 0, openGrant: null };
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE NOT asked)::int AS own,
+            COUNT(*) FILTER (WHERE asked)::int AS asked
+       FROM homeroom_bot_runs
+      WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+    [id],
+  );
+  let grants = 0;
+  let openGrant = null;
+  try {
+    const { rows: g } = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE used_at IS NOT NULL)::int AS used,
+              MAX(id) FILTER (WHERE used_at IS NULL) AS open
+         FROM homeroom_bot_revision_grants WHERE session_id = $1`,
+      [id],
+    );
+    grants = Number(g[0]?.used || 0);
+    openGrant = g[0]?.open ? Number(g[0].open) : null;
+  } catch {
+    // The migration has not run here (a test's own schema, an old copy).
+  }
+  return { own: Number(rows[0]?.own || 0), asked: Number(rows[0]?.asked || 0), grants, openGrant };
+}
+
+/**
+ * #6284: the line the change and the thread show when the bot stopped at its
+ * own limit. `tries` is its own rounds plus the grants people spent.
+ */
+function stoppedAtLimitText({ failingCount = 0, tries = MAX_REVISIONS, you = false } = {}) {
+  const who = you
+    ? 'You can let it try once more.'
+    : 'The person who asked for it or an admin can let it try again.';
+  const failing = failingCount > 0
+    ? `${failingCount} of this change's checks failed on its preview.`
+    : 'Its checks are failing on its preview.';
+  return `Checks failing · Homeroom bot stopped after ${tries} tries. ${who} ${failing}`;
+}
+
+/** #6284: the bot stopped at its own limit, as its own thread message. */
+function stoppedHandOffText({ failingCount = 0, tries = MAX_REVISIONS } = {}) {
+  const failing = failingCount === 1
+    ? ' 1 check is still failing.'
+    : failingCount > 1 ? ` ${failingCount} checks are still failing.` : '';
+  return `I stopped after ${tries} tries at getting this change past its checks.${failing} `
+    + 'The person who asked for it or an admin can let me try once more.';
+}
+
+/** #6284: the cap on updates people asked for, said in words. */
+function askedLimitText() {
+  return `I've made ${MAX_ASKED_REVISIONS} updates people asked for on this change, as many as I may. A person can make the next one.`;
 }
 
 // #4610: a person who wrote to the bot on its change heard nothing until
@@ -797,6 +882,38 @@ function checksRetryText({ broken = false, failing = true, skipped = false } = {
 }
 
 /**
+ * #6234: the one line on the change as the bot starts fixing its failing
+ * checks (homeroom-bot.js runChecksFix), so the request's page says it is
+ * being fixed instead of "Its author needs to fix this". What it is fixing,
+ * from what failed, in the people's words: the failing check's name when
+ * there is one that reads as words (plainName), else how many; what its
+ * shots showed not working; the sample data they lacked. The end line
+ * (checksRevisedText, checksRetryText or checksPersonText) follows it.
+ * Pure.
+ */
+function checksFixingText({ failing = [], broken = [], skipped = [] } = {}) {
+  const list = (v) => (Array.isArray(v) ? v : (v ? [{}] : []));
+  const checks = list(failing);
+  const tried = list(broken);
+  const seeded = list(skipped);
+  const end = 'It will say here when it\'s done.';
+  // Only shots that could not reach a change: the change works, it lacks data.
+  if (seeded.length && !tried.length && !checks.length) {
+    return `Homeroom bot is adding the sample data this change's before and after screens need. ${end}`;
+  }
+  const what = [];
+  if (checks.length === 1) {
+    const named = plainName(checks[0] && checks[0].name);
+    what.push(named ? `the failing check "${named}"` : 'the failing check on this change');
+  } else if (checks.length) {
+    what.push(`the ${checks.length} failing checks on this change`);
+  }
+  if (tried.length) what.push('what didn\'t work when Homeroom tried it');
+  if (!what.length) what.push('the failing checks on this change');
+  return `Homeroom bot is fixing ${what.join(' and ')}. ${end}`;
+}
+
+/**
  * A red check the bot found is not its change's doing (the fix turn's
  * `cause` "not_change"): that is the platform's to look at, and admins are
  * told (homeroom-bot.js runChecksFix, a platform incident). The change's own
@@ -842,6 +959,11 @@ function whySentence(why) {
   return `${said.charAt(0).toUpperCase()}${said.slice(1)}.`;
 }
 
+// #6234: who takes a change the bot could not fix from here. It said "A
+// person needs to look at it from here", which named nobody; the request's
+// own people are the requester and the project's members.
+const CHECKS_TAKE_OVER = 'The person who asked for it, or any member of this project, can take it from here.';
+
 function checksPersonText({ why, failingCount = 0, broken = [] }) {
   const said = whySentence(why);
   const tried = Array.isArray(broken) ? broken : [];
@@ -850,12 +972,12 @@ function checksPersonText({ why, failingCount = 0, broken = [] }) {
       ? `"${clipText(tried[0].claim, 200)}" didn't work when Homeroom tried it`
       : `${tried.length} things it says it does didn't work when Homeroom tried them`;
     return `Homeroom bot can't get this change working on its own: ${what}. `
-      + `${said ? `${said} ` : ''}A person needs to look at it from here.`;
+      + `${said ? `${said} ` : ''}${CHECKS_TAKE_OVER}`;
   }
   const checks = failingCount === 1 ? '1 check is' : `${failingCount || 'Some'} checks are`;
   const also = tried.length ? `, and ${tried.length === 1 ? 'one thing it says it does' : `${tried.length} things it says it does`} didn't work when Homeroom tried it` : '';
   return `Homeroom bot can't get this change past its checks on its own: ${checks} still failing${also}. `
-    + `${said ? `${said} ` : ''}A person needs to look at the failing checks from here.`;
+    + `${said ? `${said} ` : ''}${CHECKS_TAKE_OVER}`;
 }
 
 // ── The turn ─────────────────────────────────────────────────────────────
@@ -1041,6 +1163,11 @@ function headMoved({ mode, result, reviewedHeadSha, action }) {
 
 module.exports = {
   MAX_REVISIONS,
+  MAX_ASKED_REVISIONS,
+  revisionCounts,
+  stoppedAtLimitText,
+  stoppedHandOffText,
+  askedLimitText,
   MAX_SPEC_CHARS,
   ACTIONS,
   VERDICT_FOR,
@@ -1050,6 +1177,7 @@ module.exports = {
   followUpPrompt,
   parseFollowUp,
   planOutOf,
+  descriptionOut,
   answerText,
   askText,
   personText,
@@ -1076,6 +1204,8 @@ module.exports = {
   checksLookLikeInfra,
   checksFixPrompt,
   checksRevisedText,
+  checksFixingText,
+  CHECKS_TAKE_OVER,
   checksPersonText,
   whySentence,
   checksNotChangeText,

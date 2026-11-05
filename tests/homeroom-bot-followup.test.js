@@ -160,11 +160,27 @@ test('#4612: planOutOf is the text before the action JSON block, and nothing whe
 
 // One note per update: the cleared votes are the platform's line in the
 // change's discussion (routes/votes.js), so the note ends with the plan line.
+test('#6263: a revise turn\'s DESCRIPTION block is the new description, and never part of its plan', () => {
+  const raw = '# Plan\n\nDo it.\n\n==== DESCRIPTION ====\nThe list sorts by due date now.\n==== END DESCRIPTION ====\n\n```json\n{"action":"revise","reply":"Done.","plan":true}\n```';
+  const out = followup.descriptionOut(raw);
+  assert.equal(out.description, 'The list sorts by due date now.');
+  assert.equal(out.rest, '# Plan\n\nDo it.', 'the plan is what is left, never the description');
+  assert.equal(followup.planOutOf(raw), '# Plan\n\nDo it.');
+  assert.equal(followup.descriptionOut('```json\n{"action":"revise","reply":"ok"}\n```').description, null, 'no block, no description');
+  // The revise prompt asks for it on a behaviour change.
+  assert.match(followup.followUpPrompt({ seed: 'x', canRevise: true, planFormat: 'the plan format' }),
+    /between `DESCRIPTION` and `END DESCRIPTION` lines before the JSON block/);
+});
+
 test('#4612: revisedText names the new plan version, and leaves the cleared votes to the platform', () => {
   const withPlan = followup.revisedText({ summary: 's', reply: 'r', planVersion: 2 });
   assert.match(withPlan, /Its plan is updated to match: version 2 is in the change's discussion\.$/);
   assert.doesNotMatch(withPlan, /approvals/);
   assert.doesNotMatch(followup.revisedText({ summary: 's', reply: 'r' }), /Its plan is updated/, 'no version, no line');
+  assert.match(followup.revisedText({ summary: 's', reply: 'r', descriptionStale: true }),
+    /Its description still describes the earlier version\. Ask me here to reword it\.$/,
+    '#6263: an out-of-date description is said where the update is');
+  assert.doesNotMatch(followup.revisedText({ summary: 's', reply: 'r' }), /description still describes/, 'only when stale');
   const texts = [withPlan, followup.revisedText({ summary: 's', reply: 'r', planVersion: 12 })];
   for (const t of texts) assert.ok(!/—/.test(t) && !/PR #|proposal/.test(t), t);
 });
@@ -206,6 +222,9 @@ function harness({
         return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
+      // #6284: the reply path counts updates people asked for, apart from
+      // the bot's own rounds.
+      if (/COUNT\(\*\) FILTER \(WHERE NOT asked\)/.test(s)) return { rows: [{ own: 0, asked: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
       // voice.asksWaiting's: only that one (takeAsks's second UPDATE has
       // ORDER BY id LIMIT 10, not LIMIT 1).
@@ -550,6 +569,50 @@ test('a clear change is made on the proposal, and the proposal is reconciled lik
   assert.equal(insert.params[9], 'The dark background is now #000.', 'build_note says what changed');
 });
 
+test('#6263: a revise that changes what the change does rewrites its description through the author edit', async (t) => {
+  const editMod = require('../src/services/proposal-description-edit');
+  const realEdit = editMod.edit;
+  const realRead = editMod.readEditable;
+  t.after(() => { editMod.edit = realEdit; editMod.readEditable = realRead; });
+  const writes = [];
+  editMod.readEditable = async () => ({ id: 5001, pr_summary_input_version: 0 });
+  editMod.edit = async (args) => {
+    writes.push(args);
+    return { status: 200, body: { description: args.input.description, version: 1, prBodyStatus: 'synced' } };
+  };
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000 and call it Darker', createdAt: '2026-09-26T11:30:00Z' }],
+    result: {
+      lastResultText: 'The dark background is #000.\n\n==== DESCRIPTION ====\nThe dark mode background is #000 now.\n==== END DESCRIPTION ====\n\n```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","plan":true}\n```',
+      pushOk: true, sha: NEW_HEAD,
+    },
+  });
+  h.deps.sessions.persistScoutPublication = async () => ({ specVersion: 2 });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.equal(writes.length, 1, 'the description is written in the same update');
+  assert.equal(writes[0].input.description, 'The dark mode background is #000 now.');
+  assert.equal(writes[0].userId, BOT.id);
+  assert.doesNotMatch(h.calls.posts[0].text, /description still describes/, 'written, so not said to be stale');
+});
+
+test('#6263: a revise with no new description marks the summary stale, and the update message says so', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000 and call it Darker', createdAt: '2026-09-26T11:30:00Z' }],
+    result: {
+      lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","plan":true}\n```',
+      pushOk: true, sha: NEW_HEAD,
+    },
+  });
+  h.deps.sessions.persistScoutPublication = async () => ({ specVersion: 2 });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  const stale = h.calls.queries.find((q) => /SET pr_summary_stale = TRUE/.test(q.s));
+  assert.ok(stale, 'the out-of-date summary is marked so the page shows it');
+  assert.deepEqual(stale.params, [5001]);
+  assert.match(h.calls.posts[0].text, /Its description still describes the earlier version\. Ask me here to reword it\./);
+});
+
 test('#4612: a revise that says the plan changed publishes the next spec version, the card and the issue copy', async (t) => {
   const plan = '<article data-spec>\n  <h1>Darker dark mode</h1>\n  <section data-spec-tab="user"><p>The dark background is #000.</p></section>\n  <section data-spec-tab="tech"><p>One constant in the theme module.</p></section>\n</article>';
   const h = harness({
@@ -758,9 +821,9 @@ test('a Codex follow-up whose agent failed fails exactly as it did', async (t) =
   assert.equal(insertOf(h).params[18], 'revise: its change could not be pushed', 'the message it always had');
 });
 
-test('after MAX_REVISIONS the turn runs read-only, and can only hand over', async (t) => {
+test('after MAX_ASKED_REVISIONS the turn runs read-only, and can only hand over', async (t) => {
   const h = harness({
-    revisions: followup.MAX_REVISIONS,
+    revisions: followup.MAX_ASKED_REVISIONS,
     comments: [{ author: 'evan', body: 'One more tweak', createdAt: '2026-09-26T11:30:00Z' }],
     result: { lastResultText: '```json\n{"action":"person","reply":"They want another change; a person should take this over."}\n```', pushOk: false, sha: OLD_HEAD },
   });
@@ -772,17 +835,17 @@ test('after MAX_REVISIONS the turn runs read-only, and can only hand over', asyn
   assert.equal(followup.MAX_REVISIONS, 3);
 });
 
-test('a "revise" after MAX_REVISIONS changes nothing, and says a reply would not either', async (t) => {
+test('a "revise" after MAX_ASKED_REVISIONS changes nothing, and says a reply would not either', async (t) => {
   const h = harness({
-    revisions: followup.MAX_REVISIONS,
+    revisions: followup.MAX_ASKED_REVISIONS,
     comments: [{ author: 'evan', body: 'One more tweak', createdAt: '2026-09-26T11:30:00Z' }],
     result: { lastResultText: '```json\n{"action":"revise","reply":"Done."}\n```', pushOk: false, sha: OLD_HEAD },
   });
   const out = await run(t, h);
   assert.equal(out.verdict, 'failed');
   assert.equal(h.calls.posts[0].kind, 'followup_failed');
-  assert.equal(h.calls.posts[0].text, 'Homeroom bot couldn\'t update this change: it has already updated it as many times as it may '
-    + 'on its own, so a person needs to make this one. The change is as it was.');
+  assert.equal(h.calls.posts[0].text, `Homeroom bot couldn't update this change: it has already made ${followup.MAX_ASKED_REVISIONS} updates people `
+    + 'asked for on it, as many as it may. A person can make the next one. The change is as it was.');
   assert.doesNotMatch(h.calls.posts[0].text, /try again/, 'a reply would not get it updated');
   assert.equal(h.calls.posts[0].dm.canRevise, false);
 });

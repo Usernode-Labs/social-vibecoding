@@ -232,6 +232,211 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(sent.length, 1);
   });
 
+  await t.test('#6263: a reply that describes a description it did not read is caught, and it answers again', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, 'What does the change description say right now?', place);
+    const model = scripted([
+      { text: 'That\'s the earlier wording, from before the update.' },
+      { tool: 'reply', args: { text: 'I cannot see the change\'s description from here. Ask me and I will look it up.' } },
+    ]);
+    const out = await turn(place, model, { through: id - 1 });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, 2, 'its first answer was refused and it was asked again');
+    assert.ok(model.seen[1].messages.some((m) => /read it with get_change, or say you cannot see it/i.test(String(m.content || ''))),
+      'the retry note says what to do');
+    assert.equal(sent.length, 1);
+    assert.doesNotMatch(sent[0].content, /earlier wording/, 'the claim it could not check was never posted');
+    assert.match(sent[0].content, /cannot see the change's description from here/);
+    const { rows: [record] } = await pool.query(
+      'SELECT failures FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1',
+    );
+    assert.ok(record.failures.some((f) => f === 'claims:unread_description'), JSON.stringify(record.failures));
+  });
+
+  await t.test('#6263: once it has read the change, it may quote the description', async () => {
+    sent.length = 0;
+    await pool.query(
+      `UPDATE chat_sessions SET pr_summary_md = 'The header is blue.', pr_summary_input_version = 1 WHERE id = $1`,
+      [change.id],
+    );
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, 'What does the description say right now?', place);
+    const platform = {
+      async call() {
+        return { isError: false, text: JSON.stringify({ changeId: change.id, title: 'Blue header', status: 'promoted' }) };
+      },
+      async close() {},
+    };
+    const model = scripted([
+      { tool: 'get_change', args: { changeId: change.id } },
+      { tool: 'reply', args: { text: 'It says: "The header is blue." That is the earlier wording.' } },
+    ]);
+    const out = await turn(place, model, { through: id - 1, deps: { noPlatform: false, openMcp: async () => platform } });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, 2, 'read first, then answered: no retry');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /The header is blue\./, 'the description it read is quoted');
+  });
+
+  // #6270: a change of the bot's on request 61, its own, for the correction
+  // tests below: kept apart from `change` so its waits are nobody else's.
+  let mainLinkChange = null;
+  const mainLink = async () => {
+    if (!mainLinkChange) {
+      const { rows: [row] } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, linked_issues, promoted_at, pr_number)
+         VALUES ($1, $2, 'dev/homeroom_bot-main-link', 'promoted', 'Keep plus threads out of Main', $3, NOW(), 32) RETURNING id`,
+        [app.id, homeroomBot.id, [61]],
+      );
+      mainLinkChange = row.id;
+    }
+    return mainLinkChange;
+  };
+
+  await t.test('#6270: a turn that reads every round is capped, warned, and answers on its last', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, '@Homeroom bot does the header show on every page?', place);
+    let n = 0;
+    const call = (name, args) => ({
+      content: '',
+      toolCalls: [{ id: `c${++n}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }],
+      usage: { inputTokens: 100, outputTokens: 20, costUsd: 0 },
+    });
+    // The messages of every request are the same array, read as it stands when
+    // the request is made: what each round was told is kept as it was.
+    const snaps = [];
+    const model = scripted([
+      (req) => {
+        snaps.push(req.messages.map((m) => ({ ...m })));
+        return req.tools.some((tl) => tl.function.name === 'read_message')
+          ? call('read_message', { id })
+          : call('reply', { text: 'Yes: the header shows on every page.' });
+      },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'reads-1' });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, voice.MAX_ROUNDS, 'its eight rounds, the last of them the answer');
+    const lastResult = (i) => {
+      const results = snaps[i].filter((m) => m.role === 'tool');
+      return results.length ? String(results[results.length - 1].content) : '';
+    };
+    assert.doesNotMatch(lastResult(4), /reading for this turn is done/, 'the fourth read is served');
+    assert.match(lastResult(5), /reading for this turn is done/, 'the fifth is refused');
+    const last = model.seen[voice.MAX_ROUNDS - 1];
+    assert.equal(last.toolChoice, 'required');
+    assert.deepEqual(last.tools.map((tl) => tl.function.name).sort(), ['reply', 'stay_quiet', 'update_change'],
+      'nothing to read on the last round, and the change it can queue');
+    assert.ok(snaps[voice.MAX_ROUNDS - 1].some((m) => m.role === 'user' && /This is your last round\. Answer now with what you have/.test(String(m.content))));
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /Yes: the header shows on every page\./);
+  });
+
+  await t.test('#6270: a stand-in reply is refused once, then the honest line is posted', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, 'Would that keep the thread out of Main?', place);
+    const snaps = [];
+    const model = scripted([
+      (req) => {
+        snaps.push(req.messages.map((m) => ({ ...m })));
+        return {
+          content: '',
+          toolCalls: [{ id: `s${snaps.length}`, type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'placeholder' }) } }],
+          usage: { inputTokens: 100, outputTokens: 20, costUsd: 0 },
+        };
+      },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'stand-in-1' });
+    assert.equal(out.outcome, 'fallback');
+    assert.equal(model.seen.length, 2, 'one more round after the stand-in');
+    assert.ok(snaps[1].some((m) => /That reply is a stand-in, not an answer/.test(String(m.content))),
+      'the retry is told what it did');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /^Sorry, I couldn't answer just now\. Ask me again in a minute\.$/);
+    const { rows: [record] } = await pool.query('SELECT outcome, failures FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1');
+    assert.equal(record.outcome, 'fallback');
+    assert.ok(record.failures.includes('stand_in'), JSON.stringify(record.failures));
+  });
+
+  await t.test('#6270: a stand-in followed by a real answer posts the real answer', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const id = await say(evan, 'And would Main still link out?', place);
+    const model = scripted([
+      { tool: 'reply', args: { text: '...' } },
+      { tool: 'reply', args: { text: 'Yes: a thread you started from Main still links out.' } },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'stand-in-2' });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, 2);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].content, 'Yes: a thread you started from Main still links out.');
+  });
+
+  await t.test('#6270: a correction phrased as a question queues the change on the request', async () => {
+    sent.length = 0;
+    const place = { type: 'issue', ref: 61 };
+    const sessionId = await mainLink();
+    const id = await say(evan, 'Only if I started it from the plus button, should it not show up in main?', place);
+    const model = scripted([
+      { tool: 'update_change', args: { instruction: 'Only a thread started from the plus button stays out of Main; one started from Main still links out.' } },
+      { tool: 'reply', args: { text: 'Done: it is queued, so only a thread started from the plus button stays out of Main. It is not made yet.' } },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'question-1' });
+    assert.equal(out.outcome, 'replied');
+    const { rows: asks } = await pool.query(
+      'SELECT instruction, status, asker_id, issue_number, message_id FROM homeroom_bot_change_asks WHERE session_id = $1 ORDER BY id DESC',
+      [sessionId]);
+    assert.equal(asks.length, 1, 'the correction is queued as a change');
+    assert.equal(asks[0].instruction, 'Only a thread started from the plus button stays out of Main; one started from Main still links out.');
+    assert.equal(asks[0].status, 'queued');
+    assert.equal(asks[0].asker_id, evan.id);
+    assert.equal(asks[0].issue_number, 61);
+    assert.equal(asks[0].message_id, id, 'where it was asked is where the answer goes');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].thread.type, 'issue');
+    assert.match(sent[0].content, /^Got it, it is queued/, 'a reply about a queued change never says it is done');
+  });
+
+  await t.test('#6270: a change queued on the last round still gets one round to say so', async () => {
+    sent.length = 0;
+    const place = { type: 'issue', ref: 61 };
+    const sessionId = await mainLink();
+    const id = await say(evan, 'Only a thread started from the plus button should stay out of main, right?', place);
+    let n = 0;
+    const call = (name, args) => ({
+      content: '',
+      toolCalls: [{ id: `q${++n}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }],
+      usage: { inputTokens: 100, outputTokens: 20, costUsd: 0 },
+    });
+    const model = scripted([
+      (req) => {
+        const names = req.tools.map((tl) => tl.function.name);
+        if (names.length === 1 && names[0] === 'reply') {
+          return call('reply', { text: 'Yes. I have queued the change so only one started from the plus button stays out of Main. It is not made yet.' });
+        }
+        if (req.toolChoice === 'required') {
+          return call('update_change', { instruction: 'Only a thread started from the plus button stays out of Main' });
+        }
+        return call('request_detail', { number: 61 });
+      },
+    ]);
+    const out = await turn(place, model, { through: id - 1, key: 'question-2' });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, voice.MAX_ROUNDS + 1, 'a round after the last one, because it queued a change');
+    assert.deepEqual(model.seen[voice.MAX_ROUNDS].tools.map((tl) => tl.function.name), ['reply'],
+      'that round is only there to say it');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /queued the change/);
+    assert.doesNotMatch(sent[0].content, /Sorry, I couldn't answer/);
+    // This change's asks belong to these two tests: the app's counts below are
+    // the other tests'. Removed, so none is left waiting on a change nothing
+    // follows up.
+    await pool.query('DELETE FROM homeroom_bot_change_asks WHERE session_id = $1', [sessionId]);
+  });
+
   await t.test('words a DM passed on as an ask are the follow-up\'s, not answered again', async () => {
     const place = { type: 'session', ref: change.id };
     const before = sent.length;
@@ -248,6 +453,67 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     const quiet = await turn(place, scripted([{ text: 'x' }]), { through: id - 1 });
     assert.equal(quiet.outcome, 'quiet', 'queued as an ask: the follow-up answers it');
     assert.equal(sent.length, before);
+  });
+
+  await t.test('a long message to the bot on a request reaches the model whole, with no cut marker', async () => {
+    sent.length = 0;
+    const place = { type: 'issue', ref: 13 };
+    const text = `A correction to the behaviour, then two fixes for PR 31: ${'detail '.repeat(350)}FIX THREE CHECKS.`;
+    assert.ok(text.length > 2207);
+    await say(evan, `@Homeroom bot ${text}`, place);
+    const model = scripted([{ tool: 'reply', args: { text: 'Got it: the correction and both fixes, as one update.' } }]);
+    const out = await turn(place, model, { key: 'long-1' });
+    assert.equal(out.outcome, 'replied');
+    const prompt = model.seen[0].messages.find((m) => m.role === 'user').content;
+    assert.ok(prompt.includes(text), 'the whole message, ending included');
+    assert.doesNotMatch(prompt, /cut at 700 of/);
+  });
+
+  await t.test('a cut line says so, and read_message reads it whole, from this thread only', async () => {
+    sent.length = 0;
+    const root = await say(sam, '@Homeroom bot what did I write before?');
+    const thread = { type: 'message', ref: root };
+    const oldText = `The older note, in full. ${'Every word matters. '.repeat(100)}THE END.`;
+    assert.ok(oldText.length > 1500);
+    const old = await say(sam, oldText, thread);
+    await say(sam, '@Homeroom bot read my older note and summarize it', thread);
+    const elsewhere = await say(sam, 'a message in the chat, not this thread');
+    const model = scripted([
+      { tool: 'read_message', args: { id: old } },
+      { tool: 'read_message', args: { id: elsewhere } },
+      { tool: 'reply', args: { text: 'You asked me to read the older note.' } },
+    ]);
+    const out = await turn({ type: 'message', ref: root }, model, { through: Number(old), key: 'read-1' });
+    assert.equal(out.outcome, 'replied');
+    const prompt = model.seen[0].messages.find((m) => m.role === 'user').content;
+    assert.ok(prompt.includes(`[cut at 700 of ${oldText.length.toLocaleString('en-US')} characters; read_message #${old} for the rest]`));
+    // The turn's requests share one messages array, so the tool results are
+    // read in the order they came back.
+    const results = model.seen[0].messages.filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content));
+    assert.equal(results[0].id, old);
+    assert.equal(results[0].text, oldText);
+    assert.equal(results[0].textComplete, true);
+    assert.match(results[1].error, /There is no message/);
+  });
+
+  await t.test('a long ask keeps the whole instruction for the follow-up', async () => {
+    sent.length = 0;
+    const place = { type: 'session', ref: change.id };
+    const instruction = `Rewrite the description and fix three checks. ${'Keep every detail. '.repeat(200)}THE LAST FIX.`;
+    assert.ok(instruction.length > 3000);
+    const id = await say(evan, `@Homeroom bot ${instruction}`, place);
+    const model = scripted([
+      { tool: 'update_change', args: { instruction } },
+      { tool: 'reply', args: { text: 'Got it: I queued both fixes and the new description.' } },
+    ]);
+    const out = await turn(place, model, { key: 'ask-long-1' });
+    assert.equal(out.outcome, 'replied');
+    const { rows: [ask] } = await pool.query(
+      'SELECT instruction, message_id FROM homeroom_bot_change_asks WHERE session_id = $1 ORDER BY id DESC LIMIT 1', [change.id]);
+    assert.equal(ask.instruction, instruction);
+    assert.equal(Number(ask.message_id), Number(id));
+    // Put back the asks the later tests count on: this one is checked, not left waiting.
+    await pool.query('DELETE FROM homeroom_bot_change_asks WHERE session_id = $1 AND message_id = $2', [change.id, id]);
   });
 
   await t.test('mentioned in the project\'s chat, it answers in a reply thread and offers to file it', async () => {
@@ -603,12 +869,176 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     const payload = await require('../src/services/homeroom-bot').adminPayload(pool, {}, {});
     assert.equal(payload.voice.turns, summary.turns);
   });
+
+  // #6268: a person's coding agent posts for them through the connector
+  // (`posted_via = 'agent'`). On a request it is their own message: an @
+  // mention is answered. A run of connector messages with no person's own
+  // message between them stops the bot, and the turn records why.
+  await t.test('#6268: a connector message is the person on a request; a run of them stops the bot', async () => {
+    sent.length = 0;
+    const place = { type: 'issue', ref: 13 };
+    const agentSay = async (content, metadata = {}) => (await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via)
+       VALUES ($1, $2, $3, 'message', $4, 'issue', 13, 'agent') RETURNING id, created_at`,
+      [app.id, evan.id, content, JSON.stringify(metadata)],
+    )).rows[0];
+    const skipAt = (content, over = {}) => voice.connectorSkip(pool, {
+      appId: app.id, appSlug: app.slug, thread: place, content, metadata: {},
+      settings: { mode: 'live', voiceSession: true, voiceIssue: true, voiceChat: true, pausedApps: [] }, botId: homeroomBot.id, ...over,
+    });
+
+    // An ordinary agent post is not skipped and says nothing.
+    const ordinary = await agentSay('Here is the first fix.');
+    assert.equal(await skipAt('Here is the second fix.'), null);
+
+    // Two connector messages in a row, then the third is the one that stops.
+    await agentSay('And the second fix.');
+    assert.deepEqual(await skipAt('@Homeroom bot, one more thing.'), { why: 'connector_run' });
+    // A person's own message between them resets the run.
+    await say(sam, 'Nice, thanks.', place);
+    assert.equal(await skipAt('@Homeroom bot, one more thing.'), null);
+
+    // Now a run with no person between: the store writes the reason on the
+    // row, so a reader is told and the turn records it.
+    await agentSay('Here it is again, in full.');
+    await agentSay('And with the second part.');
+    const third = await agentSay('@Homeroom bot, did you see those?');
+    const skip = await skipAt('@Homeroom bot, are you looking at this?');
+    assert.deepEqual(skip, { why: 'connector_run' });
+    await pool.query('UPDATE chat_messages SET metadata = $2 WHERE id = $1',
+      [third.id, JSON.stringify({ homeroomBotSkip: { why: skip.why } })]);
+
+    // A turn over them answers nobody, and says why it stayed quiet.
+    const quiet = await turn(place, scripted([{ text: 'should not be asked' }]), { through: ordinary.id });
+    assert.equal(quiet.outcome, 'quiet');
+    assert.equal(sent.length, 0);
+    const { rows: [record] } = await pool.query(
+      'SELECT outcome, error FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1',
+    );
+    assert.deepEqual(record, { outcome: 'quiet', error: 'connector_run' });
+    const summary = await voice.voiceSummary(pool);
+    assert.ok(summary.recentFailures.some((f) => f.place === 'issue' && f.ref === 13 && f.error === 'connector_run'),
+      'the admin summary lists the skipped connector message');
+
+    // And an @ mention from an agent is answered as the person's own. A
+    // person writes first, so what comes before is not a run of connectors.
+    await say(evan, 'Here is where we are.', place);
+    const asked = await agentSay('@Homeroom bot, please confirm the deployment step.');
+    const answered = await turn(place, scripted([{ tool: 'reply', args: { text: 'Got it: the deployment step stays as it is.' } }]),
+      { through: asked.id - 1, key: 'connector-answered' });
+    assert.equal(answered.outcome, 'replied');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].thread.ref, 13);
+    const { rows: [replied] } = await pool.query(
+      'SELECT outcome, error FROM homeroom_bot_voice_turns WHERE turn_key = $1', ['connector-answered'],
+    );
+    assert.deepEqual(replied, { outcome: 'replied', error: null });
+  });
 });
 
 // 3 Nov 2026 (#6213): one live set of suggested replies per thread. A newer
 // word (the bot's, or a person's, both call this) closes the open sets before
 // it in that thread and tells every reader, leaving a set already closed, a
 // message with an offer, and another thread's sets alone.
+// #6263: a reword is the author edit people make: the text changes, and the
+// head, checks and votes stay exactly as they were. Only the bot's own open
+// change may be reworded.
+test('#6263: update_change_description rewords the bot\'s own change and moves nothing else', { timeout: 180000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+  const { rows: [botUser] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE, TRUE) RETURNING id, username`,
+  );
+  const { rows: [evan] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access) VALUES ('evan', 'x', TRUE) RETURNING id, username`,
+  );
+  const { rows: [app] } = await pool.query(
+    `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility)
+     VALUES ('Todo List', 'todo-list', 'running', $1, 'https://github.com/usernode-bot/todo-list', 'public', 'public') RETURNING id`,
+    [evan.id],
+  );
+  if (app.community_id != null) {
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, evan.id]);
+  }
+  await pool.query(
+    `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', 'live')
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+  );
+  const { rows: [change] } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, status, session_title, linked_issues, promoted_at, reviewed_head_sha,
+        approval_epoch, check_state, pr_summary_md, pr_summary_input_version, pr_summary_source, pr_summary_stale)
+     VALUES ($1, $2, 'dev/homeroom_bot-blue', 'promoted', 'Blue header', $3, NOW(), $4, 3, 'passing',
+             'The header is blue.', 1, 'author', FALSE)
+     RETURNING *`,
+    [app.id, botUser.id, [12], 'a'.repeat(40)],
+  );
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, head_sha) VALUES ($1, $2, 'yes', $3)`,
+    [change.id, evan.id, 'a'.repeat(40)],
+  );
+
+  const sent = [];
+  const ws = {
+    async sendBotMessage(p, appId, { user: from, content, metadata = null, thread }) {
+      const { rows: [row] } = await p.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+         VALUES ($1, $2, $3, 'message', $4, $5, $6) RETURNING id, created_at`,
+        [appId, from.id, content, JSON.stringify(metadata || {}), thread.type, thread.ref],
+      );
+      sent.push({ id: row.id, content, metadata, thread });
+      return { id: row.id, createdAt: row.created_at };
+    },
+    broadcast() {},
+    async broadcastThreadSummary() {},
+  };
+  const notifications = { async createMentionNotifications() { return []; }, async hydrateAndPush() {} };
+  const ask = async (who, text, place) => (await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+     VALUES ($1, $2, $3, 'message', 'session', $4) RETURNING id`,
+    [app.id, who.id, text, place.ref],
+  )).rows[0].id;
+  const run = async (place, script) => voice.runTurn(pool, {}, {
+    appId: app.id, place, turnKey: `d${sent.length}-${place.ref}`, deps: {
+      ws, notifications, chat: scripted(script).chat, apiKey: 'test-key', noPlatform: true,
+    },
+  });
+
+  const place = { type: 'session', ref: change.id };
+  const id = await ask(evan, '@Homeroom bot update the description to say the header is green.', place);
+  const out = await run(place, [
+    { tool: 'update_change_description', args: { description: 'The header is green now.' } },
+    { tool: 'reply', args: { text: 'Done: the description says the header is green. Only the text changed, so the code, checks and votes are as they were.' } },
+  ]);
+  assert.equal(out.outcome, 'replied');
+  const { rows: [after] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [change.id]);
+  assert.equal(after.pr_summary_md, 'The header is green now.');
+  assert.equal(after.pr_summary_source, 'author');
+  assert.equal(after.pr_summary_stale, false);
+  assert.equal(Number(after.pr_summary_input_version), 2);
+  assert.equal(after.reviewed_head_sha, change.reviewed_head_sha, 'the head did not move');
+  assert.equal(Number(after.approval_epoch), Number(change.approval_epoch), 'the approval epoch did not move');
+  assert.equal(after.check_state, change.check_state, 'the checks did not run again');
+  const { rows: votes } = await pool.query('SELECT vote FROM pr_votes WHERE session_id = $1', [change.id]);
+  assert.deepEqual(votes.map((v) => v.vote), ['yes'], 'the vote stands');
+
+  // It cannot reword somebody else's change.
+  const { rows: [theirs] } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, linked_issues, promoted_at, pr_summary_md, pr_summary_input_version)
+     VALUES ($1, $2, 'dev/evan-dark', 'promoted', 'Dark mode', $3, NOW(), 'Evan wrote this.', 1) RETURNING *`,
+    [app.id, evan.id, [13]],
+  );
+  const otherPlace = { type: 'session', ref: theirs.id };
+  await ask(evan, '@Homeroom bot reword the description', otherPlace);
+  await run(otherPlace, [
+    { tool: 'update_change_description', args: { description: 'Rewritten by the bot.' } },
+    { tool: 'reply', args: { text: 'That change is not one I built, so I cannot reword it.' } },
+  ]);
+  const { rows: [untouched] } = await pool.query('SELECT pr_summary_md FROM chat_sessions WHERE id = $1', [theirs.id]);
+  assert.equal(untouched.pr_summary_md, 'Evan wrote this.', 'nothing was written');
+  assert.equal(sent.length, 2, 'both turns replied');
+});
+
 test('retireThreadSuggestions closes only older open sets in the same thread', { timeout: 120000 }, async (t) => {
   const pool = await openDatabase(t);
   if (!pool) return;

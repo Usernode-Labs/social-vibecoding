@@ -286,6 +286,82 @@ test('the Testing card says something is not working when the shots show a chang
   }
 });
 
+// #6234: on a request's page, the bot's change read "Its author needs to fix
+// this before it can go live" while its author, the bot, was already fixing
+// it. The server says where the bot's fix stands (`bot_fix`,
+// homeroom-bot-progress.js changeBotFix) and the card says that instead.
+test('#6234: while Homeroom bot fixes its change\'s checks, the Testing card says so and the re-run is disabled', () => {
+  const { message } = require('./lib/platform-i18n');
+  const hadApp = Object.prototype.hasOwnProperty.call(global, 'App');
+  const previous = global.App;
+  const change = (bot_fix) => ({
+    id: 5001, user_id: 77, username: 'homeroom_bot', status: 'promoted', check_state: 'failing',
+    checks_checked_at: '2026-11-03T10:00:00Z', test_results: [{ name: 'Home loads', path: '/', status: 'fail' }],
+    ...(bot_fix === undefined ? {} : { bot_fix }),
+  });
+  const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  // An admin, who could press Re-run checks.
+  global.App = { user: { id: 1, username: 'ada', canAdminWrite: true } };
+  try {
+    const fixing = AppView._changeTestingView(change({ state: 'fixing', since, reason: null }));
+    assert.equal(fixing.figure, message('changes:page.testing.figure.botFixing'));
+    assert.equal(fixing.figure, 'Fixing');
+    assert.equal(fixing.tone, 'muted');
+    assert.equal(fixing.done, false);
+    assert.deepEqual(fixing.segments, [{ weight: 1, pct: 100, state: 'moving' }], 'still moving');
+    assert.equal(fixing.label, message('changes:page.testing.label.botFixing'));
+    assert.equal(fixing.botFix, 'fixing');
+    assert.equal(fixing.authorNote,
+      `${message('changes:page.testing.note.botFixing', { count: 10 })} ${message('changes:page.testing.note.botRerun')}`);
+    assert.equal(fixing.authorNote, 'Homeroom bot is fixing this, started 10 min ago. Re-running the checks now would restart its fix.');
+    assert.deepEqual(fixing.actions, [{
+      key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: message('changes:recheck.label'),
+      disabled: true, title: message('changes:recheck.botFixing'),
+    }], 'the re-run is there, disabled: running the checks now would restart the fix');
+    assert.equal(fixing.actions[0].title, 'Homeroom bot is fixing this. Re-running now would restart its fix.');
+    assert.ok(fixing.actions[0].act === undefined, 'nothing to press');
+    // What went wrong stays on the card, with its door into Details.
+    assert.deepEqual(fixing.note, ['One of this change’s checks failed on its preview.']);
+    assert.equal(fixing.details, true);
+    assert.ok(fixing.explain, 'what failed is still said');
+    // Under a minute: "just now".
+    assert.equal(AppView._changeTestingView(change({ state: 'fixing', since: new Date().toISOString() })).authorNote,
+      `${message('changes:page.testing.note.botFixingNow')} ${message('changes:page.testing.note.botRerun')}`);
+    // A second try after running out of time says so.
+    assert.equal(AppView._changeTestingView(change({ state: 'fixing', since, reason: 'retry' })).authorNote,
+      `${message('changes:page.testing.note.botFixing', { count: 10 })} ${message('changes:page.testing.note.botRetry')} ${message('changes:page.testing.note.botRerun')}`);
+    // Waiting its turn, and given up: the red card, with its own line.
+    const queued = AppView._changeTestingView(change({ state: 'queued', since }));
+    assert.deepEqual([queued.figure, queued.tone, queued.botFix], ['Found a problem', 'bad', 'queued']);
+    assert.equal(queued.authorNote, message('changes:page.testing.note.botQueued'));
+    assert.deepEqual(queued.actions.map((a) => [a.key, a.disabled]), [['recheck', undefined]], 'the re-run is live again');
+    const handed = AppView._changeTestingView(change({ state: 'handed_off', since: null }));
+    assert.deepEqual([handed.figure, handed.tone, handed.botFix], ['Found a problem', 'bad', 'handed_off']);
+    assert.equal(handed.authorNote, message('changes:page.testing.note.botHandedOff'));
+    assert.equal(handed.authorNote, 'Homeroom bot couldn’t fix this on its own. The person who asked for it, or any member of this project, can take it from here.');
+    assert.doesNotMatch(handed.authorNote, /Its author/);
+    // Nothing of the bot's recorded: today's words, byte for byte.
+    const plain = AppView._changeTestingView(change(null));
+    assert.equal(plain.authorNote, message('changes:page.testing.note.authorFixes'));
+    assert.equal(plain.botFix, null);
+    assert.deepEqual(plain.actions.map((a) => [a.key, a.disabled]), [['recheck', undefined]]);
+    assert.deepEqual(AppView._changeTestingView(change()).authorNote, plain.authorNote);
+    // A member who could not press Re-run checks is not told about it.
+    global.App = { user: { id: 2, username: 'bo' } };
+    const member = AppView._changeTestingView(change({ state: 'fixing', since }));
+    assert.equal(member.authorNote, message('changes:page.testing.note.botFixing', { count: 10 }));
+    assert.deepEqual(member.actions, []);
+  } finally {
+    if (hadApp) global.App = previous; else delete global.App;
+  }
+  // The card carries the state for a check to select on.
+  const card = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(card, /data-change-bot-fix=\{shown\.botFix \|\| undefined\}/);
+  // #6284 adds the stopped state a change enters once the bot has used its
+  // own fix rounds, so the union now carries it too.
+  assert.match(read('frontend/src/features/dev-board/topic/model.ts'), /botFix\?: 'fixing' \| 'queued' \| 'handed_off' \| 'stopped' \| null;/);
+});
+
 test('the before & after card marks a failed change as not working, with what happened', () => {
   const html = AppView.shotsHtml(pageShots(), { sessionId: 6269 });
   const item = /<li data-shots-story="tick-and-undo" data-shots-shot-status="failed"[\s\S]*?<\/li>/.exec(html);
@@ -349,7 +425,8 @@ test('the fix turn is told what was tried and what happened, as data, and to try
 test('what the bot says about it is plain, and never about checks that passed', () => {
   const due = followup.checksDue(botRow());
   const person = followup.checksPersonText({ why: 'The route needs a schema change I may not make', failingCount: 0, broken: due.broken });
-  assert.equal(person, 'Homeroom bot can\'t get this change working on its own: "Tapping "mark as done" ticks a chore off and offers undo." didn\'t work when Homeroom tried it. The route needs a schema change I may not make. A person needs to look at it from here.');
+  // #6234: who takes it from here, by name: the requester or any member.
+  assert.equal(person, 'Homeroom bot can\'t get this change working on its own: "Tapping "mark as done" ticks a chore off and offers undo." didn\'t work when Homeroom tried it. The route needs a schema change I may not make. The person who asked for it, or any member of this project, can take it from here.');
   // Run four (13 Oct): what was fixed, in the words of what Homeroom tried,
   // never the turn's own build note.
   const revised = followup.checksRevisedText({ broken: due.broken, failing: [] });

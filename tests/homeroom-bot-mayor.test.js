@@ -89,7 +89,7 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
 test('the tools: sixteen lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
-      'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_close_request', 'withdraw_proposal',
+      'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_copy_request', 'offer_close_request', 'withdraw_proposal',
       'draw_screen', 'close_thread', 'report_problem', 'start_project_thread', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
@@ -231,12 +231,12 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   // thread and quotes what asked for it (the offer itself is in the thread).
   // 1 Nov 2026 (C2.2, C2.4): and a design's two cards, and a new project's
   // thread's line in Main, which quotes what asked for it.
-  assert.equal(sends.length, 8, 'a turn\'s answer, a draft\'s line, its offer, the answer to a tap, a tap whose act failed for good, a design\'s plan and project cards, and a new project\'s line');
+  assert.equal(sends.length, 9, 'a turn\'s answer, a draft\'s line, its offer, a many-project offer, the answer to a tap, a tap whose act failed for good, a design\'s plan and project cards, and a new project\'s line');
   // B3: the answer to a tap (settleOffer) quotes what was typed or quoted
   // when there was one; a button's tap has no message of hers to quote.
   // One story: a tap with nothing typed is answered where its offer is (the
   // offer's own message, never quoted, names its thread).
-  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId: opened \? null : message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra|replyToId: action\.message_id \|\| null,|replyToId: ctx\.messageId, threadRootId: false/);
+  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId: opened \? null : message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra|replyToId: action\.message_id \|\| null,|replyToId: ctx\.messageId, threadRootId: false|replyToId: message\.threadRootId \|\| message\.thread_root_id \? null : message\.id/);
   assert.match(src, /settleOffer\(pool, config, \{\s*bot, user, settings, action, yes, deps, replyToId: message\.id,/);
 });
 
@@ -263,7 +263,7 @@ test('#3734, #3740: the prompt never lets the bot promise what no tool started, 
   // #11 (WP3): and never a promise to come back to it later, nor "the team
   // has been told" or "it was withdrawn" with nothing behind it.
   assert.match(prompt, /- Never say you will do something \(revise, change, build, post, file, withdraw, report, look at it again\)\n  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it\n  under way\./);
-  assert.match(prompt, /Never promise to follow up, look into, sort out, investigate or get back to them later: nothing\n  brings you back to it\./);
+  assert.match(prompt, /Never promise to follow up, look into, sort out, investigate or get back to them later: nothing\n  brings you back to it, except what tell_me_when stored this turn \(say its promise and nothing more\)\./);
   assert.match(prompt, /Never say the team has been told, or that a change was withdrawn or closed, unless\n  report_problem or withdraw_proposal did it in this turn\./);
   assert.match(prompt, /When you cannot do something, say so plainly, and what they can do instead: leave it, vote\n  No on the change, comment on the request, or use Send feedback\./);
   assert.match(prompt, /If a tool refused, say plainly why, and that\n  nothing was done\./);
@@ -403,23 +403,96 @@ test('#4605: a draft promised with no offer behind it is caught, and the second 
     'A File it button will appear under this message.',
     'Tap File it to file it.',
     'You\'ll see File it and Not now below.',
-    'I\'ve drafted the request for Rilo.',
+    'I\'ve drafted the request.',
   ]) assert.deepEqual(await kinds(text), ['drafted'], text);
-  assert.deepEqual(await kinds('I\'ve drafted the request for Rilo.', { offer: { app: {}, title: 'x' } }), [], 'the offer backs it');
-  assert.deepEqual(await kinds('Want me to file that as a request on Rilo?'), [], 'an offer to come is no promise');
+  assert.deepEqual(await kinds('I\'ve drafted the request for Rilo.', { offer: { app: { name: 'Rilo' }, title: 'x' } }), [], 'the offer backs it');
+  assert.deepEqual(await kinds('Want me to file that as a request on Rilo?', { knownProjects: new Set(['rilo']) }), [], 'an offer to come is no promise');
   assert.deepEqual(await kinds('Request #13 is with the group.'), [], 'a filed request is no draft');
   assert.deepEqual(await kinds('Tap File it under my earlier message.'), ['drafted'], 'an open draft from an earlier turn is not this turn\'s');
 
   const note = mayor.checkNote([{ kind: 'drafted', said: 'says a drafted request with File it is under it' }]);
   assert.match(note, /^\[Homeroom check, not from them: your reply says a drafted request with File it is under it\./);
   assert.match(note, /did not call offer_request in this turn, so nothing is under it\. Call offer_request now/);
-  assert.match(note, /If offer_request is refused, say why plainly and do not mention File it\. Then call reply again\.\]$/);
+  assert.match(note, /Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it\. Then reply with one short line about the draft at most/);
+  assert.match(note, /Then call reply again\.\]$/);
   assert.doesNotMatch(note, /—/);
 
   assert.equal(
     mayor.stripClaims('A File it button will appear under this message.', [{ kind: 'drafted' }]),
-    'I haven\'t drafted it yet, so there\'s nothing to tap. Tell me what you want filed and I\'ll draft it for you to confirm.',
+    'I haven\'t drafted it yet, so there\'s nothing to tap.',
   );
+});
+
+test('#6307: a draft claimed and not made is not stacked over words that still promise it', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  // The 15:44:44 reply: the stock line on top of a reply that still promised
+  // the next draft, and that asked again for what they had just listed.
+  const said = 'I haven\'t drafted it yet, so there\'s nothing to tap. Tell me what you want filed and I\'ll draft it for you to confirm.\n\n'
+    + 'The Game Corner one is filed, and it has its own thread here. Here\'s the next one, for The Best Color.';
+  const cut = mayor.stripClaims(said, [{ kind: 'drafted' }]);
+  assert.equal(cut,
+    'I haven\'t drafted it yet, so there\'s nothing to tap.\n\n'
+    + 'The Game Corner one is filed, and it has its own thread here.');
+  assert.doesNotMatch(cut, /Tell me what you want filed/, 'it does not ask again for what they just gave');
+  assert.doesNotMatch(cut, /next one|File it/i, 'nothing is left that promises a draft');
+  // The second pass is told to make the draft, and to keep its words on the card.
+  const note = mayor.checkNote([{ kind: 'drafted', said: 'says a drafted request with File it is under it' }]);
+  assert.match(note, /Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it\./);
+  assert.match(note, /the card under it shows its title and words, so never write them in your reply\./);
+  assert.ok((await mayor.claimProblems(pool, { user: { id: 1 }, appIds: new Set() }, 'A File it button will appear under this message.'))
+    .some((p) => p.kind === 'drafted'));
+});
+
+test('#6307: a paragraph is said once in a reply, whatever its case or spacing', () => {
+  const repeated = 'The Best Color is filed and I\'m reading it now (request #9).\n\n'
+    + 'Which tier list do you want to start with?\n\n'
+    + '  the best color is filed   and I\'m reading it now (request #9).  ';
+  assert.equal(mayor.dropRepeatedParagraphs(repeated),
+    'The Best Color is filed and I\'m reading it now (request #9).\n\nWhich tier list do you want to start with?');
+  assert.equal(mayor.dropRepeatedParagraphs('One.\n\nTwo.'), 'One.\n\nTwo.', 'different paragraphs stay');
+  assert.equal(mayor.dropRepeatedParagraphs('Only one paragraph.'), 'Only one paragraph.');
+});
+
+test('#6307: a reply does not print the draft the card under it already shows', () => {
+  const offer = { app: { name: 'Ear Trainer' }, title: 'Richer synth tones', details: 'A slider from 100 to 800 Hz, with a preview button beside it.' };
+  const text = 'Here is the request I\'d file on Ear Trainer.\n\n'
+    + 'A slider from 100 to 800 Hz, with a preview button beside it.\n\n'
+    + 'Tap File it to file it, or Not now.';
+  assert.equal(mayor.dropDraftEcho(text, offer),
+    'Here is the request I\'d file on Ear Trainer.\n\nTap File it to file it, or Not now.');
+  // The whole body inside one paragraph keeps its one line about the draft.
+  assert.equal(mayor.dropDraftEcho('Here is the draft:\nA slider from 100 to 800 Hz, with a preview button beside it.', offer),
+    'Here is the draft:');
+  assert.equal(mayor.dropDraftEcho('Nothing about it.', offer), 'Nothing about it.');
+  assert.equal(mayor.dropDraftEcho(text, null), text, 'no offer, no card to leave the words to');
+});
+
+test('#6307: a project a reply names must be one this turn\'s tools returned', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const offer = { app: { slug: 'community-tier-lists', name: 'Community Tier Lists' } };
+  const ctx = { user: { id: 1 }, appIds: new Set(), offer };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  assert.deepEqual(mayor.projectMentions('The draft for Community Tier Lists is ready.'), ['Community Tier Lists']);
+  assert.deepEqual(await kinds('The draft for Community Tier Lists is ready.'), [], 'the offer returned it');
+  // The 15:47:01 reply: a name the tools never returned.
+  const garbled = await mayor.claimProblems(pool, ctx, 'Sorry. The draft for Community Components is ready.');
+  assert.deepEqual(garbled.map((p) => p.kind), ['unknown_project']);
+  assert.deepEqual(garbled[0].names, ['Community Components']);
+  // A quoted name where it says which project it is, and names the wrong one.
+  assert.deepEqual(mayor.projectMentions('Next after this is "Block World" and I\'ll check which project that is.'), ['Block World']);
+  const cut = mayor.stripClaims('Sorry. The draft for Community Components is ready. The card is under this reply.',
+    [{ kind: 'unknown_project', names: ['Community Components'] }]);
+  assert.equal(cut, 'Sorry. The card is under this reply.\n\n(I can\'t find a project called "Community Components".)');
+  // The second pass is told, and a tool that returned it clears the claim.
+  const note = mayor.checkNote([{ kind: 'unknown_project', names: ['Community Components'], said: 'x' }]);
+  assert.match(note, /A project you name must be one a tool returned in this turn, spelled exactly as it returned it/);
+  const known = { user: { id: 1 }, appIds: new Set(), knownProjects: new Set(['community tier lists']) };
+  assert.deepEqual(await kinds('The draft for Community Tier Lists is ready.', { offer: null, knownProjects: known.knownProjects }), []);
+  // A name caught only at its first word ("on Note board request #6" gives
+  // "Note") is the project a tool returned, said short: not a garble, and the
+  // sentence is not cut.
+  assert.deepEqual(mayor.projectMentions('The draft for Note board is ready.'), ['Note']);
+  assert.deepEqual(await kinds('The draft for Note board is ready.', { offer: null, knownProjects: new Set(['note board']) }), []);
 });
 
 test('#11 (WP3): a promise to come back later, "the team was told" and "I withdrew it" count only when this turn did it', async () => {
@@ -492,6 +565,8 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.deepEqual(mayor.OFFER_ANSWERS, {
     file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'],
     move_request: ['Move it to Homeroom', 'Keep it here'],
+    // #6311: a copy on Homeroom's own board too; the original stays open.
+    copy_request: ['Put it on Homeroom\'s board', 'Keep it here only'],
     close_request: ['Propose to close', 'Keep it open'],
     // #6019: words from this private chat, waiting to go public as theirs.
     post_reply: ['Post it', 'Keep it private'],
@@ -762,4 +837,88 @@ test('#4525: offering a vote on closing a request, as the model and the person s
   for (const text of [tool.description, prompt.match(/- When they ask you to close a request[^\n]*\n[^\n]*\n[^\n]*/)?.[0] || '']) {
     assert.doesNotMatch(text, /\u2014/, 'no em dash');
   }
+});
+
+test('#6251: offer_request carries pictures, related requests, where it happened and Done when', () => {
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
+  assert.deepEqual(Object.keys(tool.parameters.properties).sort(),
+    ['attachmentIds', 'context', 'details', 'doneWhen', 'named', 'project', 'projects', 'related', 'title']);
+  assert.ok(tool.parameters.required.includes('doneWhen'), 'a draft always says what done looks like');
+  assert.deepEqual(tool.parameters.properties.related.items.properties.relation.enum,
+    ['same', 'part_of', 'depends_on', 'build_together']);
+  assert.equal(tool.parameters.properties.attachmentIds.maxItems, 3);
+  assert.equal(tool.parameters.properties.related.maxItems, 3);
+  assert.equal(tool.parameters.properties.doneWhen.minItems, 1);
+  assert.equal(tool.parameters.properties.doneWhen.maxItems, 3);
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /Put up to three\n  that overlap in related, each with how \(part_of, depends_on, build_together\)/);
+  assert.match(prompt, /Pass in attachmentIds the ids of their pictures that belong with the\n  request, from the "id \.\.\." in a picture's history line/);
+  assert.match(prompt, /ask which project when a bare number is ambiguous/);
+  assert.match(prompt, /Propose one\n  to three doneWhen checks in their words/);
+  // Its doneWhen is trimmed and de-dashed, and nothing else is accepted.
+  assert.deepEqual(mayor.draftDoneWhen([' A plan opens beside it — in one column ', 'The request stays in view']),
+    ['A plan opens beside it, in one column', 'The request stays in view']);
+  assert.equal(mayor.draftDoneWhen([]), null);
+  assert.equal(mayor.draftDoneWhen(['one', 'two', 'three', 'four']), null);
+  assert.equal(mayor.draftDoneWhen(['one', '  ']), null);
+  assert.equal(mayor.draftDoneWhen('one'), null);
+});
+
+test('#6251: the draft shows Where, Related and Done when, in the words it says them', () => {
+  const extras = {
+    attachmentIds: ['a'.repeat(32)],
+    related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+    context: { request: { slug: 'homeroom', name: 'Homeroom', number: 15 }, saw: 'the request page' },
+    doneWhen: ['A plan and a design open in the same side column', 'The request stays in view beside it'],
+    chatHref: '#homeroom-bot/thread/42',
+  };
+  const text = mayor.draftExtrasText(extras);
+  assert.match(text, /^\*\*Where:\*\* request #15 on Homeroom · the request page$/m);
+  assert.match(text, /^\*\*Related:\*\*$/m);
+  assert.match(text, /^- #6230 One detail column for plans and designs: build together, it is the same column$/m);
+  assert.match(text, /^\*\*Done when:\*\*$/m);
+  assert.match(text, /^- A plan and a design open in the same side column$/m);
+  // #6307: Where names a place in the app, or is left out. It never quotes the
+  // chat back, and never says "your" to one reader and "their" to the next.
+  assert.equal(mayor.draftExtrasText({ chatHref: '#homeroom-bot/thread/42' }), '');
+  assert.equal(mayor.draftExtrasText({ chatHref: '#homeroom-bot/main' }), '');
+  assert.equal(mayor.draftExtrasText({ project: 'Community Tier Lists', chatHref: '#homeroom-bot/main' }),
+    '**Where:** Community Tier Lists');
+  const quoted = mayor.draftExtrasText({ chatHref: '#homeroom-bot/main', context: { quoted: { excerpt: 'a vote on closing request #15 is open' } } });
+  assert.equal(quoted, '');
+  assert.equal(mayor.draftExtrasText({ project: 'Ear Trainer', context: { saw: 'the request page' } }),
+    '**Where:** Ear Trainer · the request page');
+  assert.doesNotMatch(text, /—/, 'no em dash');
+});
+
+test('#6251: the filed body carries the pictures, Done when, Related and Where, and links the chat', () => {
+  const extras = {
+    related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+    context: { request: { slug: 'ear-trainer', name: 'Ear Trainer', number: 15 }, quoted: { excerpt: 'a vote on closing request #15 is open' }, saw: 'the request page' },
+    doneWhen: ['A plan and a design open in the same side column', 'The request stays in view beside it'],
+    chatHref: '#homeroom-bot/main',
+  };
+  const body = mayor.requestBody({
+    details: 'The plan and design open in one column.', username: 'evan', extras, screenshotIds: ['b'.repeat(32)],
+    domain: 'app.test', slug: 'homeroom',
+  });
+  assert.match(body, /^The plan and design open in one column\.\n\n\*\*Screenshot:\*\*\n!\[Screenshot\]\(https:\/\/app\.test\/issue-images\/b{32}\)$/m);
+  assert.match(body, /^\*\*Done when\*\*$/m);
+  assert.match(body, /^- A plan and a design open in the same side column$/m);
+  assert.match(body, /^\*\*Related\*\*$/m);
+  assert.match(body, /^- \[#6230\]\(https:\/\/app\.test\/#app\/homeroom\/dev\/issues\/6230\) One detail column for plans and designs: build together, it is the same column$/m);
+  assert.match(body, /^\*\*Where it happened\*\*$/m);
+  assert.match(body, /^- \[Request #15 on Ear Trainer\]\(https:\/\/app\.test\/#app\/ear-trainer\/dev\/issues\/15\)$/m);
+  assert.match(body, /^- Homeroom bot's message: "a vote on closing request #15 is open"$/m);
+  assert.match(body, /^- the request page$/m);
+  assert.match(body, /\n---\nFiled from evan's \[chat with Homeroom bot\]\(https:\/\/app\.test\/#homeroom-bot\/main\)\.$/);
+  // Without extras, or with a footer the B9 callers give, it is today's body.
+  assert.equal(mayor.requestBody({ details: 'Search notes.', username: 'evan', domain: 'app.test' }),
+    'Search notes.\n\n---\nFiled from evan\'s chat with Homeroom bot.');
+  assert.equal(mayor.requestBody({ details: 'Moved here.', username: 'evan', extras, footer: 'Moved from #3.', domain: 'app.test' }),
+    'Moved here.\n\n---\nMoved from #3.');
+  // The client's words give way first when the body is too long.
+  const long = mayor.requestBody({ details: 'x'.repeat(70000), username: 'evan', extras, domain: 'app.test', slug: 'homeroom' });
+  assert.ok(long.length <= 65536, 'inside GitHub\'s limit');
+  assert.match(long, /^x+…\n\n\*\*Done when\*\*/);
 });

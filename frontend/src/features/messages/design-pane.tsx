@@ -340,6 +340,7 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
               sandbox={DESIGN_SANDBOX}
               referrerPolicy="no-referrer"
               srcDoc={html.doc}
+              data-design-frame=""
               onLoad={onLoad}
               style={{ width: design.width, height: design.height, transform: `scale(${scale})`, transformOrigin: '0 0', border: 0, background: '#fff' }}
             />

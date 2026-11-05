@@ -1832,7 +1832,7 @@
     {
       "name": "Home card actions menu opens from ?shot=card-menu (#847)",
       "path": "/?demo=1&shot=card-menu",
-      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
+      "expectSelector": ".un-popover .card-menu-header:is(.interface-mode-basic, .interface-mode-advanced) .card-menu-title"
     },
     {
       "name": "Home card actions menu paints an opaque surface (#847)",
@@ -2614,27 +2614,14 @@
       "expectText": "[Mock] Voting"
     },
     {
-      "name": "The Workshop's Needs-you tab is a feed of one decision per screen, with a Vote control on its rail",
+      "name": "A project's Needs you draws the review flow, one change's page at a time",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] > [data-ws-rail] > button[data-ws-rail-btn=\"vote\"]",
-      "expectText": "Vote"
+      "expectSelector": "#dev-workshop [data-rf-project=\"usernode-2d5619\"] [data-review-flow]"
     },
     {
-      "name": "A Needs-you item's picture fills the card and the caption over it leads with who and when, then its title, then the sentence a voter reads; a change with no shots has its author's diagram as that picture (#4490)",
-      "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs]:has([data-ws-diagram=rename] ~ .dev-ws-item-caption) .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-caption > .dev-ws-item-by + .dev-ws-item-title + .dev-ws-item-summary"
-    },
-    {
-      "name": "The Needs-you feed's rail offers Ask, which opens the question box about the item in front of you",
-      "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] > [data-ws-rail] > button[data-ws-rail-btn=\"ask\"]",
-      "expectText": "Ask"
-    },
-    {
-      "name": "#2172: one card past the last Needs-you item says that's it and how many you reviewed, with the way on to what is live",
-      "path": "/?demo=1&ws=needs&shot=needs-end#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-done-body > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-actions > .dev-ws-done-cta",
-      "expectText": "See what’s live"
+      "name": "Needs you draws the review flow's change page in place in the pane, not over the shell, with its own Back (#6276)",
+      "path": "/?demo=1&ws=needs#workshop",
+      "expectSelector": "body:not(:has(> [data-rf-page])) #workshop-screen:not(.hidden) [data-workshop-pane=\"needs\"] [data-rf-page] [data-rf-back]"
     },
     {
       "name": "#2761: on the Workshop the menu's Go to community hub row is a plain link, not a selected toggle segment",
@@ -3045,9 +3032,9 @@
       "expectText": "Edit profile"
     },
     {
-      "name": "Settings offers the way back into the welcome tour (#2255)",
+      "name": "Settings offers the way back into the welcome tour (#2255), and the user guide beside it (#5973)",
       "path": "/#settings/tour",
-      "expectSelector": "#settings-section-content [data-settings-section=\"tour\"]:not(.hidden) #settings-tour-section #settings-tour-replay",
+      "expectSelector": "#settings-section-content:has([data-settings-section=\"guide\"] #settings-guide-section #settings-guide-voting) [data-settings-section=\"tour\"]:not(.hidden) #settings-tour-section #settings-tour-replay",
       "expectText": "Replay the tour"
     },
     {
@@ -3344,10 +3331,10 @@
       "expectText": "Join a community"
     },
     {
-      "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488); a Just-you change's vote sheet asks for your approval (#4313)",
+      "name": "Communities: Needs you is the review flow, one change's page in the pane with its vote bar (#6276)",
       "path": "/?demo=1&ws=needs&shot=needs-approve#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has([data-workshop-needs-back]) [data-needs-reel]:has([data-ws-rail-btn=\"vote\"] ~ [data-ws-rail-btn=\"more\"]):has(a[href^=\"#app/staging-demo-your-app/dev/governance/\"]) [data-ws-sheet=\"vote\"] .dev-ws-vote-sub",
-      "expectText": "Waiting for your approval."
+      "expectSelector": "#workshop-screen:not(.hidden) [data-workshop-pane=\"needs\"] [data-rf-page] [data-rf-back]",
+      "expectText": "Skip"
     },
     {
       "name": "The Challenges area's See all opens the Challenges tab",
@@ -4241,8 +4228,14 @@
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
       "path": "/?demo=1#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden):has(#connector-url) #connector-tool-claude",
       "expectText": "Claude (claude.ai)"
+    },
+    {
+      "name": "A tool whose sign-in ran out says Needs attention on its card (#6134)",
+      "path": "/?demo=connectors-attention#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-tool-chatgpt summary [data-connector-status=\"chatgpt\"]:not(:empty)",
+      "expectText": "Needs attention"
     },
     {
       "name": "Connector setup offers Claude web and ChatGPT web as named routes with their step counts (#1289, #2370)",
@@ -5204,6 +5197,19 @@
         "frontend/src/features/settings/interface-mode*",
         "frontend/src/features/settings/sections/experimental.tsx",
         "frontend/locales/en/settings.json"
+      ]
+    },
+    {
+      "name": "#6271 (4 Nov 2026): a private thread marked done this week is listed under Live this week, with its lock and the day it closed",
+      "path": "/?demo=1#homeroom-bot",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"live\"] [data-ai-line=\"closed\"]",
+      "expectText": "Private thread · Closed",
+      "id": "ai-live-closed-private-thread",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/ai/model.ts",
+        "frontend/src/features/ai/lists.tsx",
+        "frontend/locales/en/messages.json"
       ]
     }
   ],

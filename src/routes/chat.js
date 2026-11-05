@@ -1263,7 +1263,8 @@ function chatRoutes(config) {
   //     → a tap under one of Homeroom bot's offers in a thread
   //       (homeroom-bot-voice.js decideOffer): File it, Withdraw it or
   //       Propose to close, or Not now / Keep it. Only the person it was
-  //       offered to, once, and every gate the offer met is read again.
+  //       offered to (or any member, for an "already works" note's Propose
+  //       to close, #6321), once, and every gate the offer met is read again.
   //       Members only, from the person's own browser.
   router.post('/api/apps/:slug/messages/:id/bot-offer', groupChatWriteLimiter, sameOriginBrowserOnly,
     communities.requireAppMembership(pool), async (req, res) => {
@@ -1271,13 +1272,18 @@ function chatRoutes(config) {
       if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
       const choice = req.body?.choice;
       if (choice !== 'yes' && choice !== 'no') return res.status(400).json({ error: 'Choose yes or no.' });
+      // #6305: a many-project card's File on all says which rows are ticked.
+      const rows = Array.isArray(req.body?.rows)
+        ? req.body.rows.filter((r) => typeof r === 'string').slice(0, 12)
+        : null;
+      if (rows && choice === 'yes' && !rows.length) return res.status(400).json({ error: 'Tick at least one project.' });
       const id = Number(req.params.id);
       if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'Message not found' });
       try {
         const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS);
         if (!app) return res.status(404).json({ error: 'App not found' });
         const out = await require('../services/homeroom-bot-voice').decideOffer(pool, config, {
-          app, user: req.user, messageId: id, choice,
+          app, user: req.user, messageId: id, choice, rows,
         });
         if (!out.ok) {
           return res.status(out.status || 400).json({ error: out.error || 'That didn\'t work.', said: out.said || null });

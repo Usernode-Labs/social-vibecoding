@@ -19,6 +19,10 @@
     "text": "{{count}} results",
     "description": "Small heading over the app tiles on Home while a search is active. {{count}} is how many of the viewer's apps match."
   },
+  "continue.heading": {
+    "text": "Continue where you left off",
+    "description": "Small heading, and the accessible name, of the card at the top of Home that holds one row: the change the viewer worked on most recently, which reopens it."
+  },
   "grid.heading": {
     "text": "My apps",
     "description": "Heading over the grid of app tiles on the Home screen: the apps this person keeps a tile for. The same name is used in \"Add to My apps\"."

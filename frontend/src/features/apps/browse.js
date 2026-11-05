@@ -158,6 +158,9 @@ const Browse = {
     }
     Browse._applyInitialSort();
     Browse._applyInitialFilter();
+    // Read on screen entry, never during render: there is no localStorage in
+    // the SSG pass, and the field's menu stays closed until it is focused.
+    if (Browse._store) Browse._store.set({ recent: Browse.recentSearches() });
     Browse._syncLevel();
     Browse.render();
     Browse._load();
@@ -623,6 +626,17 @@ const Browse = {
     Browse.applyFilters({ only: [], category: 'all', sort: 'recommended' });
   },
 
+  // The empty line's Clear filters (#6197): turns off what can empty a list,
+  // the type and the Show only switches. Unlike Clear all above it keeps the
+  // order as well as the view and the search, and a sort cannot empty a list
+  // (sorting reorders), so nothing is written to the remembered order.
+  clearNarrowing() {
+    Browse._only = [];
+    Browse._category = 'all';
+    Browse._keptJoins.clear();
+    Browse.render();
+  },
+
   // The number on the Filters button: the choices that differ from the
   // defaults. The view tab is not counted. Pure — unit-tested.
   activeFilterCount() {
@@ -760,29 +774,41 @@ const Browse = {
       .slice(0, Browse.NEW_FALLBACK_COUNT);
   },
 
-  // The Opened recently switch's set: see RECENT_WINDOW_DAYS. An entry with no
-  // time of its own (recent-apps-store.js seeds one from the parked app) is
-  // not recent: nobody knows when it was left. `now` is injectable for the
-  // tests. Pure but for reading the list.
-  recentApps(apps, now) {
+  // When each app was last used on this device, slug to time, within
+  // RECENT_WINDOW_DAYS: what the Opened recently switch filters by and what a
+  // row's "Last opened" says (#4025). The time is when the app was left, the
+  // one clock the list keeps. An entry with no time of its own
+  // (recent-apps-store.js seeds one from the parked app) is not recent: nobody
+  // knows when it was left. The list can hold a slug twice, and the later time
+  // wins. `now` is injectable for the tests. Pure but for reading the list.
+  openedTimes(now) {
     const at = Number.isFinite(now) ? now : Date.now();
     const windowMs = Browse.RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     const entries = typeof Browse._recentEntries === 'function' ? Browse._recentEntries() : [];
-    const slugs = new Set();
+    const times = new Map();
     for (const entry of entries || []) {
       const left = entry && entry.at ? new Date(entry.at).getTime() : NaN;
       // A time ahead of now is a clock that was wrong, not an app just left.
-      if (!Number.isNaN(left) && left <= at && at - left <= windowMs) slugs.add(entry.slug);
+      if (!Number.isNaN(left) && left <= at && at - left <= windowMs
+        && !(times.get(entry.slug) >= left)) times.set(entry.slug, left);
     }
-    return (apps || []).filter((a) => a && slugs.has(a.slug));
+    return times;
+  },
+
+  // The Opened recently switch's set.
+  recentApps(apps, now) {
+    const times = Browse.openedTimes(now);
+    return (apps || []).filter((a) => a && times.has(a.slug));
   },
 
   // ./mount.ts calls this when the list of apps you left changes. Coming back
   // from an app, App.navigateToBrowse opens this screen BEFORE the transition
   // that parks the app, so without it the app you just left would be missing
-  // from a list drawn with this switch on, until something else redrew it.
+  // from a list drawn with the switch on, and its row would not say "Last
+  // opened", until something else redrew it. So does the list a cold load drew
+  // before it knew whose device list to read.
   recentChanged() {
-    if (Browse._open && !Browse._slug && Browse._only.includes('recent')) Browse.render();
+    if (Browse._open && !Browse._slug) Browse.render();
   },
 
   // The chip's set, before any sort or search. Each chip reads a predicate
@@ -883,6 +909,26 @@ const Browse = {
         && Browse.directoryTier(a) !== 'more')
       .slice()
       .sort((x, y) => Browse.featuredRank(x) - Browse.featuredRank(y));
+  },
+
+  // "Trending this week" (#6197), on the default list under Featured: the
+  // apps people used most in the last 7 days. The score is the sum GET
+  // /api/apps orders by, time spent plus chat messages; a tie goes to the one
+  // with more members. An app nobody used this week never shows, so a quiet
+  // directory has no section at all, and the `more` tier never leads a page
+  // here any more than it does under Featured. Pure; unit-tested.
+  TRENDING_LIMIT: 3,
+  trendingScore(a) {
+    return (parseInt(a && a.total_seconds, 10) || 0) + (parseInt(a && a.message_count, 10) || 0);
+  },
+  trendingApps(apps, excludeSlugs) {
+    const members = (a) => parseInt(a.member_count, 10) || 0;
+    return (apps || [])
+      .filter((a) => a && Browse.directoryTier(a) !== 'more' && Browse.trendingScore(a) > 0
+        && !(excludeSlugs && excludeSlugs.has(a.slug)))
+      .slice()
+      .sort((x, y) => (Browse.trendingScore(y) - Browse.trendingScore(x)) || (members(y) - members(x)))
+      .slice(0, Browse.TRENDING_LIMIT);
   },
 
   toggleMore() {
@@ -1062,12 +1108,20 @@ const Browse = {
   //   merged                12 users · 37 changes merged · Updated 3d ago
   //   new                   12 users · Created 5d ago
   //
+  // An app you opened on this device in the last RECENT_WINDOW_DAYS days says
+  // "Last opened 2h ago" in place of "Updated 3d ago" (#4025): the line is
+  // one line and truncates, so another fact would be cut off on a phone, and
+  // on a row you know, when you were last there is the more useful time. Newest
+  // keeps Created, the figure that order ranks by. `times` is
+  // Browse.openedTimes(), passed in so a list render reads the device's list
+  // once rather than once a row.
+  //
   // A zero-merge app omits the merge segment rather than printing "0 merged",
   // which reads as a defect rather than as an absence. So does a zero user
   // count (polish N12): "0 users" beside the row's "Joined" read as a
   // contradiction, and a zero says nothing in this shell.
-  // Pure — unit-tested.
-  metaLine(app, key) {
+  // Pure but for reading the device's list, unit-tested.
+  metaLine(app, key, times) {
     if (!app) return '';
     const sort = Browse.resolveSort(key == null ? Browse._sort : key);
     const bits = [];
@@ -1080,9 +1134,12 @@ const Browse = {
       const merged = parseInt(app.merged_prs || 0, 10) || 0;
       if (merged > 0) bits.push(PlatformI18n.t('discover:row.meta.changesLive', { count: merged }));
     }
+    const opened = (times || Browse.openedTimes()).get(app.slug);
     if (sort === 'new') {
       const created = formatRelativeTime(app.created_at);
       if (created) bits.push(PlatformI18n.t('discover:row.meta.created', { when: created }));
+    } else if (opened) {
+      bits.push(PlatformI18n.t('discover:row.meta.lastOpened', { when: formatRelativeTime(opened) }));
     } else {
       const rel = formatRelativeTime(app.last_deploy_at || app.created_at);
       if (rel) bits.push(PlatformI18n.t('discover:row.meta.updated', { when: rel }));
@@ -1094,6 +1151,17 @@ const Browse = {
       : app.status || '';
     if (status) bits.push(status);
     return bits.length ? joinFacts(bits) : '';
+  },
+
+  // A Trending row's facts line (#6197): the member count where the other
+  // rows have their user count, then the same facts metaLine gives them.
+  // A zero says nothing, here too. Pure — unit-tested.
+  trendingMeta(app) {
+    if (!app) return '';
+    const count = parseInt(app.member_count, 10) || 0;
+    const members = count > 0 ? PlatformI18n.t('discover:row.meta.members', { count }) : '';
+    const rest = Browse.metaLine({ ...app, active_users: 0 }, 'recommended');
+    return members && rest ? joinFacts([members, rest]) : (members || rest);
   },
 
   // What the app is, in its own words (#5928): the manifest's one-line
@@ -1116,7 +1184,7 @@ const Browse = {
   // `app` travels on the descriptor because the shared card primitives take
   // the record, not a pre-rendered fragment — see ./app-card-view.tsx.
   // Pure — unit-tested in tests/browse-screen.test.js.
-  rowView(app) {
+  rowView(app, times) {
     const isDemo = !!app.demo;
     // The pill is membership now (Join, or Open once joined), not the Home shortcut it
     // used to be: see Home.setMembership. `added` keeps its name because the
@@ -1132,7 +1200,7 @@ const Browse = {
       slug: app.slug,
       name: app.name || app.slug,
       about: Browse.aboutLine(app),
-      meta: Browse.metaLine(app, Browse._sort),
+      meta: Browse.metaLine(app, Browse._sort, times),
       status: app.status || '',
       statusDot: app.status === 'running' ? 'running'
         : app.status === 'error' ? 'error' : 'creating',
@@ -1174,9 +1242,15 @@ const Browse = {
       && !query && !only.length && category === 'all';
     const picked = grouped ? Browse.recommendedApps(apps) : [];
     const pickedSlugs = new Set(picked.map((a) => a.slug));
-    const rest = picked.length ? apps.filter((a) => !pickedSlugs.has(a.slug)) : apps;
-    const rows = rest.map((a) => Browse.rowView(a));
-    rows.unshift(...picked.map((a) => ({ ...Browse.rowView(a), recommended: true })));
+    // Trending (#6197) takes its apps out of the rest, as Featured does, so no
+    // app is listed twice: Featured, then Trending, then everything else.
+    const trending = grouped ? Browse.trendingApps(apps, pickedSlugs) : [];
+    const led = new Set([...pickedSlugs, ...trending.map((a) => a.slug)]);
+    const rest = led.size ? apps.filter((a) => !led.has(a.slug)) : apps;
+    const times = Browse.openedTimes();
+    const rows = rest.map((a) => Browse.rowView(a, times));
+    rows.unshift(...trending.map((a) => ({ ...Browse.rowView(a, times), trending: true, meta: Browse.trendingMeta(a) })));
+    rows.unshift(...picked.map((a) => ({ ...Browse.rowView(a, times), recommended: true })));
     // The "Open site" row, when the query is a web address (#5364). It rides
     // the list descriptor; browse-list.tsx draws it above the app rows.
     const site = Browse.siteFor(query);
@@ -1184,6 +1258,9 @@ const Browse = {
     // list shows its skeleton and the empty line ("No apps to show yet")
     // waits; a typed web address still offers its site row.
     const loading = !Browse._loaded && !(Browse._apps || []).length;
+    // The site row IS a result, so the "No apps match" line never shows
+    // right under it.
+    const empty = site || loading ? null : (rows.length ? null : Browse.emptyText(query, Browse.derivedFilter(), category));
 
     Browse._store.set({
       site,
@@ -1211,9 +1288,11 @@ const Browse = {
       grouped,
       moreExpanded: Browse._moreExpanded,
       error: false,
-      // The site row IS a result, so the "No apps match" line never shows
-      // right under it.
-      empty: site || loading ? null : (rows.length ? null : Browse.emptyText(query, Browse.derivedFilter(), category)),
+      empty,
+      // The empty line's Clear filters (#6197): only when a filter can be what
+      // emptied the list. The Joined view's "You haven't joined anything yet"
+      // has none to clear, and a sort never empties a list.
+      canClearFilters: !!empty && (only.length > 0 || category !== 'all'),
       // The empty line's "Make" action: a search nothing in the directory
       // answers is an idea for a project (#5928).
       make: site || loading || rows.length ? null : Browse.makeIdeaFor(query, Browse._apps),
@@ -1250,6 +1329,8 @@ const Browse = {
   openRow(view) {
     const href = Browse.rowHref(view);
     if (!href) return;
+    // Opening a result is what a search was for, so its words are kept (#6197).
+    if ((Browse._query || '').trim()) Browse.rememberSearch(Browse._query);
     // The hub, not the tab that project page was last left on.
     if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(view.slug);
     location.hash = href;
@@ -1776,6 +1857,81 @@ const Browse = {
     };
     if (immediate) apply();
     else Browse._searchDebounce = setTimeout(apply, Browse.SEARCH_DEBOUNCE_MS);
+  },
+
+  // ── The search field's menu (#6197) ───────────────────────────────
+  //
+  // Recent searches while the field is empty, Suggestions while it is not.
+  // ./browse-search-menu.tsx draws them and ./browse-screen.tsx holds the
+  // open/closed state; what is listed and what a pick does is decided here.
+  //
+  // Recent searches stay on this device, in this browser. Storage can throw
+  // or hold anything, so every read and write is guarded and a bad value
+  // reads as no recent searches. Nothing here runs during render.
+  RECENT_SEARCH_KEY: 'usernode:browse-recent-searches',
+  RECENT_SEARCH_LIMIT: 12,
+  RECENT_SEARCH_MAX_CHARS: 80,
+  SUGGESTION_LIMIT: 5,
+
+  recentSearches() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(Browse.RECENT_SEARCH_KEY));
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((q) => typeof q === 'string' && q.trim()).slice(0, Browse.RECENT_SEARCH_LIMIT);
+    } catch (err) {
+      return [];
+    }
+  },
+
+  // The words go to the front, a repeat in any case moves rather than doubles,
+  // and a web address is not a search (it opens a site, siteFor).
+  rememberSearch(query) {
+    const q = String(query == null ? '' : query).trim();
+    if (!q || q.length > Browse.RECENT_SEARCH_MAX_CHARS || Browse.siteFor(q)) return;
+    const lower = q.toLowerCase();
+    const next = [q, ...Browse.recentSearches().filter((r) => r.trim().toLowerCase() !== lower)]
+      .slice(0, Browse.RECENT_SEARCH_LIMIT);
+    try { window.localStorage.setItem(Browse.RECENT_SEARCH_KEY, JSON.stringify(next)); } catch (err) { /* ignore */ }
+    if (Browse._store) Browse._store.set({ recent: next });
+  },
+
+  forgetSearches() {
+    try { window.localStorage.removeItem(Browse.RECENT_SEARCH_KEY); } catch (err) { /* ignore */ }
+    if (Browse._store) Browse._store.set({ recent: [] });
+  },
+
+  // Names from the directory already loaded, by the results search's own
+  // matching (Home.filterApps), so a suggestion is always a row the list would
+  // show for the same words. Pure — unit-tested.
+  suggestionsFor(query) {
+    const q = String(query == null ? '' : query).trim();
+    if (!q || Browse.siteFor(q)) return [];
+    return Home.filterApps(Browse.listedApps(Browse._apps), q)
+      .slice(0, Browse.SUGGESTION_LIMIT)
+      .map((app) => ({ slug: app.slug, name: app.name || app.slug, app }));
+  },
+
+  // The tiles of the recent searches (#5967): each with the app its words
+  // find first today, the first suggestion, or none. Pure — unit-tested.
+  recentSearchTiles(queries) {
+    return (queries || []).map((query) => {
+      const best = Browse.suggestionsFor(query)[0];
+      return { query, app: best ? best.app : null };
+    });
+  },
+
+  // A recent search searches again, at once.
+  pickRecentSearch(query) {
+    Browse.setQuery(query, { immediate: true });
+    Browse.rememberSearch(query);
+  },
+
+  // A suggestion opens its community, the same as tapping its row. The words
+  // typed are applied first: the debounce may still hold an earlier prefix of
+  // them, and openRow remembers what the query is.
+  pickSuggestion(suggestion, typed) {
+    Browse.setQuery(typed, { immediate: true });
+    Browse.openRow(Browse.rowView(suggestion.app));
   },
 };
 

@@ -94,10 +94,38 @@ async function migrate(config) {
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
+  // #6306's shots: a request the bot read and found already works, so Needs
+  // you says "Already works" with Propose to close and the request's page
+  // says why. Staging has no model, so the bot's note is stored.
+  await seedStagingBotAlreadyWorks(pool);
+  // #6271's shots: a private thread with the bot, already marked done this
+  // week, so Live this week has a closed thread to show. Staging has no
+  // model, so the bot's reply is stored rather than asked for.
+  await seedStagingClosedPrivateThread(pool);
+  // #6261's shots: a design thread with a version in the capture member's
+  // chat, for the comment picture's design frames.
+  await seedStagingDesignThread(pool);
   await seedStagingBotPlanWaiting(pool);
+  // #6264: a request whose bot kept its word, for the before & after shots
+  // of "tell me when it's done" (the promise, then the line it posted).
+  await seedStagingBotFollowUp(pool);
+  // #6255's shots: the member asks the bot, in Main Chat, to say when a
+  // request it is still building is made, and it agrees. Nothing here runs
+  // a model, so a fresh staging copy has no such exchange to show.
+  await seedStagingBotTellMeWhen(pool);
   // #6228's shots: a reply on the handed-back request #9103 (above), for the
   // thread's status line, its track card and the Homeroom bot page's row.
   await seedStagingBotReplyWaiting(pool);
+  // #6263's shots: a bot-built change on a request page whose description is
+  // marked out of date, so the note under it has a state to show.
+  await seedStagingBotStaleDescription(pool);
+  // #6284's shots: a bot change whose checks failed after the bot stopped at
+  // its own limit of three fixes, so the Testing card and the Homeroom bot
+  // page have the stopped state to show (and Let it try again).
+  await seedStagingBotFixesStopped(pool);
+  // #6282's shots: an update queued on that same change, so the AI tab has
+  // "Update queued" to show instead of a Vote, and its Votes card the note.
+  await seedStagingBotUpdateComing(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -273,6 +301,9 @@ async function migrate(config) {
   await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
+  // #6081: a message and a request in another language, with the English the
+  // translation route serves without a model key the copies do not have.
+  await seedStagingUserContentTranslations(pool);
   await seedStagingDbExports(pool);
   // #3654: the Homeroom bot console's Benchmark area (services/bench/demo.js).
   // Its tables are staging:private, so a preview would otherwise show none.
@@ -1781,9 +1812,247 @@ async function seedStagingBotWaitingRows(pool) {
           }),
         ],
       );
+      // #6311: the note about Homeroom itself, with the copy offer under it
+      // (Put it on Homeroom's board / Keep it here only). The before & after
+      // shots need the state on the after copy; nothing here is a signal the
+      // bot reads. Idempotent by its stagingDemo mark.
+      const copyNote = await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '20 hours'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'copy-offer-note')
+          RETURNING id`,
+        [
+          appId, botRow.rows[0].id,
+          'I think this is about Homeroom itself, not Staging demo: Staging demo: the signed-out page sends a person '
+            + 'to the authorize page. I can put it on Homeroom\'s own board too and keep this request open here.',
+          JSON.stringify({ stagingDemo: 'copy-offer-note' }),
+        ],
+      );
+      if (copyNote.rows.length) {
+        const messageId = Number(copyNote.rows[0].id);
+        const { rows: [offer] } = await pool.query(
+          `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id)
+           VALUES ($1, 'copy_request', $2, $3, $4) RETURNING id`,
+          [appId, JSON.stringify({ issueNumber: 9103, title: 'Staging demo: the signed-out page sends a person to the authorize page' }), userId, messageId],
+        );
+        const offerId = Number(offer.id);
+        await pool.query('UPDATE chat_messages SET metadata = $2 WHERE id = $1', [messageId, JSON.stringify({
+          stagingDemo: 'copy-offer-note',
+          homeroomBot: {
+            kind: 'voice',
+            offer: { id: offerId, kind: 'copy_request', status: 'open', forUserId: userId },
+            actions: [
+              { id: 'yes', label: 'Put it on Homeroom\'s board', style: 'primary', offerId },
+              { id: 'no', label: 'Keep it here only', style: 'secondary', offerId },
+            ],
+          },
+        })]);
+      }
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
+  }
+}
+
+// #6306 (4 Nov 2026): a request Homeroom bot read and found already works.
+// Its run carries `already_done`, so the Homeroom bot tab's Needs you offers
+// "Already works: …" with Propose to close, and its page's note says why.
+// Filed by the shots' member fixture (usernode-capture); the bot's note is
+// stored because staging has no model. Idempotent by request number and a
+// no-op outside staging.
+async function seedStagingBotAlreadyWorks(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!apps.rows.length || !people.rows.length || !bot.rows.length) return;
+    const appId = apps.rows[0].id;
+    const appSlug = apps.rows[0].slug;
+    const userId = people.rows[0].id;
+    const botId = bot.rows[0].id;
+    const number = 9110;
+    const title = 'Staging demo: a request the bot found already works';
+    const reason = 'Staging demo: visitors can already get in and play without an account.';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, userId, title],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, already_done, created_at)
+       SELECT $1, $2, 'live', 'person', $3, TRUE, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                           WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'person')`,
+      [appId, number, reason],
+    );
+    const note = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       SELECT $1, $2, $3, 'message', 'issue', $4, $5, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                             AND metadata->>'stagingDemo' = 'already-works-note')
+       RETURNING id`,
+      [
+        appId, botId,
+        `Already works: ${reason} Anyone in the project can Propose to close it, or reply here if something is missing.`,
+        number,
+        JSON.stringify({ stagingDemo: 'already-works-note', homeroomBot: { kind: 'note' } }),
+      ],
+    );
+    // The bell row the real sender writes for the same moment, worded by the
+    // service that words it (#6306): Needs you, "Already works", the bot's
+    // sentence. It hangs off the note above so its row opens the request's
+    // thread, and carries `i`/`p` so the bell links to that request, not to
+    // Main Chat. Rows for the shots' member fixture only.
+    let noteId = note.rows[0] ? note.rows[0].id : null;
+    if (noteId == null) {
+      const existing = await pool.query(
+        `SELECT id FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2
+            AND metadata->>'stagingDemo' = 'already-works-note'
+          ORDER BY id LIMIT 1`,
+        [appId, number],
+      );
+      noteId = existing.rows[0] ? existing.rows[0].id : null;
+    }
+    const { botNotificationDetail } = require('../services/homeroom-bot-notify-copy');
+    const detail = botNotificationDetail({
+      moment: 'needs_you', said: 'done', kind: 'person',
+      appName: 'Homeroom', appSlug, requestTitle: title, reason, issueNumber: number,
+    });
+    if (noteId != null && detail) {
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, chat_message_id, source_user_id, kind, detail, read_at, created_at)
+         SELECT $1::int, $2::int, $3::int, $4::int, 'build_needs_you', $5::varchar, NULL, NOW() - INTERVAL '1 day'
+          WHERE NOT EXISTS (SELECT 1 FROM notifications n
+                             WHERE n.user_id = $1 AND n.kind = 'build_needs_you' AND n.chat_message_id = $3::int)`,
+        [userId, appId, noteId, botId, detail],
+      );
+    }
+    // #6321: the note as it is written now, with Propose to close and Keep it
+    // open under it for any member. A copy that already has the older note is
+    // brought up to it, so the after copy shows the state either way. A row
+    // nobody decides with until a person taps; idempotent by the offer tied
+    // to the note.
+    if (noteId != null) {
+      const tied = await pool.query(
+        'SELECT 1 FROM homeroom_bot_voice_offers WHERE message_id = $1 LIMIT 1', [noteId],
+      );
+      if (!tied.rows.length) {
+        const { rows: [offer] } = await pool.query(
+          `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id)
+           VALUES ($1, 'close_request', $2, NULL, $3) RETURNING id`,
+          [appId, JSON.stringify({ issueNumber: number, title, why: reason }), noteId],
+        );
+        const offerId = Number(offer.id);
+        await pool.query('UPDATE chat_messages SET content = $2, metadata = $3 WHERE id = $1', [
+          noteId,
+          `Already works: ${reason} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`,
+          JSON.stringify({
+            stagingDemo: 'already-works-note',
+            homeroomBot: {
+              kind: 'voice',
+              offer: { id: offerId, kind: 'close_request', status: 'open', forUserId: null },
+              actions: [
+                { id: 'yes', label: 'Propose to close', style: 'primary', offerId },
+                { id: 'no', label: 'Keep it open', style: 'secondary', offerId },
+              ],
+            },
+          }),
+        ]);
+      }
+    }
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
+  }
+}
+
+// #6271 (4 Nov 2026): a private thread marked done now stays under Live this
+// week for a week. A fresh staging copy has no private thread with the bot,
+// and staging has no model to make one, so this seeds one already closed,
+// with the bot's reply stored. Rows for the shots' own member fixture
+// (usernode-capture) only; nothing here is a signal the bot reads to decide
+// anything. Idempotent through the root message's idempotency key and the
+// private thread's unique root; strictly a no-op outside staging.
+async function seedStagingClosedPrivateThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        'INSERT INTO conversations (kind, created_by) VALUES (\'direct\', $1) RETURNING id',
+        [member.id],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status)
+       VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')
+       ON CONFLICT (conversation_id, user_id) DO UPDATE SET status = 'member'`,
+      [conversationId, member.id, bot.id],
+    );
+    const key = 'staging-demo-closed-private-thread';
+    const had = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, member.id, key],
+    );
+    let rootId = had.rows[0]?.id;
+    if (!rootId) {
+      const root = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, 'Staging demo: a private thread marked done this week', $3, NOW() - INTERVAL '2 days')
+         RETURNING id`,
+        [conversationId, member.id, key],
+      );
+      rootId = root.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: kept here for a week so it can be reopened.', $3, NOW() - INTERVAL '2 days')`,
+        [conversationId, bot.id, rootId],
+      );
+    }
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const appId = apps.rows[0]?.id || null;
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, done_at, done_from)
+       VALUES ($1, $2, $3, $4, 'idea', 'done', NOW() - INTERVAL '2 days', 'open')
+       ON CONFLICT (root_message_id) DO NOTHING`,
+      [member.id, conversationId, rootId, appId],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging closed private thread seeding failed', { message: err.message });
   }
 }
 
@@ -1893,6 +2162,345 @@ async function seedStagingBotPlanWaiting(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot plan seeding failed', { message: err.message });
+  }
+}
+
+// #6263 (4 Nov 2026): a bot-built change whose description no longer matches
+// it, on a request page a fresh staging copy can open (mock issue 900004,
+// stagingMockIssues). The note under the summary is the state the before &
+// after shots need; without the row there is no change for it to sit under.
+// Filed by the shots' member fixture (usernode-capture), the change owned by
+// homeroom_bot as a real one is; obviously fake, idempotent, and strictly a
+// no-op outside staging.
+async function seedStagingBotStaleDescription(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const number = 900004;
+    const title = 'Staging demo: a change whose description is out of date';
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const botRow = await pool.query(
+      "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
+    );
+    if (!botRow.rows.length) return;
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, status, linked_issues, promoted_at,
+          pr_summary_md, pr_summary_source, pr_summary_input_version, pr_summary_stale,
+          created_at, last_activity_at)
+       SELECT $1, $2, 'staging-fixture/stale-description', $3, 'promoted', ARRAY[$4]::int[], NOW() - INTERVAL '2 days',
+              'Staging demo: the sample screen gets a sample banner. This text describes the first version of the change, not what it does now.',
+              'author', 1, TRUE, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = 'staging-fixture/stale-description')`,
+      [appId, botRow.rows[0].id, title, number],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot stale-description seeding failed', { message: err.message });
+  }
+}
+
+// #6282 (4 Nov 2026): an update queued on the change above, so the before &
+// after shots have the state this change is about: the AI tab says Update
+// queued instead of asking for a Vote, and the change's Votes card says an
+// update is coming. Filed by the shots' member fixture
+// (usernode-capture), as an ask on a real change is; obviously fake,
+// idempotent, and strictly a no-op outside staging.
+async function seedStagingBotUpdateComing(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const change = await pool.query(
+      `SELECT id, app_id, linked_issues[1] AS issue_number FROM chat_sessions
+        WHERE branch_name = 'staging-fixture/stale-description' AND status = 'promoted' LIMIT 1`,
+    );
+    const person = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!change.rows.length || !person.rows.length) return;
+    const { id: sessionId, app_id: appId, issue_number: issueNumber } = change.rows[0];
+    await pool.query(
+      `INSERT INTO homeroom_bot_change_asks
+         (app_id, session_id, issue_number, asker_id, instruction, source, status, created_at)
+       SELECT $1, $2, $3, $4, 'Staging demo: drop the second credit line', 'staging-fixture', 'queued', NOW() - INTERVAL '2 minutes'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_change_asks
+                           WHERE session_id = $2 AND source = 'staging-fixture')`,
+      [appId, sessionId, issueNumber, person.rows[0].id],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot update-coming seeding failed', { message: err.message });
+  }
+}
+
+/**
+ * #6284's shots: a change Homeroom bot built for the capture member, its
+ * checks failing after the bot stopped at its own limit of three fixes. The
+ * Testing card and the Homeroom bot page's Needs you show the stopped state
+ * and Let it try again, which a fresh staging copy cannot reach on its own
+ * because nothing there runs checks or a model. Obviously fake, idempotent,
+ * and strictly a no-op outside staging.
+ *
+ * Its id is fixed because the declared start path names the change, and it
+ * is in a range no real session can reach: a preview cloned from production
+ * already holds every id up to production's counter, and an id already taken
+ * silently skipped this fixture once (#6284's own shots could not find it).
+ */
+async function seedStagingBotFixesStopped(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  // Nine digits: the client's change address (_changeNumber) reads at most
+  // that many, and no real session counter gets near it.
+  const SESSION_ID = 999_999_999;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const memberId = people.rows[0].id;
+    const number = 900095;
+    const title = 'Staging demo: a change the bot stopped fixing';
+    const branch = 'staging-fixture/bot-fixes-stopped';
+    // Not a 40-character hex sha on purpose: the preview machine adopts every
+    // promoted change with a real head and builds it, and this fixture has no
+    // branch to build. Nothing here runs checks either, so the head it looks
+    // at is just the string its runs carry.
+    const head = 'staging-fixture-head';
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const botRow = await pool.query(
+      "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
+    );
+    if (!botRow.rows.length) return;
+    const botId = botRow.rows[0].id;
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake. Its checks failed and the bot stopped.', $4::int,
+              NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+      [appId, number, title, memberId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, created_at)
+       SELECT $1::int, $2::int, $3::int, $4::text, NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1::int AND issue_number = $2::int)`,
+      [appId, number, memberId, title],
+    );
+    const session = await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, status, linked_issues, promoted_at,
+          check_state, check_phase, reviewed_head_sha, checks_commit_sha, test_results,
+          pr_summary_md, created_at, last_activity_at)
+       SELECT $8::int, $1::int, $2::int, $3::text, $4::text, $4::text, 'promoted', ARRAY[$5::int]::int[], NOW() - INTERVAL '2 hours',
+              'failing', 'done', $6::text, $6::text, $7::jsonb,
+              'Staging demo: a change Homeroom bot built, whose checks are failing.',
+              NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $8::int)
+        RETURNING id`,
+      [appId, botId, branch, title, number, head,
+        JSON.stringify([{ name: 'The page loads', path: '/', status: 'fail', failureReason: '1 console error on load' }]),
+        SESSION_ID],
+    );
+    if (!session.rows.length) {
+      // The id was taken by something that is not this fixture: say so,
+      // rather than leaving the shots to find nothing and report a skip.
+      const taken = await pool.query('SELECT branch_name FROM chat_sessions WHERE id = $1', [SESSION_ID]);
+      if (taken.rows[0]?.branch_name !== branch) {
+        log.warn('db', 'Staging Homeroom bot stopped-fix fixture id is taken', { sessionId: SESSION_ID });
+      }
+      return;
+    }
+    const sessionId = session.rows[0].id;
+    for (const [i, limitStop] of [[1, null], [2, null], [3, null], [4, 'own_revisions']]) {
+      const reason = i === 4 ? 'its attempt to fix them changed nothing' : `fix round ${i} (staging demo)`;
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs
+           (app_id, issue_number, mode, verdict, proposal_session_id, checks_head_sha, asked, limit_stop, reason, created_at)
+         SELECT $1::int, $2::int, 'live', $3::text, $4::int, $5::text, FALSE, $6::text, $7::text,
+                NOW() - ($8::int * INTERVAL '10 minutes')
+          WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                             WHERE app_id = $1::int AND issue_number = $2::int
+                               AND proposal_session_id = $4::int AND reason = $7::text)`,
+        [appId, number, i === 4 ? 'person' : 'revise', sessionId, head, limitStop, reason, i],
+      );
+    }
+    // The bot's own stop message in the change's discussion, with Let it try
+    // again and Not now under it, as a real stop posts it. The same words
+    // followup.stoppedHandOffText says for one failing check.
+    const stopText = 'I stopped after 3 tries at getting this change past its checks. 1 check is still failing. '
+      + 'The person who asked for it or an admin can let me try once more.';
+    let offer = (await pool.query(
+      `SELECT id FROM homeroom_bot_voice_offers
+        WHERE app_id = $1 AND kind = 'try_again' AND args->>'sessionId' = $2 LIMIT 1`,
+      [appId, String(sessionId)],
+    )).rows[0];
+    if (!offer) {
+      offer = (await pool.query(
+        `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
+         VALUES ($1, 'try_again', $2::jsonb, $3) RETURNING id`,
+        [appId, JSON.stringify({ sessionId: Number(sessionId) }), memberId],
+      )).rows[0];
+    }
+    const actions = [
+      { id: 'yes', label: 'Let it try again', style: 'primary', offerId: Number(offer.id) },
+      { id: 'no', label: 'Not now', style: 'secondary', offerId: Number(offer.id) },
+    ];
+    const metadata = {
+      homeroomBot: {
+        kind: 'voice',
+        offer: { id: Number(offer.id), kind: 'try_again', status: 'open', forUserId: Number(memberId) },
+        actions,
+      },
+    };
+    const posted = await pool.query(
+      `INSERT INTO chat_messages
+         (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       SELECT $1::int, $2::int, $3::text, 'message', $4::jsonb, 'session', $5::int, NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1::int AND thread_type = 'session' AND thread_ref = $5::int
+                             AND user_id = $2::int AND content = $3::text AND deleted_at IS NULL)
+       RETURNING id`,
+      [appId, botId, stopText, JSON.stringify(metadata), sessionId],
+    );
+    const messageId = posted.rows[0]?.id || (await pool.query(
+      `SELECT id FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $2
+          AND user_id = $3 AND content = $4 AND deleted_at IS NULL
+        ORDER BY id LIMIT 1`,
+      [appId, sessionId, botId, stopText],
+    )).rows[0]?.id;
+    if (messageId) {
+      await pool.query(
+        'UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
+        [offer.id, messageId],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot stopped-fix seeding failed', { message: err.message });
+  }
+}
+
+// #6264: a request where the bot promised to say when an update was in, and
+// then said it. A fresh staging copy has no such exchange (nothing here runs
+// a model), so the before & after shots get one, obviously fake, on the
+// self-hosted Homeroom project, for the shots' member fixture
+// (usernode-capture) as the person who asked. The messages are ordinary bot
+// bubbles in the request's discussion; none of it is a signal anything
+// reads. Idempotent by request number and by each line's text; a no-op
+// outside staging.
+async function seedStagingBotFollowUp(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!apps.rows.length || !people.rows.length || !bots.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const botId = bots.rows[0].id;
+    const number = 9107;
+    const title = 'Staging demo: a request where the bot kept its word';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. An update was asked for and told.', $4, NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    const lines = [
+      [botId, "Got it, @usernode-capture: I've queued that update to PR 9107. I start on it now.", '2 days'],
+      [userId, 'Tell me when the update is made.', '47 hours'],
+      [botId, "Sure, @usernode-capture. I'll tell you here when it's in.", '47 hours'],
+      [botId, '@usernode-capture, the update to PR 9107 is in, and its checks are running.', '46 hours'],
+    ];
+    for (const [author, content, ago] of lines) {
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', $4, NOW() - ($5)::interval
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                               AND user_id = $2 AND content = $3 AND deleted_at IS NULL)`,
+        [appId, author, content, number, ago],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot follow-up seeding failed', { message: err.message });
+  }
+}
+
+// #6255: the bot agrees, in the member fixture's Main Chat, to say when a
+// request it is still building is made ("I'll tell you here when it's ready
+// to vote"). A fresh staging copy has no such exchange, because nothing here
+// runs a model, so the before & after shots would find an empty chat. The
+// lines are obviously fake and nothing reads them. Idempotent through the
+// direct pair and each line's key; a no-op outside staging.
+async function seedStagingBotTellMeWhen(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!people.rows.length || !bots.rows.length) return;
+    const member = Number(people.rows[0].id);
+    const bot = Number(bots.rows[0].id);
+    if (member === bot) return;
+    const low = Math.min(member, bot);
+    const high = Math.max(member, bot);
+    const found = await pool.query(
+      `SELECT p.conversation_id FROM conversation_direct_pairs p
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2 LIMIT 1`,
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [bot],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', $2, NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, bot, member],
+    );
+    const lines = [
+      [member, 'staging-tellmewhen-1', 'Staging demo: can you build request #9108 on Homeroom?', '27 minutes'],
+      [bot, 'staging-tellmewhen-2', "I've started building Homeroom request #9108. It usually takes about 20 minutes.", '26 minutes'],
+      [member, 'staging-tellmewhen-3', "Great, tell me when it's made.", '25 minutes'],
+      [bot, 'staging-tellmewhen-4', "I'll tell you here when it's ready to vote.", '25 minutes'],
+    ];
+    for (const [sender, key, content, ago] of lines) {
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - $5::interval)
+         ON CONFLICT (conversation_id, sender_id, idempotency_key)
+           WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+         DO NOTHING`,
+        [conversationId, sender, content, key, ago],
+      );
+    }
+    log.info('db', 'Staging tell-me-when chat seeded', { conversationId });
+  } catch (err) {
+    log.warn('db', 'Staging tell-me-when chat seeding failed', { message: err.message });
   }
 }
 
@@ -2204,6 +2812,116 @@ async function seedStagingScrollTestThread(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging scroll-test thread seeding failed', { message: err.message });
+  }
+}
+
+// #6081's before/after shots follow words written in another language, read
+// in English on a tap. The copies have no model key, so a tap there cannot
+// ask for a translation; the route still answers from what is stored. This
+// seeds one message and one request in Spanish, with the English the route
+// serves at once, so the after build can show the translated state. The rows
+// are obviously fake, in the staging ranges, idempotent, and a strict no-op
+// outside staging.
+async function seedStagingUserContentTranslations(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const digest = (text) => crypto.createHash('sha256').update(text).digest('hex');
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-lin', 'staging-demo-general-ada')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const lin = people.rows.find((row) => row.username === 'staging-demo-general-lin');
+    const ada = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    if (!member || !lin || !ada) {
+      log.warn('db', 'Staging translation fixtures skipped: fixture users missing');
+      return;
+    }
+
+    // A direct thread the member can open from Messages, with one line in
+    // Spanish from the other person and the English for it.
+    const low = Math.min(member.id, lin.id);
+    const high = Math.max(member.id, lin.id);
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+         JOIN conversation_direct_pairs p ON p.conversation_id = c.id
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2
+        LIMIT 1`,
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [member.id]
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, member.id, lin.id]
+    );
+    const spanishMessage = '¿Alguien puede revisar el cambio del botón antes del viernes?';
+    const englishMessage = 'Can someone review the button change before Friday?';
+    await pool.query(
+      `INSERT INTO conversation_messages
+         (conversation_id, sender_id, content, idempotency_key, created_at)
+       VALUES ($1, $2, $3, 'staging-translate-demo-1', NOW() - INTERVAL '2 minutes')
+       ON CONFLICT (conversation_id, sender_id, idempotency_key)
+         WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+       DO NOTHING`,
+      [conversationId, lin.id, spanishMessage]
+    );
+    await pool.query(
+      `INSERT INTO user_content_translations
+         (source_digest, language, text, source_language, same_language, model, attempted_at)
+       VALUES ($1, 'en', $2, 'es', FALSE, 'staging-fixture', NOW())
+       ON CONFLICT (source_digest, language) DO NOTHING`,
+      [digest(spanishMessage), englishMessage]
+    );
+
+    // A request on a demo app, written by one of the fake people, with its
+    // title and words translated. Its id is its number on the page.
+    const app = await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-alpha'");
+    if (!app.rows[0]?.id) {
+      log.warn('db', 'Staging translation request skipped: demo app missing');
+      return;
+    }
+    const title = 'La página del desafío no muestra por qué cuenta el progreso';
+    const body = 'En la cuenta seacookie19910814, la solicitud #123 se convirtió en el cambio #124, '
+      + 'y el cambio muestra que está en votación. La página del desafío dice que '
+      + '"Suggest an improvement" cuenta una propuesta enviada a votación, pero el desafío sigue sin empezar.';
+    const englishTitle = "The challenge page doesn't show why progress counts";
+    const englishBody = 'On the account seacookie19910814, request #123 became change #124, and the '
+      + 'change shows that it is up for a vote. The challenge page says that "Suggest an improvement" '
+      + 'counts one proposal sent to a vote, but the challenge has still not started.';
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, created_by, status)
+       VALUES (9056199, $1, $2, $3, $4, 'open')
+       ON CONFLICT (id) DO NOTHING`,
+      [app.rows[0].id, title, body, ada.id]
+    );
+    for (const [source, translated] of [[title, englishTitle], [body, englishBody]]) {
+      await pool.query(
+        `INSERT INTO user_content_translations
+           (source_digest, language, text, source_language, same_language, model, attempted_at)
+         VALUES ($1, 'en', $2, 'es', FALSE, 'staging-fixture', NOW())
+         ON CONFLICT (source_digest, language) DO NOTHING`,
+        [digest(source), translated]
+      );
+    }
+    log.info('db', 'Staging translation fixtures seeded', { conversationId, issue: 9056199 });
+  } catch (err) {
+    log.warn('db', 'Staging translation fixtures seeding failed', { message: err.message });
   }
 }
 
@@ -7886,6 +8604,109 @@ async function seedStagingBotAllowanceWarning(pool) {
   }
 }
 
+// #6261: a comment's picture left every frame out, so a design's frame was a
+// blank box. A clean staging copy has no design thread, so this seeds one in
+// the capture member's chat with Homeroom bot, with a version and the bot's
+// line saying it: the state the before & after shots need (the pane and the
+// small card in the chat). Obviously fake, idempotent by the member already
+// having a design thread, and strictly a no-op outside staging.
+async function seedStagingDesignThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const member = (await pool.query(
+      `SELECT id FROM users WHERE username = 'usernode-capture' AND is_synthetic = FALSE LIMIT 1`
+    )).rows[0];
+    if (!member) return;
+    // One design thread is enough; if theirs already holds one, leave it.
+    const had = await pool.query(
+      `SELECT 1 FROM private_threads p JOIN design_threads d ON d.private_thread_id = p.id
+        WHERE p.user_id = $1 LIMIT 1`,
+      [member.id]
+    );
+    if (had.rows.length) return;
+    const app = (await pool.query(
+      'SELECT id, slug, name FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
+    )).rows[0];
+    if (!app) return;
+    // The bot's account, in the posture botAccount() reads.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    const bot = (await pool.query(
+      `SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1`
+    )).rows[0];
+    if (!bot || Number(bot.id) === Number(member.id)) return;
+
+    const named = 'Staging demo: a screen with an unread badge';
+    const dm = require('../services/homeroom-bot-dm');
+    const opened = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: `Staging demo: I opened a design thread for ${named}, in a thread only you can see. `
+        + 'Tell me what to change there, or pin a comment on the preview, and I\'ll make the next version.',
+      threadRootId: false,
+      moment: null,
+      metadata: { kind: 'opened_design', appSlug: app.slug, appName: app.name || app.slug, designTitle: named },
+    });
+    if (!opened?.messageId) return;
+    const thread = (await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+       VALUES ($1, $2, $3, $4, 'design', 'open')
+       ON CONFLICT (root_message_id) DO NOTHING
+       RETURNING id`,
+      [member.id, opened.conversationId, opened.messageId, app.id]
+    )).rows[0];
+    if (!thread) return;
+    await pool.query(
+      `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height)
+       VALUES ($1, $2, 'platform', '#home', 390, 844)
+       ON CONFLICT (private_thread_id) DO NOTHING`,
+      [thread.id, named]
+    );
+    // Version 1 draws the obviously fake screen the shots look at: inline
+    // styles only, so it needs no image or font from anywhere.
+    const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+      + '<body style="margin:0;font-family:system-ui,sans-serif;background:#faf8f5;color:#18181b">'
+      + '<div style="padding:24px 16px">'
+      + '<div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#71717a">Needs you</div>'
+      + '<div style="margin-top:12px;border-radius:16px;background:#fff;box-shadow:0 0 0 1px #e4e4e7;padding:14px">'
+      + '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span style="width:8px;height:8px;border-radius:50%;background:#0a6ee0;display:inline-block"></span>'
+      + '<strong style="font-size:15px">Needs you &middot; 3 new</strong></div>'
+      + '<p style="font-size:13px;color:#52525b;margin:8px 0 0">Staging demo: a fake screen for the comment picture.</p>'
+      + '</div></div></body></html>';
+    await pool.query(
+      `INSERT INTO design_versions (private_thread_id, version, html, author, note)
+       VALUES ($1, 1, $2, 'capture', 'As it is now')
+       ON CONFLICT (private_thread_id, version) DO NOTHING`,
+      [thread.id, html]
+    );
+    const said = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: 'Version 1: Staging demo: a screen with an unread badge.',
+      threadRootId: opened.messageId,
+      moment: null,
+      idempotencyKey: `staging-design-${thread.id}-v1`,
+      metadata: { kind: 'design_version', appSlug: app.slug, appName: app.name || app.slug, designVersion: 1 },
+    }).catch((err) => {
+      log.warn('db', 'Staging design thread version line failed', { message: err.message });
+      return null;
+    });
+    if (said?.messageId) {
+      await pool.query(
+        'UPDATE design_versions SET message_id = $2 WHERE private_thread_id = $1 AND version = 1',
+        [thread.id, said.messageId]
+      );
+    }
+    log.info('db', 'Staging design thread fixture seeded', { threadId: thread.id });
+  } catch (err) {
+    log.warn('db', 'Staging design thread seeding failed', { message: err.message });
+  }
+}
+
 // Fixtures for the home screen's "Your apps" section + search bar
 // (homepage restructure). The section is the union of membership
 // (app_collaborators status='member') and manual favorites
@@ -10074,6 +10895,20 @@ async function seedStagingDiscussionContext(pool, config) {
     'message', issueThread, 48);
   await insert(null, 'Staging demo: a system activity row in the issue thread', 'system', issueThread, 45);
 
+  // #6268: a message a person's coding agent posted for them that Homeroom
+  // bot will not answer says so, quietly, under it. An agent cannot post
+  // through the connector on a copy with no model, so the state the shots
+  // need is written here: one agent row on the request's discussion, with
+  // the reason the route stores when it skips one.
+  await pool.query(
+    `INSERT INTO chat_messages
+       (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via, created_at)
+     VALUES ($1, $2, $3, 'message', $4::jsonb, 'issue', 42, 'agent', NOW() - INTERVAL '42 minutes')`,
+    [appId, other,
+      '[staging fixture] @Homeroom bot, one more thing while you are in here: keep the mobile header as it is.',
+      JSON.stringify({ homeroomBotSkip: { why: 'connector_run' } })],
+  );
+
   log.info('db', 'Seeded staging discussion-context fixture', { appId, sessionId, issueNumber: 42 });
 }
 
@@ -10118,8 +10953,9 @@ async function seedStagingBotCloseOffer(pool, config) {
       );
     }
     const { rows: open } = await pool.query(
-      `SELECT id FROM homeroom_bot_voice_offers WHERE app_id = $1 AND kind = 'close_request' AND status = 'open' LIMIT 1`,
-      [app.id]
+      // Its own, the member's: #6321's already-works note carries one for nobody.
+      `SELECT id FROM homeroom_bot_voice_offers WHERE app_id = $1 AND kind = 'close_request' AND status = 'open' AND for_user_id = $2 LIMIT 1`,
+      [app.id, memberId]
     );
     if (open.length) return;
     const ask = '[staging fixture] @Homeroom bot request #1 is done, can you propose closing it?';
@@ -16137,6 +16973,11 @@ async function migrateAppDbsToPerRole(pool, config) {
   const respawnQueue = [];
   let adopted = 0, verified = 0, recreated = 0, skipped = 0, failed = 0;
 
+  const inventoryStarted = Date.now();
+  const existingRoles = await dbManager.existingRoles(rows.filter(app => app.db_password)
+    .map(app => dbManager.ownerRoleName(dbManager.appDbName(app.slug))));
+  const inventoryMs = Date.now() - inventoryStarted;
+
   for (const app of rows) {
     const dbName = dbManager.appDbName(app.slug);
 
@@ -16168,7 +17009,7 @@ async function migrateAppDbsToPerRole(pool, config) {
       } else {
         // Verify role still exists; recreate with stored password if not.
         const role = dbManager.ownerRoleName(dbName);
-        const exists = await dbManager.roleExists(role);
+        const exists = existingRoles.has(role);
         if (!exists) {
           await dbManager.ensureRoleExists(dbName, app.db_password);
           recreated += 1;
@@ -16185,7 +17026,7 @@ async function migrateAppDbsToPerRole(pool, config) {
   }
 
   log.info('db', 'Per-app role migration scan complete', {
-    adopted, verified, recreated, skipped, failed,
+    adopted, verified, recreated, skipped, failed, inventoryMs,
     toRespawn: respawnQueue.length,
   });
 
@@ -16610,13 +17451,20 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
+  migrateAppDbsToPerRole,
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
+  // #6284: the stopped-fix change the Testing card and Homeroom bot page
+  // shots need, as its own test seam (the fixtures are staging-only).
+  seedStagingBotFixesStopped,
   seedStagingBotProjectNotification,
   seedStagingBotAllowanceWarning,
+  // #6306: the already-works request (run, note and bell row) the shots need.
+  seedStagingBotAlreadyWorks,
+  seedStagingDesignThread,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   followPlatformDefaultModel,

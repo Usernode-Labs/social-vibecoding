@@ -44,6 +44,7 @@ export function botVoiceServices({ config, pool }: Deps): Record<string, WorkHan
       async run({ input }): Promise<Json> {
         const out = await voice().actOnOffer(pool, config, {
           offerId: Number(input.offerId), userId: Number(input.userId), choice: String(input.choice), key: String(input.key),
+          rows: Array.isArray(input.rows) ? input.rows : null,
           gaveUp: !!input.gaveUp,
         });
         return (out || null) as Json;

@@ -3115,6 +3115,10 @@
     "text": "Rebuild the staging preview if needed and re-run the automated tests",
     "description": "Tooltip of the \"Re-run checks\" button on a proposal or an agent session."
   },
+  "recheck.botFixing": {
+    "text": "Homeroom bot is fixing this. Re-running now would restart its fix.",
+    "description": "Tooltip of the disabled \"Re-run checks\" button on a change's page while Homeroom bot, the change's author, is fixing the checks that failed on it."
+  },
   "progress.checks.sub.ofExpected_one": {
     "text": "{{count}} of {{expected}} run · {{passed}} passed",
     "description": "One short line under the \"Checks\" label on a proposal's page while its automated checks are still running. {{count}} is how many checks have run so far, {{passed}} how many of those passed and {{expected}} how many there are in all. \"run\" means \"have been run\"."
@@ -5459,6 +5463,14 @@
     "text": "Automated tests are not passing on the staging build.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: checks are failing and it is not known which."
   },
+  "badge.reason.checksFailing.mainDetail": {
+    "text": "These automated tests also fail on main, so they are not this change’s: {{tests}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: every test that failed also fails on main, the project's shared code, so the change is not at fault. {{tests}} lists their names. \"main\" is the name of the code branch and stays in English."
+  },
+  "badge.reason.checksFailing.mainSomeDetail": {
+    "text": "These automated tests also fail on main: {{main}}. These fail only in this change: {{own}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: some failing tests also fail on main, the project's shared code, and some fail only in this change. {{main}} and {{own}} each list test names. \"main\" is the name of the code branch and stays in English."
+  },
   "badge.reason.behind.label": {
     "text": "Behind main",
     "description": "Status tag on a proposal's card and row label in the ledger on its page: the main line of code has moved on since the proposal was made. Not a block, only worth knowing. \"main\" is the name of the project's main line of code and stays as it is."
@@ -5522,6 +5534,30 @@
   "badge.reason.budget.detail": {
     "text": "This proposal needs merging with main, but the platform’s shared token budget is spent for today. It resumes after the midnight UTC reset.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the shared daily AI budget is used up. Keep the words \"midnight UTC\" exactly: the page replaces them with the viewer's local time. \"main\" is the name of the project's main line of code and stays as it is."
+  },
+  "badge.reason.githubBusy.label": {
+    "text": "Waiting on GitHub",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote and its checks, but GitHub held its merge back. The platform tries again by itself, so nobody has to act."
+  },
+  "badge.reason.githubBusy.detail": {
+    "text": "GitHub said a merge of this change was already in progress. Homeroom tries again at {{time}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "badge.reason.githubBusy.detailSoon": {
+    "text": "GitHub said a merge of this change was already in progress. Homeroom tries again in a few minutes.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "badge.reason.githubRefused.label": {
+    "text": "Waiting on GitHub",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote and its checks, but GitHub refused its merge for a reason nobody has to act on. The platform tries again by itself."
+  },
+  "badge.reason.githubRefused.detail": {
+    "text": "GitHub refused the merge. Homeroom tries again at {{time}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when GitHub refused the merge for a reason nobody has to act on. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is."
+  },
+  "badge.reason.githubRefused.detailSoon": {
+    "text": "GitHub refused the merge. Homeroom tries again in a few minutes.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when GitHub refused the merge for a reason nobody has to act on, and the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is."
   },
   "badge.reason.mainPaused.label": {
     "text": "Going live is paused",
@@ -5603,9 +5639,21 @@
     "text": "This change is live in the app.",
     "description": "Tooltip of the status pill on a change's card when it reads \"✓ Live\"."
   },
+  "badge.pill.liveReload": {
+    "text": "✓ Live · reload to get it",
+    "description": "Label of the status pill on a change's card when the change is live in the app but the page open in this tab still runs the version before it. A Reload button sits beside it. Keep the check mark and the middle dot."
+  },
+  "badge.pill.liveReloadTitle": {
+    "text": "This change is live. This tab opened before it, so reload to get it here.",
+    "description": "Tooltip of the status pill on a change's card when it reads \"✓ Live · reload to get it\"."
+  },
   "badge.pill.goingLive": {
     "text": "Going live…",
     "description": "Label of the status pill on a change's card (the rounded bar that shows the vote): the change was approved and is on its way into the running app. Keep the ellipsis."
+  },
+  "badge.pill.goingLiveRolling": {
+    "text": "Going live… rolling out",
+    "description": "Label of the status pill on a change's card while the release that carries it is rolling out to the platform's servers. It reads Live only once every server runs it. Keep the ellipsis."
   },
   "badge.pill.goingLiveTitle": {
     "text": "This change was approved. The app is still running the version before it.",
@@ -7919,6 +7967,18 @@
     "text": "The preview is still loading. Close this and click Preview again in a moment.",
     "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when the preview's page has not finished loading in time. \"Preview\" is the label of the button that opens the preview."
   },
+  "frame.loader.slowRebuildRetry": {
+    "text": "The rebuild is still running on the server. The preview opens here when it’s done. If it doesn’t, retry in a moment.",
+    "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when a rebuild has not finished after several minutes, above the \"Retry preview\" button."
+  },
+  "frame.loader.slowLoadFailedRetry": {
+    "text": "The preview didn’t finish loading. Retry in a moment.",
+    "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when the preview's page failed to load, above the \"Retry preview\" button."
+  },
+  "frame.loader.slowStillLoadingRetry": {
+    "text": "The preview is still loading. If it doesn’t appear soon, retry.",
+    "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when the preview's page has not finished loading in time, above the \"Retry preview\" button."
+  },
   "frame.loader.retryPreview": {
     "text": "Retry preview",
     "description": "Button on the preview's loading screen after the preview could not be opened: tries opening (and if needed rebuilding) it again."
@@ -8659,9 +8719,17 @@
     "text": "It’s live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page once the approved change is applied to the running app."
   },
+  "page.votes.note.updateComing": {
+    "text": "An update is coming: votes cast now are cleared when it lands.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page when Homeroom bot or the change's author is changing it, or has a change queued: a Yes or No cast now is thrown away when the update lands, and everyone is asked again."
+  },
   "page.votes.note.goingLive": {
     "text": "It’s going live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while the approved change is being applied to the running app."
+  },
+  "page.votes.note.liveReload": {
+    "text": "It’s live. Reload to get it in this tab.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page when the change is live in the app but the page open in this tab runs the version before it."
   },
   "page.votes.note.stuck": {
     "text": "It’s stuck going live.",
@@ -8686,6 +8754,54 @@
   "page.votes.note.anyMember_other": {
     "text": "Any of the {{count}} members can give it.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes. \"It\" is the Yes vote the figure above asks for; {{count}} is how many active members the project has (always more than one)."
+  },
+  "page.votes.facts.yes_one": {
+    "text": "{{count}} yes",
+    "description": "Part of the tally line on the Votes card of a change's page: how many people voted Yes, for example \"3 yes\" in \"3 yes · 1 no · 2 waiting\". Only shown above zero."
+  },
+  "page.votes.facts.yes_other": {
+    "text": "{{count}} yes",
+    "description": "Part of the tally line on the Votes card of a change's page: how many people voted Yes, for example \"3 yes\" in \"3 yes · 1 no · 2 waiting\". Only shown above zero."
+  },
+  "page.votes.facts.no_one": {
+    "text": "{{count}} no",
+    "description": "Part of the tally line on the Votes card of a change's page: how many people voted No, for example \"1 no\" in \"3 yes · 1 no · 2 waiting\". Only shown above zero."
+  },
+  "page.votes.facts.no_other": {
+    "text": "{{count}} no",
+    "description": "Part of the tally line on the Votes card of a change's page: how many people voted No, for example \"1 no\" in \"3 yes · 1 no · 2 waiting\". Only shown above zero."
+  },
+  "page.votes.facts.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "Part of the tally line on the Votes card of a change's page: how many people who can vote have not voted yet, for example \"2 waiting\" in \"3 yes · 1 no · 2 waiting\". Only shown above zero."
+  },
+  "page.votes.facts.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "Part of the tally line on the Votes card of a change's page: how many people who can vote have not voted yet, for example \"2 waiting\" in \"3 yes · 1 no · 2 waiting\". Only shown above zero."
+  },
+  "page.votes.facts.approval": {
+    "text": "{{share}}% approval, {{needed}}% needed",
+    "description": "Part of the tally line on the Votes card of a change's page, only on a project whose rule asks for a percentage of its people. {{share}} is the percentage of those people who have said yes and {{needed}} the percentage the rule asks for."
+  },
+  "page.votes.facts.ends": {
+    "text": "Countdown ends {{when}}",
+    "description": "Line on the Votes card of a change's page while a countdown runs after which the change goes live or is set aside. {{when}} is a date and time, for example \"Sat 14 Nov, 10:30\". Changes have no other deadline."
+  },
+  "page.votes.facts.youSaidYes": {
+    "text": "You voted yes.",
+    "description": "Line on the Votes card of a change's page: the viewer's own current vote is Yes."
+  },
+  "page.votes.facts.youSaidNo": {
+    "text": "You voted no.",
+    "description": "Line on the Votes card of a change's page: the viewer's own current vote is No."
+  },
+  "page.votes.facts.yourProposal": {
+    "text": "Proposing it counts as your yes.",
+    "description": "Line on the Votes card of a change the viewer proposed, on a project whose rule counts proposing a change as a Yes from its author, who has not voted themselves."
+  },
+  "page.votes.facts.notVoted": {
+    "text": "You haven’t voted.",
+    "description": "Line on the Votes card of a change's page: the viewer can vote on this change and has not."
   },
   "page.votes.note.mergeCountdown": {
     "text": "It goes live when the countdown ends, unless someone objects.",
@@ -8791,6 +8907,10 @@
     "text": "Found a problem",
     "description": "The large figure on the Testing card of a change's page when at least one automated check failed."
   },
+  "page.testing.figure.botFixing": {
+    "text": "Fixing",
+    "description": "The large figure on the Testing card of a change's page while Homeroom bot, the change's author, is fixing the automated checks that failed on it."
+  },
   "page.testing.figure.willRetry": {
     "text": "Running again soon",
     "description": "The large figure on the Testing card of a change's page when the test run broke and the platform will start it again by itself."
@@ -8851,6 +8971,10 @@
     "text": "Testing: found a problem",
     "description": "Accessible description of the progress bar on the Testing card of a change's page when at least one automated check failed."
   },
+  "page.testing.label.botFixing": {
+    "text": "Homeroom bot is fixing what failed",
+    "description": "Accessible description of the progress bar on the Testing card of a change's page while Homeroom bot, the change's author, is fixing the automated checks that failed on it."
+  },
   "page.testing.label.willRetry": {
     "text": "Testing: will run again",
     "description": "Accessible description of the progress bar on the Testing card of a change's page when the test run broke and will restart by itself."
@@ -8883,6 +9007,10 @@
     "text": "The checks passed, but the screenshot agent tried this change and the app broke.",
     "description": "One sentence of the line under the figure on the Testing card of a change's page. The screenshot agent is the automated agent that uses the app to take its before and after screenshots."
   },
+  "page.testing.spent": {
+    "text": "This change has cost ${{amount}} so far at list price. That is not the credits charged.",
+    "description": "Quiet line at the foot of the Testing card on a change's page, shown only to the change's author and admins: what building the change has cost so far at the AI models' list price, which is a different figure from the credits taken from the person's balance. {{amount}} is a number with two decimals; the dollar sign is in the text."
+  },
   "page.testing.note.olderMain": {
     "text": "They passed on an older main.",
     "description": "One sentence of the line under the figure on the Testing card of a change's page, after how long the run took: the checks passed against an earlier state of \"main\", the project's current code, which has moved since. \"main\" is the name of the code branch and stays in English."
@@ -8890,6 +9018,22 @@
   "page.testing.note.skipped": {
     "text": "Its checks were skipped.",
     "description": "One sentence of the line under the figure on the Testing card of a change's page when the change's automated checks did not run."
+  },
+  "page.testing.lead.mainAll_one": {
+    "text": "Main is failing this test too, so it isn’t this change. Merges are paused until main’s fix lands, and this change’s checks run again by themselves then.",
+    "description": "First sentence on the Testing card of a change's page when the only test that failed also fails on main, the project's shared code, so the change is not at fault. \"main\" is the name of the code branch and stays in English. Followed by a link to the request that fixes main."
+  },
+  "page.testing.lead.mainAll_other": {
+    "text": "Main is failing these tests too, so they aren’t this change. Merges are paused until main’s fix lands, and this change’s checks run again by themselves then.",
+    "description": "First sentence on the Testing card of a change's page when every test that failed also fails on main, the project's shared code, so the change is not at fault. \"main\" is the name of the code branch and stays in English. Followed by a link to the request that fixes main."
+  },
+  "page.testing.lead.mainSome": {
+    "text": "These tests also fail on main, so they are not this change’s: {{main}}. These fail only in this change: {{own}}.",
+    "description": "First sentence on the Testing card of a change's page when some of the failing tests also fail on main, the project's shared code, and some fail only in this change. {{main}} and {{own}} each list test names, as the app's code wrote them, usually in English. \"main\" is the name of the code branch and stays in English."
+  },
+  "page.testing.mainFix.link": {
+    "text": "See the request to fix main (#{{number}})",
+    "description": "Link under the Testing card of a change's page, to the request the platform filed to fix main, the project's shared code. {{number}} is the request's number. \"main\" is the name of the code branch and stays in English."
   },
   "page.testing.lead.tests_one": {
     "text": "One of this change’s tests failed.",
@@ -8926,6 +9070,70 @@
   "page.testing.note.authorFixes": {
     "text": "Its author needs to fix this before it can go live.",
     "description": "Line under the Testing card of a change's page whose checks failed, shown to everybody but the change's author: the author has to fix what failed before the change can be merged. \"It\" is the change."
+  },
+  "page.testing.note.botFixing_one": {
+    "text": "Homeroom bot is fixing this, started {{count}} min ago.",
+    "description": "Line under the Testing card of a change's page whose checks failed, while Homeroom bot (the change's author) is fixing what failed. {{count}} is how many minutes ago it started; \"min\" is short for minutes. \"This\" is what failed."
+  },
+  "page.testing.note.botFixing_other": {
+    "text": "Homeroom bot is fixing this, started {{count}} min ago.",
+    "description": "Line under the Testing card of a change's page whose checks failed, while Homeroom bot (the change's author) is fixing what failed. {{count}} is how many minutes ago it started; \"min\" is short for minutes. \"This\" is what failed."
+  },
+  "page.testing.note.botFixingNow": {
+    "text": "Homeroom bot is fixing this, started just now.",
+    "description": "Line under the Testing card of a change's page whose checks failed, while Homeroom bot (the change's author) is fixing what failed and started under a minute ago. \"This\" is what failed."
+  },
+  "page.testing.note.botRetry": {
+    "text": "It is trying once more after running out of time.",
+    "description": "Sentence after \"Homeroom bot is fixing this, started N min ago.\" on the Testing card of a change's page, when the bot's first attempt to fix what failed ran out of time and this is its second. \"It\" is Homeroom bot."
+  },
+  "page.testing.note.botQueued": {
+    "text": "Homeroom bot will start fixing this shortly.",
+    "description": "Line under the Testing card of a change's page whose checks failed, while Homeroom bot's fix of what failed waits its turn in the bot's queue. \"This\" is what failed."
+  },
+  "page.testing.note.botHandedOff": {
+    "text": "Homeroom bot couldn’t fix this on its own. The person who asked for it, or any member of this project, can take it from here.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot (the change's author) gave up fixing what failed: who can take it over. \"It\" in the second sentence is the change."
+  },
+  "page.testing.note.botStopped_one": {
+    "text": "Checks failing · Homeroom bot stopped after {{count}} try. You can let it try once more.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit of fixes it may make by itself. Shown to the person who asked for it, or an admin, who may let it try again. {{count}} is the number of its tries."
+  },
+  "page.testing.note.botStopped_other": {
+    "text": "Checks failing · Homeroom bot stopped after {{count}} tries. You can let it try once more.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit of fixes it may make by itself. Shown to the person who asked for it, or an admin, who may let it try again. {{count}} is the number of its tries."
+  },
+  "page.testing.note.botStoppedOthers_one": {
+    "text": "Checks failing · Homeroom bot stopped after {{count}} try. The person who asked for it or an admin can let it try again.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit. Shown to someone who may not let it try again. {{count}} is the number of its tries."
+  },
+  "page.testing.note.botStoppedOthers_other": {
+    "text": "Checks failing · Homeroom bot stopped after {{count}} tries. The person who asked for it or an admin can let it try again.",
+    "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit. Shown to someone who may not let it try again. {{count}} is the number of its tries."
+  },
+  "tryAgain.label": {
+    "text": "Let it try again",
+    "description": "Button on the Testing card of a change whose checks failed, after Homeroom bot stopped at its own limit: lets it make one more fix round."
+  },
+  "tryAgain.asking": {
+    "text": "Asking…",
+    "description": "The Let it try again button while the request is in flight."
+  },
+  "tryAgain.done": {
+    "text": "Homeroom bot will try once more.",
+    "description": "Toast after someone lets Homeroom bot try once more at a change's failing checks."
+  },
+  "tryAgain.failedHttp": {
+    "text": "Could not let it try again ({{status}}).",
+    "description": "Toast when letting Homeroom bot try again failed with an HTTP status."
+  },
+  "tryAgain.failedWith": {
+    "text": "Could not let it try again: {{error}}",
+    "description": "Toast when letting Homeroom bot try again failed for a reason the server gave."
+  },
+  "page.testing.note.botRerun": {
+    "text": "Re-running the checks now would restart its fix.",
+    "description": "Sentence after the \"Homeroom bot is fixing this\" line on the Testing card of a change's page, shown to a viewer who could press Re-run checks, which is disabled while the bot's fix runs. \"Its\" is Homeroom bot's."
   },
   "page.testing.note.checkFailed": {
     "text": "A check failed.",

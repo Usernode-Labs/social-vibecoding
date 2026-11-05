@@ -57,7 +57,7 @@ test('the DM chat and the thread replies say where those are set, and that it is
 
 test('"it already exists" says where to find it, in the words on screen', () => {
   const triage = read('src/prompts/homeroom-bot-triage.md');
-  assert.match(triage, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its requester is offered a vote to close it\./);
+  assert.match(triage, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its members are offered a vote to close it\./);
   const mayor = require('../src/services/homeroom-bot-mayor').systemPrompt({ username: 'ann' });
   assert.match(mayor, /When something they ask for already exists, say where they find it, in the words they see on screen: the\n {2}screen or tab and the button to tap\./);
   const voice = require('../src/services/homeroom-bot-voice').systemPrompt({ app: { name: 'Maps' }, place: { type: 'issue' }, tools: [] });

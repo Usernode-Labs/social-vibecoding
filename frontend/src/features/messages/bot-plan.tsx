@@ -265,11 +265,21 @@ function quote(message: ConversationMessage, conversationId: number) {
  * first version's switch, on from Make it, whatever this device chose
  * before; a complicated change's plan keeps the one-time offer.
  */
-export function notifyFooter(meta: HomeroomBotMeta, offer: boolean, userId: number | null) {
+export function notifyFooter(meta: HomeroomBotMeta, offer: boolean, userId: number | null, conversationId?: number, messageId?: number) {
   if (!meta.plan?.complicated && meta.appSlug) {
     return <div className="mt-3"><NotifyLive appSlug={meta.appSlug} /></div>;
   }
-  return offer ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null;
+  return offer ? (
+    <div className="mt-3">
+      <NotifyMe
+        userId={userId}
+        appSlug={meta.appSlug}
+        issueNumber={meta.issueNumber}
+        conversationId={conversationId}
+        threadRootId={messageId}
+      />
+    </div>
+  ) : null;
 }
 
 export function BotPlanCard({ message, conversationId, cardId = null }: {
@@ -318,7 +328,7 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       planSpec={spec && Number(spec.sessionId) > 0 && Number(spec.version) > 0 ? <PlanSpec sessionId={Number(spec.sessionId)} version={Number(spec.version)} /> : null}
       card={meta.plan.card || null}
       footer={state === 'built' && card && card.state !== 'done'
-        ? notifyFooter(meta, offer, userId)
+        ? notifyFooter(meta, offer, userId, conversationId, Number(message.id))
         : null}
     />
   );

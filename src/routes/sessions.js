@@ -3615,6 +3615,32 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // hosted connector's submit_platform_build still takes ownership of a
   // build this way before proposing it, so an external connector token (not
   // a delegated grant) is the one caller left.
+  // #6284: a person lets the Homeroom bot try once more at a change it
+  // stopped fixing on its own. The requester or an admin may; one grant buys
+  // exactly one more round.
+  router.post('/api/apps/:slug/changes/:id/let-it-try-again', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id) return res.status(404).json({ error: 'Change not found' });
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1 AND a.slug = $2`,
+        [id, req.params.slug],
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Change not found' });
+      const out = await require('../services/homeroom-bot-retry-grants')
+        .grant(pool, { sessionId: id, user: req.user });
+      if (!out.ok) {
+        if (out.why === 'not_allowed') return res.status(403).json({ error: 'not_allowed' });
+        return res.status(409).json({ error: out.why });
+      }
+      return res.json({ granted: true });
+    } catch (err) {
+      log.error('sessions', 'Could not let the bot try again', { message: err.message });
+      return res.status(500).json({ error: 'Could not let it try again' });
+    }
+  });
+
   router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     if (!req.connectorClientId || req.mcpDelegation) {
       return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
@@ -3964,6 +3990,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (req.path.endsWith('/details') || session.check_state === 'pending') {
         detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
       }
+      // #6234: Homeroom bot fixing its own change's failing checks, for the
+      // change page's Testing card (services/homeroom-bot-progress.js
+      // changeBotFix); null for any change of a person's.
+      if (req.path.endsWith('/details')) {
+        detail.bot_fix = await require('../services/homeroom-bot-progress')
+          .changeBotFix(pool, session.id, { viewer: req.user }).catch(() => null);
+        // #6116: what it has cost so far at list price, for its author or an
+        // admin only, as the dev chat's meter (services/session-cost.js).
+        detail.cost_total_cents = await sessionCost.sessionCostForViewer(pool, session, req.user);
+      }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
       res.set('Cache-Control', 'no-store').json({ session: listTestResults.forItem(req, detail) });
@@ -4001,8 +4037,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       const session = rows[0];
       if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      // #6288: what main is already failing, so the sentence does not blame
+      // this change for a test that fails on main through no fault of its
+      // own. The same verdict the change page's Testing card reads.
+      const main = await require('../services/main-watch').mergePause(pool, session.app_id);
       const explanation = await require('../services/checks-explanation')
-        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale) });
+        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale), main });
       return res.set('Cache-Control', 'no-store').json({ explanation, runAt: session.checks_checked_at });
     } catch (err) {
       log.error('sessions', 'Failed to explain failing checks', { message: err.message });
@@ -4066,7 +4106,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                     ORDER BY t.created_at, t.id
                     LIMIT 1),
                   cs.handoff_base_sha
-                ) AS base_sha
+                ) AS base_sha,
+                -- When the merge queue tries this change again after GitHub
+                -- held its merge back (services/integration.js HELD_UNTIL_SQL).
+                ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND (cs.user_id = $2 OR $3::boolean)`,
@@ -4309,6 +4352,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
       session.freshness = require('../services/proposal-freshness').readFreshness(session);
+      // The server's own merge answers ride along, as the board card gets
+      // them (#2038): the header pill reads the same blockReasons, including
+      // a merge GitHub held back (github_busy / github_refused) and when the
+      // queue tries it again (merge_held_until, the queue's own record).
+      session.integration = require('../services/integration').readIntegration(session);
 
       res.json({ session, messages, drafts });
     } catch (err) {
@@ -6088,12 +6136,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // Same visibility rule as /checks and /details: the progress log, spend,
     // estimate and runner name below are the session's own, so a caller who
     // may not see the session gets the same 404 as for a missing one.
+    let mayReadCost = false;
     try {
       const { rows: seen } = Number.isNaN(sessionId) ? { rows: [] } : await pool.query(
         'SELECT user_id, status, shared_at FROM chat_sessions WHERE id = $1',
         [sessionId]
       );
       if (!canViewSession(seen[0], req.user)) return res.status(404).json({ error: 'Session not found' });
+      // Narrower than seeing the session: what a change cost is for its author
+      // and admins, the rule GET /api/sessions/:id applies to the same figure.
+      mayReadCost = seen[0].user_id === req.user.id || !!req.user.isAdmin;
     } catch (err) {
       log.warn('sessions', 'Status visibility lookup failed', { sessionId, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -6252,13 +6304,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
 
     // #3249: the change's running cost total for the meter, idle or busy.
-    // After the visibility check above, so only a viewer of the session
-    // gets it. `null` when the read failed: the client keeps its figure.
+    // Its author and admins only (mayReadCost above): anyone else who may
+    // view the session gets no such field, and the read does not run. `null`
+    // when the read failed: the client keeps its figure.
     let costTotalCents = null;
-    try {
-      costTotalCents = await sessionCost.sessionCostCents(pool, sessionId);
-    } catch (err) {
-      log.warn('sessions', 'Session cost read failed', { sessionId, err: err.message });
+    if (mayReadCost) {
+      try {
+        costTotalCents = await sessionCost.sessionCostCents(pool, sessionId);
+      } catch (err) {
+        log.warn('sessions', 'Session cost read failed', { sessionId, err: err.message });
+      }
     }
 
     let delivery;
@@ -6279,7 +6334,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
     // estimate, turn ({ startedAt, kind } | null, #4533), costTotalCents
-    // (the change's cost so far in cents | null, #3249)
+    // (the change's cost so far in cents | null, #3249; author and admins only,
+    // absent for anyone else)
     // (+ resolving, sync, status, and `delivery` when asked for, #3177).
     // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
@@ -6287,14 +6343,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // the client's stop-escalation ladder across reloads.
     res.json({
       busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
-      spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
+      // The running turn's share of the same figure, under the same rule.
+      spend: busy && mayReadCost ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
       resolving: !!sync && sync.reason === 'conflict',
       sync,
       status: mergeStatus,
       runner, runnerLabel, localAgent: attached,
-      costTotalCents,
+      ...(mayReadCost ? { costTotalCents } : {}),
       ...(delivery !== undefined ? { delivery } : {}),
     });
   });

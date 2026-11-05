@@ -52,6 +52,8 @@ type RowView = {
   canLeave?: boolean;
   /** In "Recommended for you", the default list's first section (#5267). */
   recommended?: boolean;
+  /** In "Trending this week", the section under Featured (#6197). */
+  trending?: boolean;
   addTitle: string;
 };
 
@@ -387,7 +389,10 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   // in the Recommended order, under one heading. The rest is "More apps"
   // under a Recommended section and "Apps to try" where there is none.
   const picked = shown.filter((view) => view.recommended);
-  const rest = shown.filter((view) => !view.recommended);
+  // Trending this week (#6197) sits between them, only when something had any
+  // activity this week; Browse._renderList takes its rows out of the rest.
+  const trending = shown.filter((view) => view.trending);
+  const rest = shown.filter((view) => !view.recommended && !view.trending);
   const more = rows.filter((view) => view.directoryTier === 'more');
   // A LABEL OVER A CARD GROUP, so it is @/components/ui/grouped-list's
   // SectionHeader and not a fourth hand-written heading: the rows under it are
@@ -400,7 +405,15 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   // column grid and a heading has to span it. The gutter comes from the
   // primitive, which is a fix as well as a consolidation — the hand-written
   // `px-3` did not line up with ListRow's `px-4` text column.
-  const headingClass = 'md:col-span-full';
+  //
+  // A DELIBERATE EXCEPTION to the 12px dim label (#5928 item 11), for Discover
+  // alone: these labels are all that breaks up one long run of near-identical
+  // rows, and people scan them to find their place, where a settings screen's
+  // label only names the card under it. So 13px in the row description's ink
+  // (`text-zinc-700 dark:text-zinc-300`, which data-contrast="more" reaches on
+  // its own), still small caps. The why line below keeps the muted ink, so the
+  // label leads it. The primitive stays as it is for every other screen.
+  const headingClass = 'text-[13px] text-zinc-700 dark:text-zinc-300 md:col-span-full';
   // One line under each tier label saying how its rows were picked (#5928
   // item 2: "Recommended for you has no explanation"). The heading stays an
   // <h2> with the label as its only child; this is a sibling <p> in the
@@ -420,10 +433,17 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
             </>
           ) : null}
           {renderRows(picked)}
+          {trending.length ? (
+            <>
+              <SectionHeader className={headingClass}>{t('discover:list.heading.trending')}</SectionHeader>
+              <p className={whyClass}>{t('discover:list.why.trending')}</p>
+            </>
+          ) : null}
+          {renderRows(trending)}
           {rest.length ? (
             <>
               <SectionHeader className={headingClass}>
-                {picked.length ? t('discover:list.heading.moreApps') : t('discover:list.heading.allApps')}
+                {picked.length || trending.length ? t('discover:list.heading.moreApps') : t('discover:list.heading.allApps')}
               </SectionHeader>
               <p className={whyClass}>{t('discover:list.why.rest')}</p>
             </>

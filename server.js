@@ -1,4 +1,18 @@
-require('dotenv').config();
+// A local .env is a convenience for people running the checkout themselves.
+// Every hosted deployment (staging and production) has its environment
+// injected, and its install (`npm ci --omit=dev`, or the platform's staging
+// runner) decides which modules exist. Loading the file optionally means a
+// deployment without this package still boots on the injected environment
+// instead of dying on a missing module before the first line of the app runs.
+// Only a missing package is ignorable: any other failure is real, and it is
+// said out loud rather than leaving the app running on a half-read .env.
+try {
+  require('dotenv').config();
+} catch (err) {
+  if (!err || err.code !== 'MODULE_NOT_FOUND') {
+    console.warn('[startup] could not read the local .env:', err && err.message ? err.message : err);
+  }
+}
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
@@ -408,7 +422,30 @@ app.all('/__mock/*', (_req, res) => {
 //                        when the deploy workflow has flagged a redeploy in
 //                        flight (see services/deploy-status.js + deploy.yml).
 const deployStatus = require('./src/services/deploy-status');
-app.get('/api/version', async (_req, res) => {
+// #6233: which merge the build a tab loaded contains, so the client can say
+// "Live · reload to get it" beside a change this tab is older than. Asked
+// with ?have=<40-hex build sha>; cached per sha, since a build's merge order
+// never changes.
+const haveThroughCache = new Map();
+async function haveThroughFor(have) {
+  if (!/^[0-9a-f]{40}$/.test(have)) return null;
+  if (haveThroughCache.has(have)) return haveThroughCache.get(have);
+  let value = null;
+  try {
+    const pool = getPool(config);
+    const { rows: [selfApp] } = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id LIMIT 1');
+    if (selfApp) {
+      const order = await require('./src/services/release-watch').mergeOrder(pool, Number(selfApp.id), have);
+      value = order ? { at: new Date(order.at).toISOString(), id: order.id } : null;
+    }
+  } catch { value = null; }
+  if (haveThroughCache.size > 500) haveThroughCache.clear();
+  haveThroughCache.set(have, value);
+  return value;
+}
+
+app.get('/api/version', async (req, res) => {
+  const have = String(req.query.have || '').toLowerCase();
   res.json({
     sha: process.env.GIT_SHA || 'dev',
     name: process.env.USERNODE_PROJECT_NAME || 'usernode',
@@ -431,6 +468,10 @@ app.get('/api/version', async (_req, res) => {
     // (already in config) and it saves a second round-trip for any
     // future code path that needs it.
     selfAppSlug: config.selfAppSlug,
+    // The merge order of the build this tab said it has (?have=): null when
+    // nothing was asked, or the build is no merge's (a direct push), and the
+    // client then shows plain Live rather than a reload it cannot justify.
+    ...(have ? { haveThrough: await haveThroughFor(have) } : {}),
   });
 });
 
@@ -683,6 +724,8 @@ app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 // Apple and Google sign-in, and Admin → Sign-in providers, where they are set up.
 app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
+// #6081: translate a person's words into the reader's language, on a tap.
+app.use(require('./src/routes/user-content-translations').userContentTranslationRoutes(config));
 // Firebase phone sign-in and sign-up (routes/phone-auth.js), pre-login
 // (middleware/auth.js PUBLIC_PATHS): fail-closed 404 unless
 // FIREBASE_PHONE_AUTH_ENABLED and its three companion values are set
@@ -1295,6 +1338,13 @@ async function start() {
     // to wait 1-2s on `docker stats`. Subsequent loads are served from
     // cache via stale-while-revalidate (see services/status.js).
     statusService.start(config);
+    // Warm the language list every shell asks for on boot: the first call
+    // builds the packs from disk, and on a freshly started process that
+    // held the event loop for seconds, so the first page load (and a
+    // declared check run against it) could time out. The build is memoized
+    // (services/language-cache.js), so warming it here leaves the first
+    // request reading memory.
+    require('./src/services/language-cache').live(getPool(config)).catch(() => {});
   }
   // Every process writes its own server-error counts to the database once a
   // minute (services/server-error-counts.js), on an unref'd timer; a minute

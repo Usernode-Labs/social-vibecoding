@@ -9,7 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { firstPerson } = require('../src/services/homeroom-bot-words');
+const { firstPerson, plainWords } = require('../src/services/homeroom-bot-words');
 const live = require('../src/services/homeroom-bot-live');
 const followup = require('../src/services/homeroom-bot-followup');
 const holds = require('../src/services/homeroom-bot-holds');
@@ -64,6 +64,12 @@ function notes() {
     followup.checksRevisedText({ failing: [{ name: 'a' }, { name: 'b' }], broken: [{ claim: 'Save works' }] }),
     followup.checksRevisedText({ broken: [{ claim: 'Save works' }] }),
     followup.checksRetryText(),
+    // #6234: the fix's start line (checksFixingText), in each of its shapes.
+    followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }] }),
+    followup.checksFixingText({ failing: [{ name: 'a' }, { name: 'b' }] }),
+    followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }], broken: [{ claim: 'Save works' }] }),
+    followup.checksFixingText({ broken: [{ claim: 'Save works' }] }),
+    followup.checksFixingText({ skipped: [{ claim: 'The list shows ten items' }] }),
     followup.checksPersonText({ why: 'That needs a decision', failingCount: 2 }),
     followup.checksPersonText({ why: 'x', broken: [{ claim: 'Save works' }] }),
     followup.checksPersonText({ why: 'it has already updated this change 3 times, as many as it may on its own', failingCount: 1 }),
@@ -102,6 +108,19 @@ test('every fixed note uses Homeroom\'s words, and the bot never speaks of itsel
   }
 });
 
+// #6234: the fix's start line, said by the bot.
+test('#6234: the fix\'s start line and the hand-off\'s ending are said in the first person', () => {
+  assert.equal(firstPerson(followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }] })),
+    'I\'m fixing the failing check "Saving a list keeps it". I\'ll say here when it\'s done.');
+  assert.equal(firstPerson(followup.checksFixingText({ failing: [{ name: 'a' }, { name: 'b' }] })),
+    'I\'m fixing the 2 failing checks on this change. I\'ll say here when it\'s done.');
+  assert.equal(firstPerson(followup.checksFixingText({ skipped: [{}] })),
+    'I\'m adding the sample data this change\'s before and after screens need. I\'ll say here when it\'s done.');
+  assert.equal(firstPerson(followup.checksPersonText({ why: 'That needs a decision', failingCount: 2 })),
+    'I can\'t get this change past its checks on my own: 2 checks are still failing. That needs a decision. '
+    + 'The person who asked for it, or any member of this project, can take it from here.');
+});
+
 test('the words people and the model wrote pass through unchanged', () => {
   assert.equal(firstPerson('It changes sign-in, so a person decides.'), 'It changes sign-in, so a person decides.');
   assert.equal(firstPerson('The Homeroom bot docs say so.'), 'The Homeroom bot docs say so.');
@@ -112,6 +131,24 @@ test('the words people and the model wrote pass through unchanged', () => {
     // "Issue" is GitHub's word: in Homeroom the request is where you reply.
     'I have a question before I can build this:\n\nWhich list should it use?\n\nReply here and I\'ll look again.',
   );
+});
+
+// #6311: a note's reason is said in plain words, and the platform note says
+// what the copy does. None of the bot's own instructions reach a member.
+test('#6311: a note built from internal words comes out in plain words, first person', () => {
+  const reason = 'Per the platform conventions, in this checkout the live head commit is fine, '
+    + 'this build agent cannot change it, and Homeroom bot confirmed a person must authorize/route the check.';
+  const own = live.personHomeroomText({ reason, platform: true, project: 'Plant Pal' });
+  for (const word of ['checkout', 'head commit', 'build agent', 'platform conventions', 'Homeroom bot', 'authorize/route']) {
+    assert.doesNotMatch(own, new RegExp(word.replace('/', '\\/'), 'i'), `still internal: ${own}`);
+  }
+  assert.match(own, /I confirmed a person needs to decide the check/, 'the bot speaks as I');
+  assert.match(own, /I can put it on Homeroom's own board too and keep this request open here\.$/);
+  // The question and the empty note go through the same rewrite.
+  assert.doesNotMatch(firstPerson(live.questionText({ question: 'In this checkout, which list?' })), /checkout/i);
+  assert.doesNotMatch(firstPerson(live.emptyText({ reason: 'The head commit names nothing.' })), /head commit/i);
+  assert.equal(plainWords('in this checkout'), 'in the project\'s code');
+  assert.equal(plainWords(''), '');
 });
 
 test('a follow-up\'s answer loses its header: the bubble already says who is talking', () => {

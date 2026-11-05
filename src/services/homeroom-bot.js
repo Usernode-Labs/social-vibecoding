@@ -2939,8 +2939,8 @@ async function insertRunRow(pool, run) {
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha, charged, payer_user_id, read_reason)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+        checks_head_sha, asked, asked_by, limit_stop, charged, payer_user_id, read_reason)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -2951,6 +2951,9 @@ async function insertRunRow(pool, run) {
       run.budgetStop || null, run.proposalSessionId || null,
       // The failing head a checks follow-up looked at, so it looks once.
       run.checksHeadSha || null,
+      // #6284: a revise run a person asked for (or a granted round), who
+      // asked, and why a run stopped ('own_revisions' on the limit hand-off).
+      run.asked === true, run.askedBy || null, run.limitStop || null,
       // Whose week it counts toward, if anybody's (billingOf): a shadow run
       // never does.
       run.charged ?? run.mode === 'live', run.payerUserId || null,
@@ -2998,6 +3001,12 @@ async function insertRunRow(pool, run) {
   if (id && run.aboutPlatform) {
     await pool.query('UPDATE homeroom_bot_runs SET about_platform = TRUE WHERE id = $1', [id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record a platform verdict', { runId: id, err: err.message }));
+  }
+  // #6306: a request whose ask is already there, so Needs you and the chat
+  // say "Already works" and offer to close it, the same way.
+  if (id && run.alreadyDone) {
+    await pool.query('UPDATE homeroom_bot_runs SET already_done = TRUE WHERE id = $1', [id])
+      .catch((err) => log.warn('homeroom-bot', 'Could not record an already-done verdict', { runId: id, err: err.message }));
   }
   return id;
 }
@@ -3498,7 +3507,7 @@ function readFingerprintOf({ issue, comments = [], threadMessages = [], botLogin
 async function heldReadyRun(pool, appId, issueNumber) {
   const { rows } = await pool.query(
     `SELECT id, verdict, cap_suppressed, mode, read_fingerprint, determined, missing_fact, build_note, reason,
-            plan, complicated, about_platform, model
+            plan, complicated, about_platform, already_done, model
        FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2
         AND budget_stop IS DISTINCT FROM 'input tokens'
@@ -3574,6 +3583,7 @@ async function reuseHeldVerdict(pool, config, {
       verdict: 'ready', determined: held.determined, missingFact: held.missing_fact, buildNote: held.build_note,
       reason: held.reason, plan: held.plan && typeof held.plan === 'object' ? held.plan : null,
       complicated: held.complicated === true, platform: held.about_platform === true,
+      done: held.already_done === true,
     };
     // As a fresh read: a change its requester was asked to plan is planned
     // with them again.
@@ -3593,7 +3603,7 @@ async function reuseHeldVerdict(pool, config, {
     readReason: readReasonOf(item),
     appId: app.id, issueNumber, mode: runMode,
     verdict: 'ready', determined: parsed.determined, missingFact: parsed.missingFact,
-    plan: parsed.plan, aboutPlatform: parsed.platform, complicated: parsed.complicated,
+    plan: parsed.plan, aboutPlatform: parsed.platform, alreadyDone: parsed.done, complicated: parsed.complicated,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
     model: held.model || null, costUsd: 0, inputTokens: 0, outputTokens: 0,
@@ -3786,6 +3796,13 @@ async function runTriage(pool, config, {
   // #3146: on an app in the live list the verdict is acted on, and the run
   // is recorded as 'live' so the ledger says which runs spoke.
   const liveMode = live.isLiveFor(settings, app);
+  // #6267: a request whose newest run finished and waits for its upload is
+  // not read (or built) again, whatever started this look: a reply sends the
+  // saved commit and, when it lands, the look has answered.
+  if (liveMode) {
+    const resumed = await resumeWaitingPush(pool, config, { bot, app, issueNumber, deps });
+    if (resumed) return { ran: false, reason: 'waiting_to_push' };
+  }
   // A follow-up may have been started while the app's session runs
   // something else (#3703); anything but a follow-up would use that session.
   if (item.followUp && !liveMode) return { ran: false, reason: NOT_FOLLOW_UP };
@@ -4626,7 +4643,7 @@ async function runTriage(pool, config, {
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
-    plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated,
+    plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
@@ -5422,19 +5439,22 @@ async function runFollowUp(pool, config, {
   // would count), the head it works on (its reconcile moves it) and the spec
   // it reads (its revision may publish the next version).
   const basis = await look.once('basis', async () => {
-    const { rows: revisionRows } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
-        WHERE proposal_session_id = $1 AND verdict = 'revise'`,
-      [session.id],
-    );
-    return { revisions: revisionRows[0]?.n || 0, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id) };
+    // #6284: only the bot's own revise runs count toward MAX_REVISIONS.
+    // Updates a person asked for have their own higher cap, and an open
+    // grant buys one more of the bot's own.
+    const revisions = await followup.revisionCounts(pool, session.id);
+    return { ...revisions, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id) };
   });
-  const canRevise = basis.revisions < followup.MAX_REVISIONS;
+  // A checks fix may run on the bot's own rounds, or on a grant somebody
+  // spent; a reply may update the change while asked updates remain.
+  const canRevise = checks
+    ? (basis.own < followup.MAX_REVISIONS || !!basis.openGrant)
+    : basis.asked < followup.MAX_ASKED_REVISIONS;
   const mode = canRevise ? 'build' : 'scout';
 
   if (checks) {
     return runChecksFix(pool, config, {
-      bot, app, repo, item, issue, session, checks, canRevise, mode, runMode, model, turnBudgetMs, startedMs,
+      bot, app, repo, item, issue, session, checks, canRevise, basis, mode, runMode, model, turnBudgetMs, startedMs,
       recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps, reasoningEffort,
     });
   }
@@ -5665,6 +5685,42 @@ async function runFollowUp(pool, config, {
     }
   }
 
+  // #6263: a revision that changed what the change does also rewrites the
+  // description people vote on, through the same edit seam its author uses.
+  // When it cannot be written, the summary is marked stale so the page says
+  // so and the reply says the description is out of date.
+  let descriptionStale = false;
+  if (moved && (parsed?.title || parsed?.planChanged)) {
+    descriptionStale = await look.once('description', async () => {
+      const raw = followup.descriptionOut(result.lastResultText).description;
+      if (raw) {
+        try {
+          const edit = require('./proposal-description-edit');
+          const askedBy = await live.askerOf(pool, session.id);
+          const text = live.creditedDescription(withoutEmDashes(raw), askedBy);
+          const editable = await edit.readEditable(pool, session.id, bot.id);
+          if (editable) {
+            const out = await edit.edit({
+              pool, sessionId: session.id, userId: bot.id,
+              input: { description: text, expectedVersion: edit.snapshot(editable).version },
+              ...(github ? { gh: github } : {}),
+            });
+            if (out?.status === 200) return false;
+            log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+              app: app.slug, issueNumber, sessionId: session.id, status: out?.status || null,
+            });
+          }
+        } catch (err) {
+          log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+            app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+          });
+        }
+      }
+      await pool.query('UPDATE chat_sessions SET pr_summary_stale = TRUE WHERE id = $1 AND pr_summary_md IS NOT NULL', [session.id]);
+      return true;
+    });
+  }
+
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     ...billingOf(item, runMode),
@@ -5676,6 +5732,9 @@ async function runFollowUp(pool, config, {
     buildNote: action === 'revise' ? (parsed?.summary || null) : null,
     threadSeenAt: seenThrough, model,
     durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
+    // #6284: a reply revision is an update a person asked for, so it never
+    // counts toward the bot's own three.
+    ...(action === 'revise' ? { asked: true, askedBy: asks[0]?.asker_id || null } : {}),
   });
   await recordSnapshot(runId);
   look.consume();
@@ -5687,7 +5746,7 @@ async function runFollowUp(pool, config, {
   const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
-      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl,
+      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl, descriptionStale,
     })
     : action === 'ask' ? followup.askText({ reply, prNumber })
       : action === 'person' ? followup.personText({ reply, prNumber })
@@ -5715,10 +5774,12 @@ async function runFollowUp(pool, config, {
     // places' own work, it survives a restart, and is said once.
     await voice.reportFollowUp(pool, config, {
       app, session, asks, runTag, deps: voiceDeps,
-      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion },
+      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion, descriptionStale },
       finish: (db) => voice.finishAsks(db, { runTag, runId }),
     }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
   }
+  // #6264: whoever asked to be told when the update is in hears it here.
+  await tellUpdateLanded(pool, session.id, deps);
   // #4612: the updated plan, where the first plan was posted: the spec card
   // in the change's discussion, then its copy on the GitHub issue. Its own
   // comment is pushed into postedAt so the turn does not read it back as
@@ -5823,6 +5884,13 @@ const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_stat
               SELECT 1 FROM homeroom_bot_runs r
                WHERE r.proposal_session_id = cs.id
                  AND r.checks_head_sha = LOWER(cs.reviewed_head_sha)
+                 -- #6284: a grant somebody spent after that look opens the
+                 -- head again, for exactly one more round.
+                 AND NOT EXISTS (
+                   SELECT 1 FROM homeroom_bot_revision_grants g
+                    WHERE g.session_id = cs.id AND g.used_at IS NULL
+                      AND g.created_at > r.created_at
+                 )
             ) AS looked,
             EXISTS (
               SELECT 1 FROM homeroom_bot_runs r
@@ -5907,9 +5975,16 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
     return { queued: false, why: 'infra' };
   }
   const { appendEvent } = require('../workflow/kernel/index.ts');
+  // #6284: a grant somebody spent is its own ask, so an earlier refusal for
+  // this head does not swallow it.
+  const { rows: grantRows } = await pool.query(
+    'SELECT id FROM homeroom_bot_revision_grants WHERE session_id = $1 AND used_at IS NULL ORDER BY id DESC LIMIT 1',
+    [Number(row.id)],
+  ).catch(() => ({ rows: [] }));
+  const grantKey = grantRows[0]?.id ? `:grant:${grantRows[0].id}` : '';
   await appendEvent(pool, loopRules.BOT_REQUEST, loopRules.requestKey(row.app_id, issueNumber), {
     type: 'FixAsked', payload: { appId: Number(row.app_id), issueNumber, sessionId: Number(row.id), head: due.head },
-  }, { requestKey: `fix:${Number(row.id)}:${due.head}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
+  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
   log.info('homeroom-bot', due.failing.length
     ? 'Its proposal\'s checks failed; asked its request to fix them'
     : due.broken?.length
@@ -5934,7 +6009,7 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
  * triage's does.
  */
 async function runChecksFix(pool, config, {
-  bot, app, repo, item, issue, session, checks, canRevise, mode, runMode, model, turnBudgetMs, startedMs,
+  bot, app, repo, item, issue, session, checks, canRevise, basis = null, mode, runMode, model, turnBudgetMs, startedMs,
   recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps, reasoningEffort = null,
 }) {
   const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
@@ -5976,6 +6051,13 @@ async function runChecksFix(pool, config, {
     });
     return { ran: false, reason: 'checks_infra' };
   }
+
+  // #6284: a grant somebody spent buys this one round, even when the bot's
+  // own three are used up. Its round is recorded as asked, not as one of the
+  // bot's own, and the grant becomes used before the turn runs.
+  const grantedRound = !!(basis?.openGrant) && Number(basis?.own || 0) >= followup.MAX_REVISIONS;
+  let grantedBy = null;
+  const tries = Number(basis?.own || 0) + Number(basis?.grants || 0);
 
   let runId = null;
   // #5220: before its own fix turn, a failure that looks like main's
@@ -6123,10 +6205,41 @@ async function runChecksFix(pool, config, {
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
-    const text = followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
+    // #6284: the stop offers Let it try again and Not now under its message,
+    // like the bot's other offers in a thread. The buttons are for the
+    // requester; an admin presses the one on the Testing card.
+    let offer = null;
+    let offerFor = null;
+    if (extra.limitStop && failing.length) {
+      const dmModule = deps.dm || require('./homeroom-bot-dm');
+      const who = typeof dmModule.requesterOf === 'function'
+        ? await dmModule.requesterOf(pool, app.id, issueNumber).catch(() => null)
+        : null;
+      offerFor = who?.userId ? Number(who.userId) : null;
+      const { rows: offerRows } = await pool.query(
+        `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
+         VALUES ($1, 'try_again', $2, $3) RETURNING id`,
+        [app.id, JSON.stringify({ sessionId: Number(session.id) }), offerFor],
+      ).catch(() => ({ rows: [] }));
+      offer = offerRows[0] || null;
+    }
+    const offerMeta = offer ? {
+      homeroomBot: {
+        kind: 'voice',
+        offer: { id: Number(offer.id), kind: 'try_again', status: 'open', forUserId: offerFor },
+        actions: [
+          { id: 'yes', label: 'Let it try again', style: 'primary', offerId: Number(offer.id) },
+          { id: 'no', label: 'Not now', style: 'secondary', offerId: Number(offer.id) },
+        ],
+      },
+    } : null;
+    const text = extra.limitStop && failing.length
+      ? followup.stoppedHandOffText({ failingCount: failing.length, tries })
+      : followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
     const posted = await postOnce(look, 'followup_person', () => live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person', runId, text,
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
+      metadata: offerMeta,
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
       // Red checks a person must look at reach the requester as a stop
@@ -6138,6 +6251,15 @@ async function runChecksFix(pool, config, {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;
     }));
+    // #6284: bind the offer to the message the post made, so a tap decides it
+    // (homeroom-bot-voice.decideOffer finds the offer by its message).
+    if (offer && posted?.postId) {
+      await pool.query(
+        `UPDATE homeroom_bot_voice_offers o SET message_id = p.thread_message_id
+           FROM homeroom_bot_posts p WHERE o.id = $1 AND p.id = $2 AND p.thread_message_id IS NOT NULL`,
+        [offer.id, posted.postId],
+      ).catch(() => {});
+    }
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt,
       postedAt: posted?.githubCreatedAt ? [posted.githubCreatedAt] : [], proposalSessionId: session.id,
@@ -6166,7 +6288,28 @@ async function runChecksFix(pool, config, {
     return handOff({
       why: `it has already updated this change ${followup.MAX_REVISIONS} times, as many as it may on its own`,
       verdict: 'person',
+      extra: { limitStop: 'own_revisions' },
     });
+  }
+
+  // #6284: the grant becomes used only now, when a round is really spent:
+  // a sync above did not use it.
+  if (grantedRound) {
+    const used = await look.once('grant', () => require('./homeroom-bot-retry-grants').useGrant(pool, session.id));
+    grantedBy = used?.granted_by || null;
+  }
+
+  // #6234: one line on the change as its fix starts, so the request's page
+  // hears the bot is on it (its Testing card reads the queue row; the
+  // thread hears it here). Once across the look's attempts (`note` is
+  // look.once), so a look resumed after a restart does not say it twice,
+  // and not on the second try after running out of time: checks_retry said
+  // so. The end line (checks_revise, checks_retry, the hand-off) follows.
+  // Not for a round only its shots asked for (onlyShots): its checks pass,
+  // nothing said a person had to fix it, and a seed that adds nothing ends
+  // in silence, which would leave a start line with no end.
+  if (!onlyShots && !await look.once('retriedAtStart', () => checksRetried(pool, session.id, head))) {
+    await note('checks_fixing', { runId: null, text: followup.checksFixingText({ failing, broken, skipped }) });
   }
 
   let turn = null;
@@ -6254,6 +6397,9 @@ async function runChecksFix(pool, config, {
       reason: parsed?.reply || summary, buildNote: summary,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
       proposalSessionId: session.id, checksHeadSha: head, ...spent,
+      // #6284: a round a person let it try counts as asked, never as one of
+      // its own three.
+      ...(grantedRound ? { asked: true, askedBy: grantedBy } : {}),
     });
     await recordSnapshot(runId);
     await dropRow();
@@ -6265,6 +6411,8 @@ async function runChecksFix(pool, config, {
     // plain words; the turn's own summary stays on the run, and the note
     // links nowhere, as it is on the change's page already.
     await note('checks_revise', { runId, text: followup.checksRevisedText({ failing, broken, skipped }) });
+    // #6264: whoever asked to be told when the update is in hears it here.
+    await tellUpdateLanded(pool, session.id, deps);
     log.info('homeroom-bot', 'Revised its proposal to fix its failing checks', {
       app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, skipped: skipped.length, costUsd, runId,
     });
@@ -6310,7 +6458,14 @@ async function runChecksFix(pool, config, {
   return handOff({
     why,
     verdict: parsed?.action === 'person' ? 'person' : 'failed',
-    extra: { ...spent, ...(turn.stopped ? { budgetStop: 'wall clock' } : {}) },
+    // #6284: a granted round that did not get past its checks stops again,
+    // and the card says so ("after 4 tries"); one that hands over because a
+    // person must decide is a hand-off, not a stop.
+    extra: {
+      ...spent,
+      ...(turn.stopped ? { budgetStop: 'wall clock' } : {}),
+      ...(grantedRound && parsed?.action !== 'person' ? { limitStop: 'own_revisions' } : {}),
+    },
     // The turn found the failures are not the change's (followup.CAUSES).
     notChange: parsed?.action === 'person' && parsed.cause === 'not_change' && failing.length > 0 && !broken.length,
     cause: parsed?.action === 'person' ? parsed.cause : null,
@@ -6403,6 +6558,9 @@ async function keepNoChange(pool, runId, noChange) {
  */
 function autoRetryable(built) {
   if (!built || built.ok || built.skipped || built.blocked || built.lostClaim || built.notProposed) return false;
+  // #6267: a build waiting for its upload was built; another try would pay
+  // for it again and leave the saved commit behind.
+  if (built.waitingToPush) return false;
   // Its project's setup failed (15 Oct 2026): another try would stop the same way.
   if (built.setupFailed) return false;
   if (built.partial) return false;
@@ -6478,7 +6636,7 @@ async function recordLiveBuild(pool, runId, built, model = null) {
             build_session_id = COALESCE(build_session_id, $8), build_spec_md = COALESCE($9, build_spec_md),
             build_model = COALESCE($10, build_model), build_no_change = COALESCE($11::jsonb, build_no_change)
       WHERE id = $1 AND (proposal_session_id IS NULL OR proposal_session_id = $8)`,
-    [runId, !!built.ok, error, built.branchName || null, built.sha || null,
+    [runId, built.waitingToPush ? null : !!built.ok, error, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
       Number.isFinite(built.costUsd) ? built.costUsd : null,
       built.sessionId || null, built.specMd || null, model || built.model || null,
@@ -6486,6 +6644,17 @@ async function recordLiveBuild(pool, runId, built, model = null) {
       // nudge (homeroom-bot-live.js buildNudgePrompt).
       built.noChange ? JSON.stringify(built.noChange) : null],
   ).catch((err) => log.warn('homeroom-bot', 'Could not record the live build on its run', { runId, err: err.message }));
+}
+
+/**
+ * Pure (#6313): whether the bot is already trying this failure again by
+ * itself, so its words say "I'm trying again" and ask nobody for a reply. A
+ * plan that could not be written (nothing was built) is read again by the
+ * bot's own queue: its post on the request is what moves the request, and
+ * the bot reads a moved request again.
+ */
+function retriesItself(reason) {
+  return require('./homeroom-bot-dm').buildFailedCause(reason).cause === 'plan';
 }
 
 /**
@@ -6542,12 +6711,34 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     }
     return 'blocked';
   }
+  if (built.waitingToPush) {
+    // #6267: the build finished, and GitHub refused the upload for a reason
+    // that may pass. The session and its saved commit are kept, so this is
+    // not said as a failed build; it is said once, and the sweep (or a
+    // person's reply) pushes the same commit later.
+    await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_finish = COALESCE(build_finish, '{}'::jsonb)
+                || jsonb_build_object('waiting_at', COALESCE(build_finish->>'waiting_at', NOW()::text))
+        WHERE id = $1`,
+      [runId],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record when a build started waiting to push', { runId, err: err.message }));
+    log.warn('homeroom-bot', 'Live build finished and waits for its upload', {
+      app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
+    });
+    if (!await runPosted(pool, runId, 'build_failed')) {
+      await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
+        { dm: { reason: built.error, retrying: retriesItself(built.error) } });
+    }
+    return 'waiting_to_push';
+  }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
     app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
   });
   // Said once per run, whatever brought the build here again.
   if (!await runPosted(pool, runId, 'build_failed')) {
-    await say('build_failed', live.buildFailedText(built.error, { firstVersion }), { dm: { reason: built.error } });
+    await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
+      { dm: { reason: built.error, retrying: retriesItself(built.error) } });
   }
   return 'build_failed';
 }
@@ -6825,6 +7016,258 @@ async function proposeFinished(pool, config, { run, app, user, bot, deps, onProp
   return { ok: true, sessionId, prNumber, app };
 }
 
+// ── A finished build waiting for its upload (#6267) ──────────────────────
+//
+// 4 Nov 2026: GitHub refused one push while it was having problems, and
+// homeroom-bot-live.js threw away a build that had finished (run 4530). Now
+// a temporary refusal keeps the session, its worker volume and the saved
+// commit, and the run is recorded waiting to push. finishWaitingPush sends
+// that exact commit (worker.rescueUnpushedCommit) and proposes it, with no
+// agent turn and no second build cost. The sweep retries every ten minutes
+// for up to six hours; a person's reply takes the same path (resumeWaitingPush).
+const WAITING_PUSH_RETRY_MINUTES = 10;
+const WAITING_PUSH_HOURS = 6;
+
+async function waitingPushRun(pool, runId) {
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT r.id, r.app_id, r.issue_number, r.build_ok, r.build_session_id, r.build_branch, r.build_sha,
+            r.build_commits, r.build_spec_md, r.build_error, r.build_finish,
+            bs.status AS session_status, bs.branch_name AS session_branch, bs.user_id AS session_user_id,
+            sw.unpushed_sha, sw.unpushed_branch_name,
+            a.slug, a.name, a.repo_url,
+            (SELECT n.id FROM homeroom_bot_runs n
+              WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number
+              ORDER BY n.id DESC LIMIT 1) AS newest_run_id
+       FROM homeroom_bot_runs r
+       JOIN apps a ON a.id = r.app_id
+       LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+       LEFT JOIN session_workers sw ON sw.session_id = r.build_session_id
+      WHERE r.id = $1`,
+    [Number(runId)],
+  );
+  return run || null;
+}
+
+/** The temporary push code kept in a waiting run's reason. */
+function waitingPushCode(reason) {
+  return /\(([a-z0-9_]+), temporary\)/i.exec(String(reason || ''))?.[1] || 'push_failed';
+}
+
+/**
+ * Send the saved commit of a run whose build finished and whose upload was
+ * refused for a temporary reason, then propose it. Claimed once per run
+ * (build_finish->>'claimed_at'), so a sweep and a reply cannot propose
+ * twice. Never runs an agent turn. Never throws.
+ */
+async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
+  let run;
+  let app = null;
+  try {
+    run = await waitingPushRun(pool, runId);
+    if (!run || run.build_ok !== null || !run.build_session_id) return { ok: false, why: 'no_run', app };
+    if (Number(run.newest_run_id) !== Number(run.id)) return { ok: false, why: 'not_newest', app };
+    if (!run.build_error || !String(run.build_error).startsWith('waiting to push:')) {
+      return { ok: false, why: 'not_waiting', app };
+    }
+    if (Number(run.session_user_id) !== Number((await ensureBotUser(pool, config)).id)) return { ok: false, why: 'not_bots', app };
+    // Its session is the bot's and still open, on the branch it built. It
+    // rests between turns ('paused'); a session left 'active' is accepted
+    // too because rescueUnpushedCommit refuses to touch one under a turn.
+    if (!['paused', 'active'].includes(run.session_status)) return { ok: false, why: 'session_gone', app };
+    if (run.build_branch && run.session_branch !== run.build_branch) return { ok: false, why: 'branch_moved', app };
+    if (run.build_sha && run.unpushed_sha !== run.build_sha) return { ok: false, why: 'commit_gone', app };
+    app = { id: Number(run.app_id), slug: run.slug, name: run.name, repo_url: run.repo_url };
+    const bot = await ensureBotUser(pool, config);
+    const sessionId = Number(run.build_session_id);
+    const { rows: claimed } = await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_finish = COALESCE(build_finish, '{}'::jsonb)
+                || jsonb_build_object('claimed_at', NOW(), 'by', $2::int, 'session_id', $3::int)
+        WHERE id = $1 AND build_ok IS NULL AND proposal_session_id IS NULL AND build_session_id = $3
+          AND build_error LIKE 'waiting to push:%'
+          AND (build_finish->>'claimed_at' IS NULL
+               OR (build_finish->>'claimed_at')::timestamptz < NOW() - make_interval(mins => $4))
+        RETURNING id`,
+      [run.id, Number(bot.id), sessionId, WAITING_PUSH_RETRY_MINUTES],
+    );
+    if (!claimed.length) return { ok: true, already: true, app };
+
+    const code = waitingPushCode(run.build_error);
+    let pushed;
+    try {
+      pushed = await (deps.worker || require('./worker')).rescueUnpushedCommit(sessionId);
+    } catch (err) {
+      const permanent = err.permanent === true;
+      log.warn('homeroom-bot', 'A build waiting for its upload could not be pushed', {
+        app: app.slug, issueNumber: run.issue_number, runId: run.id, sessionId, code: err.code || code, permanent,
+      });
+      if (!permanent) return { ok: false, why: 'push_failed', app };
+      const reason = `couldn't push the build's commit (${err.code || code}, permanent)`;
+      await pool.query(
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+                build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'failed')
+          WHERE id = $1 AND build_ok IS NULL`,
+        [run.id, reason],
+      );
+      await sayGaveUpOrPermanent({ pool, deps, app, bot, run, reason });
+      return { ok: false, why: 'push_permanent', app };
+    }
+    if (pushed?.dropped) {
+      // The branch moved on GitHub while this waited: the commit cannot go
+      // on top of it. Drop the saved record (done) and say retrying cannot fix it.
+      const reason = `couldn't push the build's commit (non_fast_forward, permanent)`;
+      await pool.query(
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+                build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'failed')
+          WHERE id = $1 AND build_ok IS NULL`,
+        [run.id, reason],
+      );
+      await sayGaveUpOrPermanent({ pool, deps, app, bot, run, reason });
+      return { ok: false, why: 'push_permanent', app };
+    }
+    if (!pushed?.pushed) return { ok: false, why: 'push_failed', app };
+
+    const settings = await readSettings(pool);
+    let promoted;
+    try {
+      promoted = await live.proposedAlready(pool, sessionId) || await live.promoteOwnBuild({
+        pool, steps: durableSteps.none(), ...(Array.isArray(deps.proposeRetryMs) ? { waits: deps.proposeRetryMs } : {}),
+        config, bot, sessionId, router: deps.votesRouter || null, ceiling: botProposalCeiling(settings),
+      });
+    } catch (err) {
+      promoted = { status: 500, body: { error: err.message } };
+    }
+    if (promoted?.status !== 200 || !promoted.body?.ok) {
+      log.warn('homeroom-bot', 'A waiting build was pushed but could not be proposed', {
+        app: app.slug, issueNumber: run.issue_number, runId: run.id, sessionId,
+        why: promoted?.body?.error || promoted?.body?.message || `promotion answered ${promoted?.status}`,
+      });
+      return { ok: false, why: 'refused', app };
+    }
+    const prNumber = promoted.body.prNumber ?? null;
+    const github = deps.github || require('./github');
+    const ws = deps.ws || require('./ws');
+    const repo = parseRepo(run.repo_url);
+    const postedAt = [];
+    let botLogin = null;
+    try { botLogin = await live.botUsernameOf(github); } catch { /* not known: no mentions */ }
+    const say = liveSayer({
+      pool, github, ws, app, repo, issueNumber: Number(run.issue_number), issue: null, runId: run.id, bot, botLogin,
+      notifications: deps.notifications || null, postedAt,
+    });
+    const { rows: [spec] = [] } = await pool.query(
+      'SELECT version FROM chat_session_specs WHERE session_id = $1 ORDER BY version DESC LIMIT 1', [sessionId],
+    ).catch(() => ({ rows: [] }));
+    await announceBuilt({
+      pool, ws, app, bot, issueNumber: Number(run.issue_number), runId: run.id, say,
+      domain: deps.domain || require('./caddy').USERNODE_DOMAIN,
+      built: {
+        ok: true, sessionId, prNumber, branchName: run.session_branch || run.build_branch,
+        sha: run.build_sha || null,
+        commits: run.build_commits == null ? undefined : Number(run.build_commits),
+        specMd: run.build_spec_md || null, specVersion: spec?.version ?? null,
+      },
+    });
+    log.info('homeroom-bot', 'A waiting build was pushed and proposed', {
+      app: app.slug, issueNumber: run.issue_number, runId: run.id, sessionId, prNumber,
+    });
+    return { ok: true, sessionId, prNumber, app };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not finish a build waiting for its upload', { runId, err: err.message });
+    return { ok: false, why: 'error', app };
+  }
+}
+
+/** Say a waiting build's upload cannot be sent again (permanent, or gave up). */
+async function sayGaveUpOrPermanent({ pool, deps, app, bot, run, reason }) {
+  try {
+    const github = deps.github || require('./github');
+    const ws = deps.ws || require('./ws');
+    const say = liveSayer({
+      pool, github, ws, app, repo: parseRepo(run.repo_url), issueNumber: Number(run.issue_number),
+      issue: null, runId: run.id, bot, botLogin: null, notifications: deps.notifications || null, postedAt: [],
+    });
+    await say('build_failed', live.buildFailedText(reason), { dm: { reason } });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not say a waiting build cannot be pushed', { runId: run.id, err: err.message });
+  }
+}
+
+/**
+ * The sweep: push and propose the runs whose build finished and waits for
+ * its upload. Runs waiting more than six hours stop trying (the saved commit
+ * and the session stay, so a reply still sends it).
+ */
+async function sweepWaitingPushes(pool, config, deps = {}) {
+  const { rows } = await pool.query(
+    `SELECT r.id,
+            COALESCE((r.build_finish->>'waiting_at')::timestamptz, r.created_at) AS waiting_since
+       FROM homeroom_bot_runs r
+      WHERE r.build_ok IS NULL AND r.build_error LIKE 'waiting to push:%'
+        AND r.build_session_id IS NOT NULL AND r.proposal_session_id IS NULL
+        AND (r.build_finish->>'claimed_at' IS NULL
+             OR (r.build_finish->>'claimed_at')::timestamptz < NOW() - make_interval(mins => $1))
+        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs n
+                         WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id)
+      ORDER BY r.id LIMIT 50`,
+    [WAITING_PUSH_RETRY_MINUTES],
+  );
+  let pushed = 0;
+  let gaveUp = 0;
+  for (const r of rows) {
+    const waitedMs = Date.now() - new Date(r.waiting_since).getTime();
+    if (waitedMs > WAITING_PUSH_HOURS * 3600 * 1000) {
+      if (await giveUpWaitingPush(pool, config, { runId: Number(r.id), deps })) gaveUp += 1;
+      continue;
+    }
+    const out = await finishWaitingPush(pool, config, { runId: Number(r.id), deps });
+    if (out?.ok) pushed += 1;
+  }
+  return pushed || gaveUp ? { pushed, gaveUp } : null;
+}
+
+async function giveUpWaitingPush(pool, config, { runId, deps = {} } = {}) {
+  const run = await waitingPushRun(pool, runId);
+  if (!run || run.build_ok !== null || Number(run.newest_run_id) !== Number(run.id)) return false;
+  const code = waitingPushCode(run.build_error);
+  const reason = `couldn't push the build's commit (${code}, gave up after 6 hours)`;
+  const { rows } = await pool.query(
+    `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+            build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'gave_up')
+      WHERE id = $1 AND build_ok IS NULL AND build_error LIKE 'waiting to push:%'
+      RETURNING id`,
+    [run.id, reason],
+  );
+  if (!rows.length) return false;
+  const bot = await ensureBotUser(pool, config);
+  const app = { id: Number(run.app_id), slug: run.slug, name: run.name, repo_url: run.repo_url };
+  await sayGaveUpOrPermanent({ pool, deps, app, bot, run, reason });
+  log.warn('homeroom-bot', 'A build waited six hours for its upload; stopped trying', { runId: run.id, code });
+  return true;
+}
+
+/**
+ * A person's reply on a request whose newest run waits for its upload takes
+ * the same path instead of being read (and built) again. Answers whether a
+ * waiting run was found: the caller then skips the read, so no new run is
+ * recorded over it and the sweep can still retry (a temporary refusal that
+ * outlasts this try leaves it waiting for the next sweep).
+ */
+async function resumeWaitingPush(pool, config, { bot, app, issueNumber, deps = {} } = {}) {
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT r.id FROM homeroom_bot_runs r
+      WHERE r.app_id = $1 AND r.issue_number = $2 AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+        AND r.build_error LIKE 'waiting to push:%'
+        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs n
+                         WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id)
+      ORDER BY r.id DESC LIMIT 1`,
+    [app.id, Number(issueNumber)],
+  );
+  if (!run) return false;
+  await finishWaitingPush(pool, config, { runId: Number(run.id), deps });
+  return true;
+}
+
 // The caps that hold a ready verdict for want of room for one more change:
 // the project's builds and its changes waiting for votes (#6156), and the
 // bot's ceiling across projects. They are the only caps there are (3 Nov
@@ -6891,6 +7334,41 @@ async function actOnVerdict({
       voiceAnswers, answerers,
     })
     : { speak: true };
+  // #6311: a re-read whose note would say the same thing as the last one it
+  // posted (same kind, same reason) says nothing. Only a look somebody asked
+  // for, or one the request's own changes started, can repeat.
+  // #6321: an "already works" note is the same words under either verdict, so
+  // `alsoKind` names the other one: a repeat gets no second set of buttons.
+  const unchangedNote = async (kind, text, alsoKind = null) => {
+    if (!gated) return false;
+    const prev = await addressedMod().lastNoteText(pool, { appId: app.id, issueNumber });
+    return !!prev && (prev.kind === kind || prev.kind === alsoKind) && addressedMod().sameNote(prev.text, text);
+  };
+  // #6321: an "already works" note carries Propose to close and Keep it open,
+  // for any member (for nobody in particular: bot-voice's tapGuard), unless a
+  // vote on closing the request is already open. The tap reads every gate
+  // again (mayor.closeGate). Resolves the stored offer, or null.
+  const doneCloseOffer = async () => {
+    const { rows: open } = await pool.query(
+      `SELECT id FROM issues
+        WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
+      [app.id, issueNumber],
+    ).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read open close votes (no buttons under the note)', { app: app.slug, issueNumber, err: err.message });
+      return { rows: [{}] };
+    });
+    if (open.length) return null;
+    return voiceModule(deps).threadOffer(pool, {
+      app, kind: 'close_request', forUserId: null,
+      args: { issueNumber, title: issue?.title || null, why: clip(parsed.reason, 500) },
+    });
+  };
+  // The note it went under was posted, or it was not and the offer goes.
+  const settleThreadOffer = async (offer, posted) => {
+    if (!offer) return;
+    if (posted?.messageId) await voiceModule(deps).tieThreadOffer(pool, offer.id, posted.messageId);
+    else await voiceModule(deps).dropThreadOffer(pool, offer.id);
+  };
   if (!gate.speak) {
     log.info('homeroom-bot', 'Live note not repeated: nobody addressed the bot', {
       app: app.slug, issueNumber, verdict: parsed.verdict,
@@ -6915,14 +7393,22 @@ async function actOnVerdict({
   } else if (parsed.verdict === 'question') {
     // #3624: `dm` carries the question to the requester's DM too, with the
     // answers they can tap (homeroom-bot-dm.js).
-    await say('question', live.questionText(parsed), {
-      dm: {
-        question: parsed.question, answers: parsed.questionAnswers || [],
-        // B6: a read that asks two questions asks both at once.
-        ...(parsed.plan?.questions?.length > 1 ? { questions: parsed.plan.questions } : {}),
-        ...quiet,
-      },
-    });
+    const noteText = require('./homeroom-bot-words').firstPerson(live.questionText(parsed));
+    if (await unchangedNote('question', noteText)) {
+      acted = 'unchanged';
+      log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
+        app: app.slug, issueNumber, verdict: parsed.verdict,
+      });
+    } else {
+      await say('question', live.questionText(parsed), {
+        dm: {
+          question: parsed.question, answers: parsed.questionAnswers || [],
+          // B6: a read that asks two questions asks both at once.
+          ...(parsed.plan?.questions?.length > 1 ? { questions: parsed.plan.questions } : {}),
+          ...quiet,
+        },
+      });
+    }
   } else if (parsed.verdict === 'person') {
     // #4239: about Homeroom itself, the requester's DM offers to move it to
     // Homeroom's own board (homeroom-bot-dm.js relayIssuePost). A requester
@@ -6932,9 +7418,10 @@ async function actOnVerdict({
       ? decider.deciders.map((d) => d?.username).filter(Boolean)
       : [];
     // Homeroom's copy names who can say Go ahead: the people who decide, or
-    // the person who asked for it.
-    const asker = deciders.length || parsed.platform ? null
-      : await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+    // the person who asked for it. #6311: the requester is read either way,
+    // because a platform note's copy offer goes to them.
+    const requester = await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+    const asker = deciders.length ? null : requester;
     const project = app.name || app.slug;
     // 3 Nov 2026: the note offers the person it names Go ahead, a smaller
     // first step and Not now, to send as their own reply. Only they see
@@ -6945,19 +7432,62 @@ async function actOnVerdict({
     const suggestActions = live.personSuggestions({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
     });
-    await say('person', live.personText({ ...parsed, project }), {
-      homeroomText: live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders }),
-      ...(suggestActions.length && suggestFor.length
-        ? { metadata: { homeroomBot: { kind: 'note', suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions } } }
-        : {}),
-      dm: {
-        reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
-        ...(parsed.done ? { done: true } : {}),
-        ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
-      },
-    });
+    const noteText = live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
+    if (await unchangedNote('person', noteText, parsed.done ? 'empty' : null)) {
+      acted = 'unchanged';
+      log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
+        app: app.slug, issueNumber, verdict: parsed.verdict,
+      });
+      // A note about Homeroom itself held so offers no move: the run says why.
+      if (parsed.platform) await require('./homeroom-bot-move').noteMoveOffer(pool, runId, 'repeat_held');
+    } else {
+      // #6311: a platform note carries the copy offer in the thread, for the
+      // person who asked for the request. Its own Move offer in their DM is
+      // unchanged.
+      const copyOffer = parsed.platform && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0
+        ? await voiceModule(deps).threadOffer(pool, {
+          app, kind: 'copy_request', forUserId: Number(requester.userId), args: { issueNumber },
+        }).catch(() => null)
+        : null;
+      // #6321: a note about Homeroom itself is never `done`, so never both.
+      const threadOffer = copyOffer || (parsed.done ? await doneCloseOffer() : null);
+      const noteMeta = threadOffer?.metadata
+        ? { kind: 'voice', ...threadOffer.metadata }
+        : (suggestActions.length && suggestFor.length
+          ? { kind: 'note', suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions }
+          : null);
+      const posted = await say('person', live.personText({ ...parsed, project }), {
+        homeroomText: noteText,
+        ...(noteMeta ? { metadata: { homeroomBot: noteMeta } } : {}),
+        dm: {
+          reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
+          ...(parsed.done ? { done: true } : {}),
+          ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
+        },
+      });
+      await settleThreadOffer(threadOffer, posted);
+    }
   } else if (parsed.verdict === 'empty') {
-    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet } });
+    // #6321: nothing to build because it is already there says that, not
+    // "couldn't find anything to build", with the same buttons as a person
+    // note that says it. Its kind stays 'empty'.
+    const noteText = parsed.done
+      ? live.personHomeroomText(parsed)
+      : require('./homeroom-bot-words').firstPerson(live.emptyText(parsed));
+    if (await unchangedNote('empty', noteText, parsed.done ? 'person' : null)) {
+      acted = 'unchanged';
+      log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
+        app: app.slug, issueNumber, verdict: parsed.verdict,
+      });
+    } else {
+      const closeOffer = parsed.done ? await doneCloseOffer() : null;
+      const posted = await say('empty', parsed.done ? live.personText(parsed) : live.emptyText(parsed), {
+        ...(parsed.done ? { homeroomText: noteText } : {}),
+        ...(closeOffer?.metadata ? { metadata: { homeroomBot: { kind: 'voice', ...closeOffer.metadata } } } : {}),
+        dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet },
+      });
+      await settleThreadOffer(closeOffer, posted);
+    }
   } else if (parsed.verdict === 'ready') {
     // C2.3: a plan a person posted on the request (usePersonPlan).
     let ownPlan = null;
@@ -7477,12 +8007,16 @@ function planCardOf(specHtmlText, { app = null, issueNumber = null } = {}) {
     const card = require('./spec-html').specCard(specHtmlText);
     if (!card || !card.lines.length) return null;
     if (card.problems.length) {
-      log.info('homeroom-bot', 'A plan\'s card text failed its checks; its card keeps the lines cut from the spec', {
-        app: app?.slug, issueNumber, problems: card.problems.slice(0, 5),
+      // #6269: the log names each problem by kind, so a writer that keeps
+      // missing one shows up; good lines are kept when only the summary
+      // fails, and the older lines are used only when a line itself fails.
+      log.info('homeroom-bot', 'A plan\'s card text failed its checks', {
+        app: app?.slug, issueNumber, problems: card.problems.slice(0, 5), kinds: card.kinds,
+        linesKept: card.lineProblems.length === 0, summaryDropped: card.summaryProblems.length > 0,
       });
-      return null;
     }
-    return { summary: card.summary, lines: card.lines };
+    if (card.lineProblems.length) return null;
+    return { summary: card.summaryProblems.length ? '' : card.summary, lines: card.lines };
   } catch (err) {
     log.warn('homeroom-bot', 'Could not read a plan\'s card text', { err: err.message });
     return null;
@@ -7604,7 +8138,9 @@ async function planBeforeBuilding({
   if (!(await runPosted(pool, runId, 'plan'))) await say('plan', live.planCommentText({ spec: drafted.specMd, questions }), {
     threadMessage: shown.spec
       ? live.specCard({
-        sessionId: shown.spec.sessionId, version: shown.spec.version, spec: drafted.specMd, bot, asking: true,
+        // #6280: it is posted because the plan now WAITS for Build it, never
+        // because its build is under way.
+        sessionId: shown.spec.sessionId, version: shown.spec.version, spec: drafted.specMd, bot, waiting: true,
         requester: asker?.username || null,
       })
       : null,
@@ -10230,6 +10766,8 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('unproposedLooked', () => (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null }));
   await each('strandedAsks', () => sweepStrandedAsks(pool, bot, settings, deps));
   await each('buildsOwed', () => sweepWaitingBuilds(pool, deps));
+  // #6267: a build finished while GitHub refused its upload.
+  await each('pushesWaiting', () => sweepWaitingPushes(pool, config, deps));
   // #6209: bot changes that add only documents stop linking the requests
   // they plan for, so a merge cannot close one as done.
   await each('docOnlyUnlinked', () => live.unlinkDocOnlyProposals(pool, { github: deps.github || require('./github') }));
@@ -10238,7 +10776,26 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));
   // P6: fixes of flaky checks merged or ended, and the changes waiting on them.
   await each('flakyChecks', () => flakyChecks(deps).sweep(pool, config, { deps }));
+  // #6264: a promise about a change that never came is dropped quietly.
+  await each('followupsExpired', () => require('./thread-followups').expireOld(pool));
   return out;
+}
+
+/**
+ * #6264: an update the bot pushed landed. Whoever asked to be told when it
+ * was in hears it, in the place they asked, if it is a newer head than the
+ * one they asked about. Best effort and logged: a failed line is retried by
+ * the change's own work.
+ */
+async function tellUpdateLanded(pool, sessionId, deps = {}) {
+  try {
+    const { rows: [row] } = await pool.query('SELECT reviewed_head_sha FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
+    await require('./thread-followups').fire(pool, {
+      sessionId: Number(sessionId), event: 'update', head: row?.reviewed_head_sha || null, deps,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not tell who asked when an update landed', { sessionId, err: err.message });
+  }
 }
 
 // A live run waiting for its build that no request instance holds: one an
@@ -10374,6 +10931,7 @@ module.exports = {
   creatorChoiceNote,
   awaitGo,
   planBeforeBuilding,
+  planCardOf,
   plannedWithRequester,
   approvedSpecHtml,
   buildItOnRequest,
@@ -10389,6 +10947,10 @@ module.exports = {
   claimAutoRetry,
   // 15 Oct 2026: Try again finishes a first version that was built.
   finishBuiltFirstVersion,
+  // #6267: a build finished while GitHub refused its upload.
+  finishWaitingPush,
+  sweepWaitingPushes,
+  resumeWaitingPush,
   finishableRun,
   whyNotFinish,
   FINISH_STALE_MINUTES,
@@ -10458,6 +11020,9 @@ module.exports = {
   NOT_FOLLOW_UP,
   checksToFix,
   runChecksFix,
+  // #6234: whether a fix of a head ran out of time once, for the change
+  // page's "trying once more" (homeroom-bot-progress.js changeBotFix).
+  checksRetried,
   queueWait,
   queueSnapshot,
   recordReviewState,

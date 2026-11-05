@@ -592,9 +592,11 @@ async function aboutContext(pool, { user, draft, deps = {} }) {
 // closed (finishForRequest), by Mark done in its ⋯ (markDone), or by asking
 // the bot (its close_thread tool, which calls markDone). A done thread leaves
 // the Homeroom bot page's lists (ai-work.js PRIVATE_SQL); its messages stay,
-// and a link still opens it. Reopen, or anything the person writes in it
-// (reopenOnReply), puts it back where it was (`done_from`). Every change
-// tells the bot page to read its lists again (homeroom-bot-tray).
+// and a link still opens it. #6250 (4 Nov 2026): a filed, posted or put-away
+// thread stays listed until it is done; only a done one leaves. Reopen, or
+// anything the person writes in it (reopenOnReply), puts it back where it
+// was (`done_from`). Every change tells the bot page to read its lists again
+// (homeroom-bot-tray).
 
 function workChanged(userId, deps = {}) {
   try { require('./homeroom-bot-tray').noteWorkChanged(userId, deps); } catch { /* the page reads again on its own */ }
@@ -613,7 +615,7 @@ async function markDone(pool, { user, rootId, bot = null, deps = {} }) {
   const { rows: [was] = [] } = await pool.query(
     'SELECT state FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [root.id, user.id],
   );
-  if (was && (was.state === 'done' || was.state === 'dropped')) return { ok: true, state: 'done', unchanged: true };
+  if (was && was.state === 'done') return { ok: true, state: 'done', unchanged: true };
   if (!was) {
     await pool.query(
       `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state, done_from, done_at)
@@ -622,9 +624,10 @@ async function markDone(pool, { user, rootId, bot = null, deps = {} }) {
       [user.id, root.conversation_id, root.id],
     );
   } else {
+    // #6250: a put-away draft is listed too, so Mark done removes it as well.
     await pool.query(
       `UPDATE private_threads SET done_from = state, state = 'done', done_at = NOW(), updated_at = NOW()
-        WHERE root_message_id = $1 AND user_id = $2 AND state IN ('open', 'filed', 'posted')`,
+        WHERE root_message_id = $1 AND user_id = $2 AND state IN ('open', 'filed', 'posted', 'dropped')`,
       [root.id, user.id],
     );
   }

@@ -136,15 +136,15 @@ const OWNED = [
   // (features/settings/sections/profile.tsx). Stateful, like Theme: settings.js
   // binds nothing inside it.
   { sel: '#settings-profile-section' },
-  // The transcript (features/group-chat/transcript.tsx). A vote row's inline
-  // controls are the one exception, and they are the controller-host seam
-  // AGENTS.md documents: transcript.tsx renders `.gc-vote-inline` ONCE as an
-  // empty span with a constant className and never looks inside it, and
-  // group-chat.js's `refreshVoteControls` fills it from AppView.voteState.
-  // The row's TINT is not exempt — that is a view-model field React renders,
-  // and the module patches the model rather than the class list.
-  { sel: '#gc-messages', except: ['[data-vote-controls]'] },
-  { sel: '#gc-thread-messages', except: ['[data-vote-controls]'] }, // 'thread' key
+  // The transcript (features/group-chat/transcript.tsx), React's end to end.
+  // A vote row's inline controls were the one exception until #6236 — a
+  // `[data-vote-controls]` span group-chat.js's `refreshVoteControls` filled
+  // from AppView.voteState. The row models the vote now (`vote`, patched
+  // onto the view model, as its tint always was) and features/group-chat/
+  // vote-card.tsx draws it, so no legacy write below either host is
+  // sanctioned any more.
+  { sel: '#gc-messages' },
+  { sel: '#gc-thread-messages' }, // 'thread' key
   // The app's own menu, behind the Homeroom mark
   // (features/app-context/app-context-sheet.tsx). Its rows are React's end to
   // end and it is mounted on every route, so no `when` clause. It earns an
@@ -318,7 +318,11 @@ const OWNED = [
   { sel: '#about-row-native-app-version' },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
-  { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
+  // Not #connectors-list: that holds the cards, whose Disclosure bodies are
+  // static markup settings.js writes into (the ticks, the Copy labels, the
+  // case filtering). The hosts of the two store-reading leaves are what React owns.
+  { sel: '[data-connector-status]' },        // features/settings/connectors-list.tsx
+  { sel: '[data-connector-connections]' },   // ditto
   { sel: '#github-link-body' },              // features/settings/social-identity.tsx
   { sel: '#settings-local-agents-list' },    // features/settings/local-agents-list.tsx
   { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
@@ -443,9 +447,9 @@ function instrument(owned) {
       // A documented legacy-filled host INSIDE an owned one: rendered once
       // with constant props and never looked inside. Writes below it are the
       // sanctioned pattern, not a second author.
-      // ALL matches, not the first: `[data-vote-controls]` is one seam with
-      // one host per votable row, and `querySelector` would exempt only the
-      // topmost one and report every row below it.
+      // ALL matches, not the first: a seam can have one host per row (the
+      // retired `[data-vote-controls]` did), and `querySelector` would exempt
+      // only the topmost one and report every row below it.
       if (except && except.some((s2) => [...document.querySelectorAll(s2)]
         .some((h) => h === node || h.contains(node)))) continue;
       const host = document.querySelector(sel);

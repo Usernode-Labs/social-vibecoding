@@ -309,57 +309,6 @@ const feedItem = (over) => ({
   app: { slug: 'plant-pal', name: 'Plant pal', icon_url: null, icon_emoji: null }, ...over,
 });
 
-test('#4270: the feed across every project says Approve and Don\'t approve for these changes', () => {
-  const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
-  // The flag rides onto the row's Yes, as `_cardVoteButtonSpecs` puts it
-  // there on a project's own Needs you; a group's Yes carries none.
-  const [solo, group, decision] = reel.reelRows([
-    feedItem({ approve: true }),
-    feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, approve: undefined, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } }),
-    { ...feedItem({ kind: 'governance', id: 9, epoch: null, yes: null, no: null }), approve: true },
-  ]);
-  assert.deepEqual(solo.yes, { label: 'Yes', act: { fn: 'castVote', args: [7, 'yes', 3] }, approve: true });
-  assert.ok(!('approve' in solo.no), 'the No is the same No either way');
-  assert.ok(!('approve' in group.yes));
-  assert.equal(decision.yes, null, 'a group decision still has no pair here');
-
-  // Drawn by the project's own feed: the rail and the swipe say it.
-  const draw = (items) => renderToHtml(createElement(reel.NeedsReel, { items, error: false, capped: false, onDone: () => {} }));
-  const html = draw([feedItem({ approve: true })]);
-  assert.match(html, /<span class="dev-ws-rail-lab">Approve<\/span>/);
-  assert.doesNotMatch(html, /<span class="dev-ws-rail-lab">Vote<\/span>/);
-  assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Approve<\/span>/);
-  assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">Don’t approve<\/span>/);
-  // The vote sheet's form is the card's picker, as an approval.
-  const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const noop = () => {};
-  const form = (row, side = 'yes', noChoice = null) => renderToHtml(createElement(NeedsVoteForm, {
-    row, slug: '', side, line: '', noChoice,
-    onSide: noop, onLine: noop, onNoChoice: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
-  }));
-  assert.match(form(solo), />Your approval<\/div>/);
-  assert.match(form(solo), /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
-  assert.match(form(solo), /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
-  // #5809: Don't approve is a No, so the sheet asks why before it sends.
-  assert.match(form(solo, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/, 'no answer, no send');
-  assert.match(form(solo, 'no', 'other'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'an answer sends it');
-
-  // A group's row is a vote, word for word.
-  const groupHtml = draw([feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } })]);
-  assert.match(groupHtml, /<span class="dev-ws-rail-lab">Vote<\/span>/);
-  assert.match(groupHtml, /dev-ws-swipe-yes" aria-hidden="true">Yes<\/span>/);
-  assert.match(groupHtml, /dev-ws-swipe-no" aria-hidden="true">No<\/span>/);
-  assert.match(form(group), />Your vote<\/div>/);
-  assert.match(form(group), />Vote yes<\/button>/);
-
-  // Once answered, the feed's own facts line says it as the project's does:
-  // "You approved it" / "You didn't approve it", not "You voted yes".
-  const lander = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
-  const facts = lander.slice(lander.indexOf('function factsFor('), lander.indexOf('function approves('));
-  assert.equal((facts.match(/text: youAnswered\(row, voted\)/g) || []).length, 1, 'one fact for both, the project\'s rows and the feed\'s');
-  assert.ok(facts.indexOf('text: youAnswered(row, voted)') < facts.indexOf('if (st) {'), 'said before either count');
-  assert.doesNotMatch(facts, /`You voted \$\{voted\}`/);
-});
 
 test('#4270: the needs feed marks a change approve by AppView._approveSolo\'s three tests', () => {
   // The query says which rows are on a project that is just the viewer's
@@ -383,7 +332,7 @@ test('#4270: the needs feed marks a change approve by AppView._approveSolo\'s th
   // advisory/uncounted first, and puts the deciding rows first after shaping.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/workshop-overview.js'), 'utf8');
   assert.match(src, /await withViewerDecides\(pool, rows, user\.id\);/);
-  assert.match(src, /return decidingFirst\(shapeNeedsFeed\(await withVotesRequired\(pool, rows\)\)\);/);
+  assert.match(src, /const items = decidingFirst\(shapeNeedsFeed\(await withVotesRequired\(pool, rows\), \{ inThreads \}\)\);/);
   assert.match(src, /const items = await needsFeedFor\(pool, \{/, 'the route reads it so');
   assert.match(src, /row\.votes_required = governance\.computeGate\(gov, electorate\.active, row\.yes, row\.no, row\.at, null\)\.required;/);
 });
@@ -417,29 +366,6 @@ test('#4270: withVotesRequired asks only for the solo rows, once per project', a
 // counts the votes; a row that asks for your approval has nobody else to
 // count, so it says whose answer it waits on, and once you have answered,
 // the answer, in #4270's words.
-test('#4313: the vote sheet\'s line asks for your approval, and reads as answered', () => {
-  const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
-  const { VoteSub } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const [solo, group] = reel.reelRows([
-    feedItem({ approve: true }),
-    feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } }),
-  ]);
-  const sub = (row, voted = null) => renderToHtml(createElement(VoteSub, { row, voted }));
-  assert.equal(sub(solo), '<p class="dev-ws-vote-sub">Waiting for your approval.</p>');
-  assert.equal(sub(solo, 'yes'), '<p class="dev-ws-vote-sub">Approved.</p>');
-  assert.equal(sub(solo, 'no'), '<p class="dev-ws-vote-sub">Not approved.</p>');
-  assert.doesNotMatch(sub(solo), /voted/);
-  // A group's row is counted, as before.
-  assert.equal(sub(group), '<p class="dev-ws-vote-sub">1 yes and 0 no so far.</p>');
-  assert.equal(sub({ ...group, tally: { yes: 0, no: 0 } }), '<p class="dev-ws-vote-sub">Nobody has voted yet.</p>');
-  // On a project's own Needs you the row has its card's pill: the wait is
-  // the eyebrow's already, so it is not said twice; any other word follows.
-  const pilled = (state) => ({ ...solo, card: { ...solo.card, pill: { state } } });
-  assert.equal(sub(pilled({ key: 'needs_vote', label: 'Waiting for your approval', yes: 0, majority: 1 })),
-    '<p class="dev-ws-vote-sub">Waiting for your approval.</p>');
-  assert.equal(sub(pilled({ key: 'checks', label: 'Checks failing', yes: 0, majority: 1 })),
-    '<p class="dev-ws-vote-sub">Waiting for your approval. Checks failing.</p>');
-});
 
 // #4313: the ?demo=1 feed carries one Just-you card so the wording can be
 // seen in a preview, and the page's follow-up requests for it are answered.
@@ -463,11 +389,11 @@ test('#4313: the demo feed has one Just-you card, and its follow-ups are answere
   assert.match(read('src/routes/chat.js'), /threadType === 'session' && isDemoNeedsProposal\(req\.query\.thread_ref\)/);
   assert.match(read('src/routes/workshop-ask.js'), /isDemoNeedsProposal\(req\.query\.ref\)\) return res\.json\(\{ messages: \[\] \}\)/);
   assert.match(read('src/routes/votes.js'), /\|\| stagingDemoNeedsProposal\(id, req\.params\.slug\)/);
-  // The declared check opens the feed on it, with its vote sheet up.
+  // The declared check draws the review flow's change page in the pane.
   const check = require('../dapp.json').tests.find((t) => /shot=needs-approve/.test(t.path));
   assert.ok(check, 'a declared check rides ?shot=needs-approve');
-  assert.match(check.expectSelector, /\[data-ws-sheet="vote"\] \.dev-ws-vote-sub$/);
-  assert.equal(check.expectText, 'Waiting for your approval.');
+  assert.match(check.expectSelector, /\[data-rf-page\] \[data-rf-back\]$/);
+  assert.equal(check.expectText, 'Skip');
   assert.ok(check.expectSelector.length < 256);
   function reel() { return loadTsx('frontend/src/features/workshop/needs-reel.tsx'); }
 });

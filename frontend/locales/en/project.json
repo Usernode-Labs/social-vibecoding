@@ -2947,6 +2947,10 @@
     "text": "A change",
     "description": "What one row of the list is, in its grey line, for a change that has no number yet. A change is a proposed edit to the project that people vote on."
   },
+  "change.reload": {
+    "text": "Reload",
+    "description": "Button beside a live change's status pill when the page open in this tab runs a version of Homeroom from before the change. Pressing it reloads the page onto the running version."
+  },
   "topic.thread.item.close": {
     "text": "Vote to close",
     "description": "What one row of the list is, in its grey line: a vote on closing the request without building it."
@@ -3423,6 +3427,10 @@
     "text": "Show less",
     "description": "Button under a request's own words on its page, and under a change's summary on a change's page, once the text is unfolded: folds it back to four lines."
   },
+  "topic.request.words.translate": {
+    "text": "Translate",
+    "description": "Button beside Show more under someone else's request on its page: shows its title and words in the language the reader uses Homeroom in. A verb."
+  },
   "topic.request.editor.label": {
     "text": "The request",
     "description": "Accessible name of the text box in which the person who filed a request rewrites its words, on the request's page. A noun."
@@ -3527,13 +3535,17 @@
     "text": "Plan for #{{number}} · any member can build it",
     "description": "On a request's page, under the title of Homeroom bot's plan for it, when the person who asked for it is not known: any member of the community may press Build it. {{number}} is the request's number."
   },
+  "topic.request.botPlan.subBuilding": {
+    "text": "Plan for #{{number}} · building",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it once somebody pressed Build it: the bot is building what the plan describes. It replaces the line that said the plan waits for Build it. {{number}} is the request's number."
+  },
   "topic.request.botPlan.readWhole": {
     "text": "Read the whole plan",
     "description": "On a request's page, a row under the lines of Homeroom bot's plan: opens the whole written plan."
   },
-  "topic.request.botPlan.readLength": {
-    "text": "about {{chars}} characters",
-    "description": "On a request's page, beside \"Read the whole plan\": how long the whole plan is. {{chars}} is a rounded number of characters, already formatted (for example 20,000)."
+  "topic.request.botPlan.readWholeLength": {
+    "text": "Read the whole plan <1>· about {{chars}} characters</1>",
+    "description": "On a request's page, the row under the lines of Homeroom bot's plan: opens the whole written plan, and says how long it is. {{chars}} is a rounded number of characters, already formatted (for example 20,000). The middle dot stands between the two parts."
   },
   "topic.request.botPlan.quote": {
     "text": "Homeroom bot's plan",
