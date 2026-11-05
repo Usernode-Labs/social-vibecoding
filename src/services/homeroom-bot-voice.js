@@ -2483,7 +2483,8 @@ function isStandIn(text) {
 function mustSay(outcome) {
   const lines = [];
   if (outcome.planVersion) lines.push(`Its plan was updated to match (version ${outcome.planVersion}).`);
-  if (outcome.descriptionStale) lines.push('Its description still describes the earlier version: say that it is out of date, and that they can ask you here to reword it.');
+  if (outcome.descriptionReworded) lines.push('Its description was reworded to match: say so.');
+  if (outcome.descriptionStale) lines.push('Its description could not be reworded, so it still describes the earlier version: say so.');
   if (outcome.action === 'failed') lines.push('The change is as it was.');
   return lines;
 }

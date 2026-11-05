@@ -267,7 +267,9 @@ function followUpPrompt({
   if (canRevise) {
     lines.push(
       '- "revise": they asked for a clear change to this proposal. Make that change, and only that change, in this working tree. Follow the repository\'s own agent instructions, keep it small, and run the tests that cover it. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again. When the change alters what the proposal does, give it a new `title` that says what it does now (its name on the vote; the old one stays otherwise).'
-        + ' When the revision changes what the change does for people, so the description people vote on no longer describes it (you set a new title or plan), also write the change\'s whole new description between `DESCRIPTION` and `END DESCRIPTION` lines before the JSON block, written the way the first build\'s description is: one or two short paragraphs in plain language, what is different for someone using the app, what they can now do or what stops going wrong, with no file names, code, commit hashes or test results, and no em dashes.'
+        + ' Whenever you set a new `title`'
+        + (planFormat ? ' or `"plan": true`' : ' or write a new plan')
+        + ', you must also write the change\'s whole new description between `DESCRIPTION` and `END DESCRIPTION` lines before the JSON block, written the way the first build\'s description is: one or two short paragraphs in plain language, what is different for someone using the app, what they can now do or what stops going wrong, with no file names, code, commit hashes or test results, and no em dashes. A revise that changes what people see without it is incomplete.'
         + (planFormat
           ? ' When the revision changes what the change does for people, so the spec above no longer describes it, write the whole updated plan in your message before the JSON block, following the plan format below, and set `"plan": true`. A code fix, a test fix or a tweak that the spec still describes keeps `"plan": false`.'
           : ''),
@@ -443,11 +445,12 @@ function personText({ reply }) {
 // One note per update: that earlier votes were cleared is the platform's
 // line in the change's discussion to say (routes/votes.js
 // reconcileNativeReviewedHead), not said again here.
-function revisedText({ summary, reply, planVersion = null, descriptionStale = false }) {
+function revisedText({ summary, reply, planVersion = null, descriptionReworded = false, descriptionStale = false }) {
   const lines = [`Homeroom bot updated this change: ${clipText(summary || reply, 600)}`];
   if (summary && reply && reply !== summary) lines.push('', clipText(reply, 2000));
   if (planVersion) lines.push('', `Its plan is updated to match: version ${planVersion} is in the change's discussion.`);
-  if (descriptionStale) lines.push('', 'Its description still describes the earlier version. Ask me here to reword it.');
+  if (descriptionReworded) lines.push('', 'Its description is reworded to match.');
+  if (descriptionStale) lines.push('', 'I could not reword its description, so it still describes the earlier version.');
   return lines.join('\n');
 }
 

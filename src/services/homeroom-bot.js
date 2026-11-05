@@ -3982,6 +3982,8 @@ async function runTriage(pool, config, {
             activeWorkers, votes: deps.votes || null, dm: deps.dm || null, fixedCheckSync: deps.fixedCheckSync || null, ...liveD,
             // P6 (homeroom-bot-flaky-checks.js), stubbed in tests.
             ...(deps.flakyChecks ? { flakyChecks: deps.flakyChecks } : {}),
+            // #6347: the description step's writing helper, stubbed in tests.
+            ...(deps.llm ? { llm: deps.llm } : {}),
             ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
           },
         });
@@ -5687,39 +5689,68 @@ async function runFollowUp(pool, config, {
 
   // #6263: a revision that changed what the change does also rewrites the
   // description people vote on, through the same edit seam its author uses.
-  // When it cannot be written, the summary is marked stale so the page says
-  // so and the reply says the description is out of date.
-  let descriptionStale = false;
+  // #6347: when the turn wrote no DESCRIPTION block it writes one now, from
+  // the previous description, the new plan and what the update did, so nobody
+  // has to ask for a reword. When it cannot be written, the summary is marked
+  // stale so the page says so and the reply says it could not be reworded.
+  let descriptionState = null;
   if (moved && (parsed?.title || parsed?.planChanged)) {
-    descriptionStale = await look.once('description', async () => {
+    descriptionState = await look.once('description', async () => {
       const raw = followup.descriptionOut(result.lastResultText).description;
-      if (raw) {
-        try {
-          const edit = require('./proposal-description-edit');
-          const askedBy = await live.askerOf(pool, session.id);
-          const text = live.creditedDescription(withoutEmDashes(raw), askedBy);
-          const editable = await edit.readEditable(pool, session.id, bot.id);
-          if (editable) {
-            const out = await edit.edit({
-              pool, sessionId: session.id, userId: bot.id,
-              input: { description: text, expectedVersion: edit.snapshot(editable).version },
-              ...(github ? { gh: github } : {}),
-            });
-            if (out?.status === 200) return false;
+      try {
+        const edit = require('./proposal-description-edit');
+        const editable = await edit.readEditable(pool, session.id, bot.id);
+        if (editable) {
+          let text = raw ? withoutEmDashes(raw) : null;
+          if (!text) {
+            try {
+              const generated = await (deps.llm || require('./llm')).generateRevisedDescription({
+                previous: editable.pr_summary_md || null,
+                title: parsed.title || session.pr_title || null,
+                summary: parsed.summary || null,
+                reply: parsed.reply || null,
+                plan: planRead?.ok ? planRead.specMd : null,
+              });
+              text = generated?.description ? withoutEmDashes(generated.description) : null;
+            } catch (err) {
+              log.warn('homeroom-bot', 'Could not write a description for the revision', {
+                app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+              });
+            }
+          }
+          if (text) {
+            const askedBy = await live.askerOf(pool, session.id);
+            const credited = live.creditedDescription(String(text).trim(), askedBy);
+            // One retry when somebody else edited it meanwhile, as the voice's
+            // update_change_description does.
+            const write = async () => {
+              const fresh = await edit.readEditable(pool, session.id, bot.id);
+              if (!fresh) return null;
+              return edit.edit({
+                pool, sessionId: session.id, userId: bot.id,
+                input: { description: credited, expectedVersion: edit.snapshot(fresh).version },
+                ...(github ? { gh: github } : {}),
+              });
+            };
+            let out = await write();
+            if (out?.status === 409) out = await write();
+            if (out?.status === 200) return 'reworded';
             log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
               app: app.slug, issueNumber, sessionId: session.id, status: out?.status || null,
             });
           }
-        } catch (err) {
-          log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
-            app: app.slug, issueNumber, sessionId: session.id, err: err.message,
-          });
         }
+      } catch (err) {
+        log.warn('homeroom-bot', 'Could not rewrite the description after a revision', {
+          app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+        });
       }
       await pool.query('UPDATE chat_sessions SET pr_summary_stale = TRUE WHERE id = $1 AND pr_summary_md IS NOT NULL', [session.id]);
-      return true;
+      return 'stale';
     });
   }
+  const descriptionReworded = descriptionState === 'reworded';
+  const descriptionStale = descriptionState === 'stale';
 
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
@@ -5746,7 +5777,7 @@ async function runFollowUp(pool, config, {
   const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
-      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl, descriptionStale,
+      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl, descriptionReworded, descriptionStale,
     })
     : action === 'ask' ? followup.askText({ reply, prNumber })
       : action === 'person' ? followup.personText({ reply, prNumber })
@@ -5774,7 +5805,7 @@ async function runFollowUp(pool, config, {
     // places' own work, it survives a restart, and is said once.
     await voice.reportFollowUp(pool, config, {
       app, session, asks, runTag, deps: voiceDeps,
-      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion, descriptionStale },
+      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion, descriptionReworded, descriptionStale },
       finish: (db) => voice.finishAsks(db, { runTag, runId }),
     }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
   }
