@@ -8,6 +8,7 @@ import {
   confirmDiscard, errorsFor, FailureNotice, FieldErrors, isDirty, readFailure, request, type Failure, type Language, type Placeholder,
 } from './shared';
 import { VisualTab } from './visual-tab';
+import { createPoller } from './translate-poller';
 
 // Translate in the editors (routes in src/routes/admin-email-templates.js,
 // the job in src/services/mail/template-translate.js).
@@ -54,11 +55,14 @@ export const languageName = (languages: Language[], code: string) => (languages.
  * 12, 3 need translating", or "English only". A translation marked unusable
  * is not counted: its readers get the English.
  */
-export function translationSummary(row: { locales?: string[]; unusableLocales?: string[] } | null, total: number, englishOnly: boolean): string {
+export function translationSummary(row: { locales?: string[]; unusableLocales?: string[] } | null, codes: string[], englishOnly: boolean): string {
+  const total = codes.length;
   if (englishOnly || total <= 0) return 'English only';
   const unusable = new Set(row?.unusableLocales || []);
-  const usable = (row?.locales || []).filter((code) => code !== 'en' && !unusable.has(code)).length;
-  const n = Math.min(usable, total);
+  // Only languages Homeroom offers now count: a translation left over for a
+  // language since dropped from the list is not one a reader can get.
+  const offered = new Set(codes);
+  const n = (row?.locales || []).filter((code) => offered.has(code) && !unusable.has(code)).length;
   if (n >= total) return `${total} of ${total}`;
   const missing = total - n;
   return `${n} of ${total}, ${missing} ${missing === 1 ? 'needs' : 'need'} translating`;
@@ -74,12 +78,12 @@ export function languagesColumn(
   englishOnly: boolean,
   live: { locales?: string[]; unusableLocales?: string[]; layout_family_id: number | null },
 ): string {
-  const total = otherLanguages(payload.languages).length;
-  const own = translationSummary(live, total, englishOnly);
+  const codes = otherLanguages(payload.languages).map((l) => l.code);
+  const own = translationSummary(live, codes, englishOnly);
   if (englishOnly || live.layout_family_id == null) return own;
   const layout = payload.layouts.find((l) => l.family_id === live.layout_family_id && l.status === 'live' && !l.deleted_at);
   if (!layout) return own;
-  const framed = translationSummary(layout, total, false);
+  const framed = translationSummary(layout, codes, false);
   return framed === own ? own : `${own}; layout: ${framed}`;
 }
 
@@ -142,35 +146,38 @@ export function TranslateProgressView({ status, languages }: { status: JobStatus
   );
 }
 
-const POLL_MS = 2000;
-
 /**
- * Reads a version's Translate job and keeps reading while it runs. `start`
- * presses Translate; the server answers with the job (a running one when it
- * was already going), and the polling follows it to the end.
+ * Reads a version's Translate job and keeps reading while it runs (through
+ * translate-poller.ts, which backs off after a failed read and keeps the last
+ * status on screen). `start` presses Translate; the server answers with the
+ * job (a running one when it was already going), and the poller follows it.
  */
 export function useTranslateJob(base: string, versionId: number | null) {
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [starting, setStarting] = useState(false);
   const alive = useRef(true);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    alive.current = false;
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  const poller = useRef<ReturnType<typeof createPoller<JobStatus, Failure>> | null>(null);
 
-  const poll = useCallback(async () => {
-    if (versionId == null) return;
-    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    const res = await request(`${base}/${versionId}/translate`);
-    if (!alive.current) return;
-    if (!res.ok || !res.data) { setFailure(readFailure(res.status, res.data)); return; }
-    setStatus(res.data);
-    if (res.data.state === 'running') timer.current = setTimeout(poll, POLL_MS);
+  useEffect(() => {
+    alive.current = true;
+    if (versionId == null) return undefined;
+    const p = createPoller<JobStatus, Failure>({
+      read: async () => {
+        const res = await request(`${base}/${versionId}/translate`);
+        return res.ok && res.data ? { ok: true as const, status: res.data } : { ok: false as const, failure: readFailure(res.status, res.data) };
+      },
+      onStatus: (next) => { setFailure(null); setStatus(next); },
+      onFailure: setFailure,
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    });
+    poller.current = p;
+    p.poll();
+    return () => { alive.current = false; p.stop(); poller.current = null; };
   }, [base, versionId]);
 
-  useEffect(() => { poll(); }, [poll]);
+  const refresh = useCallback(() => { poller.current?.poll(); }, []);
 
   const start = useCallback(async (body: { overwrite?: boolean; languages?: string[] } = {}) => {
     if (versionId == null || starting) return false;
@@ -180,12 +187,13 @@ export function useTranslateJob(base: string, versionId: number | null) {
     if (!alive.current) return false;
     setStarting(false);
     if (!res.ok || !res.data) { setFailure(readFailure(res.status, res.data)); return false; }
-    setStatus((prev) => ({ unusable: prev?.unusable || {}, ...res.data }));
-    poll();
+    const next: JobStatus = { unusable: status?.unusable || {}, ...res.data };
+    setStatus(next);
+    poller.current?.seen(next);
     return true;
-  }, [base, versionId, starting, poll]);
+  }, [base, versionId, starting, status]);
 
-  return { status, failure, starting, start, refresh: poll };
+  return { status, failure, starting, start, refresh };
 }
 
 // Why Translate cannot be pressed now, or null when it can.
@@ -217,7 +225,8 @@ export function TranslateControlsView({
             aria-describedby={blocked ? 'email-translate-blocked' : undefined} onClick={onTranslate}>
             {running || starting ? 'Translating…' : 'Translate'}
           </button>
-          <button type="button" id="email-translate-replace" className={AdminUI.btn.outlineSm} disabled={disabled} onClick={onReplace}>
+          <button type="button" id="email-translate-replace" className={AdminUI.btn.outlineSm} disabled={disabled}
+            aria-describedby={blocked ? 'email-translate-blocked' : undefined} onClick={onReplace}>
             Translate again, replacing admin edits
           </button>
         </div>
@@ -264,7 +273,11 @@ export function TranslateControls({ versionId, englishOnly, dirty, canWrite, lan
  * Pressed, it starts the job for the version just saved and shows its progress
  * in place.
  */
-export function TranslateOffer({ base, versionId, languages }: { base: string; versionId: number; languages: Language[] }) {
+export function TranslateOffer({ base, versionId, languages, onFinished }: {
+  base: string; versionId: number; languages: Language[];
+  // Called once the job it started is over, so the list can count again.
+  onFinished?: () => void;
+}) {
   const [asked, setAsked] = useState(false);
   if (!asked) {
     return (
@@ -273,12 +286,23 @@ export function TranslateOffer({ base, versionId, languages }: { base: string; v
       </button>
     );
   }
-  return <StartedTranslate base={base} versionId={versionId} languages={languages} />;
+  return <StartedTranslate base={base} versionId={versionId} languages={languages} onFinished={onFinished} />;
 }
 
-function StartedTranslate({ base, versionId, languages }: { base: string; versionId: number; languages: Language[] }) {
+function StartedTranslate({ base, versionId, languages, onFinished }: {
+  base: string; versionId: number; languages: Language[]; onFinished?: () => void;
+}) {
   const job = useTranslateJob(base, versionId);
   const once = useRef(false);
+  const state = job.status ? job.status.state : null;
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (state === 'running') { wasRunning.current = true; return; }
+    if (wasRunning.current && (state === 'done' || state === 'stopped')) {
+      wasRunning.current = false;
+      if (onFinished) onFinished();
+    }
+  }, [state, onFinished]);
   useEffect(() => {
     if (once.current) return;
     once.current = true;
@@ -315,7 +339,7 @@ export function UnusableSavedNotice({ items, languages, labelFor }: {
   if (!items || !items.length) return null;
   return (
     <div id="email-unusable-notice" className="rounded-lg bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300" role="status">
-      {`Saved. These translations no longer fit and send the English until they are fixed: ${unusableNames(items, languages, labelFor)}.`}
+      {`These translations no longer fit and send the English until they are fixed: ${unusableNames(items, languages, labelFor)}.`}
     </div>
   );
 }
@@ -334,6 +358,40 @@ export const LAYOUT_PARTS: TranslatedField[] = ['html', 'text'];
  */
 export function languageDraftFrom(row: TranslationRow | null | undefined, english: LanguageDraft, parts: TranslatedField[]): LanguageDraft {
   return Object.fromEntries(parts.map((p) => [p, row ? String((row as any)[p] ?? '') : String(english[p] ?? '')]));
+}
+
+/**
+ * Why a language is not sent, or null. The translation row is the latest
+ * word on it (a correction just saved clears it); the job's list stands in
+ * only before any row is known for that language.
+ */
+export function unusableReason(row: TranslationRow | undefined, jobUnusable: Record<string, string> | undefined, locale: string): string | null {
+  if (locale === 'en') return null;
+  if (row) return row.unusable || null;
+  return (jobUnusable && jobUnusable[locale]) || null;
+}
+
+/** The PUT that saves one language's words, to the version the editor opened on. */
+export function languageSaveRequest(base: string, versionId: number, locale: string, draft: LanguageDraft) {
+  return {
+    url: `${base}/${versionId}/translations/${encodeURIComponent(locale)}`,
+    method: 'PUT' as const,
+    body: { ...draft, expectedLiveId: versionId },
+  };
+}
+
+/** Retranslate: that one language, its words replaced whoever wrote them. */
+export const retranslateBody = (locale: string) => ({ languages: [locale], overwrite: true });
+
+/** What a move in the language switch does. */
+export function languageMove({ from, to, languageDirty }: { from: string; to: string; languageDirty: boolean }): 'stay' | 'confirm' | 'go' {
+  if (from === to) return 'stay';
+  return languageDirty ? 'confirm' : 'go';
+}
+
+/** A language's unsaved words, for a kept draft; null when there are none. */
+export function keptLanguage(lang: { dirty: boolean; locale: string; draft: LanguageDraft | null; opened: LanguageDraft | null }) {
+  return lang.dirty && lang.draft && lang.opened ? { locale: lang.locale, draft: lang.draft, opened: lang.opened } : null;
 }
 
 /** A language's state as the switch names it. */
@@ -470,7 +528,7 @@ export function LanguageFields({ draft, parts, failure, readOnly, onChange, idPr
  * One language being edited: the row it opened with, the draft, its save and
  * its Retranslate. The editors draw it with their own tabs.
  */
-export function useLanguageEditor({ base, versionId, english, parts, languages, initial }: {
+export function useLanguageEditor({ base, versionId, english, parts, languages, initial, onSaved }: {
   base: string;
   versionId: number | null;
   english: LanguageDraft;
@@ -478,6 +536,9 @@ export function useLanguageEditor({ base, versionId, english, parts, languages, 
   languages: Language[];
   // A language draft kept when the console left mid-edit.
   initial?: { locale: string; draft: LanguageDraft; opened: LanguageDraft } | null;
+  // After a language is saved: the job's view of which languages are unusable
+  // is read again.
+  onSaved?: () => void;
 }) {
   const translations = useTranslations(base, versionId);
   const [locale, setLocale] = useState<string>(initial ? initial.locale : 'en');
@@ -517,7 +578,8 @@ export function useLanguageEditor({ base, versionId, english, parts, languages, 
     setSaving(true);
     setFailure(null);
     setSaved(null);
-    const res = await request(`${base}/${versionId}/translations/${encodeURIComponent(locale)}`, 'PUT', draft);
+    const put = languageSaveRequest(base, versionId, locale, draft);
+    const res = await request(put.url, put.method, put.body);
     setSaving(false);
     if (res.ok && res.data && res.data.translation) {
       const row: TranslationRow = res.data.translation;
@@ -529,6 +591,7 @@ export function useLanguageEditor({ base, versionId, english, parts, languages, 
         text: `${languageName(languages, locale)} saved. Its readers get these words from now on.`,
         unusable: Array.isArray(res.data.unusableTranslations) ? res.data.unusableTranslations : [],
       });
+      if (onSaved) onSaved();
       return;
     }
     setFailure(readFailure(res.status, res.data));
@@ -568,6 +631,7 @@ const BODY_TABS: Array<{ key: BodyTabKey; label: string }> = [
 export function LanguageForm({
   language, draft, opened, english, parts, tab, onTab, failure, saving, saved, unusable, canWrite, retranslating,
   placeholders, idPrefix, backLabel, onBack, onChange, onSave, onRevert, onRetranslate, languagesCard, preview, side, languages,
+  hasRow = true, onTranslateOne, onReload,
 }: {
   language: string;
   draft: LanguageDraft;
@@ -595,6 +659,12 @@ export function LanguageForm({
   preview: React.ReactNode;
   side: React.ReactNode;
   languages: Language[];
+  // False when the language has no translation yet: the fields hold the
+  // English to start from, and Translate for this language is offered.
+  hasRow?: boolean;
+  onTranslateOne?: () => void;
+  // Offered when the version is no longer live (a conflict).
+  onReload?: () => void;
 }) {
   const readOnly = !canWrite;
   const changed = isDirty(draft, opened);
@@ -619,14 +689,29 @@ export function LanguageForm({
         {canWrite ? (
           <div className="flex flex-wrap gap-2">
             <button type="button" className={AdminUI.btn.outline} disabled={saving || !changed} onClick={onRevert}>Undo changes</button>
-            <button type="button" id={`${idPrefix}-save`} className={AdminUI.btn.primary} disabled={saving} onClick={onSave}>
+            <button type="button" id={`${idPrefix}-save`} className={AdminUI.btn.primary} disabled={saving || !changed}
+              aria-describedby={changed ? undefined : `${idPrefix}-save-why`} onClick={onSave}>
               {saving ? 'Saving…' : `Save ${language}`}
             </button>
           </div>
         ) : null}
       </div>
+      {canWrite && !changed ? (
+        <p id={`${idPrefix}-save-why`} className="sr-only">Nothing to save yet: change a word first.</p>
+      ) : null}
       {languagesCard}
-      <FailureNotice failure={failure} shownFields={parts} />
+      <FailureNotice failure={failure} shownFields={parts} onReload={onReload} />
+      {hasRow ? null : (
+        <div id={`${idPrefix}-none`} className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm" role="status">
+          <p className="font-semibold">{`No ${language} translation yet.`}</p>
+          <p className="mt-1">{`The fields below show the English to start from, and ${language} readers get the English until there is one.`}</p>
+          {canWrite && onTranslateOne ? (
+            <button type="button" id={`${idPrefix}-translate-one`} className={`${AdminUI.btn.outlineSm} mt-2`} disabled={retranslating} onClick={onTranslateOne}>
+              {retranslating ? 'Translating…' : `Translate ${language}`}
+            </button>
+          ) : null}
+        </div>
+      )}
       {saved ? (
         <p className="rounded-lg bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300" role="status">{saved.text}</p>
       ) : null}
@@ -712,7 +797,7 @@ export function useEditorLanguages({ base, versionId, englishOnly, englishDirty,
   idPrefix: string;
 }) {
   const job = useTranslateJob(base, versionId);
-  const lang = useLanguageEditor({ base, versionId, english, parts, languages, initial });
+  const lang = useLanguageEditor({ base, versionId, english, parts, languages, initial, onSaved: job.refresh });
   const name = languageName(languages, lang.locale);
 
   // When a job finishes, read the translations again; the effect below then
@@ -735,14 +820,25 @@ export function useEditorLanguages({ base, versionId, englishOnly, englishDirty,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang.rows]);
 
+  // The switch sits in a different form on each side of a move, so it is
+  // drawn anew; focus goes back to it, where the keyboard user left it.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    if (typeof document !== 'undefined') document.getElementById(`${idPrefix}-language`)?.focus();
+  });
+
   const switchTo = async (code: string) => {
-    if (code === lang.locale) return;
-    if (lang.dirty && !(await confirmDiscard(`Your changes to ${name} are not saved. Switch and lose them?`))) return;
+    const move = languageMove({ from: lang.locale, to: code, languageDirty: lang.dirty });
+    if (move === 'stay') return;
+    if (move === 'confirm' && !(await confirmDiscard(`Your changes to ${name} are not saved. Switch and lose them?`))) return;
+    refocus.current = true;
     lang.open(code);
   };
 
   const row = lang.rows && lang.locale !== 'en' ? lang.rows[lang.locale] : undefined;
-  const unusable = (row && row.unusable) || (job.status && job.status.unusable && job.status.unusable[lang.locale]) || null;
+  const unusable = unusableReason(row, job.status?.unusable, lang.locale);
 
   const retranslate = async () => {
     if (lang.locale === 'en') return;
@@ -758,7 +854,13 @@ export function useEditorLanguages({ base, versionId, englishOnly, englishDirty,
     }
     if (lang.dirty && !(await confirmDiscard(`Retranslating replaces your unsaved changes to ${name}.`, 'Retranslate'))) return;
     lang.revert();
-    await job.start({ languages: [lang.locale], overwrite: true });
+    await job.start(retranslateBody(lang.locale));
+  };
+  // A language with no translation yet: translate just that one. Nothing an
+  // admin wrote is there to replace.
+  const translateOne = async () => {
+    if (lang.locale === 'en') return;
+    await job.start({ languages: [lang.locale] });
   };
 
   const blockedSwitch = englishDirty ? 'Save the English first, then edit another language.' : versionId == null ? 'Save first, then translate' : null;
@@ -774,7 +876,10 @@ export function useEditorLanguages({ base, versionId, englishOnly, englishDirty,
     </LanguagesCard>
   );
 
-  return { job, lang, card, switchTo, retranslate, unusable, name, retranslating: !!job.status && job.status.state === 'running' };
+  return {
+    job, lang, card, switchTo, retranslate, translateOne, unusable, name, hasRow: !!row,
+    retranslating: !!job.status && job.status.state === 'running',
+  };
 }
 
 /**
@@ -782,12 +887,14 @@ export function useEditorLanguages({ base, versionId, englishOnly, englishDirty,
  * translations it left unusable, and, after a save, the offer to translate
  * the version just saved.
  */
-export function SavedBanner({ text, unusable, translate, languages, labelFor }: {
+export function SavedBanner({ text, unusable, translate, languages, labelFor, onFinished }: {
   text: string;
   unusable?: UnusableItem[];
   translate?: { base: string; versionId: number } | null;
   languages: Language[];
   labelFor?: (item: UnusableItem) => string | null;
+  // When a Translate started here finishes: the list counts again.
+  onFinished?: () => void;
 }) {
   return (
     <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300" role="status">
@@ -798,7 +905,7 @@ export function SavedBanner({ text, unusable, translate, languages, labelFor }: 
         </p>
       ) : null}
       {translate && otherLanguages(languages).length
-        ? <TranslateOffer base={translate.base} versionId={translate.versionId} languages={languages} /> : null}
+        ? <TranslateOffer base={translate.base} versionId={translate.versionId} languages={languages} onFinished={onFinished} /> : null}
     </div>
   );
 }

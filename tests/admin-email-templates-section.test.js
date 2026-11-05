@@ -573,12 +573,15 @@ const noop = () => {};
 
 test('list counts out-of-date languages: usable translations of the live version, and the layout where it differs', () => {
   const { translationSummary, languagesColumn } = load();
-  assert.equal(translationSummary({ locales: OTHERS.map((l) => l.code) }, 12, false), '12 of 12');
-  assert.equal(translationSummary({ locales: ['fr', 'de', 'es', 'it', 'nl', 'pl', 'ja', 'ko', 'tr'] }, 12, false), '9 of 12, 3 need translating');
-  assert.equal(translationSummary({ locales: OTHERS.map((l) => l.code), unusableLocales: ['fr'] }, 12, false),
+  const codes = OTHERS.map((l) => l.code);
+  assert.equal(translationSummary({ locales: codes }, codes, false), '12 of 12');
+  assert.equal(translationSummary({ locales: ['fr', 'de', 'es', 'it', 'nl', 'pl', 'ja', 'ko', 'tr'] }, codes, false), '9 of 12, 3 need translating');
+  assert.equal(translationSummary({ locales: codes, unusableLocales: ['fr'] }, codes, false),
     '11 of 12, 1 needs translating', 'a translation that is not sent is not counted');
-  assert.equal(translationSummary({ locales: [] }, 12, false), '0 of 12, 12 need translating');
-  assert.equal(translationSummary({ locales: ['fr'] }, 12, true), 'English only');
+  assert.equal(translationSummary({ locales: [...codes.slice(1), 'xx', 'en'] }, codes, false), '11 of 12, 1 needs translating',
+    'a language no longer offered, or English, does not count');
+  assert.equal(translationSummary({ locales: [] }, codes, false), '0 of 12, 12 need translating');
+  assert.equal(translationSummary({ locales: ['fr'] }, codes, true), 'English only');
 
   const data = payload();
   const otp = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
@@ -592,6 +595,7 @@ test('list counts out-of-date languages: usable translations of the live version
     onToggleArchived: noop, onNew: noop, onEdit: noop, onDelete: noop, onRestore: noop, onDeleteArchived: noop,
   });
   assert.match(html, /data-email-action="otp"[\s\S]*?12 of 12; layout: 0 of 12, 12 need translating/);
+  assert.match(html, /md:hidden[^>]*>Languages: 12 of 12; layout: 0 of 12, 12 need translating · 2 days ago</, 'a phone names the column it folds in');
   assert.match(html, /data-email-action="admin_test"[\s\S]*?English only/);
   const layouts = render('LayoutList', {
     payload: data, canWrite: true, showArchived: false, now: Date.parse('2026-11-03T12:00:00Z'),
@@ -621,12 +625,7 @@ test('shows per-language progress and failures, in words', () => {
   assert.equal(stateWords('failed:  model refused '), 'Failed: model refused');
   assert.equal(render('TranslateProgressView', { status: { state: 'none', perLanguage: {}, unusable: {} }, languages: LANGUAGES }), '');
 
-  // The polling follows a running job, from the first read: a reload finds it.
-  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
-  assert.match(src, /const res = await request\(`\$\{base\}\/\$\{versionId\}\/translate`\);/);
-  assert.match(src, /if \(res\.data\.state === 'running'\) timer\.current = setTimeout\(poll, POLL_MS\);/);
-  assert.match(src, /useEffect\(\(\) => \{ poll\(\); \}, \[poll\]\);/);
-  assert.match(src, /if \(timer\.current\) clearTimeout\(timer\.current\);/, 'nothing polls after the editor goes');
+  // Following a running job is the poller's: see the poller tests below.
 });
 
 test('Translate is disabled with its reason, and replacing admin edits is its own confirmed action', () => {
@@ -652,11 +651,32 @@ test('Translate is disabled with its reason, and replacing admin edits is its ow
   assert.ok(!/<button/.test(viewOnly), 'a view-only admin sees the progress, not the buttons');
   assert.match(viewOnly, /Finished: 1 translated\./);
 
-  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
-  assert.match(src, /onReplace=\{async \(\) => \{ if \(await confirmReplace\(\)\) job\.start\(\{ overwrite: true \}\); \}\}/);
-  assert.match(src, /title: 'Replace admin edits\?'/);
+  assert.match(dirty, /id="email-translate-replace"[^>]*disabled=""[^>]*aria-describedby="email-translate-blocked"|aria-describedby="email-translate-blocked"[^>]*id="email-translate-replace"/,
+    'the replace button says why it is disabled too');
   for (const file of ['editor.tsx', 'layouts.tsx']) {
     assert.match(read(`frontend/src/features/admin/email-templates/${file}`), /useEditorLanguages\(\{/, `${file} has the languages card`);
+  }
+});
+
+test('replacing admin edits asks first, and Translate does not', async () => {
+  const { TranslateControls } = load();
+  const calls = [];
+  const job = { status: null, failure: null, starting: false, start: async (body) => { calls.push(body); return true; } };
+  const asked = [];
+  const prior = globalThis.AdminConsole;
+  try {
+    const element = TranslateControls({ versionId: 5, englishOnly: false, dirty: false, canWrite: true, languages: LANGUAGES, job });
+    globalThis.AdminConsole = { _confirm: async (opts) => { asked.push(opts); return false; } };
+    await element.props.onReplace();
+    assert.equal(calls.length, 0, 'declined: nothing starts');
+    assert.equal(asked[0].title, 'Replace admin edits?');
+    globalThis.AdminConsole = { _confirm: async () => true };
+    await element.props.onReplace();
+    assert.deepEqual(calls, [{ overwrite: true }]);
+    element.props.onTranslate();
+    assert.deepEqual(calls[1], {}, 'Translate keeps admin edits and asks nothing');
+  } finally {
+    globalThis.AdminConsole = prior;
   }
 });
 
@@ -678,10 +698,15 @@ test('save offers translate, after a template save and a layout save, and names 
   assert.match(section, /englishOnly \? null : \{ base: '\/api\/admin\/email-templates', versionId: row\.id \}/);
   assert.match(section, /\{ base: '\/api\/admin\/email-layouts', versionId: row\.id \}\)\(\)\} \/>/, 'a layout save offers it too');
   assert.match(section, /setBanner\(\{ kind: 'ok', text: done, unusable: unusableOf\(res\.data\) \}\);/, 'restores and deletes name them too');
+  const { unusableOf } = load();
+  assert.deepEqual(unusableOf({ template: {}, unusableTranslations: [{ locale: 'fr', reason: 'x' }] }), [{ locale: 'fr', reason: 'x' }]);
+  assert.deepEqual(unusableOf({ template: {} }), [], 'an older answer without the list names none');
+  assert.deepEqual(unusableOf(null), []);
   for (const file of ['editor.tsx', 'layouts.tsx']) {
-    assert.match(read(`frontend/src/features/admin/email-templates/${file}`),
-      /onSaved\(res\.data\.(template|layout), Array\.isArray\(res\.data\.unusableTranslations\) \? res\.data\.unusableTranslations : \[\]\);/);
+    assert.match(read(`frontend/src/features/admin/email-templates/${file}`), /onSaved\(res\.data\.(template|layout), unusableOf\(res\.data\)\);/);
   }
+  const once = render('SavedBanner', { text: 'Sign-in code v4 is live.', languages: LANGUAGES, translate: null, unusable: [{ locale: 'fr', reason: 'x' }] });
+  assert.equal((once.match(/Saved\./g) || []).length, 0, 'the notice does not repeat "Saved."');
 });
 
 test('a language opens in the same tabs, with the English alongside, and its errors beside its fields', () => {
@@ -727,11 +752,17 @@ test('a language opens in the same tabs, with the English alongside, and its err
   assert.match(saved, /Français saved\. Its readers get these words from now on\./);
   assert.match(saved, /no longer fit and send the English until they are fixed: Français\./);
 
-  // The editors put a language's words into the preview with its locale.
-  assert.match(read('frontend/src/features/admin/email-templates/editor.tsx'), /fixedLocale=\{lang\.locale\}/);
-  assert.match(read('frontend/src/features/admin/email-templates/layouts.tsx'), /fixedLocale=\{lang\.locale\}/);
-  assert.match(read('frontend/src/features/admin/email-templates/translations.tsx'),
-    /request\(`\$\{base\}\/\$\{versionId\}\/translations\/\$\{encodeURIComponent\(locale\)\}`, 'PUT', draft\)/);
+  // A preview of a language is that language, its picker locked to it.
+  const { PreviewPane, languageSaveRequest } = load();
+  const pane = renderToHtml(createElement(PreviewPane, {
+    base: '/api/admin/email-templates', body: { action: 'otp', fields: {} }, mode: 'html', languages: LANGUAGES,
+    englishOnly: false, canWrite: true, onFieldFailure: noop, fixedLocale: 'fr',
+  }));
+  assert.match(pane, /<select[^>]*disabled=""[^>]*>[\s\S]*?<option value="fr" selected="">Français<\/option>/);
+  // The save goes to the version the editor opened on, and says which one.
+  assert.deepEqual(languageSaveRequest('/api/admin/email-templates', 41, 'pt-BR', { subject: 'Oi' }), {
+    url: '/api/admin/email-templates/41/translations/pt-BR', method: 'PUT', body: { subject: 'Oi', expectedLiveId: 41 },
+  });
 });
 
 test('an unusable language says why, that it sends the English, and offers Retranslate', () => {
@@ -742,8 +773,10 @@ test('an unusable language says why, that it sends the English, and offers Retra
   assert.match(html, /<button[^>]*id="email-language-retranslate"[^>]*>Retranslate<\/button>/);
   const viewOnly = render('UnusableLanguageNotice', { language: 'Deutsch', reason: 'r', canWrite: false, busy: false, onRetranslate: noop });
   assert.ok(!/Retranslate/.test(viewOnly));
+  const { retranslateBody } = load();
+  assert.deepEqual(retranslateBody('de'), { languages: ['de'], overwrite: true }, 'Retranslate runs that one language');
   const src = read('frontend/src/features/admin/email-templates/translations.tsx');
-  assert.match(src, /await job\.start\(\{ languages: \[lang\.locale\], overwrite: true \}\);/, 'Retranslate runs that one language');
+  assert.match(src, /await job\.start\(retranslateBody\(lang\.locale\)\);/);
   assert.match(src, /if \(row && row\.origin === 'admin'\) \{[\s\S]*?_confirm\(/, 'and asks first when an admin wrote it');
 });
 
@@ -764,13 +797,22 @@ test('the language switch names each language state, and waits for the English t
   assert.match(blocked, /<select[^>]*disabled=""[^>]*aria-describedby="email-template-language-blocked"/);
   assert.match(blocked, /Save the English first, then edit another language\./);
 
-  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
-  assert.match(src, /if \(lang\.dirty && !\(await confirmDiscard\(`Your changes to \$\{name\} are not saved\. Switch and lose them\?`\)\)\) return;/);
+  const { languageMove, keptLanguage } = load();
+  assert.equal(languageMove({ from: 'fr', to: 'fr', languageDirty: true }), 'stay');
+  assert.equal(languageMove({ from: 'fr', to: 'de', languageDirty: true }), 'confirm', 'unsaved words are asked about');
+  assert.equal(languageMove({ from: 'fr', to: 'en', languageDirty: false }), 'go');
+  const words = { subject: 'Votre code' };
+  assert.deepEqual(keptLanguage({ dirty: true, locale: 'fr', draft: words, opened: { subject: 'x' } }),
+    { locale: 'fr', draft: words, opened: { subject: 'x' } }, 'a language\'s unsaved words are kept');
+  assert.equal(keptLanguage({ dirty: false, locale: 'fr', draft: words, opened: words }), null);
   for (const file of ['editor.tsx', 'layouts.tsx']) {
     const editor = read(`frontend/src/features/admin/email-templates/${file}`);
-    assert.match(editor, /const language = now\.lang\.dirty && now\.lang\.draft && now\.lang\.opened/, `${file}: a language's unsaved words are kept too`);
-    assert.match(editor, /initial: restore\?\.language \|\| null/, `${file}: and come back with Continue editing`);
+    assert.match(editor, /const language = keptLanguage\(now\.lang\);/, `${file}: kept with the draft`);
+    assert.match(editor, /initial: restore\?\.language \|\| null/, `${file}: and back with Continue editing`);
   }
+  // After a move the switch is drawn in the other form; focus goes back to it.
+  assert.match(read('frontend/src/features/admin/email-templates/translations.tsx'),
+    /refocus\.current = true;\s*lang\.open\(code\);/);
 });
 
 test('the template editor shows the languages card on a saved version and not on a new one', () => {
@@ -792,6 +834,153 @@ test('the template editor shows the languages card on a saved version and not on
   }));
   assert.ok(!/id="email-template-language"/.test(englishOnly), 'no language switch for an English-only email');
   assert.match(englishOnly, /This email is sent in English only, so there is nothing to translate\./);
+});
+
+// ── Translate fix round 1 ───────────────────────────────────────────────
+
+function loadPoller() {
+  const { loadTsx } = require('./lib/render-tsx');
+  return loadTsx('frontend/src/features/admin/email-templates/translate-poller.ts');
+}
+
+// A poller with a hand-run clock and a queue of answers to its reads.
+function steppedPoller(answers) {
+  const { createPoller } = loadPoller();
+  const timers = [];
+  const seen = { statuses: [], failures: [], reads: 0 };
+  const poller = createPoller({
+    read: async () => { seen.reads += 1; return answers.shift(); },
+    onStatus: (s) => seen.statuses.push(s.state),
+    onFailure: (f) => seen.failures.push(f),
+    setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; },
+    clearTimer: (t) => { t.cleared = true; },
+  });
+  const tick = async () => {
+    const next = timers.find((t) => !t.cleared && !t.ran);
+    assert.ok(next, 'a read is scheduled');
+    next.ran = true;
+    next.fn();
+    await new Promise((resolve) => setImmediate(resolve));
+    return next.ms;
+  };
+  const pending = () => timers.filter((t) => !t.cleared && !t.ran);
+  return { poller, seen, tick, pending };
+}
+
+const running = (n) => ({ ok: true, status: { state: 'running', perLanguage: { fr: n } } });
+const failed = { ok: false, failure: 'network' };
+
+test('the poller keeps following a running job through failed reads, backing off', async () => {
+  const { nextDelay } = loadPoller();
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map((n) => nextDelay(n)), [2000, 2000, 4000, 8000, 16000, 30000, 30000]);
+
+  const { poller, seen, tick, pending } = steppedPoller([running('pending'), failed, failed, failed, running('saved'),
+    { ok: true, status: { state: 'done', perLanguage: { fr: 'saved' } } }]);
+  await poller.poll();
+  assert.deepEqual(seen.statuses, ['running']);
+  assert.equal(await tick(), 2000);
+  assert.deepEqual(seen.failures, ['network'], 'a failed read is reported');
+  assert.deepEqual(seen.statuses, ['running'], 'and the last status is left as it was');
+  assert.equal(await tick(), 2000, 'first retry');
+  assert.equal(await tick(), 4000, 'then longer');
+  assert.equal(await tick(), 8000);
+  assert.deepEqual(seen.statuses, ['running', 'running'], 'it carried on once a read worked');
+  assert.equal(await tick(), 2000, 'and the pause went back to the start');
+  assert.deepEqual(seen.statuses, ['running', 'running', 'done']);
+  assert.equal(pending().length, 0, 'done: nothing more is read');
+  assert.equal(seen.reads, 6);
+});
+
+test('the poller stops on a stopped job, on a failure with nothing running, and on unmount', async () => {
+  const stoppedJob = steppedPoller([{ ok: true, status: { state: 'stopped', perLanguage: {} } }]);
+  await stoppedJob.poller.poll();
+  assert.equal(stoppedJob.pending().length, 0);
+
+  const firstFails = steppedPoller([failed]);
+  await firstFails.poller.poll();
+  assert.equal(firstFails.pending().length, 0, 'nothing known to be running: no retry loop');
+  assert.deepEqual(firstFails.seen.failures, ['network']);
+
+  const unmounted = steppedPoller([running('pending'), running('saved')]);
+  await unmounted.poller.poll();
+  assert.equal(unmounted.pending().length, 1);
+  unmounted.poller.stop();
+  assert.equal(unmounted.pending().length, 0, 'stop clears the timer');
+  await unmounted.poller.poll();
+  assert.equal(unmounted.seen.reads, 1, 'and nothing reads after it');
+
+  // A read in flight when the editor goes is dropped, not acted on.
+  let release;
+  const { createPoller } = loadPoller();
+  const states = [];
+  let scheduled = 0;
+  const late = createPoller({
+    read: () => new Promise((resolve) => { release = resolve; }),
+    onStatus: (s) => states.push(s.state), onFailure: noop,
+    setTimer: () => { scheduled += 1; return {}; }, clearTimer: noop,
+  });
+  const inFlight = late.poll();
+  late.stop();
+  release(running('pending'));
+  await inFlight;
+  assert.deepEqual(states, []);
+  assert.equal(scheduled, 0);
+
+  // A start that answers with a running job is followed from there.
+  const started = steppedPoller([]);
+  started.poller.seen({ state: 'running', perLanguage: {} });
+  assert.equal(started.pending()[0].ms, 2000);
+
+  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
+  assert.match(src, /return \(\) => \{ alive\.current = false; p\.stop\(\); poller\.current = null; \};/, 'the editor stops it when it goes');
+});
+
+test('a language\'s unusable reason comes from its row once there is one', () => {
+  const { unusableReason } = load();
+  const job = { fr: 'old reason from the job', de: 'job reason' };
+  assert.equal(unusableReason({ locale: 'fr', html: '', text: '', origin: 'admin', unusable: null }, job, 'fr'), null,
+    'a correction just saved cleared it, whatever the job said');
+  assert.equal(unusableReason({ locale: 'fr', html: '', text: '', origin: 'machine', unusable: 'row reason' }, job, 'fr'), 'row reason');
+  assert.equal(unusableReason(undefined, job, 'de'), 'job reason', 'the job stands in before the row is known');
+  assert.equal(unusableReason(undefined, undefined, 'de'), null);
+  assert.equal(unusableReason(undefined, job, 'en'), null);
+  assert.match(read('frontend/src/features/admin/email-templates/translations.tsx'),
+    /useLanguageEditor\(\{ base, versionId, english, parts, languages, initial, onSaved: job\.refresh \}\)/,
+    'a language save reads the job again');
+});
+
+test('an untouched language cannot be saved, and a language with no translation offers Translate for it', () => {
+  const { LanguageForm, readFailure } = load();
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const english = { subject: 'Your code', html: '<p>{{code}}</p>', text: '{{code}}' };
+  const base = {
+    language: 'Italiano', draft: english, opened: english, english, parts: ['subject', 'html', 'text'],
+    tab: 'html', onTab: noop, failure: null, saving: false, saved: null, unusable: null, canWrite: true, retranslating: false,
+    placeholders: [], idPrefix: 'email-translation', backLabel: '‹ All templates', onBack: noop, onChange: noop, onSave: noop,
+    onRevert: noop, onRetranslate: noop, languagesCard: null, preview: null, side: null, languages: LANGUAGES,
+  };
+  const none = renderToHtml(createElement(LanguageForm, { ...base, hasRow: false, onTranslateOne: noop }));
+  assert.match(none, /<button[^>]*id="email-translation-save"[^>]*disabled=""[^>]*>Save Italiano<\/button>/, 'the English cannot be saved as Italian by one click');
+  assert.match(none, /aria-describedby="email-translation-save-why"/);
+  assert.match(none, /No Italiano translation yet\./);
+  assert.match(none, /show the English to start from/);
+  assert.match(none, /<button[^>]*id="email-translation-translate-one"[^>]*>Translate Italiano<\/button>/);
+  const edited = renderToHtml(createElement(LanguageForm, { ...base, hasRow: false, draft: { ...english, subject: 'Il tuo codice' } }));
+  assert.ok(!/id="email-translation-save"[^>]*disabled/.test(edited), 'a changed word can be saved');
+  const conflict = renderToHtml(createElement(LanguageForm, { ...base, onReload: noop,
+    failure: readFailure(409, { code: 'conflict', error: 'Someone else changed this since you opened it. Reload to see their version, then make your change again.' }) }));
+  assert.match(conflict, /Someone else changed this/);
+  assert.match(conflict, /<button[^>]*>Reload<\/button>/, 'a correction to a version no longer live offers Reload');
+  for (const file of ['editor.tsx', 'layouts.tsx']) {
+    assert.match(read(`frontend/src/features/admin/email-templates/${file}`),
+      /hasRow=\{languages\.hasRow\} onTranslateOne=\{languages\.translateOne\} onReload=\{reload\}/);
+  }
+});
+
+test('a Translate started from the banner reloads the list when it finishes', () => {
+  const src = read('frontend/src/features/admin/email-templates/translations.tsx');
+  assert.match(src, /if \(wasRunning\.current && \(state === 'done' \|\| state === 'stopped'\)\) \{\s*wasRunning\.current = false;\s*if \(onFinished\) onFinished\(\);/);
+  assert.match(read(SECTION), /labelFor=\{\(item\) => unusableWhere\(payload, item\)\} onFinished=\{load\} \/>/);
 });
 
 // ── Final review ────────────────────────────────────────────────────────

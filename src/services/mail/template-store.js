@@ -299,14 +299,19 @@ async function saveTranslation(pool, kind, id, locale, fields, origin) {
  * `keepAdmin`: a machine translation does not replace an admin's; null is
  * returned instead. The statements are written out for the SQL inventory.
  */
-async function saveCheckedTranslation(pool, kind, id, locale, fields, origin, { check = noCheck, keepAdmin = false } = {}) {
+// `requireLive`: an admin's correction is to what readers get, so it is
+// refused (conflict) when the version is no longer the live one. The live
+// row is held FOR SHARE, so a save that would archive it waits for this.
+async function saveCheckedTranslation(pool, kind, id, locale, fields, origin, { check = noCheck, keepAdmin = false, requireLive = false } = {}) {
   if (kind !== 'template' && kind !== 'layout') throw fail('not_found', `Unknown translation kind: ${kind}`);
   if (origin !== 'machine' && origin !== 'admin') throw fail('invalid_origin', 'origin must be machine or admin');
   const f = (name) => (fields && fields[name] != null ? String(fields[name]) : '');
   return inTransaction(pool, async (client) => {
     if (kind === 'template') {
-      const { rows: [row] } = await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL', [id]);
+      const { rows: [row] } = await client.query(
+        `SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL${requireLive ? ' FOR SHARE' : ''}`, [id]);
       if (!row) throw fail('not_found', 'That version does not exist');
+      if (requireLive && row.status !== 'live') throw fail('conflict', 'That version is no longer live');
       const layout = row.layout_family_id == null ? null : await liveLayout(client, row.layout_family_id);
       // Its layout was replaced while this waited: the new one has not been read.
       if (row.layout_family_id != null && !layout) throw fail('retry', 'The layout changed while this was saved');
@@ -329,6 +334,7 @@ async function saveCheckedTranslation(pool, kind, id, locale, fields, origin, { 
     await lock(client, 'email_layouts', peek.family_id);
     const { rows: [row] } = await client.query('SELECT * FROM email_layouts WHERE id = $1 AND deleted_at IS NULL', [id]);
     if (!row) throw fail('not_found', 'That version does not exist');
+    if (requireLive && row.status !== 'live') throw fail('conflict', 'That version is no longer live');
     const templates = row.status === 'live' ? await wearers(client, row.family_id) : [];
     await check({ client, row, templates });
     const { rows: [saved] } = await client.query(

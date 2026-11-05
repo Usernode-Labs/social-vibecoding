@@ -177,6 +177,10 @@ export function editedLabel(row: { created_by: number | null; created_at: string
   return String(row.created_at).slice(0, 10);
 }
 
+/** The translations a write left unusable, from its answer (an empty list when none). */
+export const unusableOf = (data: any): Array<{ locale: string; reason: string; action?: string; templateId?: number; layoutId?: number }> => (
+  data && Array.isArray(data.unusableTranslations) ? data.unusableTranslations : []);
+
 export const isLive = (row: { status: string; deleted_at: string | null }) => row.status === 'live' && !row.deleted_at;
 
 export function liveTemplate(payload: TemplatesPayload, action: string): TemplateRow | null {

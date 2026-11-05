@@ -30,7 +30,8 @@
 //                                                           (body { overwrite } to replace an admin's own)
 //   GET    /api/admin/email-templates/:id/translate          its progress, any admin
 //   GET    /api/admin/email-templates/:id/translations       every language of that version
-//   PUT    /api/admin/email-templates/:id/translations/:locale  an admin's correction
+//   PUT    /api/admin/email-templates/:id/translations/:locale  an admin's correction, to the
+//                                                           live version only ({ expectedLiveId })
 // and the same under /api/admin/email-layouts, where DELETE takes the layout's
 // family id (a layout is deleted as a whole) and `replacementId` is a family id;
 // everything else there takes a layout version's id.
@@ -513,7 +514,7 @@ function emailTemplateAdminRoutes(pool, config) {
             || !body.languages.every((code) => typeof code === 'string' && code !== 'en' && known.has(code))) {
             throw invalid([{ field: 'languages', message: 'Choose languages from the list of languages Homeroom offers.' }]);
           }
-          languages = body.languages;
+          languages = [...new Set(body.languages)];
         }
         const { started, job } = await translate.startTranslation(pool, kind, id, { overwrite, languages, userId: req.user.id });
         if (started) {
@@ -546,6 +547,12 @@ function emailTemplateAdminRoutes(pool, config) {
       try {
         const id = versionId(req, kind);
         const body = req.body || {};
+        // The version the admin opened is the live one they saw; when they
+        // name another, their screen is stale.
+        const expectedLiveId = optionalId(body, 'expectedLiveId');
+        if (expectedLiveId !== null && expectedLiveId !== id) {
+          throw Object.assign(new Error('Another version was saved first'), { code: 'conflict' });
+        }
         const fields = kind === 'template'
           ? { subject: str(body.subject), preheader: str(body.preheader), why: str(body.why), html: str(body.html), text: str(body.text) }
           : { html: str(body.html), text: str(body.text) };

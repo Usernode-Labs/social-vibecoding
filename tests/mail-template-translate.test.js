@@ -369,6 +369,30 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
     const retranslated = (await call('GET', `/api/admin/email-templates/${row.id}/translations`, undefined, 'view')).body.translations.fr;
     assert.equal(retranslated.origin, 'machine', 'the admin text was replaced, as asked');
     assert.equal(retranslated.unusable, null);
+    // Naming the same language twice runs it once.
+    const twice = await call('POST', `/api/admin/email-templates/${row.id}/translate`, { languages: ['fr', 'fr'], overwrite: true });
+    assert.equal(twice.status, 202, JSON.stringify(twice.body));
+    assert.deepEqual(Object.keys(twice.body.perLanguage), ['fr']);
+    for (let i = 0; i < 100; i++) {
+      if ((await call('GET', `/api/admin/email-templates/${row.id}/translate`, undefined, 'view')).body.state !== 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    // A correction goes to the version readers get: a stale screen is a conflict.
+    const staleId = await call('PUT', `/api/admin/email-templates/${row.id}/translations/fr`, { ...fields, expectedLiveId: row.id + 1000 });
+    assert.equal(staleId.status, 409);
+    assert.equal(staleId.body.code, 'conflict');
+    const newer = await freshVersion('otp');
+    assert.notEqual(newer.id, row.id);
+    const before = (await call('GET', `/api/admin/email-templates/${row.id}/translations`, undefined, 'view')).body.translations.fr;
+    const archived = await call('PUT', `/api/admin/email-templates/${row.id}/translations/fr`, { ...fields, subject: 'Trop tard', expectedLiveId: row.id });
+    assert.equal(archived.status, 409, JSON.stringify(archived.body));
+    assert.equal(archived.body.code, 'conflict');
+    assert.match(archived.body.error, /reload/i);
+    const after = (await call('GET', `/api/admin/email-templates/${row.id}/translations`, undefined, 'view')).body.translations.fr;
+    assert.equal(after.subject, before.subject, 'nothing was written to the archived version');
+    const oldLayout = await liveLayout();
+    const layoutNow = await call('PUT', `/api/admin/email-layouts/${oldLayout.id}/translations/fr`, { html: oldLayout.html, text: oldLayout.text, expectedLiveId: oldLayout.id });
+    assert.equal(layoutNow.status, 200, JSON.stringify(layoutNow.body));
     const englishOnly = await live('admin_test');
     assert.equal((await call('POST', `/api/admin/email-templates/${englishOnly.id}/translate`, {})).status, 400);
     const layout = await liveLayout();

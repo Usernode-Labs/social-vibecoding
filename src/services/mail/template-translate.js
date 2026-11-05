@@ -280,11 +280,12 @@ async function versionFor(pool, kind, id) {
  * Returns { translation, unusableTranslations }; translation is null when an
  * admin's was kept. Throws `invalid` with errors.
  */
-async function saveChecked(pool, kind, id, locale, fields, origin, { overwrite = true } = {}) {
+async function saveChecked(pool, kind, id, locale, fields, origin, { overwrite = true, requireLive = false } = {}) {
   let unusableTranslations = [];
   const keepAdmin = origin === 'machine' && !overwrite;
   const translation = await store.saveCheckedTranslation(pool, kind, id, locale, pick(fields, fieldsOf(kind)), origin, {
     keepAdmin,
+    requireLive,
     check: async ({ client, row, layout, layoutTranslation, templates }) => {
       if (kind === 'template') {
         const problems = templateProblems(row, fields, layoutPartOf(layoutTranslation, layout));
@@ -301,14 +302,18 @@ async function saveChecked(pool, kind, id, locale, fields, origin, { overwrite =
   return { translation, unusableTranslations };
 }
 
-/** An admin's correction of one language. */
+/**
+ * An admin's correction of one language, to the version readers get now:
+ * a version that is no longer live (someone saved, restored or deleted since
+ * the admin opened it) is a conflict, so the screen can say so and reload.
+ */
 async function saveCorrection(pool, kind, id, locale, fields, { deps = {} } = {}) {
   const languages = deps.languages || configuredLanguages();
   if (typeof locale !== 'string' || locale === 'en' || !Object.hasOwn(languages, locale)) {
     throw invalid([{ field: 'locale', message: 'Choose one of the configured languages other than English.' }]);
   }
   await versionFor(pool, kind, id);
-  return saveChecked(pool, kind, id, locale, fields || {}, 'admin');
+  return saveChecked(pool, kind, id, locale, fields || {}, 'admin', { requireLive: true });
 }
 
 // ── The job ────────────────────────────────────────────────────────────

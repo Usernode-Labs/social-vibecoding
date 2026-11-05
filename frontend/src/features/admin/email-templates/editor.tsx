@@ -6,12 +6,12 @@ import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
   confirmDiscard, errorsFor, FailureNotice, FieldErrors, isDirty, keepDraft, liveLayouts, liveTemplate,
-  PlaceholderList, readFailure, request, useUnloadGuard, type Failure, type KeptDraft, type TemplateRow, type TemplatesPayload,
+  PlaceholderList, readFailure, request, unusableOf, useUnloadGuard, type Failure, type KeptDraft, type TemplateRow, type TemplatesPayload,
 } from './shared';
 import { insertAt, UploadImageButton } from './image-panel';
 import { VisualTab } from './visual-tab';
 import {
-  LanguageForm, TEMPLATE_PARTS, useEditorLanguages, type LanguageDraft, type UnusableItem,
+  keptLanguage, LanguageForm, TEMPLATE_PARTS, useEditorLanguages, type LanguageDraft, type UnusableItem,
 } from './translations';
 
 // The template editor: what the email is for, its name, the layout it wears,
@@ -329,8 +329,7 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     const now = latest.current;
     if (settled.current || !(now.dirty || now.lang.dirty)) return;
     const name = now.draft.name || payload.actions.find((a) => a.action === action)?.label || 'this email';
-    const language = now.lang.dirty && now.lang.draft && now.lang.opened
-      ? { locale: now.lang.locale, draft: now.lang.draft, opened: now.lang.opened } : null;
+    const language = keptLanguage(now.lang);
     const label = language ? `${name} (${payload.languages.find((l) => l.code === language.locale)?.label || language.locale})` : name;
     keepDraft({ kind: 'template', action, isNew, label, draft: now.draft, opened, openedLiveId: openedLive.id, language });
   }, [action, isNew, payload, opened, openedLive]);
@@ -355,7 +354,7 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     setSaving(false);
     if (res.ok && res.data && res.data.template) {
       settled.current = true;
-      onSaved(res.data.template, Array.isArray(res.data.unusableTranslations) ? res.data.unusableTranslations : []);
+      onSaved(res.data.template, unusableOf(res.data));
       return;
     }
     const refused = readFailure(res.status, res.data);
@@ -397,6 +396,7 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
         canWrite={canWrite} retranslating={languages.retranslating} placeholders={info ? info.placeholders : []}
         idPrefix="email-translation" backLabel="‹ All templates" onBack={leave} onChange={lang.setField} onSave={lang.save}
         onRevert={lang.revert} onRetranslate={languages.retranslate} languagesCard={languages.card} languages={payload.languages}
+        hasRow={languages.hasRow} onTranslateOne={languages.translateOne} onReload={reload}
         preview={(
           <PreviewPane base="/api/admin/email-templates" body={{ action: draft.action, fields: languageFields }}
             mode={tab === 'text' ? 'text' : 'html'} languages={payload.languages} englishOnly={false} canWrite={canWrite}

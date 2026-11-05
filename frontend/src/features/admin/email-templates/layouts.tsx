@@ -6,12 +6,12 @@ import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
   confirmDiscard, editedLabel, errorsFor, FailureNotice, FieldErrors, isDirty, isLive, keepDraft,
-  liveTemplate, PlaceholderList, readFailure, request, useUnloadGuard,
+  liveTemplate, PlaceholderList, readFailure, request, unusableOf, useUnloadGuard,
   type Failure, type KeptDraft, type LayoutRow, type TemplatesPayload,
 } from './shared';
 import { VisualTab } from './visual-tab';
 import {
-  LAYOUT_PARTS, LanguageForm, otherLanguages, translationSummary, useEditorLanguages,
+  keptLanguage, LAYOUT_PARTS, LanguageForm, otherLanguages, translationSummary, useEditorLanguages,
   type LanguageDraft, type UnusableItem,
 } from './translations';
 
@@ -86,7 +86,7 @@ export function LayoutList({
                       <span className={AdminUI.badge.success}>Live</span>
                     </div>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5" title={using.join(', ')}>
-                      {`${usedByLabel(using)} · ${translationSummary(l, otherLanguages(payload.languages).length, false)} · ${editedLabel(l, now)}`}
+                      {`${usedByLabel(using)} · ${translationSummary(l, otherLanguages(payload.languages).map((x) => x.code), false)} · ${editedLabel(l, now)}`}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -184,8 +184,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
   useEffect(() => () => {
     const now = latest.current;
     if (settled.current || !(now.dirty || now.lang.dirty)) return;
-    const language = now.lang.dirty && now.lang.draft && now.lang.opened
-      ? { locale: now.lang.locale, draft: now.lang.draft, opened: now.lang.opened } : null;
+    const language = keptLanguage(now.lang);
     const name = now.draft.name || 'a new layout';
     const label = language ? `${name} (${payload.languages.find((l) => l.code === language.locale)?.label || language.locale})` : name;
     keepDraft({ kind: 'layout', familyId, label, draft: now.draft, opened, openedLiveId, language });
@@ -222,7 +221,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
     setSaving(false);
     if (res.ok && res.data && res.data.layout) {
       settled.current = true;
-      onSaved(res.data.layout, Array.isArray(res.data.unusableTranslations) ? res.data.unusableTranslations : []);
+      onSaved(res.data.layout, unusableOf(res.data));
       return;
     }
     const refused = readFailure(res.status, res.data);
@@ -257,6 +256,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
         canWrite={canWrite} retranslating={languages.retranslating} placeholders={payload.layoutPlaceholders}
         idPrefix="email-layout-translation" backLabel="‹ All layouts" onBack={leave} onChange={lang.setField} onSave={lang.save}
         onRevert={lang.revert} onRetranslate={languages.retranslate} languagesCard={languages.card} languages={payload.languages}
+        hasRow={languages.hasRow} onTranslateOne={languages.translateOne} onReload={reload}
         preview={(
           <PreviewPane base="/api/admin/email-layouts"
             body={{ action: shown, fields: { name: draft.name, html: lang.draft.html || '', text: lang.draft.text || '' } }}

@@ -8,14 +8,15 @@ import { TemplateList } from './email-templates/list';
 import { draftFrom, ENGLISH_UNTIL_TRANSLATED, expectedLiveFor, TemplateEditor, TemplateForm } from './email-templates/editor';
 import { LayoutEditor, LayoutList } from './email-templates/layouts';
 import { layoutReplacements, ReplaceDialog, templateReplacements } from './email-templates/replace-dialog';
-import { PreviewView } from './email-templates/preview';
+import { PreviewPane, PreviewView } from './email-templates/preview';
 import {
-  FailureNotice, isDirty, keepDraft, keptDraft, KeptDraftNotice, liveTemplate, PlaceholderList, readFailure, request, isLive,
+  FailureNotice, isDirty, keepDraft, unusableOf, keptDraft, KeptDraftNotice, liveTemplate, PlaceholderList, readFailure, request, isLive,
   type Failure, type KeptDraft, type LayoutRow, type TemplateRow, type TemplatesPayload,
 } from './email-templates/shared';
 import {
   SavedBanner, TranslateProgressView, LanguageForm, translationSummary, languagesColumn, jobSummary, stateWords,
-  UnusableLanguageNotice, LanguageSwitch, TranslateControlsView, translateBlocked, type UnusableItem,
+  UnusableLanguageNotice, LanguageSwitch, TranslateControlsView, translateBlocked, unusableReason, languageSaveRequest,
+  retranslateBody, languageMove, keptLanguage, TranslateControls, type UnusableItem,
 } from './email-templates/translations';
 
 // Admin > Email templates (#admin/email-templates): every email Homeroom
@@ -68,8 +69,6 @@ function deletedText(kind: 'template' | 'layout', gone: TemplateRow | LayoutRow,
   const to = fresh && movedTo != null ? fresh.layouts.find((l) => l.family_id === movedTo && isLive(l)) : null;
   return to ? `The layout ${gone.name} was deleted. Its emails now use ${to.name}.` : `The layout ${gone.name} was deleted.`;
 }
-
-const unusableOf = (data: any): UnusableItem[] => (data && Array.isArray(data.unusableTranslations) ? data.unusableTranslations : []);
 
 // Which email or layout an unusable translation belongs to, for the notice.
 function unusableWhere(payload: TemplatesPayload, item: UnusableItem): string | null {
@@ -294,7 +293,7 @@ function EmailTemplatesSection() {
       <div ref={bannerRef} tabIndex={-1} className="outline-none space-y-2" id="email-templates-banner">
         {banner && banner.kind === 'ok' ? (
           <SavedBanner text={banner.text} unusable={banner.unusable} translate={banner.translate}
-            languages={payload.languages} labelFor={(item) => unusableWhere(payload, item)} />
+            languages={payload.languages} labelFor={(item) => unusableWhere(payload, item)} onFinished={load} />
         ) : null}
         {banner && banner.kind === 'failure'
           ? <FailureNotice failure={banner.failure} onReload={reload} onRetry={banner.retry} />
@@ -357,4 +356,5 @@ export {
   deletedText, isDirty, KeptDraftNotice, TemplateEditor, LayoutEditor, keepDraft, keptDraft, expectedLiveFor,
   SavedBanner, TranslateProgressView, LanguageForm, translationSummary, languagesColumn, jobSummary, stateWords,
   UnusableLanguageNotice, LanguageSwitch, TranslateControlsView, translateBlocked, unusableWhere,
+  unusableReason, languageSaveRequest, retranslateBody, languageMove, keptLanguage, TranslateControls, unusableOf, PreviewPane,
 };

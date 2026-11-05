@@ -113,7 +113,7 @@ export function TemplateList({
                         <span className={AdminUI.badge.success}>Live</span>
                         {/* The two columns a phone has no room for, as one line. */}
                         <span className="md:hidden basis-full text-xs text-zinc-500 dark:text-zinc-400">
-                          {`${languagesColumn(payload, a.englishOnly, live)} · ${editedLabel(live, now)}`}
+                          {`Languages: ${languagesColumn(payload, a.englishOnly, live)} · ${editedLabel(live, now)}`}
                         </span>
                       </div>
                     ) : <span className={AdminUI.badge.warn}>No live version</span>}
