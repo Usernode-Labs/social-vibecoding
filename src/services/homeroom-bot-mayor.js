@@ -88,6 +88,7 @@ const { withoutEmDashes } = require('./em-dashes');
 const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
+const turnEngine = require('./homeroom-bot-turn-engine');
 const { GITHUB_ISSUE_BODY_MAX } = require('./issue-body-limit');
 const { labelledAsPullRequest } = require('./request-mentions');
 
@@ -3896,8 +3897,12 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const toolsUsed = [];
   // What a failure after this point still records (turn).
   state.turn = t;
+  // The turn a tool's own model calls count toward (homeroom-bot-already-done.js).
+  ctx.turn = t;
   state.tools = toolsUsed;
-  let rounds = 0;
+  // The turn's rounds and its limit, moved by the turn engine and by this
+  // turn (a refused stand-in's extra round, the claims correction).
+  const turnRounds = { rounds: 0, limit: MAX_ROUNDS };
   let finalText = '';
   let error = null;
   let errorStatus = null;
@@ -3995,7 +4000,6 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       }
       if (ctx.owed) messages.push({ role: 'system', content: ctx.owed });
       const ids = new Set();
-      let limit = MAX_ROUNDS;
       let preambles = 0;
       // #6346: the last round is told once, and a stand-in gets one more
       // round, even past the limit (the voice's own guards).
@@ -4003,78 +4007,89 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       let handledStandIns = 0;
       // P1: where the turn's own rounds begin, for compactRounds.
       const turnFrom = messages.length;
-      const runRounds = async () => {
-        while (rounds < limit && !ctx.reply && !ctx.drawScreen) {
-          rounds += 1;
-          state.rounds = rounds;
-          // P1: room for this round's calls and the next request, or this
-          // round replies (the transport's limit on messages).
-          compactRounds(messages, { from: turnFrom });
-          const last = rounds === limit || messages.length + MAX_CALLS_PER_ROUND + 2 > MAX_MESSAGES;
-          // #6346: the last round is told so, and can only pick a tool that
-          // ends the turn: answer, offer a draft, or hand a screen over.
-          if (last && warnedAt !== limit) {
-            messages.push({ role: 'user', content: CHAT_LAST_ROUND_NOTE });
-            warnedAt = limit;
-          }
+      // This round's: the words beside its calls, and the pictures its
+      // platform reads brought back (picturesMessage).
+      let beside = null;
+      let pictures = [];
+      // 5 Nov 2026: the chat is one profile on Homeroom bot's turn engine
+      // (homeroom-bot-turn-engine.js), which counts the rounds, asks, and
+      // keeps each call and result. What follows is what only the chat does.
+      const chat = {
+        messages, ids, normalize: normalizeCalls, parseArgs, resultChars: MAX_TOOL_RESULT_CHARS, cut: clip,
+        // #3685: one failed request used to end the turn with "I couldn't
+        // answer just now", whatever the round had already read.
+        ask: (options) => askModel(t, options),
+        where: (n) => `r${n}`,
+        // The turn ends with its reply, or with a screen handed to the designer.
+        done: () => !!ctx.reply || !!ctx.drawScreen,
+        onRound: ({ rounds }) => { state.rounds = rounds; },
+        // P1: room for this round's calls and the next request, or this
+        // round replies (the transport's limit on messages).
+        beforeRound: () => compactRounds(messages, { from: turnFrom }),
+        isLast: ({ rounds, limit }) => rounds === limit || messages.length + MAX_CALLS_PER_ROUND + 2 > MAX_MESSAGES,
+        // #6346: the last round is told so, and can only pick a tool that
+        // ends the turn: answer, offer a draft, or hand a screen over.
+        offer: ({ last, limit }) => {
+          const note = last && warnedAt !== limit ? CHAT_LAST_ROUND_NOTE : null;
+          if (note) warnedAt = limit;
           const ending = last ? tools.filter((tl) => CHAT_LAST_ROUND(tl.function.name)) : tools;
-          // #3685: one failed request used to end the turn with "I couldn't
-          // answer just now", whatever the round had already read.
-          const res = await askModel(t, {
-            messages, tools: ending, where: `r${rounds}`,
+          return {
+            note,
+            tools: ending,
             toolChoice: last
               ? (ending.length ? 'required' : { type: 'function', function: { name: 'reply' } })
               : 'auto',
-          });
-          const calls = normalizeCalls(res.toolCalls, rounds, ids);
-          if (!calls.length) {
-            // 1 Nov 2026: words that only say what it will do next are not
-            // the answer while it can still do it (announcesOnly).
-            const said = cleanReply(res.content);
-            if (goesOnAfter(said, { rounds, limit, nudged: preambles, messages: messages.length })) {
-              preambles += 1;
-              t.failures.push(`r${rounds}:preamble`);
-              messages.push({ role: 'assistant', content: String(res.content) });
-              messages.push({ role: 'user', content: PREAMBLE_NOTE });
-              continue;
-            }
-            // #6346: an answer written without its reply tool is checked the
-            // same way: a stand-in gets one more round, then gives up.
-            if (isStandIn(said)) {
-              t.failures.push('stand_in');
-              ctx.standIns += 1;
-              if (ctx.standIns > 1) { ctx.gaveUp = true; finalText = ''; break; }
-              if (said) messages.push({ role: 'assistant', content: said });
-              messages.push({ role: 'user', content: CHAT_STAND_IN_NOTE });
-              // One more round, even past the limit (it is warned again).
-              handledStandIns = ctx.standIns;
-              limit = Math.max(limit, rounds + 1);
-              continue;
-            }
-            finalText = res.content || '';
-            break;
+          };
+        },
+        onWords: (res, { rounds, limit }) => {
+          // 1 Nov 2026: words that only say what it will do next are not
+          // the answer while it can still do it (announcesOnly).
+          const said = cleanReply(res.content);
+          if (goesOnAfter(said, { rounds, limit, nudged: preambles, messages: messages.length })) {
+            preambles += 1;
+            t.failures.push(`r${rounds}:preamble`);
+            messages.push({ role: 'assistant', content: String(res.content) });
+            messages.push({ role: 'user', content: PREAMBLE_NOTE });
+            return 'continue';
           }
+          // #6346: an answer written without its reply tool is checked the
+          // same way: a stand-in gets one more round, then gives up.
+          if (isStandIn(said)) {
+            t.failures.push('stand_in');
+            ctx.standIns += 1;
+            if (ctx.standIns > 1) { ctx.gaveUp = true; finalText = ''; return 'stop'; }
+            if (said) messages.push({ role: 'assistant', content: said });
+            messages.push({ role: 'user', content: CHAT_STAND_IN_NOTE });
+            // One more round, even past the limit (it is warned again).
+            handledStandIns = ctx.standIns;
+            turnRounds.limit = Math.max(turnRounds.limit, rounds + 1);
+            return 'continue';
+          }
+          finalText = res.content || '';
+          return 'stop';
+        },
+        onCalls: (res) => {
           // 2 Nov 2026: words beside these calls are the start of the answer (besideWords).
-          const beside = besideWords(res.content);
+          beside = besideWords(res.content);
           if (beside) ctx.besides = [...(ctx.besides || []), beside];
-          messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
-          const pictures = [];
-          for (const call of calls) {
-            const name = call.function.name;
-            toolsUsed.push(name.slice(0, 40));
-            const args = parseArgs(call.function.arguments);
-            // 1 Nov 2026: the working card's words, as the call starts.
-            sayDoing(pool, ctx, name, args);
-            const result = platform && PLATFORM_TOOLS.includes(name)
-              ? await platformCall(platform, name, args, pictures)
-              : await runTool(pool, ctx, name, args);
-            if (!(platform && PLATFORM_TOOLS.includes(name))) noteRequests(ctx, result);
-            // P1: what it read, for the reply's "Looked at" line.
-            noteLookup(ctx, name, args, result);
-            // #6307: the projects the tools returned, which a reply may name.
-            noteKnownProjects(ctx, result);
-            messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), MAX_TOOL_RESULT_CHARS) });
-          }
+          pictures = [];
+        },
+        call: async (call, name, args) => {
+          toolsUsed.push(name.slice(0, 40));
+          // 1 Nov 2026: the working card's words, as the call starts.
+          sayDoing(pool, ctx, name, args);
+          const onPlatform = platform && PLATFORM_TOOLS.includes(name);
+          const result = onPlatform
+            ? await platformCall(platform, name, args, pictures)
+            : await runTool(pool, ctx, name, args);
+          if (!onPlatform) noteRequests(ctx, result);
+          // P1: what it read, for the reply's "Looked at" line.
+          noteLookup(ctx, name, args, result);
+          // #6307: the projects the tools returned, which a reply may name.
+          noteKnownProjects(ctx, result);
+          return result;
+        },
+        afterCalls: ({ rounds }) => {
           const shown = picturesMessage(takeImages({ images: pictures }));
           if (shown) messages.push(shown);
           if (beside && !ctx.reply && !ctx.besideNoted) {
@@ -4083,13 +4098,15 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           }
           // A reply tool that refused a stand-in: one more round, even past
           // the limit (the next one is warned again).
-          if (ctx.gaveUp) break;
+          if (ctx.gaveUp) return 'stop';
           if (ctx.standIns > handledStandIns) {
             handledStandIns = ctx.standIns;
-            limit = Math.max(limit, rounds + 1);
+            turnRounds.limit = Math.max(turnRounds.limit, rounds + 1);
           }
-        }
+          return undefined;
+        },
       };
+      const runRounds = () => turnEngine.runRounds(turnRounds, chat);
       await runRounds();
       // #3769, #3772: what the reply says was done is checked against what
       // this turn's tools did, and every request number it names against the
@@ -4116,7 +4133,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         ctx.besideNoted = false;
         // One round for a tool (offer_request, say) and one for the reply,
         // or the reply alone when two would not fit the transport's limit.
-        limit = rounds + (messages.length + MAX_CALLS_PER_ROUND + 2 <= MAX_MESSAGES ? 2 : 1);
+        turnRounds.limit = turnRounds.rounds + (messages.length + MAX_CALLS_PER_ROUND + 2 <= MAX_MESSAGES ? 2 : 1);
         // #6346: the correction gets its own source reads, as the voice's
         // does; it may have to read what it has to describe.
         ctx.sourceReads = 0;
@@ -4158,25 +4175,17 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   if (!text && !ctx.offer && !ctx.drawScreen) {
     // The model gave no answer. Why is recorded; what can still be said is.
     // A turn that gave up on its stand-in says so, never the stand-in word.
-    if (!error) error = ctx.gaveUp ? 'stand_in' : rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
+    if (!error) error = ctx.gaveUp ? 'stand_in' : turnRounds.rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
     ({ text, cards, fallback, defer } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
   }
   await recordTurn(pool, {
-    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds, tools: toolsUsed,
+    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,
     inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd, error,
     failures: t.failures, fallback: defer && fallback === 'plain' ? 'plain_later' : fallback,
   });
   state.recorded = true;
   // The bot's own weekly cap counts it too, as its other turns do.
-  if (t.usage.costUsd > 0) {
-    try {
-      if (await require('./openrouter-managed-keys').usesIncludedKey(pool, bot.id)) {
-        await require('./limits').recordSpend(pool, bot.id, Math.round(t.usage.costUsd * 1e6) / 1e4, { byok: false });
-      }
-    } catch (err) {
-      log.warn('homeroom-bot-mayor', 'Could not record a DM turn\'s spend', { err: err.message });
-    }
-  }
+  await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a DM turn', category: 'homeroom-bot-mayor' });
   if (defer) {
     // #3772: asked again on its own (the DM machine's timer, told through
     // onLater). A later try says nothing until it has an answer, and the

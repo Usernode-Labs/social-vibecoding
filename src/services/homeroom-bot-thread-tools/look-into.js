@@ -462,14 +462,9 @@ async function lookInto(pool, config, { user, app, question, notes = null, since
   // The bot's own weekly cap, once across the item's attempts.
   if (costUsd > 0) {
     await steps.once(`${deps.turnKey || 'look'}:debit`, async () => {
-      try {
-        const managed = deps.managedOpenRouter || require('../openrouter-managed-keys');
-        if (await managed.usesIncludedKey(pool, bot.id)) {
-          await (deps.limits || require('../limits')).recordSpend(pool, bot.id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
-        }
-      } catch (err) {
-        log.warn('homeroom-bot-look', 'Could not debit a look\'s spend', { err: err.message });
-      }
+      await require('../homeroom-bot-turn-engine').chargeTurn(pool, bot.id, costUsd, {
+        what: 'a look', category: 'homeroom-bot-look', deps,
+      });
       return true;
     });
   }

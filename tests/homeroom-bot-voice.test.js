@@ -62,6 +62,9 @@ test('a mention of the bot is its handle or its name', () => {
 test('words a DM or a chat passed on are not answered twice', () => {
   assert.equal(voice.isRelay('Make it blue\n\n(Sent in a chat with Homeroom bot. The change, as Homeroom bot understood it: blue.)'), true);
   assert.equal(voice.isRelay('Make it blue'), false);
+  // A draft posted from a private thread was written with the bot there: not answered again here.
+  assert.equal(voice.isRelay('For #41: a limit of five packets each\n\n(Posted from a private draft in a chat with Homeroom bot.)'), true);
+  assert.equal(voice.isRelay('Posted from a private draft, I think'), false, 'only the footer counts');
 });
 
 // ── The gate, on a pool that answers what it asks ────────────────────────

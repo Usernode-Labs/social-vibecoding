@@ -58,6 +58,7 @@ const log = require('./logger');
 const repoRef = require('./repo-ref');
 const replyRules = require('../workflow/rules/bot-replies.ts');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
+const turnEngine = require('./homeroom-bot-turn-engine');
 
 // A burst is one turn (the bot-voice machine settles it): its rule's.
 const { SETTLE_MS, SETTLE_CAP_MS } = replyRules;
@@ -120,8 +121,11 @@ const STALE_ASK_HOURS = 3;
 // What a DM, a project's chat or a No vote passes on to a change or a
 // request in a person's name says it came from there (homeroom-bot-dm.js
 // mirroredText, homeroom-bot-mayor.js revisionText): the DM answered it, so
-// the voice does not answer it again.
-const RELAY_RE = /\n\n\((?:Sent|Answered) (?:in|from) (?:a|the) (?:chat|DM|project's chat)[^)]*\)?/i;
+// the voice does not answer it again. A draft posted from a private thread
+// (private-threads.js postIt, "Posted from a private draft…") is one too:
+// the chat drafted it with them, and ws.js already skips it as the bot's own
+// (viaBotDm) for the DM's note and the reply status.
+const RELAY_RE = /\n\n\((?:(?:Sent|Answered) (?:in|from) (?:a|the) (?:chat|DM|project's chat)|Posted from a private draft)[^)]*\)?/i;
 
 const PLACE_TYPES = Object.freeze(['session', 'issue', 'chat', 'category', 'message']);
 const SWITCH_OF = Object.freeze({
@@ -992,7 +996,7 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('request_detail') ? '- Read the story of one of this project\'s requests (request_detail).' : null,
     has('read_message') ? '- Read one message of this thread in full (read_message).' : null,
     has('read_source') ? '- Read the project\'s code as it is on main (list_source, then read_source) when somebody asks how something works. Say which file you read.' : null,
-    has('get_change') ? '- Look up a change, a request, a discussion or the project\'s board on Homeroom (get_change, get_proposal, get_request, get_discussion, list_requests): this project only. get_change also shows a change\'s description, the text people vote on, and whether it is out of date.' : null,
+    has('get_change') ? '- Look up a change, a request, a discussion or the project\'s board on Homeroom (get_change, request_detail, get_discussion, list_requests): this project only. get_change also shows a change\'s description, the text people vote on, and whether it is out of date.' : null,
     has('update_change_description') ? '- Reword the description of one of your own changes when somebody asks (update_change_description): write the whole new description. Only its text changes: no code, the checks do not run again, the votes stay. A reword is not update_change.' : null,
     has('tell_me_when') ? '- When somebody asks you to tell them when something about a change happens ("tell me when the update is made", "let me know when it is ready to vote", "ping me when it is merged", "tell me when it is live"), call tell_me_when with that one moment and say its promise in your reply. It is stored and kept: the line comes here. Never tell them you cannot message them later, and never point them at a page to watch it instead.' : null,
     has('tell_me_when') ? '- When you say work is queued or running, offer to tell them here when it is ready to vote ("Want me to tell you here when it is ready to vote?"). Only store it with tell_me_when once they say yes, or when they already asked you to.' : null,
@@ -1471,6 +1475,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     failures: record.failures,
   };
   record.model = t.model;
+  // The turn a tool's own model calls count toward (homeroom-bot-already-done.js).
+  ctx.turn = t;
   let finalText = '';
   try {
     if (t.apiKey === undefined) t.apiKey = await mayor.botKey(pool, cfg, bot.id).catch(() => null);
@@ -1507,77 +1513,87 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       },
     ];
     const ids = new Set();
-    let rounds = 0;
-    let limit = MAX_ROUNDS;
+    // The turn's rounds and its limit, moved by the turn engine and by this
+    // turn (a refused stand-in's extra round, the claims correction).
+    const turnRounds = { rounds: 0, limit: MAX_ROUNDS };
     // #6270: each limit is told it is the last one once, a stand-in gets one
     // more round, and a change queued with nothing said gets one round to say
     // so (once per turn, whichever pass queued it).
     let warnedAt = 0;
     let handledStandIns = 0;
     let saidQueued = false;
-    const runOneRound = async ({ offered, toolChoice, note = null }) => {
-      if (note) msgs.push({ role: 'user', content: note });
-      rounds += 1;
-      record.rounds = rounds;
-      const res = await mayor.askModel(t, {
-        messages: msgs, tools: offered, where: `v${rounds}`, toolChoice,
+    // 5 Nov 2026: the voice is one profile on Homeroom bot's turn engine
+    // (homeroom-bot-turn-engine.js), which counts the rounds, asks, and
+    // keeps each call and result. What follows is what only the voice does.
+    const voiceTurn = {
+      messages: msgs, ids, normalize: mayor.normalizeCalls, parseArgs: mayor.parseArgs,
+      resultChars: mayor.MAX_TOOL_RESULT_CHARS, cut: clip,
+      ask: (options) => mayor.askModel(t, {
+        ...options,
         // Homeroom bot parity (P1): the room a private conversation now has is not the voice's.
         // Where the group reads, a reply stays short, as before.
         maxOutputTokens: VOICE_OUTPUT_TOKENS, timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
-      });
-      const calls = mayor.normalizeCalls(res.toolCalls, rounds, ids);
-      if (!calls.length) {
+      }),
+      where: (n) => `v${n}`,
+      done: () => !!ctx.reply || !!ctx.quiet || !!ctx.gaveUp,
+      onRound: ({ rounds }) => { record.rounds = rounds; },
+      offer: ({ last, limit }) => {
+        const note = last && warnedAt !== limit ? LAST_ROUND_NOTE : null;
+        if (last) warnedAt = limit;
+        return {
+          note,
+          tools: last ? tools.filter((tl) => LAST_ROUND_TOOLS.includes(tl.function.name)) : tools,
+          toolChoice: last ? 'required' : 'auto',
+        };
+      },
+      onWords: (res, { rounds }) => {
         const said = String(res.content || '');
         // An answer it wrote without its reply tool is checked the same way.
-        const standIn = isStandIn(said);
-        return { text: said, standIn, answered: !standIn };
-      }
-      msgs.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
-      for (const call of calls) {
-        const name = call.function.name;
-        record.tools.push(name.slice(0, 40));
-        const args = mayor.parseArgs(call.function.arguments);
-        const result = await runTool(pool, ctx, name, args, { platform });
-        msgs.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), mayor.MAX_TOOL_RESULT_CHARS) });
-      }
-      return {};
-    };
-    const runRounds = async () => {
-      while (rounds < limit && !ctx.reply && !ctx.quiet && !ctx.gaveUp) {
-        const last = rounds + 1 >= limit;
-        const out = await runOneRound({
-          offered: last ? tools.filter((tl) => LAST_ROUND_TOOLS.includes(tl.function.name)) : tools,
-          toolChoice: last ? 'required' : 'auto',
-          note: last && warnedAt !== limit ? LAST_ROUND_NOTE : null,
-        });
-        if (last) warnedAt = limit;
-        if (out.standIn) {
+        if (isStandIn(said)) {
           t.failures.push('stand_in');
           ctx.standIns = (ctx.standIns || 0) + 1;
-          if (ctx.standIns > 1) { ctx.gaveUp = true; finalText = ''; break; }
-          if (out.text) msgs.push({ role: 'assistant', content: out.text });
+          if (ctx.standIns > 1) { ctx.gaveUp = true; finalText = ''; return 'stop'; }
+          if (said) msgs.push({ role: 'assistant', content: said });
           msgs.push({ role: 'user', content: STAND_IN_NOTE });
-        } else if (out.answered) {
-          finalText = out.text;
-          break;
+          // One more round, even past the last.
+          handledStandIns = ctx.standIns;
+          turnRounds.limit = Math.max(turnRounds.limit, rounds + 1);
+          return 'continue';
         }
+        finalText = said;
+        return 'stop';
+      },
+      call: async (call, name, args) => {
+        record.tools.push(name.slice(0, 40));
+        return runTool(pool, ctx, name, args, { platform });
+      },
+      afterCalls: ({ rounds }) => {
         // A stand-in refused by its reply tool is the tool's to say; either
         // way it gets one more round, even past the last.
-        if (ctx.gaveUp) break;
+        if (ctx.gaveUp) return 'stop';
         if ((ctx.standIns || 0) > handledStandIns) {
           handledStandIns = ctx.standIns;
-          limit = Math.max(limit, rounds + 1);
+          turnRounds.limit = Math.max(turnRounds.limit, rounds + 1);
         }
-      }
+        return undefined;
+      },
+    };
+    const runRounds = async () => {
+      await turnEngine.runRounds(turnRounds, voiceTurn);
       // A change was queued and nothing was said: one round to say so, so the
       // person is not left with the fallback line.
       if (!saidQueued && ctx.revised && !ctx.reply && !ctx.quiet && !ctx.gaveUp) {
         saidQueued = true;
-        const out = await runOneRound({
-          offered: tools.filter((tl) => tl.function.name === 'reply'),
+        await turnEngine.runRound(turnRounds, voiceTurn, {
+          tools: tools.filter((tl) => tl.function.name === 'reply'),
           toolChoice: { type: 'function', function: { name: 'reply' } },
+          onWords: (res) => {
+            const said = String(res.content || '');
+            if (isStandIn(said)) { t.failures.push('stand_in'); finalText = ''; } else if (said) finalText = said;
+            return 'stop';
+          },
+          afterCalls: null,
         });
-        if (out.standIn) { t.failures.push('stand_in'); finalText = ''; } else if (out.text) finalText = out.text;
       }
     };
     await runRounds();
@@ -1591,7 +1607,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       });
       ctx.reply = null;
       finalText = '';
-      limit = rounds + 2;
+      turnRounds.limit = turnRounds.rounds + 2;
       // The correction gets its own lookups: it may have to read what it
       // has to describe.
       ctx.reads = 0;
@@ -1634,14 +1650,7 @@ function safePlatformRules(mayor) {
 
 /** The bot's own weekly cap counts a turn, as it counts a DM's. */
 async function chargeTurn(pool, bot, costUsd) {
-  if (!(costUsd > 0)) return;
-  try {
-    if (await require('./openrouter-managed-keys').usesIncludedKey(pool, bot.id)) {
-      await require('./limits').recordSpend(pool, bot.id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
-    }
-  } catch (err) {
-    log.warn('homeroom-bot-voice', 'Could not record a turn\'s spend', { err: err.message });
-  }
+  await turnEngine.chargeTurn(pool, bot?.id, costUsd, { what: 'a turn', category: 'homeroom-bot-voice' });
 }
 
 /** One tool call of a turn. Never throws: a refusal is a result the model reads. */

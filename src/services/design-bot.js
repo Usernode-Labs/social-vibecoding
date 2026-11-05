@@ -26,6 +26,7 @@
 // public is always the person's own tap.
 
 const log = require('./logger');
+const turnEngine = require('./homeroom-bot-turn-engine');
 const { withoutEmDashes } = require('./em-dashes');
 const { ENDED: TRACK_ENDED, STEPS: TRACK_STEPS } = require('./homeroom-bot-track');
 
@@ -1224,7 +1225,8 @@ async function answer(pool, config, {
     avoid: [],
   };
   const tools = [];
-  let rounds = 0;
+  // The turn's rounds, moved by the turn engine (its limit is MAX_ROUNDS).
+  const turnRounds = { rounds: 0, limit: MAX_ROUNDS };
   let error = null;
   let html = current ? current.html : '';
   let drawn = null;
@@ -1319,18 +1321,18 @@ async function answer(pool, config, {
     // last one only replies.
     let nudges = 0;
     const holdEnd = (said) => {
-      if (nudges >= mayor.MAX_PREAMBLE_NUDGES || rounds + 1 >= MAX_ROUNDS) return null;
+      if (nudges >= mayor.MAX_PREAMBLE_NUDGES || turnRounds.rounds + 1 >= MAX_ROUNDS) return null;
       // #6151: Homeroom bot builds a filed design: words saying it will not go back.
       if (builds && saysNotBuilt(said)) {
         nudges += 1;
-        t.failures.push(`d${rounds}:not_built`);
+        t.failures.push(`d${turnRounds.rounds}:not_built`);
         return BUILT_NOTE;
       }
       // #6159: "close it from your side" is no answer: there is no such
       // control, and close_thread finishes the thread.
       if (!closedThread && mayor.NO_CONTROL_CLAIM.test(said)) {
         nudges += 1;
-        t.failures.push(`d${rounds}:no_control`);
+        t.failures.push(`d${turnRounds.rounds}:no_control`);
         return CLOSE_NOTE;
       }
       const changedNow = !!html && html !== (current?.html || '');
@@ -1338,45 +1340,52 @@ async function answer(pool, config, {
       const why = notDrawnYet(said, { changed: changedNow, offered: !!offered || !!card, handoff, drawnBefore: !!current, mayAsk, mayor });
       if (!why) return null;
       nudges += 1;
-      t.failures.push(`d${rounds}:${why}`);
+      t.failures.push(`d${turnRounds.rounds}:${why}`);
       if (why === 'filler') return fillerNote(said);
       return why === 'preamble' ? mayor.PREAMBLE_NOTE : DRAW_NOTE;
     };
-    while (rounds < MAX_ROUNDS && !replyText) {
-      rounds += 1;
-      const last = rounds === MAX_ROUNDS;
-      // #6144: reading has a budget. From the round after READ_UNTIL it is
-      // offered ACT_TOOLS alone, and told so once.
-      const reading = rounds <= READ_UNTIL;
-      if (rounds === READ_UNTIL + 1) messages.push({ role: 'user', content: READING_OVER_NOTE });
-      // #6141: handed a screen to draw, a turn that read the code until its
-      // rounds ran out ended on "placeholder". #6142: a first drawing with
-      // nothing shown by round DRAW_BY_ROUND draws in it (write_screen),
-      // leaving the rounds after it to grow the screen; the last still replies.
-      const drawNow = firstDrawing && !mayAsk && !last && rounds === DRAW_BY_ROUND && !shownNow();
-      if (drawNow) t.failures.push(`d${rounds}:draw_forced`);
-      const res = await mayor.askModel(t, {
-        messages, tools: reading ? TOOLS : ACT_TOOLS, where: `d${rounds}`, maxOutputTokens: DESIGN_OUTPUT_TOKENS,
-        toolChoice: last ? { type: 'function', function: { name: 'reply' } }
-          : drawNow ? { type: 'function', function: { name: 'write_screen' } } : 'auto',
-      });
-      const calls = mayor.normalizeCalls(res.toolCalls, rounds, seenIds);
-      if (!calls.length) {
+    // 5 Nov 2026: the design bot is one profile on Homeroom bot's turn engine
+    // (homeroom-bot-turn-engine.js), which counts the rounds, asks, and keeps
+    // each call and result. What follows is what only the design bot does.
+    // #6144: reading has a budget. From the round after READ_UNTIL it is
+    // offered ACT_TOOLS alone, and told so once.
+    let reading = true;
+    const designTurn = {
+      messages, ids: seenIds, normalize: mayor.normalizeCalls, parseArgs: mayor.parseArgs,
+      resultChars: mayor.MAX_TOOL_RESULT_CHARS, cut: clip,
+      ask: (options) => mayor.askModel(t, { ...options, maxOutputTokens: DESIGN_OUTPUT_TOKENS }),
+      where: (n) => `d${n}`,
+      done: () => !!replyText,
+      beforeRound: ({ rounds }) => {
+        reading = rounds <= READ_UNTIL;
+        if (rounds === READ_UNTIL + 1) messages.push({ role: 'user', content: READING_OVER_NOTE });
+      },
+      offer: ({ rounds, last }) => {
+        // #6141: handed a screen to draw, a turn that read the code until its
+        // rounds ran out ended on "placeholder". #6142: a first drawing with
+        // nothing shown by round DRAW_BY_ROUND draws in it (write_screen),
+        // leaving the rounds after it to grow the screen; the last still replies.
+        const drawNow = firstDrawing && !mayAsk && !last && rounds === DRAW_BY_ROUND && !shownNow();
+        if (drawNow) t.failures.push(`d${rounds}:draw_forced`);
+        return {
+          tools: reading ? TOOLS : ACT_TOOLS,
+          toolChoice: last ? { type: 'function', function: { name: 'reply' } }
+            : drawNow ? { type: 'function', function: { name: 'write_screen' } } : 'auto',
+        };
+      },
+      onWords: (res) => {
         const said = String(res.content || '').trim();
         const note = holdEnd(said);
         if (note) {
           messages.push({ role: 'assistant', content: said });
           messages.push({ role: 'user', content: note });
-          continue;
+          return 'continue';
         }
         replyText = said;
-        break;
-      }
-      messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
-      for (const call of calls) {
-        const name = call.function.name;
+        return 'stop';
+      },
+      call: async (call, name, args, round) => {
         tools.push(name.slice(0, 40));
-        const args = mayor.parseArgs(call.function.arguments);
         // A read that arrives once reading is over is refused (#6144).
         const lateRead = !reading && READ_TOOLS.has(name);
         // 1 Nov 2026: the working card's words, as the call starts.
@@ -1388,7 +1397,7 @@ async function answer(pool, config, {
           else if (wrote && !wrote.empty) {
             // #6353: a whole redraw after one that was taken. Not applied;
             // recorded, so a slow turn shows why it kept drawing.
-            t.failures.push(`d${rounds}:rewrite`);
+            t.failures.push(`d${round.rounds}:rewrite`);
             result = { ok: false, error: REWRITE_NOTE };
           } else {
             if (!sheets) sheets = await sheetsFor(pool, { user, surface, app: project, config, deps, entry });
@@ -1493,17 +1502,21 @@ async function answer(pool, config, {
         } else {
           result = { ok: false, error: `There is no tool called ${name}.` };
         }
-        messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), mayor.MAX_TOOL_RESULT_CHARS) });
-      }
-      // A reply that says it drew, or asks leave to, with nothing drawn.
-      if (replyText) {
-        const note = holdEnd(replyText);
-        if (note) {
-          messages.push({ role: 'user', content: note });
-          replyText = '';
+        return result;
+      },
+      afterCalls: () => {
+        // A reply that says it drew, or asks leave to, with nothing drawn.
+        if (replyText) {
+          const note = holdEnd(replyText);
+          if (note) {
+            messages.push({ role: 'user', content: note });
+            replyText = '';
+          }
         }
-      }
-    }
+        return undefined;
+      },
+    };
+    await turnEngine.runRounds(turnRounds, designTurn);
   } catch (err) {
     error = mayor.codeOf(err);
     log.warn('design-bot', 'A design turn failed', { userId: user.id, messageId: message.id, code: error });
@@ -1522,7 +1535,7 @@ async function answer(pool, config, {
   // a reply the last round forced (`reply` is its only tool) unless it asks
   // a real question back: `end:filler`, `end:forced`.
   const shown = changed || (!error && (!!offered || !!card));
-  const forced = rounds === MAX_ROUNDS && !!replyText;
+  const forced = turnRounds.rounds === MAX_ROUNDS && !!replyText;
   const unkept = shown || (error && !replyText) ? null
     : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayAsk, mayor }) || (forced && !realQuestion(replyText) ? 'forced' : null);
   if (unkept) t.failures.push(`end:${unkept}`);
@@ -1536,19 +1549,11 @@ async function answer(pool, config, {
   // nothing shown, filler is unkept above.
   const said = isFiller(replyText) ? '' : replyText;
   await mayor.recordTurn(pool, {
-    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds, tools,
+    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools,
     inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd,
     error, failures: t.failures, fallback: error ? 'design_broken' : unkept ? 'not_drawn' : null,
   });
-  if (t.usage.costUsd > 0) {
-    try {
-      if (await require('./openrouter-managed-keys').usesIncludedKey(pool, bot.id)) {
-        await require('./limits').recordSpend(pool, bot.id, Math.round(t.usage.costUsd * 1e6) / 1e4, { byok: false });
-      }
-    } catch (err) {
-      log.warn('design-bot', 'Could not record a design turn\'s spend', { err: err.message });
-    }
-  }
+  await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a design turn', category: 'design-bot' });
   if (offered && !changed && !error) {
     return mayor.sendDesignOffer(pool, {
       bot, user, conversationId, message, design, offer: offered, text: withoutEmDashes(clip(said, MAX_REPLY_CHARS)), key, deps,
