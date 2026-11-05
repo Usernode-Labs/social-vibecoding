@@ -52,6 +52,8 @@ type RowView = {
   canLeave?: boolean;
   /** In "Recommended for you", the default list's first section (#5267). */
   recommended?: boolean;
+  /** In "Trending this week", the section under Featured (#6197). */
+  trending?: boolean;
   addTitle: string;
 };
 
@@ -387,7 +389,10 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   // in the Recommended order, under one heading. The rest is "More apps"
   // under a Recommended section and "Apps to try" where there is none.
   const picked = shown.filter((view) => view.recommended);
-  const rest = shown.filter((view) => !view.recommended);
+  // Trending this week (#6197) sits between them, only when something had any
+  // activity this week; Browse._renderList takes its rows out of the rest.
+  const trending = shown.filter((view) => view.trending);
+  const rest = shown.filter((view) => !view.recommended && !view.trending);
   const more = rows.filter((view) => view.directoryTier === 'more');
   // A LABEL OVER A CARD GROUP, so it is @/components/ui/grouped-list's
   // SectionHeader and not a fourth hand-written heading: the rows under it are
@@ -420,10 +425,17 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
             </>
           ) : null}
           {renderRows(picked)}
+          {trending.length ? (
+            <>
+              <SectionHeader className={headingClass}>{t('discover:list.heading.trending')}</SectionHeader>
+              <p className={whyClass}>{t('discover:list.why.trending')}</p>
+            </>
+          ) : null}
+          {renderRows(trending)}
           {rest.length ? (
             <>
               <SectionHeader className={headingClass}>
-                {picked.length ? t('discover:list.heading.moreApps') : t('discover:list.heading.allApps')}
+                {picked.length || trending.length ? t('discover:list.heading.moreApps') : t('discover:list.heading.allApps')}
               </SectionHeader>
               <p className={whyClass}>{t('discover:list.why.rest')}</p>
             </>
