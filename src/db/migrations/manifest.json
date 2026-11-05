@@ -150,6 +150,11 @@
       "id": "email-templates",
       "sha256": "1360f85450e4799aa26224b8329fc6822e8451d7e39801872d74431c8059a2be",
       "schemaSha256": "a9ef81414d7175de7964c07bdd11aeeea8df43e76eb8d573b515d985fd371fa5"
+    },
+    {
+      "id": "production-app-sleep",
+      "sha256": "ec7a043e2e2298faa72c07424eb2b9b6bd48fbdb4bc84c0386490dca291c4df1",
+      "schemaSha256": "3355ededf76acae3fb4104ba6ae12f221bb86a743571d0ce8d6a35f6f63a345c"
     }
   ]
 }

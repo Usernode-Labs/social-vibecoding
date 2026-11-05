@@ -24,6 +24,9 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
       { MAX_GLOBAL_SESSIONS: '25', CAPTURE_CPUS: '8', CHECKS_MAX_CONCURRENT_RUNS: '6' }],
     [['--set', 'platform.shotsEnabled=false'],
       { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', SHOTS_ENABLED: 'false' }],
+    [['--set', 'config.previewSleepAfterMs=1800000,config.appSleepAfterMs=0,config.checkNodePoolRequired=true',
+      '--set-string', 'config.checkNodePool=pool=checks'],
+      { PREVIEW_SLEEP_AFTER_MS: '1800000', APP_SLEEP_AFTER_MS: '0' }],
   ]) {
     const rendered = execFileSync('helm', [...args, ...overrides], { encoding: 'utf8' });
     const env = Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z0-9_]+), value: "([^"]*)"\}/g)]
@@ -33,6 +36,8 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
       ...expected, MAX_USER_SESSIONS: '3', MAX_USER_PROMOTED_SESSIONS: '5',
       MAX_ADMIN_USER_SESSIONS: '5', MAX_ADMIN_USER_PROMOTED_SESSIONS: '8',
       STAGING_IDLE_TEARDOWN_MS: '21600000',
+      PREVIEW_SLEEP_AFTER_MS: '3600000', APP_SLEEP_AFTER_MS: '3600000',
+      ...expected,
     })) {
       assert.equal(env[name], value, name);
       assert.equal(parseInt(env[name], 10), Number(value), `${name} application parsing`);

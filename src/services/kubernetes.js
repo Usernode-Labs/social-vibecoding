@@ -401,6 +401,7 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
       // (GIT_HOST_INTERNAL_URL, else the public one); GitHub's as before.
       source: { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
+      ...batchWorkPlacement(cfg),
       env: buildEnv,
       resources: {
         requests: { cpu: process.env.BUILD_REQUESTS_CPU || '500m', memory: process.env.BUILD_REQUESTS_MEMORY || '1Gi', 'ephemeral-storage': process.env.BUILD_REQUESTS_EPHEMERAL_STORAGE || '2Gi' },
@@ -423,6 +424,7 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
   }
   // A different revision can still supply cached dependency/launch layers.
   if (completed.length) body.spec.lastBuild = { image: completed[0].status.latestImage };
+  await waitForCheckPool(config);
   const { custom } = getClients();
   const createDeadline = Date.now() + 60000;
   while (true) {
@@ -1094,8 +1096,9 @@ function appGateDeploymentManifest({ namespace, image, cfg, platformUrl }) {
             env: [
               { name: 'GATE_PLATFORM_URL', value: String(platformUrl || '') },
               { name: 'GATE_UPSTREAM_PORT', value: '3000' },
+              { name: 'GATE_POD_UID', valueFrom: { fieldRef: { fieldPath: 'metadata.uid' } } },
             ],
-            ports: [{ name: 'http', containerPort: 3000 }],
+            ports: [{ name: 'http', containerPort: 3000 }, { name: 'activity', containerPort: 3001 }],
             startupProbe: { ...health, periodSeconds: 1, failureThreshold: 60 },
             readinessProbe: { ...health, periodSeconds: 2, failureThreshold: 3 },
             livenessProbe: { ...health, periodSeconds: 15, failureThreshold: 3 },
@@ -1287,6 +1290,7 @@ async function deployApplication(config, {
     : `${app.slug}--s${sessionId}.${cfg.appDomain}`;
   // Check before creating or updating any Kubernetes resources.
   require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
+  const resourceProfile = require('./app-resource-profiles').forApp(config, app, environment, { cpus, internalOnly });
   const { core, apps, networking } = getClients();
   // The Deployment as this attempt found it (the fence). When its rollout
   // fails, what goes back is the template of the attempt that serves
@@ -1319,7 +1323,10 @@ async function deployApplication(config, {
       template: {
         metadata: {
           labels: { ...resourceLabels, ...selectorLabels },
-          annotations: { 'social.usernode.io/env-checksum': envChecksum(env) },
+          annotations: {
+            'social.usernode.io/env-checksum': envChecksum(env),
+            [require('./app-resource-profiles').ANNOTATION]: resourceProfile.profile,
+          },
         },
         spec: {
           serviceAccountName: cfg.generatedAppServiceAccount,
@@ -1337,7 +1344,7 @@ async function deployApplication(config, {
               : [],
             envFrom: [{ secretRef: { name: secretName } }],
             ...httpProbes({ startupFailureThreshold: 120 }),
-            resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: String(cpus || '1'), memory: '1Gi' } },
+            resources: resourceProfile.resources,
             securityContext: containerSecurityContext(),
           }],
         },
@@ -1853,7 +1860,7 @@ async function inspectApplication(config, runtimeName) {
     const state = deploymentState(deployment);
     const status = state === 'creating' ? 'created' : state;
     const desired = deployment.spec?.replicas ?? 1;
-    return { status, labels: deployment.spec?.template?.metadata?.labels || {},
+    return { status, asleep: require('./production-sleep').isAsleep(deployment), labels: deployment.spec?.template?.metadata?.labels || {},
       imageRef: deployment.spec?.template?.spec?.containers?.find(c => c.name === 'app')?.image,
       rolloutReady: desired > 0 && !deployment.metadata?.deletionTimestamp
         && deployment.status?.observedGeneration >= deployment.metadata?.generation
@@ -1865,6 +1872,76 @@ async function inspectApplication(config, runtimeName) {
     if (isNotFound(err)) return { status: 'not_found', labels: {} };
     throw err;
   }
+}
+
+// Production sleep uses the same immutable image and a resourceVersion fence,
+// while every address must already be behind the gate that tracks activity.
+async function readProductionForSleep(config, app, { waking = false } = {}) {
+  const { apps, networking } = getClients();
+  let deployment;
+  try { deployment = await apps.readNamespacedDeployment({ name: app.runtime_name, namespace: config.kubernetes.appNamespace }); }
+  catch (err) { if (isNotFound(err)) return null; throw err; }
+  const l = deployment.metadata?.labels || {};
+  if (!deployment.metadata?.uid || !deployment.metadata?.resourceVersion || deployment.metadata.deletionTimestamp
+    || l['app.kubernetes.io/managed-by'] !== MANAGED_BY || l['social.usernode.io/app-id'] !== String(app.id)
+    || l['social.usernode.io/environment'] !== 'production' || ![0, 1].includes(deployment.spec?.replicas ?? 1)) return null;
+  if (waking) return deployment;
+  if ((deployment.spec?.replicas ?? 1) !== 1 || deployment.status?.readyReplicas !== 1
+    || deployment.status?.updatedReplicas !== 1 || deployment.status?.observedGeneration < deployment.metadata.generation) return null;
+  const ingresses = await networking.listNamespacedIngress({ namespace: config.kubernetes.appNamespace,
+    labelSelector: `social.usernode.io/app-id=${app.id}` });
+  const routes = (ingresses.items || []).flatMap((i) => (i.spec?.rules || []).flatMap((r) =>
+    (r.http?.paths || []).filter((p) => p.path === '/')));
+  if (!routes.length || routes.some((r) => r.backend?.service?.name !== APP_GATE_NAME)) return null;
+  return deployment;
+}
+
+async function scaleProductionForSleep(config, deployment, replicas, asleepAt = null) {
+  if (![0, 1].includes(replicas)) throw new Error('A production sleep runtime has zero or one replica');
+  const body = structuredClone(deployment);
+  body.spec.replicas = replicas;
+  body.metadata.annotations ||= {};
+  const { ANNOTATION } = require('./production-sleep');
+  if (replicas === 0) body.metadata.annotations[ANNOTATION] = new Date(asleepAt).toISOString();
+  else {
+    delete body.metadata.annotations[ANNOTATION];
+    // Even if already at one: fence an older in-flight sleep before recording
+    // the app awake. A lost coordinator lock cannot let it scale down later.
+    body.metadata.annotations['social.usernode.io/production-wake-at'] = new Date().toISOString();
+  }
+  delete body.status;
+  try {
+    await getClients().apps.replaceNamespacedDeployment({ name: body.metadata.name,
+      namespace: config.kubernetes.appNamespace, body });
+    return 'scaled';
+  } catch (err) {
+    if (isConflict(err)) return 'conflict';
+    if (isNotFound(err)) return 'missing';
+    throw err;
+  }
+}
+
+async function appGateActivity(config) {
+  const { core } = getClients();
+  const pods = await core.listNamespacedPod({ namespace: config.kubernetes.appNamespace,
+    labelSelector: `app.kubernetes.io/managed-by=${APP_GATE_MANAGED_BY},app.kubernetes.io/name=${APP_GATE_NAME}` });
+  // Include draining gateways: their existing streams still count. Pending,
+  // unreachable and old gateways without telemetry prevent new sleeps.
+  const live = (pods.items || []).filter((p) => !['Succeeded', 'Failed'].includes(p.status?.phase));
+  if (!live.length) throw new Error('No app gateway observations');
+  return Promise.all(live.map(async (pod) => {
+    const ip = pod.status?.podIP;
+    const ipKind = require('node:net').isIP(ip || '');
+    if (!ipKind || !pod.metadata?.uid) throw new Error('Gateway has no live telemetry address');
+    const host = ipKind === 6 ? `[${ip}]` : ip;
+    const response = await fetch(`http://${host}:3001/activity`, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error('Gateway telemetry refused');
+    const text = await response.text();
+    if (text.length > 1024 * 1024) throw new Error('Gateway telemetry too large');
+    const snapshot = JSON.parse(text);
+    if (snapshot.podUid !== pod.metadata.uid) throw new Error('Gateway telemetry identity changed');
+    return snapshot;
+  }));
 }
 
 async function getApplicationLogs(config, runtimeName, tailLines = 200) {
@@ -3125,9 +3202,13 @@ const warnedNodePools = new Set();
 // running where checks always ran is the better failure.
 function checkNodePool(cfg) {
   const raw = String(cfg.checkNodePool || '').trim();
-  if (!raw) return null;
+  if (!raw) {
+    if (cfg.checkNodePoolRequired) throw new Error('CHECK_NODE_POOL_REQUIRED needs a valid CHECK_NODE_POOL');
+    return null;
+  }
   const match = NODE_POOL_PAIR.exec(raw);
   if (!match) {
+    if (cfg.checkNodePoolRequired) throw new Error('CHECK_NODE_POOL_REQUIRED needs a valid CHECK_NODE_POOL');
     if (!warnedNodePools.has(raw)) {
       warnedNodePools.add(raw);
       log.warn('kubernetes', 'CHECK_NODE_POOL is not a label key=value; checks keep the default placement', { value: raw });
@@ -3165,11 +3246,118 @@ function checkPlacement(cfg, checkSelector) {
   }
   return {
     tolerations: [{ key: pool.key, operator: 'Equal', value: pool.value, effect: 'NoSchedule' }],
+    ...(cfg.checkNodePoolRequired ? {
+      affinity: { nodeAffinity: { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{
+        matchExpressions: [{ key: pool.key, operator: 'In', values: [pool.value] }],
+      }] } } },
+    } : {
     affinity: { nodeAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
       weight: 100,
       preference: { matchExpressions: [{ key: pool.key, operator: 'In', values: [pool.value] }] },
     }] } },
+    }),
   };
+}
+
+function batchWorkPlacement(cfg) {
+  if (!cfg.checkNodePoolRequired) return {};
+  const pool = checkNodePool(cfg);
+  return { nodeSelector: { [pool.key]: pool.value },
+    tolerations: [{ key: pool.key, operator: 'Equal', value: pool.value, effect: 'NoSchedule' }] };
+}
+
+async function checkPoolCapacity(config = null) {
+  const checkPool = require('./check-pool');
+  if (!checkPool.required(config)) return { available: true, cap: Infinity };
+  const cfg = config?.kubernetes || {
+    checkNodePool: process.env.CHECK_NODE_POOL, checkNodePoolRequired: true,
+    checkPoolMetricsUrl: process.env.CHECK_POOL_METRICS_URL,
+  };
+  const pool = checkNodePool(cfg);
+  if (!pool) throw new Error('A required checks pool is missing');
+  if (cfg.checkPoolMetricsUrl) {
+    const url = new URL('/api/v1/query', cfg.checkPoolMetricsUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Invalid check-pool metrics URL');
+    url.searchParams.set('query', checkPool.metricsQuery(pool));
+    const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error('Check-pool metrics unavailable');
+    const data = await response.json();
+    if (data.status !== 'success' || data.data?.resultType !== 'vector' || !Array.isArray(data.data.result)) {
+      throw new Error('Invalid check-pool metrics response');
+    }
+    return checkPool.fromMetrics(data.data.result);
+  }
+  const nodes = await getClients().core.listNode({ labelSelector: `${pool.key}=${pool.value}` });
+  // Tolerate exactly the configured pool taint (including a non-default key).
+  const allowed = (nodes.items || []).filter((n) => !(n.spec?.taints || []).some((t) =>
+    ['NoSchedule', 'NoExecute'].includes(t.effect)
+      && !(t.effect === 'NoSchedule' && t.key === pool.key && t.value === pool.value)));
+  return checkPool.plan(allowed.map((n) => ({ ...n, spec: { ...n.spec,
+    taints: (n.spec?.taints || []).filter((t) => t.key !== pool.key),
+  } })));
+}
+
+async function reconcileAppResourceProfiles(config, appRows, { maxChanges = 1 } = {}) {
+  const profiles = require('./app-resource-profiles');
+  const assignments = profiles.assignments(config.kubernetes?.appResourceProfiles ?? {});
+  const { apps } = getClients();
+  const namespace = config.kubernetes.appNamespace;
+  const deployments = await apps.listNamespacedDeployment({ namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=production` });
+  const byId = new Map(appRows.map((app) => [String(app.id), app]));
+  let changed = 0;
+  for (const deployment of deployments.items || []) {
+    const app = byId.get(deployment.metadata?.labels?.['social.usernode.io/app-id']);
+    if (!app || deployment.metadata?.deletionTimestamp) continue;
+    const previousProfile = deployment.spec?.template?.metadata?.annotations?.[profiles.ANNOTATION];
+    if (!Object.hasOwn(assignments, String(app.id)) && previousProfile !== 'small') continue;
+    if (app.self_hosted || app.slug === config.selfAppSlug
+      || Number(app.id) === require('../../worker/shots-hosted-app-contract').HOSTED_APP_ID) continue;
+    const replicas = deployment.spec?.replicas ?? 1;
+    if (![0, 1].includes(replicas) || (replicas === 1 && (
+      deployment.status?.observedGeneration < deployment.metadata.generation
+      || deployment.status?.replicas !== 1 || deployment.status?.updatedReplicas !== 1
+      || deployment.status?.readyReplicas !== 1))) continue;
+    const container = deployment.spec?.template?.spec?.containers?.find((c) => c.name === 'app');
+    if (!container) continue;
+    const selected = profiles.forApp(config, app, 'production');
+    const current = container.resources?.requests || {};
+    const annotation = deployment.spec.template.metadata?.annotations?.[profiles.ANNOTATION] || 'standard';
+    if (current.cpu === selected.resources.requests.cpu && current.memory === selected.resources.requests.memory
+      && annotation === selected.profile) continue;
+    // Preserve all hard limits and storage settings, including explicit
+    // workload exceptions. Refuse a profile that exceeds an existing ceiling.
+    const quantity = require('./check-pool').quantity;
+    const cpuLimit = quantity(container.resources?.limits?.cpu);
+    const memoryLimit = quantity(container.resources?.limits?.memory);
+    if (!Number.isFinite(cpuLimit) || !Number.isFinite(memoryLimit)
+      || quantity(selected.resources.requests.cpu) > cpuLimit
+      || quantity(selected.resources.requests.memory) > memoryLimit) continue;
+    const body = structuredClone(deployment);
+    const target = body.spec.template.spec.containers.find((c) => c.name === 'app');
+    target.resources.requests = { ...target.resources.requests, ...selected.resources.requests };
+    body.spec.template.metadata ||= {};
+    body.spec.template.metadata.annotations ||= {};
+    body.spec.template.metadata.annotations[profiles.ANNOTATION] = selected.profile;
+    delete body.status;
+    try {
+      await apps.replaceNamespacedDeployment({ namespace, name: body.metadata.name, body });
+      changed += 1;
+    } catch (err) { if (!isConflict(err) && !isNotFound(err)) throw err; }
+    if (changed >= maxChanges) break;
+  }
+  return { examined: deployments.items?.length || 0, changed };
+}
+
+async function waitForCheckPool(config, { signal = null, waitMs = 15 * 60 * 1000 } = {}) {
+  if (!require('./check-pool').required(config)) return;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    signal?.throwIfAborted();
+    if ((await checkPoolCapacity(config)).available) return;
+    if (Date.now() >= deadline) throw new Error('The dedicated checks pool is unavailable');
+    await observeCheck(new Promise((resolve) => setTimeout(resolve, 3000)), signal);
+  }
 }
 
 // `namePrefix` names a Job outside the preview's own check Jobs: an early
@@ -3308,6 +3496,9 @@ async function runCheckJob(config, {
   };
   try {
     signal?.throwIfAborted();
+    // Covers early and main-watch Jobs too. Their execution deadlines begin
+    // only once the dedicated pool exists, not while waiting for its return.
+    await create(() => waitForCheckPool(config, { signal }));
     if (inputSecretName) {
       inputSecret = await create(() => core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
@@ -3946,6 +4137,10 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 }
 
 module.exports = {
+  batchWorkPlacement, waitForBatchPool: waitForCheckPool,
+  reconcileAppResourceProfiles,
+  readProductionForSleep, scaleProductionForSleep, appGateActivity,
+  checkPoolCapacity,
   previewServesAttempt,
   restorePreviewAttempt,
   scaledPreviewDeployment, scalePreview, waitForPreview, ingressForSleep, routePreviewForSleep,

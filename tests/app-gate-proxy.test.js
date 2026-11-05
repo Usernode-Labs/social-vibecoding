@@ -32,6 +32,8 @@ let deadPort;
 const asked = [];
 const openSockets = [];
 const unavailableHosts = [];
+const wakingDecisions = new Map();
+const appRequests = [];
 const silent = { error() {}, warn() {} };
 
 test.before(async () => {
@@ -43,6 +45,14 @@ test.before(async () => {
     }
     asked.push({ url: req.url, headers: req.headers });
     const uri = req.headers['x-forwarded-uri'] || '/';
+    if (uri.startsWith('/waking')) {
+      const count = (wakingDecisions.get(uri) || 0) + 1;
+      wakingDecisions.set(uri, count);
+      if (uri.startsWith('/waking-timeout') || count < 3) {
+        res.writeHead(503, { 'x-usernode-runtime-sleep': 'waking', 'retry-after': '5', 'content-type': 'application/json' });
+        return res.end('{"error":"app_starting"}');
+      }
+    }
     if (uri.startsWith('/deny')) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('Not found'); }
     if (uri.startsWith('/redirect')) {
       res.writeHead(302, { location: 'https://apex.example/__access/authorize?x=1', 'set-cookie': ['__Host-usernode_access=new; Path=/; Secure; HttpOnly'], 'x-secret': 'never relayed' });
@@ -60,6 +70,7 @@ test.before(async () => {
   platformPort = await listen(platform);
 
   app = http.createServer((req, res) => {
+    appRequests.push(req.url);
     if (req.url.startsWith('/rescue')) { res.writeHead(401, { 'content-type': 'text/plain' }); return res.end('no'); }
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -89,6 +100,8 @@ test.before(async () => {
     // read the same way whatever the path, which is what the cache relies
     // on. Its own test is below.
     anonCacheMs: 0,
+    wakePollMs: 5,
+    wakeWaitMs: 60,
     log: silent,
   });
   gatePort = await listen(gate);
@@ -101,7 +114,7 @@ test.after(async () => {
   await close(app);
 });
 
-test.beforeEach(() => { asked.length = 0; unavailableHosts.length = 0; });
+test.beforeEach(() => { asked.length = 0; unavailableHosts.length = 0; appRequests.length = 0; wakingDecisions.clear(); });
 
 function through(pathname, { method = 'GET', headers = {}, body = null } = {}) {
   return new Promise((resolve, reject) => {
@@ -177,6 +190,33 @@ test('a write’s body is passed through', async () => {
   assert.equal(r.json.body, 'hello');
   assert.equal(asked[0].headers['x-forwarded-method'], 'POST');
   assert.equal(asked[0].headers['content-length'], undefined, 'the decision is asked without the body');
+});
+
+test('a cold start repeats access decisions and forwards the original write exactly once after readiness', async () => {
+  const result = await through('/waking-write', { method: 'POST', body: 'original-write-body' });
+  assert.equal(wakingDecisions.get('/waking-write'), 3);
+  assert.equal(result.status, 200);
+  assert.equal(result.json.body, 'original-write-body');
+  assert.deepEqual(appRequests, ['/waking-write']);
+});
+
+test('a wake timeout is retryable and never forwards the write', async () => {
+  const result = await through('/waking-timeout', { method: 'POST', body: 'must-not-run' });
+  assert.equal(result.status, 503);
+  assert.equal(result.headers['retry-after'], '5');
+  assert.equal(result.json.error, 'app_starting');
+  assert.deepEqual(appRequests, []);
+});
+
+test('a visitor disconnecting during a wake never sends a delayed write', async () => {
+  const request = http.request({ host: '127.0.0.1', port: gatePort, path: '/waking-timeout-abort',
+    method: 'POST', headers: { host: 'a.onhomeroom.com' } });
+  request.on('error', () => {});
+  request.end('must-not-run');
+  while (!wakingDecisions.has('/waking-timeout-abort')) await new Promise((r) => setTimeout(r, 1));
+  request.destroy();
+  await new Promise((r) => setTimeout(r, 25));
+  assert.deepEqual(appRequests, []);
 });
 
 test('a refusal is the visitor’s answer, and only its safe headers travel', async () => {
@@ -377,7 +417,9 @@ test('the gate Deployment: two replicas, never both down, no credentials, asks o
   assert.equal(pod.automountServiceAccountToken, false);
   const c = pod.containers[0];
   assert.deepEqual(c.command, ['node', 'scripts/app-gate.js']);
-  assert.deepEqual(c.env.map((e) => e.name).sort(), ['GATE_PLATFORM_URL', 'GATE_UPSTREAM_PORT']);
+  assert.deepEqual(c.env.map((e) => e.name).sort(), ['GATE_PLATFORM_URL', 'GATE_POD_UID', 'GATE_UPSTREAM_PORT']);
+  assert.deepEqual(c.env.find((e) => e.name === 'GATE_POD_UID').valueFrom, { fieldRef: { fieldPath: 'metadata.uid' } });
+  assert.ok(c.ports.some((p) => p.name === 'activity' && p.containerPort === 3001));
   assert.equal(c.readinessProbe.httpGet.path, HEALTH_PATH);
   assert.equal(d.spec.template.metadata.labels['app.kubernetes.io/name'], 'usernode-app-gate');
   assert.notEqual(d.metadata.labels['app.kubernetes.io/managed-by'], 'social-vibecoding-runtime',

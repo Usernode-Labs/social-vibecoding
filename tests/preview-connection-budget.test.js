@@ -450,7 +450,7 @@ test('#6157: a preview used inside the window does not sleep, and PREVIEW_SLEEP_
   const at = (ms) => new Date(now - ms).toISOString();
   const row = (id, ago) => ({ id, status: 'active', last_activity_at: at(ago), machine_state: 'settled', serving: { n: 1 } });
   const window = previewSleep.DEFAULT_SLEEP_AFTER_MS;
-  assert.equal(window, 2 * 3600 * 1000, 'two hours by default');
+  assert.equal(window, 3600 * 1000, 'one hour by default');
   const rows = [row(1, window + 1000), row(2, window - 1000), row(3, 60 * 1000)];
   assert.deepEqual(selectSleepers({ rows, now, sleepAfterMs: window }).map((r) => r.id), [1]);
   assert.deepEqual(selectSleepers({ rows, now, sleepAfterMs: 0 }), []);

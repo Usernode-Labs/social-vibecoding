@@ -178,6 +178,8 @@ test('the preview ceiling is four CPUs on docker and the same figure on kubernet
   assert.match(read('src/services/application-runtime.js'), /kubernetes\.deployApplication\(config, \{[\s\S]*app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,[\s\S]*\}\)/);
   const k8s = read('src/services/kubernetes.js');
   assert.match(k8s, /async function deployApplication\(config, \{[\s\S]*runtimeName = null, internalOnly = false,[\s\S]*\}\)/);
-  assert.match(k8s, /limits: \{ cpu: String\(cpus \|\| '1'\), memory: '1Gi' \}/, 'production apps pass nothing and keep 1');
+  assert.match(k8s, /forApp\(config, app, environment, \{ cpus, internalOnly \}\)/, 'the ceiling reaches the profile selector');
+  assert.match(read('src/services/app-resource-profiles.js'), /limits: \{ cpu: String\(cpus \|\| '1'\), memory: '1Gi' \}/,
+    'production apps pass nothing and keep 1');
   assert.match(read('src/services/staging.js'), /cpus: docker\.STAGING_CPUS,/, 'staging passes the ceiling on every runtime');
 });

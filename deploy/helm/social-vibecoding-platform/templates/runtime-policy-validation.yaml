@@ -1,0 +1,27 @@
+{{- if .Values.enabled }}
+{{- if and .Values.config.checkNodePoolRequired (empty .Values.config.checkNodePool) }}
+{{- fail "config.checkNodePoolRequired requires config.checkNodePool" }}
+{{- end }}
+{{- if not (kindIs "map" .Values.config.appResourceProfiles) }}
+{{- fail "config.appResourceProfiles must map app IDs to small or standard" }}
+{{- end }}
+{{- range $id, $profile := .Values.config.appResourceProfiles }}
+{{- if or (not (regexMatch "^[1-9][0-9]*$" (toString $id))) (not (has $profile (list "small" "standard"))) }}
+{{- fail "config.appResourceProfiles must map positive app IDs to small or standard" }}
+{{- end }}
+{{- end }}
+{{- range $id := .Values.config.appSleepAppIds }}
+{{- if not (regexMatch "^[1-9][0-9]*$" (toString $id)) }}
+{{- fail "config.appSleepAppIds must contain positive app IDs" }}
+{{- end }}
+{{- end }}
+{{- range $window := list .Values.config.previewSleepAfterMs .Values.config.appSleepAfterMs }}
+{{- if kindIs "string" $window }}
+{{- if not (regexMatch "^[0-9]+$" $window) }}
+{{- fail "idle windows must be non-negative integer milliseconds" }}
+{{- end }}
+{{- else if or (not (regexMatch "^(int|int64|float64)$" (kindOf $window))) (lt (float64 $window) 0.0) (ne (float64 $window) (float64 (int64 $window))) }}
+{{- fail "idle windows must be non-negative integer milliseconds" }}
+{{- end }}
+{{- end }}
+{{- end }}
