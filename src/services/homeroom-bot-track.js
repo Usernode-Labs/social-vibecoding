@@ -217,6 +217,27 @@ function trackOf({ job, work = null, runs = [], held = null, doneBy = null, unti
   return track;
 }
 
+/**
+ * Pure: where Homeroom bot is on a request, from its track, in the terms a
+ * design filed as one is told (design-threads.js filedNext, design-bot.js
+ * filedLine): `builds` (it has it in hand: reading, planning or building
+ * it), `held` at a limit ({ limit, position }), `person` (a person has
+ * taken it on, `by`, or the bot handed it to the people on the project to
+ * decide), `ended` (live, stopped or closed), or `other` (it waits on its
+ * requester's answer, its checks or its vote). Null for no track.
+ */
+function standingOf(track) {
+  if (!track) return null;
+  const work = track.work || {};
+  const code = work.line?.code || null;
+  if (ENDED.has(work.stage)) return { say: 'ended' };
+  if (code === 'claimed') return { say: 'person', by: work.line.by || null };
+  if (work.stage === 'waiting_for_you' && work.why === 'decide') return { say: 'person', by: null };
+  if (track.held?.limit) return { say: 'held', limit: track.held.limit, position: Number(track.held.position) || null };
+  if (work.stage === 'reading' || work.stage === 'planning' || work.stage === 'building') return { say: 'builds' };
+  return { say: 'other' };
+}
+
 // ── Reads ──────────────────────────────────────────────────────
 
 // Each project's held requests, in the order the bot takes them back up
@@ -840,6 +861,8 @@ module.exports = {
   triesOf,
   tryStartsOf,
   trackOf,
+  standingOf,
+  NOT_STARTED,
   HELD_QUEUE_SQL,
   heldQueue,
   DONE_BY_SQL,

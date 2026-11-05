@@ -228,12 +228,37 @@ const OWED_GOVERNANCE_WHERE = `i.status = 'open'
             AND ${CLOSE_TARGET_SQL('i')} = ANY(rc.linked_issues)))`;
 
 // #6019: the questions Homeroom bot asked the viewer about their requests,
-// still open (homeroom_bot_dm_messages): something owed like a vote, in the
-// same counts and the same feed. A question is answered on its request's
-// page, where the bot asked it.
-const OWED_QUESTIONS_FROM = `homeroom_bot_dm_messages q
-      JOIN conversation_messages qm ON qm.id = q.message_id AND qm.deleted_at IS NULL`;
-const OWED_QUESTIONS_WHERE = `q.user_id = $1 AND q.question_status = 'open'`;
+// still open: something owed like a vote, in the same counts and the same
+// feed. A question is answered on its request's page, where the bot asked it.
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): one the bot asked as its
+// post on the request, where the request's stored work state waits for its
+// requester's answer (services/work-state.js), by that post's message; and
+// one asked in their chat with the bot before then, still open there
+// (homeroom_bot_dm_messages), by its message. `$1` is the viewer.
+const OWED_QUESTIONS_FROM = `(
+      SELECT dq.app_id, dq.message_id AS id, dq.issue_number, dq.created_at,
+             COALESCE(dqm.metadata->'homeroomBot'->>'question', '') AS question, dqm.sender_id
+        FROM homeroom_bot_dm_messages dq
+        JOIN conversation_messages dqm ON dqm.id = dq.message_id AND dqm.deleted_at IS NULL
+       WHERE dq.user_id = $1 AND dq.question_status = 'open'
+      UNION ALL
+      SELECT ws.app_id, qp.thread_message_id AS id, ws.item_ref AS issue_number, COALESCE(ws.since, qp.created_at) AS created_at,
+             COALESCE(qpm.content, '') AS question, qpm.user_id AS sender_id
+        FROM work_states ws
+        JOIN LATERAL (
+          SELECT p.thread_message_id, p.created_at FROM homeroom_bot_posts p
+           WHERE p.app_id = ws.app_id AND p.issue_number = ws.item_ref AND p.kind = 'question'
+             AND p.thread_message_id IS NOT NULL
+           ORDER BY p.id DESC LIMIT 1
+        ) qp ON TRUE
+        JOIN chat_messages qpm ON qpm.id = qp.thread_message_id AND qpm.deleted_at IS NULL
+       WHERE ws.requester_id = $1 AND ws.item_kind = 'request'
+         AND ws.stage = 'waiting_for_you' AND ws.why = 'question'
+         AND NOT EXISTS (SELECT 1 FROM homeroom_bot_dm_messages odq
+                          WHERE odq.user_id = $1 AND odq.app_id = ws.app_id AND odq.issue_number = ws.item_ref
+                            AND odq.question_status = 'open')
+    ) q`;
+const OWED_QUESTIONS_WHERE = `TRUE`;
 
 // GET /api/apps's visibility filter, over `a` (apps) and `me` (the viewer's
 // membership row). `$2` is "may see self-hosted rows", `$3` "is an admin".
@@ -294,7 +319,7 @@ const COUNTS_SQL = `
   ),
   owed_questions AS (
     SELECT q.app_id, COUNT(*)::int AS n,
-           array_agg('question:' || q.message_id) AS keys
+           array_agg('question:' || q.id) AS keys
       FROM ${OWED_QUESTIONS_FROM}
      WHERE ${OWED_QUESTIONS_WHERE}
      GROUP BY q.app_id
@@ -365,8 +390,8 @@ const ITEMS_SQL = `
       FROM issues i
      WHERE ${OWED_GOVERNANCE_WHERE}
     UNION ALL
-    SELECT 'needs', 'question', q.app_id, q.message_id,
-           COALESCE(qm.metadata->'homeroomBot'->>'question', '')::text, 'open'::text, q.created_at
+    SELECT 'needs', 'question', q.app_id, q.id,
+           q.question::text, 'open'::text, q.created_at
       FROM ${OWED_QUESTIONS_FROM}
      WHERE ${OWED_QUESTIONS_WHERE}
   ),
@@ -390,15 +415,12 @@ const ITEMS_SQL = `
 `;
 
 // GET /api/workshop/bot-questions (#6019): the bot's open questions to the
-// viewer, on projects that are not suspended.
+// viewer (OWED_QUESTIONS_FROM), on projects that are not suspended.
 const BOT_QUESTIONS_MAX = 20;
 const BOT_QUESTIONS_SQL = `
-  SELECT q.message_id, q.issue_number, q.created_at, a.slug, a.name,
-         m.metadata->'homeroomBot'->>'question' AS question
-    FROM homeroom_bot_dm_messages q
+  SELECT q.id AS message_id, q.issue_number, q.created_at, a.slug, a.name, q.question
+    FROM ${OWED_QUESTIONS_FROM}
     JOIN apps a ON a.id = q.app_id AND a.moderation_suspended_at IS NULL
-    JOIN conversation_messages m ON m.id = q.message_id AND m.deleted_at IS NULL
-   WHERE q.user_id = $1 AND q.question_status = 'open'
    ORDER BY q.created_at DESC
    LIMIT $2
 `;
@@ -525,8 +547,8 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
      WHERE ${OWED_GOVERNANCE_WHERE}
     UNION ALL
     -- #6019: the bot's open questions to the viewer, by their request.
-    SELECT 'question', q.app_id, q.message_id,
-           COALESCE(qm.metadata->'homeroomBot'->>'question', '')::text, NULL::text,
+    SELECT 'question', q.app_id, q.id,
+           q.question::text, NULL::text,
            qu.username::text, q.issue_number, NULL::int, q.created_at,
            NULL::int, NULL::int,
            NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
@@ -539,7 +561,7 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
              WHERE r.app_id = q.app_id AND r.number = q.issue_number),
            NULL::int[]
       FROM ${OWED_QUESTIONS_FROM}
-      LEFT JOIN users qu ON qu.id = qm.sender_id
+      LEFT JOIN users qu ON qu.id = q.sender_id
      WHERE ${OWED_QUESTIONS_WHERE}
   )
   SELECT a.id AS app_id, a.slug, a.name, a.icon_image_id, a.icon_emoji,

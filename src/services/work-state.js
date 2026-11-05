@@ -550,9 +550,12 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
     }
   }
   const changed = [];
+  // Stored in one order everywhere (by project and number, then by change),
+  // so two refreshes of the same rows never wait on each other in a circle.
   if (requests.size) {
     const list = [...requests.values()];
     const { rows } = await db.query(REQUEST_FACTS_SQL, [list.map((r) => r.appId), list.map((r) => r.issueNumber)]);
+    rows.sort((a, b) => Number(a.app_id) - Number(b.app_id) || Number(a.issue_number) - Number(b.issue_number));
     for (const row of rows) {
       const next = { ...derive(row, { now }), requesterId: row.requester_id == null ? null : Number(row.requester_id) };
       const sessionId = Number(row.proposal_session_id || row.build_session_id || row.lc_id) || null;
@@ -563,6 +566,7 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
   }
   if (changes.size) {
     const { rows } = await db.query(CHANGE_FACTS_SQL, [[...changes]]);
+    rows.sort((a, b) => Number(a.id) - Number(b.id));
     for (const row of rows) {
       const next = { ...deriveChange(row, { now }), requesterId: row.user_id == null ? null : Number(row.user_id) };
       const key = { appId: Number(row.app_id), kind: 'change', ref: Number(row.id), issueNumber: null, sessionId: Number(row.id) };
@@ -680,13 +684,10 @@ async function publish(db, pushes) {
  * claim, a vote) and publish what changed. Never throws: the route's own
  * write stands, and the sweep corrects a row this missed.
  */
-async function touched(db, items, deps = {}) {
+async function touched(db, items) {
   try {
     const changed = await refresh(db, items);
-    if (typeof deps.ring === 'function') {
-      for (const row of changed) if (row.bell && row.state.requesterId) await deps.ring(db, row);
-    }
-    await publish(db, changed.map(pushOf));
+    await publish(db, await pushesOf(db, changed));
     return changed;
   } catch (err) {
     require('./logger').warn('work-state', 'refresh after a route write failed', { message: err.message });
@@ -694,20 +695,85 @@ async function touched(db, items, deps = {}) {
   }
 }
 
+// ── The bell ─────────────────────────────────────────────────────────────
+
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's requester
+// hears four moments, rung from its stage alone: into waiting_for_you
+// (needs you), up_for_vote (ready to vote), stopped, and live. The bell row
+// is written with the stage, in the same transaction, and its words come
+// from homeroom-bot-notify-copy.js as the bot's own moments' do; it opens
+// the request. A first version's news is still the bot's own messages,
+// which ring themselves (homeroom-bot-dm.js sendDm), so it is not rung here.
+const BELL_KINDS = Object.freeze({ needs_you: 'build_needs_you', ready: 'build_ready', stopped: 'build_stopped', live: 'build_live' });
+const WHY_SAID = Object.freeze({ question: 'question', plan: 'plan', decide: 'decide', already_works: 'done', needs_detail: 'empty' });
+const REASON_SAID = Object.freeze({
+  build_failed: 'build_other', fix_stopped: 'checks', look_failed: 'build_other', change_closed: 'build_other', stalled: 'build_no_start',
+});
+
+/** Pure: which of a moment's words a change of stage says (homeroom-bot-notify-copy.js `said`). */
+function bellSaid(bell, item, { group = false } = {}) {
+  if (bell === 'needs_you') return WHY_SAID[item.why] || 'question';
+  if (bell === 'ready') return group ? 'ready_group' : 'ready';
+  if (bell === 'stopped') return REASON_SAID[item.reason] || 'build_other';
+  return 'live';
+}
+
+const BELL_FACTS_SQL = `
+  SELECT rq.first_version, rq.issue_title, a.slug, a.name,
+         (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members,
+         bot.id AS bot_id,
+         (SELECT p.conversation_id FROM conversation_direct_pairs p
+           WHERE p.user_low_id = LEAST(bot.id, $3::int) AND p.user_high_id = GREATEST(bot.id, $3::int)) AS conversation_id
+    FROM homeroom_bot_requesters rq
+    JOIN apps a ON a.id = rq.app_id
+    LEFT JOIN users bot ON bot.username = 'homeroom_bot' AND bot.is_synthetic = TRUE
+   WHERE rq.app_id = $1 AND rq.issue_number = $2 AND rq.user_id = $3`;
+
+/**
+ * Ring each changed row's requester at its moment (bellOf), in `db`'s
+ * transaction, and resolve the pushes that tell their open tabs their bell
+ * moved. Rows with no moment, of no requester, of a change or a first
+ * version ring nothing.
+ */
+async function bellPushes(db, changed) {
+  const pushes = [];
+  for (const row of changed || []) {
+    const userId = Number(row.state?.requesterId) || 0;
+    if (!row.bell || row.kind !== 'request' || !userId || !BELL_KINDS[row.bell]) continue;
+    const { rows: [f] } = await db.query(BELL_FACTS_SQL, [row.appId, row.issueNumber, userId]);
+    if (!f || f.first_version === true || !f.bot_id) continue;
+    const said = bellSaid(row.bell, row.state, { group: Number(f.members) > 1 });
+    const reason = row.state.line?.code === 'reason' ? row.state.line.text : null;
+    const detail = require('./homeroom-bot-notify-copy').botNotificationDetail({
+      moment: row.bell, said, appName: f.name || f.slug, appSlug: f.slug, issueNumber: row.issueNumber,
+      requestTitle: f.issue_title || null, ...(reason ? { reason } : {}),
+    });
+    const { rows: rang } = await db.query(
+      `INSERT INTO notifications (user_id, conversation_id, source_user_id, kind, detail, app_id)
+       SELECT $1, $2, $3, $4, $5, $6
+        WHERE NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_user_id = $3)
+       RETURNING id`,
+      [userId, f.conversation_id || null, f.bot_id, BELL_KINDS[row.bell], detail, row.appId],
+    );
+    if (rang.length) pushes.push({ kind: 'user', routing: { userId }, data: { type: 'notifications_changed' } });
+  }
+  return pushes;
+}
+
+/** The pushes changed rows are carried by: their work_state, and the bell of each that rang. */
+async function pushesOf(db, changed) {
+  return [...changed.map(pushOf), ...(await bellPushes(db, changed))];
+}
+
 /**
  * The workflow's afterAccepted hook (kernel/pipeline.ts): refresh what an
  * accepted event's instance is about, in its own transaction, and resolve
- * the pushes of what changed. Rings a changed stage's bell through
- * `deps.ring` when given (the platform wires the bell's notification).
+ * the pushes of what changed, each moment's bell rung with it (bellPushes).
  */
-async function afterTransition(db, info, deps = {}) {
+async function afterTransition(db, info) {
   const items = await itemsOf(db, info);
   if (!items.length) return [];
-  const changed = await refresh(db, items);
-  if (typeof deps.ring === 'function') {
-    for (const row of changed) if (row.bell && row.state.requesterId) await deps.ring(db, row);
-  }
-  return changed.map(pushOf);
+  return pushesOf(db, await refresh(db, items));
 }
 
 // ── Reading the store ────────────────────────────────────────────────────
@@ -793,9 +859,9 @@ async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 
       : { sessionId: Number(r.item_ref) })),
     ...missing.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.issue_number) })),
   ];
-  if (!items.length) return { checked: 0, seeded: 0, changed: [] };
+  if (!items.length) return { checked: 0, seeded: 0, changed: [], pushes: [] };
   const changed = await refresh(db, items, { touch: true });
-  return { checked: rows.length, seeded: missing.length, changed };
+  return { checked: rows.length, seeded: missing.length, changed, pushes: await pushesOf(db, changed) };
 }
 
 /**
@@ -818,8 +884,10 @@ async function drainDirty(pool, { limit = 200 } = {}) {
     const changed = rows.length ? await refresh(client, rows.map((r) => (r.session_id != null
       ? { sessionId: Number(r.session_id) }
       : { appId: Number(r.app_id), issueNumber: Number(r.issue_number) }))) : [];
+    // Each moment's bell is rung with the stage, in this transaction.
+    const pushes = await pushesOf(client, changed);
     await client.query('COMMIT');
-    return { taken: rows.length, changed };
+    return { taken: rows.length, changed, pushes };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -867,6 +935,9 @@ module.exports = {
   wants,
   itemsOf,
   pushOf,
+  bellSaid,
+  bellPushes,
+  pushesOf,
   publish,
   touched,
   afterTransition,

@@ -2,20 +2,21 @@
 
 // #5483: a Yes cast in the chat with Homeroom bot sticks.
 //
-// The Yes on a ready card (bot-ready.tsx) or a Ready to try row in the
-// drawer (bot-strip.tsx) was saved by api.approveChange but kept on the
-// screen only: the card held it in its own state, which leaving the chat
-// unmounts, and nothing else on the page heard about it. Reopened, the card
-// read the transcript's copy from before the vote and offered Try it /
-// Approve / Change something again. The vote now lands in a page-lifetime
-// record in the activity store (./bot-activity-store.ts), which both surfaces
-// read, and the rest of the page hears it the way AppView.castVote announces
-// a vote (Your votes' own-vote note, the saved-vote publication the Needs you
-// surfaces listen on, the notification list).
+// The Yes on a ready card (bot-ready.tsx) was saved by api.approveChange but
+// kept on the screen only: the card held it in its own state, which leaving
+// the chat unmounts, and nothing else on the page heard about it. Reopened,
+// the card read the transcript's copy from before the vote and offered Try
+// it / Approve / Change something again. The vote now lands in a
+// page-lifetime record in the activity store (./bot-activity-store.ts),
+// which the card reads, and the rest of the page hears it the way
+// AppView.castVote announces a vote (Your votes' own-vote note, the
+// saved-vote publication the Needs you surfaces listen on, the notification
+// list). The activity drawer's Ready to try row, which read the same record,
+// is gone (5 Nov 2026).
 //
-// #5484: the same moment also fires the tray's window event, so the tray
-// readers (the Activity bar, the inbox's Homeroom bot row) read again even
-// when the socket's push is missed.
+// #5484: the same moment also fires the work-changed window event, so what
+// reads the viewer's tracks (the inbox's Homeroom bot row, ./bot-work.tsx)
+// reads again even when the socket's push is missed.
 //
 // Run with: node --test tests/messages-ready-approval-kept.test.js
 
@@ -30,6 +31,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const STORE = 'frontend/src/features/messages/bot-activity-store.ts';
 const READY = 'frontend/src/features/messages/bot-ready.tsx';
 const STRIP = 'frontend/src/features/messages/bot-strip.tsx';
+const WORK = 'frontend/src/features/messages/bot-work.tsx';
 
 // The page's own timeline of what a Yes did: reads asked for and window
 // events dispatched, in order. #5484 fires the tray's event here itself.
@@ -151,7 +153,7 @@ test('a ready card reopened after the Yes cast here still says You approved it, 
 
 // ── The vote is recorded only once the server has said yes ──
 
-test('the Yes is recorded in the ok branches alone, and the drawer\'s row reads the record', () => {
+test('the Yes is recorded in the ok branches alone, and the card reads the record', () => {
   const ready = read(READY);
   const at = ready.indexOf('  async function press(');
   assert.ok(at > -1, 'press is found');
@@ -162,15 +164,11 @@ test('the Yes is recorded in the ok branches alone, and the drawer\'s row reads 
   assert.match(ready, /approvedHere\(vote\.sessionId, vote\.epoch \?\? null\)/,
     'the reopened card reads the record into its state');
 
+  // The drawer's Ready to try row, its own Approve and its reader of the
+  // record went with the drawer (5 Nov 2026): the card is the one place a
+  // Yes is cast in the chat.
   const strip = read(STRIP);
-  const approve = strip.slice(strip.indexOf('  async function approve() {'), strip.indexOf('\n  }\n', strip.indexOf('  async function approve() {')));
-  assert.match(approve, /if \(out\.ok\) \{ noteApprovedHere\(sessionId, ready\?\.epoch \?\? null, out\.goesLive \|\| null\); loadBotWork\(\); return; \}/,
-    'recorded before the tray reads again');
-  assert.match(read(STORE), /export function useApprovedHere\(/,
-    'the record has a React reader: the strip\'s row does not subscribe to the cards\' snapshot');
-  assert.match(strip, /const approved = useApprovedHere\(sessionId, ready\?\.epoch \?\? null\);/,
-    'the row subscribes to the record, so a Yes cast anywhere on the page (the card\'s included) redraws it at once');
-  // #5506: nor to someone who does not build on the project (lookOnly).
-  assert.match(strip, /const canApprove = !!ready\?\.approve && !!sessionId && !approved && !lookOnly;/,
-    'a row whose Yes is in stops offering Approve');
+  assert.doesNotMatch(strip, /noteApprovedHere|useApprovedHere|approveChange/, 'the strip module casts no vote');
+  // The event the Yes fires is the one the tracks' readers listen on.
+  assert.match(read(WORK), /window\.addEventListener\(WORK_CHANGED_EVENT, changed\);/);
 });

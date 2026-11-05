@@ -606,6 +606,19 @@ async function sendDm(pool, {
   moment = undefined, threadRootId = undefined, hello = null,
 }) {
   if (!bot?.id || !userId) return null;
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
+  // not a message. It is said on the request's own page (its question or
+  // plan, built and up for a vote, one failure updated in place, live), and
+  // its requester's bell rings from its stage (services/work-state.js).
+  // Nothing about it goes into Main Chat, a request card's thread or a
+  // private thread. A first version's news is the exception: it has no
+  // request page yet.
+  if (conversations.isRequestNewsMeta(metadata)) {
+    log.info('homeroom-bot-dm', 'A request\'s news is said on its page, not sent', {
+      userId, kind: metadata?.kind || null, issueNumber: metadata?.issueNumber || null,
+    });
+    return null;
+  }
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
   if (!opened) return null;
   const input = { content: clip(content, conversations.MAX_MESSAGE_LENGTH || 8000) };
@@ -1887,6 +1900,15 @@ async function relayIssuePost({
     await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: CHAT_STATUS_OF_KIND[kind] });
   }
   if (!dm || !bot?.id) return null;
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news goes
+  // to nobody's chat. It is the post on the request's page, and its
+  // requester's bell rings from its stage (services/work-state.js), so the
+  // post does not tag them either (untaggedRequester reads `quiet`). A first
+  // version's news is still told, as it has no request page yet.
+  const asked = await requesterOf(pool, app.id, issueNumber);
+  if (asked && !asked.firstVersion) {
+    return { conversationId: null, messageId: null, quiet: true, userId: asked.userId, username: asked.username };
+  }
   // A verdict about Homeroom itself offers a move (below); where it cannot,
   // the run records why (homeroom-bot-move.js noteMoveOffer).
   const noteMove = (outcome) => (kind === 'person' && dm.platform

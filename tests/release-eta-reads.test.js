@@ -159,15 +159,21 @@ test('a request\'s track going live says when, for a merge of Homeroom itself', 
 test('a project\'s chat: the requester\'s card, approved and merged into Homeroom, says when', async () => {
   const chat = require('../src/services/homeroom-bot-chat');
   const state = (chat_message_id, session_id, session_status) => ({
-    chat_message_id, kind: 'filed', issue_number: chat_message_id, app_id: 3, chip: null, queued: false, queue_waiting: false,
+    chat_message_id, kind: 'filed', issue_number: chat_message_id, app_id: 3, queued: false, queue_waiting: false,
     queue_reason: null, first_version: false, issue_status: 'open', run_id: 7, verdict: 'ready', build_ok: true, build_error: null,
     cap_suppressed: false, proposal_session_id: session_id, build_waiting_at: null, build_status: null,
-    session_id, session_status, check_state: 'passing',
+    session_id, session_status, check_state: 'passing', session_live_at: null,
   });
   const p = pool((sql) => (/FROM chat_bot_requests r/.test(sql)
     ? [state(5, 50, 'merged'), state(6, 70, 'merging'), state(8, 80, 'promoted')] : undefined));
   const rows = [5, 6, 8].map((id) => ({ chat_message_id: id, kind: 'filed', issue_number: id, title: 'Dark mode', session_id: null, app_id: 3 }));
-  const deps = { dm: { botAccount: async () => ({ id: 99 }), typicalMinutes: async () => null, approvalState: async () => null } };
+  // A filed request's card reads its stored work state: the two merges are
+  // going live, and the third is up for a vote.
+  const works = new Map([[5, { stage: 'going_live' }], [6, { stage: 'going_live' }], [8, { stage: 'up_for_vote' }]]);
+  const deps = {
+    dm: { botAccount: async () => ({ id: 99 }), typicalMinutes: async () => null, approvalState: async () => null },
+    workState: { ensure: async () => {}, forRequests: async () => works },
+  };
   const cards = await chat.cardsOf(p, { appId: 3, user: { id: 4 }, rows, deps });
   assert.deepEqual(cards.map((c) => [c.messageId, c.state && c.state.stage, (c.state && c.state.release) || null]), [
     [5, 'approved', EXPECTED()],

@@ -329,7 +329,7 @@ test('GET /api/workshop/counts says which votes `needs` counts, in the record\'s
   assert.match(cte('owed_proposals'), /array_agg\('proposal:' \|\| cs\.id \|\| '@' \|\| cs\.approval_epoch\) AS keys/);
   assert.match(cte('owed_governance'), /array_agg\('governance:' \|\| i\.id\) AS keys/);
   // #6019: and the bot's open questions, by the message that asks.
-  assert.match(cte('owed_questions'), /array_agg\('question:' \|\| q\.message_id\) AS keys/);
+  assert.match(cte('owed_questions'), /array_agg\('question:' \|\| q\.id\) AS keys/);
   assert.match(route.COUNTS_SQL, /\(COALESCE\(op\.keys, '\{\}'::text\[\]\) \|\| COALESCE\(og\.keys, '\{\}'::text\[\]\) \|\| COALESCE\(oq\.keys, '\{\}'::text\[\]\)\) AS owed/);
   assert.match(read('src/routes/workshop-overview.js'), /owed: Array\.isArray\(row\.owed\) \? row\.owed\.map\(String\) : \[\],/);
 

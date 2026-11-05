@@ -170,7 +170,7 @@ export function ProjectTile({ name, slug = null, iconUrl = null, emoji = null, s
 
 const TAG = 'inline-flex shrink-0 items-center rounded-[6px] px-1.5 font-semibold tabular-nums bg-[hsl(var(--req-h)_80%_92%)] text-[hsl(var(--req-h)_70%_26%)] dark:bg-[hsl(var(--req-h)_35%_25%)] dark:text-[hsl(var(--req-h)_80%_82%)]';
 
-/** A request's number, "#18", in its own colour: the same in the drawer, the chat and its thread. */
+/** A request's number, "#18", in its own colour: the same in the chat and its thread. */
 export function RequestTag({ number, size = 'row' }: { number: number | null | undefined; size?: 'row' | 'line' | 'head' }) {
   if (!number || number <= 0) return null;
   const text = size === 'head' ? 'text-[13px] leading-5' : 'text-[12px] leading-[18px]';
@@ -256,7 +256,7 @@ function StatusBadge({ tone, icon: Icon, stroke = '2.5', words = null, spin = fa
 
 /**
  * How a request ended, as a small square after its project's tile, named
- * for a screen reader and on hover. An ending the tray has no record of is a
+ * for a screen reader and on hover. An ending its track has no record of is a
  * plain grey square named by the words it last said.
  */
 export function FinalState({ outcome, fallback }: { outcome: string | null | undefined; fallback: string }) {
@@ -307,7 +307,7 @@ export function OpenState({ row }: { row: StripRow }) {
 }
 
 /**
- * A settled request on one line, in the chat and in Done today: the
+ * A settled request on one line, in the chat: the
  * project's small tile at the end of the big tile's column, so it sits as
  * close to its badge as a big tile does, then how it ended, its number and
  * its title. Only what is still open gets two lines and a full tile.

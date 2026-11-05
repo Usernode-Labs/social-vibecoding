@@ -231,11 +231,14 @@ export function filedRequestOf(where: PrivateThreadState | null): { slug: string
  */
 export function RequestTrackStrip({ track, number, href }: { track: BotTrack; number: number; href: string }): ReactNode {
   const t = useMessages('messages');
-  const line = trackShort(track);
+  const word = trackStateWord(track);
+  const short = trackShort(track);
+  // A stage with no second line says its word once, not twice.
+  const line = short === word ? '' : short;
   return (
     <div className="messages-bot-note items-center gap-2 px-4 py-2" data-private-thread="track" data-private-track={track.work.stage}>
-      <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-200" data-private-track-state="">{trackStateWord(track)}</span>
-      <span className="min-w-0 flex-1 truncate" title={line}>{line}</span>
+      <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-200" data-private-track-state="">{word}</span>
+      <span className="min-w-0 flex-1 truncate" title={line || undefined}>{line}</span>
       <TrackBar track={track} className="w-16 shrink-0" />
       <a className="shrink-0 font-semibold text-violet-700 dark:text-violet-300" href={href} data-private-track-open="">
         {t('messages:privateThread.openRequest', { number })}

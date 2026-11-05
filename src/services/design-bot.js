@@ -28,7 +28,7 @@
 const log = require('./logger');
 const turnEngine = require('./homeroom-bot-turn-engine');
 const { withoutEmDashes } = require('./em-dashes');
-const { ENDED: TRACK_ENDED, STEPS: TRACK_STEPS } = require('./homeroom-bot-track');
+const { STEPS: TRACK_STEPS, NOT_STARTED: TRACK_NOT_STARTED, standingOf } = require('./homeroom-bot-track');
 
 // The most of a version the model reads; a bigger one is not edited, and the
 // person is asked to capture a smaller part of the screen.
@@ -217,10 +217,19 @@ function saysNotBuilt(text) {
 
 /** Pure (#6151): the step after the one a track is on, or for one waiting its turn, the step it starts on; null once it ended. */
 function nextStepOf(track) {
-  if (TRACK_ENDED.has(track.state)) return null;
-  if (track.state === 'queued') return track.step || 'plan';
+  if (standingOf(track)?.say === 'ended') return null;
+  if (!track.step) return 'plan';
   const at = TRACK_STEPS.indexOf(track.step);
   return at >= 0 && at + 1 < TRACK_STEPS.length ? TRACK_STEPS[at + 1] : null;
+}
+
+/** Pure: a track's stage in the prompt's words, "building", "queued", "waiting for you, question". */
+function stageWordsOf(track) {
+  const work = track.work || {};
+  const code = work.line?.code || null;
+  if (work.stage === 'reading' && TRACK_NOT_STARTED.has(code)) return code.replace(/_/g, ' ');
+  const stage = String(work.stage || 'reading').replace(/_/g, ' ');
+  return work.why ? `${stage}, ${String(work.why).replace(/_/g, ' ')}` : stage;
 }
 
 /**
@@ -236,22 +245,19 @@ function botStanding(track, live) {
       ? 'Homeroom bot: not started on it yet; it reads the project\'s requests in turn.'
       : 'Homeroom bot does not build on this project now: a person must decide who builds it.';
   }
-  const why = track.held?.limit || track.why || null;
-  if (track.state === 'stopped' && why === 'needs_person') {
-    return 'Homeroom bot: stopped, it needs a person: a person must decide who builds it.';
+  const standing = standingOf(track);
+  if (standing.say === 'person' && standing.by) {
+    return `Homeroom bot: @${standing.by} has taken it on: a person must decide who builds it.`;
   }
-  if (track.state === 'held' && why === 'taken') {
-    return `Homeroom bot: held, ${track.held?.by ? `@${track.held.by}` : 'a person'} has taken it on: a person must decide who builds it.`;
+  if (standing.say === 'person') {
+    return 'Homeroom bot: handed it to the people on the project: a person must decide who builds it.';
   }
-  if (track.state === 'held') {
-    const place = track.held?.position ? `, number ${track.held.position} in line` : '';
-    return `Homeroom bot: held at a limit (${String(why || 'slots').replace(/_/g, ' ')}${place}); it builds it once that frees.`;
+  if (standing.say === 'held') {
+    const place = standing.position ? `, number ${standing.position} in line` : '';
+    return `Homeroom bot: held at a limit (${String(standing.limit).replace(/_/g, ' ')}${place}); it builds it once that frees.`;
   }
-  // Queued, why it waits its turn is no news to them.
-  const words = [track.state, track.state === 'queued' ? null : why]
-    .filter(Boolean).map((code) => String(code).replace(/_/g, ' ')).join(', ');
   const next = nextStepOf(track);
-  return `Homeroom bot: ${words}${next ? ` (its next step: ${next})` : ''}.`;
+  return `Homeroom bot: ${stageWordsOf(track)}${next ? ` (its next step: ${next})` : ''}.`;
 }
 
 /**
@@ -271,8 +277,8 @@ function filedLine(filed) {
 function filedBuilds(filed) {
   if (!filed) return false;
   if (!filed.track) return !!filed.live;
-  const why = filed.track.held?.limit || filed.track.why || null;
-  return !TRACK_ENDED.has(filed.track.state) && !(filed.track.state === 'held' && why === 'taken');
+  const standing = standingOf(filed.track);
+  return standing.say !== 'ended' && standing.say !== 'person';
 }
 
 /** What a turn that still says a filed design will not be built says instead. */

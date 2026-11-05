@@ -939,7 +939,9 @@ test('the store reads again when the loop announces work for the viewer, and whe
   await settle();
   assert.deepEqual(reads, [{ fresh: false }], 'opening the DM reads once; its first news is what was there');
   assert.equal(store.getBotActivity().cards.get(31).step, 1);
-  assert.equal(timers.size, 1, 'a card going is asked about now and then');
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 3): no timer. A card
+  // going reads again when its request's stage moves (the window event).
+  assert.equal(timers.size, 0, 'nothing is asked about on a timer');
 
   // The live loop started or ended a piece of work for this person.
   win.dispatchEvent(new Event('homeroom-bot-work-changed'));
@@ -953,7 +955,7 @@ test('the store reads again when the loop announces work for the viewer, and whe
   await settle();
   assert.equal(reads.length, 3);
   assert.equal(store.getBotActivity().cards.get(31).outcome, 'proposed');
-  assert.equal(timers.size, 0, 'nothing going: no more asking');
+  assert.equal(timers.size, 0, 'still no timer');
 
   fake.unmount();
   win.dispatchEvent(new Event('homeroom-bot-work-changed'));

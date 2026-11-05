@@ -15,13 +15,21 @@
 -- request's row. `stage` is one of ten words, `why` says why a
 -- waiting_for_you is the requester's move, `reason` why a stopped stopped,
 -- and `line` the second line (a queue place, a hold, a round of review).
+--
+-- `session_id` and `requester_id` carry no foreign key on purpose. The row
+-- is derived again whenever its facts move, so nothing needs them checked,
+-- and a check would take a share lock on the change's chat_sessions row: a
+-- transition that holds that row FOR UPDATE (the proposal, preview,
+-- merge-followups and shots machines' facts) and then stores this row would
+-- deadlock with a drain storing the same row first. A deleted user or
+-- change leaves a number nothing joins to.
 
 CREATE TABLE IF NOT EXISTS work_states (
   app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
   item_kind     TEXT NOT NULL CHECK (item_kind IN ('request', 'change')),
   item_ref      INTEGER NOT NULL,
   issue_number  INTEGER,
-  session_id    INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  session_id    INTEGER,
   stage         TEXT NOT NULL CHECK (stage IN (
                   'reading', 'planning', 'waiting_for_you', 'building', 'checking',
                   'up_for_vote', 'going_live', 'live', 'stopped', 'closed')),
@@ -29,7 +37,7 @@ CREATE TABLE IF NOT EXISTS work_states (
   reason        TEXT CHECK (reason IS NULL OR reason IN ('build_failed', 'fix_stopped', 'look_failed', 'change_closed', 'stalled')),
   line          JSONB,
   whose_move    TEXT CHECK (whose_move IS NULL OR whose_move IN ('bot', 'requester', 'group', 'builder')),
-  requester_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  requester_id  INTEGER,
   since         TIMESTAMPTZ,
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   -- When it was last derived again, changed or not: the sweep takes the

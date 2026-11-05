@@ -206,17 +206,19 @@ export const JOBS: readonly Job[] = Object.freeze([
     async run(_ctx: WorkContext, { pool }: JobDeps) {
       const ws = legacy('services/work-state');
       let taken = 0;
-      const changed: unknown[] = [];
+      let changed = 0;
+      const pushes: unknown[] = [];
       // A burst (a build's many writes, a merge that closes many requests)
       // is drained in a few passes of one run.
       for (let pass = 0; pass < 5; pass++) {
         const out = await ws.drainDirty(pool, { limit: 200 });
         taken += out.taken;
-        changed.push(...out.changed);
+        changed += out.changed.length;
+        pushes.push(...out.pushes);
         if (out.taken < 200) break;
       }
-      await ws.publish(pool, changed.map(ws.pushOf));
-      return { taken, changed: changed.length };
+      await ws.publish(pool, pushes);
+      return { taken, changed };
     },
   },
   {
@@ -228,7 +230,7 @@ export const JOBS: readonly Job[] = Object.freeze([
     async run(_ctx: WorkContext, { pool }: JobDeps) {
       const ws = legacy('services/work-state');
       const out = await ws.sweep(pool);
-      await ws.publish(pool, out.changed.map(ws.pushOf));
+      await ws.publish(pool, out.pushes);
       return { checked: out.checked, seeded: out.seeded, changed: out.changed.length };
     },
   },

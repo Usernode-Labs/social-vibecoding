@@ -162,6 +162,16 @@ export function trackShort(track: BotTrack): string {
   return [trackLine(track), trackPlace(track)].filter(Boolean).join(' · ');
 }
 
+/**
+ * Pure: the second line where the stage word is said beside it (a badge's
+ * name, a card's status): empty when the stage has no second line, so the
+ * word is never said twice ("Building: Building").
+ */
+export function trackDetail(track: BotTrack): string {
+  const line = trackLine(track);
+  return line === trackStateWord(track) ? '' : line;
+}
+
 /** Pure: whether the bot is at it this minute, building or planning, so its clock ticks. */
 const ticks = (track: Pick<BotTrack, 'work' | 'tryStartedAt'>) => !!track.tryStartedAt
   && (track.work.stage === 'building' || track.work.stage === 'planning');
@@ -253,7 +263,7 @@ export function trackLook(track: Pick<BotTrack, 'work' | 'busy'>): { tone: Tone;
 export function TrackBadge({ track }: { track: BotTrack }) {
   const look = trackLook(track);
   const Icon = look.icon;
-  const words = `${trackStateWord(track)}: ${trackLine(track)}`;
+  const words = [trackStateWord(track), trackDetail(track)].filter(Boolean).join(': ');
   return (
     <span
       className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] ${TINT[look.tone]}`}
@@ -522,7 +532,7 @@ export function TrackCard({ track, title, project = null, links = [], pictures =
   const at = now || ticking;
   const clock = trackClock(track, at);
   const place = trackPlace(track);
-  const facts = [project, trackLine(track), place, clock].filter(Boolean).join(' · ');
+  const facts = [project, trackDetail(track), place, clock].filter(Boolean).join(' · ');
   const ended = ENDED_STAGES.has(track.work.stage);
   return (
     <div

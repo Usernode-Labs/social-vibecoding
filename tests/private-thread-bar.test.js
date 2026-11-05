@@ -190,7 +190,7 @@ test('#6153: once filed, its head says where the request stands, live from its t
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const track = (extra = {}) => ({
     key: 'ear trainer|14', appSlug: 'ear-trainer', appName: 'Ear Trainer', iconUrl: null, iconEmoji: null,
-    issueNumber: 14, title: 'Design: Ear Trainer home', firstVersion: false, state: 'building', step: 'build', why: null,
+    issueNumber: 14, title: 'Design: Ear Trainer home', firstVersion: false, work: { stage: 'building' }, step: 'build',
     waitingOn: null, busy: true, try: 1, tryStartedAt: null, tryStarts: [], since: null, rootId: null, askId: null,
     proposalId: null, sessionId: null, links: { request: '#app/ear-trainer/dev/issues/14', proposal: null, project: '#app/ear-trainer' },
     ...extra,
@@ -206,16 +206,21 @@ test('#6153: once filed, its head says where the request stands, live from its t
 
   const building = head();
   assert.match(building, /data-private-thread="track" data-private-track="building"/);
-  assert.match(building, /<span class="[^"]*" data-private-track-state="">Building<\/span>/, 'the track\'s own word');
-  assert.match(building, new RegExp(`title="${message('messages:bot.track.line.building.default')}"`), 'and its line');
+  assert.match(building, /<span class="[^"]*" data-private-track-state="">Building<\/span>/, 'the stage\'s own word');
+  assert.match(building, /data-private-track-state="">Building<\/span><span class="min-w-0 flex-1 truncate"><\/span>/,
+    'a stage with no second line says its word once');
   assert.match(building, /data-bot-track-bar="building"/, 'its five steps');
   assert.equal((building.match(/data-bot-track-step=/g) || []).length, 5);
   assert.match(building, /<a class="[^"]*" href="#app\/ear-trainer\/dev\/issues\/14" data-private-track-open="">Open request #14<\/a>/);
   assert.equal(message('messages:privateThread.openRequest', { number: 14 }), 'Open request #14');
   assert.doesNotMatch(building, /Filed as request/, 'the strip, not the snapshot');
 
+  // Where the stage has a second line, it follows the word, whole on hover.
+  work = { tracks: [track({ work: { stage: 'building', line: { code: 'reviewing', round: 1, of: 2 } } })] };
+  assert.match(head(), /data-private-track-state="">Building<\/span><span class="min-w-0 flex-1 truncate" title="Reviewing, round 1 of 2">Reviewing, round 1 of 2<\/span>/);
   // It moves as the track does.
-  work = { tracks: [track({ state: 'vote', step: 'vote', busy: false })] };
+  work = { tracks: [track({ work: { stage: 'up_for_vote' }, step: 'vote', busy: false })] };
+  assert.match(head(), /data-private-track="up_for_vote"/);
   assert.match(head(), /data-private-track-state="">Up for a vote<\/span>/);
   // Posted on a request as its plan, the same; with no address, the request's page.
   assert.match(renderToHtml(createElement(bar.PrivateThreadNote, { where: { ...where, state: 'posted', href: null } })),
@@ -240,8 +245,12 @@ test('#6153: once filed, its head says where the request stands, live from its t
 
 test('#6153: the Vote under a request\'s up-for-a-vote line goes once its vote is decided, as Read the plan does once it is built', () => {
   const source = read('frontend/src/features/messages/bot-question.tsx');
-  assert.match(source, /const VOTE_DECIDED: ReadonlySet<string> = new Set\(\['going_live', 'live', 'stopped', 'done_elsewhere', 'closed'\]\);/);
-  assert.match(source, /const pastVote = !!track && VOTE_DECIDED\.has\(track\.state\);/);
+  // By the request's stage (lib/work-state.ts): its change went live or is on its way, or it stopped or closed.
+  assert.match(source, /const VOTE_DECIDED: ReadonlySet<string> = new Set\(\['going_live', 'live', 'stopped', 'closed'\]\);/);
+  assert.match(source, /const pastVote = !!track && VOTE_DECIDED\.has\(track\.work\.stage\);/);
+  // Read the plan goes once the work is past its plan: built, or ended.
+  assert.match(source, /const BEFORE_BUILD: ReadonlySet<string> = new Set\(\['reading', 'planning', 'waiting_for_you'\]\);/);
+  assert.match(source, /const pastPlan = !!track && !BEFORE_BUILD\.has\(track\.work\.stage\);/);
   assert.match(source, /\.filter\(\(action\) => !\(pastPlan && action\.id === 'read_plan'\) && !\(pastVote && action\.id === 'vote'\)\);/);
   const dm = require('../src/services/homeroom-bot-dm');
   assert.equal(dm.buildingLine({ issueNumber: 14, appName: 'Ear Trainer', version: 4 }), 'Homeroom bot is building #14 from version 4.');

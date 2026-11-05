@@ -420,6 +420,20 @@ function isBotNewsRow(row) {
   return Number(meta.issueNumber) > 0 || !!meta.firstVersion || meta.kind === 'activity';
 }
 
+/**
+ * Pure (5 Nov 2026, docs/plans/bot-one-model.md step 4): whether a message
+ * of the bot's, by its metadata, is a request's news: REQUEST_NEWS below, as
+ * a test of one message about to be sent. Such a message is no longer sent
+ * at all (homeroom-bot-dm.js sendDm): a request's news is said on its own
+ * page, and its requester's bell rings from its stage (services/work-state.js).
+ * A first version's news is not one: it has no request page yet.
+ */
+function isRequestNewsMeta(meta) {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
+  if (meta.moment === 'reply' || meta.firstVersion === true || BOT_CONVERSATION_KINDS.has(meta.kind)) return false;
+  return /^[1-9][0-9]{0,9}$/.test(String(meta.issueNumber ?? '')) || meta.kind === 'activity';
+}
+
 /** The cards a main-stream page of this conversation carries: all of them, but in the chat with the bot. */
 async function mainStreamCards(db, membership) {
   return membership.kind === 'direct' && (await threadsAllowed(db, membership)) ? (row) => !isBotNewsRow(row) : null;
@@ -2593,6 +2607,7 @@ module.exports = {
   threadsAllowed,
   isBotNewsRow,
   BOT_CONVERSATION_KINDS,
+  isRequestNewsMeta,
   ALSO_IN_CHAT,
   REQUEST_NEWS,
   PLUS_THREAD_OPENER,

@@ -109,18 +109,14 @@ test('a plan\'s "Building it" spins while its build runs, and is a check once it
     'the newest card says');
 });
 
-test('the DM is read again while a card spins or a ready card goes live, as while work goes', () => {
-  const { stillMoving } = loadTsx(STORE);
-  const snap = (cards, ready = []) => ({
-    cards: new Map(cards.map((c, i) => [i + 1, c])), ready: new Map(ready.map((r, i) => [i + 1, r])),
-  });
-  assert.equal(stillMoving(snap([{ state: 'working' }])), true);
-  assert.equal(stillMoving(snap([{ state: 'done', outcome: 'checking' }])), true);
-  assert.equal(stillMoving(snap([{ state: 'done', outcome: 'going_live' }])), true);
-  assert.equal(stillMoving(snap([{ state: 'done', outcome: 'proposed' }])), false);
-  assert.equal(stillMoving(snap([{ state: 'done', outcome: 'needs_look' }])), false, 'a person looks: nothing to wait for');
-  assert.equal(stillMoving(snap([], [{ state: 'going_live' }])), true);
-  assert.equal(stillMoving(snap([], [{ state: 'live' }])), false);
+test('the DM\'s cards are read again when a stage moves, never on a timer', () => {
+  // 5 Nov 2026: every step of the bot's work is a stage change, pushed as
+  // `work_state` (services/work-state.js), which public/js/app.js turns into
+  // the window event the store listens for.
+  const src = read(STORE);
+  assert.doesNotMatch(src, /setInterval|POLL_MS/, 'no timer');
+  assert.match(src, /window\.addEventListener\(WORK_CHANGED_EVENT, changed\);/);
+  assert.match(read('public/js/app.js'), /case 'homeroom_bot_work_changed':\s+case 'work_state':/);
 });
 
 // ── #4242: "needs a look" ──
