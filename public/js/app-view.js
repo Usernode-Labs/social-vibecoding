@@ -29183,13 +29183,17 @@ const AppView = {
     // enter this open with the same arguments. Mirrors the card's gate —
     // read-only viewers get no Retry preview there (#866: the ensure POST is
     // collab-gated), so they get none here either. A stale closure no-ops.
-    const retry = readOnly ? null : () => {
-      if (loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug)) {
-        const retryOpts = { ...(opts || {}) };
-        delete retryOpts.telemetryAttempt;
-        return AppView.ensureStaging(sessionId, fallbackUrl, testing, retryOpts);
-      }
+    // #6077: `reopen` is that re-entry without this open's guard, because
+    // swapToStaging takes a load id of its own, which would make `retry` a dead
+    // button there. It goes down with the swap, which guards it with its own.
+    const reopen = readOnly ? null : () => {
+      const retryOpts = { ...(opts || {}) };
+      delete retryOpts.telemetryAttempt;
+      return AppView.ensureStaging(sessionId, fallbackUrl, testing, retryOpts);
     };
+    const retry = reopen && (() => {
+      if (loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug)) return reopen();
+    });
 
     let data;
     try {
@@ -29232,6 +29236,7 @@ const AppView = {
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
         telemetryAttempt,
+        ...(reopen ? { reopen } : {}),
         ...(typeof data.appName === 'string' ? { appName: data.appName } : {}),
         // The moment a time-dependent change declared (services/preview-
         // clock.js); swapToStaging opens the preview at it.
@@ -29287,9 +29292,12 @@ const AppView = {
     AppView._stagingRebuildTimer = setTimeout(() => {
       if (loadId !== AppView._stagingLoadId) return;
       if (!AppView._pendingStagingPreview || AppView._pendingStagingPreview.loadId !== loadId) return;
+      // #6077: the marker stays parked, so a staging_ready that lands after
+      // this still opens the preview on its own.
       AppView._setStagingLoader(true, {
         title: PlatformI18n.t('changes:frame.loader.slow'),
-        sub: PlatformI18n.t('changes:frame.loader.slowRebuild'),
+        sub: PlatformI18n.t(retry ? 'changes:frame.loader.slowRebuildRetry' : 'changes:frame.loader.slowRebuild'),
+        ...AppView._offerStagingPreviewRetry(retry),
       });
     }, 180000);
   },
@@ -29434,6 +29442,12 @@ const AppView = {
     staging.clearSrc();
     const loadId = ++AppView._stagingLoadId;
     const current = () => loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug);
+    // #6077: what a preview stuck loading offers. Only an open that came
+    // through ensureStaging has a way back (`opts.reopen`): a read-only
+    // viewer's, or a direct open with no session, has none.
+    const retryLoad = opts && typeof opts.reopen === 'function'
+      ? () => { if (current()) return opts.reopen(); }
+      : null;
     AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.signingIn'), sub: '' });
 
     // Join the app's in-flight mint (or its fresh cache entry). Capture this
@@ -29516,7 +29530,7 @@ const AppView = {
         const frame = staging.frame();
         if (frame && frame.src) {
           AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.loading'), sub: '' });
-          AppView._watchStagingIframeLoad(frame, loadId, null);
+          AppView._watchStagingIframeLoad(frame, loadId, null, retryLoad);
           staging.setSrc(next);
         }
       } : null,
@@ -29538,7 +29552,7 @@ const AppView = {
           ? PlatformI18n.t('changes:frame.loader.checksRunning')
           : '',
       });
-      AppView._watchStagingIframeLoad(staging.frame(), loadId, opts && opts.telemetryAttempt);
+      AppView._watchStagingIframeLoad(staging.frame(), loadId, opts && opts.telemetryAttempt, retryLoad);
       staging.setSrc(pending.src);
       return;
     }
@@ -29556,7 +29570,7 @@ const AppView = {
       if (!ready) return;
       // Keep the spinner up across the render, same as the fast path.
       AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.loading'), sub: '' });
-      AppView._watchStagingIframeLoad(staging.frame(), loadId, opts && opts.telemetryAttempt);
+      AppView._watchStagingIframeLoad(staging.frame(), loadId, opts && opts.telemetryAttempt, retryLoad);
       staging.setSrc(pending.src);
     });
   },
@@ -29571,8 +29585,12 @@ const AppView = {
   // Every path re-checks `_stagingLoadId`: closing the overlay or opening a
   // different preview bumps it, and a late event from the superseded load
   // must not touch the loader.
+  //
+  // #6077: `retry` (or null) puts "Retry preview" on the two stuck states.
+  // The timeout's still leaves the watch up: a page that does finish loading
+  // takes the loader and the button down.
   _stagingIframeTimer: null,
-  _watchStagingIframeLoad(iframe, loadId, telemetryAttempt) {
+  _watchStagingIframeLoad(iframe, loadId, telemetryAttempt, retry = null) {
     if (!iframe) return;
     if (AppView._stagingIframeTimer) {
       clearTimeout(AppView._stagingIframeTimer);
@@ -29598,7 +29616,8 @@ const AppView = {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       AppView._setStagingLoader(true, {
         title: PlatformI18n.t('changes:frame.loader.slow'),
-        sub: PlatformI18n.t('changes:frame.loader.slowLoadFailed'),
+        sub: PlatformI18n.t(retry ? 'changes:frame.loader.slowLoadFailedRetry' : 'changes:frame.loader.slowLoadFailed'),
+        ...AppView._offerStagingPreviewRetry(retry),
       });
     };
     AppView._stagingIframeTimer = setTimeout(() => {
@@ -29606,7 +29625,8 @@ const AppView = {
       if (loadId !== AppView._stagingLoadId) return;
       AppView._setStagingLoader(true, {
         title: PlatformI18n.t('changes:frame.loader.slow'),
-        sub: PlatformI18n.t('changes:frame.loader.slowStillLoading'),
+        sub: PlatformI18n.t(retry ? 'changes:frame.loader.slowStillLoadingRetry' : 'changes:frame.loader.slowStillLoading'),
+        ...AppView._offerStagingPreviewRetry(retry),
       });
     }, AppView.STAGING_IFRAME_LOAD_TIMEOUT_MS);
   },

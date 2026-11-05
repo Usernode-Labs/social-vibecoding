@@ -7967,6 +7967,18 @@
     "text": "The preview is still loading. Close this and click Preview again in a moment.",
     "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when the preview's page has not finished loading in time. \"Preview\" is the label of the button that opens the preview."
   },
+  "frame.loader.slowRebuildRetry": {
+    "text": "The rebuild is still running on the server. The preview opens here when it’s done. If it doesn’t, retry in a moment.",
+    "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when a rebuild has not finished after several minutes, above the \"Retry preview\" button."
+  },
+  "frame.loader.slowLoadFailedRetry": {
+    "text": "The preview didn’t finish loading. Retry in a moment.",
+    "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when the preview's page failed to load, above the \"Retry preview\" button."
+  },
+  "frame.loader.slowStillLoadingRetry": {
+    "text": "The preview is still loading. If it doesn’t appear soon, retry.",
+    "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when the preview's page has not finished loading in time, above the \"Retry preview\" button."
+  },
   "frame.loader.retryPreview": {
     "text": "Retry preview",
     "description": "Button on the preview's loading screen after the preview could not be opened: tries opening (and if needed rebuilding) it again."
