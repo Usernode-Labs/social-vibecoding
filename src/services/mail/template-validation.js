@@ -23,7 +23,7 @@
 const log = require('../logger');
 const { actionFor } = require('./actions');
 const { parse, render } = require('./template-language');
-const { validateEmailHtml, scanHtml, URL_ATTRIBUTES, MAX_EMAIL_HTML_BYTES } = require('./html-safety');
+const { validateEmailHtml, scanHtml, openAtEnd, URL_ATTRIBUTES, MAX_EMAIL_HTML_BYTES } = require('./html-safety');
 
 const LAYOUT_PLACEHOLDERS = {
   content: { description: 'Where each email\'s own HTML or text goes', kind: 'html' },
@@ -243,9 +243,12 @@ function branchProblem(source) {
       let html;
       try { html = render(source, values, { raw: [...vars] }); } catch { return null; }
       const result = validateEmailHtml(html);
-      if (!result.ok) {
+      // A part of a mail is followed by the next part, so it must end where
+      // ordinary text could follow.
+      const reason = result.ok ? openAtEnd(html) : result.reason;
+      if (reason) {
         const when = names.length ? `When ${names.map((name, i) => `${name} is ${path[i] ? 'true' : 'false'}`).join(', ')}: ` : '';
-        return `${when}${result.reason}`;
+        return `${when}${reason}`;
       }
     }
   }
@@ -417,7 +420,7 @@ function validateTemplate(kind, fields, layout) {
     else if (missing) errors.push(missing);
   }
   if (!errors.length) {
-    const framed = framedProblem(kind, text, layout);
+    const framed = framedPathsProblem(text, layout) || framedProblem(kind, text, layout);
     if (framed) errors.push({ field: 'html', message: framed });
   }
   return errors.length ? { ok: false, errors } : { ok: true };
@@ -425,6 +428,56 @@ function validateTemplate(kind, fields, layout) {
 
 function safeTree(source) {
   try { return parse(typeof source === 'string' ? source : '').nodes; } catch { return null; }
+}
+
+// The finished mail inside its layout, on every path through the template's
+// conditions and with each of VALUE_VARIANTS for every value, must pass as a
+// whole: what one part leaves open, the next part is read inside. The layout's
+// own conditions test only its parts (content, why, preheader), so they follow
+// from the rendered parts. Null or the first problem.
+function framedPathsProblem(text, layout) {
+  const trees = {};
+  const vars = new Set();
+  const conditions = new Set();
+  const walk = (list) => {
+    for (const n of list) {
+      if (n.type === 'var') vars.add(n.name);
+      else if (n.then) { conditions.add(n.name); walk(n.then); walk(n.else); }
+    }
+  };
+  for (const field of HTML_FIELDS) {
+    trees[field] = safeTree(text[field]);
+    if (!trees[field]) return null;
+    walk(trees[field]);
+  }
+  const names = [...conditions];
+  if (names.length > MAX_BRANCH_NAMES) {
+    return `The HTML, "why" and preview lines test more than ${MAX_BRANCH_NAMES} different conditions together (${names.join(', ')}), too many to check every combination. Use fewer.`;
+  }
+  for (let mask = 0; mask < 2 ** names.length; mask++) {
+    for (const variant of VALUE_VARIANTS) {
+      const values = {};
+      for (const name of vars) values[name] = variant;
+      names.forEach((name, i) => {
+        values[name] = mask & (1 << i) ? (vars.has(name) ? variant || 'x' : true) : '';
+      });
+      let html;
+      try {
+        const parts = Object.fromEntries(HTML_FIELDS.map((field) => [field, render(text[field], values, { raw: [...vars] })]));
+        html = layout
+          ? render(layout.html, { content: parts.html, why: parts.why, preheader: parts.preheader }, { raw: ['content', 'why', 'preheader'] })
+          : parts.html;
+      } catch {
+        return null;
+      }
+      const result = validateEmailHtml(html);
+      if (!result.ok) {
+        const when = names.length ? `When ${names.map((name, i) => `${name} is ${mask & (1 << i) ? 'true' : 'false'}`).join(', ')}, the` : 'The';
+        return `${when} finished email with its layout is refused: ${result.reason}`;
+      }
+    }
+  }
+  return null;
 }
 
 // The finished mail, with sample values, inside its layout, must pass as a
@@ -510,4 +563,4 @@ function validateLayout(fields, liveTemplates = []) {
   return errors.length ? { ok: false, errors, templates: broken } : { ok: true };
 }
 
-module.exports = { validateTemplate, validateLayout, validateTranslation, branchProblem, LAYOUT_PLACEHOLDERS };
+module.exports = { validateTemplate, validateLayout, validateTranslation, branchProblem, framedPathsProblem, LAYOUT_PLACEHOLDERS };

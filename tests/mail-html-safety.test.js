@@ -126,3 +126,13 @@ test('scanHtml reports comment and bogus comment ranges', () => {
   const scan = scanHtml(src);
   assert.deepEqual(scan.comments.map((c) => src.slice(c.start, c.end)), ['<!-- c -->', '<!x y>', '<?z>']);
 });
+
+test('openAtEnd names a part that leaves the parser outside ordinary text', () => {
+  const { openAtEnd } = require('../src/services/mail/html-safety');
+  for (const part of ['<p>Hi</p><', '<p>Hi</p><!x', '<p>Hi</p><?x', '<p>Hi</p></', 'Your code<style>', '<title>a', '<textarea>b']) {
+    assert.match(openAtEnd(part), /ends/, part);
+  }
+  for (const part of ['<p>Hi</p>', 'a < b', '<style>p{}</style>', '<!-- x -->', '<!--[if mso]><b><![endif]-->', '']) {
+    assert.equal(openAtEnd(part), null, part);
+  }
+});

@@ -183,3 +183,32 @@ test('an error that is not a template mistake is not shown to the admin', (t) =>
   assert.ok(result.errors.every((e) => !e.message.includes('internal detail')));
   assert.equal(logged.mock.callCount(), 1);
 });
+
+test('a part that ends inside a tag, declaration or raw-text element is refused, on any branch', () => {
+  const L2 = { name: 'L2', html: '<div>{{content}}{{why}}</div>', text: '{{content}}\n{{why}}' };
+  const p4 = { name: 'T', subject: 'Opened', preheader: '', why: '{{#unless hasApp}}img src=x onerror=alert(1)//{{/unless}}', html: '<p>Hi</p><a href="{{unsubscribeUrl}}">stop</a><', text: 'Hi {{unsubscribeUrl}}' };
+  hasError(validateTemplate('project_opened', p4, L2), 'html', /ends with a "<"/);
+  const L3 = { name: 'L', html: '<div>{{content}}{{why}}<p title="><img src=x onerror=alert(1)>">.</p></div>', text: '{{content}}\n{{why}}' };
+  const p3 = { name: 'T', subject: 'Opened', preheader: '', why: '{{#if hasApp}}<b>About {{app}}</b>{{/if}}', html: '<p>Hi</p><a href="{{unsubscribeUrl}}">stop</a><!x', text: 'Hi {{unsubscribeUrl}}' };
+  hasError(validateTemplate('project_opened', p3, L3), 'html', /unfinished/);
+  const broke = validateLayout(L3, [{ ...p3, action: 'project_opened', id: 1 }]);
+  hasError(broke, 'html', /"T"/);
+  const standard = SEEDS.layouts[0];
+  hasError(validateTemplate('otp', otp({ preheader: 'Your code<style>' }), standard), 'preheader', /<style>/);
+  hasError(validateTemplate('otp', otp({ preheader: 'Your code<!x' }), standard), 'preheader', /unfinished/);
+  const swallow = { name: 'T', subject: 's', preheader: '', why: '<a href="{{unsubscribeUrl}}">Unsubscribe</a>', html: '<p>Hi</p><!x', text: 'Hi {{unsubscribeUrl}}' };
+  hasError(validateTemplate('project_opened', swallow, L2), 'html', /unfinished/);
+  hasError(validateTemplate('project_opened', { ...swallow, html: '<p>Hi</p>{{#if hasApp}}<{{/if}}' }, L2), 'html', /tag/);
+  hasError(validateLayout({ name: 'L', html: '{{content}}<title>', text: '{{content}}' }, []), 'html', /title/);
+});
+
+test('the framed mail is checked on every path, not only the sample', () => {
+  const { framedPathsProblem } = require('../src/services/mail/template-validation');
+  const L2 = { html: '<div>{{content}}{{why}}</div>', text: '{{content}}' };
+  const text = { preheader: '', why: '{{#unless hasApp}}img src=x onerror=alert(1)//{{/unless}}', html: '<p>Hi</p><' };
+  assert.match(framedPathsProblem(text, L2), /hasApp is false[\s\S]*onerror/);
+  assert.equal(framedPathsProblem({ preheader: '', why: '{{#if hasApp}}<b>{{app}}</b>{{/if}}', html: '<p>Hi</p>' }, L2), null);
+  const many = ['a', 'b', 'c', 'd', 'e'].map((n) => `{{#if ${n}}}x{{/if}}`).join('');
+  const more = ['f', 'g', 'h', 'i'].map((n) => `{{#if ${n}}}x{{/if}}`).join('');
+  assert.match(framedPathsProblem({ html: many, why: more, preheader: '' }, L2), /more than 8/);
+});

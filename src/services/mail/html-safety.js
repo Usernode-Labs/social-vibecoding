@@ -216,6 +216,7 @@ function scanInto(s, offset, out, depth) {
       // ends with "<![endif]" and no ">").
       const end = s.indexOf('>', i + 2);
       const stop = end === -1 ? n : end + 1;
+      if (end === -1 && depth === 0) out.open = 'inside an unfinished <! or <? declaration';
       out.comments.push({ start: i + offset, end: stop + offset });
       i = stop;
     } else if (isLetter(next || '') || (next === '/' && isLetter(s[i + 2] || ''))) {
@@ -242,6 +243,7 @@ function scanInto(s, offset, out, depth) {
         endTag.lastIndex = i;
         const m = endTag.exec(s);
         const textEnd = m ? m.index : n;
+        if (!m && depth === 0) out.open = `inside a <${tag.name}> that is never closed`;
         const text = s.slice(i, textEnd);
         // A title or textarea is text, but a browser and the check could
         // disagree about where it ends, so it holds no markup at all.
@@ -256,6 +258,9 @@ function scanInto(s, offset, out, depth) {
         i = textEnd;
       }
     } else {
+      // A "<" with nothing after it is text here, but the start of a tag once
+      // something is put after it.
+      if (i === n - 1 && depth === 0) out.open = 'with a "<" that the next part would turn into a tag';
       i += 1;
     }
   }
@@ -278,7 +283,19 @@ function scanHtml(html) {
   if (!result.ok) return result;
   out.tags.sort((a, b) => a.start - b.start);
   out.comments.sort((a, b) => a.start - b.start);
-  return { ok: true, ...out };
+  return { ok: true, open: null, ...out };
+}
+
+/**
+ * Why `html`, as one part of a mail that others follow, would not leave the
+ * parser reading ordinary text at its end (inside a tag, a declaration or an
+ * unclosed style, title or textarea), so the next part would be read as part
+ * of it; or null. A part that fails the check itself is reported by
+ * validateEmailHtml, not here.
+ */
+function openAtEnd(html) {
+  const scan = scanHtml(html);
+  return scan.ok && scan.open ? `The HTML ends ${scan.open}, so what follows it would be read as part of it.` : null;
 }
 
 /** `{ ok: true }` or `{ ok: false, reason }`, a sentence for the admin. */
@@ -291,4 +308,4 @@ function validateEmailHtml(html) {
   return scan.ok ? { ok: true } : scan;
 }
 
-module.exports = { validateEmailHtml, scanHtml, MAX_EMAIL_HTML_BYTES, URL_ATTRIBUTES };
+module.exports = { validateEmailHtml, scanHtml, openAtEnd, MAX_EMAIL_HTML_BYTES, URL_ATTRIBUTES };

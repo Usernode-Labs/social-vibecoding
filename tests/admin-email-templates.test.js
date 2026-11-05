@@ -281,6 +281,27 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     assert.ok(!JSON.stringify(res.body).includes('internal detail'), JSON.stringify(res.body));
   });
 
+  await t.test('a part left open swallows nothing: refused at the route', async () => {
+    const plain = await call('POST', '/api/admin/email-layouts', { name: 'Why after content', html: '<div>{{content}}{{why}}</div>', text: '{{content}}\n{{why}}' });
+    assert.equal(plain.status, 200, JSON.stringify(plain.body));
+    const opened = await live('project_opened');
+    const res = await call('POST', '/api/admin/email-templates', {
+      action: 'project_opened', name: 'T', layoutFamilyId: plain.body.layout.family_id, subject: 'Opened', preheader: '',
+      why: '{{#unless hasApp}}img src=x onerror=alert(1)//{{/unless}}', html: '<p>Hi</p><a href="{{unsubscribeUrl}}">stop</a><',
+      text: 'Hi {{unsubscribeUrl}}', expectedLiveId: opened.id,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.errors.some((e) => e.field === 'html' && /ends/.test(e.message)), JSON.stringify(res.body));
+    const otp = await live('otp');
+    const swallow = await call('POST', '/api/admin/email-templates', {
+      action: 'otp', name: otp.name, layoutFamilyId: otp.layout_family_id, subject: otp.subject, preheader: 'Your code<style>',
+      why: otp.why, html: otp.html, text: otp.text, expectedLiveId: otp.id,
+    });
+    assert.equal(swallow.status, 400);
+    assert.ok(swallow.body.errors.some((e) => e.field === 'preheader'));
+    assert.equal((await live('otp')).id, otp.id);
+  });
+
   await t.test('preview never stores or sends', async () => {
     const before = { templates: (await pool.query('SELECT count(*)::int AS n FROM email_templates')).rows[0].n, events: (await eventsOf()).length, sent: sent.length };
     const current = await live('otp');
