@@ -1730,7 +1730,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // 752 → 753: #6134's Needs attention card. It needs its own ?demo= fixture
   // (connectors-attention), so it has no check to fold into.
-  checkCap.assertPinned(DAPP.tests.length, 753);
+  //
+  // 753 → 754: +1 (5 Nov 2026, the Homeroom bot tab is the one place for
+  // your work) a link's project filter (#homeroom-bot?project=<slug>) lights
+  // that project's chip. The checks of the removed Workshop lists and Me ›
+  // Your work were retargeted in place; the address is a route of its own,
+  // so it has no check to fold into. 754 leaves 126 slots.
+  checkCap.assertPinned(DAPP.tests.length, 754);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
