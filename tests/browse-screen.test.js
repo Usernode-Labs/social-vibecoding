@@ -1532,12 +1532,15 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   // back when the hairline was a `border-top`.
   assert.match(mdBlock, /\.browse-row \+ \.browse-row::before \{ content: none/,
     'md+: the between-rows hairline is cancelled, not painted over');
-  // What changed with the widget language is what the box is made of — a white
-  // surface on the grey page ground instead of a hairline outline — so the
-  // shorthand is transparent and the separation comes from the fill. It stays
-  // declared so the hover rule has a width to colour in without the box
-  // changing size under the cursor.
-  assert.match(box, /border: 1px solid transparent/);
+  // The box is a white surface on the grey page ground, and #5928 item 11 found
+  // that fill alone let the rows run together, so at rest it also wears the
+  // cards' own hairline. Hover only recolours that same 1px, so the box does
+  // not change size under the cursor, and it must out-rank both resting rules.
+  assert.match(box, /border: 1px solid var\(--app-sheet-line\)/);
+  assert.doesNotMatch(box, /border: 1px solid transparent/);
+  assert.match(box, /\.browse-row:hover,\s*\n\s*\.browse-row \+ \.browse-row:hover \{ border-color: var\(--accent-light\); \}/);
+  assert.doesNotMatch(browseCss.slice(0, browseCss.indexOf('@media (min-width: 768px)')), /\.browse-row[^{]*\{[^}]*\bborder:/,
+    'below md the rows keep the inset hairline between them, not a box');
   assert.match(box, /background-color: var\(--bg-primary\)/);
   assert.match(box, /border-radius/);
   // One theme token instead of `.dark` variants, which would out-specify
