@@ -3397,7 +3397,7 @@ test('#5967: rememberSearch keeps twelve, newest first, merges repeats and skips
   ['one', 'two', 'three', 'four', 'five', 'six'].forEach((q) => Browse.rememberSearch(q));
   assert.deepEqual(Array.from(state.recent), ['six', 'five', 'four', 'three', 'two', 'one']);
   Browse.rememberSearch('  THREE ');
-  assert.deepEqual(Array.from(state.recent), ['THREE', 'six', 'five', 'four', 'two'], 'a repeat moves, in any case');
+  assert.deepEqual(Array.from(state.recent), ['THREE', 'six', 'five', 'four', 'two', 'one'], 'a repeat moves, in any case');
   Browse.rememberSearch('   ');
   Browse.rememberSearch('example.com');
   Browse.rememberSearch('https://example.com/a');
