@@ -199,6 +199,19 @@ export const JOBS: readonly Job[] = Object.freeze([
       })),
   },
   {
+    // One work state per request and change (services/work-state.js): the
+    // rows still moving, derived again (a stage that moves on by time, a
+    // fact written where nothing refreshed it), and a row for each request
+    // the bot knows that has none yet. What changed is pushed.
+    name: 'work-states', everyMs: MIN,
+    async run(_ctx: WorkContext, { pool }: JobDeps) {
+      const ws = legacy('services/work-state');
+      const out = await ws.sweep(pool);
+      await ws.publish(pool, out.changed.map(ws.pushOf));
+      return { checked: out.checked, seeded: out.seeded, changed: out.changed.length };
+    },
+  },
+  {
     // A coding record no work item holds (the old orphan sweep's and
     // watchdog's case): a `recover` turn asked for it
     // (services/turn-leftovers.js).

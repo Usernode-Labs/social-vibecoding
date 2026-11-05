@@ -268,6 +268,58 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 180000 }, 
     }
   });
 
+  await t.test('afterAccepted: in the event\'s transaction, its pushes join, a failure undoes only its own writes, a wait retries', async () => {
+    await pool.query('CREATE TABLE kt_after (key TEXT NOT NULL, state TEXT NOT NULL, event TEXT NOT NULL)');
+    const published = [];
+    const warned = [];
+    let mode = 'ok';
+    let waits = 0;
+    const r = make({
+      log: { info() {}, warn: (_area, msg) => warned.push(msg), error() {} },
+      publish: async (_q, list) => { published.push(...list); },
+      afterAccepted: async (q, info) => {
+        if (!info.key.startsWith('ka')) return;
+        await q.query('INSERT INTO kt_after VALUES ($1, $2, $3)', [info.key, info.state, info.event]);
+        if (mode === 'fail') throw new Error('broken');
+        if (mode === 'wait' && waits++ === 0) throw Object.assign(new Error('lock wait'), { code: '55P03' });
+        return [{ kind: 'room', routing: { appId: info.appId }, data: { type: 'after', key: info.key, state: info.state } }];
+      },
+    });
+    const send = (key, type, payload = {}) => r.append(machine, key, { type, payload },
+      { requestKey: `after-${++seq}`, source: { kind: 'route' }, actor: 'user:1', appId: 7 });
+    const rows = async (key) => (await pool.query('SELECT state, event FROM kt_after WHERE key = $1', [key])).rows;
+
+    await send('ka1', 'Create');
+    await r.drain();
+    assert.deepEqual(await rows('ka1'), [{ state: 'active', event: 'Create' }], 'told the instance and the state it is in');
+    assert.deepEqual(published, [{ kind: 'room', routing: { appId: 7 }, data: { type: 'after', key: 'ka1', state: 'active' } }],
+      'its pushes are the event\'s, published in its transaction');
+
+    published.length = 0;
+    mode = 'fail';
+    const failed = await send('ka1', 'Add', { n: 2 });
+    await r.drain();
+    assert.equal((await event(failed)).result, 'accepted', 'a failure is not the event\'s');
+    assert.equal((await inst('ka1')).data.count, 2);
+    assert.deepEqual(await rows('ka1'), [{ state: 'active', event: 'Create' }], 'its own writes are undone');
+    assert.deepEqual(published, []);
+    assert.ok(warned.some((m) => /afterAccepted failed/.test(m)), 'and said in the log');
+
+    mode = 'wait';
+    const waited = await send('ka1', 'Add', { n: 3 });
+    await r.processNext();
+    const pending = await event(waited);
+    assert.equal(pending.status, 'pending', 'a wait retries the event, as any wait does');
+    assert.equal(pending.error.code, '55P03');
+    assert.equal((await inst('ka1')).data.count, 2, 'nothing of it committed');
+    await waitFor(async () => {
+      await r.drain();
+      return (await event(waited)).result === 'accepted';
+    }, { label: 'the retried event to be accepted with its hook', timeoutMs: BUSY_MS });
+    assert.equal((await inst('ka1')).data.count, 5);
+    assert.deepEqual((await rows('ka1')).map((x) => x.event), ['Create', 'Add']);
+  });
+
   await t.test('K3 a rejection writes no receipt, so the same key can be accepted later', async () => {
     await create('k3');
     await pool.query(`UPDATE kt_flags SET on_off = FALSE WHERE name = 'admission'`);

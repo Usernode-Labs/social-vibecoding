@@ -175,6 +175,13 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
     [BUS_CHANNEL, pushes.map((p) => workflowBody(p.kind, (p.routing ?? null) as Json, p.data)), owed]);
 }
 
+// What the work-state hook is given (services/work-state.js afterTransition).
+// The bell's ring from a change of stage joins here with the posting rules
+// (docs/plans/bot-one-model.md, step 4).
+function workStateDeps(): Record<string, unknown> {
+  return {};
+}
+
 // A process that dies with its node sends the server nothing, and its
 // sessions, with the row locks a slot holds and a claim's advisory lock,
 // would live on until the server's OS keepalive gave up on them: two hours
@@ -301,6 +308,10 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
     // read on the runtime's own pool, never waiting behind the app's.
     newest: () => newestBuild(workflowPool),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
+    // One work state per request and change (services/work-state.js): an
+    // accepted event of a machine that moves one stores it again, in the
+    // event's own transaction, and pushes what changed.
+    afterAccepted: (q, info) => legacy('services/work-state').afterTransition(q, info, workStateDeps()),
   });
   try {
     await started.start({ slots: true });

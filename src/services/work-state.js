@@ -329,7 +329,7 @@ async function requestsOfSession(db, sessionId) {
 
 const sameLine = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 
-async function upsert(db, key, next) {
+async function upsert(db, key, next, { touch = false } = {}) {
   const { rows: [prev] } = await db.query(
     `SELECT stage, why, reason, line, whose_move, requester_id, since FROM work_states
       WHERE app_id = $1 AND item_kind = $2 AND item_ref = $3`,
@@ -338,16 +338,21 @@ async function upsert(db, key, next) {
   if (prev && prev.stage === next.stage && (prev.why || null) === next.why && (prev.reason || null) === next.reason
     && sameLine(prev.line, next.line) && (prev.whose_move || null) === next.whoseMove
     && (prev.requester_id == null ? null : Number(prev.requester_id)) === (next.requesterId ?? null)) {
+    // Unchanged. The sweep still marks it checked, so it moves on to others.
+    if (touch) {
+      await db.query('UPDATE work_states SET checked_at = NOW() WHERE app_id = $1 AND item_kind = $2 AND item_ref = $3',
+        [key.appId, key.kind, key.ref]);
+    }
     return null;
   }
   await db.query(
     `INSERT INTO work_states (app_id, item_kind, item_ref, issue_number, session_id, stage, why, reason, line,
-                              whose_move, requester_id, since, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, NOW())
+                              whose_move, requester_id, since, updated_at, checked_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, NOW(), NOW())
      ON CONFLICT (app_id, item_kind, item_ref) DO UPDATE
        SET issue_number = EXCLUDED.issue_number, session_id = EXCLUDED.session_id, stage = EXCLUDED.stage,
            why = EXCLUDED.why, reason = EXCLUDED.reason, line = EXCLUDED.line, whose_move = EXCLUDED.whose_move,
-           requester_id = EXCLUDED.requester_id, since = EXCLUDED.since, updated_at = NOW()`,
+           requester_id = EXCLUDED.requester_id, since = EXCLUDED.since, updated_at = NOW(), checked_at = NOW()`,
     [key.appId, key.kind, key.ref, key.issueNumber ?? null, key.sessionId ?? null, next.stage, next.why, next.reason,
       next.line ? JSON.stringify(next.line) : null, next.whoseMove, next.requesterId ?? null, next.since],
   );
@@ -360,7 +365,7 @@ async function upsert(db, key, next) {
  * resolves to its requests when it has any). Resolves the changed rows:
  * { appId, kind, ref, issueNumber, sessionId, state, prev, bell }.
  */
-async function refresh(db, items, { now = new Date() } = {}) {
+async function refresh(db, items, { now = new Date(), touch = false } = {}) {
   const requests = new Map();
   const changes = new Set();
   for (const it of items || []) {
@@ -380,7 +385,7 @@ async function refresh(db, items, { now = new Date() } = {}) {
       const next = { ...derive(row, { now }), requesterId: row.requester_id == null ? null : Number(row.requester_id) };
       const sessionId = Number(row.proposal_session_id || row.build_session_id) || null;
       const key = { appId: Number(row.app_id), kind: 'request', ref: Number(row.issue_number), issueNumber: Number(row.issue_number), sessionId };
-      const wrote = await upsert(db, key, next);
+      const wrote = await upsert(db, key, next, { touch });
       if (wrote) changed.push({ ...key, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
     }
   }
@@ -389,7 +394,7 @@ async function refresh(db, items, { now = new Date() } = {}) {
     for (const row of rows) {
       const next = { ...deriveChange(row, { now }), requesterId: row.user_id == null ? null : Number(row.user_id) };
       const key = { appId: Number(row.app_id), kind: 'change', ref: Number(row.id), issueNumber: null, sessionId: Number(row.id) };
-      const wrote = await upsert(db, key, next);
+      const wrote = await upsert(db, key, next, { touch });
       if (wrote) changed.push({ ...key, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
     }
   }
@@ -444,6 +449,39 @@ function pushOf(row) {
       },
     },
   };
+}
+
+/**
+ * Publish pushes from outside a transition (a route, the sweep): the same
+ * bus envelope a transition's pushes use, so every process delivers them.
+ * Inside a transaction they go out when it commits.
+ */
+async function publish(db, pushes) {
+  if (!pushes || !pushes.length) return;
+  const bus = require('./ws-bus');
+  await db.query(
+    'SELECT pg_notify($1, body) FROM unnest($2::text[]) WITH ORDINALITY AS t(body, n) ORDER BY n',
+    [bus.CHANNEL, pushes.map((p) => bus.workflowBody(p.kind, p.routing ?? null, p.data))],
+  );
+}
+
+/**
+ * Refresh items a route changed outside any machine (a close, a reopen, a
+ * claim, a vote) and publish what changed. Never throws: the route's own
+ * write stands, and the sweep corrects a row this missed.
+ */
+async function touched(db, items, deps = {}) {
+  try {
+    const changed = await refresh(db, items);
+    if (typeof deps.ring === 'function') {
+      for (const row of changed) if (row.bell && row.state.requesterId) await deps.ring(db, row);
+    }
+    await publish(db, changed.map(pushOf));
+    return changed;
+  } catch (err) {
+    require('./logger').warn('work-state', 'refresh after a route write failed', { message: err.message });
+    return [];
+  }
 }
 
 /**
@@ -508,25 +546,63 @@ function fromRow(r) {
   };
 }
 
-// ── Time ─────────────────────────────────────────────────────────────────
+// ── The sweep ────────────────────────────────────────────────────────────
 
-// Stages that move on by time alone: a build that never started stalls
+// Some stages move on by time alone: a build that never started stalls
 // (progress.START_GRACE_MS), a reply's "about to read" lapses
-// (progress.REPLY_WAIT_MS), a hold until Monday ends. Refreshed by the sweep.
-const TIMED = Object.freeze(['reading', 'building', 'planning']);
-
-/** The sweep: refresh items in time-sensitive stages not touched for a while. Resolves what changed. */
-async function sweep(db, { olderThanMs = 60 * 1000, limit = 200 } = {}) {
+// (progress.REPLY_WAIT_MS), a hold until Monday ends, a week-old live item
+// leaves the lists. And a fact written where no machine or route refreshes
+// its item is caught here. The sweep refreshes the rows still moving, the
+// longest unchecked first, and seeds a row for each request the bot knows
+// that has none yet (its first run after the table exists).
+async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 } = {}) {
   const { rows } = await db.query(
     `SELECT app_id, item_kind, item_ref FROM work_states
-      WHERE stage = ANY($1::text[]) AND updated_at < NOW() - make_interval(secs => $2)
-      ORDER BY updated_at ASC LIMIT $3`,
-    [TIMED, Math.round(olderThanMs / 1000), limit],
+      WHERE stage <> 'closed' AND checked_at < NOW() - make_interval(secs => $1)
+        AND NOT (stage = 'live' AND since < NOW() - make_interval(days => $3))
+      ORDER BY checked_at ASC LIMIT $2`,
+    [Math.round(olderThanMs / 1000), limit, LIVE_DAYS + 1],
   );
-  if (!rows.length) return [];
-  return refresh(db, rows.map((r) => (r.item_kind === 'request'
-    ? { appId: Number(r.app_id), issueNumber: Number(r.item_ref) }
-    : { sessionId: Number(r.item_ref) })));
+  const { rows: missing } = seed > 0 ? await db.query(
+    `SELECT k.app_id, k.issue_number FROM (
+       SELECT app_id, issue_number, MAX(at) AS at FROM (
+         SELECT app_id, issue_number, created_at AS at FROM homeroom_bot_requesters
+         UNION ALL SELECT app_id, issue_number, created_at FROM homeroom_bot_runs WHERE mode = 'live'
+         UNION ALL SELECT app_id, issue_number, enqueued_at FROM homeroom_bot_queue
+       ) x GROUP BY app_id, issue_number
+     ) k
+     WHERE NOT EXISTS (SELECT 1 FROM work_states ws
+                        WHERE ws.app_id = k.app_id AND ws.item_kind = 'request' AND ws.item_ref = k.issue_number)
+       AND EXISTS (SELECT 1 FROM apps a WHERE a.id = k.app_id)
+     ORDER BY k.at DESC LIMIT $1`,
+    [seed],
+  ) : { rows: [] };
+  const items = [
+    ...rows.map((r) => (r.item_kind === 'request'
+      ? { appId: Number(r.app_id), issueNumber: Number(r.item_ref) }
+      : { sessionId: Number(r.item_ref) })),
+    ...missing.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.issue_number) })),
+  ];
+  if (!items.length) return { checked: 0, seeded: 0, changed: [] };
+  const changed = await refresh(db, items, { touch: true });
+  return { checked: rows.length, seeded: missing.length, changed };
+}
+
+/**
+ * The rows of requests that have none yet, made now (a reader listing
+ * requests from before the table, or one the sweep has not reached).
+ * Resolves nothing; read the rows after.
+ */
+async function ensure(db, items) {
+  const list = (items || []).filter((it) => Number(it.appId) > 0 && Number(it.issueNumber) > 0);
+  if (!list.length) return;
+  const { rows } = await db.query(
+    `SELECT x.app_id, x.issue_number FROM unnest($1::int[], $2::int[]) AS x(app_id, issue_number)
+      WHERE NOT EXISTS (SELECT 1 FROM work_states ws
+                         WHERE ws.app_id = x.app_id AND ws.item_kind = 'request' AND ws.item_ref = x.issue_number)`,
+    [list.map((it) => Number(it.appId)), list.map((it) => Number(it.issueNumber))],
+  );
+  if (rows.length) await refresh(db, rows.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.issue_number) })));
 }
 
 module.exports = {
@@ -546,9 +622,12 @@ module.exports = {
   WATCHED,
   itemsOf,
   pushOf,
+  publish,
+  touched,
   afterTransition,
   forRequester,
   forRequests,
   fromRow,
   sweep,
+  ensure,
 };

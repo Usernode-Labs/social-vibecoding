@@ -9,6 +9,7 @@
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { processNext } from './pipeline.ts';
+import type { PipelineOptions } from './pipeline.ts';
 import { fireDueTimers, nextDeadlineMs, purge } from './timers.ts';
 import { claim, concurrencyOf, dueKinds, execute, nextDueMs } from './services.ts';
 import { Signals, append, refuseIfPending, waitForInstance, waitForOutcome } from './stream.ts';
@@ -28,6 +29,7 @@ export { append as appendEvent } from './stream.ts';
 // Admin reads take a pool: problems, stateCounts, listInstances, instance.
 export * as inspect from './inspect.ts';
 export type * from './types.ts';
+export type { AcceptedInfo } from './pipeline.ts';
 
 export interface RuntimeOptions {
   pool: Pool;
@@ -52,6 +54,8 @@ export interface RuntimeOptions {
   authorizeEvent?: EventAuthorizer;
   // Publishes what browsers should hear, inside the transition's transaction.
   publish?: (q: Queryable, pushes: Push[]) => Promise<void>;
+  // Platform code after every accepted event, in its transaction (pipeline.ts).
+  afterAccepted?: PipelineOptions['afterAccepted'];
 }
 
 const quiet: Logger = { info() {}, warn() {}, error() {} };
@@ -75,7 +79,8 @@ export function createRuntime(opts: RuntimeOptions) {
   // Handlers are authored as an object and used as a Map, like machine tables.
   const handlers = new Map(Object.entries(opts.services || {}));
   const timeouts = { lockTimeoutMs: opts.lockTimeoutMs ?? 2000, statementTimeoutMs: opts.statementTimeoutMs ?? 5000 };
-  const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5, publish: opts.publish, authorizeEvent: opts.authorizeEvent };
+  const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5, publish: opts.publish, authorizeEvent: opts.authorizeEvent,
+    afterAccepted: opts.afterAccepted };
   const service = { pool: opts.pool, handlers, log, serviceId: opts.serviceId || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
     versions: new Map([...machines].map(([name, m]) => [name, m.version])), ...timeouts,
     release: opts.release ?? null,

@@ -24,7 +24,18 @@ export interface PipelineOptions {
   // Publishes an accepted event's pushes on the transition's connection,
   // before its COMMIT (a NOTIFY is delivered only if the transaction commits).
   publish?: (q: Queryable, pushes: Push[]) => Promise<void>;
+  // Platform code run after every accepted event, in its transaction and
+  // before its pushes are published: what the platform keeps of what the
+  // machines decided (services/work-state.js, the stored work state of a
+  // request or change). Its pushes join the event's. Behind a savepoint: a
+  // failure rolls back only its own writes and is logged, except a wait
+  // (a lock or statement timeout, a deadlock), which retries the event as
+  // any wait does, so what it keeps is never left behind silently.
+  afterAccepted?: (q: Queryable, info: AcceptedInfo) => Promise<Push[] | void>;
 }
+
+// What afterAccepted is told: the instance an accepted event moved.
+export interface AcceptedInfo { machine: string; key: string; appId: number | null; state: string; event: string }
 
 // Lock and statement timeouts, serialisation failures and deadlocks are
 // waits, not bugs: the event goes back to pending with a backoff.
@@ -224,7 +235,7 @@ async function processOne(opts: PipelineOptions, names: string[], versions: numb
     // Nothing runs after COMMIT: everything an event sets off committed with
     // it (state, writes, work, messages, pushes).
     try {
-      await applyEvent(client, machine, row, opts.publish, opts.authorizeEvent, opts.log);
+      await applyEvent(client, machine, row, opts);
       await client.query('COMMIT');
     } catch (err) {
       // Nothing of the event's transaction survives, the machine's writes
@@ -369,7 +380,8 @@ const CANCEL_WORK = `
 const json = (v: Json | undefined) => (v == null ? null : jsonText(v));
 
 async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked,
-  publish?: PipelineOptions['publish'], authorizeEvent?: EventAuthorizer, log?: Logger): Promise<void> {
+  opts: Pick<PipelineOptions, 'publish' | 'authorizeEvent' | 'log' | 'afterAccepted'>): Promise<void> {
+  const { publish, authorizeEvent, log, afterAccepted } = opts;
   const eventId = Number(row.id);
   const inst = row.instance;
   // A '(none)' row is left by a creating event that timed out or faulted.
@@ -506,6 +518,20 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after, facts) : undefined) ?? null;
   if (tx.poisoned) throw tx.poisoned;
   assertJson(reply);
+  if (afterAccepted) {
+    await client.query('SAVEPOINT wf_after_accepted');
+    try {
+      const more = await afterAccepted(client, {
+        machine: machine.name, key: row.key, appId: ctx.appId, state: outcome.next.name, event: event.type });
+      await client.query('RELEASE SAVEPOINT wf_after_accepted');
+      for (const p of more || []) pushed(p);
+    } catch (err) {
+      await client.query('ROLLBACK TO SAVEPOINT wf_after_accepted');
+      if (RETRYABLE.has((err as { code?: string }).code || '')) throw err;
+      log?.warn('workflow', 'afterAccepted failed; the event is applied without it', {
+        machine: machine.name, key: row.key, type: event.type, eventId, message: (err as Error).message });
+    }
+  }
   if (pushes.length && publish) await publish(client, pushes);
   const cancelled = [];
   for (const c of outcome.cancel || []) {

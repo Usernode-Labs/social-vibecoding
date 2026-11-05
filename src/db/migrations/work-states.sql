@@ -32,14 +32,19 @@ CREATE TABLE IF NOT EXISTS work_states (
   requester_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
   since         TIMESTAMPTZ,
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- When it was last derived again, changed or not: the sweep takes the
+  -- longest unchecked first, so it reaches every row in turn.
+  checked_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (app_id, item_kind, item_ref)
 );
 
 -- A person's own items, for the bot tab and the drawer.
 CREATE INDEX IF NOT EXISTS work_states_requester_idx
   ON work_states (requester_id, updated_at DESC) WHERE requester_id IS NOT NULL;
--- An app's items in a stage, for the time-sensitive sweep and a project's lists.
+-- An app's items in a stage, for a project's lists.
 CREATE INDEX IF NOT EXISTS work_states_app_stage_idx ON work_states (app_id, stage);
+-- The sweep: the rows still moving, longest unchecked first.
+CREATE INDEX IF NOT EXISTS work_states_sweep_idx ON work_states (checked_at) WHERE stage <> 'closed';
 -- A change's row, found from its session.
 CREATE INDEX IF NOT EXISTS work_states_session_idx ON work_states (session_id) WHERE session_id IS NOT NULL;
 
