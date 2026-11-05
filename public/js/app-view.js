@@ -7557,13 +7557,9 @@ const AppView = {
   // sentence. The server sends the figure to its author and admins only
   // (services/session-cost.js sessionCostForViewer), and never for a change
   // submitted from a fork. Nothing at zero or unknown, like the meter.
-  // `?shot=session-cost` paints the meter's sample: it reads and writes
-  // nothing (DevChat._shotSessionCost).
   _changeSpentView(kind, item) {
     if (kind === 'gov' || !item || item.source === 'imported') return null;
-    let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* no address */ }
-    const cents = shot === 'session-cost' ? 124 : Number(item.cost_total_cents);
+    const cents = Number(item.cost_total_cents);
     if (!Number.isFinite(cents) || cents < 0) return null;
     const amount = (cents / 100).toFixed(2);
     if (amount === '0.00') return null;

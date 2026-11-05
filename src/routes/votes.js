@@ -412,9 +412,14 @@ function stagingMockProposals(viewer) {
     },
     // Auto-takedown — slim No majority (No just edges ahead of Yes, under the
     // 1/3 keep-alive line): long rejection window → "Set aside in ~6d".
-    mk(9000016, 900116,
-      '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
-      30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
+    // It also carries a cost, the one state a viewer of a demo row cannot reach
+    // otherwise: a real figure goes to its author and admins only (#6116).
+    {
+      ...mk(9000016, 900116,
+        '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
+        30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
+      cost_total_cents: 124,
+    },
     // Auto-takedown — lopsided opposition (No heavily outweighs Yes): short
     // rejection window → "Set aside in ~Xh".
     mk(9000017, 900117,

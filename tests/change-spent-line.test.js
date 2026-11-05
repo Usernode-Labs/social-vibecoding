@@ -169,11 +169,13 @@ test('_changeSpentView words the figure, and says nothing at zero or unknown', (
   assert.equal(AppView._changeSpentView('proposal', { source: 'imported', cost_total_cents: 412.5 }), null);
 });
 
-test('?shot=session-cost paints the meter\'s sample, except on a change from a fork', () => {
+test('no address can paint a figure: the sample lives on a staging demo row', () => {
+  // A query parameter here would show a made-up cost on anybody's real change,
+  // to anybody, on a link. The demo row is served only on staging with ?demo=1.
   const AppView = loadAppView('?demo=1&shot=session-cost');
-  assert.equal(AppView._changeSpentView('proposal', {}).text, line('1.24'));
-  assert.equal(AppView._changeSpentView('proposal', { source: 'imported' }), null);
-  assert.equal(AppView._changeSpentView('gov', {}), null);
+  assert.equal(AppView._changeSpentView('proposal', {}), null);
+  assert.equal(AppView._changeSpentView('proposal', { cost_total_cents: 124 }).text, line('1.24'));
+  assert.match(read('src/routes/votes.js'), /mk\(9000016,[\s\S]{0,240}cost_total_cents: 124,/);
 });
 
 test('the thread view hands the Testing card its line', () => {
