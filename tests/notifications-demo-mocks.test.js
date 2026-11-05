@@ -185,7 +185,7 @@ test('staging + ?demo=1: nineteen mock rows prepend, and only the unread ones bu
       assert.equal(n.appId, 0, 'in the demo project');
     }
     assert.ok(
-      mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed'].includes(n.kind))
+      mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed', 'voted_digest'].includes(n.kind))
         .every((n) => /^staging-demo(?:-|$)/.test(n.appSlug) && /^Staging demo /.test(n.appName)),
       'obviously-fake app attribution on every APP-scoped row',
     );
@@ -213,10 +213,10 @@ test('staging + ?demo=1: nineteen mock rows prepend, and only the unread ones bu
     );
     // Real rows survive after the mocks; unread bumped by the UNREAD mock
     // count so the client's badge subtraction stays honest. Counting all
-    // eighteen would claim the read rows as unread — inflating the badge by one
+    // nineteen would claim the read rows as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 13);
+    assert.equal(body.unread, 2 + 14);
     // #18: the unread mock messages are counted apart too, for the bell to
     // leave out (the real row is a mention, which the bell keeps).
     const mockMessages = body.notifications.filter((n) => n.id !== 1 && !n.readAt
@@ -266,7 +266,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 18);
+  assert.equal(rows.length, 19);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -280,7 +280,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
     // shape closed when they are both set, so a mock carrying them would be
     // describing something the real pipeline never emits.
     assert.equal(r.appName,
-      ['conversation_message', 'platform_limit', 'app_quota_changed'].includes(r.kind)
+      ['conversation_message', 'platform_limit', 'app_quota_changed', 'voted_digest'].includes(r.kind)
         ? null : r.id === 990209 ? 'Staging demo archive' : 'Staging demo app');
     assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
   }

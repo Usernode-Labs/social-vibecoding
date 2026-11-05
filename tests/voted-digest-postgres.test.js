@@ -91,7 +91,7 @@ test('the Monday row against the full schema', async (t) => {
   // Eve turned the switch off.
   await vote(merged, eve);
   await pool.query(
-    `INSERT INTO notification_preferences (user_id, app_id, category_key, enabled) VALUES ($1, NULL, 'voted_digest', FALSE)`, [eve]);
+    `INSERT INTO notification_preferences (user_id, app_id, category, enabled) VALUES ($1, NULL, 'voted_digest', FALSE)`, [eve]);
 
   const rows = async () => (await pool.query(
     `SELECT user_id, app_id, session_id, detail, mailed_at IS NOT NULL AS mailed
@@ -111,7 +111,7 @@ test('the Monday row against the full schema', async (t) => {
   // Later the same Monday, and a sweep racing it: one row each, still.
   const again = await digest.sweep(pool, new Date('2026-11-09T15:00:00Z'));
   assert.equal(again.sent, 0);
-  assert.equal(again.candidates, 0, 'the row already made takes them out of the query');
+  assert.equal(again.candidates, 1, 'the row already made takes them out of the query, leaving the switched-off one');
   assert.equal((await rows()).length, 2);
 
   // Next Monday reports the change merged after this week's mark.

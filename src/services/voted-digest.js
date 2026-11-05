@@ -41,8 +41,10 @@
  * through chat_sessions_merged_at_idx and chat_sessions_archived_idx, and only
  * then reads their votes by pr_votes' UNIQUE (session_id, user_id). It never
  * walks pr_votes, however many votes the platform has, nor the events log,
- * whose session_id has no index. The check for a row already made reads
- * idx_notifications_user_recent per voter.
+ * whose session_id has no index. The check for a row already made is a scalar
+ * subquery on purpose: written NOT EXISTS it becomes an anti join, and the
+ * planner seq-scanned all of notifications for it (2M rows, 20k pages). This
+ * way it is one idx_notifications_user_recent probe per voter.
  */
 
 const log = require('./logger');
@@ -86,7 +88,8 @@ async function sweep(pool, now = new Date()) {
       SELECT cs.id, cs.app_id FROM chat_sessions cs
        WHERE cs.status = 'archived' AND cs.merged_at IS NULL
          AND cs.archived_at >= $1 AND cs.archived_at < $2
-    )
+    ),
+    counted AS (
     SELECT v.user_id, COUNT(*) AS decided
       FROM decided d
       JOIN pr_votes v ON v.session_id = d.id
@@ -97,10 +100,12 @@ async function sweep(pool, now = new Date()) {
          SELECT 1 FROM app_collaborators c
           WHERE c.app_id = a.id AND c.user_id = v.user_id AND c.status = 'member'))
        AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = v.user_id AND b.app_id = a.id)
-       AND NOT EXISTS (
-         SELECT 1 FROM notifications n
-          WHERE n.user_id = v.user_id AND n.kind = 'voted_digest' AND n.created_at >= $2)
-     GROUP BY v.user_id`,
+     GROUP BY v.user_id
+    )
+    SELECT c.user_id, c.decided FROM counted c
+     WHERE (SELECT 1 FROM notifications n
+             WHERE n.user_id = c.user_id AND n.created_at >= $2 AND n.kind = 'voted_digest'
+             LIMIT 1) IS NULL`,
     [since.toISOString(), until.toISOString()]
   );
   result.candidates = rows.length;

@@ -14,7 +14,8 @@ const digest = require('../src/services/voted-digest');
 const prefs = require('../src/workflow/rules/notification-preferences.ts');
 const pushPrefs = require('../src/services/mobile-push-preferences');
 const { buildNotificationCopy } = require('../src/services/mobile-push-policy');
-const { message } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 
 const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8');
 
@@ -84,4 +85,17 @@ test('the row opens Your votes, and the clock runs the sweep', () => {
   assert.match(read('frontend', 'src', 'features', 'notifications', 'notifications-kinds.js'), /'voted_digest'/,
     'under the Votes filter');
   assert.match(read('src', 'workflow', 'clock', 'services.ts'), /name: 'voted-digest', everyMs: HOUR/);
+});
+
+test('the bell row says a count under its label, and carries no project', () => {
+  if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
+  loadTsx('frontend/src/features/notifications/notifications.js');
+  const view = globalThis.window.Notifications._rowView({
+    id: 1, createdAt: new Date().toISOString(), readAt: null, kind: 'voted_digest', detail: '3',
+    appId: null, appSlug: null, appName: null, sourceUsername: null,
+  });
+  assert.equal(view.label, message('notifications:row.votedDigest.label'));
+  assert.equal(view.segments.map((s) => s.v).join(' '), message('notifications:row.votedDigest.count_other', { count: 3 }));
+  assert.equal(view.needsYou, false, 'it asks for nothing');
 });

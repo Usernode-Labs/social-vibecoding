@@ -44,6 +44,8 @@ const PUSH_DDL = [
     'the kind/category policy table'),
   extract(/INSERT INTO mobile_push_kind_categories \(kind, category, default_enabled\) VALUES[\s\S]*?EXCLUDED\.default_enabled;/,
     'the closed kind/category seed'),
+  extract(/INSERT INTO mobile_push_kind_categories \(kind, category, default_enabled\) VALUES\s+\('voted_digest'[\s\S]*?EXCLUDED\.default_enabled;/,
+    '#5404: the kind a later migration seeded'),
   extract(/CREATE TABLE IF NOT EXISTS mobile_push_preferences \([\s\S]*?\n\);/,
     'the account preferences table'),
   extract(/CREATE TABLE IF NOT EXISTS mobile_push_deliveries \([\s\S]*?\n\);/,
