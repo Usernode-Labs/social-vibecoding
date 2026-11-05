@@ -1018,6 +1018,7 @@ function authRoutes(config) {
         uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
         // The shell's one Google Analytics sign_up (#6314). A browser-check
         // account is not somebody signing up.
+        analyticsCounted: await uiTelemetry.countsInGoogleAnalytics(pool, req.user),
         justSignedUp: uiTelemetry.isEligibleUser(req.user)
           && !req.user.isSynthetic
           && await require('../services/usage-analytics').justSignedUp(pool, req.user.id),

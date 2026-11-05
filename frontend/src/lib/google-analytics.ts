@@ -9,11 +9,12 @@
  *     is counted. No script goes into an app, whose address holds its sign-in
  *     token. In-app pages are not seen.
  *   - sign_up, once, when /api/auth/me says the account is new.
- *   - the account id, for somebody who switched on Share usage analytics.
+ *   - the account id, only for somebody who switched on Share usage analytics
+ *     (`uiTelemetryEligible`).
  *
- * Signed in, that switch decides (`uiTelemetryEligible`, off unless they
- * turned it on, and false for service accounts): off, this sends nothing but
- * that one sign_up. Settings > Privacy promises as much.
+ * That switch does not decide whether a visit is counted, and Settings >
+ * Privacy says so. `analyticsCounted` does: false for service accounts and for
+ * people who objected to being recorded, who send nothing but a sign_up.
  *
  * Only `app.onhomeroom.com` runs it, so previews, checks, shots and local
  * builds load nothing from Google.
@@ -45,6 +46,7 @@ export function analyticsPath(pathname: string, hash: string): string {
 type SessionUser = {
   id?: unknown;
   uiTelemetryEligible?: unknown;
+  analyticsCounted?: unknown;
   justSignedUp?: unknown;
 };
 
@@ -129,12 +131,14 @@ export function installGoogleAnalytics(host: any = globalThis) {
     // A remembered session has no answer from the server yet: wait for it.
     if (!verified) return;
     if (user.justSignedUp === true) sendSignUpOnce(user.id);
-    if (user.uiTelemetryEligible === true) {
+    if (user.analyticsCounted === true) {
+      const withId = user.uiTelemetryEligible === true;
       // Switched on first: a frame that was off ignores the id.
       ensureFrame();
       post({ type: 'on' });
-      post({ type: 'user', id: user.id });
-      identified = true;
+      if (withId) post({ type: 'user', id: user.id });
+      else if (identified) post({ type: 'user', id: null });
+      identified = withId;
       startReporting();
     } else {
       if (identified) post({ type: 'user', id: null });

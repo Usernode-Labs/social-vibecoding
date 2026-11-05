@@ -112,6 +112,7 @@ export function UsageAnalyticsSection() {
             <span className="block">{t(on ? 'settings:privacy.usageAnalytics.stateOn' : 'settings:privacy.usageAnalytics.stateOff')}</span>
             <span className="block">{t('settings:privacy.usageAnalytics.records')}</span>
             <span className="block">{t('settings:privacy.usageAnalytics.neverRecords')}</span>
+            <span className="block">{t('settings:privacy.usageAnalytics.googleAnalytics')}</span>
             <span className="block">{t('settings:privacy.usageAnalytics.alreadyRecorded')}</span>
           </>
         )}

@@ -84,18 +84,18 @@ test('a signed-out visitor is counted, by cleaned path, once per screen', () => 
   assert.equal(posted.filter((m) => m.type === 'page').length, 2);
 });
 
-test('Share usage analytics off: nothing is loaded for somebody signed in', () => {
+test('a service account or somebody who objected loads nothing', () => {
   const { host, appended } = fakeHost('app.onhomeroom.com');
-  installGoogleAnalytics(host).setSession({ id: 7, uiTelemetryEligible: false }, true);
+  installGoogleAnalytics(host).setSession({ id: 7, analyticsCounted: false, uiTelemetryEligible: false }, true);
   assert.equal(appended.length, 0);
 });
 
-test('signing in with the switch off stops what was being reported', () => {
+test('signing in as somebody not counted stops what was being reported', () => {
   const { host, posted, listeners, ready } = fakeHost('app.onhomeroom.com');
   const api = installGoogleAnalytics(host);
   api.setSession(null);
   ready();
-  api.setSession({ id: 7, uiTelemetryEligible: false }, true);
+  api.setSession({ id: 7, analyticsCounted: false }, true);
   assert.deepEqual(posted.at(-1), { type: 'off' });
   const before = posted.length;
   host.location.hash = '#settings';
@@ -103,10 +103,31 @@ test('signing in with the switch off stops what was being reported', () => {
   assert.equal(posted.length, before, 'no page view after it');
 });
 
+test('Share usage analytics off: visits are counted, with no account id', () => {
+  const { host, posted, ready } = fakeHost('app.onhomeroom.com');
+  installGoogleAnalytics(host).setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: false }, true);
+  ready();
+  assert.deepEqual(posted.at(-1), { type: 'page', path: '/home' });
+  assert.equal(posted.some((m) => m.type === 'user'), false);
+});
+
+test('turning the switch off drops the account id and keeps counting', () => {
+  const { host, posted, listeners, ready } = fakeHost('app.onhomeroom.com');
+  const api = installGoogleAnalytics(host);
+  api.setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: true }, true);
+  ready();
+  assert.ok(posted.some((m) => m.type === 'user' && m.id === 7));
+  api.setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: false }, true);
+  assert.deepEqual(posted.filter((m) => m.type === 'user').at(-1), { type: 'user', id: null });
+  host.location.hash = '#settings';
+  listeners.hashchange();
+  assert.deepEqual(posted.at(-1), { type: 'page', path: '/settings' });
+});
+
 test('Share usage analytics on: page views carry the account id, and signing out drops it', () => {
   const { host, posted, ready } = fakeHost('app.onhomeroom.com');
   const api = installGoogleAnalytics(host);
-  api.setSession({ id: 7, uiTelemetryEligible: true }, true);
+  api.setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: true }, true);
   ready();
   assert.deepEqual(posted, [
     { type: 'on' }, { type: 'user', id: 7 }, { type: 'on' }, { type: 'page', path: '/home' },
@@ -117,14 +138,14 @@ test('Share usage analytics on: page views carry the account id, and signing out
 
 test('a remembered session waits for the server, which decides', () => {
   const { host, appended } = fakeHost('app.onhomeroom.com');
-  installGoogleAnalytics(host).setSession({ id: 7, uiTelemetryEligible: true, justSignedUp: true }, false);
+  installGoogleAnalytics(host).setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: true, justSignedUp: true }, false);
   assert.equal(appended.length, 0);
 });
 
-test('sign_up goes once per account, even with the switch off, and carries no id', () => {
+test('sign_up goes once per account, even if not counted, and carries no id', () => {
   const { host, posted, ready } = fakeHost('app.onhomeroom.com');
   const api = installGoogleAnalytics(host);
-  const user = { id: 7, uiTelemetryEligible: false, justSignedUp: true };
+  const user = { id: 7, analyticsCounted: false, uiTelemetryEligible: false, justSignedUp: true };
   api.setSession(user, true);
   api.setSession(user, true);
   ready();
@@ -156,5 +177,5 @@ test('the data rule names the exception and keeps apps out of it', () => {
   const rules = read('src/prompts/app-conventions.md');
   assert.match(rules, /Third-party trackers or external scripts/);
   assert.match(rules, /public\/analytics-frame\.html/);
-  assert.match(rules, /no precedent for an app/);
+  assert.match(rules, /no precedent: no app may add a tracker/);
 });
