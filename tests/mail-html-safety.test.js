@@ -101,3 +101,12 @@ test('scanHtml reports tags, quoted attribute value spans and style blocks by of
   const style = scan.rawTexts.find((block) => block.name === 'style');
   assert.equal(src.slice(style.start, style.end), 'p{}');
 });
+
+test('numeric references are decoded however many digits they have, leading zeros included', () => {
+  refused('<a href="&#0000000106;avascript:alert(1)">x</a>', /script or data/);
+  refused('<a href="&#x000000000006A;avascript:alert(1)">x</a>', /script or data/);
+  refused('<a href="java&#0000000000000115cript:alert(1)">x</a>', /script or data/);
+  refused('<p style="background:url(&#00000000106;avascript:x)">x</p>');
+  refused('<p style="background:url(&#X0000000006a;avascript:x)">x</p>');
+  allowed('<a href="https://example.com/&#99999999999999;">x</a>');
+});

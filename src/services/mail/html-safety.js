@@ -70,9 +70,13 @@ const shown = (name) => (name.length > 40 ? `${name.slice(0, 40)}...` : name);
 // One pass of character references, as the browser decodes an attribute value:
 // numeric ones with or without their semicolon, and the named ones above.
 function decodeEntities(text) {
-  return text.replace(/&(?:#([0-9]{1,8});?|#[xX]([0-9a-fA-F]{1,7});?|([A-Za-z]{2,8});?)/g, (match, dec, hex, name) => {
+  // Any number of digits, as the HTML parser reads them: `&#0000000106;` is
+  // "j". Zero and anything past U+10FFFF become U+FFFD, as they do there.
+  return text.replace(/&(?:#([0-9]+);?|#[xX]([0-9a-fA-F]+);?|([A-Za-z]{2,8});?)/g, (match, dec, hex, name) => {
     if (dec || hex) {
-      const cp = dec ? parseInt(dec, 10) : parseInt(hex, 16);
+      const digits = (dec || hex).replace(/^0+/, '');
+      if (digits.length > 8) return '\ufffd';
+      const cp = digits ? parseInt(digits, dec ? 10 : 16) : 0;
       return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '\ufffd';
     }
     const key = name.toLowerCase();

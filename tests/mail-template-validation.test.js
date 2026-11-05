@@ -119,3 +119,24 @@ test('a translation is held to the same rules as its template', () => {
   hasError(validateTranslation('otp', otp({ subject: '' }), LAYOUT), 'subject', /cannot be empty/);
   hasError(validateTranslation('otp', otp({ text: 'Votre code' }), LAYOUT), 'text', /\{\{code\}\}/);
 });
+
+test('a condition cannot open or close a raw-text element in one branch only', () => {
+  const opened = (html) => ({ name: 'Opened', subject: 'Opened', preheader: '', why: '', html: `${html}<a href="{{unsubscribeUrl}}">stop</a>`, text: '{{unsubscribeUrl}}' });
+  hasError(validateTemplate('project_opened', opened('<style>p{}{{#if hasApp}}</style>{{/if}}<p>x</p>'), LAYOUT), 'html', /condition|style/);
+  hasError(validateTemplate('project_opened', opened('<title>{{#if hasApp}}x{{/if}}</title>'), LAYOUT), 'html', /condition/);
+  hasError(validateTemplate('project_opened', opened('<textarea>{{else}}</textarea>'), LAYOUT), 'html', /./);
+  hasError(validateTemplate('project_opened', opened('{{#if hasApp}}<style>{{/if}}<p>x</p></style>'), LAYOUT), 'html', /style/);
+  hasError(validateTemplate('project_opened', opened('{{#unless hasApp}}</title>{{/unless}}'), LAYOUT), 'html', /title/);
+  assert.deepEqual(validateTemplate('project_opened', opened('<title>{{app}}</title>{{#if hasApp}}<p>{{app}}</p>{{/if}}'), LAYOUT), { ok: true });
+});
+
+test('every branch of the conditions renders to safe HTML', () => {
+  const opened = (html) => ({ name: 'Opened', subject: 'Opened', preheader: '', why: '', html: `${html}<a href="{{unsubscribeUrl}}">stop</a>`, text: '{{unsubscribeUrl}}' });
+  // Only the path with hasApp true closes the title early and lets a tag out.
+  hasError(validateTemplate('project_opened', opened('<title>x{{#if hasApp}}</title><iframe>{{/if}}</title>'), LAYOUT), 'html', /./);
+  hasError(validateTemplate('project_opened', opened('<a href="https://x.example/{{#if hasApp}}a{{/if}}">x</a>'), LAYOUT), 'html', /condition/);
+  const { branchProblem } = require('../src/services/mail/template-validation');
+  assert.match(branchProblem('{{#if a}}<style>{{/if}}<p>x</p>{{#unless a}}</style>{{/unless}}@import "y";'), /@import/);
+  assert.equal(branchProblem('{{#if a}}<p>{{a}}</p>{{else}}<i>none</i>{{/if}}'), null);
+  hasError(validateLayout({ name: 'L', html: '{{content}}{{#if why}}<style>{{/if}}', text: '{{content}}' }, []), 'html', /style/);
+});

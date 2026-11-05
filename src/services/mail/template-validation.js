@@ -21,7 +21,7 @@
 //   conditions go around whole tags.
 
 const { actionFor } = require('./actions');
-const { parse } = require('./template-language');
+const { parse, render } = require('./template-language');
 const { validateEmailHtml, scanHtml, URL_ATTRIBUTES, MAX_EMAIL_HTML_BYTES } = require('./html-safety');
 
 const LAYOUT_PLACEHOLDERS = {
@@ -134,9 +134,93 @@ function placementProblems(field, source, info, raw) {
       continue;
     }
     const style = scan.rawTexts.find((r) => r.name === 'style' && at >= r.start && at < r.end);
-    if (style) add(`Placeholders and conditions cannot go inside a <style> block, and ${shown} does.`);
+    if (style) {
+      add(`Placeholders and conditions cannot go inside a <style> block, and ${shown} does.`);
+      continue;
+    }
+    // A condition in a title or textarea could close it in one branch only.
+    const rawText = scan.rawTexts.find((r) => at >= r.start && at < r.end);
+    if (rawText && !isVar) add(`A condition cannot go inside a <${rawText.name}>, and ${shown} does. Put it around the whole element.`);
   }
+  problems.push(...rawTextTagsInBranches(field, source));
+  const branch = branchProblem(source);
+  if (branch && !problems.length) add(branch);
   return problems;
+}
+
+const RAW_TEXT_TAG = /<\/?(style|title|textarea|script)(?=[\s/>]|$)/i;
+
+// A raw-text element's start or end tag inside a conditional branch would
+// open or close it in one branch only, so the rest of the HTML would be read as
+// markup in one render and as text in another.
+function rawTextTagsInBranches(field, source) {
+  let nodes;
+  try { nodes = parse(source).nodes; } catch { return []; }
+  const found = new Set();
+  const walk = (list, inBranch) => {
+    for (const n of list) {
+      if (n.type === 'text') {
+        const m = inBranch && RAW_TEXT_TAG.exec(n.value);
+        if (m) found.add(m[1].toLowerCase());
+      } else if (n.then) {
+        walk(n.then, true);
+        walk(n.else, true);
+      }
+    }
+  };
+  walk(nodes, false);
+  return [...found].map((name) => ({
+    field,
+    message: `A <${name}> tag cannot start or end inside a condition. Put the condition around the whole element.`,
+  }));
+}
+
+// Every combination of the conditions, up to this many names; past it, each
+// name is flipped on its own against all-true and all-false.
+const MAX_BRANCH_NAMES = 8;
+
+/**
+ * Renders `source` once for each true/false combination of the names its
+ * conditions test (every placeholder printing a short word) and checks each
+ * result, so what a real send renders is what was checked. The first refusal's
+ * reason, or null.
+ */
+function branchProblem(source) {
+  let nodes;
+  try { nodes = parse(source).nodes; } catch { return null; }
+  const conditions = new Set();
+  const vars = new Set();
+  const walk = (list) => {
+    for (const n of list) {
+      if (n.type === 'var') vars.add(n.name);
+      else if (n.then) { conditions.add(n.name); walk(n.then); walk(n.else); }
+    }
+  };
+  walk(nodes);
+  if (!conditions.size) return null;
+  const names = [...conditions];
+  const paths = [];
+  if (names.length <= MAX_BRANCH_NAMES) {
+    for (let mask = 0; mask < 2 ** names.length; mask++) paths.push(names.map((_, i) => !!(mask & (1 << i))));
+  } else {
+    paths.push(names.map(() => true), names.map(() => false));
+    names.forEach((_, i) => {
+      paths.push(names.map((__, j) => j === i), names.map((__, j) => j !== i));
+    });
+  }
+  for (const path of paths) {
+    const values = {};
+    for (const name of vars) values[name] = 'x';
+    names.forEach((name, i) => { values[name] = path[i] ? (vars.has(name) ? 'x' : true) : ''; });
+    let html;
+    try { html = render(source, values, { raw: [...vars] }); } catch { return null; }
+    const result = validateEmailHtml(html);
+    if (!result.ok) {
+      const when = names.map((name, i) => `${name} ${path[i] ? 'true' : 'false'}`).join(', ');
+      return `When ${when}: ${result.reason}`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -304,4 +388,4 @@ function validateLayout(fields, liveTemplates = []) {
   return errors.length ? { ok: false, errors, templates: broken } : { ok: true };
 }
 
-module.exports = { validateTemplate, validateLayout, validateTranslation, LAYOUT_PLACEHOLDERS };
+module.exports = { validateTemplate, validateLayout, validateTranslation, branchProblem, LAYOUT_PLACEHOLDERS };
