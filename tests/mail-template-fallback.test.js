@@ -48,6 +48,8 @@ function poolWith(state = seededRows()) {
   const db = { ...state, down: false, hang: false, loads: 0, statements: [], deliveries: [], translationReads: 0, translations: [] };
   const query = async (sql, params) => {
     db.statements.push(sql);
+    // Down is the whole database: suppressions, history and the ledger too.
+    if (db.everything && db.down) throw new Error('connection refused');
     if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return { rows: [] };
     if (/FROM email_templates/.test(sql)) {
       db.loads += 1;
@@ -178,8 +180,12 @@ test('database down with a loaded snapshot uses it', async (t) => {
 });
 
 test('no snapshot and otp sends a plain mail with the code and logs an error', async (t) => {
+  // The whole database is down: the suppression list, the throttle's history and
+  // the ledger cannot be read or written either, and the code still goes out.
   const pool = poolWith();
   pool.db.down = true;
+  pool.db.everything = true;
+  t.mock.method(log, 'warn', () => {});
   const { config, rendered } = door(t, pool);
   const errors = errorsLogged(t);
   assert.equal(await mail.sendOtpMail(config, 'a@example.com', '123456'), undefined);
@@ -485,35 +491,49 @@ test('getSnapshot: a load that hangs does not hold the door for ever', async (t)
   assert.equal(pool.db.loads, 2);
 });
 
-test('getSnapshot: an empty first read is not kept, and the next send asks again', async () => {
+test('getSnapshot: an empty first read is not kept, and is asked again after a short wait', async (t) => {
+  const errors = errorsLogged(t);
   const pool = poolWith({ templates: [], layouts: [] });
-  assert.equal(await store.getSnapshot(pool), null);
-  assert.equal(await store.getSnapshot(pool), null);
-  assert.equal(pool.db.loads, 2);
+  let now = 1000;
+  const clock = { now: () => now };
+  assert.equal(await store.getSnapshot(pool, clock), null);
+  assert.equal(errors.mock.callCount(), 1, 'one line per read');
+  now += store.INCOMPLETE_RETRY_MS - 1;
+  assert.equal(await store.getSnapshot(pool, clock), null);
+  assert.equal(pool.db.loads, 1, 'not on every send');
+  assert.equal(errors.mock.callCount(), 1);
+  now += 1;
   const seeded = seededRows();
   pool.db.templates = seeded.templates;
   pool.db.layouts = seeded.layouts;
-  assert.equal((await store.getSnapshot(pool)).templates.otp.action, 'otp');
-  assert.equal(pool.db.loads, 3);
-  await store.getSnapshot(pool);
-  assert.equal(pool.db.loads, 3, 'now it is good for its 30 seconds');
+  assert.equal((await store.getSnapshot(pool, clock)).templates.otp.action, 'otp');
+  assert.equal(pool.db.loads, 2);
+  now += 29000;
+  await store.getSnapshot(pool, clock);
+  assert.equal(pool.db.loads, 2, 'now it is good for its 30 seconds');
 });
 
-test('getSnapshot: an incomplete read is used for what it has but not kept as good', async () => {
+test('getSnapshot: an incomplete read is used for what it has, not kept as good, and re-read after a short wait', async (t) => {
+  errorsLogged(t);
   const seeded = seededRows();
   const pool = poolWith({ templates: seeded.templates.filter((row) => row.action !== 'project_opened'), layouts: seeded.layouts });
-  const partial = await store.getSnapshot(pool);
+  let now = 1000;
+  const clock = { now: () => now };
+  const partial = await store.getSnapshot(pool, clock);
   assert.equal(partial.templates.otp.action, 'otp');
-  await store.getSnapshot(pool);
-  assert.equal(pool.db.loads, 2);
+  assert.equal(await store.getSnapshot(pool, clock), partial);
+  assert.equal(pool.db.loads, 1);
+  now += store.INCOMPLETE_RETRY_MS;
   pool.db.templates = seeded.templates;
-  assert.ok((await store.getSnapshot(pool)).templates.project_opened);
-  await store.getSnapshot(pool);
-  assert.equal(pool.db.loads, 3);
+  assert.ok((await store.getSnapshot(pool, clock)).templates.project_opened);
+  assert.equal(pool.db.loads, 2);
+  await store.getSnapshot(pool, clock);
+  assert.equal(pool.db.loads, 2);
   // A template without its layout is incomplete too.
   const noLayout = poolWith({ templates: seeded.templates, layouts: [] });
-  await store.getSnapshot(noLayout);
-  await store.getSnapshot(noLayout);
+  await store.getSnapshot(noLayout, clock);
+  now += store.INCOMPLETE_RETRY_MS;
+  await store.getSnapshot(noLayout, clock);
   assert.equal(noLayout.db.loads, 2);
 });
 
@@ -587,4 +607,35 @@ test('a stored row shaped as nothing expected is no template, and a login code s
   t.mock.method(store, 'resolve', () => { throw new Error('unexpected row'); });
   await mail.sendOtpMail(config, 'a@example.com', '123456');
   assert.match(rendered[0].text, /123456/);
+});
+
+test('a client whose ROLLBACK failed is not put back in the pool for reuse', async () => {
+  const released = [];
+  const pool = {
+    connect: async () => ({
+      query: async (sql) => {
+        if (/^ROLLBACK/.test(sql)) throw new Error('connection gone');
+        if (/^BEGIN/.test(sql)) return { rows: [] };
+        throw new Error('read failed');
+      },
+      release: (err) => { released.push(err); },
+    }),
+    query: async () => { throw new Error('read failed'); },
+  };
+  await assert.rejects(store.snapshot(pool), /read failed/);
+  await assert.rejects(store.saveLayout(pool, { name: 'L', html: '{{content}}', text: '{{content}}' }, null), /read failed/);
+  assert.equal(released.length, 2);
+  for (const err of released) assert.match(String(err && err.message), /connection gone/);
+});
+
+test('a client whose transaction rolled back cleanly goes back to the pool', async () => {
+  const released = [];
+  const pool = {
+    connect: async () => ({
+      query: async (sql) => { if (/^(BEGIN|ROLLBACK)/.test(sql)) return { rows: [] }; throw new Error('read failed'); },
+      release: (err) => { released.push(err); },
+    }),
+  };
+  await assert.rejects(store.snapshot(pool), /read failed/);
+  assert.deepEqual(released, [undefined]);
 });

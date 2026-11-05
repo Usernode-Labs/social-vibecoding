@@ -22,21 +22,24 @@ function fail(code, message) {
   return err;
 }
 
+// A client whose ROLLBACK failed is in an unknown state, so release(err) closes
+// it instead of handing it to the next caller, who might be a sign-in.
 async function inTransaction(pool, work) {
   const client = await pool.connect();
+  let rollbackFailed;
   try {
     await client.query('BEGIN');
     const result = await work(client);
     await client.query('COMMIT');
     return result;
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client.query('ROLLBACK').catch((rollbackError) => { rollbackFailed = rollbackError; });
     // A first save for an action that raced past the lock check still meets the
     // one-live-row index; that is the same "somebody else saved first".
     if (err && err.code === '23505') throw fail('conflict', 'Another version was saved first');
     throw err;
   } finally {
-    client.release();
+    client.release(rollbackFailed);
   }
 }
 
@@ -214,6 +217,7 @@ async function snapshot(pool) {
   const client = await pool.connect();
   let templates;
   let layouts;
+  let rollbackFailed;
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     // A read stuck behind a lock gives its connection back when the sender stops
@@ -227,10 +231,10 @@ async function snapshot(pool) {
                 FROM email_layouts e WHERE e.status = 'live' AND e.deleted_at IS NULL`);
     await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client.query('ROLLBACK').catch((rollbackError) => { rollbackFailed = rollbackError; });
     throw err;
   } finally {
-    client.release();
+    client.release(rollbackFailed);
   }
   const out = { templates: {}, layouts: {} };
   for (const row of templates.rows) out.templates[row.action] = row;
@@ -294,6 +298,9 @@ function resolve(snap, kind, language) {
 // hand: the owner's first rule is that a database problem does not stop mail.
 
 const SNAPSHOT_FRESH_MS = 30 * 1000;
+// An empty or incomplete read is asked again after this long, not on every send:
+// a kind that stays missing would otherwise cost every mail a read and a log line.
+const INCOMPLETE_RETRY_MS = 5 * 1000;
 // A read that has not answered in this long no longer counts as in flight, so
 // one stuck connection cannot stop every later refresh.
 const LOAD_LIMIT_MS = 15 * 1000;
@@ -303,7 +310,7 @@ const copies = new WeakMap();
 function copyFor(pool) {
   let copy = copies.get(pool);
   if (!copy) {
-    copy = { snapshot: null, complete: false, loadedAt: 0, loading: null };
+    copy = { snapshot: null, complete: false, loadedAt: 0, retryAt: 0, loading: null };
     copies.set(pool, copy);
   }
   return copy;
@@ -330,7 +337,8 @@ function load(pool, copy, clock) {
         Object.assign(copy, { snapshot: fresh, complete: true, loadedAt: clock.now() });
       } else {
         if (!copy.complete && hasRows(fresh)) copy.snapshot = fresh;
-        log.error('platform-mail', 'The email templates read are incomplete: asking again on the next send', {
+        copy.retryAt = clock.now() + INCOMPLETE_RETRY_MS;
+        log.error('platform-mail', 'The email templates read are incomplete: asking again shortly', {
           templates: Object.keys(fresh.templates).length, kinds: Object.keys(ACTIONS).length,
         });
         // A good copy in hand waits its time like a good read before asking again.
@@ -363,6 +371,7 @@ async function getSnapshot(pool, clock = Date) {
     if (!pool) return null;
     const copy = copyFor(pool);
     if (copy.complete && clock.now() - copy.loadedAt < SNAPSHOT_FRESH_MS) return copy.snapshot;
+    if (!copy.complete && clock.now() < copy.retryAt) return copy.snapshot;
     const { READ_PATIENCE_MS } = require('./language');
     let timer;
     const patience = new Promise((done) => {
@@ -434,5 +443,6 @@ module.exports = {
   seededSnapshot,
   settled,
   SNAPSHOT_FRESH_MS,
+  INCOMPLETE_RETRY_MS,
   LOAD_LIMIT_MS,
   saveTemplate, saveLayout, deleteTemplate, deleteLayout, restoreTemplate, saveTranslation, listAll };

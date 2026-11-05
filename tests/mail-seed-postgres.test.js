@@ -14,7 +14,7 @@ const { KINDS } = require('../src/services/mail/templates');
 const { reset } = require('../src/services/push-language');
 const log = require('../src/services/logger');
 const languageCache = require('../src/services/language-cache');
-const { SEEDS, seedEmailTemplates, englishTemplate } = require('../src/db/email-template-seeds');
+const { SEEDS, seedEmailTemplates, englishTemplate, kindsWithoutTemplate } = require('../src/db/email-template-seeds');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const ROOT = path.join(__dirname, '..');
@@ -120,11 +120,14 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
   await t.test('only the missing kind is added, and an edited one is left alone', async () => {
     await empty();
     await seedEmailTemplates(pool, { source: SOURCE });
-    await pool.query("UPDATE email_templates SET subject = 'Edited' WHERE action = 'otp'");
+    // An admin's save is what makes an action theirs (a raw edit of version 1 is
+    // what the refresh puts back; see below).
+    const [v1] = (await pool.query("SELECT * FROM email_templates WHERE action = 'otp'")).rows;
+    await store.saveTemplate(pool, { action: 'otp', name: v1.name, layoutFamilyId: v1.layout_family_id, subject: 'Edited', preheader: v1.preheader, why: v1.why, html: v1.html, text: v1.text, expectedLiveId: v1.id }, null);
     await pool.query("DELETE FROM email_templates WHERE action = 'password_reset'");
     await seedEmailTemplates(pool, { source: SOURCE });
     assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'password_reset' AND version = 1 AND status = 'live'"), 1);
-    assert.equal((await pool.query("SELECT subject FROM email_templates WHERE action = 'otp'")).rows[0].subject, 'Edited');
+    assert.equal((await pool.query("SELECT subject FROM email_templates WHERE action = 'otp' AND status = 'live'")).rows[0].subject, 'Edited');
     assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
   });
 
@@ -299,5 +302,140 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     } finally {
       dbPool.getPool = () => pool;
     }
+  });
+
+  // ── Untouched seed rows follow the catalog and the translations ──────────
+
+  const SOURCE_EDITED = {
+    files: {
+      ...SOURCE.files,
+      'en/email.json': { ...ENGLISH, 'otp.subject': { ...ENGLISH['otp.subject'], text: 'Your Homeroom sign-in code' } },
+    },
+  };
+  const liveRow = async (action) => (await pool.query(
+    "SELECT * FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL", [action])).rows[0];
+
+  await t.test('a catalog change refreshes an untouched row in place, and an admin\'s action never', async () => {
+    await empty();
+    await seedEmailTemplates(pool, { source: SOURCE });
+    const otp = await liveRow('otp');
+    const reset = await liveRow('password_reset');
+    // An admin's first save makes password_reset theirs, even with the seed's words.
+    const theirs = await store.saveTemplate(pool, { action: 'password_reset', name: reset.name, layoutFamilyId: reset.layout_family_id,
+      subject: reset.subject, preheader: reset.preheader, why: reset.why, html: reset.html, text: reset.text, expectedLiveId: reset.id }, null);
+    // And a version 1 an admin wrote (created_by set) is theirs too.
+    const { rows: [{ id: userId }] } = await pool.query('SELECT id FROM users ORDER BY id LIMIT 1');
+    await pool.query("UPDATE email_templates SET created_by = $1, subject = 'Mine' WHERE action = 'account_email'", [userId]);
+
+    await seedEmailTemplates(pool, { source: SOURCE_EDITED });
+    const after = await liveRow('otp');
+    assert.equal(after.id, otp.id, 'in place');
+    assert.equal(after.version, 1);
+    assert.equal(after.subject, 'Your Homeroom sign-in code');
+    assert.equal((await liveRow('password_reset')).id, theirs.id);
+    assert.equal((await liveRow('account_email')).subject, 'Mine');
+    assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'password_reset'"), 2);
+
+    // Back to the first wording: the untouched row follows again.
+    await seedEmailTemplates(pool, { source: SOURCE });
+    assert.equal((await liveRow('otp')).subject, otp.subject);
+  });
+
+  await t.test('a refresh compares, and writes only what differs', async () => {
+    await empty();
+    await seedEmailTemplates(pool, { source: SOURCE });
+    await pool.query("UPDATE email_templates SET html = 'stale' WHERE action = 'otp'");
+    await pool.query("UPDATE email_layouts SET text = 'stale'");
+    // Nothing in the catalog changed, so a fresh boot does not even look.
+    await seedEmailTemplates(pool, { source: SOURCE });
+    assert.equal((await liveRow('otp')).html, 'stale');
+    await pool.query("DELETE FROM platform_settings WHERE key = 'email_template_seed_fingerprint'");
+    const writes = [];
+    const spy = {
+      query: (...args) => pool.query(...args),
+      connect: async () => {
+        const client = await pool.connect();
+        return { release: (err) => client.release(err), query: (sql, params) => { if (/^\s*(UPDATE|INSERT|DELETE)/.test(sql)) writes.push(sql.trim().split(/\s+/).slice(0, 3).join(' ')); return client.query(sql, params); } };
+      },
+    };
+    await seedEmailTemplates(spy, { source: SOURCE });
+    assert.equal((await liveRow('otp')).html, englishTemplate('otp', { source: SOURCE }).html);
+    assert.equal((await pool.query('SELECT text FROM email_layouts')).rows[0].text, SEEDS.layouts[0].text);
+    assert.deepEqual(writes.sort(), ['INSERT INTO platform_settings', 'UPDATE email_layouts SET', 'UPDATE email_templates SET']);
+  });
+
+  await t.test('new translations reach untouched rows, and an admin\'s translation is left alone', async (st) => {
+    st.mock.method(log, 'info', () => {});
+    await empty();
+    reset();
+    await pool.query("DELETE FROM language_translations WHERE language = 'fr'");
+    await seedEmailTemplates(pool, { source: SOURCE });
+    assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), 0);
+    const otp = await liveRow('otp');
+    await store.saveTranslation(pool, 'template', (await liveRow('password_reset')).id, 'fr',
+      { subject: 'Admin', preheader: '', why: 'w', html: '<p>{{url}}</p>', text: '{{url}}' }, 'admin');
+    for (const [key, text] of Object.entries(FRENCH)) {
+      await pool.query(
+        "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', $1, $2, $3) ON CONFLICT DO NOTHING",
+        [key, hash(ENGLISH[key].text), text]);
+    }
+    await seedEmailTemplates(pool, { source: SOURCE });
+    const { rows } = await pool.query("SELECT origin, subject FROM email_template_translations WHERE template_id = $1 AND locale = 'fr'", [otp.id]);
+    assert.deepEqual(rows, [{ origin: 'machine', subject: FRENCH['otp.subject'] }]);
+    const { rows: admin } = await pool.query("SELECT t.origin, t.subject FROM email_template_translations t JOIN email_templates e ON e.id = t.template_id WHERE e.action = 'password_reset' AND t.locale = 'fr'");
+    assert.deepEqual(admin, [{ origin: 'admin', subject: 'Admin' }]);
+    assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), TRANSLATED.length);
+  });
+
+  await t.test('what the stored rows send is what the code sends today, English and French', async () => {
+    // After a seed run, read back as a send reads them: the snapshot, resolve and
+    // the stored-template render. Compared with the code templates, as the
+    // equivalence suite compares the seeds in memory.
+    const mailTemplates = require('../src/services/mail/templates');
+    const { translator } = require('../src/services/push-language');
+    reset();
+    // Only what the seed wrote: the admin's translation above is meant to differ.
+    await pool.query("DELETE FROM email_template_translations WHERE origin = 'admin'");
+    await pool.query("DELETE FROM platform_settings WHERE key = 'email_template_seed_fingerprint'");
+    await seedEmailTemplates(pool, { source: SOURCE });
+    const snap = await store.snapshot(pool);
+    const t = await translator(pool, 'fr', { namespace: 'email', source: SOURCE });
+    const UNSUB = 'https://app.onhomeroom.com/mail/unsubscribe?token=abc';
+    const payloads = {
+      otp: [{ code: '123456' }], account_email: [{ code: '123456' }], username_change: [{ code: '123456' }],
+      waitlist_joined: [{ code: '123456', confirmUrl: 'https://x.test/c' }, {}],
+      waitlist_code: [{ code: '123456', confirmUrl: 'https://x.test/c' }, { confirmed: true, statusUrl: 'https://x.test/s' }],
+      waitlist_released: [{ url: 'https://x.test/', mobile: { ios: 'https://x.test/i' } }, { url: 'https://x.test/l', hasAccount: true }],
+      password_reset: [{ url: 'https://x.test/r' }],
+      admin_test: [{ provider: 'p', from: 'f', sentAt: 'n', reference: 'r' }],
+      content_report: [{ reason: 'spam', targetType: 'app', targetLabel: 'T', url: 'https://x.test/m' }],
+      project_invite: [{ inviter: 'Sam', project: 'P', url: 'https://x.test/w' }, { url: 'https://x.test/w' }],
+      build_ready: [{ appName: 'Run Club', url: 'https://x.test/a', unsubscribeUrl: UNSUB }, { notWorking: true, unsubscribeUrl: UNSUB }],
+      invite_activity: [{ appName: 'Run Club', notice: { id: 'member_joined', values: { name: 'sam' } }, unsubscribeUrl: UNSUB }],
+      project_opened: [{ appName: 'Run Club', url: 'https://x.test/a', unsubscribeUrl: UNSUB }],
+    };
+    assert.deepEqual(Object.keys(payloads).sort(), [...KINDS].sort());
+    let compared = 0;
+    for (const kind of KINDS) {
+      for (const payload of payloads[kind]) {
+        const english = store.resolve(snap, kind, null);
+        assert.deepEqual(mailTemplates.buildMessage(kind, { ...payload, resolved: { ...english, t: null, readerHasLanguage: false } }),
+          mailTemplates.buildMessage(kind, payload), `en ${kind}`);
+        const french = store.resolve(snap, kind, 'fr');
+        const translated = french.template !== french.english.template;
+        assert.deepEqual(mailTemplates.buildMessage(kind, { ...payload, resolved: { ...french, t: translated ? t : null, readerHasLanguage: true } }),
+          mailTemplates.buildMessage(kind, { ...payload, translate: t }), `fr ${kind}`);
+        compared += 2;
+      }
+    }
+    assert.ok(compared > 30);
+  });
+
+  await t.test('a lost or skipped seed is found: every kind needs a live template on a live layout', async () => {
+    assert.deepEqual(await kindsWithoutTemplate(pool), []);
+    await pool.query("UPDATE email_templates SET status = 'archived', deleted_at = NOW() WHERE action = 'otp'");
+    assert.deepEqual(await kindsWithoutTemplate(pool), ['otp']);
+    await pool.query("UPDATE email_layouts SET status = 'archived', deleted_at = NOW()");
+    assert.deepEqual(await kindsWithoutTemplate(pool), [...KINDS].sort());
   });
 });

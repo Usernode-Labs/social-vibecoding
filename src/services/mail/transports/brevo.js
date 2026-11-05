@@ -50,7 +50,7 @@ function buildPayload(sender, to, kind, message) {
     sender,
     to: [{ email: to }],
     subject: message.subject,
-    // Brevo requires htmlContent when no provider template is named.
+    // Brevo requires htmlContent.
     htmlContent: message.html || `<pre>${escapeHtml(message.text)}</pre>`,
     textContent: message.text,
     tags: [String(kind)],

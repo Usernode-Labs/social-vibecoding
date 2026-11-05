@@ -193,6 +193,18 @@ async function pruneDeliveries(pool) {
   }
 }
 
+// The suppression list, read failing OPEN as readHistory does: an address
+// that bounced getting one more mail during a database outage is a smaller
+// problem than sign-in codes stopping because the read broke.
+async function suppressionOf(pool, to) {
+  try {
+    return await events.suppression(pool, to);
+  } catch (err) {
+    log.warn('platform-mail', 'Could not read mail suppressions: sending anyway', { message: err.message });
+    return null;
+  }
+}
+
 // ─── the words ──────────────────────────────────────────────────────────
 
 // What a send renders with: the stored template and layout for `kind`, each in
@@ -273,7 +285,7 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
       return;
     }
 
-    const blocked = await events.suppression(pool, to);
+    const blocked = await suppressionOf(pool, to);
     if (blocked) {
       await record(pool, { kind, to, messageId, provider, status: 'suppressed_bounce', error: blocked });
       return;
@@ -451,7 +463,7 @@ async function sendTest(config, { to } = {}) {
       return outcome;
     }
 
-    const blocked = await events.suppression(pool, to);
+    const blocked = await suppressionOf(pool, to);
     if (blocked) {
       outcome.status = 'suppressed_bounce';
       outcome.error = blocked;
