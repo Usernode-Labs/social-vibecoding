@@ -3386,10 +3386,16 @@ test('#6197: Trending renders under its own heading, between Featured and More a
   assert.deepEqual(order(none), ['Apps to try', 'r'], 'with nothing trending the list is what it was');
 });
 
-test('#6197: rememberSearch keeps five, newest first, merges repeats and skips what is no search', () => {
+test('#5967: rememberSearch keeps twelve, newest first, merges repeats and skips what is no search', () => {
   const { Browse, state, storage } = makeBrowse();
+  assert.equal(Browse.RECENT_SEARCH_LIMIT, 12);
+  for (let n = 1; n <= 13; n += 1) Browse.rememberSearch(`s${n}`);
+  assert.equal(state.recent.length, 12);
+  assert.equal(state.recent[0], 's13');
+  assert.equal(state.recent[11], 's2', 'the oldest goes');
+  Browse.forgetSearches();
   ['one', 'two', 'three', 'four', 'five', 'six'].forEach((q) => Browse.rememberSearch(q));
-  assert.deepEqual(Array.from(state.recent), ['six', 'five', 'four', 'three', 'two']);
+  assert.deepEqual(Array.from(state.recent), ['six', 'five', 'four', 'three', 'two', 'one']);
   Browse.rememberSearch('  THREE ');
   assert.deepEqual(Array.from(state.recent), ['THREE', 'six', 'five', 'four', 'two'], 'a repeat moves, in any case');
   Browse.rememberSearch('   ');
@@ -3531,11 +3537,11 @@ test('#6197: the search menu lists recents or suggestions, and the field is clos
   const { BrowseSearchMenu } = loadTsx('frontend/src/features/apps/browse-search-menu.tsx');
   const position = { top: 60, left: 12, width: 300 };
   const recents = renderToHtml(createElement(BrowseSearchMenu, {
-    position, activeIndex: 1, recent: ['games', 'recipes'], suggestions: null,
+    position, activeIndex: 1, recent: [{ query: 'games', app: null }, { query: 'recipes', app: null }], suggestions: null,
     onPickRecent() {}, onPickSuggestion() {}, onClearRecent() {},
   }));
   assert.match(recents, />Recent searches<\/h2>/);
-  assert.match(recents, /aria-label="Clear recent searches"[^>]*>Clear<\/button>/);
+  assert.match(recents, /aria-label="Clear recent searches"[^>]*><svg/, 'an icon button, with a name');
   assert.equal((recents.match(/role="option"/g) || []).length, 2);
   assert.match(recents, /id="browse-search-option-1" role="option" aria-selected="true"/, 'the arrow keys show on the row');
   assert.match(recents, /rounded-\[20px\]/, "Discover's own corners");
@@ -3554,6 +3560,65 @@ test('#6197: the search menu lists recents or suggestions, and the field is clos
   assert.doesNotMatch(prerender, /data-browse-search-menu|browse-search-options/, 'closed: nothing new in the shell');
   assert.match(prerender, /id="browse-search-input"[^>]*role="combobox"[^>]*aria-expanded="false"/);
   assert.doesNotMatch(prerender, /aria-activedescendant/);
+});
+
+test('#5967: recent searches are two columns of thumbnails, with a plain tile when nothing matches', () => {
+  const { createElement, renderToHtml } = require('./lib/render-tsx');
+  const { BrowseSearchMenu } = loadTsx('frontend/src/features/apps/browse-search-menu.tsx');
+  const picked = [];
+  const props = {
+    position: { top: 60, left: 12, width: 300 }, activeIndex: 0, suggestions: null,
+    onPickRecent: (q) => picked.push(q), onPickSuggestion() {}, onClearRecent() {}, onToggleRecent() {},
+  };
+  const html = renderToHtml(createElement(BrowseSearchMenu, {
+    ...props,
+    recent: [
+      { query: 'run', app: { slug: 'run-club', name: 'Run Club', icon_emoji: '🏃' } },
+      { query: '<b>gone</b>', app: null },
+    ],
+  }));
+  assert.match(html, /role="listbox"[^>]*class="grid grid-cols-2 /, 'two columns, still one listbox');
+  assert.equal((html.match(/role="option"/g) || []).length, 2);
+  assert.match(html, /id="browse-search-option-0" role="option" aria-selected="true" aria-label="run"/);
+  assert.match(html, /aria-label="run"[\s\S]*?app-icon-tile[\s\S]*?🏃/, 'the match lends its icon');
+  assert.match(html, /aria-label="&lt;b&gt;gone&lt;\/b&gt;"[\s\S]*?data-recent-no-match=""/, 'nothing matches: the plain tile');
+  assert.equal((html.match(/app-icon-tile/g) || []).length, 1);
+  assert.doesNotMatch(html, /<b>gone/);
+  assert.doesNotMatch(html, /browse-search-recent-more/, 'no toggle when they all fit');
+
+  assert.equal(message('discover:search.recent.more'), 'More');
+  assert.equal(message('discover:search.recent.less'), 'Less');
+  const tiles = [{ query: 'a', app: null }];
+  const more = renderToHtml(createElement(BrowseSearchMenu, { ...props, recent: tiles, recentToggle: 'more' }));
+  assert.match(more, /id="browse-search-recent-more"[^>]*aria-expanded="false" aria-controls="browse-search-options"[^>]*>More</);
+  const less = renderToHtml(createElement(BrowseSearchMenu, { ...props, recent: tiles, recentToggle: 'less' }));
+  assert.match(less, /id="browse-search-recent-more"[^>]*aria-expanded="true"[^>]*>Less</);
+});
+
+test('#5967: a tile shows the first suggestion for its words, or nothing when no listed app matches', () => {
+  const { Browse } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'run-club', name: 'Run Club' }),
+    app({ slug: 'run-flagged', name: 'Secret', directory: { flagged: true } }),
+  ];
+  const tiles = Array.from(Browse.recentSearchTiles(['run', 'secret', 'zzz']));
+  assert.deepEqual(Array.from(tiles, (t) => t.query), ['run', 'secret', 'zzz'], 'in the order given');
+  assert.equal(tiles[0].app.slug, Browse.suggestionsFor('run')[0].slug);
+  assert.equal(tiles[1].app, null, 'an app Discover never lists lends no icon');
+  assert.equal(tiles[2].app, null);
+  assert.deepEqual(Array.from(Browse.recentSearchTiles([])), []);
+});
+
+test('#5967: two rows until More, and the arrows go past the fold', () => {
+  const { RECENT_FOLDED_TILES } = loadTsx('frontend/src/features/apps/browse-search-menu.tsx');
+  assert.equal(RECENT_FOLDED_TILES, 4);
+  const screen = read('frontend/src/features/apps/browse-screen.tsx');
+  assert.match(screen, /recentExpanded \? recent : recent\.slice\(0, RECENT_FOLDED_TILES\)/);
+  assert.match(screen, /optionCount = query \? suggestions\.length : recentShown\.length/, 'the arrows walk what shows');
+  assert.match(screen, /activeOption === optionCount - 1\) \{\s*setRecentExpanded\(true\);\s*setActiveOption\(optionCount\);/,
+    'a keyboard, whose focus stays in the field, unfolds by going on');
+  assert.match(screen, /recentExpanded && activeOption >= RECENT_FOLDED_TILES\) setActiveOption\(-1\)/, 'Less drops a tile the arrows were on');
+  assert.match(screen, /recentToggle=\{recentCanFold \? \(recentExpanded \? 'less' : 'more'\) : null\}/);
 });
 
 test('#6197: the menu is drawn outside the bar, whose clip-path would cut it off from 768px', () => {

@@ -115,13 +115,17 @@
     "text": "Recent searches",
     "description": "Small-caps label over the list of the viewer's last searches, in the menu that opens under Discover's search field while the field is empty."
   },
-  "search.recent.clear": {
-    "text": "Clear",
-    "description": "Small button beside the \"Recent searches\" label in the menu under Discover's search field: forgets the listed searches on this device."
-  },
   "search.recent.clearLabel": {
     "text": "Clear recent searches",
-    "description": "Accessible name of the \"Clear\" button beside the \"Recent searches\" label under Discover's search field."
+    "description": "Tooltip and accessible name of the bin icon button beside the \"Recent searches\" label under Discover's search field: forgets the listed searches on this device."
+  },
+  "search.recent.more": {
+    "text": "More",
+    "description": "Small button under the two rows of recent-search tiles in the menu under Discover's search field: shows the rest of the viewer's recent searches."
+  },
+  "search.recent.less": {
+    "text": "Less",
+    "description": "Small button under the unfolded recent-search tiles in the menu under Discover's search field: folds them back to the first two rows."
   },
   "search.suggest.heading": {
     "text": "Suggestions",
