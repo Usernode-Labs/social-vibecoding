@@ -310,3 +310,51 @@ test('#6151: the design bot is told where a filed design\'s request stands; an u
   assert.equal(designBot.filedBuilds({ track: building, live: true }), true);
   assert.equal(designBot.filedBuilds({ track: track({ state: 'stopped', why: 'needs_person' }), live: true }), false);
 });
+
+test('#6355: a card\'s sentence names only the request its button posts to', () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const F = 'Tap the card to post version 4 on request #6351 as its plan, publicly, under your name.';
+  // The model's own words named another request: they are dropped whole.
+  assert.equal(mayor.cardSentence('Tap the card to post version 4 on request #6355 as its plan.', { issueNumber: 6351, fallback: F }), F);
+  // Its own request, as "#N" or "request N", is kept as written.
+  const good = 'Tap the card to post version 4 on request #6351 as its plan.';
+  assert.equal(mayor.cardSentence(good, { issueNumber: 6351, fallback: F }), good);
+  assert.equal(mayor.cardSentence('Tap the card to post version 4 on request 6351.', { issueNumber: 6351, fallback: F }),
+    'Tap the card to post version 4 on request 6351.');
+  // A paragraph keeps the sentences that pass and drops the others.
+  assert.equal(mayor.cardSentence('Here is the design. Tap the card to post it on request 12.', { issueNumber: 6351, fallback: F }),
+    'Here is the design.');
+  assert.equal(mayor.cardSentence('A plan on #12. A plan on #6351.', { issueNumber: 6351, fallback: F }), 'A plan on #6351.');
+  // A new-request card has no number yet, so a sentence naming one is dropped.
+  assert.equal(mayor.cardSentence('Tap New request to file one on #6351.', { issueNumber: null, fallback: F }), F);
+  assert.equal(mayor.cardSentence('Tap New request to file one.', { issueNumber: null, fallback: F }), 'Tap New request to file one.');
+  // A version is not a request: it stays as the bot wrote it.
+  assert.equal(mayor.cardSentence('Version 4 is ready.', { issueNumber: 6351, fallback: F }), 'Version 4 is ready.');
+  // Nothing left, or nothing said: the fixed line.
+  assert.equal(mayor.cardSentence('Tap it on request #12.', { issueNumber: 6351, fallback: F }), F);
+  assert.equal(mayor.cardSentence('', { issueNumber: 6351, fallback: F }), F);
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /cardSentence\(text, \{ issueNumber: n, fallback \}\)/, 'the plan card\'s first line is checked');
+  assert.match(src, /cardSentence\(text, \{ issueNumber: null, fallback: `Want to make \$\{o\.name\} from this design\?` \}\)/);
+  assert.match(src, /Tap the card to post version \$\{v\} on request #\$\{n\} as its plan, publicly, under your name\./);
+  assert.match(src, /Tap New request to file a request on \$\{name\} with version \$\{v\} as its plan/);
+});
+
+test('#6355: a version line says "Version N:" once, and the note does not repeat it', () => {
+  const designs = require('../src/services/design-threads');
+  assert.equal(designs.bareNote('Version 5: rows in the markup'), 'rows in the markup');
+  assert.equal(designs.bareNote('Version 5: Version 5: rows in the markup'), 'rows in the markup');
+  assert.equal(designs.bareNote('version 4 - rows in the markup'), 'rows in the markup');
+  assert.equal(designs.bareNote('rows in the markup'), 'rows in the markup');
+  assert.equal(designs.versionLine(5, 'Version 5: rows in the markup, no script'), 'Version 5: rows in the markup, no script.');
+  assert.equal(designs.versionLine(5, 'Version 5: Version 5: x'), 'Version 5: x.');
+  assert.equal(designs.versionLine(5, 'version 4 - x; Version 4: y'), 'Version 5: x; y.');
+  assert.equal(designs.versionLine(3, 'Version 3:'), 'Version 3.');
+  assert.equal(designs.versionLine(3, 'Version 3: A green Save button.'), 'Version 3: A green Save button.');
+  const src = read('src/services/design-bot.js');
+  assert.doesNotMatch(src, /it names the version/);
+  assert.match(src, /What it is, in a few plain words\. Leave out the version number: the thread adds it\./);
+  assert.match(src, /What changed, in a few plain words\. Leave out the version number: the thread adds it\./);
+  assert.match(src, /notes\.push\(threads\.bareNote\(screen\.note\)\)/, 'a written screen\'s note is stored bare');
+  assert.match(src, /notes\.push\(threads\.bareNote\(clip\(args\.note, 120\)\)\)/, 'an edit\'s note is stored bare');
+});

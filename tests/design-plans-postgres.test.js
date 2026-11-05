@@ -342,7 +342,7 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
       design: idea, offer: checked.offer, key: 'test-new-project-offer', deps,
     });
     const card = (await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [sent.messageId])).rows[0];
-    assert.match(card.content, /^Want me to post this as a plan on Plant pal\?/);
+    assert.match(card.content, /^Tap New request to file a request on Plant pal with version 1 as its plan, publicly, under your name, or add it to a request you name\./);
     const meta = card.metadata.homeroomBot;
     assert.deepEqual(meta.actions.map((a) => [a.label, a.type]),
       [['New request', 'server'], ['Add to an existing request…', 'prompt']]);

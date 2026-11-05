@@ -89,6 +89,7 @@ function boardTurn(steps, { surface = 'app', threadApp = HOMEROOM, canView = tru
       async versionOf() { return null; },
       async ensureDesign() { return { threadId: 7, title: 'Main screen', app: threadApp || HOMEROOM }; },
       async addVersion() { return { version: 1 }; },
+      bareNote: require('../src/services/design-threads').bareNote,
       versionLine: (version, note) => `Version ${version} · ${note}`,
       async noteVersionMessage() {},
     },
