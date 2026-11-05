@@ -81,6 +81,12 @@ function truthy(v) {
   return !(v === undefined || v === null || v === false || v === '');
 }
 
+// Own properties only, so {{constructor}} or {{#if toString}} cannot reach
+// Object.prototype and leak or flip on built-in members.
+function lookup(data, name) {
+  return Object.hasOwn(data, name) ? data[name] : undefined;
+}
+
 function render(source, values, opts = {}) {
   const html = opts.mode !== 'text';
   const raw = new Set(opts.raw || []);
@@ -90,11 +96,11 @@ function render(source, values, opts = {}) {
     for (const n of nodes) {
       if (n.type === 'text') out.push(n.value);
       else if (n.type === 'var') {
-        const v = data[n.name];
+        const v = lookup(data, n.name);
         if (v === undefined || v === null) continue;
         out.push(html && !raw.has(n.name) ? escapeHtml(v) : String(v));
       } else {
-        const on = truthy(data[n.name]);
+        const on = truthy(lookup(data, n.name));
         walk(on === (n.type === 'if') ? n.then : n.else);
       }
     }

@@ -60,3 +60,9 @@ test('syntax errors throw with offsets', () => {
 test('placeholdersIn includes names used only in conditions', () => {
   assert.deepEqual([...placeholdersIn('{{x}}{{#if c}}{{y}}{{/if}}{{#unless d}}z{{/unless}}')].sort(), ['c', 'd', 'x', 'y']);
 });
+
+test('lookups read own properties only', () => {
+  assert.equal(render('a{{constructor}}b', {}, { mode: 'text' }), 'ab');
+  assert.equal(render('{{#if toString}}Y{{else}}N{{/if}}', {}, { mode: 'text' }), 'N');
+  assert.equal(render('{{constructor}}', { constructor: 'own' }, { mode: 'text' }), 'own');
+});
