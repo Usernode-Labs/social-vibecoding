@@ -15,11 +15,6 @@
 
 const { actionFor } = require('./actions');
 
-const TRANSLATION_FIELDS = {
-  template: { table: 'email_template_translations', key: 'template_id', parent: 'email_templates', fields: ['subject', 'preheader', 'why', 'html', 'text'] },
-  layout: { table: 'email_layout_translations', key: 'layout_id', parent: 'email_layouts', fields: ['html', 'text'] },
-};
-
 function fail(code, message) {
   const err = new Error(message || code);
   err.code = code;
@@ -167,34 +162,43 @@ async function restoreTemplate(pool, id, userId) { // eslint-disable-line no-unu
 
 // Insert or replace one language of one version. `origin` says whether a
 // machine or an admin wrote it, so a later machine pass can leave admin text alone.
+// The statements are written out, not assembled, so the SQL inventory can read them.
 async function saveTranslation(pool, kind, id, locale, fields, origin) {
-  const spec = Object.hasOwn(TRANSLATION_FIELDS, kind) ? TRANSLATION_FIELDS[kind] : null;
-  if (!spec) throw fail('not_found', `Unknown translation kind: ${kind}`);
+  if (kind !== 'template' && kind !== 'layout') throw fail('not_found', `Unknown translation kind: ${kind}`);
   if (origin !== 'machine' && origin !== 'admin') throw fail('invalid_origin', 'origin must be machine or admin');
-  const { rows: [parent] } = await pool.query(`SELECT id FROM ${spec.parent} WHERE id = $1`, [id]);
-  if (!parent) throw fail('not_found', 'That version does not exist');
-  const values = spec.fields.map((f) => (fields && fields[f] != null ? String(fields[f]) : ''));
-  const cols = spec.fields.join(', ');
-  const marks = spec.fields.map((_, i) => `$${i + 3}`).join(', ');
-  const updates = spec.fields.map((f) => `${f} = EXCLUDED.${f}`).join(', ');
-  const o = spec.fields.length + 3;
-  const { rows: [row] } = await pool.query(
-    `INSERT INTO ${spec.table} (${spec.key}, locale, ${cols}, origin) VALUES ($1, $2, ${marks}, $${o})
-     ON CONFLICT (${spec.key}, locale) DO UPDATE SET ${updates}, origin = EXCLUDED.origin, updated_at = NOW() RETURNING *`,
-    [id, locale, ...values, origin]);
+  const f = (name) => (fields && fields[name] != null ? String(fields[name]) : '');
+  const exists = kind === 'template'
+    ? await pool.query('SELECT id FROM email_templates WHERE id = $1', [id])
+    : await pool.query('SELECT id FROM email_layouts WHERE id = $1', [id]);
+  if (!exists.rows.length) throw fail('not_found', 'That version does not exist');
+  const { rows: [row] } = kind === 'template'
+    ? await pool.query(
+      `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (template_id, locale) DO UPDATE SET subject = EXCLUDED.subject, preheader = EXCLUDED.preheader,
+         why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, origin = EXCLUDED.origin, updated_at = NOW()
+       RETURNING *`,
+      [id, locale, f('subject'), f('preheader'), f('why'), f('html'), f('text'), origin])
+    : await pool.query(
+      `INSERT INTO email_layout_translations (layout_id, locale, html, text, origin)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (layout_id, locale) DO UPDATE SET html = EXCLUDED.html, text = EXCLUDED.text,
+         origin = EXCLUDED.origin, updated_at = NOW()
+       RETURNING *`,
+      [id, locale, f('html'), f('text'), origin]);
   return row;
 }
 
 // What the sender reads: each action's live template and each layout family's
 // live layout, with every translation of that live row, in one query each.
 async function snapshot(pool) {
-  const translations = (table, key) => `(SELECT COALESCE(json_object_agg(t.locale, to_jsonb(t) - '${key}' - 'locale'), '{}'::json)
-     FROM ${table} t WHERE t.${key} = e.id) AS translations`;
   const [templates, layouts] = await Promise.all([
-    pool.query(`SELECT e.*, ${translations('email_template_translations', 'template_id')} FROM email_templates e
-                WHERE e.status = 'live' AND e.deleted_at IS NULL`),
-    pool.query(`SELECT e.*, ${translations('email_layout_translations', 'layout_id')} FROM email_layouts e
-                WHERE e.status = 'live' AND e.deleted_at IS NULL`),
+    pool.query(`SELECT e.*, (SELECT COALESCE(json_object_agg(t.locale, to_jsonb(t) - 'template_id' - 'locale'), '{}'::json)
+                  FROM email_template_translations t WHERE t.template_id = e.id) AS translations
+                FROM email_templates e WHERE e.status = 'live' AND e.deleted_at IS NULL`),
+    pool.query(`SELECT e.*, (SELECT COALESCE(json_object_agg(t.locale, to_jsonb(t) - 'layout_id' - 'locale'), '{}'::json)
+                  FROM email_layout_translations t WHERE t.layout_id = e.id) AS translations
+                FROM email_layouts e WHERE e.status = 'live' AND e.deleted_at IS NULL`),
   ]);
   const out = { templates: {}, layouts: {} };
   for (const row of templates.rows) out.templates[row.action] = row;
