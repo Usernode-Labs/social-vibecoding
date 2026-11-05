@@ -237,6 +237,7 @@ const EXEMPT = new Map([
   ['preview-projects.js POST /api/preview-projects/:slug/restart', TOKEN],
   ['preview-projects.js DELETE /api/preview-projects/:slug', TOKEN],
   ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
+  ['mail-webhooks.js POST /api/mail/webhooks/brevo', 'Brevo\'s mail webhook bearer token (BREVO_MAIL_WEBHOOK_TOKEN); no cookie or browser session authorizes a callback'],
   ['sms-webhooks.js POST /api/sms/webhooks/brevo', 'Brevo\'s SMS webhook bearer token (BREVO_SMS_WEBHOOK_TOKEN); no cookie or browser session authorizes a callback'],
   ['sms-webhooks.js POST /api/sms/webhooks/twilio', 'Twilio\'s X-Twilio-Signature HMAC keyed by TWILIO_AUTH_TOKEN over TWILIO_STATUS_CALLBACK_URL; no cookie or browser session authorizes a callback'],
   ['alerts-webhook.js POST /api/internal/alerts', 'Alertmanager\'s bearer token (ALERTMANAGER_WEBHOOK_TOKEN); no cookie or browser session authorizes a call'],
