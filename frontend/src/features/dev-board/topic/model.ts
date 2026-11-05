@@ -659,6 +659,12 @@ export interface FixChecksView {
 }
 
 /** #4455: the Votes card or the Testing card under a change's summary. */
+/** A change's cost so far: the line, and what the figure counts as its tooltip. */
+export interface ChangeSpentView {
+  text: string;
+  title: string;
+}
+
 export interface ChangeGateView {
   name: string;
   /** The figure at the right of the name: "Needs 1 more yes", "about 6 min left". */
@@ -688,6 +694,11 @@ export interface ChangeGateView {
   noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */
   actions?: ActionSpec[];
+  /**
+   * #6116, Testing only: what the change has cost so far at list price, for
+   * its author or an admin (AppView._changeSpentView). Null otherwise.
+   */
+  spent?: ChangeSpentView | null;
   /** Testing only: a "See what failed" door into Details. */
   details?: boolean;
   /** Testing only, when its checks failed: what went wrong, in plain words. */

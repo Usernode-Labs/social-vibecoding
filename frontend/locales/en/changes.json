@@ -9007,6 +9007,10 @@
     "text": "The checks passed, but the screenshot agent tried this change and the app broke.",
     "description": "One sentence of the line under the figure on the Testing card of a change's page. The screenshot agent is the automated agent that uses the app to take its before and after screenshots."
   },
+  "page.testing.spent": {
+    "text": "This change has cost ${{amount}} so far at list price. That is not the credits charged.",
+    "description": "Quiet line at the foot of the Testing card on a change's page, shown only to the change's author and admins: what building the change has cost so far at the AI models' list price, which is a different figure from the credits taken from the person's balance. {{amount}} is a number with two decimals; the dollar sign is in the text."
+  },
   "page.testing.note.olderMain": {
     "text": "They passed on an older main.",
     "description": "One sentence of the line under the figure on the Testing card of a change's page, after how long the run took: the checks passed against an earlier state of \"main\", the project's current code, which has moved since. \"main\" is the name of the code branch and stays in English."
