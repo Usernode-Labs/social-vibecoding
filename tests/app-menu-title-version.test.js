@@ -85,6 +85,8 @@ test('rows inside Homeroom keep the chevron; links out carry the external mark',
   const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
   const privacy = SHEET.slice(SHEET.indexOf('id="app-menu-privacy"'), SHEET.indexOf('</a>', SHEET.indexOf('id="app-menu-privacy"')));
   assert.match(privacy, /<ExternalMark /, 'Privacy opens Homeroom\'s notice in a new tab');
+  const terms = SHEET.slice(SHEET.indexOf('id="app-menu-terms"'), SHEET.indexOf('</a>', SHEET.indexOf('id="app-menu-terms"')));
+  assert.match(terms, /<ExternalMark /, 'Terms opens Homeroom\'s terms in a new tab');
   assert.match(SHEET, /external=\{homeroomOffer\.via === 'browser'\}/,
     'Add Homeroom is marked when it opens the system browser');
   const ABOUT = read('frontend/src/features/app-context/about-pane.tsx');
