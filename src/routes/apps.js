@@ -22,6 +22,7 @@ const offlineCache = require('../services/offline-cache');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
+const projectBotName = require('../services/project-bot-name');
 const platformOperations = require('../services/platform-operations');
 const versionLinks = require('../services/version-links');
 const places = require('../services/places');
@@ -3026,6 +3027,54 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       log.error('apps', 'Rename PR failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
+  // #4942: propose what Homeroom bot calls itself in this project, or an empty
+  // name to go back to Homeroom bot. A dapp.json line, so it goes to the vote
+  // like a rename and applies once it merges. The server's sentences here are
+  // what the dialog shows.
+  router.post('/api/apps/:slug/bot-name-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool), async (req, res) => {
+    if (typeof req.body?.name !== 'string') return res.status(400).json({ error: 'name is required' });
+    const name = appManifest.normalizeBotName(req.body.name);
+    const problem = name ? appManifest.botNameProblem(name) : null;
+    if (problem) return res.status(400).json({ error: projectBotName.PROBLEM_SENTENCES[problem] });
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      const app = rows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
+        return res.status(403).json({ error: 'Only people who can build here can propose a name for the bot' });
+      }
+      const current = appManifest.readBotName(app.manifest_snapshot) || '';
+      if (name.toLowerCase() === current.toLowerCase()) {
+        return res.status(400).json({ error: name ? 'The bot is already called that here' : 'The bot is already called Homeroom bot here' });
+      }
+      if (name && await projectBotName.belongsToAccount(pool, name)) {
+        return res.status(400).json({ error: projectBotName.PROBLEM_SENTENCES.taken });
+      }
+      if (!github.isEnabled()) {
+        return res.status(503).json({ error: 'Naming the bot needs a code host configured on the platform.' });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no repository to open a PR against' });
+      }
+      if (!repoRef.parse(app.repo_url)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+      const result = await proposeManifest(res, app, req.user, 'bot-name', { name });
+      if (!result) return;
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+      });
+    } catch (err) {
+      log.error('apps', 'Bot name PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Could not propose that name. Try again.' });
     }
   });
 

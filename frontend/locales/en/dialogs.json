@@ -363,6 +363,50 @@
     "text": "Network error while opening rename PR",
     "description": "Error in the rename dialog when the request to open the pull request (PR) could not reach the server."
   },
+  "botName.title": {
+    "text": "Bot's name",
+    "description": "Heading of the dialog for proposing what Homeroom bot calls itself in a project."
+  },
+  "botName.current": {
+    "text": "In {{project}} it's called<0>{{name}}</0>",
+    "description": "Line under the heading of the Bot's name dialog. {{project}} is the project's name and {{name}} is what the bot is called there now; the numbered tag sets the name in a different typeface and must stay around it."
+  },
+  "botName.label": {
+    "text": "Name in this project",
+    "description": "Label of the text field in the Bot's name dialog."
+  },
+  "botName.placeholder": {
+    "text": "Homeroom bot",
+    "description": "Greyed text inside the empty field of the Bot's name dialog: the bot's default name, which leaving the field empty goes back to."
+  },
+  "botName.hint": {
+    "text": "Up to 40 characters and 3 words, and not somebody's name on Homeroom. The group votes on it, and the bot uses it in its replies here once it's voted in. People still mention it as @homeroom_bot. Leave it empty to go back to Homeroom bot.",
+    "description": "Help text under the field of the Bot's name dialog. @homeroom_bot is the bot's handle and stays as it is."
+  },
+  "botName.submit": {
+    "text": "Propose this name",
+    "description": "Button in the Bot's name dialog: puts the typed name to the group's vote."
+  },
+  "botName.submitting": {
+    "text": "Proposing…",
+    "description": "Text of the Bot's name dialog's button while the proposal is being opened."
+  },
+  "botName.error.tooLong": {
+    "text": "Keep the name to 40 characters or fewer.",
+    "description": "Error in the Bot's name dialog when the typed name is longer than 40 characters."
+  },
+  "botName.error.same": {
+    "text": "The bot is already called that here.",
+    "description": "Error in the Bot's name dialog when the typed name is the one the bot already has in this project."
+  },
+  "botName.error.failed": {
+    "text": "Could not propose that name. Try again.",
+    "description": "Error in the Bot's name dialog when the server refused the proposal and gave no reason."
+  },
+  "botName.error.network": {
+    "text": "Could not reach Homeroom. Check your connection and try again.",
+    "description": "Error in the Bot's name dialog when the request could not reach the server."
+  },
   "closeIssue.title": {
     "text": "Propose closing issue<0>#{{number}}</0>?",
     "description": "Heading of the dialog that asks whether to put closing an issue to a group vote. {{number}} is the issue's number; keep the # before it and the numbered tag around both."

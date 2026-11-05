@@ -40,6 +40,13 @@ const FLAVORS = new Map([
     access: 'collab', selfHosted: true, member: true,
     build: (d, app, a, actor, steps) => renamePr.createRenamePR(d.config, d.pool, app, a.newName, actor, { steps }),
   }],
+  // #4942: what Homeroom bot calls itself in this project.
+  ['bot-name', {
+    access: 'collab', selfHosted: true, member: true,
+    existing: (pool, app) => renamePr.findBotNamePr(pool, app.id),
+    existingError: () => 'A name for the bot is already waiting for a vote',
+    build: (d, app, a, actor, steps) => renamePr.createBotNamePR(d.config, d.pool, app, { name: a.name }, actor, { steps }),
+  }],
   ['secret-declaration', {
     access: 'collab', selfHosted: 'voting', member: true,
     existing: (pool, app, a) => pendingSecrets.findLiveByKey(pool, app.id, a.key)

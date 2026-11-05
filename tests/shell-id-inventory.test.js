@@ -436,6 +436,13 @@ const ADDED_IDS = {
   'who-decides-modal': '#4666: the Who can see & change it sheet (features/dialogs/who-decides.tsx), opened from the Workshop rule line\'s Rules, Settings & rules, App settings and Members. Who can see the project and how its changes are approved (four presets, or groups and rules of its own) go up as ONE PR against dapp.json\'s `visibility` and `governance` blocks. Ships hidden and EMPTY but for its root and card; everything is drawn from the community record once it is open, so the prerender and the first client render agree. The one id behind the open (not in the prerender, nor here): #who-group-name.',
   'members-who-decides': '#4666: Members & approvals\' row that opens the Who can see & change it sheet, in place of the approval controls on every project but the platform\'s own. Ships hidden; members-controller.js shows it to whoever manages the project.',
   'topics-error': '#4417: the Topics dialog\'s error line, hidden until a proposal is refused.',
+  'bot-name-modal': '#4942: the Bot\'s name dialog (features/dialogs/bot-name.tsx), opened from the project page\'s Settings & rules › Bot\'s name row. It opens a PR against dapp.json\'s `bot_name` for the group\'s vote. Ships hidden with an empty field and an empty current name.',
+  'bot-name-current': '#4942: the name the bot goes by in this project now, filled when the dialog opens.',
+  'bot-name-form': '#4942: the Bot\'s name dialog\'s form.',
+  'bot-name-input': '#4942: the dialog\'s uncontrolled name field.',
+  'bot-name-error': '#4942: the dialog\'s error line, hidden until a proposal is refused.',
+  'bot-name-cancel': '#4942: closes the dialog without proposing.',
+  'bot-name-submit': '#4942: puts the name to the group\'s vote.',
   'share-homeroom-address': '#4405: the "Also at <homeroom host>" line under Share\'s link, shown only when the link offered is the project\'s custom domain. Ships hidden and empty.',
   // ── #4127: one paperclip for Photo and Video in Send feedback ─────────
   'feedback-queue-retry': '#3994: Try again under Send feedback\'s status line, shown while a message saved on this device has not been sent. It sends the outbox now (FeedbackQueue.retryNow) instead of waiting for reconnect, sign-in or the backoff timer. Shown and worded by ./feedback-controller.',

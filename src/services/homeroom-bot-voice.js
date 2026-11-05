@@ -54,6 +54,7 @@
 // the fixed notes it had. Never a reason anything else fails: every entry
 // point is best-effort and never throws.
 
+const projectBotName = require('./project-bot-name');
 const log = require('./logger');
 const repoRef = require('./repo-ref');
 const replyRules = require('../workflow/rules/bot-replies.ts');
@@ -545,11 +546,15 @@ async function appRow(pool, appId) {
   const { rows } = await pool.query(
     // With what the access checks read (app-access.js ACCESS_COLUMNS).
     `SELECT id, slug, name, repo_url, created_by, self_hosted, community_id,
-            collab_visibility, view_visibility, moderation_suspended_at
+            collab_visibility, view_visibility, moderation_suspended_at,
+            manifest_snapshot->>'bot_name' AS bot_name
        FROM apps WHERE id = $1`,
     [Number(appId)],
   );
-  return rows[0] || null;
+  const app = rows[0] || null;
+  // #4942: the name the project voted in, unless it has become somebody's.
+  if (app?.bot_name) app.bot_name = await projectBotName.usableBotName(pool, app.bot_name);
+  return app;
 }
 
 async function personRow(pool, userId) {
@@ -1001,6 +1006,7 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
   ].filter(Boolean);
   return [
     `You are Homeroom bot, a member of the "${app.name || app.slug}" project on Homeroom, replying in ${WHERE[place.type]}.`,
+    ...projectBotName.promptLines(app.bot_name),
     'Homeroom is where people build small web apps together: every change is a proposal the project\'s group votes on.',
     'Everyone who can open this place reads what you write. Write to the person or people who wrote to you, in the first',
     'person, plainly, as a helpful teammate would. One reply answers everything new that was said to you.',

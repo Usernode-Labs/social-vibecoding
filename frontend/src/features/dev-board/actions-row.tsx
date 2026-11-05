@@ -57,7 +57,7 @@ import type { ReactNode } from 'react';
 
 import {
   AppWindowIcon, ArrowPathIcon, ArrowRightIcon, BookmarkIcon, BookmarkSolidIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, KeyIcon, LightBulbIcon, LockIcon,
-  PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
+  PencilSparklesIcon, PencilSquareIcon, SparklesIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -492,6 +492,18 @@ export function DevPlusMenu({
               title={t('project:menu.rename.title')}
               sub={t('project:menu.rename.sub')}
               dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
+            />
+            {/* #4942: what Homeroom bot calls itself here, a proposal against
+                dapp.json's `bot_name` (features/dialogs/bot-name.tsx). */}
+            <PlusRow
+              data-plus="bot-name"
+              icon={<SparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title={t('project:menu.botName.title')}
+              sub={t('project:menu.botName.sub')}
+              onClick={() => {
+                callAppView('_closePlusMenu');
+                window.UsernodeReact?.dialogs?.botName?.open({ slug: window.AppView?.appData?.slug });
+              }}
             />
             {/* #4417: the project's topics, its lasting conversations: each
                 is a channel and a category. A change to them is a proposal

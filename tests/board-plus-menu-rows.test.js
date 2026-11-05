@@ -66,9 +66,10 @@ test('every action row has a glyph, and every glyph is decoration', () => {
   // #4666: "Make it public" and "Make it private" became one row, "Who can
   // see & change it", which opens the sheet that sets both who can see it and
   // how its changes are approved. 18 Oct 2026: Pin to sidebar, a member's,
-  // after "Import a pull request".
-  assert.equal(rows.length, 19,
-    'new-change, issue, import-pr, pin, settings, who-decides, leave, app-settings, domain, featured-illustration, members x2, rename, topics, secrets, updates, suggest-back, fork x2');
+  // after "Import a pull request". #4942: Bot's name, between the display name
+  // and Topics, another change that is a proposal to dapp.json.
+  assert.equal(rows.length, 20,
+    'new-change, issue, import-pr, pin, settings, who-decides, leave, app-settings, domain, featured-illustration, members x2, rename, bot-name, topics, secrets, updates, suggest-back, fork x2');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
   assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written

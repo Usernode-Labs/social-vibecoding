@@ -833,6 +833,52 @@ function readName(parsed) {
   return raw;
 }
 
+// #4942: the optional top-level `bot_name`, what Homeroom bot calls itself in
+// this project's replies. People read it, and it reaches a model's prompt, so
+// it must be a name and nothing else:
+//   - letters, numbers, spaces, apostrophes, hyphens and full stops, at least
+//     one letter, no "@", no line breaks, no invisible characters;
+//   - 40 characters and three words at most, which leaves little room for a
+//     sentence (the prompt still treats it as data, project-bot-name.js);
+//   - no word that claims an office or the platform ("admin", "Homeroom"), and
+//     no Latin mixed with Cyrillic or Greek, the usual way to fake one.
+// Whether it is somebody's name needs the database: project-bot-name.js.
+// One rule for the route, the proposal and the reader. A bad value in a
+// hand-edited file reads as null, so the bot is Homeroom bot and no deploy
+// fails. Never throws.
+const MAX_BOT_NAME_LENGTH = 40;
+const MAX_BOT_NAME_WORDS = 3;
+const BOT_NAME_CHARS = /^[\p{L}\p{N}][\p{L}\p{M}\p{N} '.\-]*$/u;
+const BOT_NAME_RESERVED_WORDS = new Set([
+  'admin', 'administrator', 'mod', 'moderator', 'staff', 'system', 'support', 'official', 'owner', 'founder',
+]);
+const BOT_NAME_RESERVED_PARTS = ['homeroom', 'usernode'];
+
+function normalizeBotName(value) {
+  if (typeof value !== 'string') return '';
+  return value.normalize('NFKC').replace(/\u2019/g, '\'').replace(/ +/g, ' ').trim();
+}
+
+// What is wrong with an already normalized name: 'too_long', 'too_many_words',
+// 'invalid', 'reserved', or null when it is fine.
+function botNameProblem(name) {
+  if (name.length > MAX_BOT_NAME_LENGTH) return 'too_long';
+  if (!BOT_NAME_CHARS.test(name) || !/\p{L}/u.test(name) || /\p{M}{3}/u.test(name)) return 'invalid';
+  if (name.split(' ').length > MAX_BOT_NAME_WORDS) return 'too_many_words';
+  const scripts = [/\p{Script=Latin}/u, /\p{Script=Cyrillic}/u, /\p{Script=Greek}/u];
+  if (scripts.filter((script) => script.test(name)).length > 1) return 'invalid';
+  const lower = name.toLowerCase();
+  const joined = lower.replace(/[ '.-]/g, '');
+  if (BOT_NAME_RESERVED_PARTS.some((part) => joined.includes(part))) return 'reserved';
+  if (lower.split(/[ '.-]+/).some((word) => BOT_NAME_RESERVED_WORDS.has(word))) return 'reserved';
+  return null;
+}
+
+function readBotName(parsed) {
+  const name = normalizeBotName(parsed?.bot_name);
+  return name && !botNameProblem(name) ? name : null;
+}
+
 // The top-level `description`: one line about what the app IS, which the
 // join screen, Discover, the project page and the PWA manifest read off the
 // stored manifest snapshot. Whitespace collapses to single spaces and the
@@ -1515,9 +1561,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
+    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null, bot_name: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null, bot_name: null };
   }
 
   let parsed;
@@ -1525,7 +1571,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null, bot_name: null };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -1548,6 +1594,7 @@ function read(cloneDir) {
     category: readCategory(parsed),
     followOriginal: readFollowOriginal(parsed),
     offline: readOffline(parsed),
+    bot_name: readBotName(parsed),
   };
 }
 
@@ -2628,6 +2675,11 @@ async function reconcilePlatformEnv(pool, appId, entries) {
 module.exports = {
   read,
   readName,
+  readBotName,
+  normalizeBotName,
+  botNameProblem,
+  MAX_BOT_NAME_LENGTH,
+  MAX_BOT_NAME_WORDS,
   readDescription,
   MAX_DESCRIPTION_LENGTH,
   readCategory,

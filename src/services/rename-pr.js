@@ -20,9 +20,12 @@
  *   - admins PRs (top-level `admins` array, issue #788) — used by
  *     POST /api/apps/:slug/admins-pr; applied by reconcileAppAdmins;
  *   - secret-declaration PRs (one `secrets` / `platform_env` entry) —
- *     used by POST /api/apps/:slug/secret-declaration-pr.
+ *     used by POST /api/apps/:slug/secret-declaration-pr;
+ *   - bot-name PRs (top-level `bot_name`, #4942) — used by
+ *     POST /api/apps/:slug/bot-name-pr. A deploy snapshots it, and the bot's
+ *     replies read it off the snapshot (services/project-bot-name.js).
  *
- * Every flavor but rename carries explicitApproval: true with its reason
+ * Every flavor but rename and bot-name carries explicitApproval: true with its reason
  * (services/explicit-approval.js), so the resulting proposal never merges
  * on a timer, needs a Yes from a member other than its author whenever
  * the community has more than one, and can't be force-merged by an app
@@ -284,6 +287,40 @@ async function createRenamePR(config, pool, app, newName, actor, { steps } = {})
     chatText: (prData, majority, activeUsers) =>
       `${actor.username} proposed renaming to "${newName}". Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
     eventMetadata: { rename: true },
+  });
+}
+
+function botNamePrTitle(name) {
+  return name ? `Call Homeroom bot "${name}" in this project` : 'Call it Homeroom bot again';
+}
+
+/**
+ * Open a PR that sets dapp.json's `bot_name`, or takes the line out when the
+ * name is empty (#4942). It goes to the vote like a rename, with no explicit
+ * approval: it changes a word in the bot's replies and nothing about who
+ * decides. The route validates it and answers the person; the rule is read
+ * again here so that no route can write a name the reader would drop.
+ */
+async function createBotNamePR(config, pool, app, { name }, actor, { steps } = {}) {
+  const next = appManifest.normalizeBotName(name);
+  if (next && !appManifest.readBotName({ bot_name: next })) throw new Error('Not a usable name for the bot');
+  const title = botNamePrTitle(next);
+  return createManifestPR(config, pool, app, actor, {
+    steps,
+    mutate: (m) => {
+      if (next) m.bot_name = next;
+      else delete m.bot_name;
+    },
+    branchPrefix: 'bot-name',
+    commitMessage: title,
+    prTitle: title,
+    prBody:
+      `${actor.username} (via Homeroom) proposed ${next ? `that Homeroom bot call itself "${next}"` : 'that the bot go back to calling itself Homeroom bot'} in this project.\n\n` +
+      `This PR updates the \`bot_name\` field in \`dapp.json\`. It still needs a regular merge vote to land, ` +
+      `and applies once the PR merges and the app redeploys. People still mention the bot as @homeroom_bot.`,
+    chatText: (prData, majority, activeUsers) =>
+      `${actor.username} proposed: ${title}. Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
+    eventMetadata: { botName: true },
   });
 }
 
@@ -565,6 +602,19 @@ async function findGovernancePr(pool, appId) {
   return rows[0] || null;
 }
 
+// The open bot-name proposal for an app, if any: one at a time (#4942).
+async function findBotNamePr(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT id, pr_number, pr_url, pr_title FROM chat_sessions
+      WHERE app_id = $1 AND status IN ('promoted', 'merging')
+        AND branch_name LIKE 'bot-name/%'
+      ORDER BY id DESC
+      LIMIT 1`,
+    [appId]
+  );
+  return rows[0] || null;
+}
+
 // Returns the open visibility-change PR session for an app, if any —
 // the dedupe check for POST /api/apps/:slug/visibility-pr (only one
 // visibility proposal is allowed in flight per app, unlike renames
@@ -586,6 +636,9 @@ module.exports = {
   // own module (#4417: services/topics-pr.js).
   createManifestPR,
   createRenamePR,
+  createBotNamePR,
+  botNamePrTitle,
+  findBotNamePr,
   createVisibilityPR,
   createGovernancePR,
   createAdminsPR,

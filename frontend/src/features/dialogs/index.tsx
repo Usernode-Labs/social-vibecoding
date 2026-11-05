@@ -44,6 +44,7 @@ import { BoardFiltersDialog } from './board-filters';
 import { WalletRecoveryDialog } from './wallet-recovery';
 import { AppDomainDialog } from './app-domain';
 import { TopicsDialog } from './topics';
+import { BotNameDialog } from './bot-name';
 import { WhoDecidesDialog } from './who-decides';
 
 export function Dialogs() {
@@ -80,6 +81,8 @@ export function Dialogs() {
       <WhoDecidesDialog />
       {/* #6000: propose reopening a closed request. New markup, appended last. */}
       <ReopenIssueDialog />
+      {/* #4942: what Homeroom bot calls itself in a project. New markup, appended last. */}
+      <BotNameDialog />
     </>
   );
 }

@@ -4507,6 +4507,14 @@
     "text": "Renames are proposals, applied once voted in",
     "description": "Second line of the 'App display name' row in a project's settings: a new name is itself a change put up for a vote, and takes effect only when the vote passes."
   },
+  "menu.botName.title": {
+    "text": "Bot's name",
+    "description": "Row in a project's Settings & rules menu that opens the dialog for proposing what Homeroom bot calls itself in this project."
+  },
+  "menu.botName.sub": {
+    "text": "What Homeroom bot calls itself here",
+    "description": "Second line of the Bot's name row in a project's Settings & rules menu."
+  },
   "menu.secrets.appTitle": {
     "text": "App secrets",
     "description": "Row among a project's settings: opens the dialog for the app's secret values, such as API keys its server reads. A short status may follow this title."

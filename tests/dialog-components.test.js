@@ -83,6 +83,10 @@ const DIALOG_IDS = [
   // #6000: propose reopening a closed request. Its own dialog, the mirror of
   // close-issue-modal, opened from a closed request's status card or ⋯ menu.
   'reopen-issue-modal',
+  // #4942: what Homeroom bot calls itself in a project (Settings & rules ›
+  // Bot's name). Its own dialog: its one change is a proposal against
+  // dapp.json's `bot_name`.
+  'bot-name-modal',
 ];
 
 /**
