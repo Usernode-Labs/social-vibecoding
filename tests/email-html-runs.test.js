@@ -237,3 +237,50 @@ test('a block\'s placeholders are the ones the template language reads in it', (
     }
   }
 });
+
+// ── What the visual tab needs from this module ──────────────────────────
+
+test('escapeText turns typed text into HTML that reads back as the same text', () => {
+  assert.equal(runs.escapeText('1 < 2 & 3 > 0 "q" \'a\''), '1 &lt; 2 &amp; 3 &gt; 0 "q" \'a\'');
+  assert.equal(runs.escapeText('{{code}}'), '{{code}}', 'braces are the template language\'s, not HTML\'s');
+  const source = englishTemplate('password_reset').html;
+  const [first] = editableBlocks(source);
+  assert.equal(spliceBlock(source, first, runs.escapeText('A < B & C')), source.slice(0, first.start) + 'A &lt; B &amp; C' + source.slice(first.end));
+});
+
+test('a script or vbscript link is refused with a sentence the admin can act on', () => {
+  const source = englishTemplate('password_reset').html;
+  const [first] = editableBlocks(source);
+  for (const href of ['javascript:alert(1)', ' JavaScript:x', 'java&#115;cript:x', 'java\tscript:x', 'vbscript:x', 'jav&#x61;script&colon;x']) {
+    assert.throws(() => spliceBlock(source, first, `${first.html}<a href="${href}">x</a>`), /only open web addresses|http/i, href);
+    assert.throws(() => insertAfterBlock(source, first, `<p><a href="${href}">x</a></p>`), /only open web addresses|http/i, href);
+  }
+  assert.doesNotThrow(() => spliceBlock(source, first, `${first.html}<a href="https://x.test/javascript:">x</a>`));
+});
+
+test('spliceBlock reads the placeholders and tag from the source, not from the block it is handed', () => {
+  const source = englishTemplate('content_report').html;
+  const block = editableBlocks(source).find((b) => b.html.startsWith('Reason: '));
+  // A caller that claims the block has no placeholders cannot drop them.
+  const lying = { ...block, placeholders: [], tag: 'div' };
+  assert.throws(() => spliceBlock(source, lying, 'nothing left'), /drops/);
+});
+
+test('spliceBlock adds a placeholder only when the caller allows that one', () => {
+  const source = englishTemplate('content_report').html;
+  const block = editableBlocks(source).find((b) => b.html.startsWith('Reason: '));
+  const html = `${block.html} {{url}}`;
+  assert.throws(() => spliceBlock(source, block, html), /adds/);
+  assert.throws(() => spliceBlock(source, block, html, { allowAdded: ['reason'] }), /adds/);
+  assert.equal(spliceBlock(source, block, html, { allowAdded: ['url'] }), source.slice(0, block.start) + html + source.slice(block.end));
+});
+
+test('a block emptied by an edit can still be typed into again', () => {
+  const source = englishTemplate('password_reset').html;
+  const [first] = editableBlocks(source);
+  const emptied = spliceBlock(source, first, '');
+  const now = { ...first, end: first.start, html: '' };
+  assert.equal(spliceBlock(emptied, now, 'Back'), source.slice(0, first.start) + 'Back' + source.slice(first.end));
+  // An empty block is still not offered when the email is opened.
+  assert.ok(!editableBlocks(emptied).some((b) => b.start === first.start));
+});

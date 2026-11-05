@@ -20,6 +20,11 @@
 // "--!>", and the text of style, textarea and title runs to its end tag.
 // tests/email-html-runs.test.js runs both over the seeds and requires them to
 // agree on every tag.
+//
+// Every edit these functions take is HTML, not text: the visual tab reads a
+// block's content back from the browser's DOM (which has escaped what was
+// typed) and turns its placeholder chips back into {{name}}. Text from
+// anywhere else goes through escapeText first.
 
 export const INLINE_TAGS: ReadonlySet<string> = new Set(['b', 'i', 'em', 'strong', 'a', 'span', 'br', 'u', 'small', 'sup', 'sub']);
 const BLOCK_TAGS: ReadonlySet<string> = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'li', 'div', 'a']);
@@ -30,6 +35,11 @@ const RAW_TEXT_TAGS: ReadonlySet<string> = new Set(['style', 'textarea', 'title'
 const SNIPPET_TAGS: ReadonlySet<string> = new Set([...INLINE_TAGS, 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'img']);
 
 const MARKER = /^(#if\s|#unless\s|else$|\/if$|\/unless$)/;
+
+/** Text as HTML that a browser reads back as the same text. */
+export function escapeText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 export interface Attribute { name: string; value: string }
 
@@ -315,20 +325,29 @@ function blockOf(node: Node, tokens: Token[], source: string): Block {
  * whose other text depends on a condition).
  */
 export function findBlocks(source: string): { editable: Block[]; structure: Block[] } {
+  const { editable, structure } = scanBlocks(source);
+  return { editable, structure };
+}
+
+// As findBlocks, plus the blocks with nothing in them, which are not offered
+// when an email opens but are still blocks: one an admin has just emptied can
+// be typed into again.
+function scanBlocks(source: string): { editable: Block[]; empty: Block[]; structure: Block[] } {
   const tokens = tokenize(source);
   const editable: Block[] = [];
+  const empty: Block[] = [];
   const structure: Block[] = [];
   const visit = (node: Node, inStructure: boolean) => {
     const leaf = BLOCK_TAGS.has(node.name) && node.close && node.inlineOnly;
     if (leaf && !node.hasMarker) {
-      if (node.hasContent) editable.push(blockOf(node, tokens, source));
+      (node.hasContent ? editable : empty).push(blockOf(node, tokens, source));
       return;
     }
     if (leaf && !inStructure) structure.push(blockOf(node, tokens, source));
     for (const child of node.children) visit(child, inStructure || !!leaf);
   };
   for (const root of buildTree(tokens)) visit(root, false);
-  return { editable, structure };
+  return { editable, empty, structure };
 }
 
 /** The blocks an admin may retype in place, in source order. */
@@ -343,10 +362,41 @@ export class EditRefused extends Error {
   }
 }
 
-function checkCurrent(source: string, block: Block) {
+// The block as the source holds it now. The caller's copy only says where it
+// is: its placeholders and tag are read again here, so a caller cannot widen
+// what an edit may drop by handing in a block it changed.
+function currentBlock(source: string, block: Block): Block {
   if (source.slice(block.start, block.end) !== block.html) {
     throw new EditRefused('The email changed since this block was read. Read its blocks again.');
   }
+  const { editable, empty } = scanBlocks(source);
+  const found = [...editable, ...empty].find((b) => b.start === block.start && b.end === block.end);
+  if (!found) throw new EditRefused('This part of the email holds a condition. Change it in the HTML tab.');
+  return found;
+}
+
+// What a browser skips inside a URL's scheme ("java\tscript:"), as
+// src/services/mail/html-safety.js has it.
+// eslint-disable-next-line no-control-regex
+const IGNORABLE = /[\u0000-\u0020\u007f-\u00a0\u1680\u180e\u2000-\u200f\u2028\u2029\u205f\u3000\ufeff]/g;
+const NAMED: Record<string, string> = { colon: ':', tab: '\t', newline: '\n', amp: '&', nbsp: '\u00a0' };
+const URL_ATTRIBUTES: ReadonlySet<string> = new Set(['href', 'src', 'background', 'action', 'formaction', 'xlink:href']);
+
+function decodeReferences(value: string): string {
+  return value.replace(/&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);?/g, (whole, ref: string) => {
+    if (ref[0] === '#') {
+      const code = ref[1] === 'x' || ref[1] === 'X' ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+    }
+    return NAMED[ref.toLowerCase()] ?? whole;
+  });
+}
+
+// The server refuses these too, on save; refusing them here says why while
+// the admin is still looking at the link.
+function scriptUrl(value: string): boolean {
+  const folded = decodeReferences(value).replace(IGNORABLE, '').toLowerCase();
+  return folded.startsWith('javascript:') || folded.startsWith('vbscript:');
 }
 
 // A fragment of markup: balanced tags from `allowed`, no event handlers, no
@@ -366,6 +416,9 @@ function checkFragment(html: string, allowed: ReadonlySet<string>): Token[] {
       continue;
     }
     if (token.attributes.some((a) => a.name.startsWith('on'))) throw new EditRefused('Event handler attributes are not allowed in email.');
+    if (token.attributes.some((a) => URL_ATTRIBUTES.has(a.name) && scriptUrl(a.value))) {
+      throw new EditRefused('A link in an email can only open web addresses (http or https) or a link placeholder.');
+    }
     if (attributeHas(token, HAS_MARKER)) throw new EditRefused('Conditions are changed in the HTML tab.');
     if (!VOID_TAGS.has(token.name)) open.push(token.name);
   }
@@ -377,22 +430,20 @@ function checkFragment(html: string, allowed: ReadonlySet<string>): Token[] {
  * `source` with `block`'s content replaced by `html`, every other byte as it
  * was. Throws when the block is stale or structure, or when `html` would change
  * the block's placeholders, hold a condition, or use markup other than inline
- * text tags, so the visual editor cannot drop the email's code.
+ * text tags, so the visual editor cannot drop the email's code. `allowAdded`
+ * names the placeholders an edit may add (the ones the editor inserted).
  */
-export function spliceBlock(source: string, block: Block, html: string): string {
-  checkCurrent(source, block);
-  if (!editableBlocks(source).some((b) => b.start === block.start && b.end === block.end)) {
-    throw new EditRefused('This part of the email holds a condition. Change it in the HTML tab.');
-  }
-  if (html === block.html) return source;
+export function spliceBlock(source: string, block: Block, html: string, { allowAdded = [] }: { allowAdded?: string[] } = {}): string {
+  const current = currentBlock(source, block);
+  if (html === current.html) return source;
   const tokens = checkFragment(html, INLINE_TAGS);
   const names = placeholderNames(tokens);
-  const before = new Set(block.placeholders);
+  const before = new Set(current.placeholders);
   const missing = [...before].filter((name) => !names.includes(name));
-  const added = names.filter((name) => !before.has(name));
+  const added = names.filter((name) => !before.has(name) && !allowAdded.includes(name));
   if (missing.length) throw new EditRefused(`The edit drops {{${missing[0]}}}. Placeholders are kept as they are.`);
-  if (added.length) throw new EditRefused(`The edit adds {{${added[0]}}}. Insert placeholders with the editor's placeholder button.`);
-  return source.slice(0, block.start) + html + source.slice(block.end);
+  if (added.length) throw new EditRefused(`The edit adds {{${added[0]}}}, which this email cannot use here.`);
+  return source.slice(0, current.start) + html + source.slice(current.end);
 }
 
 /**
@@ -402,10 +453,10 @@ export function spliceBlock(source: string, block: Block, html: string): string 
  * tab's.
  */
 export function insertAfterBlock(source: string, block: Block, snippet: string): string {
-  checkCurrent(source, block);
-  if (block.tag === 'a' || block.tag === 'td' || block.tag === 'li') {
-    throw new EditRefused(`Add after a <${block.tag}> in the HTML tab.`);
+  const current = currentBlock(source, block);
+  if (current.tag === 'a' || current.tag === 'td' || current.tag === 'li') {
+    throw new EditRefused('Nothing can be added after a link, table cell or list item here. Add it in the HTML tab.');
   }
   checkFragment(snippet, SNIPPET_TAGS);
-  return source.slice(0, block.outerEnd) + snippet + source.slice(block.outerEnd);
+  return source.slice(0, current.outerEnd) + snippet + source.slice(current.outerEnd);
 }
