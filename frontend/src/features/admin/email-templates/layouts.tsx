@@ -9,6 +9,7 @@ import {
   languagesLabel, liveTemplate, PlaceholderList, readFailure, request, useUnloadGuard,
   type Failure, type KeptDraft, type LayoutRow, type TemplatesPayload,
 } from './shared';
+import { VisualTab } from './visual-tab';
 
 // Layouts: the header and footer an email is wrapped in. Each email picks one
 // and writes only its middle ({{content}}). A layout is a family of versions;
@@ -119,6 +120,14 @@ export function LayoutList({
 
 interface LayoutDraft { name: string; html: string; text: string }
 
+// As in the template editor: Visual first and where it opens, HTML the full truth.
+type LayoutTab = 'visual' | 'html' | 'text';
+const LAYOUT_TABS: Array<{ key: LayoutTab; label: string }> = [
+  { key: 'visual', label: 'Visual' },
+  { key: 'html', label: 'HTML' },
+  { key: 'text', label: 'Text' },
+];
+
 // The fields this form draws; an error for any other is listed above it.
 const SHOWN = ['name', 'html', 'text'];
 
@@ -173,7 +182,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
     settled.current = true;
     onReload();
   };
-  const [tab, setTab] = useState<'html' | 'text'>('html');
+  const [tab, setTab] = useState<LayoutTab>('visual');
   const [failure, setFailure] = useState<Failure | null>(null);
   const [saving, setSaving] = useState(false);
   // Which email the preview wraps: one that wears this layout, else the sign-in code.
@@ -239,21 +248,29 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
           </div>
           <div>
             <div className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800" role="tablist" aria-label="Layout body">
-              {(['html', 'text'] as const).map((k) => (
-                <button key={k} type="button" role="tab" aria-selected={tab === k}
+              {LAYOUT_TABS.map(({ key: k, label }) => (
+                <button key={k} type="button" role="tab" aria-selected={tab === k} id={`email-layout-tab-${k}`}
                   className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${tab === k
                     ? 'border-violet-600 text-zinc-900 dark:text-zinc-100'
                     : 'border-transparent text-zinc-500 dark:text-zinc-400'}`}
-                  onClick={() => setTab(k)}>{k === 'html' ? 'HTML' : 'Text'}</button>
+                  onClick={() => setTab(k)}>{label}</button>
               ))}
             </div>
-            <div className="mt-2">
-              <label htmlFor={`email-layout-${tab}`} className={AdminUI.label}>{tab === 'html' ? 'HTML' : 'Text version'}</label>
-              <textarea id={`email-layout-${tab}`} className={`${AdminUI.textarea} font-mono text-xs mt-1`} rows={18}
-                spellCheck={false} value={draft[tab]} readOnly={readOnly} onChange={set(tab)}
-                {...described(`email-layout-${tab}`, err(tab))} />
-              <FieldErrors id={`email-layout-${tab}-error`} messages={err(tab)} />
-            </div>
+            {tab === 'visual' ? (
+              <div className="mt-2" role="tabpanel" aria-labelledby="email-layout-tab-visual">
+                <VisualTab source={draft.html} opened={opened.html} onChange={(html) => setDraft((d) => ({ ...d, html }))}
+                  placeholders={payload.layoutPlaceholders} readOnly={readOnly} />
+                <FieldErrors id="email-layout-visual-error" messages={err('html')} />
+              </div>
+            ) : (
+              <div className="mt-2" role="tabpanel" aria-labelledby={`email-layout-tab-${tab}`}>
+                <label htmlFor={`email-layout-${tab}`} className={AdminUI.label}>{tab === 'html' ? 'HTML' : 'Text version'}</label>
+                <textarea id={`email-layout-${tab}`} className={`${AdminUI.textarea} font-mono text-xs mt-1`} rows={18}
+                  spellCheck={false} value={draft[tab]} readOnly={readOnly} onChange={set(tab)}
+                  {...described(`email-layout-${tab}`, err(tab))} />
+                <FieldErrors id={`email-layout-${tab}-error`} messages={err(tab)} />
+              </div>
+            )}
           </div>
         </div>
         <div className="space-y-4 min-w-0">
@@ -261,7 +278,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
             <h3 className="text-sm font-semibold mb-2">Preview</h3>
             <PreviewPane base="/api/admin/email-layouts"
               body={{ action: shown, fields: { name: draft.name, html: draft.html, text: draft.text } }}
-              mode={tab} languages={payload.languages} englishOnly={!!(shownInfo && shownInfo.englishOnly)}
+              mode={tab === 'text' ? 'text' : 'html'} languages={payload.languages} englishOnly={!!(shownInfo && shownInfo.englishOnly)}
               canWrite={canWrite} onFieldFailure={setFailure}
               extra={(
                 <label className="block text-xs">

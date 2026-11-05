@@ -1,0 +1,155 @@
+'use strict';
+
+// frontend/src/features/admin/email-templates/visual-tab.tsx: the Visual tab
+// of the email editor, where an admin retypes an email's text in place.
+// It draws a decorated copy of the HTML in a script-less iframe and splices
+// each edited block back into the source through ./html-runs.ts, so what was
+// not touched keeps every byte.
+//
+// Effects and the browser's editing do not run under node, so the DOM side is
+// split into pure steps that are tested here on all 13 seeds and the layout:
+// decorating, reading a block back from the DOM's HTML, splicing it, pasting.
+// tests/admin-email-templates-section.test.js pins how the editors use it.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { KINDS } = require('../src/services/mail/templates');
+const { englishTemplate, seededLayout } = require('../src/db/email-template-seeds');
+
+const ROOT = path.join(__dirname, '..');
+const FILE = 'frontend/src/features/admin/email-templates/visual-tab.tsx';
+const ADMIN_UI = new Proxy({}, {
+  get: (_t, key) => (['btn', 'badge'].includes(key) ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` }) : String(key)),
+});
+const visual = loadTsx(FILE, { stubs: { '../admin-console.js': { AdminUI: ADMIN_UI } } });
+const runs = loadTsx('frontend/src/features/admin/email-templates/html-runs.ts');
+
+const SOURCES = [
+  ...['waitlist_released', ...KINDS.filter((k) => k !== 'waitlist_released')].map((kind) => [kind, englishTemplate(kind).html]),
+  ['layout: Homeroom standard', seededLayout('Homeroom standard').html],
+];
+
+// The editable blocks' inner HTML as the decorated document carries it.
+function decoratedInners(decorated) {
+  const out = [];
+  const re = /data-hr-block="(\d+)"[^>]*>/g;
+  let m;
+  while ((m = re.exec(decorated))) out.push({ index: Number(m[1]), at: m.index + m[0].length });
+  return out;
+}
+
+test('opening and saving with no edit sends source unchanged', () => {
+  for (const [name, source] of SOURCES) {
+    const decorated = visual.decorate(source, { editable: true });
+    // Everything the decoration adds comes off again, byte for byte.
+    assert.equal(visual.undecorate(decorated), source, name);
+    const model = visual.openModel(source);
+    assert.equal(decoratedInners(decorated).length, model.blocks.length, `${name}: every block is drawn editable`);
+    // A block read back untouched is the block as it was.
+    model.blocks.forEach((block, i) => {
+      const inner = visual.chipify(block.html);
+      assert.equal(visual.fromEditorHtml(inner), block.html, `${name}: ${block.html}`);
+      assert.equal(visual.applyBlockEdit(model, i, block.html, []).source, source, name);
+      assert.equal(visual.readEdit(inner, inner, block.html), block.html, 'the browser\'s own spelling of an unedited block is not an edit');
+    });
+  }
+  // Rendered, the tab changes nothing until someone types.
+  let calls = 0;
+  const source = englishTemplate('waitlist_released').html;
+  const html = renderToHtml(createElement(visual.VisualTab, {
+    source, opened: source, onChange() { calls += 1; }, placeholders: [], readOnly: false,
+  }));
+  assert.equal(calls, 0);
+  assert.match(html, /<iframe[^>]*sandbox="allow-same-origin"/);
+  assert.doesNotMatch(html, /allow-scripts/);
+  assert.match(html, /srcDoc=|srcdoc=/i);
+  assert.match(html, /data-hr-block=&quot;0&quot;/, 'the frame is drawn with its blocks marked');
+});
+
+test('chips serialize back to {{name}}', () => {
+  assert.equal(visual.chipHtml('why'), '<span data-hr-chip="why" contenteditable="false" class="hr-chip">why</span>');
+  assert.equal(visual.fromEditorHtml(`Homeroom<br>${visual.chipHtml('why')}`), 'Homeroom<br>{{why}}');
+  // As a browser may hand it back: attributes moved, the chip wrapped in bold,
+  // its shown text changed.
+  assert.equal(visual.fromEditorHtml('A <b><span class="hr-chip" contenteditable="false" data-hr-chip="code">x</span></b>.'), 'A <b>{{code}}</b>.');
+  assert.equal(visual.fromEditorHtml('<span contenteditable="false" data-hr-chip="a" class="hr-chip">a</span><span data-hr-chip="b">b</span>'), '{{a}}{{b}}');
+  // Conditions are labels outside every block; read back, they are the marker.
+  const decorated = visual.decorate('{{#if x}}<p>Hi {{name}}</p>{{else}}<p>Bye</p>{{/if}}', { editable: true });
+  assert.match(decorated, /Shown only when x/);
+  assert.match(decorated, />Otherwise</);
+  assert.equal(visual.undecorate(decorated), '{{#if x}}<p>Hi {{name}}</p>{{else}}<p>Bye</p>{{/if}}');
+  // A structure block (a condition inside) is outlined and labelled, never editable.
+  const structure = visual.decorate('<p>Hi {{#if x}}there{{/if}}</p>', { editable: true });
+  assert.match(structure, /<p data-hr-structure="" title="[^"]+">/);
+  assert.doesNotMatch(structure, /contenteditable="true"/);
+});
+
+test('paste strips markup', () => {
+  const clipboard = (types) => ({ getData: (type) => types[type] || '' });
+  const pasted = visual.pastedHtml(clipboard({ 'text/html': '<b>Bold</b><script>x()</script>', 'text/plain': 'Bold & <b>x</b>\r\nNext line' }));
+  assert.equal(pasted, 'Bold &amp; &lt;b&gt;x&lt;/b&gt;<br>Next line');
+  assert.equal(visual.pastedHtml(clipboard({ 'text/html': '<p>Only HTML</p>' })), '', 'HTML is never read');
+  const src = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
+  assert.match(src, /addEventListener\('paste'/);
+  assert.doesNotMatch(src, /getData\('text\/html'\)/);
+});
+
+test('a block edit reaches onChange with only that range changed', () => {
+  const source = englishTemplate('waitlist_released').html;
+  let model = visual.openModel(source);
+  const headline = model.blocks.findIndex((b) => b.html === 'Make and share apps with groups and friends.');
+  const chip = model.blocks.findIndex((b) => b.html === 'Use and improve apps together');
+  assert.ok(headline >= 0 && chip > headline);
+  const before = model.blocks[headline];
+  model = visual.applyBlockEdit(model, headline, 'Make apps <b>together</b>.', []);
+  assert.equal(model.source, source.slice(0, before.start) + 'Make apps <b>together</b>.' + source.slice(before.end));
+  // A later block, read after the first edit shifted it, changes only its own range.
+  const later = model.blocks[chip];
+  const after = visual.applyBlockEdit(model, chip, 'Improve apps together', []);
+  assert.equal(after.source, model.source.slice(0, later.start) + 'Improve apps together' + model.source.slice(later.end));
+  assert.ok(after.source.includes('<td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Improve apps together</td>'));
+  // A chip's placeholder stays: an edit that drops it is refused.
+  const layout = visual.openModel(seededLayout('Homeroom standard').html);
+  const footer = layout.blocks.findIndex((b) => b.html === 'Homeroom<br>{{why}}');
+  assert.throws(() => visual.applyBlockEdit(layout, footer, 'Homeroom', []), /drops \{\{why\}\}/);
+  // Inserting an allowed placeholder at the caret is an edit like any other.
+  const content = visual.openModel(englishTemplate('content_report').html);
+  const first = content.blocks[0];
+  const withUrl = visual.applyBlockEdit(content, 0, `${first.html} ${visual.fromEditorHtml(visual.chipHtml('url'))}`, ['url']);
+  assert.ok(withUrl.source.startsWith(`<p>${first.html} {{url}}</p>`));
+});
+
+test('links take a web address or a link placeholder, and a button goes after the block', () => {
+  assert.equal(visual.linkProblem('https://x.test/a', null), null);
+  assert.equal(visual.linkProblem('', 'url'), null);
+  assert.match(visual.linkProblem('javascript:alert(1)', null), /http/);
+  assert.match(visual.linkProblem('x.test', null), /http/);
+  const source = englishTemplate('password_reset').html;
+  const model = visual.openModel(source);
+  const snippet = visual.buttonSnippet('{{url}}', 'Reset <now>');
+  assert.match(snippet, /^<p><a href="\{\{url\}\}" style="display:inline-block;[^"]*">Reset &lt;now&gt;<\/a><\/p>$/);
+  const next = runs.insertAfterBlock(source, model.blocks[0], snippet);
+  assert.equal(next, source.slice(0, model.blocks[0].outerEnd) + snippet + source.slice(model.blocks[0].outerEnd));
+});
+
+test('the toolbar offers what the brief lists, labelled, with Image waiting for the next part', () => {
+  const source = englishTemplate('otp').html;
+  const html = renderToHtml(createElement(visual.VisualTab, {
+    source, opened: source, onChange() {},
+    placeholders: [{ name: 'code', description: 'The code' }, { name: 'hasUrl', description: 'flag', kind: 'flag' }, { name: 'url', description: 'link', kind: 'url' }],
+  }));
+  for (const label of ['Bold', 'Italic', 'Link', 'Button', 'Image', 'Insert placeholder', 'Revert to opened']) {
+    assert.match(html, new RegExp(`aria-label="${label}"|>${label}<`), label);
+  }
+  assert.match(html, /<button[^>]*disabled=""[^>]*title="Coming in the next part"|title="Coming in the next part"[^>]*disabled=""/);
+  assert.match(html, /<option value="code">/);
+  assert.doesNotMatch(html, /<option value="hasUrl">/, 'a flag is for conditions, not text');
+  assert.match(html, /flex-wrap/, 'the toolbar wraps on a phone');
+  const readOnly = renderToHtml(createElement(visual.VisualTab, { source, opened: source, onChange() {}, placeholders: [], readOnly: true }));
+  assert.doesNotMatch(readOnly, /aria-label="Bold"/);
+  assert.doesNotMatch(readOnly, /contenteditable=&quot;true&quot;/);
+});
