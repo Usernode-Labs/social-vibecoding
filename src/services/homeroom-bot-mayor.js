@@ -4004,7 +4004,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // P1: where the turn's own rounds begin, for compactRounds.
       const turnFrom = messages.length;
       const runRounds = async () => {
-        while (rounds < limit && !ctx.reply && !ctx.drawScreen && !ctx.gaveUp) {
+        while (rounds < limit && !ctx.reply && !ctx.drawScreen) {
           rounds += 1;
           state.rounds = rounds;
           // P1: room for this round's calls and the next request, or this
