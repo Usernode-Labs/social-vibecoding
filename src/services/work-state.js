@@ -49,12 +49,13 @@ const iso = (at) => {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
-function clip(value, max = 160) {
-  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
-  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+// #6306: the bot's first whole sentence, cut at `max` with "…" when it does
+// not fit. A row says what it found in one sentence; the page keeps all.
+function firstSentence(text, max = 140) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  const sentence = (flat.match(/^.+?[.!?](?=\s|$)/) || [flat])[0];
+  return sentence.length > max ? `${sentence.slice(0, max - 1).trimEnd()}…` : sentence;
 }
-
-const firstLine = (text, max) => clip(String(text || '').split('\n').find((l) => l.trim()) || '', max);
 
 // ── Deciding ──────────────────────────────────────────────────────────────
 
@@ -162,7 +163,7 @@ function derive(row, { now = new Date() } = {}) {
 
   // Nothing in progress: what its newest look came to.
   const back = progress.handedBack(row);
-  const reason = row.run_reason ? firstLine(row.run_reason, 140) : null;
+  const reason = row.run_reason ? firstSentence(row.run_reason, 140) : null;
   const said = reason ? { line: { code: 'reason', text: reason } } : {};
   // Somebody took a hand-back up since (a claim): it is being built.
   if (back && row.claimed_by) return state('building', { since: row.claimed_at, line: { code: 'claimed', by: row.claimed_by }, whoseMove: 'builder' });
@@ -253,6 +254,106 @@ function bellOf(prev, next) {
   return null;
 }
 
+// ── Words ────────────────────────────────────────────────────────────────
+
+// The English words of frontend/locales/en/core.json's work.* entries, for
+// what the server words itself (Homeroom bot's answers, the bell). Keyed by
+// those entries' keys; tests/work-state.test.js holds the two together.
+const WORDS = Object.freeze({
+  'work.stage.reading': 'Reading it',
+  'work.stage.notStarted': 'Not started yet',
+  'work.stage.readyToBuild': 'Ready to build',
+  'work.stage.planning': 'Planning',
+  'work.stage.waitingForYou': 'Waiting for you',
+  'work.stage.building': 'Building',
+  'work.stage.checking': 'Checking',
+  'work.stage.upForVote': 'Up for a vote',
+  'work.stage.goingLive': 'Going live',
+  'work.stage.live': 'Live',
+  'work.stage.stopped': 'Stopped',
+  'work.stage.closed': 'Closed',
+  'work.why.question': 'Waiting for your answer',
+  'work.why.plan': 'Waiting for you to OK the plan',
+  'work.why.decide': 'Waiting for you to decide',
+  'work.why.alreadyWorks': 'It may already work: close it?',
+  'work.why.needsDetail': 'Waiting for more detail from you',
+  'work.whyOthers.question': 'Waiting for an answer',
+  'work.whyOthers.plan': "Waiting for the plan to be OK'd",
+  'work.whyOthers.decide': 'Waiting for a decision',
+  'work.whyOthers.alreadyWorks': 'It may already work',
+  'work.whyOthers.needsDetail': 'Waiting for more detail',
+  'work.reason.buildFailed': "Stopped: the build didn't finish",
+  'work.reason.fixStopped': 'Stopped: its tests still fail',
+  'work.reason.lookFailed': "Stopped: it couldn't be read",
+  'work.reason.changeClosed': 'Stopped: its change was closed',
+  'work.reason.stalled': "Stopped: the build didn't start",
+  'work.line.queued': 'Waiting its turn',
+  'work.line.queuedAt': 'Number {{place}} in line',
+  'work.line.heldBuilds': "Waiting for one of the project's builds to finish",
+  'work.line.heldWaiting': 'Waiting for changes up for a vote to be decided',
+  'work.line.onHold': "On hold until Monday: this week's building time is used up",
+  'work.line.reply': 'Reading your reply',
+  'work.line.retryPlan': 'Trying the plan again',
+  'work.line.reviewing': 'Reviewing, round {{round}} of {{of}}',
+  'work.line.starting': 'Starting',
+  'work.line.proposing': 'Putting it up for a vote',
+  'work.line.fixing': 'Fixing what its tests found',
+  'work.line.revising': 'Updating the change',
+  'work.line.updateQueued': 'An update is on its way',
+  'work.line.checksFailing': 'Tests are failing',
+  'work.line.checksFailingCount_one': '{{count}} test failing',
+  'work.line.checksFailingCount_other': '{{count}} tests failing',
+  'work.line.firstVersion': 'First version: it goes live without a vote',
+  'work.line.claimed': '{{username}} is building it',
+  'work.line.planningWithYou': 'Planning it with you in a private thread',
+  'work.line.waiting': 'Waiting to be read',
+  'work.line.said': 'Homeroom bot: {{reason}}',
+});
+
+// A request in the reading stage nobody has started on yet, and one ready to
+// build that waits its turn, are said so (the same stages, in plainer words).
+const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold']);
+const READY = new Set(['queued', 'held_builds', 'held_waiting']);
+
+const camel = (s) => String(s).replace(/_([a-z])/g, (_m, c) => c.toUpperCase());
+const fill = (key, values = {}) => WORDS[key].replace(/\{\{(\w+)\}\}/g, (_m, k) => String(values[k] ?? ''));
+
+/** Pure: the stage's words in English, as the screens say them (lib/work-state.ts stageWords). */
+function stageSays(item, { yours = true } = {}) {
+  if (!item) return '';
+  if (item.stage === 'waiting_for_you' && item.why && WORDS[`work.why.${camel(item.why)}`]) {
+    return fill(`work.${yours ? 'why' : 'whyOthers'}.${camel(item.why)}`);
+  }
+  if (item.stage === 'stopped' && item.reason && WORDS[`work.reason.${camel(item.reason)}`]) return fill(`work.reason.${camel(item.reason)}`);
+  const code = item.line && item.line.code;
+  if (item.stage === 'reading' && NOT_STARTED.has(code)) return fill('work.stage.notStarted');
+  if (item.stage === 'building' && READY.has(code)) return fill('work.stage.readyToBuild');
+  return fill(`work.stage.${camel(item.stage)}`) || '';
+}
+
+/** Pure: the second line in English (lib/work-state.ts lineWords), or null. */
+function lineSays(item) {
+  const line = item && item.line;
+  if (!line || !line.code) return null;
+  switch (line.code) {
+    case 'queued': return line.place ? fill('work.line.queuedAt', { place: line.place }) : fill('work.line.queued');
+    case 'reviewing': return fill('work.line.reviewing', { round: line.round || 1, of: line.of || 1 });
+    case 'checks_failing':
+      return line.failing
+        ? fill(line.failing === 1 ? 'work.line.checksFailingCount_one' : 'work.line.checksFailingCount_other', { count: line.failing })
+        : fill('work.line.checksFailing');
+    case 'claimed': return line.by ? fill('work.line.claimed', { username: line.by }) : null;
+    case 'reason': return line.text ? fill('work.line.said', { reason: line.text }) : null;
+    default: return WORDS[`work.line.${camel(line.code)}`] ? fill(`work.line.${camel(line.code)}`) : null;
+  }
+}
+
+/** Pure: the stage and its second line in one English phrase ("Building · Starting"). */
+function says(item, opts) {
+  const line = lineSays(item);
+  return line ? `${stageSays(item, opts)} · ${line}` : stageSays(item, opts);
+}
+
 // ── Reading the facts ─────────────────────────────────────────────────────
 
 /**
@@ -269,6 +370,7 @@ const REQUEST_FACTS_SQL = `
       FROM unnest($1::int[], $2::int[]) AS x(app_id, issue_number)
   )
   SELECT it.app_id, it.issue_number,
+         (SELECT a.slug FROM apps a WHERE a.id = it.app_id) AS app_slug,
          rq.user_id AS requester_id,
          COALESCE(rq.first_version, FALSE) AS first_version,
          iss.created_at AS request_at,
@@ -303,7 +405,7 @@ const REQUEST_FACTS_SQL = `
 
 /** One row per change named by $1 (session ids) that has no request of its own. */
 const CHANGE_FACTS_SQL = `
-  SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.check_state, cs.checks_checked_at AS checks_at,
+  SELECT cs.id, cs.app_id, (SELECT a.slug FROM apps a WHERE a.id = cs.app_id) AS app_slug, cs.user_id, cs.status, cs.check_state, cs.checks_checked_at AS checks_at,
          cs.promoted_at, cs.merged_at, cs.live_at, cs.created_at, cs.last_activity_at
     FROM chat_sessions cs
    WHERE cs.id = ANY($1::int[])`;
@@ -386,7 +488,7 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
       const sessionId = Number(row.proposal_session_id || row.build_session_id) || null;
       const key = { appId: Number(row.app_id), kind: 'request', ref: Number(row.issue_number), issueNumber: Number(row.issue_number), sessionId };
       const wrote = await upsert(db, key, next, { touch });
-      if (wrote) changed.push({ ...key, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
+      if (wrote) changed.push({ ...key, appSlug: row.app_slug || null, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
     }
   }
   if (changes.size) {
@@ -395,7 +497,7 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
       const next = { ...deriveChange(row, { now }), requesterId: row.user_id == null ? null : Number(row.user_id) };
       const key = { appId: Number(row.app_id), kind: 'change', ref: Number(row.id), issueNumber: null, sessionId: Number(row.id) };
       const wrote = await upsert(db, key, next, { touch });
-      if (wrote) changed.push({ ...key, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
+      if (wrote) changed.push({ ...key, appSlug: row.app_slug || null, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
     }
   }
   return changed;
@@ -475,10 +577,11 @@ async function itemsOf(db, { machine, key, appId }) {
 function pushOf(row) {
   return {
     kind: 'scoped',
-    routing: { appId: row.appId, appSlug: null },
+    routing: { appId: row.appId, appSlug: row.appSlug || null },
     data: {
       type: 'work_state',
       appId: row.appId,
+      appSlug: row.appSlug || null,
       item: { kind: row.kind, ref: row.ref, issueNumber: row.issueNumber, sessionId: row.sessionId },
       state: {
         stage: row.state.stage, why: row.state.why, reason: row.state.reason, line: row.state.line,
@@ -647,6 +750,10 @@ module.exports = {
   WHYS,
   REASONS,
   LIVE_DAYS,
+  WORDS,
+  stageSays,
+  lineSays,
+  says,
   fromStage,
   derive,
   deriveChange,

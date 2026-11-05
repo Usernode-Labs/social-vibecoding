@@ -6,7 +6,8 @@
  *
  * WHAT MOVES A ROW. The lists are the threads you are in (GET /api/ai/work,
  * and the Needs you feed for them), so they are read again when:
- *   - a change or a request in a project they show moved: a change built,
+ *   - a change or a request in a project they show moved (`work_state`,
+ *     when its stage did): a change built,
  *     put up for a vote, voted on, merged or closed (`session_update`,
  *     `vote_update`), a request filed, claimed, answered or closed
  *     (`issue_update`), a merge gone live (`app_version_changed`). These go
@@ -62,7 +63,8 @@ export interface Showing {
   botId: number | null;
 }
 
-const PROJECT_EVENTS: ReadonlySet<string> = new Set(['session_update', 'vote_update', 'issue_update', 'app_version_changed']);
+// `work_state`: a request's or a change's stage moved (services/work-state.js).
+const PROJECT_EVENTS: ReadonlySet<string> = new Set(['session_update', 'vote_update', 'issue_update', 'app_version_changed', 'work_state']);
 const BANNER_ACTIONS: ReadonlySet<string> = new Set(['behind_main', 'freshness', 'sync_status', 'staging_ready']);
 const YOUR_EVENTS: ReadonlySet<string> = new Set(['notification_new', 'notifications_changed']);
 const MAIN_EVENTS: ReadonlySet<string> = new Set(['conversation_message_created', 'conversation_message_updated']);

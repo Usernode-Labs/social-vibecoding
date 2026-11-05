@@ -162,8 +162,9 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal(pushes.length, 1);
     const [push] = pushes;
     assert.equal(push.kind, 'scoped');
-    assert.equal(push.routing.appId, app.id);
+    assert.deepEqual(push.routing, { appId: app.id, appSlug: 'ws-seeds' });
     assert.equal(push.data.type, 'work_state');
+    assert.equal(push.data.appSlug, 'ws-seeds', 'a page showing the project knows it is about it');
     assert.deepEqual(push.data.item, { kind: 'request', ref: 4, issueNumber: 4, sessionId: null });
     assert.equal(push.data.state.stage, 'reading');
     assert.deepEqual(rings, [], 'read again: nothing to ring');
