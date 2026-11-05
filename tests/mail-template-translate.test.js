@@ -73,6 +73,20 @@ test('a translation is compared with its English', () => {
   assert.match(translate.englishDifference(img, { html: '<p><img src="https://x.example/a.png" alt="Logo">\u0000</p>' }), /HTML/);
 });
 
+test('probe: a translation cannot add a link placeholder to loose HTML text or glue one in its text', () => {
+  const { SEEDS, englishTemplate } = require('../src/db/email-template-seeds');
+  const english = { action: 'password_reset', ...englishTemplate('password_reset') };
+  const layout = SEEDS.layouts[0];
+  assert.deepEqual(translate.templateProblems(english, english, layout), [], 'the English itself passes');
+  const loose = { ...english, html: english.html.replace('</p>', ' https://evil.example/?u={{url}}</p>') };
+  assert.notEqual(loose.html, english.html);
+  assert.match(translate.templateProblems(english, loose, layout)[0].message, /can only be a whole href value/);
+  const glued = { ...english, text: english.text.replace('{{url}}', 'https://evil.example/?u={{url}}') };
+  assert.match(translate.templateProblems(english, glued, layout)[0].message, /only a space, a line break or "\(" may come right before it/);
+  const cjk = { ...english, text: english.text.replace(/[^\n]*\{\{url\}\}/, '\u3053\u3061\u3089\uff1a{{url}}') };
+  assert.deepEqual(translate.templateProblems(english, cjk, layout), [], 'a Japanese lead-in is fine');
+});
+
 test('email template translation against PostgreSQL', { timeout: 300000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {

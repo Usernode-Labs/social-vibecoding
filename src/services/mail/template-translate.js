@@ -576,6 +576,7 @@ module.exports = {
   STALE_MS,
   HEARTBEAT_MS,
   englishDifference,
+  templateProblems,
   recheckTranslations,
   saveCorrection,
   startTranslation,
