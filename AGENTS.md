@@ -801,7 +801,9 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   pins the Docker builder/copy contract. Its `public/index.html` input is the
   ignored output materialized by the test preflight, never a committed
   artifact.
-- The shell loads **no cross-origin assets**. marked, DOMPurify and qrcodejs
+- The shell document loads **no cross-origin assets** (the live site's Google
+  Analytics tag is the one exception, by decision, and stays inside
+  `public/analytics-frame.html`, never in the shell's own page: #6314). marked, DOMPurify and qrcodejs
   are vendored under `public/vendor/` by `npm run vendor:assets` (provenance
   in `public/vendor/README.md`). Don't add a CDN `<script>`/`<link>` to
   `frontend/src/head.html` — vendor or compile it instead; three tests

@@ -1484,7 +1484,7 @@
     "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
   },
   "privacy.usageAnalytics.intro": {
-    "text": "Whether Homeroom may record how you use it.",
+    "text": "Whether Homeroom may keep a record of how you use it, linked to your account.",
     "description": "One line under the Usage analytics heading in Settings > Privacy."
   },
   "privacy.usageAnalytics.label": {
@@ -1492,7 +1492,7 @@
     "description": "Label of the switch in Settings > Privacy that lets Homeroom record how the person uses it. Off unless they turn it on."
   },
   "privacy.usageAnalytics.stateOff": {
-    "text": "Off. Homeroom doesn't record how you use it unless you turn this on.",
+    "text": "Off. Homeroom doesn't keep a record linked to your account unless you turn this on.",
     "description": "First line under the Share usage analytics switch in Settings > Privacy while the switch is off: what is true now."
   },
   "privacy.usageAnalytics.stateOn": {
@@ -1506,6 +1506,10 @@
   "privacy.usageAnalytics.neverRecords": {
     "text": "We never record: what you type or what is on screen.",
     "description": "Last line under the Share usage analytics switch in Settings > Privacy: what is never recorded, whether the switch is on or off."
+  },
+  "privacy.usageAnalytics.googleAnalytics": {
+    "text": "On or off, Google Analytics counts the screens and apps you open, without your name. When this is on, those visits also carry your account number.",
+    "description": "Line under the Share usage analytics switch in Settings > Privacy. Says Google Analytics counts visits whatever the switch says, and what the switch adds."
   },
   "privacy.usageAnalytics.alreadyRecorded": {
     "text": "Turning this off doesn't delete what was already recorded.",

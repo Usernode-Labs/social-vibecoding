@@ -75,6 +75,7 @@ import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 import { installApiCacheIdentity } from './lib/api-cache-identity';
 import { installReadTimeout } from './lib/read-timeout';
+import { installGoogleAnalytics } from './lib/google-analytics';
 // #6233: publishes window.UsernodeReact.tabBuild at module scope. app.js's
 // /api/version poll writes the build this tab loaded and its merge boundary
 // here, and screens read it to say "Live · reload to get it".
@@ -238,6 +239,7 @@ bootStep('installSessionRenewalRetry', () => installSessionRenewalRetry());
 // identity confirmation, a native renewal and its one retry), and its signal
 // reaches the request that goes out.
 bootStep('installReadTimeout', () => installReadTimeout());
+bootStep('installGoogleAnalytics', () => installGoogleAnalytics());
 // Votes and reactions with no answer wait on the device for the connection
 // (./lib/action-outbox.ts), and go once the shell says it is back.
 bootStep('installActionOutbox', () => installActionOutbox());
