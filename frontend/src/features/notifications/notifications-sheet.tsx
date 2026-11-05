@@ -288,6 +288,35 @@ function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`da
 }
 
 /**
+ * #5929 item 13: one line over the Unread groups, "3 need you · 96 unread",
+ * so the shape of a backlog reads before its rows do.
+ *
+ * Its two numbers come from different places and neither pretends otherwise.
+ * The total is the bell's own (`badgeTotal`), printed through the bell's cap
+ * (#5289), and it INCLUDES the ones that need you: it is never the total less
+ * the asks, because the asks are only counted in the rows paged in, and that
+ * subtraction would state a figure nobody knows. So the asks say "At least"
+ * while the Unread pager still has rows to bring up (`partial`), and the
+ * total says nothing when it could only repeat them. Zero says nothing.
+ */
+function CatchUpLine({ needs, total, partial }: { needs: number; total: number; partial: boolean }): ReactNode {
+  const t = useMessages('notifications');
+  // Nothing asks: the total alone only repeats the Unread tab's own number.
+  if (!needs) return null;
+  const needsWords = t(partial ? 'notifications:sheet.catchUp.needsYouAtLeast' : 'notifications:sheet.catchUp.needsYou', { count: needs });
+  const totalWords = total <= needs ? null
+    : total > 99 ? t('notifications:sheet.catchUp.unreadCapped')
+      : t('notifications:sheet.catchUp.unread', { count: total });
+  return (
+    <p className="px-4 pt-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400" data-notif-catch-up="">
+      {needsWords}
+      {totalWords ? <span aria-hidden="true"> · </span> : null}
+      {totalWords}
+    </p>
+  );
+}
+
+/**
  * #5406: the heading of one app's group of unread notifications on the Unread
  * tab, with that app's "Mark read" beside it. The heading is the app's name
  * (the same words each row's meta line already carries); the pill is the
@@ -1430,6 +1459,8 @@ export function NotificationsSheetView() {
     loadingMore: boolean;
     /** #5289: the bell's number, which the Unread tab prints too. */
     badgeTotal?: number;
+    /** Pending invites, pinned above the list: the bell counts them too. */
+    invites?: unknown[] | null;
     /** #5527: the Unread tab's own pager — see loadMoreUnread(). */
     unreadCanLoadMore?: boolean;
     loadingUnread?: boolean;
@@ -1579,6 +1610,11 @@ export function NotificationsSheetView() {
   // sum the unread rows paged in so far, which on a backlog was a count of
   // the list ("Unread (81)") under a bell saying 99+ and a title saying 300.
   const unreadCount = snap.badgeTotal || 0;
+  // #5929 item 13: what still waits on the reader, in what is known of it:
+  // the unread rows in hand (one answered here stops counting at once, though
+  // its row stays until the sheet closes) and the pending invites, every one
+  // of which the bell's number holds too.
+  const needsCount = unreadNow.filter((view) => view.needsYou).length + (snap.invites || []).length;
   const boundary = startOfToday();
   const entries: Entry[] = shown.map((view) => (
     { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
@@ -1796,6 +1832,7 @@ export function NotificationsSheetView() {
           className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm '
             + 'hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target'}
           aria-label={t('core:common.close')}
+          title={t('core:common.close')}
           onClick={() => NotificationsSheet.close()}
         >
           <XIcon className="w-5 h-5" />
@@ -1926,6 +1963,9 @@ export function NotificationsSheetView() {
             {t('notifications:sheet.search.noMatches', { query: query.trim() })}
           </p>
         )
+      ) : null}
+      {!searching && appGroups.length ? (
+        <CatchUpLine needs={needsCount} total={unreadCount} partial={!!snap.unreadCanLoadMore} />
       ) : null}
       {!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (
         <>

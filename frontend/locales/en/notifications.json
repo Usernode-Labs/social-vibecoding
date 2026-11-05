@@ -227,6 +227,34 @@
     "text": "Everything else",
     "description": "Small label over the remaining project groups on the notifications sheet's Unread tab, under the \"Needs you\" groups: the rows that only tell the reader what happened."
   },
+  "sheet.catchUp.needsYou_one": {
+    "text": "{{count}} needs you",
+    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: one notification or invite is waiting on the reader. May stand alone."
+  },
+  "sheet.catchUp.needsYou_other": {
+    "text": "{{count}} need you",
+    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: {{count}} notifications or invites are waiting on the reader. May stand alone."
+  },
+  "sheet.catchUp.needsYouAtLeast_one": {
+    "text": "At least {{count}} needs you",
+    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: one is known to wait on the reader and there may be more. May stand alone."
+  },
+  "sheet.catchUp.needsYouAtLeast_other": {
+    "text": "At least {{count}} need you",
+    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: {{count}} are known to wait on the reader and there may be more. May stand alone."
+  },
+  "sheet.catchUp.unread_one": {
+    "text": "{{count}} unread",
+    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
+  },
+  "sheet.catchUp.unread_other": {
+    "text": "{{count}} unread",
+    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
+  },
+  "sheet.catchUp.unreadCapped": {
+    "text": "99+ unread",
+    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab, when more than 99 are unread: the same capped number the bell's badge shows. May stand alone."
+  },
   "sheet.today": {
     "text": "Today",
     "description": "Heading over the notifications that arrived today, in the notifications sheet."
