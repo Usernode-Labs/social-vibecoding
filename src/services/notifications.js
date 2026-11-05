@@ -105,6 +105,13 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
 ]);
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
+// 5 Nov 2026 (docs/plans/bot-one-model.md, decision 7): a request's stage
+// rings its requester with a build row that no message rang for
+// (services/work-state.js bellPushes). It is about the request (its project
+// and its change), not a chat, so whether they are in their chat with the
+// bot does not hide it; its project's access still does (APP_ACCESS_SQL).
+const STAGE_BELL_SQL = `(n.conversation_message_id IS NULL
+  AND n.kind IN ('build_ready', 'build_needs_you', 'build_stopped', 'build_live'))`;
 
 // A notification belongs to its recipient, but that does not grant enduring
 // access to the project it hydrates. Share this fresh predicate across exact
@@ -136,7 +143,7 @@ const APP_ACCESS_SQL = `EXISTS (
 // Removed/departed members match no row and therefore lose title/content as
 // well as navigation metadata on list, exact lookup, and live hydration.
 const CONVERSATION_ACCESS_SQL = `(
-  (n.conversation_id IS NULL AND n.kind NOT IN (${CONVERSATION_KIND_SQL}))
+  (n.conversation_id IS NULL AND (n.kind NOT IN (${CONVERSATION_KIND_SQL}) OR ${STAGE_BELL_SQL}))
   OR (
     n.conversation_id IS NOT NULL
     AND n.kind IN (${CONVERSATION_KIND_SQL})

@@ -495,7 +495,7 @@ test('a reply after a walkthrough written beside a call sends the walkthrough, a
       async query(sql) {
         const text = String(sql);
         if (/SELECT slug, name FROM apps WHERE slug = ANY/.test(text)) return { rows: [{ slug: 'gym', name: 'Gym Tracker' }] };
-        if (/INSERT INTO homeroom_bot_dm_actions/.test(text)) return { rows: [{ id: 5 }] };
+        if (/INSERT INTO bot_cards/.test(text)) return { rows: [{ id: 5 }] };
         if (/FROM apps/.test(text)) return { rows: [{ id: 3, slug: 'gym', name: 'Gym Tracker', repo_url: 'https://github.com/o/r', view_visibility: 'public', community_id: null }] };
         return { rows: [] };
       },
@@ -545,7 +545,7 @@ test('a thread tool\'s card stays under a reply that ends in an offer', async ()
     const pool = {
       async query(sql) {
         const text = String(sql);
-        if (/INSERT INTO homeroom_bot_dm_actions/.test(text)) return { rows: [{ id: 6 }] };
+        if (/INSERT INTO bot_cards/.test(text)) return { rows: [{ id: 6 }] };
         if (/FROM apps/.test(text)) return { rows: [{ id: 3, slug: 'gym', name: 'Gym Tracker', repo_url: 'https://github.com/o/r', view_visibility: 'public', community_id: null }] };
         return { rows: [] };
       },

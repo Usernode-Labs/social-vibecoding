@@ -3359,6 +3359,7 @@ function issueRoutes(config) {
         [app.id, issueNumber, targetUserId]
       );
       const cleared = rows.length > 0;
+      if (cleared) await require('../services/work-state').touched(pool, [{ appId: app.id, issueNumber }]);
 
       if (cleared) {
         const content = targetUserId === req.user.id

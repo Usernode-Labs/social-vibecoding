@@ -1,48 +1,39 @@
 'use strict';
 
-// One track per request (16 Oct 2026).
+// One track per request (16 Oct 2026; 5 Nov 2026).
 //
-// Six parts of the platform each worked out where a request the Homeroom bot
-// had was, from their own reading of its runs, its queue row and its change:
-// the activity cards, the tray and its strip, the progress answer, the chat's
-// news lines, a project's chat cards and the request page. They disagreed:
-// a request closed elsewhere stayed in Needs you, work held at a limit read
-// as finished, a build's clock counted from its first try, "See progress"
-// opened the whole chat. This module is the one place the PEOPLE-FACING
-// state of a request is decided, from the same records those readers use:
-// progress.stageOf for work in hand and the tray's outcome for work that
-// ended. Every surface draws what it says.
-//
-// A track is a loop, not a line. The normal path is
-//
-//     queued → planning → building → checks → vote → going_live → live
-//
-// and it goes back: a question sends it to `waiting` (on the person) and
-// back; failing checks, or voters asking for changes, send it back to
-// `building` as its next try (`try` counts them); a change behind main is
-// synced and its checks run again. From any step it can end up `held` at a
-// limit (which limit, what frees it, its place in line), `stopped` (why),
-// or `done_elsewhere` (somebody else's change shipped it) or `closed`.
+// A request's place in its work is its stored work state
+// (services/work-state.js: ten stages, the same words on every screen). A
+// track is that state with what a request's card draws around it: the step
+// of the five its bar lights, which try it is on and since when, its place
+// in a line, who has it, who shipped it, the links to it. Every surface that
+// draws a request's progress (its page, the slots page, a private thread's
+// bar, a project's week) reads it from here.
 //
 // What a track carries is codes, never words: the client words them
-// (frontend/locales/en/messages.json bot.track.*), so every surface says the
-// same thing the same way.
+// (lib/work-state.ts for the stage, messages.json bot.track.* for the rest).
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
 const { requestClosedSql, requestRecordJoinsSql } = require('./homeroom-bot-progress');
+const workState = require('./work-state');
+const { changeHref } = require('./change-destination');
 
-const STATES = Object.freeze([
-  'queued', 'planning', 'waiting', 'building', 'checks', 'vote', 'going_live', 'live',
-  'held', 'stopped', 'done_elsewhere', 'closed',
-]);
-
-// The five steps a track's bar draws, in order. A state lights one.
+// The five steps a track's bar draws, in order. A stage lights one.
 const STEPS = Object.freeze(['plan', 'build', 'checks', 'vote', 'live']);
 
-// The states that are over: the bell rings once on reaching one, and the
-// chat folds them into "finished today".
-const ENDED = new Set(['live', 'stopped', 'done_elsewhere', 'closed']);
+// The stages that are over: the chat folds them into "finished today".
+const ENDED = new Set(['live', 'stopped', 'closed']);
+
+// The step each stage lights (none before the work starts, or once it ended
+// some other way than live).
+const STEP_OF_STAGE = Object.freeze({
+  reading: 'plan', planning: 'plan', waiting_for_you: 'plan', building: 'build', checking: 'checks',
+  up_for_vote: 'vote', going_live: 'live', live: 'live', stopped: null, closed: null,
+});
+// A line that says nobody is at it yet, or that it waits its turn.
+const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'first_version_wait']);
+const READY = new Set(['queued', 'held_builds', 'held_waiting']);
 
 // The limits a request can be held at. `builds`: the project's builds
 // waiting or under way (homeroom-bot.js BUILDS_PER_APP, #6156), so it waits
@@ -55,39 +46,6 @@ const CAP_LIMITS = Object.freeze({
   proposals_per_app: 'slots',
   proposals_total: 'bot_wide',
 });
-
-/**
- * Pure: a progress stage (homeroom-bot-progress.js stageOf, as a tray job
- * or progress entry carries it) as a track's state, step and why. Null for
- * a stage this module does not know, which the caller then reads from the
- * request's outcome instead.
- */
-function fromStage(stage, { waitingFor = null } = {}) {
-  switch (stage) {
-    case 'setting_up': return { state: 'planning', step: 'plan', why: 'setting_up', busy: true };
-    case 'queued': return { state: 'queued', step: null, why: waitingFor?.reason || 'turn' };
-    case 'reading': return { state: 'planning', step: 'plan', why: 'reading', busy: true };
-    case 'question': return { state: 'waiting', step: 'plan', why: 'question', waitingOn: 'you' };
-    case 'plan': return { state: 'waiting', step: 'plan', why: 'plan', waitingOn: 'you' };
-    case 'held': return { state: 'held', step: 'build', why: 'slots' };
-    case 'on_hold': return { state: 'held', step: null, why: 'allowance' };
-    case 'build_queued': return { state: 'queued', step: 'build', why: waitingFor?.reason || 'build_turn' };
-    case 'starting': case 'planning': return { state: 'planning', step: 'plan', why: 'planning', busy: true };
-    case 'stalled': return { state: 'building', step: 'build', why: 'stalled' };
-    case 'building': return { state: 'building', step: 'build', why: null, busy: true };
-    case 'reviewing': return { state: 'building', step: 'build', why: 'reviewing', busy: true };
-    case 'proposing': return { state: 'building', step: 'build', why: 'proposing', busy: true };
-    case 'fix_queued': return { state: 'building', step: 'build', why: 'fix_queued', loop: true };
-    case 'fixing': return { state: 'building', step: 'build', why: 'fixing', busy: true, loop: true };
-    case 'followup_queued': return { state: 'building', step: 'build', why: 'changes_queued', loop: true };
-    case 'revising': return { state: 'building', step: 'build', why: 'revising', busy: true, loop: true };
-    case 'checks': return { state: 'checks', step: 'checks', why: null };
-    case 'checks_failed': return { state: 'checks', step: 'checks', why: 'failed' };
-    case 'vote': return { state: 'vote', step: 'vote', why: null, waitingOn: 'group' };
-    case 'merging': return { state: 'going_live', step: 'live', why: null, busy: true };
-    default: return null;
-  }
-}
 
 /**
  * Pure: why a build that did not succeed stopped, as a code, from its run's
@@ -127,32 +85,6 @@ function noChangeWhy(noChange) {
   return 'no_change';
 }
 
-/**
- * Pure: an outcome of the tray's (homeroom-bot-tray.js outcomeOf, on a
- * request's lead run) as a track's state, step and why. `lead` is the run
- * the outcome was read from, for a stop's reason and a hold's limit.
- */
-function fromOutcome(outcome, lead = null) {
-  switch (outcome) {
-    case 'live': return { state: 'live', step: 'live', why: null };
-    case 'going_live': return { state: 'going_live', step: 'live', why: null };
-    case 'proposed': return { state: 'vote', step: 'vote', why: null, waitingOn: 'group' };
-    case 'checking': return { state: 'checks', step: 'checks', why: null };
-    case 'needs_look': return { state: 'waiting', step: 'checks', why: 'look', waitingOn: 'you' };
-    case 'question': return { state: 'waiting', step: 'plan', why: 'question', waitingOn: 'you' };
-    case 'blocked': return { state: 'waiting', step: 'plan', why: 'detail', waitingOn: 'you' };
-    case 'empty': return { state: 'stopped', step: 'plan', why: 'nothing_to_build' };
-    case 'person': return { state: 'stopped', step: lead?.proposal_session_id ? 'checks' : 'plan', why: 'needs_person' };
-    case 'build_failed': return { state: 'stopped', step: 'build', why: buildStopWhy(lead?.build_error, { said: lead?.no_change_said }) };
-    case 'failed': return { state: 'stopped', step: null, why: 'failed' };
-    case 'held': return { state: 'held', step: 'build', why: CAP_LIMITS[lead?.cap_suppressed] || 'slots' };
-    case 'closed': return { state: 'stopped', step: 'vote', why: 'withdrawn' };
-    case 'stopped': return { state: 'stopped', step: null, why: 'skipped' };
-    // A reply the bot answered on its own change: the change is the news.
-    case 'answer': case 'revise': return { state: 'vote', step: 'vote', why: null, waitingOn: 'group' };
-    default: return null;
-  }
-}
 
 /**
  * Pure: how many tries a request's work has had, from its live runs (the
@@ -196,71 +128,46 @@ function iso(value) {
 }
 
 /**
- * Pure: one request's track, from what the tray knows of it.
+ * Pure: where an entry's links go: its request, its change, or (with no
+ * request) its project.
+ */
+function linksFor(slug, issueNumber, proposalId, prNumber = null) {
+  const request = Number(issueNumber) ? `#app/${encodeURIComponent(slug)}/dev/issues/${Number(issueNumber)}` : null;
+  return {
+    request,
+    proposal: proposalId ? changeHref(slug, proposalId, prNumber) : null,
+    project: request ? null : `#app/${encodeURIComponent(slug)}/app`,
+  };
+}
+
+/**
+ * Pure: one request's track, from its stored work state.
  *
- *   job      the tray's entry for it (Now, Needs you or History)
- *   entry    progress.progressFor's entry for it, when it has one: the
- *            stage of work in hand, including a change up for a vote
- *   runs     its live runs, newest first (tray pastRuns rows)
- *   held     its place among the project's held requests ({ position }),
- *            or who has the request when a person does ({ limit: 'taken',
- *            by }): the bot leaves a request somebody claimed alone
+ *   job      who it is (key, project, number, title, links, its change)
+ *   work     its work state (work-state.js fromRow; a fresh request with
+ *            none yet reads as not started)
+ *   runs     its live runs, newest first, for its tries and a stop's cause
+ *   held     its place among the project's held requests ({ position })
  *   doneBy   who shipped it, when somebody else's change closed it
  *            ({ username, prNumber, sessionId })
- *   until    when an allowance hold lifts (limits.weeklyResetAt)
+ *   until    when a hold on the week's building time lifts (limits.weeklyResetAt)
  */
-function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, until = null }) {
-  const stage = job.stage || entry?.stage || null;
-  const lead = runs.find((run) => Number(run.id) === Number(job.id)) || runs[0] || null;
-  let base = stage ? fromStage(stage, { waitingFor: entry?.waitingFor || job.waitingFor || null }) : null;
-  // #6228: a read after somebody's reply says so, in the existing planning
-  // state's line, rather than "Reading the request".
-  if (base?.why === 'reading' && job.reply) base = { ...base, why: 'reply' };
-  // #6313: a read queued again after a plan that could not be written says
-  // it is retrying the plan, not only that it waits its turn.
-  if (base?.state === 'queued' && (entry?.retry === 'plan' || job.retry === 'plan')) {
-    base = { ...base, why: 'plan_retry' };
-  }
-  // #6156: held, it waits at the limit its run was held by, as an ended
-  // hold reads it (fromOutcome): the bot's turn, or votes on its changes.
-  if (base?.state === 'held' && stage === 'held' && CAP_LIMITS[lead?.cap_suppressed]) {
-    base = { ...base, why: CAP_LIMITS[lead.cap_suppressed] };
-  }
-  // A stage that says nothing waits (a change up for a vote) is read off the
-  // outcome when the work ended in something sharper.
-  if (!base) base = fromOutcome(job.outcome, lead);
-  // 16 Oct 2026: held, but a person has the request now (a claim, their own
-  // change): it waits on them, not on a slot (heldQueue's `takenBy`).
-  if (base?.state === 'held' && held?.limit === 'taken') base = { ...base, why: 'taken' };
-  if (!base) {
-    base = job.inHand
-      ? { state: 'building', step: 'build', why: null }
-      : { state: 'stopped', step: null, why: 'unknown' };
-  }
-  // A question its person answered waits on the bot again, not on them.
-  if (base.state === 'waiting' && job.answered && !job.ask) {
-    base = { ...base, state: 'planning', waitingOn: null, why: 'answered' };
-  }
-  // A hand-off of failing checks: the change waits on a person now.
-  if (base.state === 'checks' && base.why === 'failed' && job.outcome === 'person') {
-    base = { ...base, why: 'handed_over' };
-  }
-  // The request itself was closed: whatever was still waiting on somebody,
-  // or stopped, is over, shipped by somebody else's change or just closed.
-  const closed = job.requestClosed === true;
-  if (closed && !['vote', 'checks', 'going_live', 'live', 'building'].includes(base.state)) {
-    // B23 (audit 2 Nov 2026): a request its own change made live, and that
-    // closed when it merged, is live, whatever a later look at it said: a
-    // first version that went live read "Closed".
-    base = runs.some(wentLive)
-      ? { state: 'live', step: 'live', why: null }
-      : doneBy
-      ? { state: 'done_elsewhere', step: 'live', why: null }
-      : { state: 'closed', step: null, why: null };
-  }
-  const underWay = !!base.loop && !runs.some((run) => run.verdict === 'revise' && Date.parse(run.created_at) >= Date.parse(entry?.since || job.since || 0));
-  const tries = triesOf(runs, { underWay });
-  const since = iso(job.since) || iso(entry?.since) || iso(job.at);
+function trackOf({ job, work = null, runs = [], held = null, doneBy = null, until = null }) {
+  const state = work || { stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, whoseMove: 'bot', since: null };
+  const code = state.line?.code || null;
+  let step = STEP_OF_STAGE[state.stage] ?? null;
+  if (state.stage === 'reading' && NOT_STARTED.has(code)) step = null;
+  // The bot is at it this minute: reading, planning, building, putting it live.
+  const busy = (state.stage === 'reading' && !NOT_STARTED.has(code))
+    || (state.stage === 'planning' && code !== 'retry_plan' && code !== 'planning_with_you')
+    || (state.stage === 'building' && !READY.has(code) && code !== 'claimed')
+    || state.stage === 'going_live';
+  const waitingOn = state.whoseMove === 'requester' ? 'you' : state.whoseMove === 'group' ? 'group' : null;
+  const since = iso(state.since) || iso(job.at);
+  // A change being fixed or updated is its next try, until a run records it.
+  const loop = code === 'fixing' || code === 'revising';
+  const underWay = loop && !runs.some((run) => run.verdict === 'revise' && Date.parse(run.created_at) >= Date.parse(since || 0));
+  const lead = runs[0] || null;
   const lastBuild = runs.find((run) => Number(run.build_session_id) > 0);
   const track = {
     key: job.key,
@@ -271,43 +178,64 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
     issueNumber: Number(job.issueNumber) || null,
     title: job.title || null,
     firstVersion: !!job.firstVersion,
-    state: base.state,
-    step: base.step,
-    why: base.why || null,
-    waitingOn: base.waitingOn || null,
-    busy: !!base.busy,
-    try: tries,
+    work: { stage: state.stage, why: state.why || null, reason: state.reason || null, line: state.line || null, since },
+    step,
+    waitingOn,
+    busy,
+    try: triesOf(runs, { underWay }),
     // This try's clock: when the work under way began, never the wait
     // before it nor an earlier try (#5210 read "16h 31m so far" on a build
     // fifteen minutes old).
-    tryStartedAt: ['building', 'planning'].includes(base.state) ? since : null,
+    tryStartedAt: busy && (state.stage === 'building' || state.stage === 'planning') ? since : null,
     since,
     rootId: Number(job.cardId) || Number(job.ask?.messageId) || null,
     askId: Number(job.ask?.messageId) || null,
-    // The private thread that message is in, when it is not Main (tray threadsOf).
     askThreadId: Number(job.ask?.threadRootId) || null,
-    proposalId: Number(job.proposalId) || Number(entry?.proposal?.proposal) || null,
+    proposalId: Number(job.proposalId) || null,
     // The session its plan and change live in: the change, else its build.
-    sessionId: Number(job.proposalId) || Number(entry?.proposal?.proposal) || Number(lastBuild?.build_session_id) || null,
+    sessionId: Number(job.proposalId) || Number(lastBuild?.build_session_id) || null,
     tryStarts: tryStartsOf(runs, { underWay: underWay ? since : null }),
     links: job.links || null,
     ...(job.release ? { release: job.release } : {}),
   };
-  if (base.state === 'held') {
-    track.held = {
-      limit: base.why,
-      position: held?.position || null,
-      until: base.why === 'allowance' ? iso(until) : null,
-      ...(base.why === 'taken' ? { by: held?.by || null } : {}),
-    };
+  // Held for one of the project's builds, or for its changes up for a vote:
+  // its place in that line. On hold for the week's building time: until when.
+  if (code === 'held_builds' || code === 'held_waiting') {
+    track.held = { limit: code === 'held_builds' ? 'builds' : 'slots', position: held?.position || null, until: null };
   }
-  if (base.state === 'queued' && entry?.waitingFor?.ahead != null) {
-    track.queue = { ahead: Number(entry.waitingFor.ahead) || 0 };
+  if (code === 'on_hold') track.held = { limit: 'allowance', position: null, until: iso(until) };
+  if (state.stage === 'reading' && code === 'queued' && Number(state.line.place) > 0) {
+    track.queue = { ahead: Number(state.line.place) - 1 };
   }
-  if (base.state === 'done_elsewhere' && doneBy) {
+  // A build that did not finish says why, in a code (buildStopWhy).
+  if (state.stage === 'stopped' && state.reason === 'build_failed' && lead) {
+    track.cause = buildStopWhy(lead.build_error, lead.no_change_said ? { said: lead.no_change_said } : null);
+  }
+  if (state.stage === 'closed' && doneBy) {
     track.doneBy = { username: doneBy.username || null, prNumber: Number(doneBy.prNumber) || null };
   }
   return track;
+}
+
+/**
+ * Pure: where Homeroom bot is on a request, from its track, in the terms a
+ * design filed as one is told (design-threads.js filedNext, design-bot.js
+ * filedLine): `builds` (it has it in hand: reading, planning or building
+ * it), `held` at a limit ({ limit, position }), `person` (a person has
+ * taken it on, `by`, or the bot handed it to the people on the project to
+ * decide), `ended` (live, stopped or closed), or `other` (it waits on its
+ * requester's answer, its checks or its vote). Null for no track.
+ */
+function standingOf(track) {
+  if (!track) return null;
+  const work = track.work || {};
+  const code = work.line?.code || null;
+  if (ENDED.has(work.stage)) return { say: 'ended' };
+  if (code === 'claimed') return { say: 'person', by: work.line.by || null };
+  if (work.stage === 'waiting_for_you' && work.why === 'decide') return { say: 'person', by: null };
+  if (track.held?.limit) return { say: 'held', limit: track.held.limit, position: Number(track.held.position) || null };
+  if (work.stage === 'reading' || work.stage === 'planning' || work.stage === 'building') return { say: 'builds' };
+  return { say: 'other' };
 }
 
 // ── Reads ──────────────────────────────────────────────────────
@@ -413,66 +341,6 @@ async function doneByFor(pool, pairs) {
   return out;
 }
 
-/**
- * Every request in the tray's `work` as a track (trackOf), in the order
- * the tray has them: Now, Needs you, History. `entries` are progressFor's
- * (by key), `rows` the person's live runs (pastRuns). Adds `work.tracks`
- * and returns it. Never throws: a read that fails leaves the tracks without
- * a hold's place or a closer's name.
- */
-async function withTracks(pool, work, { entries = [], rows = [], keyOf, deps = {} } = {}) {
-  const jobs = [...(work.now || []), ...(work.needsYou || []), ...(work.history || [])];
-  const runsByKey = new Map();
-  for (const row of rows) {
-    const key = keyOf(row.slug, row.issue_number);
-    if (!runsByKey.has(key)) runsByKey.set(key, []);
-    runsByKey.get(key).push(row);
-  }
-  // B02 (audit 2 Nov 2026): an entry is found by the key its job has. A
-  // first version once filed has its request's number on both (tray
-  // jobOfEntry), so keying it 'first' lost its stage: a plan waiting for its
-  // creator read "Stopped". One being set up has no number, and stays 'first'.
-  const entryByKey = new Map();
-  for (const e of entries) {
-    if (!e || !e.project) continue;
-    const key = keyOf(e.project, e.number);
-    if (!entryByKey.has(key)) entryByKey.set(key, e);
-  }
-  const appIdOf = new Map(rows.map((row) => [row.slug, Number(row.app_id)]).filter(([, id]) => id > 0));
-  let held = new Map();
-  let doneBy = new Map();
-  let until = null;
-  try {
-    const heldApps = [...new Set(jobs.filter((job) => job.outcome === 'held' || job.stage === 'held')
-      .map((job) => appIdOf.get(job.appSlug)).filter(Boolean))];
-    if (heldApps.length) {
-      // Who has a held request now, so it reads as theirs, not as a wait.
-      const botSvc = deps.botSvc || require('./homeroom-bot');
-      const takenBy = typeof botSvc.issueHolders === 'function'
-        ? new Map(await Promise.all(heldApps.map(async (appId) => [appId, await botSvc.issueHolders(pool, appId)])))
-        : null;
-      held = await heldQueue(pool, heldApps, { takenBy });
-    }
-    const closed = jobs.filter((job) => job.requestClosed === true && appIdOf.get(job.appSlug) && job.issueNumber)
-      .map((job) => ({ appId: appIdOf.get(job.appSlug), n: Number(job.issueNumber) }));
-    if (closed.length) doneBy = await doneByFor(pool, closed);
-    if (jobs.some((job) => job.stage === 'on_hold' || entryByKey.get(job.key)?.stage === 'on_hold')) {
-      until = (deps.limits || require('./limits')).weeklyResetAt();
-    }
-  } catch (err) {
-    log.warn('homeroom-bot-track', 'Could not read holds or closers for the tracks', { err: err.message });
-  }
-  const at = (job) => `${appIdOf.get(job.appSlug)}#${job.issueNumber}`;
-  work.tracks = jobs.map((job) => trackOf({
-    job,
-    entry: entryByKey.get(job.key) || null,
-    runs: runsByKey.get(job.key) || [],
-    held: held.get(at(job)) || null,
-    doneBy: doneBy.get(at(job)) || null,
-    until,
-  }));
-  return work;
-}
 
 // ── One project's requests, whoever asked (the request page, the slots) ──
 
@@ -486,14 +354,16 @@ const TOUCHED_SQL = `
    WHERE EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.app_id = $1 AND r.issue_number = w.n AND r.mode = 'live')
       OR EXISTS (SELECT 1 FROM homeroom_bot_queue q WHERE q.app_id = $1 AND q.issue_number = w.n)`;
 
-// The records progress.stageOf reads, as homeroom-bot-progress.js
-// requestRows reads them for one person, for any requests of one project:
-// `$1` the project, `$2` the request numbers. An open question is anybody's.
+// One project's requests as a track names them (its title, its run, its
+// change up for a vote), from the shared per-request record
+// (homeroom-bot-progress.js requestRecordJoinsSql): `$1` the project, `$2`
+// the request numbers.
 const REQUEST_ROWS_SQL = `
   SELECT a.id AS app_id, a.slug, a.name, w.n AS issue_number,
          (SELECT i.title FROM issues i WHERE i.app_id = a.id AND i.github_issue_number = w.n
            ORDER BY i.id DESC LIMIT 1) AS issue_title,
-         FALSE AS first_version,
+         COALESCE((SELECT rq.first_version FROM homeroom_bot_requesters rq
+                    WHERE rq.app_id = a.id AND rq.issue_number = w.n), FALSE) AS first_version,
          q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until,
          run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
          run.cap_suppressed, run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
@@ -528,19 +398,10 @@ const REQUEST_RUNS_SQL = `
    ORDER BY r.id DESC`;
 
 /**
- * Pure: one row of REQUEST_ROWS_SQL as the tray's entry for it would be,
- * so trackOf reads it the same way: its stage (progress.stageOf), and when
- * nothing about it is in hand, what its newest run came to (the tray's
- * outcomeOf).
+ * Pure: who one row of REQUEST_ROWS_SQL is (its project, number, title, its
+ * change up for a vote or merging, the links to it), for its track.
  */
-function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null } = {}) {
-  const live = row.mode === 'live' || !row.run_id;
-  const state = live ? stageOf(row, { now }) : null;
-  const outcome = state || !row.run_id ? null : outcomeOf({
-    ...row,
-    proposal_session_id: row.run_proposal,
-    proposal_status: row.run_proposal && Number(row.run_proposal) === Number(row.proposal_session_id) ? row.proposal_status : null,
-  });
+function jobOfRow(row) {
   const n = Number(row.issue_number);
   const open = ['promoted', 'merging'].includes(row.proposal_status) ? Number(row.proposal_session_id) || null : null;
   return {
@@ -550,18 +411,10 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null }
     appName: row.name || row.slug,
     issueNumber: n,
     title: row.issue_title || null,
-    firstVersion: false,
-    stage: state ? state.stage : null,
-    // #6228: the read is of somebody's newest reply.
-    reply: state?.reply === true,
-    // #6313: the queued read is retrying a plan that could not be written.
-    retry: state?.retry || null,
-    since: state ? iso(state.since) : null,
+    firstVersion: row.first_version === true,
     at: iso(row.run_at),
-    outcome,
-    requestClosed: row.request_closed === true,
     proposalId: open,
-    links: linksFor ? linksFor(row.slug, n, open, row.proposal_pr_number || null) : null,
+    links: linksFor(row.slug, n, open, row.proposal_pr_number || null),
   };
 }
 
@@ -571,28 +424,23 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null }
  * What the request page and the slots view draw. Never throws. `people`:
  * issueHolders' Map for the project, when the caller has read it already.
  */
-async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps = {}, people = null, settings = null }) {
+async function tracksForRequests(pool, { appId, numbers, deps = {}, people = null }) {
   const out = new Map();
   const asked = [...new Set((numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!appId || !asked.length) return out;
   try {
-    const botSvc = deps.botSvc || require('./homeroom-bot');
-    // A project's builds under way at once: its own number, or the setting.
-    const s = settings || (typeof botSvc.readSettings === 'function'
-      ? await botSvc.readSettings(pool).catch(() => null) : null);
-    const perProject = (typeof botSvc.appCapsOf === 'function'
-      ? botSvc.appCapsOf(s, appId) : require('./homeroom-bot').appCapsOf(s, appId)).building;
     // A board's whole list comes through here: only the requests the bot has
     // read or queued are worth the full read below.
     const wanted = asked.length > 1
       ? (await pool.query(TOUCHED_SQL, [Number(appId), asked])).rows.map((row) => Number(row.n))
       : asked;
     if (!wanted.length) return out;
-    const progress = deps.progress || require('./homeroom-bot-progress');
-    const tray = deps.tray || require('./homeroom-bot-tray');
-    const [{ rows }, { rows: runs }] = await Promise.all([
+    const items = wanted.map((n) => ({ appId: Number(appId), issueNumber: n }));
+    await workState.ensure(pool, items);
+    const [{ rows }, { rows: runs }, states] = await Promise.all([
       pool.query(REQUEST_ROWS_SQL, [Number(appId), wanted]),
       pool.query(REQUEST_RUNS_SQL, [Number(appId), wanted]),
+      workState.forRequests(pool, Number(appId), wanted),
     ]);
     const bot = rows.filter((row) => row.run_id || row.queue_id);
     if (!bot.length) return out;
@@ -602,36 +450,38 @@ async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps 
       if (!runsOf.has(n)) runsOf.set(n, []);
       runsOf.get(n).push(run);
     }
-    const jobs = bot.map((row) => [row, jobOfRow(row, { now, stageOf: progress.stageOf, outcomeOf: tray.outcomeOf, linksFor: tray.linksFor })]);
-    // 16 Oct 2026: what a build waiting its turn waits for, as its
-    // requester's chat says it (homeroom-bot-progress.js buildWait): the
-    // project's other builds, or nothing, so it starts next. Without it,
-    // #5323 read "waiting its turn" on the slots page with every builder free.
-    const queuedBuilds = jobs.filter(([, job]) => job.stage === 'build_queued');
-    if (queuedBuilds.length && typeof progress.buildWait === 'function') {
-      const busy = await progress.projectsBusy(pool, queuedBuilds.map(([row]) => row));
-      for (const [row, job] of queuedBuilds) job.waitingFor = progress.buildWait(row, { busy, now, perProject }).waitingFor || null;
-    }
+    const jobs = bot.map((row) => [row, jobOfRow(row), states.get(Number(row.issue_number)) || null]);
+    const code = (work) => work?.line?.code || null;
     let held = new Map();
-    if (jobs.some(([, job]) => job.outcome === 'held' || job.stage === 'held')) {
+    if (jobs.some(([, , work]) => code(work) === 'held_builds' || code(work) === 'held_waiting')) {
       // A held request a person has taken since reads as theirs (heldQueue).
       const holders = people || await (deps.botSvc || require('./homeroom-bot')).issueHolders(pool, appId);
       held = await heldQueue(pool, [appId], { takenBy: new Map([[Number(appId), holders]]) });
     }
-    const closed = jobs.filter(([, job]) => job.requestClosed).map(([, job]) => ({ appId: Number(appId), n: job.issueNumber }));
+    const closed = jobs.filter(([, , work]) => work?.stage === 'closed').map(([, job]) => ({ appId: Number(appId), n: job.issueNumber }));
     const doneBy = closed.length ? await doneByFor(pool, closed) : new Map();
-    const until = jobs.some(([, job]) => job.stage === 'on_hold') ? (deps.limits || require('./limits')).weeklyResetAt() : null;
-    for (const [row, job] of jobs) {
+    const until = jobs.some(([, , work]) => code(work) === 'on_hold') ? (deps.limits || require('./limits')).weeklyResetAt() : null;
+    for (const [row, job, work] of jobs) {
       const runsHere = (runsOf.get(job.issueNumber) || []).map((run) => (Number(run.id) === Number(row.run_id)
         ? { ...run, no_change_said: row.no_change_said } : run));
       out.set(job.issueNumber, trackOf({
         job,
-        entry: null,
+        work,
         runs: runsHere,
         held: held.get(`${appId}#${job.issueNumber}`) || null,
         doneBy: doneBy.get(`${appId}#${job.issueNumber}`) || null,
         until,
       }));
+    }
+    // A merge of Homeroom itself going live: when its release comes
+    // (release-watch.js releasesFor), as the change's own pill says it.
+    const going = [...out.values()].filter((t) => t.work.stage === 'going_live' && t.proposalId);
+    if (going.length) {
+      const releases = await (deps.releaseWatch || require('./release-watch')).releasesFor(pool, going.map((t) => t.proposalId));
+      for (const t of going) {
+        const release = releases.get(t.proposalId);
+        if (release) t.release = release;
+      }
     }
   } catch (err) {
     log.warn('homeroom-bot-track', 'Could not read a project\'s request tracks', { appId, err: err.message });
@@ -756,7 +606,7 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
   const numbers = [...holders.map((h) => Number(h.issue_number)), ...waiting.map((w) => w.issueNumber),
     ...taken.map((w) => w.issueNumber), ...onHold.map((q) => Number(q.issue_number))].filter((n) => n > 0);
   const [tracks, asked] = await Promise.all([
-    tracksForRequests(pool, { appId: app.id, numbers, deps, people, settings: s }),
+    tracksForRequests(pool, { appId: app.id, numbers, deps, people }),
     askersFor(pool, app.id, numbers),
   ]);
   // Who asked, its title and a line of it: GitHub's list first, then what
@@ -799,14 +649,15 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
 }
 
 // Where a track that is not in a slot or a line puts its request on the
-// slots page: waiting on a person (a question, a plan's Build it, more
-// detail, a look), stopped after trying, or left to people.
-const LEFT_TO_PEOPLE = new Set(['needs_person', 'nothing_to_build']);
+// slots page, by its stage: waiting on a person (a question, a plan's Build
+// it, more detail), what the bot reads or plans next, stopped after trying,
+// or left to a person to decide.
 function restSection(track) {
-  if (!track) return null;
-  if (track.state === 'waiting') return 'waitingOn';
-  if (track.state === 'queued' || track.state === 'planning') return 'upNext';
-  if (track.state === 'stopped') return LEFT_TO_PEOPLE.has(track.why) ? 'leftToPeople' : 'stopped';
+  const work = track?.work;
+  if (!work) return null;
+  if (work.stage === 'waiting_for_you') return work.why === 'decide' || work.why === 'already_works' ? 'leftToPeople' : 'waitingOn';
+  if (work.stage === 'reading' || work.stage === 'planning') return 'upNext';
+  if (work.stage === 'stopped') return 'stopped';
   return null;
 }
 
@@ -831,7 +682,7 @@ async function placeTheRest(pool, view, { app, open, queue, people, tracks, aske
     const rest = openNumbers.filter((n) => !people.has(n));
     const isRest = new Set(rest);
     view.withPeople = openNumbers.length - rest.length;
-    const more = await tracksForRequests(pool, { appId: app.id, numbers: rest.filter((n) => !tracks.has(n)), deps, people, settings });
+    const more = await tracksForRequests(pool, { appId: app.id, numbers: rest.filter((n) => !tracks.has(n)), deps, people });
     const trackOfN = (n) => tracks.get(n) || more.get(n) || null;
     // Titles for the ones the first read did not ask about.
     const missing = rest.filter((n) => !asked.has(n));
@@ -891,8 +742,23 @@ function demoSlots(app, now = Date.now(), mocks = []) {
   const about = (n, fallback, askedBy) => ({
     title: mock.get(n)?.title || fallback, askedBy, excerpt: requestExcerpt(mock.get(n)?.body) || null,
   });
-  const job = (n, title, fields) => ({ key: `demo#${n}`, appSlug: app.slug, appName: app.name || app.slug, issueNumber: n, title, ...fields });
-  const track = (n, title, fields, extra = {}) => trackOf({ job: job(n, title, fields), ...extra });
+  const job = (n, title) => ({ key: `demo#${n}`, appSlug: app.slug, appName: app.name || app.slug, issueNumber: n, title });
+  // Each demo request's work state: a stage of the bot's by its old name
+  // (work-state.js fromStage maps it), or how its work ended.
+  const ENDED_WORK = {
+    build_failed: { stage: 'stopped', reason: 'build_failed' },
+    person: { stage: 'waiting_for_you', why: 'decide' },
+  };
+  const workOf = (fields = {}, extra = {}) => {
+    if (fields.stage) return { ...workState.fromStage({ stage: fields.stage, since: fields.since || null }, {}), since: fields.since || null };
+    if (fields.outcome === 'held') {
+      return extra.held?.limit === 'taken'
+        ? { stage: 'building', line: { code: 'claimed', by: extra.held.by }, whoseMove: 'builder' }
+        : { stage: 'building', line: { code: extra.held?.limit === 'builds' ? 'held_builds' : 'held_waiting' }, whoseMove: 'bot' };
+    }
+    return ENDED_WORK[fields.outcome] || null;
+  };
+  const track = (n, title, fields, extra = {}) => trackOf({ job: job(n, title), work: workOf(fields, extra), ...extra });
   const slot = (kind, n, title, askedBy, fields, extra) => {
     const a = about(n, title, askedBy);
     return { kind, issueNumber: n, ...a, since: ago(60), track: track(n, a.title, fields, extra) };
@@ -976,30 +842,31 @@ function demoRequestTrack(app, number, title, now = Date.now()) {
   return trackOf({
     job: {
       key: `${app.slug}#${number}`, appSlug: app.slug, appName: app.name || app.slug,
-      issueNumber: number, title: title || null, stage: 'building', since: new Date(now - 15 * 60 * 1000).toISOString(),
+      issueNumber: number, title: title || null,
     },
+    work: { stage: 'building', line: null, whoseMove: 'bot', since: new Date(now - 15 * 60 * 1000).toISOString() },
     runs: [{ verdict: 'ready', created_at: new Date(now - 26 * 60 * 60 * 1000).toISOString() },
       { verdict: 'ready', created_at: new Date(now - 16 * 60 * 1000).toISOString() }],
   });
 }
 
 module.exports = {
-  STATES,
   STEPS,
   ENDED,
+  STEP_OF_STAGE,
   CAP_LIMITS,
-  fromStage,
-  fromOutcome,
+  linksFor,
   buildStopWhy,
   noChangeWhy,
   triesOf,
   tryStartsOf,
   trackOf,
+  standingOf,
+  NOT_STARTED,
   HELD_QUEUE_SQL,
   heldQueue,
   DONE_BY_SQL,
   doneByFor,
-  withTracks,
   TOUCHED_SQL,
   REQUEST_ROWS_SQL,
   REQUEST_RUNS_SQL,

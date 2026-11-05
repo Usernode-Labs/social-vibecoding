@@ -185,8 +185,10 @@ test('every predicate names the viewer, and the route refuses one it has not got
   // not a smaller answer, it is the whole platform's. #4538 added a ninth:
   // MY_PROPOSALS_WHERE's bot-request predicate, also on $1. #6019 added four
   // in OWED_PROPOSALS_WHERE (a ballot owed once: the viewer's rival, vote,
-  // close and close vote) and one for the bot's questions (OWED_QUESTIONS_WHERE).
-  assert.equal((sql.match(/\$1/g) || []).length, 14,
+  // close and close vote) and one for the bot's questions; 5 Nov 2026, three
+  // there (OWED_QUESTIONS_FROM: the chat's open ones, the stored states that
+  // wait on the viewer's answer, and the chat's again so neither repeats).
+  assert.equal((sql.match(/\$1/g) || []).length, 16,
     'the viewer appears in every CTE predicate and in the collaborator join');
 
   // The refusal itself, driven rather than grepped: `getPool` is called once

@@ -234,7 +234,7 @@ test('the staging already-works request carries its note and its bell row', { ti
     reason: 'Staging demo: visitors can already get in and play without an account.', done: true,
   }));
   const offers = await pool.query(
-    `SELECT kind, for_user_id, status, args FROM homeroom_bot_voice_offers WHERE app_id = $1`, [app.id],
+    `SELECT kind, user_id AS for_user_id, status, args FROM bot_cards WHERE place = 'thread' AND app_id = $1`, [app.id],
   );
   assert.equal(offers.rows.length, 1, 'one offer, not two');
   assert.equal(offers.rows[0].kind, 'close_request');

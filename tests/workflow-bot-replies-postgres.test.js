@@ -401,10 +401,10 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     reset();
     const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, ada.id);
     const { rows: [action] } = await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title) VALUES ($1, $2, $3, 'file_request', 'Tags') RETURNING id`,
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title) VALUES ($1, $2, $3, 'file_request', 'Tags') RETURNING id`,
       [ada.id, opened.conversationId, app.id]);
     const { rows: [plan] } = await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title) VALUES ($1, $2, $3, 'build_plan', 'Plan') RETURNING id`,
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title) VALUES ($1, $2, $3, 'build_plan', 'Plan') RETURNING id`,
       [ada.id, opened.conversationId, app.id]);
     const tap = (who, actionId, choice) => send('bot-dm', dmKey(who), 'Tapped', { userId: who.id, actionId, choice, answers: [] });
     assert.equal((await tap(ben, action.id, 'yes')).reason, 'no_such_choice', 'only theirs');
@@ -419,7 +419,7 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     // An act that failed for good is settled as failed and said, by work.
     reset();
     const { rows: [third] } = await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title) VALUES ($1, $2, $3, 'file_request', 'Pins') RETURNING id`,
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title) VALUES ($1, $2, $3, 'file_request', 'Pins') RETURNING id`,
       [ada.id, opened.conversationId, app.id]);
     work.answer.set(dm.WORK.act, (input) => { if (!input.gaveUp) throw new Error('down'); return { done: false, why: 'gave_up' }; });
     await tap(ada, third.id, 'yes');

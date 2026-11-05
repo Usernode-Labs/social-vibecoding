@@ -3274,10 +3274,9 @@
       ]
     },
     {
-      "name": "#2905: an app's chat in Messages draws no report or block text links in its rows, under a header with the app's own icon; B9: a message that asked Homeroom bot wears its Building chip for everyone",
+      "name": "#2905: an app's chat in Messages draws no report or block text links in its rows, under a header with the app's own icon; a message that asked Homeroom bot wears no status chip for the room (5 Nov 2026: where a request stands is on its page)",
       "path": "/?demo=1#messages/app/usernode-2d5619",
-      "expectSelector": "#messages-screen:not(.hidden):has(header.messages-thread-header .app-icon-tile[data-icon=\"image\"] img) #gc-messages:has(.gc-msg):has([data-bot-request=building]):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
-      "expectText": "Homeroom bot is building this",
+      "expectSelector": "#messages-screen:not(.hidden):has(header.messages-thread-header .app-icon-tile[data-icon=\"image\"] img) #gc-messages:has(.gc-msg):not(:has([data-bot-request])):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
       "impact": [
         "frontend/src/features/group-chat/**",
         "public/css/app.css"
@@ -5203,7 +5202,7 @@
     {
       "name": "#6019 (#6160): the AI tab's Waiting & in progress card of its own lists your work under way then what waits on someone else (going live before being built, then other people's votes on a change or a group decision, then a build held back as Homeroom bot says in Main)",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"] [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"going_live\"] ~ [data-ai-line=\"building\"] ~ [data-ai-line=\"vote\"]",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"] [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"going_live\"] ~ [data-ai-line=\"building\"] ~ [data-ai-line=\"up_for_vote\"]",
       "expectText": "Going live"
     },
     {

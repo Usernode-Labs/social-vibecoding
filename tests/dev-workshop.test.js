@@ -5596,6 +5596,10 @@ test('a run that does not know its total yet still shows its bar: "Checks" on th
 
 // ── #5385: the bot's work on your requests, as it happens ──
 
+// #6145 (2 Nov 2026): a row's side panel is portalled to <body>, so it stayed
+// over the Homeroom bot tab after the project page was left. app.js now
+// publishes the project page's visibility to the store, and the Workshop
+// clears its panel's item when that goes false.
 test('#6145: the side panel\'s item is cleared when the project page is hidden', () => {
   const classes = new Map();
   const sandbox = {

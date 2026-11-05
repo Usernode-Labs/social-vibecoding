@@ -645,9 +645,8 @@ const POSTABLE = new Set(['open', 'posted', 'filed']);
 // minute later. The line that said it was filed stopped at "…as its plan",
 // and asked "will you build this now?" the design bot answered that it
 // could not. The line now says what happens next, read off the new
-// request's track (homeroom-bot-track.js): the track states in which the bot
-// has it in hand, and the limits it waits at.
-const FILED_BUILDS = new Set(['queued', 'planning', 'building']);
+// request's track (homeroom-bot-track.js standingOf): whether the bot has it
+// in hand, and the limits it waits at.
 // #6156: 'builds', the project's builds all under way, among them.
 const FILED_LIMITS = new Set(['builds', 'slots', 'bot_wide', 'allowance']);
 
@@ -665,10 +664,10 @@ function filedNext(track, { queued = false, version = null } = {}) {
   const v = Number(version);
   const builds = Number.isSafeInteger(v) && v > 0 ? { say: 'builds', version: v } : null;
   if (!track) return queued ? builds : { say: 'person' };
-  if (FILED_BUILDS.has(track.state)) return builds;
-  const why = track.held?.limit || track.why || null;
-  if (track.state === 'held') return FILED_LIMITS.has(why) ? { say: 'held', limit: why } : { say: 'person' };
-  if (track.state === 'stopped' && why === 'needs_person') return { say: 'person' };
+  const standing = require('./homeroom-bot-track').standingOf(track);
+  if (standing.say === 'builds') return builds;
+  if (standing.say === 'held') return FILED_LIMITS.has(standing.limit) ? { say: 'held', limit: standing.limit } : { say: 'person' };
+  if (standing.say === 'person') return { say: 'person' };
   return null;
 }
 

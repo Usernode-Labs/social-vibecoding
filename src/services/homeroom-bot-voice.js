@@ -54,6 +54,10 @@
 // the fixed notes it had. Never a reason anything else fails: every entry
 // point is best-effort and never throws.
 
+const profiles = require('./bot-profiles');
+// Its limits are its thread kinds' (bot-profiles.js, step 5).
+const { THREAD_LIMITS } = profiles;
+const botTools = require('./bot-tools');
 const log = require('./logger');
 const repoRef = require('./repo-ref');
 const replyRules = require('../workflow/rules/bot-replies.ts');
@@ -72,15 +76,15 @@ const MAX_LINE_CHARS = 700;
 // read whole, up to this: the most a chat message can hold.
 const MAX_WHOLE_CHARS = 8000;
 // A message older than this before its turn is not answered by it.
-const ANSWER_WINDOW_MINUTES = 60;
+const ANSWER_WINDOW_MINUTES = THREAD_LIMITS.answerWindowMinutes;
 // The next message after the bot's own in a reply thread, this soon after
 // it, is to the bot.
-const CONTINUE_MINUTES = 30;
-const MAX_ROUNDS = 8;
+const CONTINUE_MINUTES = THREAD_LIMITS.continueMinutes;
+const MAX_ROUNDS = THREAD_LIMITS.rounds;
 // #6270: a turn that spent every round reading the code answered with a
 // stand-in word. It may look things up this many times, and its last round is
 // told so and can only answer or queue the change.
-const MAX_READS_PER_TURN = 4;
+const MAX_READS_PER_TURN = THREAD_LIMITS.readsPerTurn;
 const READ_TOOLS = Object.freeze([
   'list_source', 'read_source', 'request_detail', 'read_message', 'get_change', 'get_discussion', 'list_requests',
 ]);
@@ -107,11 +111,11 @@ const CONNECTOR_REASONS = Object.freeze(['connector', 'connector_loop', 'connect
 const CONNECTOR_NOTE = 'Homeroom bot doesn\'t answer this message; @ it in your own words to ask it.';
 // Homeroom bot parity (P1): the voice keeps the chat's old room per request (homeroom-bot-mayor.js
 // raised its own for private conversations), so a public reply stays short and quick.
-const VOICE_OUTPUT_TOKENS = 900;
-const VOICE_REQUEST_TIMEOUT_MS = 45_000;
-const MAX_REPLY_CHARS = 2000;
+const VOICE_OUTPUT_TOKENS = THREAD_LIMITS.outputTokens;
+const VOICE_REQUEST_TIMEOUT_MS = THREAD_LIMITS.requestTimeoutMs;
+const MAX_REPLY_CHARS = THREAD_LIMITS.replyChars;
 // A place that keeps the bot busy is a place something is wrong with.
-const MAX_TURNS_PER_PLACE_HOUR = 30;
+const MAX_TURNS_PER_PLACE_HOUR = THREAD_LIMITS.turnsPerHour;
 const MAX_FACTS_CHARS = 6000;
 // A change asked for and not yet made is tried this many times.
 const MAX_ASK_TRIES = 2;
@@ -140,6 +144,10 @@ const OFFER_WORDS = Object.freeze({
   try_again: { yes: 'Let it try again', no: 'Not now' },
   // #6311: the copy beside the move. The original stays open.
   copy_request: { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' },
+  // 5 Nov 2026: the move itself, under the note in the request's thread
+  // (its news no longer goes to their chat with the bot, where it was
+  // offered): filed on Homeroom's board, the original closed or voted on.
+  move_request: { yes: 'Move it to Homeroom', no: 'Keep it here' },
 });
 
 let sharedConfig = null;
@@ -459,80 +467,102 @@ async function changeRow(pool, sessionId) {
   return rows[0] || null;
 }
 
-/**
- * Whether the person who wrote `row` in `place` wrote to the bot: the
- * place's rule, as the header says. Resolves { speak, why }. `ctx` carries
- * what the caller has read already ({ bot, settings, speaker }).
- */
-async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }) {
-  const no = (why) => ({ speak: false, why });
-  if (!app || !place || !row || !bot) return no('unknown');
-  if (!voiceOn(settings, place)) return no('switched_off');
-  if ((settings.pausedApps || []).includes(app.slug)) return no('paused');
-  if (!speaker || speaker.isSynthetic || Number(speaker.id) === Number(bot.id)) return no('not_a_person');
-  if (row.msg_type !== 'message' || row.deleted_at) return no('not_a_message');
+// When the bot speaks on a project's thread (5 Nov 2026,
+// docs/plans/bot-one-model.md, step 5): each kind's rules, in its profile's
+// order (bot-profiles.js speaks), run here one by one. A rule decides ({
+// speak, why }) or passes (null); the first to decide does. The common
+// checks come first; who the message was to (`addressed`: a mention, a
+// reply to the bot's message, or one that followed its post) is read once
+// they pass, before the place's own rules. Nothing decided: not addressed.
+const no = (why) => ({ speak: false, why });
+const yes = (why) => ({ speak: true, why });
+const SPEAK_RULES = Object.freeze({
+  switched_on: (s) => (voiceOn(s.settings, s.place) ? null : no('switched_off')),
+  not_paused: (s) => ((s.settings.pausedApps || []).includes(s.app.slug) ? no('paused') : null),
+  a_person: (s) => (!s.speaker || s.speaker.isSynthetic || Number(s.speaker.id) === Number(s.bot.id) ? no('not_a_person') : null),
+  a_plain_message: (s) => (s.row.msg_type !== 'message' || s.row.deleted_at ? no('not_a_message') : null),
   // #6268: a person's agent posting for them is heard as the person is on a
   // request, a change and a reply thread; a channel keeps today's rule. The
   // loop guard decides before the place's own rules get to speak.
-  if (row.posted_via === 'agent' && !CONNECTOR_PLACES.includes(place.type)) return no('connector');
-  if (isRelay(row.content)) return no('relayed');
-  if (!dmModule(deps).hasBot(settings, speaker)) return no('not_let_in');
-  if (row.posted_via === 'agent') {
-    const looped = await connectorGuard(pool, {
-      appId: app.id, place, botId: bot.id, quote: row.metadata?.quote, beforeId: row.id, at: row.created_at,
+  connector_place: (s) => (s.row.posted_via === 'agent' && !CONNECTOR_PLACES.includes(s.place.type) ? no('connector') : null),
+  not_relayed: (s) => (isRelay(s.row.content) ? no('relayed') : null),
+  has_the_bot: (s) => (dmModule(s.deps).hasBot(s.settings, s.speaker) ? null : no('not_let_in')),
+  connector_loop: async (s) => {
+    if (s.row.posted_via !== 'agent') return null;
+    const looped = await connectorGuard(s.pool, {
+      appId: s.app.id, place: s.place, botId: s.bot.id, quote: s.row.metadata?.quote, beforeId: s.row.id, at: s.row.created_at,
     });
-    if (looped) return no(looped);
-  }
-  const mentioned = mentionsBot(row.content);
-  const replied = mentioned ? false : await quotesBot(pool, row, bot.id);
-  let addressed = mentioned ? 'mentioned' : replied ? 'replied' : null;
-  if (place.type === 'session' || place.type === 'issue') {
-    // Words a DM, a chat or a No vote passed on as a change to make are the
-    // follow-up's, which answers them when it has made it.
-    if (await queuedAsAsk(pool, row.id)) return no('queued_as_ask');
-  }
-  if (place.type === 'session') {
-    const change = await changeRow(pool, place.ref);
-    const own = change && Number(change.user_id) === Number(bot.id) && !change.is_headless
-      && change.status === 'promoted';
-    if (own) return { speak: true, why: addressed || 'own_change' };
-    return addressed ? { speak: true, why: addressed } : no('not_addressed');
-  }
-  if (place.type === 'issue') {
-    // A request whose change the bot built is up for a vote: what people say
-    // there is about that change, as on the change itself.
-    const open = await liveModule(deps).openBotProposal(pool, bot.id, app.id, place.ref).catch(() => null);
-    if (open?.status === 'promoted') return { speak: true, why: addressed || 'own_change' };
-    // #6311: the requester or a project admin writing straight after one of
-    // the bot's posts is answering it, with no @ and no Reply needed.
-    if (!addressed
-      && await followsBotPost(pool, { app, place, row, bot })
-      && await require('./homeroom-bot-move').asksForRequest(pool, { app, issueNumber: place.ref, user: speaker })) {
-      addressed = 'followed';
+    return looped ? no(looped) : null;
+  },
+  // Words a DM, a chat or a No vote passed on as a change to make are the
+  // follow-up's, which answers them when it has made it.
+  not_queued_as_ask: async (s) => ((await queuedAsAsk(s.pool, s.row.id)) ? no('queued_as_ask') : null),
+  // The bot's own change, up for a vote: what anybody says there is to it.
+  own_change: async (s) => {
+    const change = await changeRow(s.pool, s.place.ref);
+    const own = change && Number(change.user_id) === Number(s.bot.id) && !change.is_headless && change.status === 'promoted';
+    return own ? yes(s.addressed || 'own_change') : null;
+  },
+  // A request whose change the bot built is up for a vote: what people say
+  // there is about that change, as on the change itself.
+  own_change_up: async (s) => {
+    const open = await liveModule(s.deps).openBotProposal(s.pool, s.bot.id, s.app.id, s.place.ref).catch(() => null);
+    return open?.status === 'promoted' ? yes(s.addressed || 'own_change') : null;
+  },
+  // #6311: the requester or a project admin writing straight after one of
+  // the bot's posts is answering it, with no @ and no Reply needed.
+  followed_a_post: async (s) => {
+    if (!s.addressed
+      && await followsBotPost(s.pool, { app: s.app, place: s.place, row: s.row, bot: s.bot })
+      && await require('./homeroom-bot-move').asksForRequest(s.pool, { app: s.app, issueNumber: s.place.ref, user: s.speaker })) {
+      s.addressed = 'followed';
     }
-    if (!addressed) return no('not_addressed');
-    // Before that, the request is its build's to read: a message after the
-    // question the bot asked there is the answer, and the build reads it and
-    // says what it makes of it (homeroom-bot-addressed.js).
-    if (await answersQuestion(pool, { app, issueNumber: place.ref, bot, row })) return no('answers_question');
-    return { speak: true, why: addressed };
-  }
-  if (place.type === 'message') {
-    if (addressed) return { speak: true, why: addressed };
-    // The next message after the bot's own reply in a reply thread is to it.
-    const { rows } = await pool.query(
+    return null;
+  },
+  addressed_or_stop: (s) => (s.addressed ? null : no('not_addressed')),
+  // Before that, the request is its build's to read: a message after the
+  // question the bot asked there is the answer, and the build reads it and
+  // says what it makes of it (homeroom-bot-addressed.js).
+  not_an_answer: async (s) => ((await answersQuestion(s.pool, { app: s.app, issueNumber: s.place.ref, bot: s.bot, row: s.row }))
+    ? no('answers_question') : null),
+  speak_addressed: (s) => yes(s.addressed),
+  addressed: (s) => (s.addressed ? yes(s.addressed) : null),
+  // The next message after the bot's own reply in a reply thread is to it.
+  continued: async (s) => {
+    const { rows } = await s.pool.query(
       `SELECT m.user_id, m.created_at FROM chat_messages m
         WHERE m.app_id = $1 AND m.thread_type = 'message' AND m.thread_ref = $2 AND m.id < $3
           AND m.deleted_at IS NULL
         ORDER BY m.id DESC LIMIT 1`,
-      [app.id, place.ref, row.id],
+      [s.app.id, s.place.ref, s.row.id],
     );
     const before = rows[0];
     const recent = before && Date.now() - new Date(before.created_at).getTime() < CONTINUE_MINUTES * 60 * 1000;
-    if (before && Number(before.user_id) === Number(bot.id) && recent) return { speak: true, why: 'continued' };
-    return no('not_addressed');
+    return before && Number(before.user_id) === Number(s.bot.id) && recent ? yes('continued') : null;
+  },
+});
+
+/**
+ * Whether the person who wrote `row` in `place` wrote to the bot: the
+ * place's rules (its kind's profile, bot-profiles.js), as the header says.
+ * Resolves { speak, why }. `ctx` carries what the caller has read already
+ * ({ bot, settings, speaker }).
+ */
+async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }) {
+  if (!app || !place || !row || !bot) return no('unknown');
+  const kind = profiles.profileOfPlace(place);
+  if (!kind) return no('unknown');
+  const s = { pool, app, place, row, bot, settings, speaker, deps, addressed: undefined };
+  for (const name of kind.speaks) {
+    if (s.addressed === undefined && !profiles.THREAD_CHECKS.includes(name)) {
+      const mentioned = mentionsBot(row.content);
+      const replied = mentioned ? false : await quotesBot(pool, row, bot.id);
+      s.addressed = mentioned ? 'mentioned' : replied ? 'replied' : null;
+    }
+    const decided = await SPEAK_RULES[name](s);
+    if (decided) return decided;
   }
-  return addressed ? { speak: true, why: addressed } : no('not_addressed');
+  return no('not_addressed');
 }
 
 // ── Hearing ──────────────────────────────────────────────────────────────
@@ -855,9 +885,7 @@ async function replyOf(pool, { app, place, bot, turnKey }) {
   );
   if (!m) return null;
   const offerId = Number(m.metadata?.homeroomBot?.offer?.id);
-  if (offerId) {
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL', [offerId, m.id]);
-  }
+  if (offerId) await tieOffer(pool, offerId, m.id);
   return { id: Number(m.id), through: Number(m.metadata?.homeroomBot?.turn?.through) || null };
 }
 
@@ -1060,6 +1088,9 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
 
 // ── Tools ────────────────────────────────────────────────────────────────
 
+// The platform reads a project's thread offers (bot-tools/platform.js).
+const PLATFORM_READS = Object.freeze(['get_change', 'get_discussion', 'list_requests']);
+
 function fn(name, description, properties = {}, required = []) {
   return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } };
 }
@@ -1176,23 +1207,11 @@ function toolsFor(place, {
   tools.push(fn('read_message', 'Read one message of this thread in full, by its #id, when its line says it was cut.', {
     id: { type: 'integer' },
   }, ['id']));
-  tools.push(fn('list_source', 'Files in the project\'s code on main, by folder or name.', {
-    dir: { type: 'string' }, match: { type: 'string' },
-  }));
-  tools.push(fn('read_source', 'Read one file of the project\'s code on main.', {
-    path: { type: 'string' }, fromLine: { type: 'integer' },
-  }, ['path']));
-  if (platform) {
-    tools.push(fn('get_change', 'A change on this project: title, description (what people vote on), plan version, whether the description is out of date, status, checks with failing names, votes, preview.', {
-      changeId: { type: 'integer' },
-    }, ['changeId']));
-    tools.push(fn('get_discussion', 'Read a discussion on this project (threadType issue, session, or channel).', {
-      threadType: { type: 'string', enum: ['issue', 'session', 'channel', 'message'] }, ref: { type: 'integer' },
-    }, ['threadType']));
-    tools.push(fn('list_requests', 'This project\'s open requests, optionally matching a query.', {
-      query: { type: 'string' },
-    }));
-  }
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 2): the project's code
+  // and the platform's reads, each defined once (src/services/bot-tools/):
+  // the reads with the web connector's own schemas, about this project only.
+  tools.push(...botTools.toolsFor(['list_source', 'read_source'], 'thread'));
+  if (platform) tools.push(...botTools.toolsFor(PLATFORM_READS, 'thread'));
   return tools;
 }
 
@@ -1708,15 +1727,17 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         };
       }
       case 'list_source':
-        return await mayor.listSource(pool, { user, project: app.slug, dir: args.dir, match: args.match, deps });
       case 'read_source':
-        return await mayor.readSource(pool, { user, project: app.slug, path: args.path, fromLine: args.fromLine, deps });
+        return await botTools.run(name, args, { pool, user, scope: 'thread', app, deps: { ...deps, mayor } });
       case 'get_change':
       case 'get_discussion':
       case 'list_requests':
         if (!platform) return { error: 'That lookup is not available right now.' };
         {
-          const out = await scopedPlatformCall(pool, platform, app, name, args);
+          const out = await botTools.run(name, args, {
+            pool, user, scope: 'thread', app, deps,
+            platformCall: (tool, given) => scopedPlatformCall(pool, platform, app, tool, given),
+          });
           if (name === 'get_change' && !out?.error) ctx.readChanges.add(Number(args.changeId));
           return out;
         }
@@ -1887,7 +1908,7 @@ async function updateChange(pool, ctx, args) {
   if (!asked) return { ok: false, error: 'Could not queue it just now. Nothing was queued.' };
   ctx.revised = true;
   ctx.workBusy = true;
-  require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+  require('./bot-work-changed').noteWorkChanged(user.id, deps);
   return {
     ok: true,
     change: { change: Number(change.id), pr: change.pr_number || null, title: change.title || null },
@@ -2056,13 +2077,45 @@ function offerActions(kind, offerId) {
  * is posted (tieThreadOffer). Resolves { id, metadata } in the shape say()
  * builds, or null. Never throws.
  */
+// ── Offers, in one store (5 Nov 2026, docs/plans/bot-one-model.md, step 2) ──
+//
+// A thread's offers are Homeroom bot's cards (bot_cards, place 'thread',
+// their message in chat_message_id). Those said before stay in
+// homeroom_bot_voice_offers until they are answered or 14 days old. Every
+// card's id is above every older offer's (migration bot-cards), so an id
+// names one row: a thread card when bot_cards has it, else an older offer.
+// Read through OFFERS_SQL, in the older table's own words.
+const OFFERS_SQL = `(
+  SELECT id, app_id, chat_message_id AS message_id, kind, args, user_id AS for_user_id, status, result,
+         created_at, decided_at, decided_key, expires_at, 'cards' AS store
+    FROM bot_cards WHERE place = 'thread'
+  UNION ALL
+  SELECT id, app_id, message_id, kind, args, for_user_id, status, result,
+         created_at, decided_at, decided_key, created_at + INTERVAL '14 days' AS expires_at, 'voice' AS store
+    FROM homeroom_bot_voice_offers
+)`;
+const OFFER_TABLES = Object.freeze({ cards: 'bot_cards', voice: 'homeroom_bot_voice_offers' });
+
+/** A new offer in a project's thread, open, before its message: its id. */
+async function newOffer(db, { appId, kind, args = {}, forUserId = null }) {
+  const { rows: [row] } = await db.query(
+    `INSERT INTO bot_cards (place, app_id, kind, args, user_id) VALUES ('thread', $1, $2, $3, $4) RETURNING id`,
+    [Number(appId), String(kind), JSON.stringify(args || {}), forUserId || null],
+  );
+  return row ? Number(row.id) : null;
+}
+
+/** Name the message an offer was said on (a new card; or, after a restart, an older offer not yet tied). */
+async function tieOffer(db, offerId, messageId) {
+  await db.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = \'thread\' AND chat_message_id IS NULL',
+    [Number(offerId), Number(messageId)]);
+  await db.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
+    [Number(offerId), Number(messageId)]);
+}
+
 async function threadOffer(pool, { app, kind, forUserId, args = {} }) {
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [Number(app.id), String(kind), JSON.stringify(args || {}), forUserId || null],
-    );
-    const id = Number(rows[0]?.id);
+    const id = await newOffer(pool, { appId: app.id, kind, args, forUserId });
     if (!id) return null;
     return {
       id,
@@ -2079,14 +2132,13 @@ async function threadOffer(pool, { app, kind, forUserId, args = {} }) {
 
 /** #6311: tie a thread offer to the note's message, so decideOffer finds it. */
 async function tieThreadOffer(pool, offerId, messageId) {
-  await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
-    [Number(offerId), Number(messageId)])
+  await tieOffer(pool, offerId, messageId)
     .catch((err) => log.warn('homeroom-bot-voice', 'Could not tie an offer to its note', { offerId, messageId, err: err.message }));
 }
 
 /** #6311: the note could not be posted: its offer is dropped. */
 async function dropThreadOffer(pool, offerId) {
-  await pool.query('DELETE FROM homeroom_bot_voice_offers WHERE id = $1 AND message_id IS NULL', [Number(offerId)])
+  await pool.query('DELETE FROM bot_cards WHERE id = $1 AND place = \'thread\' AND chat_message_id IS NULL', [Number(offerId)])
     .catch((err) => log.warn('homeroom-bot-voice', 'Could not drop an offer for an unposted note', { offerId, err: err.message }));
 }
 
@@ -2112,11 +2164,8 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
   }
   let offerRow = null;
   if (offer) {
-    const { rows } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [app.id, offer.kind, JSON.stringify(offer.args || {}), offer.forUserId || null],
-    );
-    offerRow = rows[0];
+    const id = await newOffer(pool, { appId: app.id, kind: offer.kind, args: offer.args, forUserId: offer.forUserId });
+    offerRow = id ? { id } : null;
   }
   // A request's or a change's discussion may end in buttons to tap: only the
   // people it answered see them, and an offer keeps its own Yes/No instead.
@@ -2153,7 +2202,7 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
   if (offerRow) {
     // Without it the buttons decide nothing (decideOffer finds the offer by
     // its message): a failure here is the turn's, and retried.
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [offerRow.id, sent.id]);
+    await pool.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = \'thread\'', [offerRow.id, sent.id]);
   }
   // A newer word from the bot in this thread retires the suggested replies
   // on its older messages there, as a newer word in its chat does.
@@ -2195,9 +2244,15 @@ async function decideOffer(pool, config, { app, user: viewer, messageId, choice,
     return { ok: false, status: 400, error: 'Tick at least one project.' };
   }
   const { rows: [offer] } = await pool.query(
-    'SELECT id FROM homeroom_bot_voice_offers WHERE message_id = $1 AND app_id = $2', [Number(messageId), app.id],
+    `SELECT o.id, o.status, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
+      WHERE o.message_id = $1 AND o.app_id = $2 ORDER BY o.id DESC LIMIT 1`, [Number(messageId), app.id],
   );
   if (!offer) return { ok: false, status: 404, error: 'Nothing to decide here.' };
+  // 14 days and it is no longer an offer: its buttons go.
+  if (offer.expired && offer.status === 'open') {
+    await markOfferMessage(pool, { app, messageId: Number(messageId), status: 'expired', deps });
+    return { ok: false, status: 410, error: 'That offer has expired.' };
+  }
   return workflowModule(deps).tapVoiceOffer({
     appId: Number(app.id), offerId: Number(offer.id), messageId: Number(messageId), userId: Number(viewer.id), choice,
     ...(Array.isArray(rows) ? { rows } : {}),
@@ -2217,13 +2272,15 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
   const deps = { ...given, actKey: key };
   const { rows: [offer] } = await pool.query(
     `SELECT o.*, m.thread_type, m.thread_ref, m.id AS msg_id, a.slug AS app_slug
-       FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id JOIN apps a ON a.id = o.app_id
-      WHERE o.id = $1`,
+       FROM ${OFFERS_SQL} o JOIN chat_messages m ON m.id = o.message_id JOIN apps a ON a.id = o.app_id
+      WHERE o.id = $1
+      ORDER BY o.store LIMIT 1`,
     [Number(offerId)],
   );
   if (!offer) return { decision: 'gone' };
+  const table = OFFER_TABLES[offer.store] || OFFER_TABLES.voice;
   const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_voice_offers SET status = 'deciding', decided_key = $2
+    `UPDATE ${table} SET status = 'deciding', decided_key = $2
       WHERE id = $1 AND (status = 'open' OR (status = 'deciding' AND decided_key = $2)) RETURNING id`,
     [offer.id, String(key)],
   );
@@ -2250,7 +2307,7 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
   const messageId = Number(offer.msg_id);
   const settle = async (status, result, said) => {
     await pool.query(
-      `UPDATE homeroom_bot_voice_offers SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`,
+      `UPDATE ${table} SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`,
       [offer.id, status, JSON.stringify({ ...(result || {}), ...(said ? { said } : {}) })],
     );
     await markOfferMessage(pool, { app, messageId, status, deps });
@@ -2287,6 +2344,17 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
     });
     if (!proposed.ok) return settle('failed', { error: proposed.code }, 'I couldn\'t propose closing it just now.');
     return settle('done', { closeIssueId: proposed.id || null }, `Done: a vote on closing request ${requestMd(domainOf(deps), app.slug, args.issueNumber)} is open. It closes if the group votes for it.`);
+  }
+  if (offer.kind === 'move_request') {
+    const full = await mayor.findApp(pool, app.slug);
+    const move = require('./homeroom-bot-move');
+    const moved = await move.moveToHomeroom(pool, config, {
+      user, app: full, issueNumber: args.issueNumber, fileKey: `voice-offer:${offer.id}`, settings, deps,
+    });
+    if (!moved.ok) return settle('failed', { error: moved.code }, `I couldn't move it: ${moved.error}`);
+    return settle('done', { issueNumber: moved.issueNumber, original: moved.how },
+      `Moved to Homeroom's own board as request ${requestMd(domainOf(deps), moved.target.slug, moved.issueNumber)}, with a link to it left here. `
+        + move.closedWords({ how: moved.how, appName: moved.appName, reasons: moved.reasons, author: moved.mine }));
   }
   if (offer.kind === 'copy_request') {
     const full = await mayor.findApp(pool, app.slug);
@@ -2739,7 +2807,7 @@ async function voiceSummary(pool) {
       ),
       pool.query(
         `SELECT kind, status, COUNT(*)::int AS n
-           FROM homeroom_bot_voice_offers
+           FROM ${OFFERS_SQL} o
           WHERE created_at >= date_trunc('week', NOW())
           GROUP BY kind, status`,
       ),
@@ -2808,6 +2876,7 @@ module.exports = {
   MAX_ASK_TRIES,
   MAX_ROUNDS,
   MAX_READS_PER_TURN,
+  SPEAK_RULES,
   isStandIn,
   OFFER_WORDS,
   SORRY_TEXT,

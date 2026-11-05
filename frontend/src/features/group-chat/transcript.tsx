@@ -69,7 +69,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
-import { BotRequestCardView, BotStatusChip } from './bot-request';
+import { BotRequestCardView } from './bot-request';
 import { ImageViewer, openInViewer, useInlineImageViewer } from '../image-viewer/image-viewer';
 import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
@@ -418,20 +418,12 @@ export function Attachments({ items }: { items: Attachment[] }) {
  * the border width), so the affordance had quietly gone missing.
  */
 export function Reactions({ msg }: { msg: TranscriptMessage }) {
-  if (!msg.reactions.length && !msg.botRequest) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request asked of
+  // Homeroom bot here wears no status chip for the room any more; where it
+  // stands is on its own page.
+  if (!msg.reactions.length) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
   return (
     <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`}>
-      {/* B9: a request asked of Homeroom bot here, first and in its own colour (./bot-request.tsx). */}
-      {msg.botRequest ? (
-        <BotStatusChip
-          chip={msg.botRequest}
-          mine={msg.mine}
-          onTry={(sessionId) => controller()?.tryBotChange?.(sessionId)}
-          onProgress={() => (msg.botRequest?.status === 'fixing' && msg.botRequest.sessionId
-            ? controller()?.openBotChange?.(msg.botRequest.sessionId)
-            : controller()?.openBotChat?.(msg.botRequest?.issueNumber || null))}
-        />
-      ) : null}
       {msg.reactions.map((r) => (
         <ReactionPill
           key={r.emoji}

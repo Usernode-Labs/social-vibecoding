@@ -53,7 +53,7 @@ test('#6228: a status is broadcast to the project and the bot page re-reads for 
   };
   const deps = {
     ws: { broadcast: (appId, data) => frames.push([appId, data]) },
-    tray: { noteWorkChanged: (userId) => changed.push(userId) },
+    workChanged: { noteWorkChanged: (userId) => changed.push(userId) },
     dm: { requesterOf: async () => ({ userId: 7 }) },
   };
   const out = await replyStatus.publish(pool, { appId: 1, issueNumber: 2, deps });

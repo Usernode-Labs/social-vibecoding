@@ -8,8 +8,10 @@
 // that post is updated with how many tries it has been and nobody is told.
 //
 // Against the full schema, through live.post itself: the rows it writes, the
-// message it broadcasts and the two cases that must still post (a first
-// failure, and a failure that says something different).
+// message it broadcasts and the case that must still post (a first failure).
+// 5 Nov 2026 (docs/plans/bot-one-model.md, decision 6): a failure that says
+// something different takes the same post's place too (replaceFailurePost):
+// the request's thread holds one failure post.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-failure-repeat-postgres.test.js
 
@@ -113,9 +115,19 @@ test('a repeated build failure updates its one post instead of saying it again',
   assert.equal(afterThree[0].content,
     'I couldn\'t finish writing the plan for this. I\'m trying again. (Tried 3 times.)');
 
-  // A failure that says something different is news, and is posted.
+  // A failure that says something different is news: on GitHub a comment of
+  // its own, and in the thread the same post, saying it now.
+  broadcasts.length = 0;
   const third = await say(TIME);
   assert.equal(third.thread, true);
-  assert.equal((await posts()).length, 2);
-  assert.equal((await messages()).length, 2);
+  assert.equal(comments, 2, 'its own GitHub comment');
+  const rows = await posts();
+  assert.equal(rows.length, 2, 'recorded as its own post');
+  const afterOther = await messages();
+  assert.equal(afterOther.length, 1, 'still one failure message in the thread');
+  assert.equal(Number(rows[1].thread_message_id), afterOther[0].id, 'the new post is that message');
+  assert.match(afterOther[0].content, /^I couldn't finish building this: the build took longer than I'm allowed\./);
+  assert.equal(afterOther[0].metadata.hrbotPost, String(rows[1].id), 'marked as the new post, for a retry to find');
+  assert.deepEqual(broadcasts.map((b) => b.frame.type), ['chat_edit', 'chat_message_updated'],
+    'everybody reading hears the new words and its metadata');
 });

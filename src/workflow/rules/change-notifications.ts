@@ -272,6 +272,16 @@ export async function settleDecidedChange(pool: Queryable, sessionId: unknown, {
     [id]
   )).rows);
 
+  // 5 Nov 2026: a "ready to try" the request's stage rang (work-state.js
+  // bellPushes) carries its change already, and no message: read, so a merge
+  // hides it and a close words it Closed, as the message-rung one above.
+  note((await pool.query(
+    `UPDATE notifications SET read_at = NOW()
+      WHERE session_id = $1 AND kind = 'build_ready' AND conversation_message_id IS NULL AND read_at IS NULL
+      RETURNING user_id`,
+    [id]
+  )).rows);
+
   for (const userId of await settleVoteDigests(pool, { appId: session.app_id, since: session.asked_from, decided: id })) {
     touched.add(userId);
   }

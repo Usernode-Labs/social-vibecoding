@@ -4,12 +4,14 @@
 //
 // "@Homeroom bot could it remind us on Sundays?" in a project's chat files a
 // request in its writer's words (after a quick read says it asks for a
-// change), and the bot writes nothing into the chat: everybody sees the
-// message's status chip, and its writer alone a card under it. A question is
-// pointed at the bot's own chat; an unclear one asks first. "Make this a
-// request" does the same without the read. Only a person's own message, in
-// the main stream, and never a connector's. Names starting with "homeroom"
-// are taken, and nobody gets a notification for mentioning the bot.
+// change), and the bot writes nothing into the chat: its writer alone gets a
+// card under it, which says where the request stands from its stored work
+// state (services/work-state.js). The room's status chip on the message is
+// gone (5 Nov 2026). A question is pointed at the bot's own chat; an unclear
+// one asks first. "Make this a request" does the same without the read. Only
+// a person's own message, in the main stream, and never a connector's. Names
+// starting with "homeroom" are taken, and nobody gets a notification for
+// mentioning the bot.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-chat.test.js
 
@@ -78,21 +80,14 @@ test('B9: a failed read never rejects', async () => {
   assert.equal(out, null);
 });
 
-test('B9: the chip and the card', () => {
-  const { BotStatusChip, BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
-  const chip = (status, extra = {}) => renderToHtml(createElement(BotStatusChip, { chip: { status, issueNumber: 4, sessionId: null, ...extra } }));
-  // 5 October 2026: each chip says in words who has the message and what it
-  // is doing, so the room can tell the bot took it (it said "👀 Reading").
-  assert.match(chip('reading'), /data-bot-request="reading"[^>]*aria-label="Homeroom bot is looking at this"[^>]*>.*👀.*Homeroom bot is looking at this/);
-  assert.match(chip('building'), /aria-label="Homeroom bot is building this"[^>]*>.*🔨.*Homeroom bot is building this/);
-  assert.match(chip('fixing', { sessionId: 9 }), /aria-label="Homeroom bot is fixing this"[^>]*>.*🔧.*Homeroom bot is fixing this/);
-  assert.match(chip('live'), /aria-label="Homeroom bot built this, and it’s live"[^>]*>.*✅.*Live</);
-  assert.match(chip('ready', { sessionId: 9 }), /<button[^>]*data-bot-request="ready"[^>]*>.*▶.*Try it/);
-  for (const status of ['reading', 'building', 'fixing', 'live']) {
-    assert.doesNotMatch(chip(status), />(Reading|Building|Fixing)</, `${status}: no bare one-word chip`);
-  }
-  assert.ok(!/<button/.test(chip('reading')), 'nobody but its asker taps the chip');
-  assert.match(renderToHtml(createElement(BotStatusChip, { chip: { status: 'building', issueNumber: 4, sessionId: null }, mine: true })), /<button/);
+test('B9: the card, and no chip for the room', () => {
+  const request = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { BotRequestCardView, cardWords } = request;
+  // The room's status chip is gone (5 Nov 2026): where a request stands is on its own page.
+  for (const gone of ['BotStatusChip', 'CHIP_WORDS', 'chipLabel']) assert.equal(request[gone], undefined, `${gone} is gone`);
+  assert.equal(typeof request.BOT_CHIP_CLASS, 'string', 'the bot\'s periwinkle pill stays, for the composer');
+  const reactions = read('frontend/src/features/group-chat/transcript.tsx');
+  assert.doesNotMatch(reactions, /BotStatusChip|msg\.botRequest/, 'the reactions row draws no chip');
   assert.equal(cardWords({ kind: 'filed', title: 'Add a Sunday reminder', typicalMinutes: 8 }), 'Got it: Add a Sunday reminder. Usually about 8 minutes.');
   assert.equal(cardWords({ kind: 'group', title: 'Add tags' }), 'Filed as a request for the group: Add tags.');
   assert.equal(cardWords({ kind: 'question' }), 'I answer questions in our chat.');
@@ -184,8 +179,12 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     [app.id, who.id, content, extra.thread ? 'issue' : null, extra.thread || null, extra.postedVia || null],
   )).rows[0].id;
   const metaOf = async (id) => (await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [id])).rows[0].metadata;
+  // The platform's triggers mark a request whose records changed, and its
+  // clock derives it again; here that is done by hand before a read.
+  const workState = require('../src/services/work-state');
+  const rederive = (issueNumber) => workState.refresh(pool, [{ appId: app.id, issueNumber }]);
 
-  await t.test('a change is filed in his words, the room sees its chip, and only he gets the card', async () => {
+  await t.test('a change is filed in his words, and only he gets the card, which follows its work state', async () => {
     const id = await say(ben, '@Homeroom bot could it remind us on Sundays to pick who hosts?');
     const out = await botChat.noteChatMessage(pool, null, {
       appId: app.id, userId: ben.id, messageId: id, content: '@Homeroom bot could it remind us on Sundays to pick who hosts?',
@@ -199,23 +198,34 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     assert.deepEqual([req.kind, req.issue_number, req.requester_id], ['filed', 41, ben.id]);
     const { rows: [asked] } = await pool.query('SELECT user_id, asked_text FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 41', [app.id]);
     assert.deepEqual(asked, { user_id: ben.id, asked_text: 'could it remind us on Sundays to pick who hosts?' });
-    assert.deepEqual((await metaOf(id)).botRequest, { issueNumber: 41, status: 'reading' });
-    assert.deepEqual(frames.at(-1), { type: 'bot_request_status', messageId: id, botRequest: { issueNumber: 41, status: 'reading' } });
     const card = pushed.at(-1);
     assert.equal(card.userId, ben.id, 'his alone');
     assert.deepEqual([card.frame.type, card.frame.card.kind, card.frame.card.title], ['bot_request_card', 'filed', 'Add a Sunday host reminder']);
+    assert.equal(card.frame.card.state.stage, 'reading', 'filed, waiting to be read');
     const { rows: room } = await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1 AND thread_type IS NULL', [app.id]);
     assert.equal(room[0].n, 1, 'the bot wrote nothing into the room');
+    // The room's status chip is gone (5 Nov 2026): nothing is written on the message or sent to the room.
+    assert.equal((await metaOf(id)).botRequest, undefined, 'no chip on the message');
+    assert.equal(frames.filter((f) => f.type === 'bot_request_status').length, 0, 'no chip frame for the room');
     // Asked again (a retry, an edit): nothing more is filed.
     await botChat.noteChatMessage(pool, null, { appId: app.id, userId: ben.id, messageId: id, content: '@homeroom_bot again', deps: deps({ kind: 'change', title: 'x' }) });
     assert.equal(created.length, 1);
-    // Its moments move the chip; stopping takes it away.
-    await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: 41, status: 'building', deps: deps(null) });
-    assert.equal((await metaOf(id)).botRequest.status, 'building');
-    await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: 41, status: 'ready', sessionId: 9, deps: deps(null) });
-    assert.deepEqual((await metaOf(id)).botRequest, { issueNumber: 41, status: 'ready', sessionId: 9 });
-    await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: 41, status: 'stopped', deps: deps(null) });
-    assert.equal((await metaOf(id)).botRequest, undefined);
+    // Its moments push his card again, as its work state reads then.
+    const cardOf = () => pushed.filter((p) => p.frame.type === 'bot_request_card' && p.frame.card.messageId === id).at(-1);
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 41, 'live', 'ready') RETURNING id`, [app.id]);
+    await rederive(41);
+    pushed.length = 0;
+    await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: 41, deps: deps(null) });
+    assert.deepEqual([cardOf().userId, cardOf().frame.card.state.stage], [ben.id, 'building'], 'read to build: building');
+    await pool.query(`UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = 'the build did not finish' WHERE id = $1`, [run.id]);
+    await rederive(41);
+    pushed.length = 0;
+    await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: 41, deps: deps(null) });
+    assert.equal(cardOf().frame.card.state.stage, 'stopped', 'the build stopped: so does its card');
+    assert.equal(pushed.filter((p) => p.userId !== ben.id).length, 0, 'nobody else is pushed anything');
+    assert.equal((await metaOf(id)).botRequest, undefined, 'and still nothing on the message');
+    assert.equal(frames.filter((f) => f.type === 'bot_request_status').length, 0);
     // His cards come back after a reload; Ada sees none of them.
     const mine = await botChat.myRequests(pool, { app, user: { id: ben.id, username: 'ben', hasPlatformAccess: true } });
     assert.deepEqual([mine.bot, mine.builds, mine.cards.length, mine.cards[0].messageId], [true, true, 1, id]);
@@ -283,8 +293,9 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
 });
 
 // B9's staging fixture: a preview has no live bot, so one demo message in the
-// platform's own chat wears the chip, for the shots and the declared check.
-test('B9: the staging demo seeds one chat request wearing its Building chip, once, and only on staging', { timeout: 180000 }, async (t) => {
+// platform's own chat asked Homeroom bot for a change, for the shots and the
+// declared check, which now asserts the room sees no chip on it.
+test('B9: the staging demo seeds one chat request, once, and only on staging; its check sees no chip', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -327,13 +338,13 @@ test('B9: the staging demo seeds one chat request wearing its Building chip, onc
   assert.equal(rows[0].thread_type, null, 'in the main stream');
   assert.equal(rows[0].username, 'staging-demo-asker', 'a demo account, never the viewer');
   assert.match(rows[0].content, /^Staging demo: @Homeroom bot /);
-  assert.deepEqual(rows[0].metadata, { botRequest: { status: 'building' } });
+  // The room's status chip is gone (5 Nov 2026): whatever chip the seeded metadata names is drawn nowhere.
 
   // Folded into #2905's check on the same route rather than taking a slot.
-  const check = JSON.parse(read('dapp.json')).tests.find((c) => /B9: a message that asked Homeroom bot/.test(c.name));
-  assert.ok(check, 'a declared check reads the chip');
+  const check = JSON.parse(read('dapp.json')).tests.find((c) => /a message that asked Homeroom bot wears no status chip/.test(c.name));
+  assert.ok(check, 'a declared check reads the message');
   assert.equal(check.path, '/?demo=1#messages/app/usernode-2d5619');
-  assert.match(check.expectSelector, /#gc-messages:has\(\.gc-msg\):has\(\[data-bot-request=building\]\)/);
+  assert.match(check.expectSelector, /#gc-messages:has\(\.gc-msg\):not\(:has\(\[data-bot-request\]\)\)/, 'a message, and no chip on any');
   assert.ok(check.expectSelector.length <= 256, 'within the capture runner\'s selector cap');
-  assert.equal(check.expectText, 'Homeroom bot is building this');
+  assert.equal(check.expectText, undefined, 'no chip words to read');
 });

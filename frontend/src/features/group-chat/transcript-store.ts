@@ -123,18 +123,6 @@ export interface Quote {
 export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github';
 
 /**
- * B9: a request's chip on its message (homeroom-bot-chat.js setStatus).
- * `fixing`: a fix asked for on one of the bot's changes still waiting for
- * approval, until that change is ready again. `waiting_first_version`: a
- * request held until the project's first version is live.
- */
-export interface BotRequestChip {
-  status: 'reading' | 'building' | 'ready' | 'live' | 'fixing' | 'waiting_first_version';
-  issueNumber: number | null;
-  sessionId: number | null;
-}
-
-/**
  * 10 October: what Homeroom bot offered to do in its reply in a thread
  * (homeroom-bot-voice.js): file a request, withdraw one of its changes, or
  * open a vote on closing a request. Nothing happens until the person it was
@@ -428,12 +416,6 @@ export interface TranscriptMessage {
    * snapshot, when the card shows the change's name and its doors alone.
    */
   vote?: VoteView | null;
-  /**
-   * B9: how a request asked of Homeroom bot on this message is going, which
-   * everybody in the room sees (metadata the server alone sets): reading,
-   * building, ready (with its change to try), live. Null for none.
-   */
-  botRequest?: BotRequestChip | null;
   /** B9: the card under the viewer's own message about it, theirs alone. */
   botCard?: BotRequestCard | null;
   /** B9: "Make this a request" is offered on this message (theirs, and the bot answers them here). */

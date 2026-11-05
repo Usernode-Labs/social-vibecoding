@@ -102,7 +102,7 @@ test('#6305: File on all files one request per ticked row', { timeout: 180000 },
   assert.deepEqual(out.rows.slice(0, 2).map((r) => r.issueNumber), [101, 102]);
   // One record per filed request, each done with its number.
   const actions = await pool.query(
-    `SELECT app_id, status, issue_number FROM homeroom_bot_dm_actions WHERE user_id = $1 ORDER BY id`, [user.id],
+    `SELECT app_id, status, issue_number FROM bot_cards WHERE user_id = $1 ORDER BY id`, [user.id],
   );
   assert.equal(actions.rows.length, 2);
   for (const row of actions.rows) {

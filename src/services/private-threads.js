@@ -599,7 +599,7 @@ async function aboutContext(pool, { user, draft, deps = {} }) {
 // (homeroom-bot-tray).
 
 function workChanged(userId, deps = {}) {
-  try { require('./homeroom-bot-tray').noteWorkChanged(userId, deps); } catch { /* the page reads again on its own */ }
+  try { require('./bot-work-changed').noteWorkChanged(userId, deps); } catch { /* the page reads again on its own */ }
 }
 
 /**

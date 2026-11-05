@@ -114,7 +114,7 @@ test('#6305: several projects make one card, one row each, in the named order', 
   assert.deepEqual(c.card.rows[1].choices.map((ch) => ch.slug), ['block-game']);
   assert.equal(c.card.rows[2].match, 'exact');
   // Nothing is filed by the offer: no request, no action row.
-  assert.equal(pool.writes.filter((w) => /homeroom_bot_dm_actions|INTO issues/.test(w.sql)).length, 0);
+  assert.equal(pool.writes.filter((w) => /bot_cards|INTO issues/.test(w.sql)).length, 0);
 });
 
 test('#6305: a row for an app that already does it says so and starts unticked', async () => {
@@ -128,13 +128,15 @@ test('#6305: a row for an app that already does it says so and starts unticked',
   assert.equal(c.card.rows.find((r) => r.slug === 'viatales').ticked, true);
 });
 
-test('#6305: a second offer in the turn is refused', async () => {
+// 5 Nov 2026 (docs/plans/bot-one-model.md, decision 2): up to three offers
+// under one reply; the same one twice is one card.
+test('#6305: the same offer twice in the turn is refused', async () => {
   const pool = fakePool();
   const c = ctx();
   await mayor.runTool(pool, c, 'offer_request', ARGS);
   const again = await mayor.runTool(pool, c, 'offer_request', ARGS);
   assert.equal(again.ok, false);
-  assert.match(again.error, /One offer per turn/);
+  assert.equal(again.error, 'That is already under this reply for them to decide.');
 });
 
 test('#6305: an unanswered look leaves its row ticked with no sentence', async () => {

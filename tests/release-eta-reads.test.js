@@ -137,38 +137,43 @@ test('the bot DM\'s activity cards: one going live says when', async () => {
   assert.deepEqual(p.asked(), [[50, 60]], 'the SQL, not the caller, tells a child app\'s apart');
 });
 
-test('the bot\'s tray: a History entry going live says when', async () => {
-  const tray = require('../src/services/homeroom-bot-tray');
-  const at = new Date(NOW - 20 * MIN);
-  const run = (id, proposal_session_id, slug) => ({
-    id, issue_number: id, verdict: 'ready', build_ok: true, build_error: null, cap_suppressed: false,
-    proposal_session_id, proposal_pr_number: null, created_at: at, awaiting_go_at: null, request_closed: false, plan_only: false,
-    proposal_status: 'merging', proposal_at: at, merged_at: null, slug, name: slug, issue_title: 'Say when', first_version: false,
+test('a request\'s track going live says when, for a merge of Homeroom itself', async () => {
+  const track = require('../src/services/homeroom-bot-track');
+  const going = (sessionId) => ({ ...track.trackOf({
+    job: { key: `x#${sessionId}`, appSlug: 'usernode-2d5619', appName: 'Homeroom', issueNumber: sessionId, proposalId: sessionId },
+    work: { stage: 'going_live', line: null, whoseMove: null, since: new Date(NOW - 20 * MIN).toISOString() },
+  }) });
+  // The reader adds it as the change's own pill reads it (release-watch.js releasesFor).
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-track.js'), 'utf8');
+  assert.match(src, /const going = \[\.\.\.out\.values\(\)\]\.filter\(\(t\) => t\.work\.stage === 'going_live' && t\.proposalId\);/);
+  assert.match(src, /\.releasesFor\(pool, going\.map\(\(t\) => t\.proposalId\)\)/);
+  // And a track carries it through as given.
+  const withRelease = track.trackOf({
+    job: { key: 'x#1', appSlug: 'usernode-2d5619', appName: 'Homeroom', issueNumber: 1, proposalId: 50, release: EXPECTED() },
+    work: { stage: 'going_live', line: null, whoseMove: null, since: null },
   });
-  const p = pool((sql) => {
-    if (/FROM homeroom_bot_requesters q/.test(sql)) return [run(12, 50, 'usernode-2d5619'), run(13, 60, 'notes')];
-    if (/FROM apps WHERE slug = ANY/.test(sql)) return [APP(), APP({ id: 4, slug: 'notes', self_hosted: false })];
-    return undefined;
-  });
-  const work = await tray.workFor(p, { user: { id: 4 }, settings: { mode: 'off' } });
-  const byApp = new Map(work.history.map((job) => [job.appSlug, job]));
-  assert.equal(byApp.get('usernode-2d5619').outcome, 'going_live');
-  assert.deepEqual(byApp.get('usernode-2d5619').release, EXPECTED());
-  assert.equal(byApp.get('notes').release, undefined);
+  assert.deepEqual(withRelease.release, EXPECTED());
+  assert.equal(going(51).release, undefined, 'none unless the reader found one');
 });
 
 test('a project\'s chat: the requester\'s card, approved and merged into Homeroom, says when', async () => {
   const chat = require('../src/services/homeroom-bot-chat');
   const state = (chat_message_id, session_id, session_status) => ({
-    chat_message_id, kind: 'filed', issue_number: chat_message_id, app_id: 3, chip: null, queued: false, queue_waiting: false,
+    chat_message_id, kind: 'filed', issue_number: chat_message_id, app_id: 3, queued: false, queue_waiting: false,
     queue_reason: null, first_version: false, issue_status: 'open', run_id: 7, verdict: 'ready', build_ok: true, build_error: null,
     cap_suppressed: false, proposal_session_id: session_id, build_waiting_at: null, build_status: null,
-    session_id, session_status, check_state: 'passing',
+    session_id, session_status, check_state: 'passing', session_live_at: null,
   });
   const p = pool((sql) => (/FROM chat_bot_requests r/.test(sql)
     ? [state(5, 50, 'merged'), state(6, 70, 'merging'), state(8, 80, 'promoted')] : undefined));
   const rows = [5, 6, 8].map((id) => ({ chat_message_id: id, kind: 'filed', issue_number: id, title: 'Dark mode', session_id: null, app_id: 3 }));
-  const deps = { dm: { botAccount: async () => ({ id: 99 }), typicalMinutes: async () => null, approvalState: async () => null } };
+  // A filed request's card reads its stored work state: the two merges are
+  // going live, and the third is up for a vote.
+  const works = new Map([[5, { stage: 'going_live' }], [6, { stage: 'going_live' }], [8, { stage: 'up_for_vote' }]]);
+  const deps = {
+    dm: { botAccount: async () => ({ id: 99 }), typicalMinutes: async () => null, approvalState: async () => null },
+    workState: { ensure: async () => {}, forRequests: async () => works },
+  };
   const cards = await chat.cardsOf(p, { appId: 3, user: { id: 4 }, rows, deps });
   assert.deepEqual(cards.map((c) => [c.messageId, c.state && c.state.stage, (c.state && c.state.release) || null]), [
     [5, 'approved', EXPECTED()],

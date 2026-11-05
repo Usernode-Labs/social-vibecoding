@@ -501,7 +501,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // change's own cards say where it stands, so the steps and the bot's track
   // give way to them; a closed request still says how it ended.
   const working = layout.changes.length > 0 || !!layout.close;
-  const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.state : null, (id) => translate(id));
+  const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.work.stage : null, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one
@@ -583,7 +583,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             // of having to open the chat to find out. Drawn from the board's
             // older row it holds its place unseen (`trackPending`, app.css),
             // and says where the work is once the fresh row lands.
-            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.state} inert={!!r.trackPending}>
+            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.work.stage} inert={!!r.trackPending}>
               <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
             </div>
           ) : null}
