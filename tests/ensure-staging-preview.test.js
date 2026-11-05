@@ -732,3 +732,176 @@ test('the preview bar says Back, not Back to session, and its title is not set i
   // Nothing hands the bar a raw address any more.
   assert.doesNotMatch(SRC, /setUrlLabel\((?:resolved|'https?:)/);
 });
+
+// ── #6077: a preview stuck loading offers the retry, not "close and reopen" ──
+//
+// The trap these pin: swapToStaging takes a load id of its own, so
+// ensureStaging's `retry` closure no-ops by the time the iframe is loading. A
+// button wired to it would be drawn and do nothing, which is why the loading
+// states get `opts.reopen`, guarded by the swap's own id, and why these press
+// the button and count the requests rather than only look at it.
+
+const SLOW_REBUILD_MS = 180000;
+
+// Holds the two give-up timers for the test to fire by hand, however late.
+function holdGiveUpTimers(sandbox) {
+  const real = sandbox.setTimeout;
+  const held = { rebuild: [], iframe: [] };
+  sandbox.setTimeout = (fn, ms) => {
+    if (ms === SLOW_REBUILD_MS) { held.rebuild.push(fn); return 0; }
+    if (ms === sandbox.__AppView.STAGING_IFRAME_LOAD_TIMEOUT_MS) { held.iframe.push(fn); return 0; }
+    return real(fn, ms);
+  };
+  return held;
+}
+
+function assertOffersRetry(dom, id) {
+  assert.equal(dom.els['staging-loader-title'].textContent, message('changes:frame.loader.slow'));
+  assert.equal(dom.els['staging-loader-sub'].textContent, message(id));
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, 'the button is up');
+  assert.equal(dom.els['staging-retry-btn'].textContent, message('changes:frame.loader.retryPreview'));
+}
+
+function assertOffersNoRetry(dom, id) {
+  assert.equal(dom.els['staging-loader-sub'].textContent, message(id));
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'no button');
+}
+
+test('#6077 where the button is up the copy has stopped saying close and reopen; without one it still does', () => {
+  for (const id of ['slowRebuild', 'slowLoadFailed', 'slowStillLoading']) {
+    assert.match(message(`changes:frame.loader.${id}`), /Close this and click Preview again/, id);
+    assert.doesNotMatch(message(`changes:frame.loader.${id}Retry`), /Close|click Preview/i, `${id}Retry`);
+  }
+});
+
+test('#6077 a rebuild past its give-up time offers a retry that asks about the same session again', async () => {
+  const bodies = [{ status: 'rebuilding' }, { status: 'rebuilding' }];
+  const endpoints = [];
+  const { AppView, dom, sandbox } = makeAppView(async (url) => {
+    endpoints.push(url);
+    return { ok: true, json: async () => bodies.shift() };
+  });
+  const held = holdGiveUpTimers(sandbox);
+  await AppView.ensureStaging(7, 'https://stale.example', null, {});
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'no retry before it is stuck');
+
+  held.rebuild[0]();
+  assertOffersRetry(dom, 'changes:frame.loader.slowRebuildRetry');
+  assert.ok(AppView._pendingStagingPreview, 'a rebuild that finishes after this still opens by itself');
+
+  await AppView._staging()._handlers.onRetry();
+  assert.deepEqual(endpoints, ['/api/sessions/7/ensure-staging', '/api/sessions/7/ensure-staging']);
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'the wait starts over');
+  assert.equal(dom.els['staging-loader-title'].textContent, message('changes:frame.loader.rebuilding'));
+
+  // The first wait's timer goes off late: it speaks for an older load.
+  held.rebuild[0]();
+  assert.equal(dom.els['staging-loader-title'].textContent, message('changes:frame.loader.rebuilding'));
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'a stale timer offers nothing');
+  assert.equal(held.rebuild.length, 2);
+  held.rebuild[1]();
+  assertOffersRetry(dom, 'changes:frame.loader.slowRebuildRetry');
+});
+
+test('#6077 the rebuild that lands after the give-up copy still opens, and the button goes with the copy', async () => {
+  let requests = 0;
+  const { AppView, dom, swaps, sandbox } = makeAppView(async () => ({
+    ok: true,
+    json: async () => (++requests === 1
+      ? { status: 'rebuilding' }
+      : { status: 'ready', url: 'https://rebuilt.example', verified: true }),
+  }));
+  const held = holdGiveUpTimers(sandbox);
+  await AppView.ensureStaging(7, 'https://stale.example', null, {});
+  held.rebuild[0]();
+  await AppView.onStagingRebuildResult(7, { url: 'https://rebuilt.example' });
+  assert.equal(swaps.length, 1);
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true);
+});
+
+test('#6077 a read-only viewer stuck on a waking preview keeps the old advice and gets no button', async () => {
+  const { AppView, dom, sandbox } = makeAppView(okJson({ status: 'rebuilding', waking: true }));
+  const held = holdGiveUpTimers(sandbox);
+  await AppView.ensureStaging(7, '', null, { readOnly: true });
+  held.rebuild[0]();
+  assertOffersNoRetry(dom, 'changes:frame.loader.slowRebuild');
+});
+
+test('#6077 a page that fails or hangs offers a retry that really re-runs the same open', async () => {
+  for (const stuck of ['error', 'timeout']) {
+    const endpoints = [];
+    const { AppView, dom, sandbox } = makeAppView(async (url) => {
+      endpoints.push(url);
+      return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+    }, { stubSwap: false });
+    const held = holdGiveUpTimers(sandbox);
+    await AppView.ensureStaging(7, 'https://fallback.example', { md: 'do x', path: '/x' }, { jump: true });
+    const firstLoad = AppView._stagingLoadId;
+    if (stuck === 'error') dom.els['staging-iframe'].onerror();
+    else held.iframe[0]();
+    assertOffersRetry(dom, stuck === 'error'
+      ? 'changes:frame.loader.slowLoadFailedRetry'
+      : 'changes:frame.loader.slowStillLoadingRetry');
+
+    await AppView._staging()._handlers.onRetry();
+    assert.deepEqual(endpoints, ['/api/sessions/7/ensure-staging', '/api/sessions/7/ensure-staging'], stuck);
+    assert.ok(AppView._stagingLoadId > firstLoad, `${stuck}: a new load`);
+    assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, `${stuck}: the button goes`);
+    assert.match(dom.els['staging-iframe'].src, /^https:\/\/live\.example\/.*x/, `${stuck}: the same deep link`);
+  }
+});
+
+test('#6077 a stale iframe timer offers nothing, and a press from an older load does nothing', async () => {
+  let requests = 0;
+  const { AppView, dom, sandbox } = makeAppView(async () => {
+    requests++;
+    return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+  }, { stubSwap: false });
+  const held = holdGiveUpTimers(sandbox);
+  await AppView.ensureStaging(7, null, null, {});
+  held.iframe[0]();
+  const olderPress = AppView._staging()._handlers.onRetry;
+
+  await olderPress();
+  assert.equal(requests, 2);
+  const title = dom.els['staging-loader-title'].textContent;
+  held.iframe[0]();
+  assert.equal(dom.els['staging-loader-title'].textContent, title, 'the older load speaks no more');
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true);
+
+  await olderPress();
+  assert.equal(requests, 2, 'pressing the older load\'s button asks nothing');
+
+  // Backing out is the other way a load goes old.
+  held.iframe[1]();
+  const closed = AppView._staging()._handlers.onRetry;
+  AppView._stagingLoadId++;
+  await closed();
+  assert.equal(requests, 2);
+});
+
+test('#6077 a page that finishes loading after the give-up copy takes the button down', async () => {
+  const { AppView, dom, sandbox } = makeAppView(
+    okJson({ status: 'ready', url: 'https://live.example', verified: true }), { stubSwap: false });
+  const held = holdGiveUpTimers(sandbox);
+  await AppView.ensureStaging(7, null, null, {});
+  held.iframe[0]();
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false);
+  dom.els['staging-iframe'].onload();
+  assert.equal(dom.els['staging-loader'].classList._hidden, true);
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true);
+});
+
+test('#6077 with no way back the stuck page keeps the old advice: a reader, and a direct open with no session', async () => {
+  const reader = makeAppView(
+    okJson({ status: 'ready', url: 'https://live.example', verified: true }), { stubSwap: false });
+  await reader.AppView.ensureStaging(7, null, null, { readOnly: true });
+  reader.dom.els['staging-iframe'].onerror();
+  assertOffersNoRetry(reader.dom, 'changes:frame.loader.slowLoadFailed');
+
+  const direct = makeAppView(okJson({}), { stubSwap: false });
+  const held = holdGiveUpTimers(direct.sandbox);
+  await direct.AppView.swapToStaging('https://live.example', null, { verified: true });
+  held.iframe[0]();
+  assertOffersNoRetry(direct.dom, 'changes:frame.loader.slowStillLoading');
+});
