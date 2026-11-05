@@ -15,6 +15,10 @@
     "text": "Mark all from {{app}} as read",
     "description": "Accessible name of that button. {{app}} is the project's name."
   },
+  "sheet.markOlder": {
+    "text": "Mark everything older than a week as read",
+    "description": "Quiet text button at the foot of the notifications sheet's Unread filter, shown only when an unread notification older than seven days is listed. It marks every unread notification older than seven days as read and leaves the newer ones unread."
+  },
   "sheet.group.other": {
     "text": "Across Homeroom",
     "description": "Heading on the Unread filter over the notifications that are not filed under a single project's group: account notices, people, and the daily reminder of changes waiting for the viewer's approval (which, when several changes wait, is filed here even if they all belong to one project). It replaced the vague \"Other\"."
@@ -1409,7 +1413,7 @@
   },
   "toast.markAllFailed": {
     "text": "Couldn’t mark notifications as read. Try again.",
-    "description": "Brief message shown when \"Mark all read\" failed."
+    "description": "Brief message shown when \"Mark all read\" or \"Mark everything older than a week as read\" failed."
   },
   "toast.markAppFailed": {
     "text": "Couldn’t mark these notifications as read. Try again.",
