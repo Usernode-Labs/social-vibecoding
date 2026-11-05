@@ -31,6 +31,7 @@ const { message: catalog } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const mayor = require('../src/services/homeroom-bot-mayor');
 const designBot = require('../src/services/design-bot');
+const designThreads = require('../src/services/design-threads');
 const realDm = require('../src/services/homeroom-bot-dm');
 
 const ROOT = path.join(__dirname, '..');
@@ -246,6 +247,10 @@ function designTurn(steps, {
   const threads = {
     surfaceFor: () => surface,
     validHtml: () => true,
+    // #6353: the real module's script-free reads, which the turn uses to see
+    // whether a drawn screen shows anything without its scripts.
+    screenMarkup: designThreads.screenMarkup,
+    visibleText: designThreads.visibleText,
     async versionOf() { return current; },
     async ensureDesign() { return { threadId: 7, title: 'Main screen', app: { slug: 'ear', name: 'Ear Trainer' } }; },
     async addVersion(_pool, args) { versions.push(args.html); return { version: (current?.version || 0) + 1 }; },
