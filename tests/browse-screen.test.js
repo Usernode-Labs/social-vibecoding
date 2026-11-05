@@ -3511,10 +3511,12 @@ test('#6197: the field\'s keys: the menu goes first, then Escape clears as it al
   assert.equal(message('discover:search.suggest.heading'), 'Suggestions');
 });
 
-test('#6197: recent searches go with the session, and a restored session keeps them', () => {
+test('#6197: recent searches go on every session sweep, whoever comes next', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
   const drop = app.slice(app.indexOf('  _dropCachedSession('));
-  assert.match(drop, /if \(!keepUnsent\) \{\s*try \{\s*localStorage\.removeItem\('usernode:browse-recent-searches'\)/);
+  const at = drop.indexOf("localStorage.removeItem('usernode:browse-recent-searches')");
+  assert.ok(at > 0, 'the sweep removes them');
+  assert.doesNotMatch(drop.slice(Math.max(0, at - 60), at), /keepUnsent/, 'not only when the token merely changed');
   const browse = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8');
   assert.match(browse, /RECENT_SEARCH_KEY: 'usernode:browse-recent-searches'/, 'the sweep names the key the store writes');
 });
