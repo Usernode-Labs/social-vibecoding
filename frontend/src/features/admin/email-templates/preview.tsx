@@ -22,7 +22,11 @@ interface TestResult { ok: boolean; message: string }
 
 function testHeadline(outcome: any, to: string): TestResult {
   switch (outcome && outcome.status) {
-    case 'sent': return { ok: true, message: `Sent to ${to}. Check your inbox.` };
+    case 'sent':
+      // A server with no mail provider "sends" by writing the mail to its log.
+      return outcome.provider === 'log'
+        ? { ok: true, message: 'Rendered to the platform log: this server has no mail provider, so nothing was delivered.' }
+        : { ok: true, message: `Sent to ${to}. Check your inbox.` };
     case 'skipped_staging': return { ok: true, message: 'Rendered to the platform log. Staging never delivers mail.' };
     case 'no_transport': return { ok: false, message: 'Nothing was sent: no mail transport is configured.' };
     case 'no_template': return { ok: false, message: 'Nothing was sent: the email could not be put together.' };
