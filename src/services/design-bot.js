@@ -25,38 +25,41 @@
 // #6260), and still cannot file or post anything from here. What becomes
 // public is always the person's own tap.
 
+// Its limits are a design thread's (bot-profiles.js, step 5).
+const { DESIGN_LIMITS } = require('./bot-profiles');
+const botTools = require('./bot-tools');
 const log = require('./logger');
 const turnEngine = require('./homeroom-bot-turn-engine');
 const { withoutEmDashes } = require('./em-dashes');
-const { ENDED: TRACK_ENDED, STEPS: TRACK_STEPS } = require('./homeroom-bot-track');
+const { STEPS: TRACK_STEPS, NOT_STARTED: TRACK_NOT_STARTED, standingOf } = require('./homeroom-bot-track');
 
 // The most of a version the model reads; a bigger one is not edited, and the
 // person is asked to capture a smaller part of the screen.
 const MAX_DESIGN_CHARS = 120_000;
 // The thread's newest messages it reads.
-const MAX_HISTORY = 16;
+const MAX_HISTORY = DESIGN_LIMITS.history;
 // 1 Nov 2026: 4 → 6, room to read the code, draw, and grow what it drew.
 // #6142: 12 for a first drawing; #6144: 12 for every design turn, since
 // "build a dedicated home screen" is an edit only in name. A small edit still
 // ends in two or three rounds: the limit only matters while it keeps reading.
-const MAX_ROUNDS = 12;
+const MAX_ROUNDS = DESIGN_LIMITS.rounds;
 // #6142: a first drawing (handed a screen, or a thread with no version yet)
 // with nothing drawn by round 8 draws in it (write_screen), leaving 9 to 11
 // for edit_design and 12 to reply.
-const DRAW_BY_ROUND = 8;
+const DRAW_BY_ROUND = DESIGN_LIMITS.drawByRound;
 // #6144: the rounds it may read the project's code in (list_source,
 // read_source); from the next one on it is offered ACT_TOOLS alone.
-const READ_UNTIL = 7;
+const READ_UNTIL = DESIGN_LIMITS.readUntilRound;
 // The app's entry page, up front in a first drawing's prompt: its <body>,
 // scripts left out, at most this long (a read_source answer's size).
 const ENTRY_BODY_CHARS = 12_000;
-const MAX_EDITS = 16;
+const MAX_EDITS = DESIGN_LIMITS.editsPerCall;
 const MAX_FIND_CHARS = 4000;
 const MAX_REPLACE_CHARS = 40_000;
 // An edit's pairs and its words fit in this: room for a reasoning model's
 // thinking and the edit after it (the transport's own ceiling).
-const DESIGN_OUTPUT_TOKENS = 4096;
-const MAX_REPLY_CHARS = 1500;
+const DESIGN_OUTPUT_TOKENS = DESIGN_LIMITS.outputTokens;
+const MAX_REPLY_CHARS = DESIGN_LIMITS.replyChars;
 const MAX_SCREEN_TITLE = 120;
 
 // The project's stylesheets a drawn screen is given (sheetsFor): the native
@@ -217,10 +220,19 @@ function saysNotBuilt(text) {
 
 /** Pure (#6151): the step after the one a track is on, or for one waiting its turn, the step it starts on; null once it ended. */
 function nextStepOf(track) {
-  if (TRACK_ENDED.has(track.state)) return null;
-  if (track.state === 'queued') return track.step || 'plan';
+  if (standingOf(track)?.say === 'ended') return null;
+  if (!track.step) return 'plan';
   const at = TRACK_STEPS.indexOf(track.step);
   return at >= 0 && at + 1 < TRACK_STEPS.length ? TRACK_STEPS[at + 1] : null;
+}
+
+/** Pure: a track's stage in the prompt's words, "building", "queued", "waiting for you, question". */
+function stageWordsOf(track) {
+  const work = track.work || {};
+  const code = work.line?.code || null;
+  if (work.stage === 'reading' && TRACK_NOT_STARTED.has(code)) return code.replace(/_/g, ' ');
+  const stage = String(work.stage || 'reading').replace(/_/g, ' ');
+  return work.why ? `${stage}, ${String(work.why).replace(/_/g, ' ')}` : stage;
 }
 
 /**
@@ -236,22 +248,19 @@ function botStanding(track, live) {
       ? 'Homeroom bot: not started on it yet; it reads the project\'s requests in turn.'
       : 'Homeroom bot does not build on this project now: a person must decide who builds it.';
   }
-  const why = track.held?.limit || track.why || null;
-  if (track.state === 'stopped' && why === 'needs_person') {
-    return 'Homeroom bot: stopped, it needs a person: a person must decide who builds it.';
+  const standing = standingOf(track);
+  if (standing.say === 'person' && standing.by) {
+    return `Homeroom bot: @${standing.by} has taken it on: a person must decide who builds it.`;
   }
-  if (track.state === 'held' && why === 'taken') {
-    return `Homeroom bot: held, ${track.held?.by ? `@${track.held.by}` : 'a person'} has taken it on: a person must decide who builds it.`;
+  if (standing.say === 'person') {
+    return 'Homeroom bot: handed it to the people on the project: a person must decide who builds it.';
   }
-  if (track.state === 'held') {
-    const place = track.held?.position ? `, number ${track.held.position} in line` : '';
-    return `Homeroom bot: held at a limit (${String(why || 'slots').replace(/_/g, ' ')}${place}); it builds it once that frees.`;
+  if (standing.say === 'held') {
+    const place = standing.position ? `, number ${standing.position} in line` : '';
+    return `Homeroom bot: held at a limit (${String(standing.limit).replace(/_/g, ' ')}${place}); it builds it once that frees.`;
   }
-  // Queued, why it waits its turn is no news to them.
-  const words = [track.state, track.state === 'queued' ? null : why]
-    .filter(Boolean).map((code) => String(code).replace(/_/g, ' ')).join(', ');
   const next = nextStepOf(track);
-  return `Homeroom bot: ${words}${next ? ` (its next step: ${next})` : ''}.`;
+  return `Homeroom bot: ${stageWordsOf(track)}${next ? ` (its next step: ${next})` : ''}.`;
 }
 
 /**
@@ -271,8 +280,8 @@ function filedLine(filed) {
 function filedBuilds(filed) {
   if (!filed) return false;
   if (!filed.track) return !!filed.live;
-  const why = filed.track.held?.limit || filed.track.why || null;
-  return !TRACK_ENDED.has(filed.track.state) && !(filed.track.state === 'held' && why === 'taken');
+  const standing = standingOf(filed.track);
+  return standing.say !== 'ended' && standing.say !== 'person';
 }
 
 /** What a turn that still says a filed design will not be built says instead. */
@@ -376,41 +385,9 @@ const TOOLS = Object.freeze([
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'list_source',
-      description: 'The files in the project\'s code on main: paths and sizes. Narrow it with dir (a folder, like "public") '
-        + 'and match (words in the path, like "css"). For how its screens are built, their classes and their words.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project: { type: 'string', description: 'Another project they can build on, by name; leave it out for this design\'s.' },
-          dir: { type: 'string', description: 'Only files under this folder.' },
-          match: { type: 'string', description: 'Only paths containing all of these words (case does not matter).' },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'read_source',
-      description: 'One file of the project\'s code on main, with line numbers, a few thousand characters at a time. '
-        + 'For a long file, nextLine says where to go on: call again with fromLine.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project: { type: 'string', description: 'Another project they can build on, by name; leave it out for this design\'s.' },
-          path: { type: 'string', description: 'The file\'s path, from list_source.' },
-          fromLine: { type: 'integer', description: 'The first line to read (1 by default).' },
-        },
-        required: ['path'],
-        additionalProperties: false,
-      },
-    },
-  },
+  // The project's code on main, defined once (src/services/bot-tools/source.js):
+  // a design reads its own project's unless it names another.
+  ...botTools.toolsFor(['list_source', 'read_source'], 'design'),
   {
     type: 'function',
     function: {
@@ -1430,13 +1407,7 @@ async function answer(pool, config, {
         } else if (lateRead) {
           result = { ok: false, error: READING_OVER_ERROR };
         } else if (name === 'list_source' || name === 'read_source') {
-          const named = typeof args.project === 'string' && args.project.trim() ? args.project : project?.slug;
-          if (!named) result = { ok: false, error: 'This design is for a new project, which has no code yet. Name a project they can build on to read its code.' };
-          else if (name === 'list_source') {
-            result = await mayor.listSource(pool, { user, project: named, dir: args.dir, match: args.match, deps });
-          } else {
-            result = await mayor.readSource(pool, { user, project: named, path: args.path, fromLine: args.fromLine, deps });
-          }
+          result = await botTools.run(name, args, { pool, user, scope: 'design', app: project || null, deps: { ...deps, mayor } });
         } else if (name === 'list_requests' || name === 'get_request') {
           result = await boardRead(pool, config, { user, project, args, name, deps, state: board });
         } else if (name === 'read_plan') {

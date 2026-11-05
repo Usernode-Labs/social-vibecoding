@@ -18,7 +18,6 @@
   "tests/homeroom-bot-followup-restart-postgres.test.js": 1,
   "tests/homeroom-bot-live-outcome-postgres.test.js": 1,
   "tests/homeroom-bot-mayor-postgres.test.js": 1,
-  "tests/homeroom-bot-tray-postgres.test.js": 1,
   "tests/invite-activity-postgres.test.js": 3,
   "tests/issue-filed-notify-once-postgres.test.js": 1,
   "tests/issue-mention-notifications-postgres.test.js": 1,

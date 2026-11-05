@@ -41,7 +41,7 @@ function fakePool({ run, queued = false, action = null, requester = { userId: 1,
       said.push({ sql, params });
       if (/FROM homeroom_bot_runs r/.test(sql)) return { rows: run ? [run] : [] };
       if (/FROM homeroom_bot_queue/.test(sql)) return { rows: queued ? [{}] : [] };
-      if (/JOIN homeroom_bot_dm_actions a/.test(sql)) return { rows: action ? [action] : [] };
+      if (/JOIN bot_cards a/.test(sql)) return { rows: action ? [action] : [] };
       return { rows: [], rowCount: 1 };
     },
   };

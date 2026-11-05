@@ -172,10 +172,16 @@ test('POST /api/apps takes a design: checked, its brief and plan from it, the ca
 
 const TRACK_TSX = 'frontend/src/features/messages/bot-track.tsx';
 const EAR = { id: 3, slug: 'ear', name: 'Ear Trainer', repo_url: 'https://github.com/usernode-bot/ear' };
-const track = (extra = {}) => ({
-  key: 'ear#14', appSlug: 'ear', appName: 'Ear Trainer', issueNumber: 14, state: 'queued', step: null, why: 'turn',
-  waitingOn: null, busy: false, try: 1, ...extra,
+// A request's track (homeroom-bot-track.js trackOf): its stored work state,
+// waiting its turn unless `work` says otherwise.
+const track = (work = {}, extra = {}) => ({
+  key: 'ear#14', appSlug: 'ear', appName: 'Ear Trainer', issueNumber: 14,
+  work: { stage: 'reading', why: null, reason: null, line: { code: 'queued', place: 1 }, since: null, ...work },
+  step: null, waitingOn: null, busy: false, try: 1, ...extra,
 });
+const HELD_SLOTS = { line: { code: 'held_waiting' }, stage: 'building' };
+// A person must decide: the bot handed it to the people on the project.
+const DECIDE = { stage: 'waiting_for_you', why: 'decide', line: null };
 
 // A design thread drawn from words, at version 4: no capture, so its plan is version 4 alone.
 function filingPool() {
@@ -237,25 +243,25 @@ test('#6151: filing a design says Homeroom bot reads it next and builds it from 
   assert.match(line, /reads it next and builds it from version 4\. Its progress shows here and on the request\.$/);
   // Planning or building already, it is still Homeroom bot's to build.
   for (const state of ['planning', 'building']) {
-    assert.deepEqual((await fileDesign(track({ state, step: state === 'planning' ? 'plan' : 'build', why: null }))).sent[0].metadata.filedNext,
+    assert.deepEqual((await fileDesign(track({ stage: state, line: null }, { step: state === 'planning' ? 'plan' : 'build' }))).sent[0].metadata.filedNext,
       { say: 'builds', version: 4 }, state);
   }
 });
 
 test('#6151: held at a limit, the filed line names the wait in the track\'s own words; off or a person\'s, who decides', async () => {
   const { filedNextLine } = loadTsx(TRACK_TSX);
-  const held = await fileDesign(track({ state: 'held', step: 'build', why: 'slots', held: { limit: 'slots', position: 2, until: null } }));
+  const held = await fileDesign(track(HELD_SLOTS, { step: 'build', held: { limit: 'slots', position: 2, until: null } }));
   assert.deepEqual(held.sent[0].metadata.filedNext, { say: 'held', limit: 'slots' });
   assert.equal(filedNextLine(held.sent[0].metadata.filedNext),
     'Homeroom bot builds it when one of its changes is voted in or closed: it is at its limit of changes up for a vote here. Its progress shows here and on the request.');
   // #6156: held for its turn among the project's builds.
-  const turn = await fileDesign(track({ state: 'held', step: 'build', why: 'builds', held: { limit: 'builds', position: 1, until: null } }));
+  const turn = await fileDesign(track({ stage: 'building', line: { code: 'held_builds' } }, { step: 'build', held: { limit: 'builds', position: 1, until: null } }));
   assert.deepEqual(turn.sent[0].metadata.filedNext, { say: 'held', limit: 'builds' });
-  // The limit in the track's own words (bot.track.line.held.*), after its colon.
+  // The track's own held lines (bot.track.line.held.*) are gone (5 Nov
+  // 2026): a held track says its work state's line (lib/work-state.ts), and
+  // the filed line keeps whole sentences of its own, one per limit.
   for (const limit of ['builds', 'slots', 'bot_wide', 'allowance']) {
-    const words = filedNextLine({ say: 'held', limit });
-    const own = message(`messages:bot.track.line.held.${limit}`).split(': ')[1].replace(/^Homeroom bot is /, 'it is ');
-    assert.ok(words.includes(`: ${own}.`), `${limit}: ${words}`);
+    assert.match(filedNextLine({ say: 'held', limit }), /^Homeroom bot builds it .+: .+\. Its progress shows here and on the request\.$/, limit);
   }
   // The bot is off for the project: nothing queued it, and it has no track.
   const off = await fileDesign(null, { queued: false });
@@ -264,15 +270,15 @@ test('#6151: held at a limit, the filed line names the wait in the track\'s own 
   // Queued, though the read found no track: it reads it next all the same.
   assert.deepEqual((await fileDesign(null)).sent[0].metadata.filedNext, { say: 'builds', version: 4 });
   const designs = require('../src/services/design-threads');
-  assert.deepEqual(designs.filedNext(track({ state: 'stopped', step: 'plan', why: 'needs_person' }), { version: 4 }), { say: 'person' });
-  assert.deepEqual(designs.filedNext(track({ state: 'held', why: 'taken', held: { limit: 'taken', by: 'maya' } }), { version: 4 }), { say: 'person' });
-  assert.equal(designs.filedNext(track({ state: 'vote', step: 'vote', why: null }), { version: 4 }), null, 'a track that says none of these says nothing');
+  assert.deepEqual(designs.filedNext(track(DECIDE, { step: 'plan' }), { version: 4 }), { say: 'person' });
+  assert.deepEqual(designs.filedNext(track({ stage: 'building', line: { code: 'claimed', by: 'maya' } }, { step: 'build' }), { version: 4 }), { say: 'person' });
+  assert.equal(designs.filedNext(track({ stage: 'up_for_vote', line: null }, { step: 'vote' }), { version: 4 }), null, 'a track that says none of these says nothing');
 });
 
 test('#6151: the design bot is told where a filed design\'s request stands; an unfiled one is not', async () => {
   const designBot = require('../src/services/design-bot');
   const base = { surface: 'app', app: { slug: 'ear', name: 'Ear Trainer' }, title: 'Interval drill', width: 390, height: 844 };
-  const building = track({ state: 'building', step: 'build', why: null, busy: true });
+  const building = track({ stage: 'building', line: null }, { step: 'build', busy: true });
   const read = [];
   const deps = { track: { async tracksForRequests(_pool, args) { read.push(args); return new Map([[14, building]]); } } };
   const project = { id: 3, slug: 'ear', name: 'Ear Trainer' };
@@ -299,16 +305,24 @@ test('#6151: the design bot is told where a filed design\'s request stands; an u
   // Where a person must decide, the line says so, and only there.
   const line = (t, live = true) => designBot.filedLine({ state: 'filed', number: 14, appName: 'Ear Trainer', track: t, live });
   assert.match(line(null, false), /Homeroom bot does not build on this project now: a person must decide who builds it\.$/);
-  assert.match(line(track({ state: 'stopped', step: 'plan', why: 'needs_person' })), /a person must decide who builds it\.$/);
+  assert.match(line(track(DECIDE, { step: 'plan' })), /a person must decide who builds it\.$/);
   assert.match(line(track()), /Homeroom bot: queued \(its next step: plan\)\.$/);
-  assert.match(line(track({ state: 'held', step: 'build', why: 'slots', held: { limit: 'slots', position: 2 } })),
+  assert.match(line(track(HELD_SLOTS, { step: 'build', held: { limit: 'slots', position: 2 } })),
     /Homeroom bot: held at a limit \(slots, number 2 in line\); it builds it once that frees\.$/);
-  for (const t of [track(), building, track({ state: 'held', why: 'slots', held: { limit: 'slots' } }), null]) {
+  for (const t of [track(), building, track(HELD_SLOTS, { held: { limit: 'slots' } }), null]) {
     assert.doesNotMatch(line(t), /must decide/);
   }
   assert.equal(designBot.filedBuilds({ track: null, live: false }), false, 'off: a person decides');
   assert.equal(designBot.filedBuilds({ track: building, live: true }), true);
-  assert.equal(designBot.filedBuilds({ track: track({ state: 'stopped', why: 'needs_person' }), live: true }), false);
+  assert.equal(designBot.filedBuilds({ track: track(DECIDE), live: true }), false);
+  // Somebody took it on: a person, by name.
+  const taken = track({ stage: 'building', line: { code: 'claimed', by: 'maya' } }, { step: 'build' });
+  assert.match(line(taken), /Homeroom bot: @maya has taken it on: a person must decide who builds it\.$/);
+  assert.equal(designBot.filedBuilds({ track: taken, live: true }), false);
+  // Waiting on its requester's answer: said with what it waits for.
+  assert.match(line(track({ stage: 'waiting_for_you', why: 'question', line: null }, { step: 'plan' })),
+    /Homeroom bot: waiting for you, question \(its next step: build\)\.$/);
+  assert.equal(designBot.filedBuilds({ track: track({ stage: 'live', line: null }, { step: 'live' }), live: true }), false, 'over');
 });
 
 // ── #6353: a plan is drawn without scripts, so a script-built screen is
@@ -421,7 +435,7 @@ test('the plan card warns that the lists would show empty, and offers to write t
   const sent = [];
   const pool = {
     async query(sql) {
-      if (/INSERT INTO homeroom_bot_dm_actions/.test(String(sql))) return { rows: [{ id: 5 }] };
+      if (/INSERT INTO bot_cards/.test(String(sql))) return { rows: [{ id: 5 }] };
       return { rows: [] };
     },
   };

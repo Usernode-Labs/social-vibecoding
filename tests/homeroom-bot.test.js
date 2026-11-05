@@ -1149,7 +1149,7 @@ test('the everyone moment: what the bot never read live before it went on for ev
   assert.match(SRC, /function everyoneSinceOf\(settings\) \{\n  return settings\?\.everyoneSince \|\| null;\n\}/);
 });
 
-test('a new request on a live app gets its card when it is queued, under the key its read starts from, whatever it is', async () => {
+test('a first version on a live app gets its card when it is queued, under the key its read starts from; an ordinary request none', async () => {
   const started = [];
   const events = [];
   const pool = {
@@ -1184,13 +1184,13 @@ test('a new request on a live app gets its card when it is queued, under the key
   };
   const app = { id: 9, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/usernode-bot/todo' };
   const capRoom = { proposals_per_app: 5, proposals_total: 50 };
-  // One story: a request filed on the board gets its card too.
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request filed on
+  // the board gets no card in its requester's chat with the bot; where it
+  // stands is on its page.
   let firstVersion = null;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
-  assert.equal(started.length, 1);
-  assert.equal(started[0].idempotencyKey, 'hrbot-activity-r9-1', 'the request\'s own card (bot-loop lookCardKey)');
-  started.length = 0;
-  // So does a project's first version.
+  assert.equal(started.length, 0);
+  // A project's first version does.
   firstVersion = 1;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
   assert.equal(started.length, 1);

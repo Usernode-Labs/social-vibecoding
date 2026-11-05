@@ -277,6 +277,9 @@ test('a batch against the full PostgreSQL schema', { timeout: 120000 }, async (t
   assert.equal((await batches.batchRow(pool, reading.batchId)).message_id, readingMsg.id, 'its card was found, and kept');
   await asKernel((c) => c.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5', [app.id]));
   await run(5, 'person', { reason: 'The group should pick the search engine.' });
+  // The platform's triggers mark the request and its clock derives it again
+  // (services/work-state.js); here that is done by hand before the read.
+  await require('../src/services/work-state').refresh(pool, [{ appId: app.id, issueNumber: 5 }]);
   assert.deepEqual(await batches.refreshBatch(pool, reading.batchId, { deps: { ws } }), { ended: false, patched: true });
   const { rows: [readMsg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [readingMsg.id]);
   assert.deepEqual(readMsg.metadata.homeroomBot.card.requests.map((r) => [r.number, r.read, r.note]),

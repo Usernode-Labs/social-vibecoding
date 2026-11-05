@@ -1034,13 +1034,6 @@
     {
       "source": "src/services/ai-work.js",
       "kind": "runtime-built-identifier",
-      "fingerprint": "a3d9bd6f2e3b8315d3af",
-      "count": 1,
-      "preview": "FACTS_SQL"
-    },
-    {
-      "source": "src/services/ai-work.js",
-      "kind": "runtime-built-identifier",
       "fingerprint": "da9e0ef3aa5f12fda97b",
       "count": 1,
       "preview": "YOURS_SQL"
@@ -1452,13 +1445,6 @@
       "preview": "REQUEST_ROWS_SQL"
     },
     {
-      "source": "src/services/homeroom-bot-tray.js",
-      "kind": "structural-template",
-      "fingerprint": "38a972aa978bf0a467cf",
-      "count": 1,
-      "preview": "`SELECT r.id, r.app_id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed, r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.cre"
-    },
-    {
       "source": "src/services/homeroom-bot-voice.js",
       "kind": "structural-template",
       "fingerprint": "19d5901e0bba03592093",
@@ -1475,9 +1461,23 @@
     {
       "source": "src/services/homeroom-bot-voice.js",
       "kind": "structural-template",
+      "fingerprint": "8449df32e94a1e521ddb",
+      "count": 1,
+      "preview": "`UPDATE ${table} SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot-voice.js",
+      "kind": "structural-template",
       "fingerprint": "a41b8ecd8f407af0caec",
       "count": 1,
       "preview": "`SELECT created_at FROM chat_messages WHERE app_id = $1 AND ${scope.sql} AND user_id = $${botIdx} AND msg_type = 'message' AND deleted_at IS NULL ${beforeBot} O"
+    },
+    {
+      "source": "src/services/homeroom-bot-voice.js",
+      "kind": "structural-template",
+      "fingerprint": "d11c278a85aa0e8d2f50",
+      "count": 1,
+      "preview": "`UPDATE ${table} SET status = 'deciding', decided_key = $2 WHERE id = $1 AND (status = 'open' OR (status = 'deciding' AND decided_key = $2)) RETURNING id`"
     },
     {
       "source": "src/services/homeroom-bot-voice.js",
@@ -2220,6 +2220,13 @@
       "fingerprint": "9d1082139d72c4cb203f",
       "count": 1,
       "preview": "PENDING_SQL"
+    },
+    {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "e291c7da7e5ce11b4cf9",
+      "count": 1,
+      "preview": "REQUEST_FACTS_SQL"
     },
     {
       "source": "src/services/worker-eviction.js",

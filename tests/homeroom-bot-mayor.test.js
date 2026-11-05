@@ -207,7 +207,8 @@ test('a request\'s status, in the words the model repeats', () => {
 test('it hears the send in its own transaction, never into the answer, and files a request the way the route does', () => {
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /const decided = await mayor\.decideOffer\(pool, config, \{ bot, user, settings, conversationId, message, deps \}\);/);
-  assert.match(dm, /if \(settings\.dmChat !== false\) \{\n    return mayor\.runDmTurn\(/);
+  // Through the one entry (thread-bot.js, 5 Nov 2026), by the thread's kind.
+  assert.match(dm, /if \(settings\.dmChat !== false\) \{\n(?:\s*\/\/[^\n]*\n)*\s*return require\('\.\/thread-bot'\)\.answer\(pool, config, \{\n\s*kind: require\('\.\/bot-profiles'\)\.kindInChat\(turnDeps\)/);
   // The person's DM machine hears it in the message's own transaction
   // (src/workflow/bot-dm/), and its work answers: nothing floats after the
   // response.
@@ -951,7 +952,7 @@ function chatTurn(chat, { extra = {}, message = {} } = {}) {
         };
       }
       // The offer's own row, which a real send needs for its card's action.
-      if (/INSERT INTO homeroom_bot_dm_actions/.test(s)) return { rows: [{ id: 5 }] };
+      if (/INSERT INTO bot_cards/.test(s)) return { rows: [{ id: 5 }] };
       return { rows: [] };
     },
   };

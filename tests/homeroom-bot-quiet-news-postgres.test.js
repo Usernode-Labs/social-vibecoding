@@ -7,6 +7,14 @@
 // else GitHub's) and keeps it; and news marked `quiet` (an older request's
 // first read that is not ready, a request that names who builds it) is said
 // in the chat with the bot and rings nothing.
+//
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is no
+// longer said in the chat with the bot (relayIssuePost is quiet for every
+// request but a first version). Its requester's bell rings from the
+// request's stage (services/work-state.js bellPushes), so the naming and the
+// quiet rule are checked on that bell: the request's name falls back to
+// Homeroom's own copy (BELL_FACTS_SQL), read each time, and the quiet rule
+// reads the look's run (quietBell: its read_reason, the builder it named).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -74,14 +82,26 @@ test('the bot\'s news names its request, and quiet news rings nobody', { timeout
     'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, $4)',
     [app.id, n, ada.id, title],
   );
-  const bell = async (sent) => {
-    const { rows } = await pool.query(
-      'SELECT kind, detail FROM notifications WHERE user_id = $1 AND conversation_message_id = $2', [ada.id, sent.messageId],
+  const ws = require('../src/services/work-state');
+  // The request's look came to `verdict`: its stage is refreshed, and the
+  // bell rows it rang are read back.
+  const looked = async (n, verdict, reason = null, { readReason = null, builder = null } = {}) => {
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, read_reason, builder)
+       VALUES ($1, $2, 'live', $3, $4, $5, $6)`,
+      [app.id, n, verdict, reason, readReason, builder],
     );
-    return rows[0] || null;
+    await ws.pushesOf(pool, await ws.refresh(pool, [{ appId: app.id, issueNumber: n }]));
+    const { rows } = await pool.query(
+      `SELECT kind, detail FROM notifications WHERE user_id = $1 AND app_id = $2 AND detail LIKE $3 ORDER BY id`,
+      [ada.id, app.id, `%"i":${n},%`],
+    );
+    return rows;
   };
+  const inChat = async () => (await pool.query(
+    'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE sender_id = $1', [bot.id])).rows[0].n;
 
-  await t.test('a requester row with no title is named by Homeroom\'s own row of it, and kept', async () => {
+  await t.test('a requester row with no title is named by Homeroom\'s own row of it', async () => {
     await asked(5308);
     await pool.query(
       `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
@@ -89,48 +109,66 @@ test('the bot\'s news names its request, and quiet news rings nobody', { timeout
       [app.id, ada.id],
     );
     const sent = await dm.relayIssuePost({ pool, app, issueNumber: 5308, kind: 'person', bot, dm: { reason: 'A design call.' } });
-    assert.ok(sent?.messageId, 'told in their chat with the bot');
-    const row = await bell(sent);
+    assert.deepEqual([sent.quiet, sent.messageId], [true, null], 'nothing in her chat with the bot');
+    const [row] = await looked(5308, 'person', 'A design call.');
+    assert.ok(row, 'her bell rings from its stage');
     const words = notifyCopy.botMomentCopy(row.detail);
     assert.deepEqual([words.bellLabel, words.bellSubject, words.bellMeta],
       ['Your decision', 'Show slots by state', 'Homeroom · #5308 · Homeroom bot']);
-    const { rows: [kept] } = await pool.query(
-      'SELECT issue_title FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 5308', [app.id],
-    );
-    assert.equal(kept.issue_title, 'Show slots by state', 'kept from then on');
   });
 
   await t.test('with no title anywhere, the request is named by its number, never by the project alone', async () => {
     await asked(5309);
     const sent = await dm.relayIssuePost({ pool, app, issueNumber: 5309, kind: 'question', bot, dm: { question: 'Which one?', answers: ['A', 'B'] } });
-    const words = notifyCopy.botMomentCopy((await bell(sent)).detail);
+    assert.equal(sent.messageId, null, 'nothing in her chat with the bot');
+    const [row] = await looked(5309, 'question');
+    const words = notifyCopy.botMomentCopy(row.detail);
     assert.deepEqual([words.bellLabel, words.bellSubject, words.bellMeta, words.title],
       ['Question for you', 'Request #5309', 'Homeroom · Homeroom bot', 'Request #5309 · Homeroom']);
   });
 
-  await t.test('quiet news is said, rings nothing, and a question in it still waits for its answer', async () => {
+  await t.test('a question in quiet news still waits for its answer, and the same news, not quiet, rings', async () => {
     await asked(5310, 'Tidy the Discover filters');
+    const before = await inChat();
     const sent = await dm.relayIssuePost({
       pool, app, issueNumber: 5310, kind: 'question', bot, dm: { question: 'Which filter first?', answers: ['Topic', 'Mine'], quiet: true },
     });
-    assert.ok(sent?.messageId, 'said in their chat with the bot');
-    assert.equal(await bell(sent), null, 'no bell row, so no push');
-    const { rows: [msg] } = await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [sent.messageId]);
-    assert.match(msg.content, /Which filter first\?/);
-    const { rows: [rec] } = await pool.query(
-      'SELECT kind, question_status FROM homeroom_bot_dm_messages WHERE message_id = $1', [sent.messageId],
+    assert.deepEqual([sent.quiet, sent.messageId], [true, null]);
+    assert.equal(await inChat(), before, 'nothing in her chat with the bot');
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 5310, 'live', 'question')`, [app.id],
     );
-    assert.deepEqual([rec.kind, rec.question_status], ['question', 'open'], 'the bot\'s Needs you list still shows it');
+    await ws.refresh(pool, [{ appId: app.id, issueNumber: 5310 }]);
+    const { rows: [stored] } = await pool.query(
+      `SELECT stage, why, whose_move FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 5310`, [app.id],
+    );
+    assert.deepEqual([stored.stage, stored.why, stored.whose_move], ['waiting_for_you', 'question', 'requester'],
+      'the bot\'s Needs you list still shows it');
+    // The same news, not quiet, rings as it did.
+    await asked(5312, 'Search box');
+    await dm.relayIssuePost({ pool, app, issueNumber: 5312, kind: 'person', bot, dm: { reason: 'A design call.' } });
+    assert.deepEqual((await looked(5312, 'person', 'A design call.')).map((r) => r.kind), ['build_needs_you']);
+  });
+
+  // 16 Oct 2026: news marked quiet (an older request's first read that is
+  // not ready, a request that names who builds it) rang nobody. The stage
+  // bell keeps that rule, from the look's run.
+  await t.test('news the bot marks quiet still rings nobody', async () => {
+    await asked(5313, 'Sort the backlog');
+    await dm.relayIssuePost({
+      pool, app, issueNumber: 5313, kind: 'question', bot, dm: { question: 'Oldest first?', answers: ['Yes', 'No'], quiet: true },
+    });
+    assert.deepEqual(await looked(5313, 'question', null, { readReason: 'backlog' }), [], 'an older request\'s first read rings nothing');
+    const { rows: [waits] } = await pool.query(
+      `SELECT stage, why FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 5313`, [app.id],
+    );
+    assert.deepEqual([waits.stage, waits.why], ['waiting_for_you', 'question'], 'its stage still shows where it waits');
     // A hand-off that names who builds it is quiet too.
     await asked(5311, 'Board view');
-    const handOff = await dm.relayIssuePost({
+    await dm.relayIssuePost({
       pool, app, issueNumber: 5311, kind: 'person', bot, dm: { reason: 'Assigned to snait.', builder: 'snait', quiet: true },
     });
-    assert.ok(handOff?.messageId);
-    assert.equal(await bell(handOff), null);
-    // And the same news, not quiet, rings as it did.
-    await asked(5312, 'Search box');
-    const loud = await dm.relayIssuePost({ pool, app, issueNumber: 5312, kind: 'person', bot, dm: { reason: 'A design call.' } });
-    assert.equal((await bell(loud))?.kind, 'build_needs_you');
+    assert.deepEqual(await looked(5311, 'person', 'Assigned to snait.', { builder: 'snait' }), [], 'a hand-off to a named builder rings nothing');
+    assert.equal(ws.quietBell('ready', { read_reason: 'backlog' }), false, 'ready to try rings, however it was read');
   });
 });

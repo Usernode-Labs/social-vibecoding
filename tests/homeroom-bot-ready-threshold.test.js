@@ -16,6 +16,11 @@
 // @mo_t1006" once one is in. When everybody listed is needed they still
 // say "Waiting for approval from you and @ada".
 //
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): no ready card goes to
+// the requester's chat with the bot any more, but for a first version. A
+// card sent before reads who it waits on afresh (readyStates), so its words
+// are checked on one of those, as the client draws it.
+//
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-ready-threshold.test.js
 
 const test = require('node:test');
@@ -216,7 +221,33 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
   const yes = (sessionId, who) => pool.query(
     `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [sessionId, who.id],
   );
-  const viewOf = (meta) => renderToHtml(createElement(readyCard.ReadyCardView, { meta, state: 'open', actions: meta.actions }));
+  // A card sent before 5 Nov 2026, as the relay sent it, and what the client
+  // draws of it once it has read where its change stands now.
+  const oldCard = async (person, app, sessionId) => {
+    const { rows: [run] } = await pool.query(
+      'SELECT id, issue_number FROM homeroom_bot_runs WHERE proposal_session_id = $1 ORDER BY id DESC LIMIT 1', [sessionId],
+    );
+    const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, homeroomBot.id, person.id);
+    const meta = {
+      kind: 'proposal', appSlug: app.slug, appName: app.name, issueNumber: Number(run.issue_number), sessionId, epoch: 0,
+      status: 'open', ready: { group: true, last: false, waitingOn: [], more: 0 },
+      actions: dm.readyActions({ sessionId, epoch: 0, approve: true }),
+    };
+    const { rows: [m] } = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+       VALUES ($1, $2, $3, jsonb_build_object('homeroomBot', $4::jsonb)) RETURNING id`,
+      [opened.conversationId, homeroomBot.id, 'It is ready to try.', JSON.stringify(meta)],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
+       VALUES ($1, $2, $3, $4, $5, 'proposal', $6)`,
+      [m.id, person.id, opened.conversationId, app.id, Number(run.issue_number), run.id],
+    );
+    const fresh = (await dm.readyStates(pool, { user: { id: person.id } })).find((s) => s.messageId === Number(m.id));
+    return { meta, fresh };
+  };
+  const viewOf = ({ meta, fresh }) => renderToHtml(createElement(readyCard.ReadyCardView, { meta, fresh, state: 'open', actions: meta.actions }));
+  const sorted = (approval) => ({ ...approval, waitingOn: [...approval.waitingOn].sort() });
 
   await t.test('three members, two approvals needed: the cards say two, from any of the three', async () => {
     const pages = await project('page-turners', 'Page Turners', { members: [alex, priya, mo] });
@@ -225,11 +256,12 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     assert.deepEqual([state.audience, state.needed, state.have, state.missing, state.last], ['invited', 2, 0, 2, false]);
 
     await tellReadyNow(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
-    const meta = await card(alex.id, s.id);
-    assert.deepEqual({ ...meta.ready, waitingOn: [...meta.ready.waitingOn].sort() },
-      { group: true, last: false, waitingOn: ['mo_t1006', 'priya_t1006'], missing: 2, needed: 2 });
-    const [one, other] = meta.ready.waitingOn;
-    assert.ok(viewOf(meta).includes(`data-bot-ready-waiting="">Needs 2 approvals from you, @${one} or @${other}<`), 'never "you, @… and @…"');
+    assert.equal(await card(alex.id, s.id), undefined, 'his chat with the bot holds only his conversation with it');
+    const sent = await oldCard(alex, pages, s.id);
+    assert.deepEqual(sorted(sent.fresh.approval),
+      { missing: 2, needed: 2, last: false, approved: false, waitingOn: ['mo_t1006', 'priya_t1006'], more: 0 });
+    const [one, other] = sent.fresh.approval.waitingOn;
+    assert.ok(viewOf(sent).includes(`data-bot-ready-waiting="">Needs 2 approvals from you, @${one} or @${other}<`), 'never "you, @… and @…"');
     assert.equal(chatCard.approvalWords({ stage: 'proposed', ...(await botChat.approvalOf(pool, { sessionId: s.id, viewer: { id: alex.id } })) }),
       'Needs 2 approvals from you, @mo_t1006 or @priya_t1006.');
 
@@ -260,9 +292,10 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     const club = await project('supper-club', 'Supper Club', { members: [ben, ada] });
     const s = await change(club, ben, 1);
     await tellReadyNow(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
-    const meta = await card(ben.id, s.id);
-    assert.deepEqual(meta.ready, { group: true, last: false, waitingOn: ['ada'], missing: 2, needed: 2 });
-    assert.ok(viewOf(meta).includes('data-bot-ready-waiting="">Waiting for approval from you and @ada<'));
+    assert.equal(await card(ben.id, s.id), undefined);
+    const sent = await oldCard(ben, club, s.id);
+    assert.deepEqual(sent.fresh.approval, { missing: 2, needed: 2, last: false, approved: false, waitingOn: ['ada'], more: 0 });
+    assert.ok(viewOf(sent).includes('data-bot-ready-waiting="">Waiting for approval from you and @ada<'));
     assert.equal(chatCard.approvalWords({ stage: 'proposed', ...(await botChat.approvalOf(pool, { sessionId: s.id, viewer: { id: ben.id } })) }),
       'Waiting for approval from you and @ada.');
     await yes(s.id, ben);
@@ -278,9 +311,10 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     const state = await dm.approvalState(pool, { sessionId: s.id, userId: ben.id });
     assert.deepEqual([state.audience, state.missing], ['open', 2]);
     await tellReadyNow(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
-    const meta = await card(ben.id, s.id);
-    assert.deepEqual(meta.ready, { group: true, last: false, waitingOn: [], missing: 2, needed: 2 });
-    assert.ok(viewOf(meta).includes('data-bot-ready-waiting="">Waiting for approval from you<'));
+    assert.equal(await card(ben.id, s.id), undefined);
+    const sent = await oldCard(ben, town, s.id);
+    assert.deepEqual(sent.fresh.approval, { missing: 2, needed: 2, last: false, approved: false, waitingOn: [], more: 0 });
+    assert.ok(viewOf(sent).includes('data-bot-ready-waiting="">Waiting for approval from you<'));
     const approval = await botChat.approvalOf(pool, { sessionId: s.id, viewer: { id: ben.id } });
     assert.deepEqual([approval.youApprove, approval.waitingOn], [false, []]);
     assert.equal(chatCard.approvalWords({ stage: 'proposed', ...approval }), 'Waiting for approval.');

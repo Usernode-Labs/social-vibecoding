@@ -42,6 +42,8 @@ async function claimIssueForUser(pool, { app, issueNumber, user }) {
     [app.id, issueNumber, user.id]
   );
   const created = !!rows[0]?.created;
+  // Its work state: a claimed request is being built, by who has it.
+  await require('./work-state').touched(pool, [{ appId: app.id, issueNumber }]);
 
   // #1648: claiming is an explicit statement that the caller is taking
   // the issue, so mirror it into the existing community-voted assignee

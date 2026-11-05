@@ -322,19 +322,14 @@ function wentLive(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
   return step('live', asked(stop.d, [...work, ...tell]), { work: [...work, ...tell, ...stop.work], timer: null });
 }
 
-// A vote: whoever asked for the change reads its tray again (it names who
-// it still waits on), and a yes is a quiet line in the request's thread
-// ("ada approved it."), once per voter and epoch. Said after the vote's
-// commit before, a restart in between lost it.
-function voted(s: BState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<BState> {
+// A vote: whoever asked for the change reads where its requests stand again
+// (they name who it still waits on). 5 Nov 2026 (docs/plans/bot-one-model.md,
+// decision 6): a yes is no longer a line in the request's thread ("ada
+// approved it."); the change's votes are on its page. WORK.approved stays
+// for work owed before, which its service now settles quietly.
+function voted(s: BState, _e: Event<any>, f: Facts, _ctx: TransitionContext): Outcome<BState> {
   const live = s as Live;
-  const key = `approved:${e.payload.voterId}:${e.payload.epoch}`;
-  const work: WorkRequest[] = e.payload.vote === 'yes' && !live.data.notes[key]
-    ? [{ kind: WORK.approved, key, input: {
-      sessionId: live.data.sessionId, voterId: e.payload.voterId, voter: e.payload.voter, epoch: e.payload.epoch, owedAt: ctx.now.toISOString(),
-    } }]
-    : [];
-  return step(live.name as Name, asked(live.data, work), { work, push: tray(f) });
+  return step(live.name as Name, live.data, { work: [], push: tray(f) });
 }
 
 // Closed: whoever asked to be told about it hears that it was closed, once,

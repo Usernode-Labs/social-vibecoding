@@ -117,9 +117,8 @@ test('clicking a pill calls the method the module actually has', () => {
   };
   try {
     const element = Reactions({ msg: msg([reaction('👍', false), reaction('🎉', true, ['alice'])]) });
-    // B9: a request's chip leads the row when there is one; none here.
-    const [chip, pills] = element.props.children;
-    assert.equal(chip, null);
+    // The room's status chip is gone (5 Nov 2026): the row is the pills alone.
+    const pills = element.props.children;
     assert.equal(pills.length, 2);
     for (const pill of pills) pill.props.onClick();
   } finally {

@@ -380,7 +380,7 @@ async function redo(pool, config, { row, user, message = null, deps = {} }) {
   await botModule(deps).enqueueFront(pool, {
     appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_redo', payerId: steer.theirs ? null : user.id,
   }).catch((err) => log.warn('homeroom-bot-steer', 'Could not queue a redo', { app: app.slug, issueNumber: n, err: err.message }));
-  try { require('./homeroom-bot-tray').noteWorkChanged(user.id, deps); } catch { /* the tray reads again on its own */ }
+  try { require('./bot-work-changed').noteWorkChanged(user.id, deps); } catch { /* the tray reads again on its own */ }
   log.info('homeroom-bot-steer', 'A build was stopped to be redone with its note', {
     app: app.slug, issueNumber: n, runId: build.runId, userId: user.id, posted: !!posted?.ok,
   });

@@ -68,7 +68,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  GROUP_FIRST, NOT_MOVING, byProject, changeOnGithub, freshByProject, freshCount, freshFirst, groupRows, holdOrder, nextWords, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
+  GROUP_FIRST, byProject, changeOnGithub, freshByProject, freshCount, freshFirst, groupRows, holdOrder, nextWords, notMoving, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -128,13 +128,14 @@ function needGlyph(row: WorkRow): ReactNode {
   if (kind === 'private') return <LockIcon className={G} />;
   return <BallotIcon className={G} />;
 }
-/** In progress's glyph, by what is being done. */
+/** In progress's glyph, by its stage. */
 function nextGlyph(t: AiThread): ReactNode {
-  if (t.what === 'going_live' || t.what === 'merging') return <ArrowUpTrayIcon className={G} />;
-  if (t.what === 'reading' || t.what === 'reading_reply') return <EyeIcon className={G} />;
-  if (t.what === 'fixing') return <CogIcon className={G} />;
-  // #6282: Updating is the bot following up on it, as Revising was.
-  if (t.what === 'revising' || t.what === 'updating') return <ReplyArrowIcon className={G} />;
+  const code = t.work.line?.code;
+  if (t.work.stage === 'going_live') return <ArrowUpTrayIcon className={G} />;
+  if (t.work.stage === 'reading' || t.work.stage === 'planning') return <EyeIcon className={G} />;
+  if (code === 'fixing') return <CogIcon className={G} />;
+  // #6282: an update is the bot following up on it.
+  if (code === 'revising') return <ReplyArrowIcon className={G} />;
   return <CodeIcon className={G} />;
 }
 
@@ -638,7 +639,12 @@ export function AiLists({
   historyRef?: React.Ref<HTMLDivElement>;
 }): ReactNode {
   const t = useMessages('messages');
-  const say = (p: Phrase | null) => (p ? t(p.id, p.values) : null);
+  const say = (p: Phrase | null): string | null => {
+    if (!p) return null;
+    // A stage's words inside a row's line are translated first.
+    const nested = p.nested ? Object.fromEntries(Object.entries(p.nested).map(([k, q]) => [k, say(q) || ''])) : null;
+    return t(p.id, nested ? { ...p.values, ...nested } : p.values);
+  };
   // The projects in any list, the ones that need you most first; the ones
   // picked; the chips the rail shows; and More, open under its chip.
   // 5 Nov 2026: History's projects too, after the rest, and any project a
@@ -686,7 +692,7 @@ export function AiLists({
   }));
   const threadLine = (glyph: (th: AiThread) => ReactNode) => (th: AiThread): Line => ({
     key: String(th.threadId),
-    kind: th.what,
+    kind: th.work.stage,
     app: th.app,
     glyph: glyph(th),
     number: th.number,
@@ -708,8 +714,8 @@ export function AiLists({
   // that order within a project so the rows read work first, then the wait.
   // #6158: what is moving leads; the waiting rows nobody is moving fold away
   // under one head.
-  const movingShown = waitingShown.filter((th) => !NOT_MOVING.has(th.what));
-  const stillShown = waitingShown.filter((th) => NOT_MOVING.has(th.what));
+  const movingShown = waitingShown.filter((th) => !notMoving(th));
+  const stillShown = waitingShown.filter((th) => notMoving(th));
   const waitingLine = threadLine(() => <ClockIcon className={G} />);
   const busyLines: Line[] = [
     ...progressShown.map(threadLine(nextGlyph)),
@@ -718,7 +724,7 @@ export function AiLists({
   const stillLines: Line[] = stillShown.map(waitingLine);
   const tab = useTabBuild();
   const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => {
-    if (th.what === 'closed') {
+    if (th.kind === 'private' && th.work.stage === 'closed') {
       // #6271: a private thread marked done this week: a lock, its title, the
       // day it closed, and no number. It opens the thread, where Reopen is.
       return {

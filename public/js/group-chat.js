@@ -776,11 +776,6 @@ const GroupChat = {
         GroupChat._updateMessageReactions(msg.messageId, msg.reactions || []);
         break;
       }
-      case 'bot_request_status': {
-        // B9: a request asked of Homeroom bot here moved on.
-        GroupChat._applyBotRequestStatus(msg);
-        break;
-      }
       case 'chat_message_updated': {
         // An offer of Homeroom bot's in a thread was decided.
         GroupChat._applyMessageUpdate(msg);
@@ -1328,14 +1323,14 @@ const GroupChat = {
         icon: GroupChat._eventIcon(event.type, event),
       } : null,
       eventHref: linksProposal ? GroupChat._eventHref(GroupChat._voteRef(msg)[0], pr) : null,
-      // B9: how a request asked of Homeroom bot is going, on the message
-      // everybody sees (its metadata, set by the server alone), and the card
-      // under it for its writer alone (GroupChat._botCards).
-      botRequest: GroupChat._botRequestView(kind === 'message' && !deleted ? meta.botRequest : null),
+      // B9: the card under a request's message for its writer alone
+      // (GroupChat._botCards). 5 Nov 2026: the room's status chip is gone;
+      // where a request stands is on its own page.
       botCard: kind === 'message' && !deleted && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
         ? (GroupChat._botCards.get(Number(msg.id)) || null) : null,
       canAskBot: GroupChat._botHere && kind === 'message' && !deleted && !threadType && msg.id != null
         && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
+        // A message an older chip names (its metadata) is a request already.
         && !(meta.botRequest) && !GroupChat._botCards.has(Number(msg.id))
         && !/(^|[^\w])@(homeroom_bot\b|homeroom\s+bot\b)/i.test(String(msg.content || '')),
       // Only the message knows WHICH change it is about, so the pair rides
@@ -3389,40 +3384,14 @@ const GroupChat = {
   // Apply a fresh reaction aggregate (from the WS 'reaction' broadcast or
   // history) to a message — update state + patch just its pill row. The
   // message may live in the general stream or any cached thread (#194).
-  // B9: the chip a request's message wears, from its metadata: reading,
-  // building, ready (with the change to try), live, fixing (a fix asked on
-  // one of the bot's changes waiting for approval), or waiting_first_version
-  // (held until the project's first version is live). Null for none.
-  _botRequestView(value) {
-    if (!value || typeof value !== 'object') return null;
-    const status = ['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version'].includes(value.status) ? value.status : null;
-    if (!status) return null;
-    return {
-      status,
-      issueNumber: Number(value.issueNumber) || null,
-      sessionId: Number(value.sessionId) || null,
-    };
-  },
-
   // B9: one row's chat-request fields again, after a frame moved them.
   _repaintBotRequest(messageId) {
     const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
     if (!msg) return;
     const view = GroupChat._messageView(msg);
     GroupChat._react()?.patchTranscriptMessage(Number(messageId), {
-      botRequest: view.botRequest, botCard: view.botCard, canAskBot: view.canAskBot,
+      botCard: view.botCard, canAskBot: view.canAskBot,
     });
-  },
-
-  // B9: the room said a request's status moved (`bot_request_status`).
-  _applyBotRequestStatus(frame) {
-    const msg = GroupChat.messages.find((m) => String(m.id) === String(frame.messageId));
-    if (!msg) return;
-    const meta = { ...(msg.metadata || msg.meta || {}) };
-    if (frame.botRequest) meta.botRequest = frame.botRequest;
-    else delete meta.botRequest;
-    msg.metadata = meta;
-    GroupChat._repaintBotRequest(frame.messageId);
   },
 
   // B9: the viewer's own card under one of their messages, pushed to their
