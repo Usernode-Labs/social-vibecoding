@@ -285,8 +285,10 @@ test('the bot keeps its promises and reads its older requests, one at a time', {
     ], 'what waits in the queue, then the older ones in the bot\'s order');
     assert.equal(view.upNext[1].title, 'Never read');
     assert.equal(view.upNext[1].excerpt, 'A request nobody read.');
-    assert.deepEqual(view.waitingOn.map((e) => [e.issueNumber, e.track.why]), [[35, 'question'], [37, 'question']]);
-    assert.deepEqual(view.leftToPeople.map((e) => [e.issueNumber, e.track.why]), [[30, 'needs_person'], [36, 'needs_person']]);
+    // By its stored work state (services/work-state.js): a question waits on
+    // its requester; one a person must decide is left to people.
+    assert.deepEqual(view.waitingOn.map((e) => [e.issueNumber, e.track.work.why]), [[35, 'question'], [37, 'question']]);
+    assert.deepEqual(view.leftToPeople.map((e) => [e.issueNumber, e.track.work.why]), [[30, 'decide'], [36, 'decide']]);
     // #33 maya claimed: hers, counted only.
     assert.equal(view.withPeople, 1);
     // #30, read live since, needs a person too.

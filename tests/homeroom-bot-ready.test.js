@@ -11,6 +11,13 @@
 // community, only the approvers it names (decided: everybody there could
 // vote, and nobody is told this way). A Yes cast anywhere settles the card.
 //
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): the card goes out for a
+// project's first version only. Anybody else's chat with the bot holds only
+// their conversation with it: the request's thread says the change is up
+// for a vote, and their bell rings from its stage (services/work-state.js).
+// A card sent before still settles when a Yes is cast, and still says where
+// its change stands.
+//
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-ready.test.js
 
 const test = require('node:test');
@@ -168,9 +175,10 @@ test('#5506: the card offers a non-builder only what works, and Withdraw it to w
   assert.match(api, /\.\.\.\(type === 'preview' && pick\(row, 'readOnly'\) === true \? \{ readOnly: true \} : \{\}\)/);
   assert.match(api, /response\.status === 403 && pick\(data, 'code'\) === 'collab_required'/);
   assert.match(api, /fetch\(`\/api\/conversations\/homeroom-bot\/withdraw\/\$\{sessionId\}`/);
-  const strip = read('frontend/src/features/messages/bot-strip.tsx');
-  assert.match(strip, /const canApprove = !!ready\?\.approve && !!sessionId && !approved && !lookOnly;/);
-  assert.match(strip, /tryChange\(\{ appSlug: row\.job\.appSlug \}, sessionId, \{ readOnly: lookOnly \}\)/);
+  // The activity drawer's Ready to try row, which offered the same Try it
+  // and held back its Approve, is gone (5 Nov 2026): the card is the one
+  // place in the chat that offers them.
+  assert.doesNotMatch(read('frontend/src/features/messages/bot-strip.tsx'), /tryChange|canApprove|lookOnly/);
 });
 
 test('B7: the client knows the new buttons, and Approve is the person\'s own vote, on the version they were sent', () => {
@@ -357,16 +365,16 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     `INSERT INTO app_activity (app_id, user_id, date, seconds_spent) VALUES ($1, $2, CURRENT_DATE, 120)
      ON CONFLICT DO NOTHING`, [app.id, p.id],
   )));
-  const change = async (app, requester, issueNumber) => {
+  const change = async (app, requester, issueNumber, { firstVersion = false } = {}) => {
     const { rows: [s] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, check_state)
        VALUES ($1, $2, $3, 'promoted', 'Sunday reminder', NOW(), 'passing') RETURNING id`,
       [app.id, homeroomBot.id, `bot-${app.slug}-${issueNumber}`],
     );
     await pool.query(
-      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
-       VALUES ($1, $2, $3, 'Sunday reminder', 'Remind us on Sundays')`,
-      [app.id, issueNumber, requester.id],
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text, first_version)
+       VALUES ($1, $2, $3, 'Sunday reminder', 'Remind us on Sundays', $4)`,
+      [app.id, issueNumber, requester.id, firstVersion],
     );
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, build_ok)
@@ -374,6 +382,29 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
       [app.id, issueNumber, s.id],
     );
     return s.id;
+  };
+  // A card sent before 5 Nov 2026, as the relay sent it (decision 10: it
+  // still settles, and still says where its change stands).
+  const oldCard = async (person, app, sessionId) => {
+    const { rows: [run] } = await pool.query(
+      'SELECT id, issue_number FROM homeroom_bot_runs WHERE proposal_session_id = $1 ORDER BY id DESC LIMIT 1', [sessionId],
+    );
+    const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, homeroomBot.id, person.id);
+    const meta = {
+      kind: 'proposal', appSlug: app.slug, appName: app.name, issueNumber: Number(run.issue_number), sessionId, epoch: 0,
+      status: 'open', ready: { group: false, last: false }, actions: [{ id: 'try' }, { id: 'approve', epoch: 0 }, { id: 'change' }],
+    };
+    const { rows: [m] } = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+       VALUES ($1, $2, $3, jsonb_build_object('homeroomBot', $4::jsonb)) RETURNING id`,
+      [opened.conversationId, homeroomBot.id, 'It\'s ready to try.', JSON.stringify(meta)],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
+       VALUES ($1, $2, $3, $4, $5, 'proposal', $6)`,
+      [m.id, person.id, opened.conversationId, app.id, Number(run.issue_number), run.id],
+    );
+    return Number(m.id);
   };
   const card = async (userId, sessionId) => (await pool.query(
     `SELECT m.id, m.content, m.metadata->'homeroomBot' AS meta
@@ -395,17 +426,12 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     const state = await dm.approvalState(pool, { sessionId: id, userId: maya.id });
     assert.deepEqual([state.audience, state.counts, state.already, state.last], ['solo', true, false, true]);
     await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
-    const sent = await card(maya.id, id);
-    assert.equal(sent.meta.ready.group, false);
-    assert.equal(sent.meta.ready.last, true);
-    assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
-    assert.equal(sent.meta.actions[1].epoch, 0);
-    assert.equal(sent.meta.askedText, 'Remind us on Sundays');
-    assert.equal(sent.meta.changeTitle, 'Sunday reminder', 'the card says what the change is (#3870)');
-    assert.match(sent.content, /It's ready to try\. Approve it when you're happy with it, and it goes live\.$/);
+    assert.equal(await card(maya.id, id), undefined, 'her chat with the bot holds only her conversation with it');
     assert.deepEqual(await told(id), [], 'nobody else must approve');
-    // A Yes, from the card or anywhere, settles it on every device, and
-    // says what happens next: hers was the last Yes it needed.
+    // A Yes, from a card sent before or anywhere, settles that card on
+    // every device, and says what happens next: hers was the last Yes it
+    // needed.
+    await oldCard(maya, solo, id);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [id, maya.id]);
     assert.deepEqual(await dm.noteApproved(pool, id, maya.id), { soon: true });
     const settled = (await card(maya.id, id)).meta;
@@ -421,23 +447,16 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.deepEqual([state.audience, state.counts, state.last, state.needed], ['invited', true, false, 2]);
     assert.deepEqual(await dm.needsYesFrom(pool, state, { except: [ben.id] }), [ada.id]);
     await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
-    const sent = await card(ben.id, id);
-    assert.deepEqual(sent.meta.ready, { group: true, last: false, waitingOn: ['ada'], missing: 2, needed: 2 });
-    assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
+    assert.equal(await card(ben.id, id), undefined, 'the asker is told by the request, not in his chat with the bot');
     assert.deepEqual(await told(id), [{ username: 'ada', detail: 'epoch:0', source_user_id: ben.id }]);
     await dm.noteApproversReady(pool, { sessionId: id, epoch: 0, requesterId: ben.id });
     assert.equal((await told(id)).length, 1, 'once per version');
     await pool.query('UPDATE chat_sessions SET approval_epoch = 1 WHERE id = $1', [id]);
     await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
     assert.deepEqual((await told(id)).map((r) => r.detail).sort(), ['epoch:0', 'epoch:1'], 'a new version asks again');
-    const older = (await pool.query(
-      `SELECT m.metadata->'homeroomBot' AS meta FROM homeroom_bot_dm_messages d JOIN conversation_messages m ON m.id = d.message_id
-        WHERE d.user_id = $1 AND d.kind = 'proposal' ORDER BY m.id`,
-      [ben.id],
-    )).rows;
-    assert.deepEqual([older[0].meta.status, older[0].meta.updated], ['closed', true], 'the older version\'s card gives way');
     // Ben approves the version in front of him: it waits on Ada, or goes
     // live three days after it went up for approval if nobody objects.
+    await oldCard(ben, club, id);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 1)`, [id, ben.id]);
     const { rows: [{ promoted_at: promotedAt }] } = await pool.query('SELECT promoted_at FROM chat_sessions WHERE id = $1', [id]);
     const next = await dm.noteApproved(pool, id, ben.id);
@@ -466,7 +485,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
        VALUES ($1, $2, 'Votes for the club', 'filed', 1)`,
       [club.id, maya.id],
     );
-    const id = await change(club, maya, 1);
+    const id = await change(club, maya, 1, { firstVersion: true });
     const state = await dm.approvalState(pool, { sessionId: id, userId: maya.id });
     assert.equal(state.firstVersion, true);
     assert.equal(state.gate.mergeable, true, 'no vote needed');
@@ -494,7 +513,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.equal(next.firstVersion, false);
     assert.equal(next.gate.mergeable, false);
     await tellReadyNow(pool, later, { bot: homeroomBot, domain: 'app.example.test' });
-    assert.deepEqual((await card(ben.id, later)).meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
+    assert.equal(await card(ben.id, later), undefined, 'a first version\'s news is the only news sent there');
     assert.deepEqual((await told(later)).map((r) => r.username), ['ada', 'maya']);
   });
 
@@ -507,16 +526,15 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     const id = await change(tiers, lee, 29);
     await pool.query(`UPDATE chat_sessions SET linked_issues = '{29}' WHERE id = $1`, [id]);
     await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
-    const sent = await card(lee.id, id);
-    assert.deepEqual(sent.meta.actions.map((a) => [a.id, !!a.readOnly]), [['try', true], ['change', false]], 'no Approve; Try it look-only');
-    assert.match(sent.content, /It goes live once it's approved\.$/);
+    assert.equal(await card(lee.id, id), undefined);
+    // A card sent before says what its reader can do on it now.
+    const sentId = await oldCard(lee, tiers, id);
     const [now] = await dm.readyStates(pool, { user: { id: lee.id } });
-    assert.deepEqual([now.messageId, now.state, now.canBuild, now.canWithdraw], [Number(sent.id), 'open', false, true]);
-    // A builder's card on the same project still offers Approve.
+    assert.deepEqual([now.messageId, now.state, now.canBuild, now.canWithdraw], [sentId, 'open', false, true]);
+    // A builder's on the same project may build there.
     const id2 = await change(tiers, ada, 30);
     await pool.query(`UPDATE chat_sessions SET linked_issues = '{30}' WHERE id = $1`, [id2]);
-    await tellReadyNow(pool, id2, { bot: homeroomBot, domain: 'app.example.test' });
-    assert.deepEqual((await card(ada.id, id2)).meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
+    await oldCard(ada, tiers, id2);
     const [adas] = await dm.readyStates(pool, { user: { id: ada.id } });
     assert.deepEqual([adas.canBuild, adas.canWithdraw], [true, true], 'she asked for it');
     // Withdraw it, from the card: only theirs to withdraw.
@@ -558,9 +576,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.equal(named.counts, false, 'only the named approvers\' Yes counts');
     assert.deepEqual(await dm.needsYesFrom(pool, named, { except: [ben.id] }), [ada.id]);
     await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
-    const sent = await card(ben.id, id);
-    assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'change'], 'no Approve for a Yes that does not count');
-    assert.match(sent.content, /It goes live once it's approved\.$/);
+    assert.equal(await card(ben.id, id), undefined);
     assert.deepEqual((await told(id)).map((r) => r.username), ['ada']);
   });
 });

@@ -297,7 +297,7 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     const { rows: objects } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [answer.id]);
     assert.deepEqual(objects.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${pending.id}`]);
     assert.equal(await turnsOf(sam), 0, 'decided without the model');
-    const { rows: offers } = await pool.query('SELECT kind FROM homeroom_bot_dm_actions WHERE user_id = $1', [sam.id]);
+    const { rows: offers } = await pool.query('SELECT kind FROM bot_cards WHERE user_id = $1', [sam.id]);
     assert.deepEqual(offers.map((o) => o.kind), ['post_reply'], 'the draft, and no new request offered');
   });
 
@@ -367,9 +367,11 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     const tapped = await conversations.sendMessage(pool, maya, await chatOf(maya), { content: 'File it', reply_to_id: offered.messageId });
     const card = await mayor.decideOffer(pool, CONFIG, { bot, user: maya, settings, message: tapped.message, deps: {} });
     assert.equal(created.length, 1, 'filed');
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): no request card in
+    // her chat with the bot; the tap's answer is the reply saying it is filed,
+    // and the request keeps what was asked, which its page leads with.
     const { rows: [meta] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [card.messageId]);
-    assert.equal(meta.metadata.homeroomBot.kind, 'activity');
-    assert.equal(meta.metadata.homeroomBot.askedText, 'Let two flatmates swap their turns on a chore.');
+    assert.equal(meta.metadata.homeroomBot.kind, 'filed');
     const { rows: [recorded] } = await pool.query(
       'SELECT asked_text FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2', [app.id, 41],
     );

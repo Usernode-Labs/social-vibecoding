@@ -34,19 +34,22 @@ test('numbersOf: positive request numbers, once each, at most twenty', () => {
 
 test('readOf: work under way wins, a verdict counts while it is fresh, anything else is read again', () => {
   const read = (o) => batches.readOf({ now: NOW, ...o });
-  // The request's track first.
-  assert.deepEqual(read({ track: { state: 'live' } }), { read: 'done', note: null, why: 'live' });
-  assert.deepEqual(read({ track: { state: 'done_elsewhere' } }).read, 'done');
-  assert.equal(read({ track: { state: 'closed' } }).closed, true);
-  for (const state of ['building', 'checks', 'vote', 'going_live']) assert.equal(read({ track: { state } }).read, 'underway', state);
-  assert.deepEqual(read({ track: { state: 'queued', step: 'build' } }), { read: 'underway', note: null, why: 'build_queued' });
-  assert.equal(read({ track: { state: 'queued', step: null } }).read, 'reading');
-  assert.equal(read({ track: { state: 'planning' } }).read, 'reading');
-  assert.deepEqual(read({ track: { state: 'waiting', why: 'plan' } }), { read: 'ready', note: null, why: 'plan' });
-  assert.deepEqual(read({ track: { state: 'held', why: 'slots' } }), { read: 'ready', note: null, why: 'held' });
-  assert.deepEqual(read({ track: { state: 'held', why: 'allowance' } }).why, 'allowance');
+  // The request's track first: its stored work state (5 Nov 2026).
+  const T = (stage, extra = {}, track = {}) => ({ work: { stage, why: null, reason: null, line: null, ...extra }, ...track });
+  assert.deepEqual(read({ track: T('live') }), { read: 'done', note: null, why: 'live' });
+  assert.deepEqual(read({ track: T('closed', {}, { doneBy: { username: 'maya' } }) }).read, 'done', 'closed by somebody else\'s change');
+  assert.equal(read({ track: T('closed') }).closed, true);
+  for (const [stage, why] of [['building', 'building'], ['checking', 'checks'], ['up_for_vote', 'vote'], ['going_live', 'going_live']]) {
+    assert.deepEqual(read({ track: T(stage) }), { read: 'underway', note: null, why }, stage);
+  }
+  assert.deepEqual(read({ track: T('building', { line: { code: 'queued', place: 2 } }) }), { read: 'underway', note: null, why: 'build_queued' });
+  assert.equal(read({ track: T('reading', { line: { code: 'queued', place: 1 } }) }).read, 'reading');
+  assert.equal(read({ track: T('planning') }).read, 'reading');
+  assert.deepEqual(read({ track: T('waiting_for_you', { why: 'plan' }) }), { read: 'ready', note: null, why: 'plan' });
+  assert.deepEqual(read({ track: T('building', { line: { code: 'held_waiting' } }, { held: { limit: 'slots' } }) }), { read: 'ready', note: null, why: 'held' });
+  assert.deepEqual(read({ track: T('reading', { line: { code: 'on_hold' } }, { held: { limit: 'allowance' } }) }).why, 'allowance');
   const asked = { verdict: 'question', question: 'Which colour?', created_at: ago(DAY) };
-  assert.deepEqual(read({ track: { state: 'waiting', why: 'question' }, run: asked }), { read: 'question', note: 'Which colour?', why: null });
+  assert.deepEqual(read({ track: T('waiting_for_you', { why: 'question' }), run: asked }), { read: 'question', note: 'Which colour?', why: null });
   // A look owed or under way, with no track yet.
   assert.equal(read({ queued: true }).read, 'reading');
   // The newest verdict, while fresh.
@@ -64,7 +67,7 @@ test('readOf: work under way wins, a verdict counts while it is fresh, anything 
   assert.equal(read({ run: { verdict: 'ready', created_at: ago(2 * DAY) }, personAt: ago(DAY) }).read, 'unread');
   assert.equal(read({ run: { verdict: 'ready', created_at: ago(DAY) }, personAt: ago(2 * DAY) }).read, 'ready');
   // A stopped build's request reads its verdict again.
-  assert.equal(read({ track: { state: 'stopped' }, run: { verdict: 'ready', created_at: ago(DAY) } }).read, 'ready');
+  assert.equal(read({ track: T('stopped', { reason: 'build_failed' }), run: { verdict: 'ready', created_at: ago(DAY) } }).read, 'ready');
   assert.equal(read({}).read, 'unread');
   // The bot's own words are clipped, never left to run on.
   assert.ok(read({ run: { verdict: 'person', reason: 'x'.repeat(900), created_at: ago(DAY) } }).note.length <= 240);
@@ -85,13 +88,15 @@ test('the summary counts each read, and says nothing of a zero', () => {
 });
 
 test('rollupOf: the started requests\' tracks, counted; one with no track yet is waiting; active ones hold the batch', () => {
+  const W = (stage, line = null, extra = {}) => ({ work: { stage, why: null, reason: null, line }, ...extra });
   const tracks = new Map([
-    [1, { state: 'live', title: 'Dark mode' }], [2, { state: 'going_live' }], [3, { state: 'vote' }], [4, { state: 'checks' }],
-    [5, { state: 'building' }], [6, { state: 'planning' }], [7, { state: 'held' }], [8, { state: 'stopped' }], [9, { state: 'waiting' }],
+    [1, W('live', null, { title: 'Dark mode' })], [2, W('going_live')], [3, W('up_for_vote')], [4, W('checking')],
+    [5, W('building')], [6, W('planning')], [7, W('building', { code: 'held_waiting' })], [8, W('stopped')],
+    [9, W('waiting_for_you')],
   ]);
   const roll = batches.rollupOf([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], tracks);
   assert.deepEqual(roll.counts, { live: 2, ready: 1, checks: 1, building: 2, waiting: 3, stopped: 1, total: 10 });
-  // checks, building, planning, held, and #10 with no track (queued).
+  // checks, building, planning, held (building, ready for room), and #10 with no track (queued).
   assert.equal(roll.active, 5);
   assert.deepEqual(roll.progress[0], { number: 1, state: 'live', title: 'Dark mode' });
   assert.deepEqual(roll.progress[9], { number: 10, state: 'waiting' });

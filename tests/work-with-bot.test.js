@@ -213,11 +213,18 @@ test('a change gets the quiet version: under its cards, on its request\'s page a
     'the last of the change page\'s root post, under its cards');
 });
 
-test('the bot tab says Waiting for your plan', () => {
+test('the bot tab says Waiting for you to OK the plan', () => {
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 3): in its stage's own
+  // words (lib/work-state.ts), the same on every screen.
   const model = loadTsx('frontend/src/features/ai/model.ts');
-  const t = { group: 'waiting', what: 'awaiting_plan', app: { slug: 'x', name: 'Plant Pal' }, number: 18, title: 'Dark mode' };
-  assert.equal(model.nextWords(t).id, 'messages:ai.up.awaitingPlan');
-  assert.equal(model.shortWords(t).id, 'messages:ai.short.yourPlan');
-  assert.equal(message('messages:ai.up.awaitingPlan', { project: 'Plant Pal', number: 18 }), 'Plant Pal · #18 · Waiting for your plan');
-  assert.equal(message('messages:ai.short.yourPlan'), 'Your plan');
+  const t = {
+    group: 'needs', app: { slug: 'x', name: 'Plant Pal' }, number: 18, title: 'Dark mode',
+    work: { stage: 'waiting_for_you', why: 'plan', reason: null, line: null, since: null },
+  };
+  const words = model.nextWords(t);
+  assert.equal(words.id, 'messages:ai.row.stage');
+  assert.equal(words.nested.stage.id, 'core:work.why.plan');
+  assert.equal(model.shortWords(t).id, 'core:work.why.plan');
+  assert.equal(message('messages:ai.row.stage', { project: 'Plant Pal', number: 18, stage: message('core:work.why.plan') }),
+    'Plant Pal · #18 · Waiting for you to OK the plan');
 });

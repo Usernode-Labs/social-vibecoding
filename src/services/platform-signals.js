@@ -450,6 +450,7 @@ async function fileRow(pool, config, row, deps) {
     await pool.query(
       `UPDATE issues SET status = 'open' WHERE app_id = $1 AND github_issue_number = $2 AND kind = 'general'`,
       [app.id, issueNumber]);
+    await require('./work-state').touched(pool, [{ appId: app.id, issueNumber }]);
   } else {
     // A pass that died between filing and recording the number: find it.
     const { rows: [found] } = await pool.query(FILED_SINCE_SQL, [app.id, row.title, row.first_seen_at]);
@@ -532,6 +533,7 @@ async function closeRow(pool, row, deps, { reason = 'cleared', comment = true } 
     await pool.query(
       `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND kind = 'general'`,
       [row.app_id, row.issue_number]);
+    await require('./work-state').touched(pool, [{ appId: Number(row.app_id), issueNumber: Number(row.issue_number) }]);
   }
   await pool.query(
     `UPDATE platform_signals SET state = 'closed', closed_at = NOW(), close_reason = $2 WHERE id = $1`,

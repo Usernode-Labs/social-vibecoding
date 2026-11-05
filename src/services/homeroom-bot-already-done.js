@@ -20,33 +20,10 @@ const MAX_ROUNDS = MAX_READS + 2;
 const CALL_TIMEOUT_MS = 20 * 1000;
 const MAX_OUTPUT_TOKENS = 300;
 
-const READ_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'list_source',
-      description: 'Files in the project\'s code on main, by folder or name.',
-      parameters: {
-        type: 'object',
-        properties: { dir: { type: 'string' }, match: { type: 'string' } },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'read_source',
-      description: 'Read one file of the project\'s code on main.',
-      parameters: {
-        type: 'object',
-        properties: { path: { type: 'string' }, fromLine: { type: 'integer' } },
-        required: ['path'],
-        additionalProperties: false,
-      },
-    },
-  },
-];
+// The project's code on main, read by the one definition of each tool
+// (src/services/bot-tools/source.js), as a project's own thread reads it.
+const botTools = require('./bot-tools');
+const READ_TOOLS = botTools.toolsFor(['list_source', 'read_source'], 'thread');
 
 function systemPrompt() {
   return [
@@ -173,13 +150,9 @@ async function one(pool, { user, app, title, details, deps, ctx, t = null }) {
     },
     call: async (call, name, args) => {
       if (reads >= MAX_READS) return { error: 'Enough reading: answer with the JSON line now.' };
-      if (name === 'list_source') {
+      if (name === 'list_source' || name === 'read_source') {
         reads += 1;
-        return mayor.listSource(pool, { user, project: app.slug, dir: args.dir, match: args.match, deps });
-      }
-      if (name === 'read_source') {
-        reads += 1;
-        return mayor.readSource(pool, { user, project: app.slug, path: args.path, fromLine: args.fromLine, deps });
+        return botTools.run(name, args, { pool, user, scope: 'thread', app, deps: { ...deps, mayor } });
       }
       return { error: 'There is no such tool. Use list_source or read_source.' };
     },

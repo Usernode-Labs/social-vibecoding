@@ -2,8 +2,10 @@
 
 // B8: one front door. A request asked for on the platform (Suggest an improvement)
 // goes to Homeroom bot as one filed in its chat does: recorded as the
-// asker's, in their words, first in its queue with its card in their DM, and
-// the confirmation says how long it usually takes. Only members file one.
+// asker's, in their words, first in its queue, followed from its stored work
+// state (no card in their DM since 5 Nov 2026, docs/plans/bot-one-model.md
+// step 4), and the confirmation says how long it usually takes. Only members
+// file one.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-front-door.test.js
 
@@ -173,10 +175,11 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
         WHERE d.user_id = $1 AND d.app_id = $2 AND d.issue_number = 12 AND d.kind = 'activity'`,
       [maya.id, plantPal.id],
     );
-    // One story: filed through the form, it still gets its card in her DM
-    // with the bot, whose thread holds its story (the main chat shows only
-    // the moments that need her).
-    assert.equal(cards.length, 1);
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
+    // no longer sent to her DM with the bot, so filing through the form
+    // leaves no activity card there. She follows it from its stored work
+    // state (the Messages list's bot row and the Homeroom bot tab).
+    assert.equal(cards.length, 0, 'no card in her chat with the bot');
     // Nothing else runs on Plant Pal: the lane grants it the project's read
     // at once (its row started), and the bot is reading it.
     await until(async () => (await pool.query(
@@ -184,6 +187,12 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
     )).rows[0]?.started_at != null, 'its read granted');
     const work = await require('../src/services/homeroom-bot-progress').botWorkByIssue(pool, plantPal.id);
     assert.equal(work.get(12).what, 'reading', 'the bot has it, and reads it');
+    // Followed in her tray: the request's stored work state is hers, and reads it.
+    const ws = require('../src/services/work-state');
+    await ws.refresh(pool, [{ appId: plantPal.id, issueNumber: 12 }]);
+    const tracked = (await ws.forRequester(pool, maya.id)).find((s) => s.kind === 'request' && s.ref === 12);
+    assert.ok(tracked, 'her request has a stored work state');
+    assert.deepEqual([tracked.appId, tracked.stage], [plantPal.id, 'reading']);
   });
 
   await t.test('elsewhere it goes to the group; and nothing for somebody the bot does not talk to', async () => {

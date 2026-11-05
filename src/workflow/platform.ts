@@ -301,6 +301,13 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
     // read on the runtime's own pool, never waiting behind the app's.
     newest: () => newestBuild(workflowPool),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
+    // One work state per request and change (services/work-state.js): an
+    // accepted event of a machine that moves one stores it again, in the
+    // event's own transaction, and pushes what changed.
+    afterAccepted: {
+      wants: (info) => legacy('services/work-state').wants(info),
+      run: (q, info) => legacy('services/work-state').afterTransition(q, info),
+    },
   });
   try {
     await started.start({ slots: true });

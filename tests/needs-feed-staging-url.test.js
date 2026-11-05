@@ -63,13 +63,14 @@ test('the query reads the column for proposals and a typed NULL for decisions, i
   assert.match(sql, /o\.requires_explicit_approval, o\.explicit_approval_reason, o\.staging_url,/);
   // Every arm of the UNION ends on the same columns, so a positional
   // mismatch cannot put a decision's payload where the URL goes.
+  // (The questions' own source is a UNION of two, after the third arm.)
   const [proposals, decisions, questions] = sql.split('UNION ALL');
   assert.match(proposals, /explicit_approval_reason::text,[\s\S]*?staging_url,[\s\S]*?cs\.thread_id, cs\.linked_issues\s+FROM chat_sessions/);
   assert.match(decisions, /explicit_approval_reason,\s+NULL::text AS staging_url, i\.thread_id, NULL::int\[\] AS linked_issues\s+FROM issues/);
   // #6262: a bot question carries its request's thread where #6019 put a
   // typed NULL, so the Homeroom bot page can count what is new there.
   assert.match(questions,
-    /NULL::boolean, NULL::text, NULL::text,\s+-- #6262[^\n]*\n[^\n]*\n\s+\(SELECT r\.thread_id FROM requests r\s+WHERE r\.app_id = q\.app_id AND r\.number = q\.issue_number\),\s+NULL::int\[\]\s+FROM homeroom_bot_dm_messages q/,
+    /NULL::boolean, NULL::text, NULL::text,\s+-- #6262[^\n]*\n[^\n]*\n\s+\(SELECT r\.thread_id FROM requests r\s+WHERE r\.app_id = q\.app_id AND r\.number = q\.issue_number\),\s+NULL::int\[\]\s+FROM \(\s+SELECT dq\.app_id/,
     'and the bot\'s questions, #6019');
   assert.ok(route.NEEDS_FEED_MAX > 0, 'still bounded');
 });

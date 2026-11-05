@@ -355,7 +355,8 @@ test('the tap is decided before the model, and the model still has everything el
   const tap = answer.indexOf('if (target && target.kind === \'build_failed\' && saysTryAgain(message.content)) {');
   assert.ok(tap > 0, 'a quoted Try again under a stop');
   assert.ok(tap > answer.indexOf('const target = await quotedTarget(pool, user.id, quoted);'));
-  assert.ok(tap < answer.indexOf('mayor.runDmTurn('), 'before the model');
+  // The model's turn runs through the one entry (thread-bot.js, 5 Nov 2026).
+  assert.ok(tap < answer.indexOf("require('./thread-bot').answer(pool, config, {\n      kind: require('./bot-profiles').kindInChat(turnDeps)"), 'before the model');
   assert.match(answer, /const finished = await finishOnTryAgain\(pool, config, \{ bot, user, target, message, deps \}\);\n\s+if \(finished\) return finished;/,
     'and on to the model when it was not finished');
 });

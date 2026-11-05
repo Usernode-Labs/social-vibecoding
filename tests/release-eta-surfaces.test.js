@@ -215,21 +215,24 @@ test('the activity card: "Built it." and then when', () => {
   assert.match(child, /data-bot-activity-eyebrow="">Approved<[\s\S]*<span role="status">Going live<\/span>/);
 });
 
-test('the strip: a Homeroom merge going live reads "going live", with no timing', () => {
+test('the chat\'s request rows: a Homeroom merge going live reads "Going live", with no timing', () => {
   // One request, one story: the tray's panel and the header's status line,
-  // which said when the next release carries a Homeroom merge, are gone.
-  // The activity drawer says no timings (its rows open the request's
-  // thread, whose card still counts down to the release, tested above).
+  // which said when the next release carries a Homeroom merge, are gone, and
+  // so is the activity drawer (5 Nov 2026). Where each request stands, read
+  // from its track (bot-strip.tsx stripGroups), says no timings: its thread's
+  // card still counts down to the release, tested above.
   const { stripGroups } = loadTsx('frontend/src/features/messages/bot-strip.tsx');
-  const job = (extra) => ({
+  const track = (work, extra) => ({
     key: 'usernode-2d5619#12', appSlug: 'usernode-2d5619', appName: 'Homeroom', iconUrl: null, iconEmoji: null,
-    issueNumber: 12, title: 'Say when', firstVersion: false, href: null, links: { request: null, proposal: null, project: null }, earlier: [], ...extra,
+    issueNumber: 12, title: 'Say when', firstVersion: false, work, step: 'live', waitingOn: null, busy: false, try: 1,
+    tryStartedAt: null, tryStarts: [], since: null, rootId: null, askId: null, proposalId: 4600, sessionId: 4600,
+    links: { request: null, proposal: null, project: null }, ...extra,
   });
-  const merging = job({ phase: 'merging', step: null, of: null, stepName: null, doing: null, since: null, release: release8 });
-  const went = job({ id: 3, outcome: 'going_live', doing: null, at: new Date(NOW.getTime() - 2 * MIN).toISOString(), release: release8 });
-  const progress = stripGroups({ now: [merging], needsYou: [], history: [] }, NOW).progress;
-  assert.deepEqual(progress.map((row) => row.state), ['going live']);
-  const done = stripGroups({ now: [], needsYou: [], history: [went] }, NOW).done;
+  const merging = track({ stage: 'going_live' }, { release: release8, since: new Date(NOW.getTime() - 2 * MIN).toISOString() });
+  const went = track({ stage: 'live' }, { since: new Date(NOW.getTime() - 2 * MIN).toISOString() });
+  const progress = stripGroups({ tracks: [merging] }, NOW).progress;
+  assert.deepEqual(progress.map((row) => row.state), ['Going live']);
+  const done = stripGroups({ tracks: [went] }, NOW).done;
   assert.deepEqual(done.map((row) => row.state), ['Live']);
   assert.ok(!progress.some((row) => row.state.includes(SENTENCE)));
 });
@@ -248,13 +251,19 @@ test('the bot\'s reads keep `release` only where it belongs', () => {
   ] });
   assert.deepEqual(ready.release, release8);
   assert.equal(open.release, undefined);
+  // A request's track (GET /api/ai/tracks) keeps it only while its change goes live.
   const w = api.normalizeBotWork({
-    now: [{ key: 'a#1', appSlug: 'a', phase: 'merging', release: release8 }, { key: 'b#1', appSlug: 'b', phase: 'building', release: release8 }],
-    history: [{ key: 'c#1', appSlug: 'c', id: 3, outcome: 'going_live', release: release8 }],
+    tracks: [
+      { key: 'a#1', appSlug: 'a', work: { stage: 'going_live' }, release: release8 },
+      { key: 'b#1', appSlug: 'b', work: { stage: 'building' }, release: release8 },
+      { key: 'c#1', appSlug: 'c', work: { stage: 'live' }, release: release8 },
+      { key: 'd#1', appSlug: 'd', work: { stage: 'going_live' }, release: { state: 'soon' } },
+    ],
   });
-  assert.deepEqual(w.now[0].release, release8);
-  assert.equal(w.now[1].release, undefined);
-  assert.deepEqual(w.history[0].release, release8);
+  assert.deepEqual(w.tracks[0].release, release8);
+  assert.equal(w.tracks[1].release, undefined, 'only a track going live');
+  assert.equal(w.tracks[2].release, undefined, 'live already');
+  assert.equal(w.tracks[3].release, undefined, 'only a release block');
 });
 
 // ── A project's chat: the requester's card ──────────────────────────────

@@ -708,7 +708,11 @@ test('why words do not end a design turn yet', () => {
 const CANT_BUILD = 'I can\'t build it myself: the request is filed with version 4 as its plan, and building starts from there '
   + 'on the project\'s side. If you want anything changed before it\'s built, tell me and I\'ll adjust the design first.';
 const FILED = { ...DESIGNED, state: 'filed', number: 14, latest: 4, app: { slug: 'ear', name: 'Ear Trainer' } };
-const BUILDING = { key: 'ear#14', appSlug: 'ear', issueNumber: 14, state: 'building', step: 'build', why: null, busy: true, try: 1 };
+// Its track (homeroom-bot-track.js trackOf): its stored work state, building.
+const BUILDING = {
+  key: 'ear#14', appSlug: 'ear', issueNumber: 14, work: { stage: 'building', why: null, reason: null, line: null, since: null },
+  step: 'build', busy: true, try: 1,
+};
 const filedTurn = (steps, extra = {}) => designTurn(steps, {
   handoff: false, design: FILED, current: { version: 4, html: '<main>Keys</main>' }, filedTrack: BUILDING,
   ask: 'will you build this now?', ...extra,

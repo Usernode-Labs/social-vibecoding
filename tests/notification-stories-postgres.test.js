@@ -7,9 +7,10 @@
 // database can show:
 //
 //   1. The Homeroom bot's news about a request rings with that request's
-//      project on the row (homeroom-bot-dm.js storyAppId through
-//      conversations.sendMessage), and so does its reply in that request's
-//      thread, found by the thread's card. The bell's read serializes them
+//      project on the row (since 5 Nov 2026 rung from the request's stage,
+//      services/work-state.js bellPushes, not sent as a message), and so
+//      does its reply in that request's thread, found by the thread's card
+//      (homeroom-bot-dm.js storyAppId). The bell's read serializes them
 //      with the project and the request, and the bot's reply about a
 //      project is counted, not left to Messages as a plain message is.
 //      #5877: and with that project's icon, which the row's leading tile
@@ -92,17 +93,31 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
     .map(notifications.serialize);
 
   await t.test('the bot\'s news about a request carries its project and its request', async () => {
-    const sent = await dm.sendDm(pool, {
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
+    // no message in her chat with the bot. Its stage rings her bell instead
+    // (services/work-state.js bellPushes): here, the bot's question for her.
+    assert.equal(await dm.sendDm(pool, {
       bot, userId: ada.id, content: 'The plant shelf is live.', moment: 'live',
       metadata: { kind: 'merged', appSlug: app.slug, appName: app.name, issueNumber: 5580, issueTitle: 'Plant shelf' },
-    });
-    assert.ok(sent && sent.messageId, 'the DM was sent');
+    }), null, 'not sent');
+    await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, ada.id);
+    await pool.query(
+      'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 5580, $2, \'Plant shelf\')',
+      [app.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 5580, 'live', 'question')`, [app.id],
+    );
+    const ws = require('../src/services/work-state');
+    const changed = await ws.refresh(pool, [{ appId: app.id, issueNumber: 5580 }]);
+    assert.equal(changed[0].bell, 'needs_you');
+    await ws.pushesOf(pool, changed);
     const { rows: [row] } = await pool.query(
-      'SELECT app_id, kind FROM notifications WHERE user_id = $1 AND conversation_message_id = $2', [ada.id, sent.messageId],
+      `SELECT id, app_id, kind FROM notifications WHERE user_id = $1 AND kind = 'build_needs_you'`, [ada.id],
     );
     assert.equal(Number(row.app_id), app.id, 'the row is filed under the request\'s project');
 
-    const bell = (await listed()).find((n) => n.conversationMessageId === sent.messageId);
+    const bell = (await listed()).find((n) => n.id === row.id);
     assert.ok(bell, 'the bell lists it');
     assert.equal(bell.appId, app.id);
     assert.equal(bell.appSlug, app.slug);
@@ -111,7 +126,11 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
     assert.equal(bell.appIconUrl, '/app-icons/icon-seed-swap');
     assert.equal(bell.appIconEmoji, '🌱');
     assert.equal(bell.storyIssueNumber, 5580, 'and it is about request #5580');
-    assert.ok(bell.conversationId, 'it still routes as the conversation row it is');
+    // No chat is its home (notifications.js STAGE_BELL_SQL): it opens the
+    // request's page, and it is listed whether or not she is in her chat
+    // with the bot.
+    assert.equal(bell.conversationId, null, 'about the request, not a chat');
+    assert.equal(bell.storyIssueNumber, 5580);
   });
 
   await t.test('a plain direct message stays the conversation\'s, with no project', async () => {
@@ -150,7 +169,7 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
     assert.ok(split.unread >= 2);
     const unreadOnly = await notifications.listForUser(pool, ada.id, { limit: 50, unreadOnly: true });
     assert.ok(!unreadOnly.some((n) => n.conversation_id === conversationId), 'not on Unread');
-    assert.ok(unreadOnly.some((n) => Number(n.app_id) === app.id && n.conversation_id), 'the bot\'s news is');
+    assert.ok(unreadOnly.some((n) => Number(n.app_id) === app.id && n.kind === 'build_needs_you'), 'the bot\'s news is');
   });
 
   // The request's story: its discussion and its proposal's.
@@ -232,7 +251,7 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
     // Another request's discussion is not this story.
     await line({ userId: ben.id, content: 'Unrelated', type: 'issue', ref: 6000, minutes: 45 });
 
-    const bell = (await listed()).find((n) => n.storyIssueNumber === 5580 && n.conversationId);
+    const bell = (await listed()).find((n) => n.storyIssueNumber === 5580 && n.kind === 'build_needs_you');
     const row = await notifications.getForUser(pool, ada.id, bell.id);
     const story = await storyHistory.storyOf(pool, row);
     assert.equal(story.issueNumber, 5580, 'the bot\'s row names its request in its detail');
@@ -248,5 +267,29 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
     assert.equal(history.steps.find((s) => s.kind === 'proposed').actor, 'ben_stories');
     assert.equal(history.steps.at(-1).actor, 'ada_stories', 'she asked for it');
     assert.ok(!history.steps.some((s) => s.words === 'Unrelated'));
+  });
+
+  // 5 Nov 2026: before step 4 the bot's news opened its chat with the
+  // requester (sendDm), so every row of it had a conversation. A stage bell
+  // opens none, and a requester who never wrote to the bot must still find
+  // it in the bell.
+  await t.test('a requester who never wrote to the bot still finds her request\'s bell row', async () => {
+    const cy = await user('cy_stories');
+    await pool.query(
+      'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 5581, $2, \'Seed labels\')',
+      [app.id, cy.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 5581, 'live', 'question')`, [app.id],
+    );
+    const ws = require('../src/services/work-state');
+    await ws.pushesOf(pool, await ws.refresh(pool, [{ appId: app.id, issueNumber: 5581 }]));
+    const { rows: [row] } = await pool.query(
+      `SELECT id FROM notifications WHERE user_id = $1 AND kind = 'build_needs_you'`, [cy.id],
+    );
+    assert.ok(row, 'rung');
+    const bell = (await notifications.listForUser(pool, cy.id, { limit: 50 })).find((n) => Number(n.id) === Number(row.id));
+    assert.ok(bell, 'the bell lists it');
+    assert.equal((await notifications.countUnreadSplit(pool, cy.id)).unread, 1, 'and counts it');
   });
 });

@@ -2,11 +2,15 @@
 
 // One request, one story: the chat with Homeroom bot, redrawn.
 //
-//   1. The activity drawer (frontend/src/features/messages/bot-strip.tsx):
-//      its groups (Needs you, Ready to try, In progress, Done today, each
-//      request once, Done today folded), each row's state words, number,
-//      badge and button, the Activity bar that opens it (closed until opened,
-//      remembered per device), and nothing at all with nothing to show.
+//   1. Where each request stands (frontend/src/features/messages/bot-strip.tsx),
+//      read from the viewer's tracks, each its stored work state
+//      (lib/work-state.ts): the groups (Needs you, Ready to try, In progress,
+//      Finished today, each request once, by its stage), each row's words,
+//      the counts the Messages list's bot row says, and how a request ended.
+//      5 Nov 2026 (docs/plans/bot-one-model.md): the activity drawer that
+//      drew those groups under the bot chat's header is gone, and with it
+//      its Activity bar, its remembered open state and its Try it and
+//      Approve; Main Chat holds only the conversation.
 //   2. The main chat's news (frontend/src/features/messages/bot-news-line.tsx):
 //      each request is ONE row, its earlier news folded into its newest. An
 //      open request is two lines with a badge saying what it waits on; a
@@ -15,7 +19,7 @@
 //      request from before threads on its oldest piece; the bot's replies,
 //      offers and hellos stay messages.
 //   3. A request's number in its own colour (bot-request.ts), the same in
-//      the drawer, the chat's rows, its thread's header and the bot's words.
+//      the chat's rows, its thread's header and the bot's words.
 //
 // Run with: node --test tests/messages-bot-strip.test.js
 
@@ -44,235 +48,176 @@ globalThis.window = {
 const NOW = new Date('2026-10-09T12:00:00Z');
 const ago = (minutes) => new Date(NOW.getTime() - minutes * 60000).toISOString();
 const nowhere = { request: null, proposal: null, project: null };
+// A work state as the server stores it (services/work-state.js).
+const at = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, whoseMove: null, since: null, ...extra });
+// One of the viewer's requests, as GET /api/ai/tracks sends it (api.ts normalizeBotTrack).
 let seq = 0;
-const job = (extra = {}) => {
+const track = (work, extra = {}) => {
   seq += 1;
+  const issueNumber = extra.issueNumber || seq;
   return {
-    key: `plant-pal#${extra.issueNumber || seq}`, appSlug: 'plant-pal', appName: 'Plant Pal', iconUrl: null, iconEmoji: null,
-    issueNumber: seq, title: `Request ${seq}`, firstVersion: false, href: null, links: nowhere, earlier: [], ...extra,
+    key: `plant-pal#${issueNumber}`, appSlug: 'plant-pal', appName: 'Plant Pal', iconUrl: null, iconEmoji: null,
+    issueNumber, title: `Request ${issueNumber}`, firstVersion: false, work, step: null, waitingOn: null,
+    busy: false, try: 1, tryStartedAt: null, tryStarts: [], since: ago(30), rootId: null, askId: null, proposalId: null,
+    sessionId: null, links: nowhere, ...extra,
   };
 };
-const working = (extra) => job({ phase: 'building', step: null, of: null, stepName: null, doing: null, since: null, ...extra });
-const past = (extra) => job({ id: 1, outcome: 'live', doing: null, at: ago(60), ...extra });
-const work = (extra) => ({ now: [], needsYou: [], history: [], ...extra });
+const work = (...tracks) => ({ tracks });
 
 function strip() { return loadTsx(STRIP); }
-function draw(props) {
-  const { BotStripView } = strip();
-  return renderToHtml(createElement(BotStripView, { now: NOW, ...props }));
-}
 
-// ── 1. The strip ─────────────────────────────────────────────────────────
+// ── 1. Where each request stands ─────────────────────────────────────────
 
-test('the groups, in order, each request once', () => {
+test('the groups, in order, each request once, by its stage', () => {
   const { stripGroups } = strip();
-  const asked = past({ title: 'Dinner rota', outcome: 'question', cardId: 31, ask: { messageId: 40, kind: 'question', question: 'Which night?' } });
-  const stuck = past({ title: 'Print view', outcome: 'build_failed', ask: { messageId: 41, kind: 'build_failed' }, cardId: 32 });
-  const quietStop = past({ title: 'Old stop', outcome: 'build_failed' });
-  const ready = past({ title: 'Grey out', outcome: 'proposed', ready: { messageId: 50, sessionId: 9, epoch: 0, open: true, approve: true, waiting: null } });
-  const building = working({ title: 'Totals', stage: 'building' });
-  const held = working({ title: 'Held', stage: 'on_hold' });
-  const live = past({ title: 'Went live', outcome: 'live', at: ago(50) });
-  const oldLive = past({ title: 'Long ago', outcome: 'live', at: ago(60 * 30) });
-  const model = stripGroups(work({
-    now: [building, held],
-    needsYou: [asked],
-    history: [stuck, quietStop, ready, live, oldLive, { ...asked }],
-  }), NOW);
-  const titles = (rows) => rows.map((row) => row.job.title);
-  assert.deepEqual(titles(model.needs), ['Dinner rota', 'Print view', 'Held'], 'a stop with an open ask needs them; one without does not');
-  assert.deepEqual(titles(model.ready), ['Grey out']);
-  assert.deepEqual(titles(model.progress), ['Totals'], 'on hold is not in progress');
-  assert.deepEqual(titles(model.done), ['Went live'], 'done is the last day only');
-  // The Needs you button opens the request's thread at what waits.
-  assert.deepEqual([model.needs[0].rootId, model.needs[0].focusId], [31, 40]);
+  const asked = track(at('waiting_for_you', { why: 'question' }), { title: 'Dinner rota' });
+  const stuck = track(at('stopped', { reason: 'build_failed' }), { title: 'Print view', cause: 'time' });
+  const ready = track(at('up_for_vote'), { title: 'Grey out', step: 'vote' });
+  const building = track(at('building'), { title: 'Totals', step: 'build' });
+  const held = track(at('building', { line: { code: 'held_waiting' } }), { title: 'Held', held: { limit: 'slots', position: 2, until: null } });
+  const live = track(at('live'), { title: 'Went live', step: 'live', since: ago(50) });
+  const oldLive = track(at('live'), { title: 'Long ago', step: 'live', since: ago(60 * 30) });
+  const model = stripGroups(work(asked, stuck, ready, building, held, live, oldLive, { ...asked, work: at('building') }), NOW);
+  const titles = (rows) => rows.map((row) => row.track.title);
+  assert.deepEqual(titles(model.needs), ['Dinner rota', 'Print view'], 'what waits for them, and a stop they can start again');
+  assert.deepEqual(titles(model.ready), ['Grey out'], 'a change up for a vote');
+  assert.deepEqual(titles(model.progress), ['Totals', 'Held'], 'work under way, a hold among it');
+  assert.deepEqual(titles(model.done), ['Went live'], 'done is today only');
+  assert.deepEqual(model.needs.map((row) => row.state), ['Waiting for your answer', 'It ran out of time']);
+  assert.deepEqual(model.ready.map((row) => row.state), ['Up for a vote']);
+  assert.deepEqual(model.progress.map((row) => row.state), ['Building', 'Ready to build · Waiting for a slot, 1 request ahead of it']);
+  assert.deepEqual(model.done.map((row) => row.state), ['Live']);
+  // Each row carries its track: its badge and the chat's news rows read it.
+  assert.equal(model.needs[0].track, asked, 'the first of a request\'s tracks is the one drawn');
+  assert.equal(model.needs[0].key, asked.key);
   assert.deepEqual(stripGroups(null), { needs: [], ready: [], progress: [], done: [] });
+  assert.deepEqual(stripGroups(work()), { needs: [], ready: [], progress: [], done: [] });
 });
 
-// #4974: a reply on the request's discussion settles a need, and what the
-// tray then folds into History carries no ask. The strip draws it nowhere:
-// not Needs you (nothing waits on them any more), not done (nothing was
-// built from the reply yet) — the quiet line in the request's thread says
-// what happened instead.
-test('a need settled by a reply leaves the strip: no longer a need, not done either', () => {
+// #4974: a reply on the request's discussion settles a need. Its work state
+// moves on (Homeroom bot reads the reply), so it leaves Needs you, and it is
+// not done either: nothing was built from the reply yet.
+test('a need settled by a reply leaves Needs you: Homeroom bot reads it, under In progress', () => {
   const { stripGroups } = strip();
-  const settled = past({ title: 'Dinner rota', outcome: 'question', answered: true, at: ago(20) });
-  const waiting = past({ title: 'Print view', outcome: 'blocked', ask: { messageId: 42, kind: 'blocked' } });
-  const model = stripGroups(work({ needsYou: [waiting], history: [settled] }), NOW);
-  assert.deepEqual(model.needs.map((row) => row.job.title), ['Print view'], 'the answered one is not asked for any more');
-  assert.deepEqual(model.done.map((row) => row.job.title), [], 'and it is not done: nothing was built from the reply yet');
+  const settled = track(at('reading', { line: { code: 'reply' } }), { title: 'Dinner rota' });
+  const waiting = track(at('waiting_for_you', { why: 'needs_detail' }), { title: 'Print view' });
+  const model = stripGroups(work(waiting, settled), NOW);
+  assert.deepEqual(model.needs.map((row) => row.track.title), ['Print view'], 'the answered one is not asked for any more');
+  assert.deepEqual(model.progress.map((row) => [row.track.title, row.state]), [['Dinner rota', 'Reading your reply']]);
+  assert.deepEqual(model.done, [], 'and it is not done: nothing was built from the reply yet');
 });
 
-test('each row says one short thing: no step numbers, no timings', () => {
-  const { needsRow, readyState, doingWord, stripTitle } = strip();
-  const said = (extra) => needsRow(past(extra));
-  assert.deepEqual(said({ outcome: 'question', ask: { messageId: 1, kind: 'question', question: 'Which night?' } }), { state: 'Which night?', action: 'messages:bot.strip.action.answer' });
-  assert.equal(said({ outcome: 'question' }).state, 'Needs your answer');
-  assert.deepEqual(said({ outcome: 'question', ask: { messageId: 1, kind: 'plan' } }), { state: 'Your plan is ready', action: 'messages:bot.strip.action.buildIt' });
-  assert.deepEqual(said({ outcome: 'person', ask: { messageId: 1, kind: 'person' } }), { state: 'Needs your decision', action: 'messages:bot.strip.action.decide' });
-  assert.deepEqual(said({ outcome: 'build_failed', stopCause: 'time' }), { state: 'Stopped: took too long', action: 'messages:bot.strip.action.tryAgain' });
-  assert.equal(said({ outcome: 'build_failed' }).state, 'Stopped');
-  assert.deepEqual(said({ outcome: 'blocked' }), { state: 'Can’t build it as written', action: 'messages:bot.strip.action.addDetail' });
-  assert.deepEqual(said({ outcome: 'empty' }), { state: 'Nothing to build yet', action: 'messages:bot.strip.action.addDetail' });
-  assert.deepEqual(said({ outcome: 'needs_look' }), { state: 'Needs a person to look', action: 'messages:bot.strip.action.open' });
-  assert.equal(said({ outcome: 'stopped', ask: { messageId: 1, kind: 'checks' } }).state, 'Needs a person to look');
-  assert.equal(needsRow(working({ stage: 'on_hold' })).state, 'On hold until Monday');
-  assert.equal(said({ outcome: null, doing: 'waiting for its secrets' }).state, 'Waiting for its secrets');
-
-  assert.equal(readyState(past({ outcome: 'proposed', ready: { approve: true } })), 'Ready for your yes');
-  assert.equal(readyState(past({ outcome: 'proposed', ready: { approve: false, waiting: '@ada' } })), 'Waiting for @ada');
-  assert.equal(readyState(past({ outcome: 'proposed' })), 'Waiting for approval');
-
-  const words = (stage, phase = 'building') => doingWord(working({ stage, phase }));
-  assert.deepEqual(
-    [words('building'), words('planning'), words('reading', 'looking'), words('checks'), words('queued', 'queued'), words('revising', 'following_up'), words('merging', 'merging')],
-    ['building', 'planning', 'reading', 'testing', 'in the queue', 'following up', 'going live'],
-  );
-  assert.equal(doingWord(working({ stage: null, phase: 'looking' })), 'reading', 'by its phase when no stage is said');
-
-  assert.equal(stripTitle(job({ title: 'Dark mode', issueNumber: 4 })), 'Dark mode', 'no "Plant Pal #4:" prefix');
-  assert.equal(stripTitle(job({ firstVersion: true, title: null })), 'Plant Pal, first version');
-  assert.equal(stripTitle(job({ title: null, issueNumber: 9 })), 'Request #9');
-
-  // #6349: one act, one name. The drawer's buttons say what the person does,
-  // in the same words the AI tab's Needs you pills use.
-  assert.deepEqual(
-    ['answer', 'buildIt', 'decide', 'tryAgain'].map((key) => message(`messages:bot.strip.action.${key}`)),
-    ['Needs Reply', 'Review plan', 'Needs Reply', 'Restart build'],
-  );
-  assert.equal(said({ outcome: 'first_version_failed' }).action, 'messages:bot.strip.action.tryAgain',
-    'a new project\'s first version that could not start is a stopped build too');
+test('each row says one short thing, in the stage\'s own words: no step numbers, no timings', () => {
+  const { stripGroups } = strip();
+  const said = (state, extra) => {
+    const model = stripGroups(work(track(state, extra)), NOW);
+    const [row] = [...model.needs, ...model.ready, ...model.progress, ...model.done];
+    return [row.group, row.state];
+  };
+  // Waiting for you, by why it waits.
+  assert.deepEqual(said(at('waiting_for_you', { why: 'question' })), ['needs', 'Waiting for your answer']);
+  assert.deepEqual(said(at('waiting_for_you', { why: 'plan' })), ['needs', 'Waiting for you to OK the plan']);
+  assert.deepEqual(said(at('waiting_for_you', { why: 'decide' })), ['needs', 'Waiting for you to decide']);
+  assert.deepEqual(said(at('waiting_for_you', { why: 'already_works' })), ['needs', 'It may already work: close it?']);
+  assert.deepEqual(said(at('waiting_for_you', { why: 'needs_detail' })), ['needs', 'Waiting for more detail from you']);
+  assert.deepEqual(said(at('waiting_for_you', { why: 'decide', line: { code: 'reason', text: 'It needs a design call.' } })),
+    ['needs', 'Homeroom bot: It needs a design call.'], 'Homeroom bot\'s own reason, where it gave one');
+  // Stopped, by what stopped it, and a build by why it did not finish.
+  assert.deepEqual(said(at('stopped', { reason: 'build_failed' }), { cause: 'time' }), ['needs', 'It ran out of time']);
+  assert.deepEqual(said(at('stopped', { reason: 'build_failed' })), ['needs', 'Stopped: the build didn\'t finish']);
+  assert.deepEqual(said(at('stopped', { reason: 'fix_stopped' })), ['needs', 'Stopped: its tests still fail']);
+  assert.deepEqual(said(at('stopped', { reason: 'look_failed' })), ['needs', 'Stopped: it couldn\'t be read']);
+  assert.deepEqual(said(at('stopped', { reason: 'change_closed' })), ['needs', 'Stopped: its change was closed']);
+  assert.deepEqual(said(at('stopped', { reason: 'stalled' })), ['needs', 'Stopped: the build didn\'t start']);
+  // Up for a vote says the stage alone.
+  assert.deepEqual(said(at('up_for_vote')), ['ready', 'Up for a vote']);
+  assert.deepEqual(said(at('up_for_vote', { line: { code: 'update_queued' } })), ['ready', 'Up for a vote']);
+  // Under way: the second line, else the stage.
+  assert.deepEqual(said(at('reading', { line: { code: 'queued', place: 4 } })), ['progress', 'Number 4 in line']);
+  assert.deepEqual(said(at('reading', { line: { code: 'waiting' } })), ['progress', 'Waiting to be read']);
+  assert.deepEqual(said(at('reading')), ['progress', 'Reading it']);
+  assert.deepEqual(said(at('reading', { line: { code: 'on_hold' } })), ['progress', 'On hold until Monday: this week\'s building time is used up']);
+  assert.deepEqual(said(at('planning')), ['progress', 'Planning']);
+  assert.deepEqual(said(at('planning', { line: { code: 'retry_plan' } })), ['progress', 'Trying the plan again']);
+  assert.deepEqual(said(at('building', { line: { code: 'reviewing', round: 2, of: 3 } })), ['progress', 'Reviewing, round 2 of 3']);
+  assert.deepEqual(said(at('building', { line: { code: 'claimed', by: 'maya' } })), ['progress', 'maya is building it']);
+  assert.deepEqual(said(at('checking')), ['progress', 'Checking']);
+  assert.deepEqual(said(at('checking', { line: { code: 'checks_failing', failing: 2 } })), ['progress', '2 tests failing']);
+  assert.deepEqual(said(at('going_live')), ['progress', 'Going live'], 'going live has not ended');
+  assert.deepEqual(said(at('going_live', { line: { code: 'first_version' } })), ['progress', 'First version: it goes live without a vote']);
+  // Done today, by how it ended.
+  assert.deepEqual(said(at('live'), { since: ago(5) }), ['done', 'Live']);
+  assert.deepEqual(said(at('closed'), { since: ago(5) }), ['done', 'Closed']);
+  // No clock on a row, however long the try has run: its thread says that.
+  const [, busy] = said(at('building'), { busy: true, step: 'build', try: 2, tryStartedAt: ago(15) });
+  assert.equal(busy, 'Building');
+  assert.doesNotMatch(busy, /so far|\d+m\b|step \d|Try \d/);
 });
 
-test('a Needs you row opens on a tap and has ONE action; a Ready row Try it and, when their yes counts, Approve', () => {
-  const html = draw({
-    remembered: true,
-    work: work({
-      needsYou: [past({ title: 'Dinner rota', outcome: 'question', cardId: 31, ask: { messageId: 40, kind: 'question', question: 'Which night?' } })],
-      history: [
-        past({ title: 'Grey out', outcome: 'proposed', ready: { messageId: 50, sessionId: 9, epoch: 0, open: true, approve: true, waiting: null } }),
-        past({ title: 'Counts', outcome: 'proposed', ready: { messageId: null, sessionId: null, epoch: 0, open: true, approve: false, waiting: '@ada' } }),
-      ],
-    }),
-  });
-  const needs = html.slice(html.indexOf('data-bot-strip-group="needs"'), html.indexOf('data-bot-strip-group="ready"'));
-  assert.equal((needs.match(/data-bot-strip-act=/g) || []).length, 1, 'one action on the row');
-  assert.match(needs, /<button type="button" class="flex min-w-0 flex-1 items-center gap-2 text-start" data-bot-strip-open="">/, 'the row itself opens it');
-  assert.match(needs, /<button type="button" class="[^"]*bg-violet-600[^"]*" data-bot-strip-act="open">Needs Reply<\/button>/);
-  assert.match(needs, /Which night\?/);
-  const ready = html.slice(html.indexOf('data-bot-strip-group="ready"'));
-  assert.match(ready, /data-bot-strip-act="try">Try it<\/button><button type="button" class="[^"]*bg-violet-600[^"]*" data-bot-strip-act="approve">Approve<\/button>/);
-  assert.equal((ready.match(/data-bot-strip-act="approve"/g) || []).length, 1, 'Approve only where their yes counts');
-  assert.match(ready, /Waiting for @ada/);
-  // Reused, not copied: the ready card's Try it and the vote endpoint it approves with.
-  const source = read(STRIP);
-  assert.match(source, /import \{ tryChange \} from '\.\/bot-ready';/);
-  assert.match(source, /api\.approveChange\(sessionId, ready\?\.epoch \?\? null\)/);
-  // 31 Oct 2026: its request's page, as the chat's row opens it; what waits
-  // on them in the chat opens there; a request no page is named for (the
-  // staging demo's) opens where its story is told.
-  assert.match(source, /if \(row\.focusId && !asked\?\.threadRootId && !row\.rootId\) \{ openThreadAt\(null, row\.focusId\); return; \}/);
-  assert.match(source, /if \(page\) \{ openRequestPage\(page, loadedMessages\(\)\[0\]\?\.conversationId \|\| null\); return; \}/, 'its request\'s page');
-  assert.match(source, /const rootId = row\.rootId \|\| storyRootIn\(loadedMessages\(\), requestKey\(row\.job\)\);\s*if \(rootId \|\| row\.focusId\) \{ openThreadAt\(rootId, row\.focusId\); return; \}/, 'else its story');
-  // Opening a request closes the drawer; Try it and Approve leave it open.
-  assert.match(source, /const onOpen = \(row: StripRow\) => \{ choose\(false\); openRow\(row\); \};/);
-  assert.match(source, /data-bot-strip-act="try" onClick=\{tryIt\}/);
-});
+// The drawer's Needs you rows, each with ONE action, and its Ready rows' Try
+// it and Approve went with the drawer (5 Nov 2026): a request's acts are on
+// its own card and page, and on the Homeroom bot tab.
 
-test('the drawer lists every request in its group, a row each with its number and badge; Finished today folded to its count', () => {
-  const asks = Array.from({ length: 5 }, (_, i) => past({ title: `Ask ${i}`, outcome: 'question' }));
-  const readies = Array.from({ length: 4 }, (_, i) => past({ title: `Ready ${i}`, outcome: 'proposed' }));
-  const total = working({ title: 'Show a total under the list', stage: 'building' });
-  const html = draw({
-    remembered: true,
-    work: work({
-      needsYou: asks,
-      history: [...readies, past({ title: 'Live one', outcome: 'live', at: ago(30) }), past({ title: 'Live two', outcome: 'going_live', at: ago(90) })],
-      now: [total, working({ title: 'Add a search box', stage: 'planning' }), working({ title: 'C' }), working({ title: 'D' })],
-    }),
-  });
-  assert.equal((html.match(/data-bot-strip-row="needs"/g) || []).length, 5, 'no "+N more": the drawer scrolls');
-  assert.equal((html.match(/data-bot-strip-row="ready"/g) || []).length, 4);
-  assert.equal((html.match(/data-bot-strip-row="progress"/g) || []).length, 4, 'In progress is a row each');
-  assert.equal((html.match(/data-bot-strip-row="done"/g) || []).length, 0, 'Finished today waits behind its count');
-  assert.match(html, /aria-expanded="false" data-bot-strip-done-toggle=""><span>Finished today<\/span><span class="font-semibold tabular-nums" data-bot-strip-done-count="">· 2<\/span>/);
-  assert.equal((html.match(/data-bot-badge="needs"/g) || []).length, 5, 'each Needs you row wears the amber badge');
-  assert.equal((html.match(/data-bot-badge="ready"/g) || []).length, 4);
-  assert.equal((html.match(/data-bot-badge="progress"/g) || []).length, 4);
-  assert.doesNotMatch(html, /data-bot-strip-more/);
-  assert.match(html, new RegExp(`data-request-tag="${total.issueNumber}">#${total.issueNumber}</span><span class="truncate[^"]*">Show a total under the list</span>`), 'its number, then its title');
-  assert.match(html, /first-letter:uppercase[^"]*" data-bot-strip-state="">building</, 'what it is doing, capitalised on screen');
-  assert.match(html, /5 need you<\/span>[\s\S]*4 ready to try[\s\S]*4 in progress[\s\S]*2 finished today/);
-});
-
-test('the Activity bar: zero parts left out, the need part in the need colour with its numbers, and a chevron', () => {
+test('the Messages list\'s bot row counts every request in its group, zero parts left out', () => {
   const { summaryParts, stripGroups } = strip();
-  const one = stripGroups(work({ needsYou: [past({ outcome: 'question' })], history: [past({ outcome: 'proposed' })] }), NOW);
+  const tracks = [
+    ...Array.from({ length: 5 }, () => track(at('waiting_for_you', { why: 'question' }))),
+    ...Array.from({ length: 4 }, () => track(at('up_for_vote'), { step: 'vote' })),
+    track(at('building'), { step: 'build' }), track(at('planning'), { step: 'plan' }),
+    track(at('checking'), { step: 'checks' }), track(at('going_live'), { step: 'live' }),
+    track(at('live'), { step: 'live', since: ago(30) }), track(at('closed'), { since: ago(90) }),
+  ];
+  const model = stripGroups(work(...tracks), NOW);
+  assert.deepEqual(summaryParts(model).map((part) => part.text), ['5 need you', '4 ready to try', '4 in progress', '2 finished today'],
+    'every request counted, none capped');
+  assert.deepEqual(summaryParts(model).map((part) => part.group), ['needs', 'ready', 'progress', 'done']);
+  const one = stripGroups(work(track(at('waiting_for_you', { why: 'plan' })), track(at('up_for_vote'))), NOW);
   assert.deepEqual(summaryParts(one).map((part) => part.text), ['1 needs you', '1 ready to try']);
-  const asked = past({ outcome: 'question', issueNumber: 18 });
-  const html = draw({ work: work({ needsYou: [asked], now: [working({})] }) });
-  assert.match(html, /^<section class="relative z-20 shrink-0" aria-label="Your requests" data-bot-strip="closed"><button type="button" class="[^"]*" aria-expanded="false" data-bot-strip-toggle=""><span class="[^"]*">Activity<\/span>/);
-  assert.match(html, /<span class="text-amber-700 dark:text-amber-400" data-bot-strip-count="needs">1 needs you<\/span><span class="ms-1 inline-flex gap-1 align-\[1px\]"><span class="[^"]*" style="--req-h:265" data-request-tag="18">#18<\/span><\/span><\/span><span><span aria-hidden="true"> · <\/span><span data-bot-strip-count="progress">1 in progress<\/span>/);
-  assert.match(html, /<svg [^>]*aria-hidden="true"[^>]*>/, 'the chevron, from the icon set');
-  assert.doesNotMatch(html, /data-bot-strip-drawer/, 'closed: the bar alone');
-  const open = draw({ work: work({ needsYou: [asked] }), remembered: true });
-  assert.match(open, /data-bot-strip="open"[\s\S]*aria-expanded="true"[\s\S]*data-bot-strip-scrim=""[\s\S]*data-bot-strip-drawer=""/, 'open: the dimmed chat and the drawer over it');
-  assert.match(open, /class="[^"]*uppercase[^"]*text-amber-700[^"]*">Needs you</, 'its eyebrow in the need colour');
-  assert.match(read(STRIP), /import \{[^}]*\bChevronDownIcon\b[^}]*\} from '@\/components\/ui\/icons';/);
+  assert.deepEqual(summaryParts(stripGroups(work(), NOW)), [], 'nothing to say: nothing at all');
+  // The row says the first two parts, from the tracks once they are read; its last message until then.
+  const screen = read('frontend/src/features/messages/index.tsx');
+  assert.match(screen, /if \(!botWork\.work\) return null;\s*const parts = summaryParts\(stripGroups\(botWork\.work\)\);\s*return parts\.length \? parts\.slice\(0, 2\)\.map\(\(part\) => part\.text\)\.join\(' · '\) : null;/);
+  assert.match(screen, /useWorkChanged\(!!botConversation\);/, 'read again when a request\'s stage moves, with no timer');
+  assert.doesNotMatch(screen, /POLL_MS/);
 });
 
-test('the drawer starts closed whatever waits; open is remembered on the device; with nothing, nothing', () => {
-  const busy = work({ needsYou: [past({ outcome: 'question' })] });
-  assert.match(draw({ work: busy }), /data-bot-strip="closed"/, 'closed: the bar says what waits');
-  assert.match(draw({ work: busy, remembered: true }), /data-bot-strip="open"/, 'left open, remembered');
-  assert.match(draw({ work: busy, remembered: false }), /data-bot-strip="closed"/);
-  assert.equal(draw({ work: work({}) }), '', 'nothing to show: nothing at all');
-  assert.equal(draw({ work: null }), '', 'nothing until the first read');
-  // Remembered per device, in localStorage, never trusted to be there.
+// #5373: the per-project "The bot's slots on …" links that hung under the
+// drawer's Finished today are gone, and so is the drawer (5 Nov 2026); the
+// slots page still opens from a held request's own card (./bot-track.tsx).
+test('the strip has no slots links of its own: a hold is In progress, and its card opens the slots', () => {
+  const { stripGroups } = strip();
+  const model = stripGroups(work(
+    track(at('building'), { issueNumber: 12, step: 'build' }),
+    track(at('up_for_vote'), { issueNumber: 13, step: 'vote' }),
+    track(at('building', { line: { code: 'held_waiting' } }), { issueNumber: 14, held: { limit: 'slots', position: 2, until: null } }),
+    track(at('building', { line: { code: 'held_builds' } }), { issueNumber: 15, held: { limit: 'builds', position: 1, until: null } }),
+  ), NOW);
+  // #5392: a hold is in progress; there is no On hold group.
+  assert.deepEqual(model.progress.map((row) => row.track.issueNumber), [12, 14, 15], 'the building one and the held ones');
+  assert.deepEqual(Object.keys(model), ['needs', 'ready', 'progress', 'done']);
+  assert.equal(model.progress[1].state, 'Ready to build · Waiting for a slot, 1 request ahead of it', 'a hold says it is ready to build, and what it waits for');
+  assert.equal(model.progress[2].state, 'Ready to build · Next in line to be built');
   const source = read(STRIP);
-  assert.match(source, /const HIDDEN_KEY = 'homeroom:botDrawer:open';/);
-  assert.match(source, /try \{\s*const value = window\.localStorage\.getItem\(HIDDEN_KEY\);[\s\S]*?\} catch \{\s*return null;\s*\}/);
-  assert.match(source, /try \{ window\.localStorage\.setItem\(HIDDEN_KEY, open \? '1' : '0'\); \} catch/);
-});
-
-// #5373: the drawer ends at its last group. The per-project "The bot's
-// slots on …" links that hung under Finished today are gone; the slots page
-// still opens from a held request's own card (./bot-track.tsx).
-test('the drawer ends at Finished today: no per-project slots links', () => {
-  const trackFixture = (extra = {}) => ({
-    key: `plant-pal#${extra.issueNumber || 12}`, appSlug: 'plant-pal', appName: 'Plant Pal', iconUrl: null, iconEmoji: null,
-    issueNumber: 12, title: 'Dark mode', firstVersion: false, state: 'building', step: 'build', why: null, waitingOn: null,
-    busy: false, try: 1, tryStartedAt: null, tryStarts: [], since: ago(30), rootId: null, askId: null, proposalId: null,
-    sessionId: null, links: { request: '#app/plant-pal/dev/i/12', proposal: null, project: '#app/plant-pal' }, ...extra,
-  });
-  const html = draw({
-    remembered: true,
-    work: work({
-      tracks: [
-        trackFixture({ issueNumber: 12, state: 'building' }),
-        trackFixture({ issueNumber: 13, state: 'vote' }),
-        trackFixture({ issueNumber: 14, state: 'held', step: null, why: 'slots', held: { limit: 'slots', position: 2, until: null } }),
-      ],
-    }),
-  });
-  assert.match(html, /data-bot-strip-group="progress"/);
-  // #5392: a hold is in progress now; there is no On hold group any more.
-  assert.equal((html.match(/data-bot-strip-row="progress"/g) || []).length, 2, 'the building one and the held one');
-  assert.doesNotMatch(html, /data-bot-strip-group="held"/);
-  assert.match(html, /data-bot-strip-state="">On hold · /, 'a hold says it is on hold, under In progress');
-  assert.doesNotMatch(html, /data-bot-strip-slots/, 'no slots links at the drawer\'s end');
-  const source = read(STRIP);
-  assert.doesNotMatch(source, /data-bot-strip-slots|bot\.strip\.slots/);
+  assert.doesNotMatch(source, /data-bot-strip-slots|bot\.strip\.slots|openSlots\(/);
   assert.equal(JSON.parse(read('frontend/locales/en/messages.json'))['bot.strip.slots'], undefined, 'the link\'s words are gone from the catalog');
   // The held request's card keeps its own slots button.
   assert.match(read('frontend/src/features/messages/bot-track.tsx'), /data-bot-track-slots/);
 });
 
-test('the strip is pinned under the bot chat\'s header and its sub-line says what the bot is for', () => {
+test('the bot chat\'s header has no drawer under it: Main Chat holds only the conversation', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /\{embedded \? null : <ThreadHeader \/>\}\s*(?:\{\/\*[^\n]*\*\/\}\s*)?\{botDm && !embedded \? <BotStrip \/> : null\}/);
-  assert.doesNotMatch(screen, /BotWorkPanel|BotWorkButton|BotWorkStatusLine/);
+  assert.match(screen, /\{embedded \? null : <ThreadHeader \/>\}/);
+  assert.doesNotMatch(screen, /<BotStrip\b|BotWorkPanel|BotWorkButton|BotWorkStatusLine/);
+  assert.match(screen, /\{botDm \? <BotWorkSync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/,
+    'the chat still reads its requests\' tracks, for its news rows');
+  const source = read(STRIP);
+  assert.doesNotMatch(source, /export function BotStrip|data-bot-strip=|homeroom:botDrawer|localStorage|useDismiss/,
+    'no drawer, no Activity bar, no remembered open state');
+  for (const gone of ['bot.strip.name', 'bot.strip.activity', 'bot.strip.group.needs', 'bot.strip.action.approve', 'bot.strip.approveStale']) {
+    assert.equal(JSON.parse(read('frontend/locales/en/messages.json'))[gone], undefined, `${gone} went with the drawer`);
+  }
 });
+
 
 // ── 2. The main chat's news ──────────────────────────────────────────────
 
@@ -320,7 +265,7 @@ test('each row says where its request stands under its title, in grey: the need 
     [{ kind: 'note', moment: 'on_hold', said: 'slots' }, 'Waiting for votes on other changes', false],
     [{ kind: 'note', moment: 'on_hold', said: 'builds' }, 'Waiting its turn to be built', false],
   ];
-  // Before the tray's first read (as here), a row says what its message rang as.
+  // Before the tracks' first read (as here), a row says what its message rang as.
   for (const [meta, words, need] of cases) {
     const html = line(botMessage(meta));
     const label = JSON.stringify(meta);
@@ -333,35 +278,68 @@ test('each row says where its request stands under its title, in grey: the need 
   assert.doesNotMatch(line(botMessage({ kind: 'merged', firstVersion: true })), /data-request-tag/);
 });
 
-test('with the tray read, a row says where its request stands NOW: amber only while it waits; an ask that moved on, in the past', () => {
+test('with the tracks read, a row says where its request stands NOW: amber only while it waits; an ask that moved on, in the past', () => {
   const { newsStatus } = loadTsx(NEWS);
-  const { trayNow } = strip();
+  const { trayNow, trayEnded } = strip();
   const meta = (extra) => ({ appName: 'Plant Pal', appSlug: 'plant-pal', issueNumber: 4, kind: 'question', ...extra });
-  const tray = trayNow(work({
-    needsYou: [past({ issueNumber: 4, outcome: 'question', ask: { messageId: 1, kind: 'question', question: 'Which night?' } })],
-    history: [past({ issueNumber: 6, outcome: 'proposed', ready: { approve: true } })],
-    now: [working({ issueNumber: 7, stage: 'building' })],
-  }));
+  const tracks = work(
+    track(at('waiting_for_you', { why: 'question' }), { issueNumber: 4 }),
+    track(at('up_for_vote'), { issueNumber: 6, step: 'vote' }),
+    track(at('building'), { issueNumber: 7, step: 'build' }),
+  );
+  const now = trayNow(tracks);
   const said = (status) => ({ text: status.text, need: status.need, settled: status.settled, ended: status.ended });
-  assert.deepEqual(said(newsStatus(meta({}), tray)), { text: 'Which night?', need: true, settled: false, ended: null }, 'still waiting: the drawer\'s words');
-  assert.equal(newsStatus(meta({}), tray).row.group, 'needs', 'its badge reads the tray\'s row');
-  assert.deepEqual(said(newsStatus(meta({ issueNumber: 6, kind: 'question' }), tray)), { text: 'Ready for your yes', need: false, settled: false, ended: null }, 'moved on: where it is now');
-  assert.deepEqual(said(newsStatus(meta({ issueNumber: 7, kind: 'activity' }), tray)), { text: 'building', need: false, settled: false, ended: null });
-  assert.deepEqual(said(newsStatus(meta({ issueNumber: 9, kind: 'question' }), tray)), { text: 'Asked you a question', need: false, settled: true, ended: null }, 'gone from the tray: settled, an ask in the past');
-  assert.deepEqual(said(newsStatus(meta({ issueNumber: 9, kind: 'plan' }), tray)), { text: 'Sent you a plan', need: false, settled: true, ended: null });
-  assert.equal(newsStatus(meta({ issueNumber: 9, kind: 'proposal' }), tray).text, 'Was ready to try');
-  assert.deepEqual(said(newsStatus(meta({ issueNumber: 9, kind: 'build_failed' }), tray)), { text: 'Stopped', need: false, settled: true, ended: 'build_failed' }, 'never a need once it no longer waits; its ending from its news');
-  assert.equal(newsStatus(meta({ issueNumber: 9, kind: 'merged' }), tray).ended, 'live');
+  assert.deepEqual(said(newsStatus(meta({}), now)), { text: 'Waiting for your answer', need: true, settled: false, ended: null }, 'still waiting: its stage\'s words');
+  assert.equal(newsStatus(meta({}), now).row.group, 'needs', 'its badge reads the row');
+  assert.deepEqual(said(newsStatus(meta({ issueNumber: 6, kind: 'question' }), now)), { text: 'Up for a vote', need: false, settled: false, ended: null }, 'moved on: where it is now');
+  assert.deepEqual(said(newsStatus(meta({ issueNumber: 7, kind: 'activity' }), now)), { text: 'Building', need: false, settled: false, ended: null });
+  assert.deepEqual(said(newsStatus(meta({ issueNumber: 9, kind: 'question' }), now)), { text: 'Asked you a question', need: false, settled: true, ended: null }, 'no track for it: settled, an ask in the past');
+  assert.deepEqual(said(newsStatus(meta({ issueNumber: 9, kind: 'plan' }), now)), { text: 'Sent you a plan', need: false, settled: true, ended: null });
+  assert.equal(newsStatus(meta({ issueNumber: 9, kind: 'proposal' }), now).text, 'Was ready to try');
+  assert.deepEqual(said(newsStatus(meta({ issueNumber: 9, kind: 'build_failed' }), now)), { text: 'Stopped', need: false, settled: true, ended: 'build_failed' }, 'never a need once it no longer waits; its ending from its news');
+  assert.equal(newsStatus(meta({ issueNumber: 9, kind: 'merged' }), now).ended, 'live');
   assert.deepEqual(said(newsStatus(meta({ issueNumber: 9, kind: 'question' }), null)), { text: 'Needs your answer', need: true, settled: false, ended: null }, 'before the first read: as it rang, nothing settled');
-  assert.deepEqual(said(newsStatus(meta({ appName: 'Other', issueNumber: 4 }), tray)), { text: 'Asked you a question', need: false, settled: true, ended: null }, 'a number is matched within its project');
-  // How it ended comes from the tray's History, at any age, before its news.
-  const { trayEnded } = strip();
-  const history = work({ history: [past({ issueNumber: 9, outcome: 'closed', at: ago(60 * 48) }), past({ issueNumber: 10, outcome: 'person', at: ago(60 * 30) })] });
-  const ends = trayEnded(history);
-  assert.equal(newsStatus(meta({ issueNumber: 9, kind: 'proposal' }), trayNow(history), ends).ended, 'closed');
-  assert.equal(newsStatus(meta({ issueNumber: 10, kind: 'person' }), trayNow(history), ends).ended, 'person');
-  const today = work({ history: [past({ issueNumber: 11, outcome: 'live', at: ago(30) })] });
+  assert.deepEqual(said(newsStatus(meta({ appName: 'Other', issueNumber: 4 }), now)), { text: 'Asked you a question', need: false, settled: true, ended: null }, 'a number is matched within its project');
+  // How it ended comes from its track, at any age, before its news.
+  const old = work(
+    track(at('closed'), { issueNumber: 9, since: ago(60 * 48) }),
+    track(at('live'), { issueNumber: 10, step: 'live', since: ago(60 * 30) }),
+    track(at('closed'), { issueNumber: 12, since: ago(60 * 30), doneBy: { username: 'ben', prNumber: 4822 } }),
+  );
+  const ends = trayEnded(old);
+  assert.equal(newsStatus(meta({ issueNumber: 9, kind: 'proposal' }), trayNow(old), ends).ended, 'closed');
+  assert.equal(newsStatus(meta({ issueNumber: 10, kind: 'proposal' }), trayNow(old), ends).ended, 'live');
+  assert.equal(newsStatus(meta({ issueNumber: 12, kind: 'proposal' }), trayNow(old), ends).ended, 'done_elsewhere', 'shipped by somebody else\'s change');
+  // trayNow counts "today" by the device's own clock.
+  const today = work(track(at('live'), { issueNumber: 11, step: 'live', since: new Date().toISOString() }));
   assert.deepEqual(said(newsStatus(meta({ issueNumber: 11, kind: 'merged' }), trayNow(today), trayEnded(today))), { text: 'Live', need: false, settled: true, ended: 'live' }, 'done today is settled too');
+  // A stop waits on the person: an open row, never settled, its badge the need one.
+  const stopped = work(track(at('stopped', { reason: 'build_failed' }), { issueNumber: 13, cause: 'no_start' }));
+  assert.deepEqual(said(newsStatus(meta({ issueNumber: 13, kind: 'build_failed' }), trayNow(stopped), trayEnded(stopped))),
+    { text: 'Its build couldn\'t start', need: true, settled: false, ended: null });
+});
+
+test('how a track ended, in the endings the chat\'s small squares draw', () => {
+  const { trackEnding, endedWords } = strip();
+  const ending = (state, extra = {}) => trackEnding({ work: state, ...extra });
+  assert.deepEqual(
+    ['live', 'going_live', 'closed'].map((stage) => ending(at(stage))),
+    ['live', 'going_live', 'closed'],
+  );
+  assert.equal(ending(at('closed'), { doneBy: { username: 'ben', prNumber: null } }), 'done_elsewhere');
+  assert.equal(ending(at('stopped', { reason: 'build_failed' })), 'build_failed', 'a build that went wrong');
+  assert.equal(ending(at('stopped', { reason: 'look_failed' })), 'failed');
+  for (const reason of ['fix_stopped', 'change_closed', 'stalled']) assert.equal(ending(at('stopped', { reason })), 'stopped', reason);
+  for (const stage of ['reading', 'planning', 'waiting_for_you', 'building', 'checking', 'up_for_vote']) {
+    assert.equal(ending(at(stage)), null, `${stage} has not ended`);
+  }
+  // In words: the ending's own word, and a build that went wrong says why with it.
+  const failed = track(at('stopped', { reason: 'build_failed' }), { cause: 'time' });
+  assert.equal(endedWords('build_failed', failed, 'Stopped'), 'Couldn’t build · It ran out of time', 'the dot joins two whole sentences');
+  assert.equal(endedWords('build_failed', null, 'Stopped'), 'Couldn’t build', 'no track: the ending\'s word alone');
+  assert.equal(endedWords('live', failed, 'Stopped'), 'Live');
+  assert.equal(endedWords('done_elsewhere', null, 'x'), message('messages:bot.final.doneElsewhere'));
+  assert.equal(endedWords(null, failed, 'What it last said'), 'What it last said', 'no record of how it ended: the words it last said');
 });
 
 test('one request, one row: a request\'s earlier news folds into its newest, which counts the updates', () => {
@@ -443,21 +421,18 @@ test('a story from before threads: its oldest piece, then the pieces after it in
   assert.match(pane, /\{pieces\.map\(\(item\) => <MessageRow key=\{item\.clientKey \|\| item\.id\} message=\{\{ \.\.\.item, thread: null, threadRootId: rootId \}\}/);
 });
 
-test('a line wears the project\'s icon the strip has, else its initial', () => {
+test('a line wears the project\'s icon its requests\' tracks have, else its initial', () => {
   const { newsIcon } = loadTsx(NEWS);
-  const job = (appSlug, iconUrl, iconEmoji, appName = 'Project') => ({ appSlug, appName, iconUrl, iconEmoji });
-  const work = {
-    now: [job('plants', null, null)],
-    needsYou: [job(null, null, '🧪', 'Staging demo app')],
-    history: [job('plants', null, '🌱'), job('rota', '/app-icons/7', null)],
-  };
-  assert.deepEqual(newsIcon(work, 'plants'), { iconUrl: null, iconEmoji: '🌱' }, 'the first entry with artwork, wherever it is');
-  assert.deepEqual(newsIcon(work, 'rota'), { iconUrl: '/app-icons/7', iconEmoji: null });
-  assert.deepEqual(newsIcon(work, 'elsewhere'), { iconUrl: null, iconEmoji: null });
-  assert.deepEqual(newsIcon(null, 'plants'), { iconUrl: null, iconEmoji: null }, 'before the tray loads: the initial');
-  assert.deepEqual(newsIcon(work, null, 'Staging demo app'), { iconUrl: null, iconEmoji: '🧪' }, 'a project with no slug, by its name');
-  assert.deepEqual(newsIcon(work, null, 'Project'), { iconUrl: null, iconEmoji: null }, 'a name never matches a project that has a slug');
+  const icon = (appSlug, iconUrl, iconEmoji, appName = 'Project') => track(at('building'), { appSlug, appName, iconUrl, iconEmoji });
+  const tracks = work(icon('plants', null, null), icon(null, null, '🧪', 'Staging demo app'), icon('plants', null, '🌱'), icon('rota', '/app-icons/7', null));
+  assert.deepEqual(newsIcon(tracks, 'plants'), { iconUrl: null, iconEmoji: '🌱' }, 'the first track with artwork, wherever it is');
+  assert.deepEqual(newsIcon(tracks, 'rota'), { iconUrl: '/app-icons/7', iconEmoji: null });
+  assert.deepEqual(newsIcon(tracks, 'elsewhere'), { iconUrl: null, iconEmoji: null });
+  assert.deepEqual(newsIcon(null, 'plants'), { iconUrl: null, iconEmoji: null }, 'before the tracks are read: the initial');
+  assert.deepEqual(newsIcon(tracks, null, 'Staging demo app'), { iconUrl: null, iconEmoji: '🧪' }, 'a project with no slug, by its name');
+  assert.deepEqual(newsIcon(tracks, null, 'Project'), { iconUrl: null, iconEmoji: null }, 'a name never matches a project that has a slug');
   assert.match(read(NEWS), /iconUrl=\{icon\.iconUrl\} emoji=\{meta\.appEmoji \|\| icon\.iconEmoji\}/);
+  assert.match(read('frontend/src/features/messages/bot-shared.ts'), /for \(const job of work\.tracks\) \{/, 'read from the tracks alone');
 });
 
 test('the bot\'s replies, offers, hellos and words about no request stay messages', () => {
@@ -477,7 +452,7 @@ test('the bot\'s replies, offers, hellos and words about no request stay message
   assert.match(screen, /if \(botDm && isBotNews\(message\) && !asks\) \{[\s\S]{0,700}?rows\.push\(<BotNewsLine/);
 });
 
-test('the thread pane opens at the message a Needs you button names, and flashes it', () => {
+test('the thread pane opens at the message a line names, and flashes it', () => {
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /export function openThreadAt\(rootId: number \| null \| undefined, focusId: number \| null \| undefined = null\): void \{/);
   assert.match(store, /publish\(\{ threadFocusId: validId\(focusId\) && focusId !== rootId \? focusId : null \}\);\s*openThread\(rootId\);/);
@@ -489,32 +464,39 @@ test('the thread pane opens at the message a Needs you button names, and flashes
   assert.match(pane, /focused=\{flashId === message\.id\}/);
 });
 
-test('every row wears a badge: amber with what to do, blue when ready, grey and turning while the bot works', () => {
+test('every open row wears a badge: amber with what to do, blue when up for a vote, a clock on a hold, grey and turning while the bot works', () => {
   const { OpenState, stripGroups } = strip();
-  const model = stripGroups(work({
-    needsYou: [
-      past({ outcome: 'question', ask: { messageId: 1, kind: 'question', question: 'Which night?' } }),
-      past({ outcome: 'blocked', ask: { messageId: 2, kind: 'blocked' } }),
-      past({ outcome: 'person', ask: { messageId: 3, kind: 'person' } }),
-    ],
-    history: [past({ outcome: 'proposed', ready: { approve: true } })],
-    now: [working({ stage: 'building' })],
-  }), NOW);
+  const model = stripGroups(work(
+    track(at('waiting_for_you', { why: 'question' })),
+    track(at('waiting_for_you', { why: 'needs_detail' })),
+    track(at('waiting_for_you', { why: 'decide' })),
+    track(at('stopped', { reason: 'build_failed' })),
+    track(at('stopped', { reason: 'fix_stopped' })),
+    track(at('up_for_vote'), { step: 'vote' }),
+    track(at('building'), { step: 'build' }),
+    track(at('building', { line: { code: 'held_waiting' } }), { held: { limit: 'slots', position: 1, until: null } }),
+    track(at('reading', { line: { code: 'queued', place: 2 } })),
+  ), NOW);
   const badge = (row) => renderToHtml(createElement(OpenState, { row }));
+  assert.equal(model.needs.length, 5);
   for (const row of model.needs) {
     assert.match(badge(row), /^<span class="flex h-\[22px\] w-\[22px\] shrink-0 items-center justify-center rounded-\[6px\] bg-amber-100 text-amber-700 dark:bg-amber-900\/50 dark:text-amber-300" aria-hidden="true" data-bot-badge="needs"><svg /);
   }
-  assert.notEqual(badge(model.needs[0]), badge(model.needs[1]), 'the glyph says what to do: answer, add detail, decide');
-  assert.notEqual(badge(model.needs[1]), badge(model.needs[2]));
+  const glyphs = new Set(model.needs.map(badge));
+  assert.equal(glyphs.size, 5, 'the glyph says what to do: answer, add detail, decide, start it again, look at its tests');
   assert.match(badge(model.ready[0]), /bg-violet-100 text-violet-700[^"]*" aria-hidden="true" data-bot-badge="ready"/);
-  assert.match(badge(model.progress[0]), /bg-zinc-200\/80 text-zinc-600[^"]*" aria-hidden="true" data-bot-badge="progress"><svg [^>]*class="h-3\.5 w-3\.5 animate-spin \[animation-duration:2\.4s\]"/);
+  const [building, held, queued] = model.progress;
+  assert.match(badge(building), /bg-zinc-200\/80 text-zinc-600[^"]*" aria-hidden="true" data-bot-badge="progress"><svg [^>]*class="h-3\.5 w-3\.5 animate-spin \[animation-duration:2\.4s\]"/);
+  assert.match(badge(held), /bg-zinc-200\/80 text-amber-600[^"]*" aria-hidden="true" data-bot-badge="progress">/, 'a hold is waiting, never finished');
+  assert.doesNotMatch(badge(held), /animate-spin/, 'and never turning');
+  assert.doesNotMatch(badge(queued), /animate-spin/, 'nobody is at it yet');
   const source = read(STRIP);
   assert.match(source, /question: \{ icon: ChatIcon, stroke: '2' \}/);
-  assert.match(source, /blocked: \{ icon: PencilSquareIcon, stroke: '2' \}, empty: \{ icon: PencilSquareIcon, stroke: '2' \}/);
-  assert.match(source, /person: \{ icon: UserIcon, stroke: '1\.75' \}/);
-  assert.match(source, /build_failed: \{ icon: ArrowPathIcon, stroke: '2' \}/);
-  // The same badge leads a drawer row and a chat row.
-  assert.match(source, /<span className="flex min-w-0 items-center gap-1\.5">\s*<OpenState row=\{row\} \/>/);
+  assert.match(source, /needs_detail: \{ icon: PencilSquareIcon, stroke: '2' \}/);
+  assert.match(source, /decide: \{ icon: UserIcon, stroke: '1\.75' \}/);
+  assert.match(source, /stopped: \{ icon: ArrowPathIcon, stroke: '2' \}/);
+  assert.match(source, /checks: \{ icon: EyeIcon, stroke: '2' \}/);
+  // The badge leads a chat row.
   assert.match(read(NEWS), /\{status\.row \? <OpenState row=\{status\.row\} \/> : null\}/);
 });
 
@@ -558,14 +540,14 @@ test('a finished request is ONE line: the project\'s small tile, how it ended, i
 });
 
 test('finished requests in a row fold into words, "N finished · N couldn\'t build"; open, whole rows under it', () => {
-  // The run reads the viewer's bot work as the drawer does; hand the bundle
-  // a read (tests/lib/render-tsx.js stubs).
-  const tray = work({});
+  // The run reads the viewer's tracks (./bot-work.tsx); hand the bundle a
+  // read with none (tests/lib/render-tsx.js stubs).
+  const tray = work();
   const { SettledRun } = loadTsx(NEWS, {
     stubs: {
       './bot-work': {
         useBotWork: () => ({ work: tray, failed: false }),
-        loadBotWork() {}, resetBotWork() {}, newestBotMessageId: () => null, BotWorkSync: () => null,
+        loadBotWork() {}, newestBotMessageId: () => null, BotWorkSync: () => null, useWorkChanged() {},
         WORK_CHANGED_EVENT: 'homeroom_bot_work_changed', jobName: () => '', jobTitle: () => '',
       },
     },
@@ -594,7 +576,7 @@ test('finished requests in a row fold into words, "N finished · N couldn\'t bui
   assert.doesNotMatch(failedHtml, /data-bot-settled-count="finished"/, 'zero parts are left out');
   const opened = renderToHtml(createElement(SettledRun, { items: items.map((item, index) => ({ ...item, focused: index === 0 })) }));
   assert.match(opened, /data-bot-settled-rows="">/, 'opened: whole rows under it');
-  assert.match(opened, /data-bot-settled-words="">Live<\/span>/, 'an opened row says how it ended, as the drawer\'s Finished today rows do');
+  assert.match(opened, /data-bot-settled-words="">Live<\/span>/, 'an opened row says how it ended, in words after its title');
   const source = read(NEWS);
   assert.doesNotMatch(source, /RUN_BADGES/, 'no strip of squares to cap');
   assert.match(source, /data-bot-settled-count="failed"/);
@@ -619,22 +601,10 @@ test('pressing "N finished" leaves it where it is on screen', () => {
   assert.match(source, /if \(count\.current && holdPlace\) putBack\.current = holdPlace\(count\.current\);\s*setOpen\(!open\);/);
 });
 
-test('Finished today starts folded each time the drawer opens; pressed, its rows are one line each with how they ended', () => {
-  const source = read(STRIP);
-  assert.match(source, /const \[doneOpen, setDoneOpen\] = useState\(false\);/);
-  assert.match(source, /const choose = \(next: boolean\) => \{ setOpen\(next\); setDoneOpen\(false\); onRemember\?\.\(next\); \};/);
-  assert.match(source, /\{doneOpen \? <ul data-bot-strip-group="done">\{model\.done\.map\(\(row\) => <DoneRow key=\{row\.key\} row=\{row\} onOpen=\{onOpen\} \/>\)\}<\/ul> : null\}/);
-  assert.match(source, /function DoneRow[\s\S]*?<SettledLine[\s\S]*?outcome=\{outcome\} fallback=\{row\.state\}\s*words=\{row\.state\}/, 'each finished row says how it ended in words');
-});
+// Finished today, the drawer's folded group, went with the drawer (5 Nov
+// 2026); a finished request's line in the chat says how it ended (below).
 
 // ── #5392: one reading of the bot's work, grouped once ───────────────────
-
-const trackOf = (extra = {}) => ({
-  key: `plant-pal#${extra.issueNumber || 20}`, appSlug: 'plant-pal', appName: 'Plant Pal', iconUrl: null, iconEmoji: null,
-  issueNumber: 20, title: 'Dark mode', firstVersion: false, state: 'building', step: 'build', why: null, waitingOn: null,
-  busy: false, try: 1, tryStartedAt: null, tryStarts: [], since: ago(30), rootId: null, askId: null, proposalId: null,
-  sessionId: null, links: { request: null, proposal: null, project: null }, ...extra,
-});
 
 test('"today" is the local day: what ended since midnight, not the last 24 hours', () => {
   const { startOfDay, stripGroups } = strip();
@@ -642,57 +612,51 @@ test('"today" is the local day: what ended since midnight, not the last 24 hours
   const midnight = startOfDay(NOW).getTime();
   const yesterday = new Date(midnight - 10 * 60000).toISOString(); // 23:50 the day before
   const early = new Date(midnight + 5 * 60000).toISOString(); // 00:05 today
-  const model = stripGroups(work({
-    tracks: [
-      trackOf({ issueNumber: 1, state: 'live', step: 'live', since: yesterday }),
-      trackOf({ issueNumber: 2, state: 'live', step: 'live', since: early }),
-      trackOf({ issueNumber: 3, state: 'stopped', why: 'build_failed', step: null, since: early }),
-      trackOf({ issueNumber: 4, state: 'stopped', why: 'time', step: null, since: 'not a moment' }),
-    ],
-  }), NOW);
-  assert.deepEqual(model.done.map((row) => row.job.issueNumber), [2, 3], '23:50 yesterday is not finished today; 00:05 today is; no parsable since stays out');
-  // "Couldn't build" says the reason with it, the dot joining two sentences.
-  assert.deepEqual(model.done.map((row) => row.state), ['Live', 'Couldn’t build · Its build didn\'t finish']);
+  const model = stripGroups(work(
+    track(at('live'), { issueNumber: 1, step: 'live', since: yesterday }),
+    track(at('live'), { issueNumber: 2, step: 'live', since: early }),
+    track(at('closed'), { issueNumber: 3, since: early }),
+    track(at('closed'), { issueNumber: 4, since: early, doneBy: { username: 'ben', prNumber: 4822 } }),
+    track(at('live'), { issueNumber: 5, step: 'live', since: 'not a moment' }),
+    track(at('stopped', { reason: 'build_failed' }), { issueNumber: 6, since: early }),
+  ), NOW);
+  assert.deepEqual(model.done.map((row) => row.track.issueNumber), [2, 3, 4], '23:50 yesterday is not finished today; 00:05 today is; no parsable since stays out');
+  // Each says how it ended, in the ending's own word.
+  assert.deepEqual(model.done.map((row) => row.state), ['Live', 'Closed', 'Done another way']);
+  assert.deepEqual(model.needs.map((row) => row.track.issueNumber), [6], 'a stop waits for them to start it again, under Needs you');
 });
 
-test('a vote whose yes is yours is Needs you, with Try it and Approve; the group\'s turn stays Ready to try', () => {
+test('a change up for a vote is Ready to try, whoever\'s yes it waits for', () => {
   const { stripGroups, summaryParts } = strip();
-  const tracks = [
-    trackOf({ issueNumber: 30, state: 'vote', step: 'vote' }),
-    trackOf({ issueNumber: 31, state: 'vote', step: 'vote' }),
-  ];
-  const yours = past({ issueNumber: 30, outcome: 'proposed', ready: { messageId: 60, sessionId: 9, epoch: 0, open: true, approve: true, waiting: null } });
-  const theirs = past({ issueNumber: 31, outcome: 'proposed', ready: { messageId: 61, sessionId: null, epoch: 0, open: true, approve: false, waiting: '@ada' } });
-  const model = stripGroups(work({ tracks, history: [yours, theirs] }), NOW);
-  assert.deepEqual(model.needs.map((row) => row.job.issueNumber), [30], 'a change waiting for your yes waits on you');
-  assert.equal(model.needs[0].state, 'Ready for your yes');
-  assert.deepEqual(model.ready.map((row) => row.job.issueNumber), [31], 'the group\'s turn is not yours');
-  assert.deepEqual(summaryParts(model).map((part) => part.text), ['1 needs you', '1 ready to try']);
-  const html = draw({ remembered: true, work: work({ tracks, history: [yours, theirs] }) });
-  const needs = html.slice(html.indexOf('data-bot-strip-group="needs"'), html.indexOf('data-bot-strip-group="ready"'));
-  assert.match(needs, /data-bot-strip-row="needs" data-bot-strip-key=/, 'the row wears the group it is in');
-  assert.match(needs, /data-bot-strip-act="try">Try it<\/button>/);
-  assert.match(needs, /data-bot-strip-act="approve">Approve<\/button>/, 'their yes is theirs to say there');
-  assert.match(needs, /data-bot-badge="needs"/, 'the need badge, with what to do on it');
+  const model = stripGroups(work(
+    track(at('up_for_vote', { whoseMove: 'group' }), { issueNumber: 30, step: 'vote', waitingOn: 'group' }),
+    track(at('up_for_vote'), { issueNumber: 31, step: 'vote' }),
+  ), NOW);
+  assert.deepEqual(model.ready.map((row) => row.track.issueNumber), [30, 31]);
+  assert.deepEqual(model.ready.map((row) => row.state), ['Up for a vote', 'Up for a vote']);
+  assert.deepEqual(model.needs, [], 'a vote is the group\'s to give, never a need of the requester\'s');
+  assert.deepEqual(summaryParts(model).map((part) => part.text), ['2 ready to try']);
+  // The drawer's Try it and Approve went with it (5 Nov 2026): the change's
+  // ready card in the chat keeps both (./bot-ready.tsx).
+  assert.doesNotMatch(read(STRIP), /tryChange|approveChange|noteApprovedHere/);
 });
 
-test('a hold and a change going live are In progress, never finished; the bar\'s parts, in order', () => {
+test('a hold and a change going live are In progress, never finished; the counts, in order', () => {
   const { stripGroups, summaryParts } = strip();
-  const model = stripGroups(work({
-    tracks: [
-      trackOf({ issueNumber: 40, state: 'held', step: null, why: 'slots', held: { limit: 'slots', position: 1, until: null } }),
-      trackOf({ issueNumber: 41, state: 'held', step: null, why: 'allowance', held: { limit: 'allowance', position: null, until: '2026-10-19T09:00:00Z' } }),
-      trackOf({ issueNumber: 42, state: 'going_live', step: 'live', since: ago(5) }),
-      trackOf({ issueNumber: 43, state: 'waiting', step: 'plan', why: 'plan', askId: 44 }),
-    ],
-  }), NOW);
-  assert.deepEqual(model.progress.map((row) => row.job.issueNumber), [40, 41, 42], 'none of it has ended');
-  assert.match(model.progress[0].state, /^On hold · /, 'the state\'s word leads, then what it waits for');
-  assert.match(model.progress[1].state, /^On hold/, 'the allowance line says on hold by itself');
+  const model = stripGroups(work(
+    track(at('building', { line: { code: 'held_waiting' } }), { issueNumber: 40, held: { limit: 'slots', position: 1, until: null } }),
+    track(at('reading', { line: { code: 'on_hold' } }), { issueNumber: 41, held: { limit: 'allowance', position: null, until: '2026-10-19T09:00:00Z' } }),
+    track(at('going_live'), { issueNumber: 42, step: 'live', since: ago(5) }),
+    track(at('waiting_for_you', { why: 'plan' }), { issueNumber: 43, step: 'plan', askId: 44 }),
+  ), NOW);
+  assert.deepEqual(model.progress.map((row) => row.track.issueNumber), [40, 41, 42], 'none of it has ended');
+  assert.equal(model.progress[0].state, 'Ready to build · Next in line for a slot', 'the stage\'s word leads, then what it waits for');
+  assert.match(model.progress[1].state, /^On hold until .+: this week's building time is used up$/, 'the allowance line says on hold, and until when');
+  assert.equal(model.progress[2].state, 'Going live');
   assert.deepEqual(model.done, [], 'going live has not ended');
   const parts = summaryParts(model).map((part) => part.text);
   assert.deepEqual(parts, ['1 needs you', '3 in progress'], 'the groups in order, zero ones left out');
-  assert.equal(parts.slice(0, 2).join(' · '), '1 needs you · 3 in progress', 'the row shows the bar\'s first two parts');
+  assert.equal(parts.slice(0, 2).join(' · '), '1 needs you · 3 in progress', 'the row shows the first two parts');
 });
 
 test('a finished row wears its ending in words after its mark; a failed one says what went wrong', () => {
@@ -735,21 +699,5 @@ test('the thread\'s header and the bot\'s own words wear the number\'s colour to
   assert.match(read(STRIP), /bg-\[hsl\(var\(--req-h\)_80%_92%\)\] text-\[hsl\(var\(--req-h\)_70%_26%\)\] dark:bg-\[hsl\(var\(--req-h\)_35%_25%\)\] dark:text-\[hsl\(var\(--req-h\)_80%_82%\)\]/);
 });
 
-// ── Polish board #22 (19 Oct 2026): the ••• menu's dismiss rules ─────────
-
-test('the Activity drawer closes on a press outside and on Escape, which hands focus back to its bar', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', STRIP), 'utf8');
-  const view = src.slice(src.indexOf('export function BotStripView('), src.indexOf('/** The strip in the chat with Homeroom bot'));
-  assert.match(view, /useDismiss\(open, \[sectionRef\], \(\) => choose\(false\)\);/, 'the ••• menu\'s hook (message-actions/use-dismiss.ts)');
-  assert.match(view, /if \(event\.key === 'Escape' && sectionRef\.current\?\.contains\(document\.activeElement\)\) \{\s*toggleRef\.current\?\.focus\(\{ preventScroll: true \}\);/);
-  assert.match(view, /<section ref=\{sectionRef\} className="relative z-20 shrink-0"/);
-  assert.match(view, /ref=\{toggleRef\}[\s\S]{0,400}focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/,
-    'the shell\'s focus ring, not the browser\'s');
-  // The bar draws nothing until the tray has something to say. Every hook is
-  // above that return: one below it changed the hook count when the tray
-  // landed, and the chat's pane threw (caught by the declared checks on
-  // #messages/910005 before this proposal was promoted).
-  const early = view.indexOf('if (!parts.length) return null;');
-  assert.ok(early > 0);
-  assert.doesNotMatch(view.slice(early), /\buse[A-Z]\w*\(/, 'no hook after the early return');
-});
+// Polish board #22 (19 Oct 2026) pinned the Activity drawer's dismiss rules
+// (a press outside, Escape, focus back to its bar); the drawer is gone.

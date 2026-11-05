@@ -543,7 +543,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(offer.status, 'open');
     assert.equal(offer.forUserId, sam.id);
     assert.deepEqual(sent[0].metadata.homeroomBot.actions.map((a) => a.label), ['File it', 'Not now']);
-    const { rows: [row] } = await pool.query('SELECT kind, args, status, message_id FROM homeroom_bot_voice_offers WHERE id = $1', [offer.id]);
+    const { rows: [row] } = await pool.query('SELECT kind, args, status, chat_message_id AS message_id FROM bot_cards WHERE id = $1', [offer.id]);
     assert.equal(row.message_id, sent[0].id);
     assert.equal(row.args.title, 'Sort the list by due date');
     assert.equal(row.args.messageId, id);
@@ -696,7 +696,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(offer.status, 'open');
     assert.equal(offer.forUserId, evan.id);
     assert.deepEqual(sent[0].metadata.homeroomBot.actions.map((a) => a.label), ['Propose to close', 'Keep it open']);
-    const { rows: [row] } = await pool.query('SELECT kind, args, status, message_id FROM homeroom_bot_voice_offers WHERE id = $1', [offer.id]);
+    const { rows: [row] } = await pool.query('SELECT kind, args, status, chat_message_id AS message_id FROM bot_cards WHERE id = $1', [offer.id]);
     assert.equal(row.kind, 'close_request');
     assert.equal(row.message_id, sent[0].id);
     assert.equal(row.args.issueNumber, 12);

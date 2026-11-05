@@ -43,13 +43,56 @@ const { message } = require('./lib/platform-i18n');
 
 const MODEL = 'frontend/src/features/ai/model.ts';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const words = (p) => message(p.id, p.values);
+// A phrase's nested phrases (a stage's words inside a row's line) are said first.
+const words = (p) => message(p.id, {
+  ...p.values,
+  ...Object.fromEntries(Object.entries(p.nested || {}).map(([k, q]) => [k, words(q)])),
+});
 
 const app = { slug: 'garden', name: 'Garden club', icon_url: null, icon_emoji: null };
-const thread = (threadId, number, what, extra = {}) => ({
-  threadId, number, kind: 'work', title: `T${threadId}`, app, change: null,
-  href: `#app/garden/dev/issues/${number}`, group: 'waiting', what, at: null, ...extra,
-});
+// 5 Nov 2026: a row carries its stored work state (lib/work-state.ts). The
+// tests below name a row by the old shorthand for it, mapped here to the
+// stage, why, reason and line it is now.
+const WORK = {
+  plan: { stage: 'waiting_for_you', why: 'plan' },
+  decide: { stage: 'waiting_for_you', why: 'decide' },
+  already_works: { stage: 'waiting_for_you', why: 'already_works' },
+  build_stopped: { stage: 'stopped', reason: 'build_failed' },
+  fix_stopped: { stage: 'stopped', reason: 'fix_stopped' },
+  going_live: { stage: 'going_live' },
+  fixing: { stage: 'building', line: { code: 'fixing' } },
+  revising: { stage: 'building', line: { code: 'revising' } },
+  building: { stage: 'building' },
+  reading: { stage: 'reading' },
+  reading_reply: { stage: 'reading', line: { code: 'reply' } },
+  vote: { stage: 'up_for_vote' },
+  checking: { stage: 'checking' },
+  update_queued: { stage: 'up_for_vote', line: { code: 'update_queued' } },
+  build_queued: { stage: 'building', line: { code: 'queued' } },
+  held: { stage: 'building', line: { code: 'held_waiting' } },
+  held_turn: { stage: 'building', line: { code: 'held_builds' } },
+  stalled: { stage: 'stopped', reason: 'stalled' },
+  queued: { stage: 'reading', line: { code: 'queued' } },
+  retrying_plan: { stage: 'planning', line: { code: 'retry_plan' } },
+  on_hold: { stage: 'reading', line: { code: 'on_hold' } },
+  not_picked_up: { stage: 'reading', line: { code: 'waiting' } },
+  not_read: { stage: 'reading', line: { code: 'waiting' } },
+  operator: { stage: 'reading', line: { code: 'waiting' } },
+  needs_person: { stage: 'waiting_for_you', why: 'decide' },
+  nothing_to_build: { stage: 'waiting_for_you', why: 'needs_detail' },
+  awaiting_plan: { stage: 'planning', line: { code: 'planning_with_you' } },
+  live: { stage: 'live' },
+  closed: { stage: 'closed' },
+};
+const thread = (threadId, number, what, extra = {}) => {
+  const { work: given, ...rest } = extra;
+  return {
+    threadId, number, kind: 'work', title: `T${threadId}`, app, change: null,
+    href: `#app/garden/dev/issues/${number}`, group: 'waiting', at: null,
+    work: { why: null, reason: null, line: null, since: null, ...(WORK[what] || { stage: what }), ...(given || {}) },
+    ...rest,
+  };
+};
 
 test('Needs you: the feed, then the bot\'s plans waiting for Build it, then private threads, each once', () => {
   const { needsYou, needHref, owedCount } = loadTsx(MODEL);
@@ -93,7 +136,9 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(rows[2].href, '#app/garden/dev/issues/390');
   assert.equal(rows[3].href, '#app/garden/dev/governance/14');
   assert.equal(words(rows[3].sub), 'Garden club');
-  assert.deepEqual([rows[4].title, words(rows[4].sub), rows[4].href], ['A reminder email', 'Garden club · #410', '#app/garden/dev/issues/410']);
+  assert.deepEqual([rows[4].title, words(rows[4].sub), rows[4].href],
+    ['A reminder email', 'Garden club · #410 · Waiting for you to OK the plan', '#app/garden/dev/issues/410'],
+    'the row says its stage in the words every screen uses');
   // #6210 (3 Nov 2026): its Build it is on the plan on the request's page,
   // so the row opens that page, as a Vote or Needs Reply row for it
   // would. B06's way to Main Chat at the plan is gone.
@@ -430,53 +475,47 @@ test('a vote on a change for a request names the request\'s number, and opens on
   assert.equal(words(plain.sub), 'Garden club · #6050', 'a change for no request keeps its own number');
 });
 
-test('each In progress and Waiting row says what it waits on, in the bot\'s words where it is the bot\'s', () => {
+test('each In progress and Waiting row says its stage and its second line, in the words every screen uses', () => {
   const { nextWords, heroWords } = loadTsx(MODEL);
-  const row = (what, extra = {}) => ({ threadId: 1, number: 7, app, what, ...extra });
+  const row = (what, extra = {}) => thread(1, 7, what, { group: 'next', ...extra });
   assert.deepEqual([
-    row('going_live'), row('merging'), row('fixing'), row('revising'), row('reading'),
-    row('building', { by: 'bot' }), row('building', { by: 'you' }), row('building', { by: 'someone' }),
-    row('building', { by: 'someone', claimedBy: 'snait' }),
+    row('going_live'), row('fixing'), row('revising'), row('reading'), row('reading_reply'),
+    row('building', { by: 'bot' }), row('building', { by: 'you' }),
+    row('building', { by: 'someone', work: { line: { code: 'claimed', by: 'snait' } } }),
   ].map((r) => words(nextWords(r))), [
-    'Garden club · #7 · Going live', 'Garden club · #7 · Merging',
-    'Garden club · #7 · Homeroom bot is fixing what its tests found',
-    'Garden club · #7 · Homeroom bot is following up on the replies',
-    'Garden club · #7 · Homeroom bot is reading it',
-    'Garden club · #7 · Homeroom bot is building it', 'Garden club · #7 · You\'re building it',
-    'Garden club · #7 · Being built',
-    'Garden club · #7 · snait is building it',
+    'Garden club · #7 · Going live',
+    'Garden club · #7 · Building · Fixing what its tests found',
+    'Garden club · #7 · Building · Updating the change',
+    'Garden club · #7 · Reading it',
+    'Garden club · #7 · Reading it · Reading your reply',
+    'Garden club · #7 · Building', 'Garden club · #7 · Building',
+    'Garden club · #7 · Building · snait is building it',
   ], 'a claim with no change yet names who has it');
+  const waits = (what, extra = {}) => thread(1, 7, what, extra);
   assert.deepEqual([
-    row('vote', { myVote: 'yes' }), row('vote', { myVote: 'no' }), row('vote', { myVote: null }),
-    row('checking'),
-    row('fix_queued'), row('followup_queued'), row('build_queued'),
-    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'turn' }), row('stalled'),
-    row('queued'), row('on_hold'),
-    row('not_picked_up'), row('not_picked_up', { quietDays: 10 }), row('not_picked_up', { number: null }),
+    waits('vote'), waits('checking'), waits('checking', { work: { line: { code: 'checks_failing', failing: 2 } } }),
+    waits('update_queued'), waits('build_queued'), waits('held'), waits('held_turn'), waits('stalled'),
+    waits('queued', { work: { line: { code: 'queued', place: 4 } } }), waits('on_hold'), waits('not_picked_up'),
+    waits('needs_person'), waits('needs_person', { work: { line: { code: 'reason', text: 'A person must choose.' } } }),
+    waits('nothing_to_build'),
   ].map((r) => words(nextWords(r))), [
-    'Garden club · #7 · Waiting for votes · you voted Yes', 'Garden club · #7 · Waiting for votes · you voted No',
-    'Garden club · #7 · Waiting for votes',
-    'Garden club · #7 · Waiting for checks',
-    'Garden club · #7 · A test failed · waiting for a free builder to fix it',
-    'Garden club · #7 · Waiting for a free builder to follow up on the replies',
-    'Garden club · #7 · Ready to build · waiting its turn',
-    'Garden club · #7 · Ready to build · waits until a change up for a vote is decided',
-    'Garden club · #7 · Ready to build · waits for Homeroom bot\'s turn on this project',
-    'Garden club · #7 · Ready to build · its build has not started',
-    'Garden club · #7 · Waiting for a free builder',
-    'Garden club · #7 · On hold until Monday',
-    'Garden club · #7 · Nobody is on it',
-    'Garden club · #7 · Nobody is on it · quiet 10 days',
-    'Garden club · Nobody is on it',
-  ], 'a row with no number (a decision) says no "#"');
-  // 30 Oct 2026: a decision up for a vote waits for votes, not a builder.
-  assert.deepEqual([
-    row('decision', { number: null, myVote: null }), row('decision', { number: null, myVote: 'yes' }),
-    row('decision', { number: null, myVote: 'no' }),
-  ].map((r) => words(nextWords(r))), [
-    'Garden club · Waiting for votes', 'Garden club · Waiting for votes · you voted Yes',
-    'Garden club · Waiting for votes · you voted No',
-  ]);
+    'Garden club · #7 · Up for a vote',
+    'Garden club · #7 · Checking',
+    'Garden club · #7 · Checking · 2 tests failing',
+    'Garden club · #7 · Up for a vote · An update is on its way',
+    'Garden club · #7 · Ready to build · Waiting its turn',
+    'Garden club · #7 · Ready to build · Waiting for changes up for a vote to be decided',
+    'Garden club · #7 · Ready to build · Waiting for one of the project\'s builds to finish',
+    'Garden club · #7 · Stopped: the build didn\'t start',
+    'Garden club · #7 · Not started yet · Number 4 in line',
+    'Garden club · #7 · Not started yet · On hold until Monday: this week\'s building time is used up',
+    'Garden club · #7 · Not started yet · Waiting to be read',
+    'Garden club · #7 · Waiting for a decision',
+    'Garden club · #7 · Waiting for a decision · Homeroom bot: A person must choose.',
+    'Garden club · #7 · Waiting for more detail',
+  ], 'what waits on somebody else is said as they read it, not as the requester does');
+  // A decision up for a vote has no number.
+  assert.equal(words(nextWords(thread(1, null, 'vote', { kind: 'decision' }))), 'Garden club · Up for a vote');
   assert.equal(message('messages:ai.busy.title', { count: 2 }), 'Waiting & in progress · 2');
   assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
   assert.equal(words(heroWords(0, 3)), 'In progress: 3');
@@ -487,36 +526,35 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
 
 test('a row\'s one word on the right, and on a phone the reason where it is news', () => {
   const { shortWords, whyOf, threadWhy, needsYou, upNext } = loadTsx(MODEL);
-  const row = (what, extra = {}) => ({ threadId: 1, number: 7, app, what, ...extra });
+  const row = (what, extra = {}) => thread(1, 7, what, extra);
   assert.deepEqual([
-    row('going_live'), row('building', { by: 'bot' }), row('building', { by: 'you' }), row('building', { by: 'someone', claimedBy: 'snait' }),
-    row('building', { by: 'someone' }), row('vote'), row('checking'), row('decision'), row('queued'), row('build_queued'),
-    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'turn' }), row('on_hold'), row('not_picked_up'), row('mystery'),
+    row('going_live'), row('building', { by: 'bot' }), row('building', { by: 'you' }),
+    row('building', { by: 'someone', work: { line: { code: 'claimed', by: 'snait' } } }),
+    row('building', { by: 'someone' }), row('vote'), row('checking'), row('queued'), row('build_queued'),
+    row('held'), row('held_turn'), row('on_hold'), row('not_picked_up'), row('build_stopped'),
   ].map((r) => words(shortWords(r))), [
-    'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Checks', 'Votes', 'A builder', 'In line',
-    'A slot', 'In line', 'Monday', 'Nobody on it', 'Waiting',
-  ]);
-  // Every id is one whole literal, so the inventory can check it exists.
-  assert.ok(!read(MODEL).includes('messages:ai.short.${'));
+    'Going live', 'Homeroom bot', 'You', 'snait', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
+    'Ready to build', 'Ready to build', 'Not started yet', 'Not started yet', 'Stopped: the build didn\'t finish',
+  ], 'the stage, in the words every screen uses; who is building it where that is the news');
   // Handed back by the bot: Needs Reply, Restart build and Retry the fix,
-  // each with its reason.
+  // each saying its stage.
   const work = {
     private: [], next: [], live: [],
     needs: [thread(7, 410, 'decide', { group: 'needs' }), thread(8, 411, 'build_stopped', { group: 'needs' }), thread(10, 413, 'fix_stopped', { group: 'needs' })],
-    waiting: [thread(9, 412, 'held', { heldBy: 'approvals' })],
+    waiting: [thread(9, 412, 'held')],
   };
   const bots = [{ kind: 'proposal', id: 1, number: 600, title: 'Its change', app, author: 'homeroom_bot' }];
   const rows = needsYou(bots, work);
   assert.deepEqual(rows.map((r) => [r.key, r.pill && message(r.pill.id), words(r.sub)]), [
     ['need:proposal:1', 'Vote', 'Garden club · #600 · Your vote helps free a build slot'],
-    ['decide:7', 'Needs Reply', 'Garden club · #410 · Homeroom bot says a person needs to decide'],
-    ['stopped:8', 'Restart build', 'Garden club · #411 · Homeroom bot\'s build stopped'],
-    ['fix_stopped:10', 'Retry the fix', 'Garden club · #413 · Checks failing · Homeroom bot stopped'],
+    ['decide:7', 'Needs Reply', 'Garden club · #410 · Waiting for you to decide'],
+    ['stopped:8', 'Restart build', 'Garden club · #411 · Stopped: the build didn\'t finish'],
+    ['fix_stopped:10', 'Retry the fix', 'Garden club · #413 · Stopped: its tests still fail'],
   ]);
   assert.deepEqual(rows.map((r) => whyOf(r) && words(whyOf(r))), [
-    'Your vote helps free a build slot', 'Homeroom bot needs a person to decide', 'Homeroom bot\'s build stopped',
-    'Checks failing · Homeroom bot stopped',
-  ]);
+    'Your vote helps free a build slot', 'Waiting for you to decide', 'Stopped: the build didn\'t finish',
+    'Stopped: its tests still fail',
+  ], 'a phone shows the stage under the title, where nothing hovers');
   // The fallback: a kind no pill names says what to do.
   const [unknown] = needsYou([{ kind: 'mystery', id: 3, number: 602, title: 'Odd one', app }], null);
   assert.equal(message(unknown.pill.id), 'Take a look');
@@ -524,7 +562,9 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   const [held] = upNext(bots, work);
   assert.equal(held.yourVotes, 1);
   assert.equal(words(threadWhy(held)), 'A vote you owe can free its slot');
-  assert.equal(threadWhy(row('queued')), null);
+  assert.equal(words(threadWhy(row('queued', { work: { line: { code: 'queued', place: 2 } } }))), 'Number 2 in line', 'the second line');
+  assert.equal(words(threadWhy(row('vote', { myVote: 'yes' }))), 'You voted Yes');
+  assert.equal(threadWhy(row('vote')), null, 'a stage with no second line has none');
   const lists = read('frontend/src/features/ai/lists.tsx');
   assert.match(lists, /<span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 md:hidden" aria-hidden="true" data-ai-line-why="">\{line\.why\}<\/span>/,
     'the reason is a phone\'s second line; the tooltip says it everywhere');
@@ -533,12 +573,13 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
 
 test('#6306: a request the bot found already works says so, and offers Confirm it works', () => {
   const { needsYou, whyOf } = loadTsx(MODEL);
+  const said = (text) => ({ work: { line: { code: 'reason', text } } });
   const work = {
     private: [], next: [], live: [],
     needs: [
-      thread(7, 410, 'already_works', { group: 'needs', reason: 'Visitors get the lobby and play as a guest.' }),
+      thread(7, 410, 'already_works', { group: 'needs', ...said('Visitors get the lobby and play as a guest.') }),
       thread(8, 411, 'already_works', { group: 'needs' }),
-      thread(9, 412, 'decide', { group: 'needs', reason: 'It changes who can sign in' }),
+      thread(9, 412, 'decide', { group: 'needs', ...said('It changes who can sign in') }),
     ],
     waiting: [],
   };
@@ -546,15 +587,15 @@ test('#6306: a request the bot found already works says so, and offers Confirm i
   assert.deepEqual(rows.map((r) => r.key), ['works:7', 'works:8', 'decide:9']);
   assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Confirm it works', 'Confirm it works', 'Needs Reply']);
   assert.deepEqual(rows.map((r) => words(r.sub)), [
-    'Garden club · #410 · Already works: Visitors get the lobby and play as a guest.',
-    'Garden club · #411 · Already works',
-    'Garden club · #412 · Homeroom bot handed it back: It changes who can sign in',
+    'Garden club · #410 · It may already work: close it? · Homeroom bot: Visitors get the lobby and play as a guest.',
+    'Garden club · #411 · It may already work: close it?',
+    'Garden club · #412 · Waiting for you to decide · Homeroom bot: It changes who can sign in',
   ]);
   assert.deepEqual(rows.map((r) => whyOf(r) && words(whyOf(r))), [
-    'Already works: Visitors get the lobby and play as a guest.',
-    'Already works',
-    'Homeroom bot handed it back: It changes who can sign in',
-  ]);
+    'Homeroom bot: Visitors get the lobby and play as a guest.',
+    'It may already work: close it?',
+    'Homeroom bot: It changes who can sign in',
+  ], 'the bot\'s own reason, where it gave one');
   assert.equal(rows[0].href, '#app/garden/dev/issues/410', 'the row opens the request, where Propose to close lives');
   // The glyph is a check, not the raised hand a decision gets.
   const lists = read('frontend/src/features/ai/lists.tsx');
@@ -563,50 +604,40 @@ test('#6306: a request the bot found already works says so, and offers Confirm i
 
 test('#6306: the chat names already-done requests as working, not as decisions', () => {
   const aiWork = require('../src/services/ai-work');
+  const garden = { slug: 'garden', name: 'Garden club' };
   const lists = aiWork.listsOf([], {
     private: [], next: [], waiting: [], live: [],
     needs: [
-      { threadId: 1, number: 410, kind: 'work', title: 'Work for people who aren\'t signed in', app: { slug: 'garden', name: 'Garden club' },
-        what: 'already_works', reason: 'Visitors get the lobby and play as a guest.' },
-      { threadId: 2, number: 412, kind: 'work', title: 'Rebuild the map editor', app: { slug: 'garden', name: 'Garden club' },
-        what: 'decide', reason: 'It changes who can sign in' },
+      { threadId: 1, number: 410, kind: 'work', title: 'Work for people who aren\'t signed in', app: garden, group: 'needs',
+        work: { stage: 'waiting_for_you', why: 'already_works', line: { code: 'reason', text: 'Visitors get the lobby and play as a guest.' } } },
+      { threadId: 2, number: 412, kind: 'work', title: 'Rebuild the map editor', app: garden, group: 'needs',
+        work: { stage: 'waiting_for_you', why: 'decide', line: { code: 'reason', text: 'It changes who can sign in' } } },
     ],
   });
   assert.deepEqual(lists.needsYou.map((r) => r.says), [
-    'already works, so Homeroom bot offered to close it (Propose to close): Visitors get the lobby and play as a guest.',
-    'Homeroom bot handed it back: a person needs to decide',
-  ]);
-  assert.doesNotMatch(lists.needsYou[0].says, /person needs to decide/);
+    'It may already work: close it? · Homeroom bot: Visitors get the lobby and play as a guest.',
+    'Waiting for you to decide · Homeroom bot: It changes who can sign in',
+  ], 'the same stage words the page shows, in English');
+  assert.doesNotMatch(lists.needsYou[0].says, /decide/);
 });
 
 test('#6158: a Waiting row says what it waits on, and the rows nobody is moving fold under "Not moving"', () => {
-  const { shortWords, nextWords, NOT_MOVING } = loadTsx(MODEL);
+  const { shortWords, nextWords, notMoving } = loadTsx(MODEL);
   const row = (what, extra = {}) => thread(1, 7, what, extra);
+  // Nobody is moving it: not started on, or waiting on somebody else's move.
   assert.deepEqual([
-    row('queued', { place: 4 }), row('held', { heldBy: 'approvals', place: 2 }), row('held', { heldBy: 'turn', place: 2 }),
-    row('needs_person'), row('nothing_to_build'), row('not_read'), row('operator'), row('not_picked_up', { quietDays: 12 }),
-  ].map((r) => words(shortWords(r))), [
-    '#4 in line', 'Held · #2 for a slot', '#2 in line', 'Needs a person', 'Nothing to build', 'Not read yet', 'Operator task',
-    'Nobody on it · quiet 12 days',
-  ]);
-  // The tooltip carries Homeroom bot's own reason, on one line.
-  assert.equal(words(nextWords(row('needs_person', { reason: 'A person must choose.' }))),
-    'Garden club · #7 · Homeroom bot left it for a person to decide: A person must choose.');
-  assert.equal(words(nextWords(row('nothing_to_build', { reason: 'A question, not a change.' }))),
-    'Garden club · #7 · Homeroom bot found nothing to build in it: A question, not a change.');
-  assert.equal(words(nextWords(row('not_read'))),
-    'Garden club · #7 · Homeroom bot has not read it yet · ask it from the request\'s page');
-  assert.equal(words(nextWords(row('operator'))), 'Garden club · #7 · An operator task: nobody can do it from Homeroom');
-  assert.equal(words(nextWords(row('queued', { place: 4 }))), 'Garden club · #7 · #4 in line for Homeroom bot to read it');
-  assert.equal(words(nextWords(row('held', { heldBy: 'approvals', place: 2 }))), 'Garden club · #7 · Ready to build · #2 for a slot');
-  assert.deepEqual([...NOT_MOVING].sort(), ['needs_person', 'not_picked_up', 'not_read', 'nothing_to_build', 'operator']);
+    row('queued'), row('held'), row('needs_person'), row('nothing_to_build'), row('not_picked_up'), row('stalled'), row('vote'),
+  ].map(notMoving), [false, false, true, true, true, true, false]);
+  assert.equal(words(shortWords(row('not_picked_up', { quietDays: 12 }))), 'Not started yet');
+  assert.equal(words(nextWords(row('queued', { work: { line: { code: 'queued', place: 4 } } }))),
+    'Garden club · #7 · Not started yet · Number 4 in line');
   // The part is folded, with its count, over the rows that are not moving;
   // the ones that are moving stay in the section above it.
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
     hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
     progress: [], live: [], openRow() {}, openThread() {},
-    waiting: [thread(1, 71, 'queued', { place: 2 }), thread(2, 72, 'not_read'), thread(3, 73, 'operator')],
+    waiting: [thread(1, 71, 'queued', { work: { line: { code: 'queued', place: 2 } } }), thread(2, 72, 'not_read'), thread(3, 73, 'operator')],
   });
   assert.match(html, /data-ai-still=""/, 'the folded head');
   assert.match(html, /Not moving · 2/, 'its count is only the rows nobody is moving');
@@ -615,7 +646,7 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   // #6160 moved these rows to the card of their own, whose head counts the
   // whole card: the rows moving and the rows folded under Not moving.
   assert.match(html, /Waiting &amp; in progress · 3/, 'the card\'s head still counts every row');
-  assert.match(html, /#2 in line/, 'the moving rows lead the list');
+  assert.match(html, /Number 2 in line/, 'the moving rows lead the list');
   const src = read('frontend/src/features/ai/lists.tsx');
   assert.match(src, /const stillShown = stillOpen \|\| !!still\?\.lines\.some\(\(l\) => l\.lit\);/, 'a row where you are opens it');
   assert.match(src, /onClick=\{\(\) => setStillOpen\(\(o\) => !o\)\}/, 'and a press toggles it');
@@ -627,14 +658,14 @@ test('#6237: a change on a GitHub-hosted project is "PR N" on the bot tab\'s row
   // A change-led thread: its number is GitHub's pull request number.
   const change = thread(1, 6230, 'vote', { kind: 'change', app: github });
   assert.equal(changeOnGithub(change), true);
-  assert.equal(words(nextWords(change)), 'Garden club · PR 6230 · Waiting for votes');
+  assert.equal(words(nextWords(change)), 'Garden club · PR 6230 · Up for a vote');
   // The same project on Homeroom's git host shares one counter and keeps '#'.
   const hosted = thread(2, 6230, 'vote', { kind: 'change', app });
   assert.equal(changeOnGithub(hosted), false);
-  assert.equal(words(nextWords(hosted)), 'Garden club · #6230 · Waiting for votes');
+  assert.equal(words(nextWords(hosted)), 'Garden club · #6230 · Up for a vote');
   // A request on the same GitHub project keeps '#N': it is not a change.
   const request = thread(3, 6230, 'vote', { kind: 'request', app: github });
-  assert.equal(words(nextWords(request)), 'Garden club · #6230 · Waiting for votes');
+  assert.equal(words(nextWords(request)), 'Garden club · #6230 · Up for a vote');
   // The number cell and the live row's tooltip have their PR twins.
   assert.equal(message('messages:ai.live.numberPr', { number: 6230 }), 'PR 6230');
   assert.equal(message(prWord('messages:ai.live.row', true), { project: 'Garden club', number: 6230 }),
@@ -658,123 +689,104 @@ test('#6237: a change on a GitHub-hosted project is "PR N" on the bot tab\'s row
   assert.doesNotMatch(html, />#6230</);
 });
 
-test('the server: a vote you have given waits on others (Up next), and the bot\'s stage decides where its requests go', () => {
+test('the server: a row\'s list is its stored work state, read for the viewer', () => {
   const aiWork = require('../src/services/ai-work');
   const now = new Date('2026-10-29T12:00:00Z');
   const at = '2026-10-29T10:00:00.000Z';
   const ME = 5;
-  const open = { state: 'open', own: true, request_state: 'open', request_at: at, created_at: at };
+  const open = { state: 'open', own: true, number: 7, request_id: 1, request_state: 'open', request_at: at, created_at: at };
+  const ws = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: at, requesterId: null, ...extra });
+  const work = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: at, ...extra });
   const promoted = { ...open, change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: at };
-  assert.deepEqual(aiWork.standing({ ...promoted, check_state: 'passing' }, ME, now),
-    { group: 'waiting', what: 'vote', at, myVote: 'yes' });
-  // #6060: checks that have not passed hold it, so the row says Checks, not
-  // Votes. A vote cannot merge it until they pass.
-  assert.deepEqual(aiWork.standing({ ...promoted, check_state: 'skipped' }, ME, now),
-    { group: 'waiting', what: 'vote', at, myVote: 'yes' }, 'skipped checks count as passed');
-  for (const checkState of ['pending', 'failing', 'error', 'unknown', null]) {
-    assert.deepEqual(aiWork.standing({ ...promoted, check_state: checkState }, ME, now),
-      { group: 'waiting', what: 'checking', at }, `${checkState || 'NULL'} waits for its checks`);
-  }
-  const bot = (stage, extra = {}) => aiWork.standing(open, ME, now, null, { stage, since: at, ...extra });
-  assert.deepEqual(bot('plan'), { group: 'needs', what: 'plan', at }, 'a plan waiting for Build it is Needs you\'s');
-  assert.equal(bot('question'), null, 'the bot\'s question is the feed\'s Answer');
-  assert.deepEqual(bot('held', { capSuppressed: 'proposals_per_app' }), { group: 'waiting', what: 'held', at, heldBy: 'approvals' },
-    'held back until a change up for a vote is decided, as the bot says in Main');
-  // 3 Nov 2026: there is no day's limit any more; a hold by a cap that is gone waits as one for votes does.
-  assert.equal(bot('held', { capSuppressed: 'question_tripwire' }).heldBy, 'approvals');
-  // #6156: held for the bot's turn among the project's builds, which no vote frees.
-  assert.equal(bot('held', { capSuppressed: 'builds_per_app' }).heldBy, 'turn');
-  assert.deepEqual(bot('build_queued'), { group: 'waiting', what: 'build_queued', at });
-  assert.deepEqual(bot('queued'), { group: 'waiting', what: 'queued', at }, 'not "Not picked up yet": it is in the bot\'s queue');
-  assert.deepEqual(bot('reading'), { group: 'next', what: 'reading', at });
-  assert.deepEqual(bot('planning'), { group: 'next', what: 'building', by: 'bot', at });
-  assert.deepEqual(bot('fix_queued'), { group: 'waiting', what: 'fix_queued', at });
-  assert.deepEqual(bot('fixing'), { group: 'next', what: 'fixing', at });
-  assert.deepEqual(aiWork.standing({ ...open, change_status: 'merging', merged_at: at }, ME, now, null, { stage: 'merging' }),
-    { group: 'next', what: 'merging', at }, 'where its change says it, the change speaks');
-  assert.equal(aiWork.standing({ ...open, state: 'closed' }, ME, now, null, { stage: 'plan' }), null, 'never on a closed thread');
-  assert.deepEqual(aiWork.standing(open, ME, now), { group: 'waiting', what: 'not_picked_up', at, quietDays: 0 },
-    'nobody building it, and not the bot\'s');
-  // 30 Oct 2026: handed back by the bot, it is Needs you's, until somebody takes it up.
-  assert.deepEqual(bot('decide'), { group: 'needs', what: 'decide', at }, 'a person needs to decide: not "Nobody is building it yet"');
-  assert.deepEqual(bot('build_stopped'), { group: 'needs', what: 'build_stopped', at }, 'its build stopped: Try again');
-  assert.deepEqual(aiWork.standing({ ...open, claimed_by: 'snait' }, ME, now, null, { stage: 'decide', since: at }),
-    { group: 'next', what: 'building', at, by: 'someone', claimedBy: 'snait' }, 'claimed since: being built, by who has it');
-  assert.equal(aiWork.standing({ ...open, change_status: 'active', change_user: ME, last_activity_at: at }, ME, now, null, { stage: 'build_stopped' }).what,
-    'building', 'or with a change of theirs');
-  assert.deepEqual(aiWork.standing({ ...open, claimed_by: 'aw_me', claimed_mine: true }, ME, now),
-    { group: 'next', what: 'building', at, by: 'you' }, 'their own claim');
-  assert.equal(aiWork.standing({ ...open, own: false, claimed_by: 'snait' }, ME, now), null, 'one they only wrote in, claimed, asks nothing of them');
-  // #6158: what a request waits on, from the bot's own records, whoever
-  // filed it (botStages covers only its requesters).
-  const facts = (extra = {}) => ({ run: null, queuePlace: null, heldPlace: null, labels: [], viewerDecides: true, ...extra });
-  const personRun = { verdict: 'person', reason: 'A person must choose which column.\nMore detail follows.', held: false };
-  const numbered = { ...open, number: 7 };
-  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({ run: personRun })),
-    { group: 'needs', what: 'decide', at, quietDays: 0, reason: 'A person must choose which column.' },
-    'handed back to a person: Needs you when the viewer decides, with the bot\'s reason');
-  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({ run: personRun, viewerDecides: false })),
-    { group: 'waiting', what: 'needs_person', at, quietDays: 0, reason: 'A person must choose which column.' },
-    'anyone else following it waits on that person');
-  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({ queuePlace: 4 })),
-    { group: 'waiting', what: 'queued', at, quietDays: 0, place: 4 }, 'its place in the queue');
-  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({
-    run: { verdict: 'ready', reason: null, capSuppressed: 'proposals_per_app', held: true }, heldPlace: 2,
-  })), { group: 'waiting', what: 'held', at, quietDays: 0, heldBy: 'approvals', place: 2 }, 'held for a slot, with its place');
-  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts({ run: { verdict: 'empty', reason: 'It is a question, not a change.', held: false } })),
-    { group: 'waiting', what: 'nothing_to_build', at, quietDays: 0, reason: 'It is a question, not a change.' });
-  assert.deepEqual(aiWork.standing(numbered, ME, now, null, null, facts()),
-    { group: 'waiting', what: 'not_read', at, quietDays: 0 }, 'never read yet');
-  assert.deepEqual(aiWork.standing({ ...numbered, request_title: 'Operator: rotate the mail key' }, ME, now, null, null, facts()),
-    { group: 'waiting', what: 'operator', at, quietDays: 0 }, 'an operator task, read from its title');
-  assert.equal(aiWork.standing(numbered, ME, now, null, null, facts({ labels: ['Infra'] })).what, 'operator', 'or its label');
-  // A bot stage still wins, and carries its place.
-  assert.deepEqual(aiWork.standing(numbered, ME, now, null, { stage: 'queued', since: at }, facts({ queuePlace: 3 })),
-    { group: 'waiting', what: 'queued', at, place: 3 }, 'the bot\'s own stage keeps its place in line');
+  assert.deepEqual(aiWork.standing(promoted, ME, now, null, ws('up_for_vote')),
+    { group: 'waiting', work: work('up_for_vote'), at, myVote: 'yes' }, 'a vote you have given waits on others');
+  assert.equal(aiWork.standing({ ...promoted, voted: false }, ME, now, null, ws('up_for_vote')), null,
+    'a vote still owed is the Needs you feed\'s');
+  assert.deepEqual(aiWork.standing(promoted, ME, now, null, ws('checking', { line: { code: 'checks_failing', failing: 2 } })),
+    { group: 'waiting', work: work('checking', { line: { code: 'checks_failing', failing: 2 } }), at },
+    '#6060: checks that have not passed hold it, and say so');
+  const mine = (stage, extra = {}) => aiWork.standing(open, ME, now, null, ws(stage, { requesterId: ME, ...extra }));
+  assert.deepEqual(mine('waiting_for_you', { why: 'plan' }), { group: 'needs', work: work('waiting_for_you', { why: 'plan' }), at },
+    'a plan waiting for Build it is Needs you\'s');
+  assert.equal(mine('waiting_for_you', { why: 'question' }), null, 'the bot\'s question is the feed\'s Answer');
+  assert.equal(mine('stopped', { reason: 'build_failed' }).group, 'needs', 'its build stopped: Restart build');
+  assert.equal(mine('building', { line: { code: 'held_waiting' } }).group, 'waiting', 'held back until a change up for a vote is decided');
+  assert.equal(mine('reading', { line: { code: 'queued', place: 3 } }).group, 'waiting', 'in the bot\'s line');
+  assert.equal(mine('reading').group, 'next', 'being read');
+  assert.equal(mine('planning').group, 'next', 'being planned');
+  assert.equal(mine('building', { line: { code: 'fixing' } }).group, 'next', 'being fixed');
+  assert.equal(mine('going_live').group, 'next');
+  assert.equal(aiWork.standing({ ...open, state: 'closed' }, ME, now, null, ws('waiting_for_you', { why: 'plan', requesterId: ME })), null,
+    'never on a closed thread');
+  assert.equal(aiWork.standing(open, ME, now, null, ws('closed')), null, 'nor a closed request');
+  // Handed back to a person: Needs you when the viewer decides, Waiting for anyone else following it.
+  const decide = ws('waiting_for_you', { why: 'decide', line: { code: 'reason', text: 'A person must choose.' } });
+  assert.equal(aiWork.standing(open, ME, now, null, decide, { decides: true }).group, 'needs');
+  assert.equal(aiWork.standing(open, ME, now, null, decide, { decides: false }).group, 'waiting');
+  assert.equal(aiWork.standing({ ...open, own: false }, ME, now, null, decide, { decides: false }).group, 'waiting',
+    'one they only wrote in, with no change in flight, waits on that person');
+  assert.equal(aiWork.standing({ ...open, own: false, change_status: 'active', change_user: 9 }, ME, now, null, ws('building')), null,
+    'one they only wrote in, being built, asks nothing of them');
+  // Who is building it is the viewer's to read.
+  assert.equal(aiWork.standing({ ...open, change_status: 'active', change_user: 3 }, ME, now, 3, ws('building')).by, 'bot');
+  assert.equal(aiWork.standing({ ...open, change_status: 'active', change_user: ME }, ME, now, 3, ws('building')).by, 'you');
+  assert.equal(aiWork.standing({ ...open, claimed_by: 'aw_me', claimed_mine: true }, ME, now, null,
+    ws('building', { line: { code: 'claimed', by: 'aw_me' } })).by, 'you', 'their own claim');
+  // #6282: an update on its way carries what was asked for.
+  assert.equal(aiWork.standing({ ...promoted, update_ask: 'Bigger\nbuttons' }, ME, now, null,
+    ws('up_for_vote', { line: { code: 'update_queued' } })).ask, 'Bigger buttons');
+  // A request nobody has started on for a week says how long.
+  const old = { ...open, request_at: '2026-10-17T10:00:00.000Z' };
+  assert.equal(aiWork.standing(old, ME, now, null, ws('reading', { line: { code: 'waiting' } })).quietDays, 12);
+  // Live for a week, for anyone in the thread.
+  const live = { ...open, own: false, change_status: 'merged', change_id: 4, merged_at: at, live_at: at };
+  assert.deepEqual(aiWork.standing(live, ME, now, null, ws('live')),
+    { group: 'live', work: work('live'), at, mergedAt: at, changeId: 4 });
+  assert.equal(aiWork.standing({ ...live, live_at: '2026-10-01T00:00:00.000Z' }, ME, now, null, ws('live', { since: '2026-10-01T00:00:00.000Z' })), null,
+    'a week on, it is history');
+  // With no stored row yet (a read that failed), the change says it.
+  assert.equal(aiWork.standing({ ...promoted, check_state: 'passing', change_id: 4 }, ME, now).work.stage, 'up_for_vote');
+  assert.equal(aiWork.standing(open, ME, now).work.stage, 'reading');
   // A decision up for a vote waits for votes; one whose vote is owed is the feed's.
   const decision = { state: 'open', own: true, kind: 'decision', number: null, created_at: at, decision_status: 'open' };
-  assert.deepEqual(aiWork.standing({ ...decision, decision_mine: true }, ME, now), { group: 'waiting', what: 'decision', at, myVote: null });
-  assert.deepEqual(aiWork.standing({ ...decision, decision_vote: 'yes' }, ME, now), { group: 'waiting', what: 'decision', at, myVote: 'yes' });
+  assert.deepEqual(aiWork.standing({ ...decision, decision_mine: true }, ME, now),
+    { group: 'waiting', work: work('up_for_vote'), at, myVote: null });
+  assert.equal(aiWork.standing({ ...decision, decision_vote: 'yes' }, ME, now).myVote, 'yes');
   assert.equal(aiWork.standing(decision, ME, now), null, 'a vote she owes is Needs you\'s');
   assert.equal(aiWork.standing({ ...decision, own: false, decision_vote: 'yes' }, ME, now), null, 'one she only voted on');
   assert.equal(aiWork.standing({ ...decision, decision_mine: true, decision_status: 'applied' }, ME, now), null, 'decided');
-  // Every stage the bot words a request at (homeroom-bot-progress.js
-  // STEP_OF_STAGE) has a list here, but those its change says as well.
-  const progress = read('src/services/homeroom-bot-progress.js');
-  const block = progress.slice(progress.indexOf('const STEP_OF_STAGE = Object.freeze({'));
-  const stages = [...block.slice(0, block.indexOf('});')).matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]);
-  assert.ok(stages.length > 15, 'the stages were read');
-  for (const stage of stages) {
-    if (['setting_up', 'checks', 'checks_failed', 'vote', 'merging'].includes(stage)) continue;
-    assert.ok(Object.prototype.hasOwnProperty.call(aiWork.BOT_STANDING, stage), `the bot's stage ${stage} has a list`);
-  }
 });
 
-test('the server arranges Waiting nearest to live first, and matches the bot\'s stages by request', () => {
+test('the server arranges Waiting nearest to live first, and matches the stored states by request', () => {
   const aiWork = require('../src/services/ai-work');
   const now = new Date('2026-10-29T12:00:00Z');
   const row = (id, number, extra = {}) => ({
-    id, number, kind: 'work', state: 'open', own: true, slug: 'garden', name: 'Garden club',
+    id, number, request_id: id, kind: 'work', state: 'open', own: true, slug: 'garden', name: 'Garden club',
     request_title: `R${number}`, request_state: 'open', request_at: `2026-10-2${id}T00:00:00Z`, created_at: '2026-10-20T00:00:00Z', ...extra,
   });
-  const bots = new Map([
-    ['garden#6014', { stage: 'held', since: '2026-10-29T01:00:00Z', capSuppressed: 'proposals_per_app' }],
-    ['garden#6002', { stage: 'plan', since: '2026-10-29T02:00:00Z' }],
+  const ws = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: null, requesterId: 5, ...extra });
+  const states = new Map([
+    ['garden#6038', ws('reading', { line: { code: 'waiting' } })],
+    ['garden#6014', ws('building', { line: { code: 'held_waiting' }, since: '2026-10-29T01:00:00Z' })],
+    ['garden#6002', ws('waiting_for_you', { why: 'plan', since: '2026-10-29T02:00:00Z' })],
+    ['garden#6025', ws('up_for_vote', { since: '2026-10-29T03:00:00Z' })],
+    ['garden#6026', ws('checking', { since: '2026-10-29T04:00:00Z' })],
   ]);
   const lists = aiWork.arrange([
     row(1, 6038),
     row(2, 6014),
     row(3, 6002),
-    row(4, 6025, { change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: '2026-10-29T03:00:00Z', change_id: 1, pr_number: 6025, check_state: 'passing' }),
+    row(4, 6025, { change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', change_id: 1, pr_number: 6025 }),
     // #6060: a change still waiting for its checks sorts with the votes, ahead of held.
-    row(5, 6026, { change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: '2026-10-29T04:00:00Z', change_id: 2, pr_number: 6026, check_state: 'pending' }),
-  ], 5, now, null, bots);
+    row(5, 6026, { change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', change_id: 2, pr_number: 6026 }),
+  ], 5, now, null, states);
   assert.deepEqual(lists.needs.map((t) => t.number), [6002], 'the plan waiting for Build it');
-  assert.deepEqual(lists.waiting.map((t) => `${t.number}:${t.what}`), ['6025:vote', '6026:checking', '6014:held', '6038:not_picked_up']);
+  assert.deepEqual(lists.waiting.map((t) => `${t.number}:${t.work.stage}`),
+    ['6025:up_for_vote', '6026:checking', '6014:building', '6038:reading']);
   assert.deepEqual(lists.next, []);
 });
 
-test('a request the bot handed back is one its records say it left for a person, or whose build stopped', async () => {
+test('a request the bot handed back is one its records say it left for a person, or whose build stopped', () => {
   const { handedBack, stageOf } = require('../src/services/homeroom-bot-progress');
   const looked = { mode: 'live', verdict: 'person', request_closed: false, proposal_status: null };
   assert.equal(stageOf(looked), null, 'nothing about it is in progress');
@@ -790,41 +802,23 @@ test('a request the bot handed back is one its records say it left for a person,
   assert.equal(handedBack({ ...looked, run_already_done: true }), 'already_works');
   assert.equal(handedBack({ ...looked, verdict: 'empty', run_already_done: true }), 'already_works');
   assert.equal(handedBack({ ...looked, verdict: 'ready', run_already_done: true }), null, 'a ready verdict is unchanged');
-  // botStages reads it where nothing is in progress.
-  const aiWork = require('../src/services/ai-work');
-  const stages = await aiWork.botStages(null, { id: 5 }, {
-    liveSvc: { isStaging: () => false },
-    settings: { mode: 'live' },
-    progress: {
-      handedBack,
-      requestStates: async () => [
-        { row: { ...looked, slug: 'garden', issue_number: 6010, run_at: '2026-10-29T10:00:00Z' }, state: null },
-        { row: { ...looked, slug: 'garden', issue_number: 6011, verdict: 'failed' }, state: null },
-      ],
-    },
-  });
-  assert.deepEqual([...stages], [['garden#6010', { stage: 'decide', since: '2026-10-29T10:00:00Z', capSuppressed: null }]]);
+  // The stored work state reads it the same way (services/work-state.js derive).
+  const { derive } = require('../src/services/work-state');
+  assert.deepEqual([derive(looked).stage, derive(looked).why], ['waiting_for_you', 'decide']);
+  assert.deepEqual([derive({ ...looked, run_already_done: true }).why], ['already_works']);
+  const stopped = derive({ ...looked, verdict: 'ready', build_ok: false, build_error: 'turn timed out' });
+  assert.deepEqual([stopped.stage, stopped.reason], ['stopped', 'build_failed']);
 });
 
-test('B03: a first version being built is In progress, never Waiting · Nobody yet', async () => {
+test('B03: a first version being built is In progress, never Waiting · Nobody yet', () => {
   const aiWork = require('../src/services/ai-work');
-  const stages = await aiWork.botStages(null, { id: 5 }, {
-    liveSvc: { isStaging: () => false },
-    settings: { mode: 'live' },
-    progress: {
-      handedBack: () => null,
-      requestStates: async () => [
-        { row: { slug: 'flat-chores', issue_number: 1, first_version: true }, state: { stage: 'building', since: '2026-11-01T22:00:00Z' } },
-      ],
-    },
-  });
-  assert.deepEqual([...stages], [['flat-chores#1', { stage: 'building', since: '2026-11-01T22:00:00Z', capSuppressed: null }]]);
+  const states = new Map([['flat-chores#1', { stage: 'building', why: null, reason: null, line: null, since: '2026-11-01T22:00:00Z', requesterId: 5 }]]);
   const row = {
-    id: 60, kind: 'request', slug: 'flat-chores', name: 'Flat Chores', number: 1, request_title: 'First version of Flat Chores',
+    id: 60, kind: 'request', slug: 'flat-chores', name: 'Flat Chores', number: 1, request_id: 60, request_title: 'First version of Flat Chores',
     state: 'open', request_state: 'open', own: true, created_at: '2026-11-01T21:50:00Z',
   };
-  const lists = aiWork.arrange([row], 5, new Date('2026-11-01T22:08:00Z'), null, stages);
-  assert.deepEqual(lists.next.map((t) => [t.number, t.what, t.by]), [[1, 'building', 'bot']]);
+  const lists = aiWork.arrange([row], 5, new Date('2026-11-01T22:08:00Z'), null, states);
+  assert.deepEqual(lists.next.map((t) => [t.number, t.work.stage, t.by]), [[1, 'building', 'bot']]);
   assert.equal(lists.waiting.length, 0, 'not Waiting · Nobody yet');
 });
 
@@ -838,21 +832,22 @@ test('Homeroom bot answers "where do things stand?" from the lists this page dra
   const work = {
     private: [{ rootId: 9, title: 'A calendar idea', app: null }],
     needs: [thread(1, 6010, 'decide', { group: 'needs', title: 'Points table' }), thread(2, 6038, 'plan', { group: 'needs' })],
-    next: [thread(3, 6020, 'building', { group: 'next', by: 'someone', claimedBy: 'snait', title: 'Sound toggle', app: games })],
-    waiting: [thread(4, 6014, 'held', { heldBy: 'approvals', title: 'Export' }), thread(5, 6039, 'vote', { title: 'Owed already' })],
+    next: [thread(3, 6020, 'building', { group: 'next', by: 'someone', work: { line: { code: 'claimed', by: 'snait' } }, title: 'Sound toggle', app: games })],
+    waiting: [thread(4, 6014, 'held', { title: 'Export' }), thread(5, 6039, 'vote', { title: 'Owed already' })],
     live: [thread(6, 6001, 'live', { group: 'live', title: 'Pause button' })],
   };
   const lists = aiWork.listsOf(needs, work, { botUsername: 'homeroom_bot' });
   assert.deepEqual(lists.needsYou.map((r) => [r.number || null, r.title, r.says]), [
     [6038, 'Spell out the rules', 'waits for their vote'],
     [6039, 'Night theme', 'waits for them to pick one of its changes'],
-    [6010, 'Points table', 'Homeroom bot handed it back: a person needs to decide'],
+    [6010, 'Points table', 'Waiting for you to decide'],
     [null, 'A calendar idea', 'their private thread with Homeroom bot, not posted yet'],
   ], 'the feed\'s cards by their requests\' numbers, then what the bot handed back; #6038\'s plan is the vote above');
-  assert.deepEqual(lists.inProgress.map((r) => [r.projectName, r.says]), [['Game corner', 'snait is building it']]);
-  assert.deepEqual(lists.waiting.map((r) => r.says), ['ready to build; a vote they owe on Homeroom bot\'s changes can free its slot'],
+  assert.deepEqual(lists.inProgress.map((r) => [r.projectName, r.says]), [['Game corner', 'Building · snait is building it']]);
+  assert.deepEqual(lists.waiting.map((r) => r.says),
+    ['Ready to build · Waiting for changes up for a vote to be decided; a vote they owe on Homeroom bot\'s changes can free its slot'],
     'the vote owed on #6039 is Needs you\'s alone');
-  assert.deepEqual(lists.liveThisWeek.map((r) => r.says), ['live']);
+  assert.deepEqual(lists.liveThisWeek.map((r) => r.says), ['Live']);
   assert.deepEqual(lists.counts, { needsYou: 3, inProgress: 1, waiting: 1, liveThisWeek: 1 }, 'the headings\' counts: a private thread asks nothing');
   // my_work carries them, and the prompt says to answer from them.
   const mayor = read('src/services/homeroom-bot-mayor.js');
@@ -1062,15 +1057,15 @@ test('#6160: Waiting & in progress is a card of its own between Needs you and Li
   const LISTS = 'frontend/src/features/ai/lists.tsx';
   const bakery = { slug: 'bakery', name: 'Bakery orders', icon_url: null, icon_emoji: null };
   const row = (threadId, a, what, extra = {}) => ({
-    threadId, number: 100 + threadId, kind: 'work', title: `${a.name} ${what} ${threadId}`, app: a, change: null,
-    href: `#app/${a.slug}/dev/issues/${100 + threadId}`, group: 'next', what, at: null, ...extra,
+    ...thread(threadId, 100 + threadId, what, { group: 'next', ...extra }),
+    title: `${a.name} ${what} ${threadId}`, app: a, href: `#app/${a.slug}/dev/issues/${100 + threadId}`,
   });
   // Under way first, then what waits: two projects, one with more rows than
   // it shows before its own Show more.
   const progress = [row(1, app, 'going_live'), row(2, bakery, 'building', { by: 'bot' })];
   const waiting = [
     row(3, app, 'vote'), row(4, bakery, 'not_picked_up'),
-    row(5, app, 'checking'), row(6, bakery, 'held', { heldBy: 'approvals' }),
+    row(5, app, 'checking'), row(6, bakery, 'held'),
     row(7, app, 'queued'), row(8, app, 'not_picked_up'),
   ];
   const live = [{ ...row(9, app, 'live'), group: 'live' }];
@@ -1104,7 +1099,7 @@ test('#6160: Waiting & in progress is a card of its own between Needs you and Li
   // One list, grouped by project: under way before waiting, and each
   // project's rows under its own name.
   const garden = busySheet.slice(busySheet.indexOf('data-ai-group="garden"'), busySheet.indexOf('data-ai-group="bakery"'));
-  assert.ok(garden.indexOf('data-ai-line="going_live"') < garden.indexOf('data-ai-line="vote"'), 'work under way comes first');
+  assert.ok(garden.indexOf('data-ai-line="going_live"') < garden.indexOf('data-ai-line="up_for_vote"'), 'work under way comes first');
   assert.match(garden, />Garden club</, 'under its project\'s name');
   // Four of the garden's rows are moving: three, then its own Show more for
   // the last. Its two not picked up rows fold under Not moving below.
@@ -1240,7 +1235,7 @@ test('#6271: a private thread marked done this week is Live this week\'s, and on
     live: [thread(21, 21, 'live', { group: 'live', app })],
   };
   const rows = liveThisWeek(work, now);
-  const closed = rows.filter((t) => t.what === 'closed');
+  const closed = rows.filter((t) => t.work.stage === 'closed');
   assert.deepEqual(closed.map((t) => [t.rootId, t.at]), [
     [804, '2026-11-04T09:00:00Z'],
     [801, '2026-11-03T12:00:00Z'],
@@ -1248,7 +1243,7 @@ test('#6271: a private thread marked done this week is Live this week\'s, and on
   const row = closed.find((t) => t.rootId === 801);
   assert.deepEqual([row.threadId, row.number, row.kind, row.group, row.rootId, row.href], [0, null, 'private', 'live', 801, ''],
     'a live row that opens its thread, with no number');
-  assert.ok(rows.findIndex((t) => t.what === 'live') < rows.findIndex((t) => t.what === 'closed'),
+  assert.ok(rows.findIndex((t) => t.work.stage === 'live') < rows.findIndex((t) => t.work.stage === 'closed'),
     'after the project\'s live requests');
   assert.deepEqual(needsYou([], work).map((r) => r.key), ['private:805'], 'a done thread is never Needs you\'s; the open one still is');
 

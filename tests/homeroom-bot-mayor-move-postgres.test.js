@@ -9,8 +9,10 @@
 // footer, a link left on the original, and the original closed at once only
 // when its author tapped and nobody else took part, else put to a vote.
 // Beside it, the bot's other offers about where a request belongs: a vote on
-// closing one a triage found already done, and "Did you mean ...?" before a
-// request is filed on a project named inexactly (#4501).
+// closing one a triage found already done (in the DM only as an offer sent
+// before 5 Nov 2026, when its news left the DM: docs/plans/bot-one-model.md
+// step 4), and "Did you mean ...?" before a request is filed on a project
+// named inexactly (#4501).
 //
 // Run with: node --test tests/homeroom-bot-mayor-move-postgres.test.js
 
@@ -189,7 +191,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     return conversations.getMessage(pool, ada, opened.conversationId, sent.messageId);
   }
   const actionOf = async (messageId) => (await pool.query(
-    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [messageId],
+    'SELECT * FROM bot_cards WHERE message_id = $1', [messageId],
   )).rows[0];
   const tap = (action, choice, who = ada) => mayor.decideOfferTap(pool, CONFIG, {
     user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test', replies },
@@ -256,7 +258,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.equal(original.status, 'closed');
     const { rows: votes } = await pool.query('SELECT id FROM issues WHERE kind = \'close_issue\'');
     assert.equal(votes.length, 0, 'no vote needed');
-    const decided = await pool.query('SELECT status, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    const decided = await pool.query('SELECT status, issue_number FROM bot_cards WHERE id = $1', [action.id]);
     assert.deepEqual(decided.rows[0], { status: 'done', issue_number: 901 });
     const { rows: [ack] } = await pool.query(
       'SELECT content FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
@@ -387,34 +389,59 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.equal((await read(refused)).metadata.homeroomBot.kind, 'chat', 'no offer under it');
   });
 
-  await t.test('a triage that says it is about Homeroom tells the requester and offers the move once', async () => {
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): the request's news is
+  // no longer sent to her chat with the bot, where the move was offered. The
+  // bot's note in the request's thread carries it instead (homeroom-bot.js:
+  // a platform note's thread offer is `move_request` for its requester), and
+  // a tap there moves it as the DM's did (homeroom-bot-move.js
+  // moveToHomeroom).
+  await t.test('a triage that says it is about Homeroom offers the move under its note in the request\'s thread', async () => {
     await request(13, { title: 'Invite message wording' });
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, about_platform)
        VALUES ($1, 13, 'live', 'person', $2, TRUE)`,
       [ears.id, 'The invite message is Homeroom\'s'],
     );
-    const post = (postId) => dm.relayIssuePost({
-      pool, app: ears, issueNumber: 13, kind: 'person', postId, bot,
+    const told = await dm.relayIssuePost({
+      pool, app: ears, issueNumber: 13, kind: 'person', postId: 501, bot,
       dm: { reason: 'The invite message is written by Homeroom.', platform: true },
     });
-    const told = await post(501);
-    const person = await read(told);
-    assert.match(person.content, /This is about Homeroom itself rather than Ear trainer/);
-    // One story: the verdict and its offer are one message, with no Go ahead.
-    assert.deepEqual(person.metadata.homeroomBot.actions.map((a) => a.label), ['Move it to Homeroom', 'Keep it here'], 'no Go ahead');
-    const { rows: offers } = await pool.query(
-      `SELECT * FROM homeroom_bot_dm_actions WHERE kind = 'move_request' AND source_issue_number = 13`,
+    assert.deepEqual([told.quiet, told.messageId], [true, null], 'nothing in her chat with the bot');
+    const { rows: dmOffers } = await pool.query(
+      `SELECT 1 FROM bot_cards WHERE kind = 'move_request' AND source_issue_number = 13`,
     );
-    assert.equal(offers.length, 1);
-    assert.equal(offers[0].conversation_id, opened.conversationId);
-    assert.equal(Number(offers[0].message_id), Number(person.id), 'the offer is the verdict\'s own message');
-    assert.equal(person.metadata.homeroomBot.actionId, Number(offers[0].id));
-    await post(502);
-    const { rows: again } = await pool.query(
-      `SELECT 1 FROM homeroom_bot_dm_actions WHERE kind = 'move_request' AND source_issue_number = 13`,
+    assert.equal(dmOffers.length, 0);
+
+    const voice = require('../src/services/homeroom-bot-voice');
+    const offer = await voice.threadOffer(pool, { app: ears, kind: 'move_request', forUserId: ada.id, args: { issueNumber: 13 } });
+    assert.deepEqual(offer.metadata.actions.map((a) => a.label), ['Move it to Homeroom', 'Keep it here']);
+    const { rows: [note] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata)
+       VALUES ($1, $2, $3, 'issue', 13, $4) RETURNING id`,
+      [ears.id, bot.id, 'This is about Homeroom itself rather than Ear trainer.', JSON.stringify({ homeroomBot: { kind: 'voice', ...offer.metadata } })],
     );
-    assert.equal(again.length, 1, 'offered once');
+    await voice.tieThreadOffer(pool, offer.id, note.id);
+    const before = gh.created.length;
+    const said = [];
+    const sock = {
+      async sendBotMessage(_pool, _appId, msg) { said.push(msg); return { id: 9000 + said.length }; },
+      async sendSystemMessage() { return { id: 9500 }; }, broadcast() {},
+    };
+    const out = await voice.actOnOffer(pool, CONFIG, {
+      offerId: offer.id, userId: ada.id, choice: 'yes', key: `move-13-${offer.id}`, deps: { bot, workflow, domain: 'app.test', ws: sock },
+    });
+    assert.equal(out.decision, 'done', JSON.stringify(out));
+    assert.equal(gh.created.length, before + 1, 'filed once');
+    assert.equal(gh.created.at(-1).repo, 'usernode-2d5619', 'on Homeroom\'s own repository');
+    assert.equal(gh.created.at(-1).title, 'Invite message wording');
+    const { rows: [decided] } = await pool.query('SELECT status, result FROM bot_cards WHERE id = $1', [offer.id]);
+    assert.equal(decided.status, 'done');
+    assert.equal(Number(decided.result.issueNumber), 900 + gh.created.length);
+    assert.match(said.at(-1).content, /^Moved to Homeroom's own board as request \[#\d+\]\(.+\), with a link to it left here\. /,
+      'said where she tapped');
+    assert.equal((await voice.actOnOffer(pool, CONFIG, {
+      offerId: offer.id, userId: ada.id, choice: 'yes', key: 'move-13-again', deps: { bot, workflow, domain: 'app.test', ws: sock },
+    })).decision, 'already', 'decided once');
 
     // The chat model sees why it was left.
     const detail = await mayor.requestDetail(pool, { user: ada, project: 'ear-trainer', number: 13, settings });
@@ -448,26 +475,47 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.ok(gh.created.some((c) => c.repo === 'ear-trainer' && c.title === 'Show interval names'));
   });
 
-  await t.test('a triage that finds a request already done tells the requester, offers a vote on closing it once, and a tap opens it', async () => {
+  await t.test('a triage that finds a request already done says nothing in the DM; a close offer sent there before still opens the vote', async () => {
     await request(14, { title: 'Show my votes' });
     const post = (postId, kind = 'person') => dm.relayIssuePost({
       pool, app: ears, issueNumber: 14, kind, postId, bot,
       dm: { reason: 'It is there already: open Profile, then Your votes.', done: true },
     });
-    const told = await read(await post(601));
-    // One story: one message, the verdict with its offer's buttons.
-    assert.match(told.content, /This looks done already: It is there already: open Profile, then Your votes\.$/);
-    assert.deepEqual(told.metadata.homeroomBot.actions.map((a) => a.label), ['Propose to close', 'Tell me what\'s missing'],
-      'no Go ahead: there is nothing to decide');
     const offers = async () => (await pool.query(
-      `SELECT * FROM homeroom_bot_dm_actions WHERE kind = 'close_request' AND source_issue_number = 14`,
+      `SELECT * FROM bot_cards WHERE kind = 'close_request' AND source_issue_number = 14`,
     )).rows;
-    const [offer] = await offers();
-    assert.equal(offer.conversation_id, opened.conversationId);
-    assert.equal(offer.details, 'It is there already: open Profile, then Your votes.', 'the vote\'s reason');
-    assert.equal(Number(offer.message_id), Number(told.id), 'the offer is the verdict\'s own message');
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
+    // not relayed to its requester's DM. The "already works" note and its
+    // Propose to close are the request thread's (homeroom-bot.js doneCloseOffer).
+    const quiet = await post(601);
+    assert.deepEqual([quiet.conversationId, quiet.messageId, quiet.quiet, quiet.userId], [null, null, true, ada.id]);
     await post(602, 'empty');
-    assert.equal((await offers()).length, 1, 'offered once');
+    assert.equal((await offers()).length, 0, 'no offer folded into a DM message');
+
+    // An offer folded into a verdict sent before the change, as foldOffer
+    // left it: its message in the DM and its row, tied together.
+    const offerMeta = {
+      kind: 'person', appSlug: ears.slug, appName: ears.name, issueNumber: 14, status: 'open',
+      actions: [{ id: 'yes', label: 'Propose to close', style: 'primary', type: 'server' },
+        { id: 'missing', label: 'Tell me what\'s missing', style: 'secondary', type: 'reply' }],
+    };
+    const { rows: [action] } = await pool.query(
+      `INSERT INTO bot_cards (user_id, app_id, kind, title, details, source_issue_number)
+       VALUES ($1, $2, 'close_request', 'Show my votes', $3, 14) RETURNING id`,
+      [ada.id, ears.id, 'It is there already: open Profile, then Your votes.'],
+    );
+    const { rows: [told] } = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+       VALUES ($1, $2, $3, jsonb_build_object('homeroomBot', $4::jsonb)) RETURNING id`,
+      [opened.conversationId, bot.id, 'This looks done already: It is there already: open Profile, then Your votes.',
+        JSON.stringify({ ...offerMeta, actionId: Number(action.id) })],
+    );
+    await pool.query(
+      'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
+      [action.id, told.id, opened.conversationId],
+    );
+    const [offer] = await offers();
+    assert.equal(Number(offer.message_id), Number(told.id));
 
     const went = await tap(offer, 'yes');
     assert.equal(went.ok, true);
@@ -477,17 +525,12 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     );
     assert.equal(votes.length, 1, 'the request\'s own close vote');
     assert.equal(Number(votes[0].created_by), Number(ada.id), 'proposed by them');
-
-    // Not offered again while that vote is open, to anybody.
-    await request(15, { title: 'Show my votes again' });
-    await pool.query(
-      `INSERT INTO issues (app_id, title, description, kind, payload, created_by, status)
-       VALUES ($1, 'Close #15', 'x', 'close_issue', '{"issueNumber":15}', $2, 'open')`,
-      [ears.id, sam.id],
-    );
-    await dm.relayIssuePost({ pool, app: ears, issueNumber: 15, kind: 'person', postId: 603, bot, dm: { reason: 'Done.', done: true } });
+    const again = await tap(offer, 'yes');
+    assert.notEqual(again.ok, true, 'decided once');
     assert.equal((await pool.query(
-      `SELECT 1 FROM homeroom_bot_dm_actions WHERE kind = 'close_request' AND source_issue_number = 15`,
-    )).rows.length, 0);
+      `SELECT 1 FROM issues WHERE app_id = $1 AND kind = 'close_issue' AND (payload->>'issueNumber')::int = 14`, [ears.id],
+    )).rows.length, 1, 'and opens no second vote');
+    // (Not offering it again while a close vote is open was the DM fold's
+    // rule; the thread's offer keeps it, homeroom-bot.js doneCloseOffer.)
   });
 });
