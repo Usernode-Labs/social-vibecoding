@@ -201,9 +201,36 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal(String(closedChecked.checked_at), String(closedChecked.updated_at), 'a closed row is not swept');
   });
 
+  await t.test('a write anywhere marks its item, and the drain derives it again', async () => {
+    await pool.query('DELETE FROM work_state_dirty');
+    // A build's progress, written by no machine: the spec post, a review round.
+    await ask(8, ada, 'Weekly digest');
+    const run8 = await run(8, 'ready');
+    const marks = async () => (await pool.query(
+      'SELECT app_id, issue_number, session_id FROM work_state_dirty ORDER BY id')).rows
+      .map((r) => (r.session_id ? `s${r.session_id}` : `${r.issue_number}`));
+    assert.deepEqual(await marks(), ['8'], 'the request, once, however many of its rows were written');
+    await pool.query('UPDATE homeroom_bot_runs SET build_session_id = NULL WHERE id = $1', [run8.id]);
+    assert.deepEqual(await marks(), ['8'], 'marking one already marked does nothing');
+    // A change's checks move: the change is marked, and a change's turn too.
+    await pool.query("UPDATE chat_sessions SET check_state = 'failing' WHERE id = $1", [failing.id]);
+    await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [own.id]);
+    assert.deepEqual(await marks(), ['8', `s${failing.id}`], 'what a stage reads, not every write (a view bumps activity)');
+    const out = await ws.drainDirty(pool);
+    assert.equal(out.taken, 2);
+    assert.deepEqual(out.changed.map((c) => [c.ref, c.state.stage]).sort(), [[5, 'checking'], [8, 'building']].sort());
+    assert.deepEqual(await marks(), [], 'taken');
+    assert.deepEqual((await ws.drainDirty(pool)).taken, 0);
+    // A claim, a reply's question answered, a closed record: each marks its request.
+    await pool.query('INSERT INTO issue_claims (app_id, github_issue_number, user_id) VALUES ($1, 8, $2)', [app.id, bob.id]);
+    await pool.query("UPDATE homeroom_bot_dm_messages SET question_status = 'closed' WHERE app_id = $1", [app.id]);
+    assert.deepEqual((await marks()).sort(), ['4', '8']);
+    await ws.drainDirty(pool);
+  });
+
   await t.test('readers: a person\'s own rows, and a project\'s by number', async () => {
     const hers = await ws.forRequester(pool, ada.id);
-    assert.deepEqual(hers.map((r) => r.ref).sort(), [1, 2, 3, 4]);
+    assert.deepEqual(hers.map((r) => r.ref).sort((a, b) => a - b), [1, 2, 3, 4, 8]);
     assert.equal(hers[0].app.slug, 'ws-seeds');
     const byNumber = await ws.forRequests(pool, app.id, [5, 6, 99]);
     assert.deepEqual([...byNumber.keys()].sort(), [5, 6]);

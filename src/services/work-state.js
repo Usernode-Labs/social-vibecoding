@@ -767,6 +767,36 @@ async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 
 }
 
 /**
+ * Derive again what the triggers marked (work_state_dirty: a write to what
+ * a work state is derived from, wherever it was made), at most `limit` at a
+ * time, and resolve the changed rows. The marks are taken and the items
+ * refreshed in one transaction, so a mark made meanwhile waits for it and
+ * stays for the next run; a failure leaves them marked. `db` is a pool.
+ */
+async function drainDirty(pool, { limit = 200 } = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `DELETE FROM work_state_dirty
+        WHERE id IN (SELECT id FROM work_state_dirty ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED)
+        RETURNING app_id, issue_number, session_id`,
+      [limit],
+    );
+    const changed = rows.length ? await refresh(client, rows.map((r) => (r.session_id != null
+      ? { sessionId: Number(r.session_id) }
+      : { appId: Number(r.app_id), issueNumber: Number(r.issue_number) }))) : [];
+    await client.query('COMMIT');
+    return { taken: rows.length, changed };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * The rows of requests that have none yet, made now (a reader listing
  * requests from before the table, or one the sweep has not reached).
  * Resolves nothing; read the rows after.
@@ -812,5 +842,6 @@ module.exports = {
   forRequests,
   fromRow,
   sweep,
+  drainDirty,
   ensure,
 };

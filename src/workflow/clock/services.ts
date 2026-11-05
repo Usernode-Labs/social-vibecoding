@@ -199,6 +199,27 @@ export const JOBS: readonly Job[] = Object.freeze([
       })),
   },
   {
+    // What the triggers marked as changed since (work_state_dirty: a write
+    // to what a work state is derived from, made anywhere), derived again
+    // and pushed, within seconds (services/work-state.js drainDirty).
+    name: 'work-state-drain', everyMs: 3000,
+    async run(_ctx: WorkContext, { pool }: JobDeps) {
+      const ws = legacy('services/work-state');
+      let taken = 0;
+      const changed: unknown[] = [];
+      // A burst (a build's many writes, a merge that closes many requests)
+      // is drained in a few passes of one run.
+      for (let pass = 0; pass < 5; pass++) {
+        const out = await ws.drainDirty(pool, { limit: 200 });
+        taken += out.taken;
+        changed.push(...out.changed);
+        if (out.taken < 200) break;
+      }
+      await ws.publish(pool, changed.map(ws.pushOf));
+      return { taken, changed: changed.length };
+    },
+  },
+  {
     // One work state per request and change (services/work-state.js): the
     // rows still moving, derived again (a stage that moves on by time, a
     // fact written where nothing refreshed it), and a row for each request
