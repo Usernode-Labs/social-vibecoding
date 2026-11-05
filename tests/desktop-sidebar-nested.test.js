@@ -207,8 +207,9 @@ test('the pages: one pane at a time in the inbox, All communities one page, and 
   assert.match(read('frontend/src/features/workshop/index.tsx'), /\{rows !== null && !state\.error && !q \? \(/, 'a search\'s answer is the whole list');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /if \(key === 'workshop' && sidebarRows\) \{\s*event\.preventDefault\(\);\s*if \(screen === 'workshop-screen'\) pressLitTab\(screen\);\s*else goToCommunity\(null\);/);
-  // The places button has nothing to open beside the docked sidebar.
-  assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) \.dev-ws-places-btn \{\n    display: none;\n  \}/);
+  // One Home (#6361): the sidebar nests no places, so the place bar's button
+  // to them stays beside the docked sidebar too.
+  assert.doesNotMatch(css, /\.platform-tabs-folded\)\) \.dev-ws-places-btn \{\n    display: none;/);
 });
 
 test('the look: one indent a level, one unbroken line, the parent unfilled; AI a sparkle', () => {

@@ -98,16 +98,17 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
           runs to the screen's edges on a phone (`-mx-3 px-3`, the section's
           own gutter given back) and snaps a card to the gutter. */}
       <div className="home-panel-body pt-2">
-        <div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2.5 overflow-x-auto px-3 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="list">
+        <div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2.5 overflow-x-auto px-3 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {/* Each card is the row's own child, as the declared checks
+              select it (`.home-panel-rows > .home-challenge-card`). */}
           {view.rows.map((row) => (
-            <div key={row.id} role="listitem" className="w-[min(19rem,82vw)] shrink-0 snap-start">
-              <ChallengeCard
-                view={row}
-                className="home-challenge-card h-full"
-                data-challenge-id={row.id}
-                onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
-              />
-            </div>
+            <ChallengeCard
+              key={row.id}
+              view={row}
+              className="home-challenge-card w-[min(19rem,82vw)] shrink-0 snap-start"
+              data-challenge-id={row.id}
+              onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
+            />
           ))}
         </div>
       </div>

@@ -872,15 +872,15 @@ test('a numeric challenge at full target is a finished line, not a count (#4563)
 test("Home draws the Challenges tab's card, not a card of its own", () => {
   const src = challengesSrc();
   assert.match(src, /import \{ ChallengeCard \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
-  assert.match(src, /<ChallengeCard[\s\S]*?className="home-challenge-card h-full"/);
   // One Home (#6361): one row that scrolls sideways, each card a fixed width
-  // so the next one peeks in, snapped to the section's gutter.
-  assert.match(src, /<div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2\.5 overflow-x-auto px-3 pb-1 [^"]*" role="list">/);
-  assert.match(src, /<div key=\{row\.id\} role="listitem" className="w-\[min\(19rem,82vw\)\] shrink-0 snap-start">/);
+  // so the next one peeks in, snapped to the section's gutter, and still the
+  // row's own child, which the declared checks select.
+  assert.match(src, /<ChallengeCard[\s\S]*?className="home-challenge-card w-\[min\(19rem,82vw\)\] shrink-0 snap-start"/);
+  assert.match(src, /<div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2\.5 overflow-x-auto px-3 pb-1 [^"]*">/);
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [panel()] }).html);
   // S8: the card's corners are 24px and the tile's 11px, concentric inside
   // the card's 12px padding and 1px border.
-  assert.match(card, /^home-challenge-card h-full flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl/);
+  assert.match(card, /^home-challenge-card w-\[min\(19rem,82vw\)\] shrink-0 snap-start flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl/);
   assert.match(card, /h-20 w-20 [^"]*rounded-\[0\.6875rem\]"/, "the tab's 80px tile");
   assert.match(card, /data-challenge-id="1"/);
 });

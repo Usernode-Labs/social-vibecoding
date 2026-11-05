@@ -2582,9 +2582,9 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
-      "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417)",
+      "name": "Workshop: the Workshop is the place named on the place bar, with the bar's button to the places beside it, and All items' search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417; One Home #6361 put the places behind that button on a wide window too)",
       "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"] .dev-ws-places-btn + [data-place-title]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
       "expectText": "All items"
     },
     {
@@ -2670,10 +2670,10 @@
       "expectText": "Recently live"
     },
     {
-      "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels and its topics under Topics, in the column beside the strip (#4417)",
+      "name": "On a wide window a project page's place bar names the Hub and carries the button to its places (Hub, Needs you, Workshop, #general and its topics), now that the sidebar nests none (#4417; One Home, #6361)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "[data-places=\"usernode-2d5619\"] > nav > [data-place=\"status\"][aria-current=\"page\"] + [data-place=\"needs\"] + [data-place=\"workshop\"] + [role=\"separator\"] + [data-places-group=\"channels\"] + [data-places-group=\"topics\"] > [data-place=\"c:onboarding\"]",
-      "expectText": "general"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > [data-place-bar=\"status\"] .dev-ws-places-btn[aria-expanded=\"false\"] + h2[data-place-title]",
+      "expectText": "Hub"
     },
     {
       "name": "On a wide window the sidebar's Recents lists your communities with the one you are on lit, each row carrying its pin after the link (#3709, D; One Home #6361)",
@@ -5130,11 +5130,11 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: Discover shows project cards, each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015)",
+      "name": "Signed out, 3 loads: #apps opens the same Home, its community cards each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015; One Home, #6361)",
       "path": "/?shot=anon#apps",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover] [data-guest-card=\"staging-landing-open\"]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href=\"/app/staging-landing-open\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover] [data-guest-card]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href^=\"/app/\"]",
       "allowConsoleErrors": true
     },
     {
