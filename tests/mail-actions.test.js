@@ -86,7 +86,6 @@ test('activity mails carry their unsubscribe headers; nothing else has headers',
 test('only admin_test and content_report are English only', () => {
   const only = Object.entries(ACTIONS).filter(([, a]) => a.englishOnly).map(([k]) => k).sort();
   assert.deepEqual(only, ['admin_test', 'content_report']);
-  assert.deepEqual(only, [...templates.ENGLISH_ONLY_KINDS].sort());
 });
 
 test('url values are checked', () => {

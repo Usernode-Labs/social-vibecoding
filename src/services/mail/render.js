@@ -76,8 +76,7 @@ function renderMessage(kind, { template, layout }, payload = {}, t, { readerHasL
 }
 
 // The values a mail exists to carry. Its translation must carry every one the
-// English does, or the English goes instead (templates.js keepsWhatItCarries,
-// with this renderer's escaping).
+// English does, or the English goes instead.
 function keepsWhatItCarries(payload, inEnglish, translated) {
   const carried = [payload.code, payload.url, payload.confirmUrl, payload.statusUrl, payload.unsubscribeUrl, ...Object.values(payload.mobile || {})];
   return carried.every((value) => {

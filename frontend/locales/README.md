@@ -255,30 +255,41 @@ only a full admin receives stays in English in the policy.
 
 ## An email
 
-`en/email.json` is the fixed wording of the mail people receive, read the same
-way by the same lookup (`src/services/push-language.js`, asked for this
-namespace by `src/services/mail/language.js`), and a server namespace like
-`push`. `src/services/mail/templates.js` asks for it by id, and
+An email's words are not catalog text. Every mail people receive is a stored
+template, written, edited and translated by admins in the admin console (Admin,
+Email templates; `src/services/mail/template-store.js`), and Translate there
+writes its other languages. Do not add an email's wording to a catalog, or write
+it in code: a new mail is a new action in `src/services/mail/actions.js` and its
+first template in `src/db/email-template-seeds.js`, which is plain English data
+that a fresh database starts from. `tests/mail-no-hardcoded.test.js` holds this.
+
+`en/email.json` is what is left: the few words an action builds in code from what
+its sender hands over (`build_ready`'s and `invite_activity`'s lines and
+subjects, in `src/services/mail/actions.js`, and `activity-mail.js`'s English
+line). It is a server namespace like `push`, read by the same lookup
+(`src/services/push-language.js`, asked for this namespace by
+`src/services/mail/language.js`) when a reader's template is translated, and
 `tests/mail-language.test.js` checks those ids against the catalog.
 
 - **Which language.** The recipient's `users.locale` where the recipient is an
   account. An address with no account uses what the flow knows: the browser
   request that asked for the mail (`requestLanguage`), or an inviter's language
   for an invite; a released waitlist row with no account stays English. A
-  language is never guessed from an address.
-- **A translation is untrusted text.** It reaches html through `esc()`, the
-  whole message with its parameters. Markup stays in the template: a link in
-  a sentence is a parameter put in place by `withLink`, and anything else is
-  numbered tags read by `rich`. A subject cannot carry a line break, and a
-  translation that adds lines the English lacks is not used.
+  language is never guessed from an address. A language with no usable row for
+  a mail gets its English.
+- **A translation is untrusted text.** The template language escapes every
+  value where it lands, so words built in code reach html as words. A subject
+  cannot carry a line break, and a translated word that adds lines the English
+  lacks is not used.
 - **A problem costs a mail its translation, never its code or its link.** A read
   is waited for at most 250ms, and a translation that loses a value the English
-  carries is thrown away whole. A build with no English at all still sends the
-  code and the links, bare.
-- **What stays in English in code:** what only an admin or an operator receives
-  (`ENGLISH_ONLY_KINDS`: the test email and report notices), and a
-  `build_ready`'s words when they are handed over from the bot's notification
-  copy, which has no catalog of its own and is English on the push as well.
+  carries is thrown away whole. With no template at all, a mail that carries a
+  code or a link still goes as just that (`src/services/mail/plain-message.js`).
+- **What stays in English:** what only an admin or an operator receives (the
+  actions marked `englishOnly`: the test email and report notices, whose
+  subject is built in code), and a `build_ready`'s words when they are handed
+  over from the bot's notification copy, which has no catalog of its own and is
+  English on the push as well.
 
 ## A server's error
 

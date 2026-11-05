@@ -7,10 +7,9 @@
 // English, a `sample` payload for previews and test sends, and `values()`,
 // which turns a send's payload into the named values a template renders with.
 //
-// `values()` returns everything today's template functions in templates.js
-// compute or branch on, named after the catalog's own parameters where one
-// exists ({{code}}, {{url}}, {{app}}, {{inviter}}, {{project}}), so a template
-// written in the template language can say what the code says. A placeholder
+// `values()` returns everything a template may print or branch on, named as the
+// mails' own words name them ({{code}}, {{url}}, {{app}}, {{inviter}},
+// {{project}}). A placeholder
 // marked `fromCode` holds wording that is built in code from the payload (an
 // activity mail's line, the bot's subject), not words an admin edits.
 //
@@ -34,7 +33,7 @@ const { destination } = require('./tracking');
 const { englishFrom, englishTexts } = require('../push-text');
 
 // The email catalog's English, for the wording a value builds in code. Read when
-// asked, like templates.js does, so a catalog edit is seen on the next send.
+// asked, so a catalog edit is seen on the next send.
 const english = (id, values) => englishFrom(englishTexts(undefined, 'email'))(id, values);
 
 const url = (value) => destination(value) || '';

@@ -47,9 +47,9 @@ async function migrate(config) {
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool);
   await seedReferenceData(pool);
-  // Never fails a boot, and costs one query once every email has its row. A
-  // preview seeds later, below, once its translations have come in.
-  if (process.env.USERNODE_ENV !== 'staging') await require('./email-template-seeds').seedEmailTemplates(pool);
+  // Never fails a boot, and costs one query once every email has its row. The
+  // seeds are English and read no translation, so a preview seeds here too.
+  await require('./email-template-seeds').seedEmailTemplates(pool);
   await require('../services/moderation-migration').importLegacyReports(pool);
   await require('../services/moderation').purgeExpired(pool);
   // The verified-identity rule's one-time production rollout: on, with $20
@@ -141,11 +141,8 @@ async function migrate(config) {
   finishPhase('coreSeedMs');
   // In the background: a slow or unreachable production never holds up the
   // preview's boot (it logs either way).
-  // The email templates are seeded with whatever translations there are then,
-  // once only, so in a preview they wait for the import. Neither can reject.
-  void seedStagingTranslations(pool).finally(() => (
-    process.env.USERNODE_ENV === 'staging' ? require('./email-template-seeds').seedEmailTemplates(pool) : undefined
-  ));
+  // It cannot reject.
+  void seedStagingTranslations(pool);
   await seedStagingNotifications(pool, config);
   // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
   // off a notification id that seeder owns.

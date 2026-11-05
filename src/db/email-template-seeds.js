@@ -455,7 +455,8 @@ async function refreshUntouched(client, families, seeded) {
     // English just replaced: they go, and the reader gets the new English
     // until Translate runs again. An admin's translation stays, rechecked
     // below, as an admin's save of the English would leave it.
-    await client.query("DELETE FROM email_template_translations WHERE template_id = $1 AND origin = 'machine'", [row.id]);
+    const { rows: machine } = await client.query("SELECT 1 FROM email_template_translations WHERE template_id = $1 AND origin = 'machine' LIMIT 1", [row.id]);
+    if (machine.length) await client.query("DELETE FROM email_template_translations WHERE template_id = $1 AND origin = 'machine'", [row.id]);
     if (job) await client.query("DELETE FROM email_translation_jobs WHERE kind = 'template' AND version_id = $1", [row.id]);
     // Every translation left is checked here, in the same transaction, inside
     // the layout it is sent in, and marked rather than sent if it no longer fits.
