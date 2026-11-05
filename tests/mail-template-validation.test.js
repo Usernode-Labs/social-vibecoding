@@ -354,3 +354,26 @@ test('probe r3: CSS reads no attribute and a <style> block loads through no func
   hasError(validateTemplate('password_reset', html('<p style="background:image(attr(href))">x</p>'), layout), 'html', /attr\(\)/);
   hasError(validateTemplate('password_reset', html('<!--[if mso]><style>a[href^="h"]{x:y}</style><![endif]-->'), layout), 'html', /attribute selector/);
 });
+
+test('probe f1/f2: an inline tag before a secret does not break the text, a block or line-breaking one does', () => {
+  const layout = SEEDS.layouts[0];
+  const otp = englishTemplate('otp');
+  const inP = (extra) => ({ ...otp, html: otp.html.replace(/<\/p>/, `${extra}</p>`) });
+  const joined = /\{\{code\}\} is a one-time secret, so in the HTML only a space/;
+  for (const extra of [' https://evil.example/?u=<span></span>{{code}}', ' https://evil.example/?u=<b>{{code}}</b>', ' https://evil.example/?u=<wbr>{{code}}',
+    ' https://evil.example/?u=<a href="https://x.example/">x</a>{{code}}', ' https://evil.example/?u=<span><b>{{code}}</b></span>', ' https://evil.example/?u=(<i>{{code}}</i>',
+    ' https://evil.example/?u=&nbsp;{{code}}', ' https://evil.example/&#63;{{code}}', ' https://evil.example/?u=&#32;{{code}}']) {
+    hasError(validateTemplate('otp', inP(extra), layout), 'html', joined);
+  }
+  // A line break, a space or a block boundary does end the address.
+  for (const extra of [' https://evil.example/?u=<br>{{code}}', ' https://evil.example/?u= {{code}}', ' https://evil.example/?u=\n{{code}}',
+    ' x <b>{{code}}</b>', ' x (<i>{{code}}</i>)', '</p><div>{{code}}</div><p>']) {
+    assert.deepEqual(validateTemplate('otp', inP(extra), layout), { ok: true }, extra);
+  }
+  // The layout's own inline tag around a part is skipped the same way.
+  const spanLayout = { html: layout.html.replace('{{preheader}}', 'https://evil.example/?u=<span>{{preheader}}</span>'), text: layout.text };
+  hasError(validateTemplate('otp', { ...otp, preheader: '{{code}} is your code' }, spanLayout), 'html', joined);
+  const broken = validateLayout(spanLayout, [{ id: 1, action: 'otp', name: 'Code', ...otp, preheader: '{{code}} is your code' }]);
+  assert.equal(broken.ok, false);
+  assert.match(broken.errors[0].message, /one-time secret/);
+});

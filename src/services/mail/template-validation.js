@@ -394,27 +394,48 @@ function requiredOnEveryPath(action, text, layout) {
 }
 
 // What may come right before a secret wherever it is text: the start of the
-// text or of an element, an ASCII space, tab, CR or LF, or a "(" after one of
-// those. Nothing else, not even a CJK letter, a full-width comma or a
-// no-break or ideographic space: Android's Linkify and others read those as
-// part of an address, and would carry the secret off with it.
+// text, an ASCII space, tab, CR or LF, or a "(" after one of those. Nothing
+// else, not even a CJK letter, a full-width comma or a no-break or
+// ideographic space: Android's Linkify and others read those as part of an
+// address, and would carry the secret off with it. In HTML, a block-level or
+// line-breaking tag (BREAK_TAGS, start or end) right before is a break too.
+// Any other tag (<wbr>, <span>, <b>, <a>, ...) leaves the text running on,
+// so it is skipped and the rule applies to the last text character before it:
+// `?u=<b>{{code}}</b>` reads as one address.
 const LEAD_SPACE = /^[ \t\r\n]$/;
-// `out` is plain text, or HTML with `tagEnds` (where each tag ends), where a
-// tag ending right before also starts the element's text.
-function secretLeadOk(out, at, tagEnds = null) {
-  const startsAt = (i) => i <= 0 || LEAD_SPACE.test(out[i - 1]) || (tagEnds !== null && tagEnds.has(i));
+const BREAK_TAGS = new Set(['br', 'p', 'div', 'td', 'th', 'tr', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'table', 'tbody', 'thead', 'hr', 'blockquote', 'pre']);
+
+// `out` is plain text, or HTML with `tagsByEnd` (each tag by where it ends).
+function secretLeadOk(out, at, tagsByEnd = null) {
+  // Where the text before `i` really ends, past any inline tags, or -1 when a
+  // break comes first.
+  const textEnd = (i) => {
+    let j = i;
+    while (tagsByEnd !== null && tagsByEnd.has(j)) {
+      const tag = tagsByEnd.get(j);
+      if (BREAK_TAGS.has(tag.name)) return -1;
+      j = tag.start;
+    }
+    return j;
+  };
+  const startsAt = (i) => {
+    const j = textEnd(i);
+    return j <= 0 || LEAD_SPACE.test(out[j - 1]);
+  };
   if (startsAt(at)) return true;
-  return out[at - 1] === '(' && startsAt(at - 1);
+  const j = textEnd(at);
+  return out[j - 1] === '(' && startsAt(j - 1);
 }
 
 const SECRET_JOINED = (name, where) => `{{${name}}} is a one-time secret, so in ${where} only a space, a line break or "(" may come right before it, or the start of the text. Joined to other text, it could become part of another site's address.`;
 
 // Every place `marker` sits in `out` is led as secretLeadOk wants, skipping
 // the places `inTag` names (attributes have their own rules).
-function markerLeadsOk(out, marker, tagEnds = null, inTag = () => false) {
+function markerLeadsOk(out, marker, tagsByEnd = null, inTag = () => false) {
   for (let at = out.indexOf(marker); at !== -1; at = out.indexOf(marker, at + marker.length)) {
     if (inTag(at)) continue;
-    if (!secretLeadOk(out, at, tagEnds)) return false;
+    if (!secretLeadOk(out, at, tagsByEnd)) return false;
   }
   return true;
 }
@@ -477,13 +498,13 @@ function secretLeadProblem(action, text, layout) {
     }
     const scan = scanHtml(html);
     if (!scan.ok) return null;
-    const tagEnds = new Set(scan.tags.map((t) => t.end));
+    const tagsByEnd = new Map(scan.tags.map((t) => [t.end, t]));
     const inTag = (at) => scan.tags.some((t) => at >= t.start && at < t.end);
     for (const name of used) {
       const marker = textMark(name);
       if (!markerLeadsOk(subject, marker)) return { field: 'subject', message: SECRET_JOINED(name, 'the subject') };
       if (!markerLeadsOk(plain, marker)) return { field: 'text', message: SECRET_JOINED(name, 'the text version') };
-      if (!markerLeadsOk(html, marker, tagEnds, inTag)) return { field: 'html', message: SECRET_JOINED(name, 'the HTML') };
+      if (!markerLeadsOk(html, marker, tagsByEnd, inTag)) return { field: 'html', message: SECRET_JOINED(name, 'the HTML') };
     }
   }
   return null;
