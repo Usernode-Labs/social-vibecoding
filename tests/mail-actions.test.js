@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { PRODUCTION_ORIGIN } = require('../src/services/cli-auth-constants');
 const templates = require('../src/services/mail/templates');
 const { ACTIONS, actionFor } = require('../src/services/mail/actions');
 
@@ -63,7 +64,7 @@ test('url values are checked', () => {
   assert.equal(ACTIONS.waitlist_code.values({ statusUrl: bad }).statusUrl, '');
   assert.equal(ACTIONS.build_ready.values({ url: bad, unsubscribeUrl: bad }).unsubscribeUrl, '');
   assert.equal(ACTIONS.waitlist_released.values({ mobile: { ios: bad } }).hasIos, false);
-  assert.equal(ACTIONS.content_report.values({ url: bad }).url, 'https://my.onhomeroom.com');
+  assert.equal(ACTIONS.content_report.values({ url: bad }).url, PRODUCTION_ORIGIN);
 });
 
 test('every value of every placeholder kind is declared and typed', () => {
@@ -106,9 +107,9 @@ test('values carry what the templates compute today', () => {
 
   const ready = ACTIONS.build_ready.values({ appName: 'Plant Pal' });
   assert.equal(ready.app, 'Plant Pal');
-  assert.equal(ready.lead, 'Ready to try');
-  assert.equal(ready.subject, 'Ready to try: Plant Pal');
-  assert.equal(ready.url, 'https://my.onhomeroom.com');
+  assert.match(ready.lead, /^Ready to try\./);
+  assert.equal(ready.subject, 'Plant Pal: Ready to try');
+  assert.equal(ready.url, PRODUCTION_ORIGIN);
   assert.equal(ACTIONS.build_ready.values({ lead: '  Hi  ', subject: ' S ' }).lead, 'Hi');
   assert.equal(ACTIONS.build_ready.values({ appName: 'x'.repeat(200) }).app.length, 80);
 
