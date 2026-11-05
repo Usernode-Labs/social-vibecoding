@@ -19,8 +19,8 @@
 //   it goes only in href and only as the whole value (`href="{{url}}"`).
 //   Joined to other text (`https://evil.example/?u={{url}}`) or in an address
 //   the mail client fetches by itself on open (an image's src), it would hand
-//   that secret to another site. The text version holds it to the same rule:
-//   nothing but space may touch it, other than brackets around it.
+//   that secret to another site. In the text version it may not touch a
+//   character that could continue a URL (a letter, a digit, "/", "=", ...).
 // - Wording built in code (`fromCode`) and anything inserted as HTML (an
 //   action's `htmlValues`, a layout's {{content}}, {{why}} and {{preheader}})
 //   is not escaped for an attribute, so none of it may go in one.
@@ -369,11 +369,12 @@ function requiredOnEveryPath(action, text, layout) {
 }
 
 // The text version on every path through its conditions, with each value
-// printed as a marker, must not join a link placeholder to an address before
-// it. Right before the link may come only space, punctuation outside ASCII
-// (a full-width colon, as a translation writes), or a bracket or quote that
-// itself follows one of those. Right after it, nothing that would carry the
-// address on (a letter, a digit, "/", "=", another value). Null or a problem.
+// printed as a marker, must not join a link placeholder to an address around
+// it. A text mail fetches nothing on open, so the only risk is a reader's
+// client reading `https://evil.example/?u={{url}}` as one address: refused
+// when the character right before or after the link (or another value there)
+// could continue a URL. Any other character is fine, so `こちら{{url}}` and
+// `详情：{{url}}` pass as the translations write them. Null or a problem.
 function joinedLinkProblem(action, source) {
   const tree = safeTree(source);
   if (!tree) return null;
@@ -395,7 +396,8 @@ function joinedLinkProblem(action, source) {
     return `The text version tests more than ${MAX_BRANCH_NAMES} different conditions (${names.join(', ')}), too many to check where its links land. Use fewer.`;
   }
   const mark = (name) => `\uE010${name}\uE011`;
-  const separates = (ch) => ch === '' || /\s/.test(ch) || (ch > '\u007f' && /\p{P}/u.test(ch));
+  // ASCII letters and digits, URL punctuation, and the edge of another value.
+  const continuesUrl = (ch) => /[A-Za-z0-9/?=&#%.:_~+\-@\uE010\uE011]/.test(ch);
   for (let mask = 0; mask < 2 ** names.length; mask++) {
     const values = {};
     for (const name of vars) values[name] = mark(name);
@@ -407,12 +409,10 @@ function joinedLinkProblem(action, source) {
     for (const name of used) {
       const marker = mark(name);
       for (let at = out.indexOf(marker); at !== -1; at = out.indexOf(marker, at + marker.length)) {
-        const prev = at > 0 ? out[at - 1] : '';
-        const beforeOk = separates(prev) || ('([<"\''.includes(prev) && separates(at > 1 ? out[at - 2] : ''));
-        const next = out.charAt(at + marker.length);
-        const afterOk = !/[A-Za-z0-9/?=&#%+\-_~@$*\uE010]/.test(next);
+        const beforeOk = !continuesUrl(at > 0 ? out[at - 1] : '');
+        const afterOk = !continuesUrl(out.charAt(at + marker.length));
         if (!beforeOk || !afterOk) {
-          return `{{${name}}} is a link that may carry a one-time secret, so in the text version it must stand on its own, with space around it. Joined to other text, it could become part of another site's address.`;
+          return `{{${name}}} is a link that may carry a one-time secret, so in the text version it cannot touch a letter, digit or URL character such as / ? = & or a dot. Joined to them, it could become part of another site's address.`;
         }
       }
     }

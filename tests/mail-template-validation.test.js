@@ -256,17 +256,19 @@ test('a link placeholder cannot hand its one-time secret to another site', () =>
   assert.deepEqual(validateTemplate('password_reset', withHtml('<p><a href=" {{url}} ">again</a></p>'), layout), { ok: true });
 });
 
-test('in the text version a link placeholder stands apart from other text', () => {
+test('in the text version a link placeholder cannot be joined into a longer address', () => {
   const reset = englishTemplate('password_reset');
   const layout = SEEDS.layouts[0];
   const withText = (extra) => ({ ...reset, text: `${reset.text}${extra}` });
-  hasError(validateTemplate('password_reset', withText('\nhttps://evil.example/?u={{url}}'), layout), 'text', /stand on its own/);
-  hasError(validateTemplate('password_reset', withText('\nx=({{url}})'), layout), 'text', /stand on its own/);
-  hasError(validateTemplate('password_reset', withText('\n{{#if url}}?u={{/if}}{{url}}'), layout), 'text', /stand on its own/);
-  hasError(validateTemplate('password_reset', withText('\n{{url}}/x'), layout), 'text', /stand on its own/);
-  for (const ok of ['\nAgain: {{url}}.', '\n({{url}})', '\n\u3053\u3061\u3089\uff1a{{url}}']) {
+  const joined = /cannot touch a letter, digit or URL character/;
+  for (const bad of ['\nhttps://evil.example/?u={{url}}', '\n?u={{url}}', '\nx{{url}}', '\n{{url}}x', '\n{{url}}/x', '\n{{#if url}}?u={{/if}}{{url}}']) {
+    hasError(validateTemplate('password_reset', withText(bad), layout), 'text', joined);
+  }
+  // Text mail fetches nothing, so any character that cannot continue a URL is
+  // fine, as Japanese, Chinese and Korean translations write it.
+  for (const ok of ['\n\u3053\u3061\u3089{{url}}', '\n\u8be6\u60c5\uff1a{{url}}', '\nAgain: {{url}}', '\n({{url}})']) {
     assert.deepEqual(validateTemplate('password_reset', withText(ok), layout), { ok: true }, ok);
   }
   const invite = englishTemplate('project_invite');
-  hasError(validateTemplate('project_invite', { ...invite, text: `${invite.text}\n{{inviter}}{{url}}` }, layout), 'text', /stand on its own/);
+  hasError(validateTemplate('project_invite', { ...invite, text: `${invite.text}\n{{inviter}}{{url}}` }, layout), 'text', joined);
 });
