@@ -36,7 +36,8 @@ const mail = require('../services/mail');
 const store = require('../services/mail/template-store');
 const language = require('../services/mail/language');
 const { ACTIONS, actionFor } = require('../services/mail/actions');
-const { renderMessage } = require('../services/mail/render');
+// Read through the module, so a test can stand in for it.
+const renderer = require('../services/mail/render');
 const { validateTemplate, validateLayout, LAYOUT_PLACEHOLDERS } = require('../services/mail/template-validation');
 
 const STATUS = {
@@ -154,7 +155,7 @@ function emailTemplateAdminRoutes(pool, config) {
     const action = actionFor(kind);
     const reader = action.englishOnly ? null : language.readerLanguage(locale);
     const t = reader && action.codeWords ? await language.translatorFor(pool, reader) : null;
-    const message = renderMessage(kind, { template, layout }, action.sample || {}, t || undefined, { readerHasLanguage: !!reader });
+    const message = renderer.renderMessage(kind, { template, layout }, action.sample || {}, t || undefined, { readerHasLanguage: !!reader });
     return { reader, t, message };
   }
 
@@ -193,7 +194,12 @@ function emailTemplateAdminRoutes(pool, config) {
         ({ message } = await render(kind, template, layout, (req.body || {}).locale));
       } catch (err) {
         // Does not parse: there is nothing to show, only why.
-        throw invalid(validation.ok ? [{ field: 'html', message: `The email could not be put together: ${err.message}.` }] : validation.errors);
+        if (!validation.ok) throw invalid(validation.errors);
+        // Only a mistake in the template is the admin's to read; anything else
+        // is the server's, and its detail stays in the log.
+        if (err && err.name === 'TemplateSyntaxError') throw invalid([{ field: 'html', message: `The email could not be put together: ${err.message}.` }]);
+        log.error('admin', 'An email preview could not be rendered', { what, message: err && err.message });
+        throw invalid([{ field: 'html', message: 'The email could not be put together. The server logged why; try again or ask a developer.' }]);
       }
       // Problems that would stop a save are shown beside the preview, not
       // instead of it, so an admin can see a draft while they fix it.

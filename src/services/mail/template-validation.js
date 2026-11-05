@@ -20,6 +20,7 @@
 // - A condition inside an attribute could splice a value together, so
 //   conditions go around whole tags.
 
+const log = require('../logger');
 const { actionFor } = require('./actions');
 const { parse, render } = require('./template-language');
 const { validateEmailHtml, scanHtml, URL_ATTRIBUTES, MAX_EMAIL_HTML_BYTES } = require('./html-safety');
@@ -111,6 +112,13 @@ function placementProblems(field, source, info, raw) {
     const body = m[1].trim();
     const isVar = !/^[#/]/.test(body) && body !== 'else';
     const shown = m[0];
+    // Taking text out of a comment can move where it ends, so the comment
+    // checked is not the one sent. Nothing in a comment is printed for sure,
+    // either.
+    if (scan.comments.some((c) => at >= c.start && at < c.end)) {
+      add(`Placeholders and conditions cannot go inside an HTML comment, and ${shown} does.`);
+      continue;
+    }
     const tag = scan.tags.find((t) => at >= t.start && at < t.end);
     if (tag) {
       const attr = tag.attributes.find((a) => a.quote && at >= a.valueStart && at < a.valueEnd);
@@ -133,19 +141,37 @@ function placementProblems(field, source, info, raw) {
       }
       continue;
     }
-    const style = scan.rawTexts.find((r) => r.name === 'style' && at >= r.start && at < r.end);
-    if (style) {
-      add(`Placeholders and conditions cannot go inside a <style> block, and ${shown} does.`);
-      continue;
-    }
-    // A condition in a title or textarea could close it in one branch only.
+    // A value or a condition could finish a partial end tag (`</tit{{x}}`) or
+    // close the element in one branch only.
     const rawText = scan.rawTexts.find((r) => at >= r.start && at < r.end);
-    if (rawText && !isVar) add(`A condition cannot go inside a <${rawText.name}>, and ${shown} does. Put it around the whole element.`);
+    if (rawText) {
+      add(rawText.name === 'style'
+        ? `Placeholders and conditions cannot go inside a <style> block, and ${shown} does.`
+        : `Placeholders and conditions cannot go inside a <${rawText.name}>, and ${shown} does.`);
+    }
   }
   problems.push(...rawTextTagsInBranches(field, source));
-  const branch = branchProblem(source);
-  if (branch && !problems.length) add(branch);
+  const names = conditionNames(source);
+  if (names.length > MAX_BRANCH_NAMES) {
+    add(`This has more than ${MAX_BRANCH_NAMES} different conditions (${names.join(', ')}), too many to check every combination. Use fewer.`);
+  } else if (!problems.length) {
+    const branch = branchProblem(source);
+    if (branch) add(branch);
+  }
   return problems;
+}
+
+function conditionNames(source) {
+  let nodes;
+  try { nodes = parse(source).nodes; } catch { return []; }
+  const names = new Set();
+  const walk = (list) => {
+    for (const n of list) {
+      if (n.then) { names.add(n.name); walk(n.then); walk(n.else); }
+    }
+  };
+  walk(nodes);
+  return [...names];
 }
 
 const RAW_TEXT_TAG = /<\/?(style|title|textarea|script)(?=[\s/>]|$)/i;
@@ -175,15 +201,22 @@ function rawTextTagsInBranches(field, source) {
   }));
 }
 
-// Every combination of the conditions, up to this many names; past it, each
-// name is flipped on its own against all-true and all-false.
+// Every combination of the conditions is checked, so a field may test at most
+// this many names: past it the combinations are too many to check, and checking
+// only some of them would let an unsafe one through.
 const MAX_BRANCH_NAMES = 8;
+
+// What a placeholder prints while the branches are checked. An empty value, a
+// hyphen and a space are the ones that can change how text around them reads
+// (a comment's end, a word joined to the next).
+const VALUE_VARIANTS = ['x', '', '-', ' '];
 
 /**
  * Renders `source` once for each true/false combination of the names its
- * conditions test (every placeholder printing a short word) and checks each
- * result, so what a real send renders is what was checked. The first refusal's
- * reason, or null.
+ * conditions test, with every placeholder printing each of VALUE_VARIANTS, and
+ * checks each result, so what a real send renders is what was checked. The
+ * first refusal's reason, or null. A source with more than MAX_BRANCH_NAMES
+ * names is refused outright.
  */
 function branchProblem(source) {
   let nodes;
@@ -197,27 +230,109 @@ function branchProblem(source) {
     }
   };
   walk(nodes);
-  if (!conditions.size) return null;
   const names = [...conditions];
-  const paths = [];
-  if (names.length <= MAX_BRANCH_NAMES) {
-    for (let mask = 0; mask < 2 ** names.length; mask++) paths.push(names.map((_, i) => !!(mask & (1 << i))));
-  } else {
-    paths.push(names.map(() => true), names.map(() => false));
-    names.forEach((_, i) => {
-      paths.push(names.map((__, j) => j === i), names.map((__, j) => j !== i));
-    });
+  if (names.length > MAX_BRANCH_NAMES) return `This has more than ${MAX_BRANCH_NAMES} different conditions, too many to check every combination. Use fewer.`;
+  for (let mask = 0; mask < 2 ** names.length; mask++) {
+    const path = names.map((_, i) => !!(mask & (1 << i)));
+    for (const variant of VALUE_VARIANTS) {
+      const values = {};
+      for (const name of vars) values[name] = variant;
+      names.forEach((name, i) => {
+        values[name] = path[i] ? (vars.has(name) ? variant || 'x' : true) : '';
+      });
+      let html;
+      try { html = render(source, values, { raw: [...vars] }); } catch { return null; }
+      const result = validateEmailHtml(html);
+      if (!result.ok) {
+        const when = names.length ? `When ${names.map((name, i) => `${name} is ${path[i] ? 'true' : 'false'}`).join(', ')}: ` : '';
+        return `${when}${result.reason}`;
+      }
+    }
   }
-  for (const path of paths) {
+  return null;
+}
+
+// Whether `name` is sure to print from these nodes whenever it has a value:
+// printed at this level, inside a condition on itself or on a flag that means
+// the same (`guards`), or in both branches of any other condition.
+function surelyPrints(nodes, name, guards) {
+  for (const n of nodes) {
+    if (n.type === 'var' && n.name === name) return true;
+    if (!n.then) continue;
+    if (n.type === 'if' && guards.has(n.name) && surelyPrints(n.then, name, guards)) return true;
+    if (n.type === 'unless' && guards.has(n.name) && surelyPrints(n.else, name, guards)) return true;
+    if (surelyPrints(n.then, name, guards) && surelyPrints(n.else, name, guards)) return true;
+  }
+  return false;
+}
+
+// The names whose truth means `name` prints something.
+function guardsFor(action, name) {
+  const guards = new Set([name]);
+  for (const [flagName, info] of Object.entries(action.placeholders)) {
+    if (info.presenceOf === name) guards.add(flagName);
+  }
+  return guards;
+}
+
+const MARK = (name) => `zq${name}qz`;
+
+// The finished mail on every path through its conditions, with each required
+// value and the flags that mean it forced true (a mail without its code has no
+// code to print), must print every required value. Null or a problem.
+function requiredOnEveryPath(action, text, layout) {
+  const required = [...new Set([...action.required.html, ...action.required.text])];
+  if (!required.length) return null;
+  const forced = new Set(required.flatMap((name) => [...guardsFor(action, name)]));
+  const trees = {};
+  const vars = new Set();
+  const conditions = new Set();
+  const walk = (list) => {
+    for (const n of list) {
+      if (n.type === 'var') vars.add(n.name);
+      else if (n.then) { conditions.add(n.name); walk(n.then); walk(n.else); }
+    }
+  };
+  for (const field of ['html', 'why', 'preheader', 'text']) {
+    trees[field] = safeTree(text[field]);
+    if (!trees[field]) return null;
+    walk(trees[field]);
+  }
+  const free = [...conditions].filter((name) => !forced.has(name));
+  if (free.length > MAX_BRANCH_NAMES) {
+    return `This email tests more than ${MAX_BRANCH_NAMES} different conditions across its parts (${free.join(', ')}), too many to check that it always carries ${required.map((n) => `{{${n}}}`).join(', ')}. Use fewer.`;
+  }
+  for (let mask = 0; mask < 2 ** free.length; mask++) {
     const values = {};
-    for (const name of vars) values[name] = 'x';
-    names.forEach((name, i) => { values[name] = path[i] ? (vars.has(name) ? 'x' : true) : ''; });
-    let html;
-    try { html = render(source, values, { raw: [...vars] }); } catch { return null; }
-    const result = validateEmailHtml(html);
-    if (!result.ok) {
-      const when = names.map((name, i) => `${name} ${path[i] ? 'true' : 'false'}`).join(', ');
-      return `When ${when}: ${result.reason}`;
+    for (const name of vars) values[name] = MARK(name);
+    for (const name of forced) values[name] = vars.has(name) ? MARK(name) : true;
+    free.forEach((name, i) => {
+      values[name] = mask & (1 << i) ? (vars.has(name) ? MARK(name) : true) : '';
+    });
+    let out;
+    try {
+      const html = render(text.html, values);
+      const why = render(text.why, values);
+      const preheader = render(text.preheader, values);
+      const plain = render(text.text, values, { mode: 'text' });
+      out = layout
+        ? {
+          html: render(layout.html, { content: html, why, preheader }, { raw: ['content', 'why', 'preheader'] }),
+          text: render(layout.text, { content: plain, why: render(text.why, values, { mode: 'text' }), preheader: render(text.preheader, values, { mode: 'text' }) }, { mode: 'text' }),
+        }
+        : { html, text: plain };
+    } catch {
+      return null;
+    }
+    for (const form of ['html', 'text']) {
+      for (const name of action.required[form]) {
+        if (out[form].includes(MARK(name))) continue;
+        const when = free.filter((_, i) => mask & (1 << i)).map((n) => `{{${n}}}`);
+        return {
+          field: form,
+          message: `The ${LABELS[form]} does not always include {{${name}}}: it is missing when ${when.length ? `only ${when.join(', ')} ${when.length === 1 ? 'is' : 'are'} true` : 'every other condition is false'}.`,
+        };
+      }
     }
   }
   return null;
@@ -281,15 +396,13 @@ function validateTemplate(kind, fields, layout) {
   const layoutTrees = layout ? { html: safeTree(layout.html), text: safeTree(layout.text) } : null;
   for (const form of ['html', 'text']) {
     if (!trees[form]) continue;
-    const printed = printedIn(trees[form]);
-    if (layoutTrees && layoutTrees[form]) {
-      const framed = printedIn(layoutTrees[form]);
-      for (const part of ['why', 'preheader']) {
-        if (framed.has(part) && trees[part]) printedIn(trees[part], printed);
-      }
-    }
+    // The layout's why and preheader count only where the layout is sure to
+    // print them, at its top level or under a condition on that same part.
+    const parts = ['why', 'preheader'].filter((part) => trees[part] && layoutTrees && layoutTrees[form]
+      && surelyPrints(layoutTrees[form], part, new Set([part])));
     for (const name of action.required[form]) {
-      if (printed.has(name)) continue;
+      const guards = guardsFor(action, name);
+      if (surelyPrints(trees[form], name, guards) || parts.some((part) => surelyPrints(trees[part], name, guards))) continue;
       const about = info(name);
       errors.push({
         field: form,
@@ -298,6 +411,11 @@ function validateTemplate(kind, fields, layout) {
     }
   }
 
+  if (!errors.length) {
+    const missing = requiredOnEveryPath(action, text, layout);
+    if (typeof missing === 'string') errors.push({ field: 'html', message: missing });
+    else if (missing) errors.push(missing);
+  }
   if (!errors.length) {
     const framed = framedProblem(kind, text, layout);
     if (framed) errors.push({ field: 'html', message: framed });
@@ -319,7 +437,11 @@ function framedProblem(kind, text, layout) {
     const safety = validateEmailHtml(message.html);
     return safety.ok ? null : `With its layout, the finished email is refused: ${safety.reason}`;
   } catch (err) {
-    return `The email could not be put together with sample values: ${err.message}.`;
+    // Only a mistake in the template itself is the admin's to read; anything
+    // else is the server's, and its detail stays in the log.
+    if (err && err.name === 'TemplateSyntaxError') return `The email could not be put together: ${err.message}.`;
+    log.error('email-templates', 'A template could not be put together with sample values', { message: err && err.message });
+    return 'The email could not be put together with sample values. The server logged why; try again or ask a developer.';
   }
 }
 

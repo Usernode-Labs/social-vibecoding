@@ -111,6 +111,12 @@ function cssProblem(css, where) {
   return null;
 }
 
+// A data: URL at the start of the value or, in srcset, of any candidate.
+function startsWithData(name, folded) {
+  const candidates = name === 'srcset' ? folded.split(',') : [folded];
+  return candidates.some((candidate) => candidate.startsWith('data:'));
+}
+
 // Why one attribute is refused, or null. A value is checked as written and with
 // its placeholders taken out, since a placeholder can render as nothing.
 function attributeProblem(name, value) {
@@ -120,7 +126,7 @@ function attributeProblem(name, value) {
     const decoded = decodeEntities(variant);
     const folded = fold(decoded);
     if (folded.includes('javascript:') || folded.includes('vbscript:')
-        || (URL_ATTRIBUTES.has(name) && folded.startsWith('data:'))) {
+        || (URL_ATTRIBUTES.has(name) && startsWithData(name, folded))) {
       return `The ${shown(name)} attribute contains a script or data URL.`;
     }
     if (name === 'style') {
@@ -202,13 +208,16 @@ function scanInto(s, offset, out, depth) {
         const inner = scanInto(s.slice(comment.bodyStart, comment.bodyEnd), offset + comment.bodyStart, out, depth + 1);
         if (!inner.ok) return reject(`Inside a comment: ${inner.reason}`);
       }
+      out.comments.push({ start: i + offset, end: comment.end + offset });
       i = comment.end;
     } else if (next === '!' || next === '?' || (next === '/' && !isLetter(s[i + 2] || ''))) {
       // A doctype, a "<![endif]>", or another bogus comment: up to the next ">",
       // or to the end, where the browser ends it too (the inside of a comment
       // ends with "<![endif]" and no ">").
       const end = s.indexOf('>', i + 2);
-      i = end === -1 ? n : end + 1;
+      const stop = end === -1 ? n : end + 1;
+      out.comments.push({ start: i + offset, end: stop + offset });
+      i = stop;
     } else if (isLetter(next || '') || (next === '/' && isLetter(s[i + 2] || ''))) {
       const closing = next === '/';
       const read = readTag(s, i, closing);
@@ -234,6 +243,11 @@ function scanInto(s, offset, out, depth) {
         const m = endTag.exec(s);
         const textEnd = m ? m.index : n;
         const text = s.slice(i, textEnd);
+        // A title or textarea is text, but a browser and the check could
+        // disagree about where it ends, so it holds no markup at all.
+        if (tag.name !== 'style' && text.includes('<')) {
+          return reject(`A <${tag.name}> may hold plain text only, without the < character.`);
+        }
         if (tag.name === 'style') {
           const problem = cssProblem(text, 'A <style> block');
           if (problem) return reject(problem);
@@ -252,16 +266,18 @@ function scanInto(s, offset, out, depth) {
  * Tokenizes `html` and checks it. `{ ok: true, tags, rawTexts }` where each tag
  * is `{ name, start, end, closing, attributes: [{ name, quote, valueStart,
  * valueEnd, value }] }` (`quote` is '"', "'", '' for an unquoted value, or null
- * for none) and each raw text block is `{ name, start, end }`, all by offset in
+ * for none) and each raw text block is `{ name, start, end }` and each comment (bogus
+ * ones such as `<!x>` included) `{ start, end }`, all by offset in
  * `html`; or `{ ok: false, reason }`.
  */
 function scanHtml(html) {
   if (typeof html !== 'string') return reject('The HTML must be text.');
   if (html.includes('\u0000')) return reject('The HTML contains a NUL character.');
-  const out = { tags: [], rawTexts: [] };
+  const out = { tags: [], rawTexts: [], comments: [] };
   const result = scanInto(html, 0, out, 0);
   if (!result.ok) return result;
   out.tags.sort((a, b) => a.start - b.start);
+  out.comments.sort((a, b) => a.start - b.start);
   return { ok: true, ...out };
 }
 

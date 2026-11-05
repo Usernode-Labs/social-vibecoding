@@ -127,7 +127,7 @@ test('a condition cannot open or close a raw-text element in one branch only', (
   hasError(validateTemplate('project_opened', opened('<textarea>{{else}}</textarea>'), LAYOUT), 'html', /./);
   hasError(validateTemplate('project_opened', opened('{{#if hasApp}}<style>{{/if}}<p>x</p></style>'), LAYOUT), 'html', /style/);
   hasError(validateTemplate('project_opened', opened('{{#unless hasApp}}</title>{{/unless}}'), LAYOUT), 'html', /title/);
-  assert.deepEqual(validateTemplate('project_opened', opened('<title>{{app}}</title>{{#if hasApp}}<p>{{app}}</p>{{/if}}'), LAYOUT), { ok: true });
+  assert.deepEqual(validateTemplate('project_opened', opened('<title>Opened</title>{{#if hasApp}}<p>{{app}}</p>{{/if}}'), LAYOUT), { ok: true });
 });
 
 test('every branch of the conditions renders to safe HTML', () => {
@@ -139,4 +139,47 @@ test('every branch of the conditions renders to safe HTML', () => {
   assert.match(branchProblem('{{#if a}}<style>{{/if}}<p>x</p>{{#unless a}}</style>{{/unless}}@import "y";'), /@import/);
   assert.equal(branchProblem('{{#if a}}<p>{{a}}</p>{{else}}<i>none</i>{{/if}}'), null);
   hasError(validateLayout({ name: 'L', html: '{{content}}{{#if why}}<style>{{/if}}', text: '{{content}}' }, []), 'html', /style/);
+});
+
+test('a required placeholder counts only where it is sure to print', () => {
+  const t = (o) => ({ name: 'n', subject: 's', preheader: '', why: '', ...o });
+  hasError(validateTemplate('project_opened', t({ html: '<p>Hi</p>{{#if hasApp}}<a href="{{unsubscribeUrl}}">Unsub</a>{{/if}}', text: 'Hi {{#if hasApp}}{{unsubscribeUrl}}{{/if}}' }), null), 'html', /\{\{unsubscribeUrl\}\}/);
+  hasError(validateTemplate('otp', t({ html: '<p>{{#unless code}}{{code}}{{/unless}}</p>', text: '{{#unless code}}{{code}}{{/unless}}' }), null), 'html', /\{\{code\}\}/);
+  const gated = { html: '<div>{{content}}{{#if preheader}}{{why}}{{/if}}</div>', text: '{{content}}\n{{#if preheader}}{{why}}{{/if}}' };
+  hasError(validateTemplate('project_opened', t({ html: '<p>Hi</p>', text: 'Hi {{unsubscribeUrl}}', why: '<a href="{{unsubscribeUrl}}">u</a>' }), gated), 'html', /\{\{unsubscribeUrl\}\}/);
+  hasError(validateTemplate('otp', t({ html: '<!-- {{code}} --><p>x</p>', text: '{{code}}' }), null), 'html', /comment/);
+  // The same name, a flag that means the same, or both branches: sure.
+  assert.deepEqual(validateTemplate('otp', t({ html: '{{#if code}}<p>{{code}}</p>{{/if}}', text: '{{code}}' }), null), { ok: true });
+  assert.deepEqual(validateTemplate('project_opened', t({ html: '{{#if hasUnsubscribeUrl}}<a href="{{unsubscribeUrl}}">u</a>{{/if}}', text: '{{unsubscribeUrl}}' }), null), { ok: true });
+  assert.deepEqual(validateTemplate('project_opened', t({ html: '{{#if hasApp}}<a href="{{unsubscribeUrl}}">u</a>{{else}}<a href="{{unsubscribeUrl}}">stop</a>{{/if}}', text: '{{unsubscribeUrl}}' }), null), { ok: true });
+  assert.deepEqual(validateTemplate('project_opened', t({ html: '<p>Hi</p>', text: 'Hi {{unsubscribeUrl}}', why: '<a href="{{unsubscribeUrl}}">u</a>' }), { html: '{{content}}{{#if why}}<p>{{why}}</p>{{/if}}', text: '{{content}}' }), { ok: true });
+});
+
+test('conditions can hide nothing from the check: no markers in comments, and at most 8 names a field', () => {
+  const names = ['url', 'hasAccount', 'hasSignInLink', 'needsCodeNote', 'hasIos', 'iosLink', 'hasAndroid', 'androidLink', 'hasMobile'];
+  assert.equal(names.length, 9);
+  const openers = '{{#if hasAccount}}<!x{{/if}}{{#unless hasSignInLink}}<!x{{/unless}}{{#if needsCodeNote}}<!x{{/if}}{{#unless hasIos}}<!x{{/unless}}'
+    + '{{#if url}}{{/if}}{{#if iosLink}}{{/if}}{{#if hasAndroid}}{{/if}}{{#if androidLink}}{{/if}}{{#if hasMobile}}{{/if}}';
+  const html = '<p><a href="{{url}}">Sign in</a></p>' + openers + ' <img src="https://x.test/a.png" onerror="alert(1)">';
+  const result = validateTemplate('waitlist_released', { name: 'n', subject: 's', preheader: '', why: '', html, text: '{{url}}' }, null);
+  hasError(result, 'html', /comment/);
+  const many = names.map((n) => `{{#if ${n}}}<b>${n}</b>{{/if}}`).join('');
+  hasError(validateTemplate('waitlist_released', { name: 'n', subject: 's', preheader: '', why: '', html: `<a href="{{url}}">x</a>${many}`, text: '{{url}}' }, null), 'html', /more than 8/);
+});
+
+test('nothing in a title or textarea may be a placeholder', () => {
+  const opened = (html) => ({ name: 'n', subject: 's', preheader: '', why: '', html: `${html}<a href="{{unsubscribeUrl}}">stop</a>`, text: '{{unsubscribeUrl}}' });
+  hasError(validateTemplate('project_opened', opened('<title>x</tit{{app}}<img src=x onerror=1></title>'), LAYOUT), 'html', /title/);
+  hasError(validateTemplate('project_opened', opened('<textarea>{{app}}</textarea>'), LAYOUT), 'html', /textarea/);
+});
+
+test('an error that is not a template mistake is not shown to the admin', (t) => {
+  const render = require('../src/services/mail/render');
+  const log = require('../src/services/logger');
+  const logged = t.mock.method(log, 'error', () => {});
+  t.mock.method(render, 'renderMessage', () => { throw new Error('internal detail /srv/app'); });
+  const result = validateTemplate('otp', otp(), LAYOUT);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.every((e) => !e.message.includes('internal detail')));
+  assert.equal(logged.mock.callCount(), 1);
 });

@@ -110,3 +110,19 @@ test('numeric references are decoded however many digits they have, leading zero
   refused('<p style="background:url(&#X0000000006a;avascript:x)">x</p>');
   allowed('<a href="https://example.com/&#99999999999999;">x</a>');
 });
+
+test('title and textarea text holds no markup, and every srcset candidate is checked', () => {
+  refused('<title><img src=x onerror=alert(1)></title>', /<title>/);
+  refused('<title/><img src=x onerror=1>', /<title>/);
+  refused('<textarea><p>x</p></textarea>', /<textarea>/);
+  allowed('<title>Your code &amp; more</title><textarea>plain</textarea>');
+  refused('<img srcset="a.png 1x, data:image/svg+xml,xx 2x">', /script or data/);
+  refused('<img srcset="a.png 1x,  &#100;ata:image/png,xx 2x">', /script or data/);
+  allowed('<img srcset="https://x.example/a.png 1x, https://x.example/b.png?data=1 2x">');
+});
+
+test('scanHtml reports comment and bogus comment ranges', () => {
+  const src = '<p>a</p><!-- c --><!x y><?z>';
+  const scan = scanHtml(src);
+  assert.deepEqual(scan.comments.map((c) => src.slice(c.start, c.end)), ['<!-- c -->', '<!x y>', '<?z>']);
+});

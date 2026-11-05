@@ -251,6 +251,36 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     assert.equal(again.status, 404, 'a deleted layout stays deleted');
   });
 
+  await t.test('the review\'s ways past validation are refused at the route', async () => {
+    const opened = await live('project_opened');
+    const conditional = await call('POST', '/api/admin/email-templates', {
+      action: 'project_opened', name: 'Unsub only with an app', layoutFamilyId: opened.layout_family_id, subject: 's', preheader: '', why: '',
+      html: '<p>Hi</p>{{#if hasApp}}<a href="{{unsubscribeUrl}}">Unsub</a>{{/if}}', text: 'Hi {{#if hasApp}}{{unsubscribeUrl}}{{/if}}', expectedLiveId: opened.id,
+    });
+    assert.equal(conditional.status, 400);
+    assert.ok(conditional.body.errors.some((e) => e.message.includes('{{unsubscribeUrl}}')));
+    const released = await live('waitlist_released');
+    const openers = '{{#if hasAccount}}<!x{{/if}}{{#unless hasSignInLink}}<!x{{/unless}}{{#if needsCodeNote}}<!x{{/if}}{{#unless hasIos}}<!x{{/unless}}'
+      + '{{#if url}}{{/if}}{{#if iosLink}}{{/if}}{{#if hasAndroid}}{{/if}}{{#if androidLink}}{{/if}}{{#if hasMobile}}{{/if}}';
+    const hidden = await call('POST', '/api/admin/email-templates', {
+      action: 'waitlist_released', name: 'n', layoutFamilyId: released.layout_family_id, subject: 's', preheader: '', why: '',
+      html: '<p><a href="{{url}}">Sign in</a></p>' + openers + ' <img src="https://x.test/a.png" onerror="alert(1)">', text: '{{url}}', expectedLiveId: released.id,
+    });
+    assert.equal(hidden.status, 400);
+    assert.equal((await live('waitlist_released')).id, released.id);
+  });
+
+  await t.test('a preview that fails for a reason other than the template shows no server detail', async (st) => {
+    const render = require('../src/services/mail/render');
+    const log = require('../src/services/logger');
+    st.mock.method(log, 'error', () => {});
+    st.mock.method(render, 'renderMessage', () => { throw new Error('internal detail /srv/app'); });
+    const current = await live('password_reset');
+    const res = await call('POST', '/api/admin/email-templates/preview', { action: 'password_reset', fields: { ...current, layoutFamilyId: current.layout_family_id } });
+    assert.equal(res.status, 400);
+    assert.ok(!JSON.stringify(res.body).includes('internal detail'), JSON.stringify(res.body));
+  });
+
   await t.test('preview never stores or sends', async () => {
     const before = { templates: (await pool.query('SELECT count(*)::int AS n FROM email_templates')).rows[0].n, events: (await eventsOf()).length, sent: sent.length };
     const current = await live('otp');
