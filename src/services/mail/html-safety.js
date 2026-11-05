@@ -103,8 +103,12 @@ function decodeCssEscapes(text) {
 
 const fold = (text) => text.replace(IGNORABLE, '').toLowerCase();
 
-// Why a piece of CSS is refused, or null.
-function cssProblem(css, where) {
+// Why a piece of CSS is refused, or null. A <style> block (`block`) is held
+// tighter than a style attribute: its selectors can test an attribute's value
+// (`a[href*="00"]`) and fetch an address for each match on open, which would
+// spell a link's secret out to another site one piece at a time. So a block
+// may use no attribute selector and load nothing (no url() or image-set()).
+function cssProblem(css, where, { block = false } = {}) {
   const plain = fold(decodeCssEscapes(css.replace(/\/\*[\s\S]*?\*\//g, '')));
   const raw = fold(decodeCssEscapes(css));
   for (const text of [plain, raw]) {
@@ -113,6 +117,12 @@ function cssProblem(css, where) {
     if (text.includes('data:')) return `${where} contains a data URL. Upload the image and link to it instead.`;
     if (text.includes('expression(')) return `${where} contains a CSS expression, which runs script in old Outlook.`;
     if (text.includes('-moz-binding') || text.includes('behavior:')) return `${where} attaches script through CSS.`;
+  }
+  if (block) {
+    for (const text of [plain, raw]) {
+      if (text.includes('[')) return `${where} cannot use an attribute selector ([...]): it could read a link's address and report it elsewhere.`;
+      if (text.includes('url(') || text.includes('image-set(')) return `${where} cannot load anything with url() or image-set(). Use an <img> with an https address, or a style attribute.`;
+    }
   }
   return null;
 }
@@ -128,6 +138,7 @@ function startsWithData(name, folded) {
 function attributeProblem(name, value) {
   if (name.startsWith('on')) return `The ${shown(name)} attribute runs script, which email cannot use.`;
   if (name === 'srcdoc') return 'The srcdoc attribute holds a whole document, which email cannot use.';
+  if (name === 'ping') return 'The ping attribute reports every click to another address, which email cannot use.';
   for (const variant of [value, value.replace(TEMPLATE_TAG, '')]) {
     const decoded = decodeEntities(variant);
     const folded = fold(decoded);
@@ -259,7 +270,7 @@ function scanInto(s, offset, out, depth) {
           return reject(`A <${tag.name}> may hold plain text only, without the < character.`);
         }
         if (tag.name === 'style') {
-          const problem = cssProblem(text, 'A <style> block');
+          const problem = cssProblem(text, 'A <style> block', { block: true });
           if (problem) return reject(problem);
         }
         out.rawTexts.push({ name: tag.name, start: i + offset, end: textEnd + offset });

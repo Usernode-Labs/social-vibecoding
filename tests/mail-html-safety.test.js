@@ -148,3 +148,14 @@ test('openAtEnd: a part closes every element it opens, and none it did not', () 
 test('template, select and their kin are not allowed', () => {
   for (const name of ['template', 'select', 'option', 'optgroup', 'datalist']) refused(`<p>x</p><${name}>`, new RegExp(name));
 });
+
+test('a <style> block reads no attribute and loads nothing; ping is refused', () => {
+  refused('<style>a[href*="00"]{color:red}</style>', /attribute selector/);
+  refused('<style>a{background:url(https://evil.example/b)}</style>', /url\(\)/);
+  refused('<style>a{background:u\\72l(https://evil.example/b)}</style>', /url\(\)/);
+  refused('<style>a{background-image:image-set("https://evil.example/b" 1x)}</style>', /image-set/);
+  refused('<style>a{background:/*x*/url(https://evil.example/b)}</style>', /url\(\)/);
+  allowed('<style>p{color:#333;margin:0}</style>');
+  allowed('<p style="background:url(https://x.example/a.png)">x</p>');
+  refused('<a href="https://x.example/" ping="https://evil.example/p">x</a>', /ping/);
+});
