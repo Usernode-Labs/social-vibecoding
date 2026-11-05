@@ -2127,6 +2127,10 @@
     "text": "Only PNG and JPEG images can be attached.",
     "description": "Error in the comment box in comment mode (the box beside a pin where the person writes their request) when the person added a file that is not a PNG or JPEG image. PNG and JPEG are image formats; keep them."
   },
+  "commentPin.error.imageTooLarge": {
+    "text": "Images over {{megabytes}} MB can't be attached.",
+    "description": "Error in the comment box in comment mode (the box beside a pin where the person writes their request) when the person added an image bigger than the server accepts. {{megabytes}} is that limit in megabytes."
+  },
   "commentPin.error.imageLimit_one": {
     "text": "A request can carry {{count}} image.",
     "description": "Error in the comment box in comment mode (the box beside a pin where the person writes their request) when the person tried to add an image but the request already holds as many pictures as it can. {{count}} is that limit."
@@ -2150,6 +2154,22 @@
   "commentPin.toast.postedManyBuilding_other": {
     "text": "Posted {{count}} comments to {{place}}. Homeroom bot is building it.",
     "description": "Toast after a request of several comments written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted and Homeroom's bot started building it. {{count}} is how many comments it held; {{place}} is where it went: the app's name, or Homeroom. 'Homeroom bot' is the name of the platform's coding agent."
+  },
+  "commentPin.toast.postedPicturesLost_one": {
+    "text": "Posted to {{place}}, but {{count}} picture couldn't attach.",
+    "description": "Toast after a request written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted, but the server would not take some of its pictures. {{place}} is where it went: the app's name, or Homeroom. {{count}} is how many pictures were left off."
+  },
+  "commentPin.toast.postedPicturesLost_other": {
+    "text": "Posted to {{place}}, but {{count}} pictures couldn't attach.",
+    "description": "Toast after a request written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted, but the server would not take some of its pictures. {{place}} is where it went: the app's name, or Homeroom. {{count}} is how many pictures were left off."
+  },
+  "commentPin.toast.postedPicturesLostBuilding_one": {
+    "text": "Posted to {{place}}, but {{count}} picture couldn't attach. Homeroom bot is building it.",
+    "description": "Toast after a request written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted, but the server would not take some of its pictures. {{place}} is where it went: the app's name, or Homeroom. {{count}} is how many pictures were left off. Homeroom bot is the platform's assistant and goes on to build the request."
+  },
+  "commentPin.toast.postedPicturesLostBuilding_other": {
+    "text": "Posted to {{place}}, but {{count}} pictures couldn't attach. Homeroom bot is building it.",
+    "description": "Toast after a request written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted, but the server would not take some of its pictures. {{place}} is where it went: the app's name, or Homeroom. {{count}} is how many pictures were left off. Homeroom bot is the platform's assistant and goes on to build the request."
   },
   "commentPin.toast.kudosPlaced": {
     "text": "Your kudos goes to whoever solves it.",
