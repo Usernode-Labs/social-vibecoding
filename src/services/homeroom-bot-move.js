@@ -304,6 +304,7 @@ async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = 
     `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open' AND kind = 'general'`,
     [app.id, n],
   ).catch(() => {});
+  await require('./work-state').touched(pool, [{ appId: app.id, issueNumber: n }]);
   await ws.sendSystemMessage(pool, app.id, `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,
     'system', null, { type: 'issue', ref: n }).catch(() => {});
   try {

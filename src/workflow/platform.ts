@@ -311,7 +311,10 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
     // One work state per request and change (services/work-state.js): an
     // accepted event of a machine that moves one stores it again, in the
     // event's own transaction, and pushes what changed.
-    afterAccepted: (q, info) => legacy('services/work-state').afterTransition(q, info, workStateDeps()),
+    afterAccepted: {
+      wants: (info) => legacy('services/work-state').wants(info),
+      run: (q, info) => legacy('services/work-state').afterTransition(q, info, workStateDeps()),
+    },
   });
   try {
     await started.start({ slots: true });

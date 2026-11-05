@@ -274,15 +274,18 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 180000 }, 
     const warned = [];
     let mode = 'ok';
     let waits = 0;
+    const asked = [];
     const r = make({
       log: { info() {}, warn: (_area, msg) => warned.push(msg), error() {} },
       publish: async (_q, list) => { published.push(...list); },
-      afterAccepted: async (q, info) => {
-        if (!info.key.startsWith('ka')) return;
-        await q.query('INSERT INTO kt_after VALUES ($1, $2, $3)', [info.key, info.state, info.event]);
-        if (mode === 'fail') throw new Error('broken');
-        if (mode === 'wait' && waits++ === 0) throw Object.assign(new Error('lock wait'), { code: '55P03' });
-        return [{ kind: 'room', routing: { appId: info.appId }, data: { type: 'after', key: info.key, state: info.state } }];
+      afterAccepted: {
+        wants: (info) => { asked.push(info); return info.key.startsWith('ka'); },
+        async run(q, info) {
+          await q.query('INSERT INTO kt_after VALUES ($1, $2, $3)', [info.key, info.state, info.event]);
+          if (mode === 'fail') throw new Error('broken');
+          if (mode === 'wait' && waits++ === 0) throw Object.assign(new Error('lock wait'), { code: '55P03' });
+          return [{ kind: 'room', routing: { appId: info.appId }, data: { type: 'after', key: info.key, state: info.state } }];
+        },
       },
     });
     const send = (key, type, payload = {}) => r.append(machine, key, { type, payload },
@@ -292,6 +295,11 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 180000 }, 
     await send('ka1', 'Create');
     await r.drain();
     assert.deepEqual(await rows('ka1'), [{ state: 'active', event: 'Create' }], 'told the instance and the state it is in');
+    assert.deepEqual(asked.map((i) => [i.machine, i.key, i.state, i.appId, i.data.count]), [['kt-counter', 'ka1', 'active', 7, 0]],
+      'asked first, with the data it moved to');
+    await send('kb1', 'Create');
+    await r.drain();
+    assert.deepEqual(await rows('kb1'), [], 'an event it does not want runs nothing');
     assert.deepEqual(published, [{ kind: 'room', routing: { appId: 7 }, data: { type: 'after', key: 'ka1', state: 'active' } }],
       'its pushes are the event\'s, published in its transaction');
 

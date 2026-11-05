@@ -405,7 +405,24 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
 
 // The machines whose transitions move a request or a change, and how an
 // instance's key names what it is about.
-const WATCHED = new Set(['bot-request', 'bot-build', 'bot-change', 'proposal', 'preview', 'merge-followups', 'app-delivery']);
+const WATCHED = new Set([
+  'bot-request', 'bot-build', 'bot-change', 'proposal', 'preview', 'merge-followups', 'app-delivery', 'governance-proposal',
+]);
+
+// A vote decides a request only when it closes or reopens one, as it applies.
+const DECIDING_KINDS = new Set(['close_issue', 'reopen_issue']);
+
+/**
+ * Pure: whether an accepted event may move a request or change (the
+ * kernel's afterAccepted `wants`, asked before any query): a watched
+ * machine's, and of a governance vote only the one that applies a close or
+ * a reopen.
+ */
+function wants({ machine, state, data } = {}) {
+  if (!WATCHED.has(machine)) return false;
+  if (machine === 'governance-proposal') return state === 'applied' && DECIDING_KINDS.has(data?.kind);
+  return true;
+}
 
 /** The items one instance of a watched machine is about. */
 async function itemsOf(db, { machine, key, appId }) {
@@ -419,6 +436,26 @@ async function itemsOf(db, { machine, key, appId }) {
   }
   m = /^session:(\d+)$/.exec(key);
   if (m) return [{ sessionId: Number(m[1]) }];
+  // A vote to close or reopen a request (governance-proposal): the request
+  // it names, and the ones open in its thread that close with it.
+  m = machine === 'governance-proposal' && /^issue:(\d+)$/.exec(key);
+  if (m) {
+    const { rows } = await db.query(
+      `SELECT p.app_id, (p.payload->>'issueNumber')::int AS issue_number, p.thread_id
+         FROM issues p
+        WHERE p.id = $1 AND p.kind IN ('close_issue', 'reopen_issue')
+          AND (p.payload->>'issueNumber') ~ '^[0-9]+$'`,
+      [Number(m[1])],
+    );
+    if (!rows.length) return [];
+    const { rows: thread } = rows[0].thread_id ? await db.query(
+      `SELECT r.app_id, r.number AS issue_number FROM requests r WHERE r.thread_id = $1 AND r.app_id = $2`,
+      [rows[0].thread_id, rows[0].app_id],
+    ) : { rows: [] };
+    const out = new Map();
+    for (const r of [...rows, ...thread]) out.set(`${r.app_id}:${r.issue_number}`, { appId: Number(r.app_id), issueNumber: Number(r.issue_number) });
+    return [...out.values()];
+  }
   m = /^app:(\d+)$/.exec(key);
   if (m) {
     // An app's delivery: whatever of it is going live may be live now.
@@ -620,6 +657,7 @@ module.exports = {
   requestsOfSession,
   refresh,
   WATCHED,
+  wants,
   itemsOf,
   pushOf,
   publish,

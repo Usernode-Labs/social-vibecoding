@@ -29,7 +29,7 @@ export { append as appendEvent } from './stream.ts';
 // Admin reads take a pool: problems, stateCounts, listInstances, instance.
 export * as inspect from './inspect.ts';
 export type * from './types.ts';
-export type { AcceptedInfo } from './pipeline.ts';
+export type { AcceptedInfo, AfterAccepted } from './pipeline.ts';
 
 export interface RuntimeOptions {
   pool: Pool;

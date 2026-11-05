@@ -171,6 +171,35 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
       'a machine that moves no request refreshes nothing');
   });
 
+  await t.test('a vote to close a request names it; a route write refreshes and publishes it', async () => {
+    const vote = await one(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by, kind, payload)
+       VALUES ($1, 900, 'Close #3', $2, 'close_issue', '{"issueNumber": 3}'::jsonb) RETURNING id`, [app.id, bob.id]);
+    assert.deepEqual(await ws.itemsOf(pool, { machine: 'governance-proposal', key: `issue:${vote.id}` }),
+      [{ appId: app.id, issueNumber: 3 }]);
+    assert.deepEqual(await ws.itemsOf(pool, { machine: 'governance-proposal', key: 'issue:999999' }), []);
+    await pool.query("UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = 3 AND kind = 'general'", [app.id]);
+    const changed = await ws.touched(pool, [req(3)]);
+    assert.deepEqual(changed.map((c) => [c.ref, c.state.stage]), [[3, 'closed']]);
+  });
+
+  await t.test('the sweep seeds a row for a request the bot knows, then checks the oldest in turn', async () => {
+    await ask(7, bob, 'Share a list');
+    assert.equal(await stored('request', 7), undefined);
+    const first = await ws.sweep(pool, { olderThanMs: 0 });
+    assert.equal(first.seeded, 1);
+    assert.equal((await stored('request', 7)).stage, 'reading');
+    const before = await one('SELECT checked_at FROM work_states WHERE app_id = $1 AND item_ref = 7', [app.id]);
+    const again = await ws.sweep(pool, { olderThanMs: 0, limit: 100 });
+    assert.equal(again.seeded, 0);
+    assert.ok(again.checked >= 1);
+    const after = await one('SELECT checked_at FROM work_states WHERE app_id = $1 AND item_ref = 7', [app.id]);
+    assert.ok(new Date(after.checked_at) > new Date(before.checked_at), 'an unchanged row is still marked checked');
+    assert.equal((await stored('request', 3)).stage, 'closed');
+    const closedChecked = await one('SELECT checked_at, updated_at FROM work_states WHERE app_id = $1 AND item_ref = 3', [app.id]);
+    assert.equal(String(closedChecked.checked_at), String(closedChecked.updated_at), 'a closed row is not swept');
+  });
+
   await t.test('readers: a person\'s own rows, and a project\'s by number', async () => {
     const hers = await ws.forRequester(pool, ada.id);
     assert.deepEqual(hers.map((r) => r.ref).sort(), [1, 2, 3, 4]);

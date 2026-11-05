@@ -2208,6 +2208,13 @@
       "preview": "PENDING_SQL"
     },
     {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "e291c7da7e5ce11b4cf9",
+      "count": 1,
+      "preview": "REQUEST_FACTS_SQL"
+    },
+    {
       "source": "src/services/worker-eviction.js",
       "kind": "structural-template",
       "fingerprint": "420c49cd61d8e0ca08ca",

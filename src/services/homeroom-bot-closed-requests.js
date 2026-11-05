@@ -275,6 +275,7 @@ async function recordClosed(pool, { appId, numbers }) {
   const list = numbersOf(numbers);
   if (!pool || !(Number(appId) > 0) || !list.length) return;
   await pool.query(RECORD_CLOSED_SQL, [Number(appId), list]);
+  await require('./work-state').touched(pool, list.map((n) => ({ appId: Number(appId), issueNumber: n })));
 }
 
 // The bot's lane hears a slot came free: the project is refreshed soon (a
@@ -429,7 +430,10 @@ async function closeRequestRows(pool, { appId, appSlug, repoUrl, openNumbers, de
   if (!pool || !(Number(appId) > 0) || !repo || !Array.isArray(openNumbers)) return { closed: [] };
   try {
     // A request back on the open list is open again (CLEAR_REOPENED_SQL).
-    if (numbers.length) await pool.query(CLEAR_REOPENED_SQL, [Number(appId), numbers]);
+    if (numbers.length) {
+      await pool.query(CLEAR_REOPENED_SQL, [Number(appId), numbers]);
+      await require('./work-state').touched(pool, numbers.map((n) => ({ appId: Number(appId), issueNumber: Number(n) })));
+    }
     const { rows: candidates } = await pool.query(OPEN_TRACKED_SQL, [Number(appId), numbers, RECONCILE_LIMIT]);
     const isClosed = deps.isClosed || githubClosed(repo, deps);
     const confirmed = [];

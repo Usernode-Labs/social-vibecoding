@@ -30,12 +30,18 @@ export interface PipelineOptions {
   // request or change). Its pushes join the event's. Behind a savepoint: a
   // failure rolls back only its own writes and is logged, except a wait
   // (a lock or statement timeout, a deadlock), which retries the event as
-  // any wait does, so what it keeps is never left behind silently.
-  afterAccepted?: (q: Queryable, info: AcceptedInfo) => Promise<Push[] | void>;
+  // any wait does, so what it keeps is never left behind silently. `wants`
+  // is asked first, with no query: an event it does not want costs nothing.
+  afterAccepted?: AfterAccepted;
 }
 
-// What afterAccepted is told: the instance an accepted event moved.
-export interface AcceptedInfo { machine: string; key: string; appId: number | null; state: string; event: string }
+// What afterAccepted is told: the instance an accepted event moved, and the
+// state and data it moved to.
+export interface AcceptedInfo { machine: string; key: string; appId: number | null; state: string; data: Json; event: string }
+export interface AfterAccepted {
+  wants(info: AcceptedInfo): boolean;
+  run(q: Queryable, info: AcceptedInfo): Promise<Push[] | void>;
+}
 
 // Lock and statement timeouts, serialisation failures and deadlocks are
 // waits, not bugs: the event goes back to pending with a backoff.
@@ -518,11 +524,11 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after, facts) : undefined) ?? null;
   if (tx.poisoned) throw tx.poisoned;
   assertJson(reply);
-  if (afterAccepted) {
+  const accepted: AcceptedInfo = { machine: machine.name, key: row.key, appId: ctx.appId, state: outcome.next.name, data, event: event.type };
+  if (afterAccepted && afterAccepted.wants(accepted)) {
     await client.query('SAVEPOINT wf_after_accepted');
     try {
-      const more = await afterAccepted(client, {
-        machine: machine.name, key: row.key, appId: ctx.appId, state: outcome.next.name, event: event.type });
+      const more = await afterAccepted.run(client, accepted);
       await client.query('RELEASE SAVEPOINT wf_after_accepted');
       for (const p of more || []) pushed(p);
     } catch (err) {
