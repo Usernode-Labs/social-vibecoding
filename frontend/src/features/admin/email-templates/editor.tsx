@@ -11,7 +11,7 @@ import {
 import { insertAt, UploadImageButton } from './image-panel';
 import { VisualTab } from './visual-tab';
 import {
-  keptLanguage, LanguageForm, TEMPLATE_PARTS, useEditorLanguages, type LanguageDraft, type UnusableItem,
+  confirmHandCorrected, keptLanguage, LanguageForm, TEMPLATE_PARTS, useEditorLanguages, type LanguageDraft, type UnusableItem,
 } from './translations';
 
 // The template editor: what the email is for, its name, the layout it wears,
@@ -348,6 +348,9 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
 
   const save = async () => {
     if (saving || !canWrite) return;
+    // The new version starts with no translations: say first what an admin's
+    // hand corrections of this one will need.
+    if (!(await confirmHandCorrected(lang.rows, 'email'))) return;
     setSaving(true);
     setFailure(null);
     const res = await request('/api/admin/email-templates', 'POST', { ...draft, expectedLiveId });

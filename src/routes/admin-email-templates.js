@@ -207,6 +207,8 @@ function emailTemplateAdminRoutes(pool, config) {
   // live version's translation of it, so that is what is shown. Any other
   // draft has no translation yet, and its readers would get its English after
   // a save: `untranslated` says so, and the console labels the preview.
+  // `ownWords` says the fields already are that language's words (a language
+  // being corrected), shown as they are.
   async function partsFor(what, body) {
     const kind = str(body.action) || (what === 'layout' ? 'otp' : '');
     const action = actionFor(kind);
@@ -223,8 +225,9 @@ function emailTemplateAdminRoutes(pool, config) {
         layout = store.inReaderLanguage(snap.layouts[familyId], reader, 'layout');
       }
       const validation = validateTemplate(kind, { ...template, name: undefined }, layout);
-      const shown = reader ? savedTranslation(snap, kind, template, reader) : null;
-      return { kind, template: shown || template, layout, validation, untranslated: !!reader && !shown };
+      const ownWords = body.ownWords === true;
+      const shown = reader && !ownWords ? savedTranslation(snap, kind, template, reader) : null;
+      return { kind, template: shown || template, layout, validation, untranslated: !!reader && !ownWords && !shown };
     }
     const layout = layoutFields(fields);
     if (!Object.hasOwn(snap.templates, kind)) throw invalid([{ field: 'action', message: LIVE_ONLY_MESSAGE }]);
@@ -448,7 +451,8 @@ function emailTemplateAdminRoutes(pool, config) {
       const row = await store.restoreLayout(pool, id, { expectedLiveId }, req.user.id, {
         check: async ({ row: version, templates, client }) => {
           refuseUnless(validateLayout({ html: version.html, text: version.text }, templates));
-          unusableTranslations = await translate.recheckTranslations(client, { templates, layout: version });
+          // Every template it frames is checked, so a mark can be cleared too.
+          unusableTranslations = await translate.recheckTranslations(client, { templates, layout: version, complete: true });
         },
       });
       await changed(req, { what: 'layout', change: 'restored', id: row.id, familyId: row.family_id, version: row.version });

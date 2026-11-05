@@ -16,7 +16,7 @@ import {
 import {
   SavedBanner, TranslateProgressView, LanguageForm, translationSummary, languagesColumn, jobSummary, stateWords,
   UnusableLanguageNotice, LanguageSwitch, TranslateControlsView, translateBlocked, unusableReason, languageSaveRequest,
-  retranslateBody, languageMove, keptLanguage, TranslateControls, type UnusableItem,
+  retranslateBody, languageMove, keptLanguage, TranslateControls, handCorrectedWarning, type UnusableItem,
 } from './email-templates/translations';
 
 // Admin > Email templates (#admin/email-templates): every email Homeroom
@@ -357,4 +357,5 @@ export {
   SavedBanner, TranslateProgressView, LanguageForm, translationSummary, languagesColumn, jobSummary, stateWords,
   UnusableLanguageNotice, LanguageSwitch, TranslateControlsView, translateBlocked, unusableWhere,
   unusableReason, languageSaveRequest, retranslateBody, languageMove, keptLanguage, TranslateControls, unusableOf, PreviewPane,
+  handCorrectedWarning,
 };

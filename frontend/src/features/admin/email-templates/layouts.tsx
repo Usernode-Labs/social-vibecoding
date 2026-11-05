@@ -11,7 +11,7 @@ import {
 } from './shared';
 import { VisualTab } from './visual-tab';
 import {
-  keptLanguage, LAYOUT_PARTS, LanguageForm, otherLanguages, translationSummary, useEditorLanguages,
+  confirmHandCorrected, keptLanguage, LAYOUT_PARTS, LanguageForm, otherLanguages, translationSummary, useEditorLanguages,
   type LanguageDraft, type UnusableItem,
 } from './translations';
 
@@ -213,6 +213,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
 
   const save = async () => {
     if (saving || !canWrite) return;
+    if (!(await confirmHandCorrected(lang.rows, 'layout'))) return;
     setSaving(true);
     setFailure(null);
     const res = await request('/api/admin/email-layouts', 'POST', {

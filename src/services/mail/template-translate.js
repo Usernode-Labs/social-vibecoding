@@ -20,7 +20,8 @@
 // after STALE_MS. Each run claims the row with its own `run_id` and writes only
 // while the row still carries it, so a slow run whose job was taken over as
 // stale stops instead of writing over the new one. It touches `updated_at`
-// with every language, so only a run that has gone quiet looks stale. Languages go to the model a few at a time (CHUNK), one
+// with every language and on a heartbeat while it waits on the model, so only
+// a run whose process has gone looks stale. Languages go to the model a few at a time (CHUNK), one
 // request each; a failed request fails only its languages. Spend counts
 // against the system budget, as the interface's translation step does.
 //
@@ -56,8 +57,12 @@ const LABELS = { subject: 'subject', preheader: 'preview line', why: '"why you g
 // Languages asked of the model at once: each is its own request.
 const CHUNK = 4;
 const MAX_TOKENS = 16000;
-// A running job not heard from in this long belongs to a process that stopped.
-const STALE_MS = 15 * 60 * 1000;
+// A running job not heard from in this long belongs to a process that stopped
+// (a pod replaced mid-run). A live run touches its job every HEARTBEAT_MS,
+// even while it waits on the model, so a few missed beats are enough to tell,
+// and Translate is offered again within minutes rather than a quarter hour.
+const STALE_MS = 3 * 60 * 1000;
+const HEARTBEAT_MS = 30 * 1000;
 
 function fail(code, message, extra = {}) {
   return Object.assign(new Error(message), { code }, extra);
@@ -211,51 +216,70 @@ const layoutPartOf = (translation, layout) => (translation ? { html: translation
 
 /**
  * Marks the translations a change leaves broken, inside the change's
- * transaction (`client`), and returns them: [{ templateId, action, locale,
- * reason }] and [{ layoutId, locale, reason }]. `templates` are the English
- * template rows the change concerns (an unsaved one with no id), `layout` the
- * English layout they are sent in ({ id?, html, text }, or null). With an id,
- * the layout's own translations are checked against those templates first.
- * `layoutTranslations` ({ locale: { html, text } }) stands in for stored ones,
- * for a layout translation being saved; `locale` narrows the check to one.
+ * transaction (`client`), and returns the ones it newly marked: [{ templateId,
+ * action, locale, reason }] and [{ layoutId, locale, reason }]. A translation
+ * already marked is checked again too, and its mark is cleared when it now
+ * passes (the layout that broke it was put back, say), so a mark never
+ * outlives its cause. `templates` are the English template rows the change
+ * concerns (an unsaved one with no id), `layout` the English layout they are
+ * sent in ({ id?, html, text }, or null). With an id, the layout's own
+ * translations are checked against those templates first. `layoutTranslations`
+ * ({ locale: { html, text } }) stands in for stored ones, for a layout
+ * translation being saved; `locale` narrows the check to one. A layout
+ * translation's mark is cleared only when `complete` says `templates` are all
+ * the templates the layout frames: passing against some of them says nothing
+ * about the rest, so until then it stays marked and is not used.
  */
-async function recheckTranslations(client, { templates = [], layout = null, layoutTranslations = {}, locale = null } = {}) {
+async function recheckTranslations(client, { templates = [], layout = null, layoutTranslations = {}, locale = null, complete = false } = {}) {
   const marked = [];
+  const cleared = [];
   const usable = { ...layoutTranslations };
   if (layout && layout.id != null) {
     const { rows } = locale
-      ? await client.query('SELECT * FROM email_layout_translations WHERE layout_id = $1 AND locale = $2 AND unusable IS NULL', [layout.id, locale])
-      : await client.query('SELECT * FROM email_layout_translations WHERE layout_id = $1 AND unusable IS NULL', [layout.id]);
+      ? await client.query('SELECT * FROM email_layout_translations WHERE layout_id = $1 AND locale = $2', [layout.id, locale])
+      : await client.query('SELECT * FROM email_layout_translations WHERE layout_id = $1', [layout.id]);
     for (const translation of rows) {
       if (Object.hasOwn(usable, translation.locale)) continue;
       const result = templates.length ? validateLayout(pick(translation, LAYOUT_FIELDS), templates) : { ok: true };
       if (result.ok) {
+        if (translation.unusable != null && !complete) continue;
         usable[translation.locale] = translation;
+        if (translation.unusable != null) {
+          await client.query('UPDATE email_layout_translations SET unusable = NULL WHERE layout_id = $1 AND locale = $2', [layout.id, translation.locale]);
+          cleared.push({ layoutId: layout.id, locale: translation.locale });
+        }
         continue;
       }
       const reason = result.errors[0].message;
       await client.query('UPDATE email_layout_translations SET unusable = $3 WHERE layout_id = $1 AND locale = $2', [layout.id, translation.locale, reason]);
-      marked.push({ layoutId: layout.id, locale: translation.locale, reason });
+      if (translation.unusable == null) marked.push({ layoutId: layout.id, locale: translation.locale, reason });
     }
   }
   const ids = templates.map((row) => row.id).filter((id) => id != null);
   if (ids.length) {
     const { rows } = locale
-      ? await client.query('SELECT * FROM email_template_translations WHERE template_id = ANY($1::int[]) AND locale = $2 AND unusable IS NULL ORDER BY template_id, locale', [ids, locale])
-      : await client.query('SELECT * FROM email_template_translations WHERE template_id = ANY($1::int[]) AND unusable IS NULL ORDER BY template_id, locale', [ids]);
+      ? await client.query('SELECT * FROM email_template_translations WHERE template_id = ANY($1::int[]) AND locale = $2 ORDER BY template_id, locale', [ids, locale])
+      : await client.query('SELECT * FROM email_template_translations WHERE template_id = ANY($1::int[]) ORDER BY template_id, locale', [ids]);
     const byId = new Map(templates.map((row) => [row.id, row]));
     for (const translation of rows) {
       const english = byId.get(translation.template_id);
       const action = actionFor(english.action);
       if (!action || action.englishOnly) continue;
       const problems = templateProblems(english, translation, layoutPartOf(usable[translation.locale], layout));
-      if (!problems.length) continue;
+      if (!problems.length) {
+        if (translation.unusable != null) {
+          await client.query('UPDATE email_template_translations SET unusable = NULL WHERE template_id = $1 AND locale = $2', [translation.template_id, translation.locale]);
+          cleared.push({ templateId: translation.template_id, locale: translation.locale });
+        }
+        continue;
+      }
       const reason = problems[0].message;
       await client.query('UPDATE email_template_translations SET unusable = $3 WHERE template_id = $1 AND locale = $2', [translation.template_id, translation.locale, reason]);
-      marked.push({ templateId: translation.template_id, action: english.action, locale: translation.locale, reason });
+      if (translation.unusable == null) marked.push({ templateId: translation.template_id, action: english.action, locale: translation.locale, reason });
     }
   }
   if (marked.length) log.warn('email-templates', 'Translations marked unusable after a change', { count: marked.length, marked: marked.slice(0, 20) });
+  if (cleared.length) log.info('email-templates', 'Translations usable again after a change', { count: cleared.length, cleared: cleared.slice(0, 20) });
   return marked;
 }
 
@@ -382,7 +406,28 @@ async function setLanguages(pool, kind, id, runId, updates) {
   if (!rowCount) throw new Superseded('This Translate run was taken over by a newer one');
 }
 
-async function run(pool, kind, id, runId, english, todo, { overwrite, deps }) {
+// Touches the job every HEARTBEAT_MS until stopped, so a run waiting minutes
+// on the model is not taken for a dead one. A missed beat is only logged: the
+// run's own next write finds out whether it still owns the job.
+function heartbeat(pool, kind, id, runId, every = HEARTBEAT_MS) {
+  const timer = setInterval(() => {
+    pool.query('UPDATE email_translation_jobs SET updated_at = NOW() WHERE kind = $1 AND version_id = $2 AND run_id = $3', [kind, id, runId])
+      .catch((err) => log.warn('email-templates', 'A Translate heartbeat failed', { kind, id, message: err && err.message }));
+  }, every);
+  if (typeof timer.unref === 'function') timer.unref();
+  return () => clearInterval(timer);
+}
+
+async function run(pool, kind, id, runId, english, todo, options) {
+  const stop = heartbeat(pool, kind, id, runId, options.deps.heartbeatMs);
+  try {
+    await runLanguages(pool, kind, id, runId, english, todo, options);
+  } finally {
+    stop();
+  }
+}
+
+async function runLanguages(pool, kind, id, runId, english, todo, { overwrite, deps }) {
   const model = deps.llm || llm;
   const budget = deps.limits || limits;
   const languages = deps.languages || configuredLanguages();
@@ -454,14 +499,22 @@ async function startTranslation(pool, kind, id, { overwrite = false, languages: 
   const kept = new Set(overwrite ? [] : admins.map((row) => row.locale));
   const perLanguage = Object.fromEntries(locales.map((code) => [code, kept.has(code) ? 'skipped: admin' : 'pending']));
   const runId = crypto.randomUUID();
+  // A run for some languages (Retranslate on one) keeps the other languages'
+  // outcomes from the job before it; one still pending there belonged to a
+  // run that stopped, and says so. A run for every language starts afresh.
   const { rows: [claimed] } = await pool.query(
     `INSERT INTO email_translation_jobs (kind, version_id, state, per_language, overwrite, started_by, run_id)
      VALUES ($1, $2, 'running', $3::jsonb, $4, $5, $7)
-     ON CONFLICT (kind, version_id) DO UPDATE SET state = 'running', per_language = EXCLUDED.per_language,
+     ON CONFLICT (kind, version_id) DO UPDATE SET state = 'running',
+       per_language = CASE WHEN $8 THEN (
+           SELECT COALESCE(jsonb_object_agg(e.key, CASE WHEN e.value = '"pending"'::jsonb
+             THEN '"failed: Translate stopped before this language"'::jsonb ELSE e.value END), '{}'::jsonb)
+           FROM jsonb_each(email_translation_jobs.per_language) AS e(key, value)
+         ) || EXCLUDED.per_language ELSE EXCLUDED.per_language END,
        overwrite = EXCLUDED.overwrite, started_by = EXCLUDED.started_by, run_id = EXCLUDED.run_id, started_at = NOW(), updated_at = NOW()
      WHERE email_translation_jobs.state <> 'running' OR email_translation_jobs.updated_at < NOW() - make_interval(secs => $6)
      RETURNING *`,
-    [kind, id, JSON.stringify(perLanguage), !!overwrite, userId, STALE_MS / 1000, runId]);
+    [kind, id, JSON.stringify(perLanguage), !!overwrite, userId, STALE_MS / 1000, runId, !!only]);
   if (!claimed) {
     const { rows: [running] } = await pool.query('SELECT * FROM email_translation_jobs WHERE kind = $1 AND version_id = $2', [kind, id]);
     return { started: false, job: jobFrom(running), done: Promise.resolve() };
@@ -521,6 +574,7 @@ async function translationsOf(pool, kind, id) {
 module.exports = {
   CHUNK,
   STALE_MS,
+  HEARTBEAT_MS,
   englishDifference,
   recheckTranslations,
   saveCorrection,

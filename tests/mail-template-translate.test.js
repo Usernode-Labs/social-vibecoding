@@ -359,20 +359,24 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
     }
     const one = await call('POST', `/api/admin/email-templates/${row.id}/translate`, { languages: ['fr'], overwrite: true });
     assert.equal(one.status, 202, JSON.stringify(one.body));
-    assert.deepEqual(Object.keys(one.body.perLanguage), ['fr']);
+    assert.equal(one.body.perLanguage.fr, 'pending');
+    // The other languages keep the outcome of the run before it.
+    assert.equal(one.body.perLanguage.es, 'saved');
     for (let i = 0; i < 100; i++) {
       progress = await call('GET', `/api/admin/email-templates/${row.id}/translate`, undefined, 'view');
       if (progress.body.state !== 'running') break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(progress.body.perLanguage.fr, 'saved');
+    assert.equal(progress.body.perLanguage.es, 'saved');
     const retranslated = (await call('GET', `/api/admin/email-templates/${row.id}/translations`, undefined, 'view')).body.translations.fr;
     assert.equal(retranslated.origin, 'machine', 'the admin text was replaced, as asked');
     assert.equal(retranslated.unusable, null);
     // Naming the same language twice runs it once.
     const twice = await call('POST', `/api/admin/email-templates/${row.id}/translate`, { languages: ['fr', 'fr'], overwrite: true });
     assert.equal(twice.status, 202, JSON.stringify(twice.body));
-    assert.deepEqual(Object.keys(twice.body.perLanguage), ['fr']);
+    assert.equal(twice.body.perLanguage.fr, 'pending');
+    assert.ok(Object.entries(twice.body.perLanguage).every(([code, state]) => code === 'fr' || state !== 'pending'), 'only French runs');
     for (let i = 0; i < 100; i++) {
       if ((await call('GET', `/api/admin/email-templates/${row.id}/translate`, undefined, 'view')).body.state !== 'running') break;
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -403,6 +407,60 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
       if ((await call('GET', `/api/admin/email-layouts/${layout.id}/translate`)).body.state !== 'running') break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+  });
+
+  await t.test('a layout save that breaks a translation marks it, and restoring the old layout clears the mark', async () => {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const call = async (method, p, body) => {
+      const res = await fetch(base + p, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    };
+    const row = await freshVersion('otp');
+    // A French "why you got this" line much longer than the English: about
+    // 60 KB, fine inside the standard layout and too big inside a 50 KB one.
+    const longWhy = `${row.why} ${'mot '.repeat(15000)}`.trim();
+    await store.saveTranslation(pool, 'template', row.id, 'fr', { ...row, why: longWhy }, 'machine');
+    assert.deepEqual(await translate.recheckTranslations(pool, { templates: [row], layout: await liveLayout() }), [], 'it fits the standard layout');
+    const before = await liveLayout();
+    const padded = before.html.replace('{{content}}', `{{content}}<p>${'x '.repeat(25000)}</p>`);
+    const saved = await call('POST', '/api/admin/email-layouts', { familyId: before.family_id, name: before.name, html: padded, text: before.text, expectedLiveId: before.id });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.ok(saved.body.unusableTranslations.some((u) => u.templateId === row.id && u.locale === 'fr'), JSON.stringify(saved.body.unusableTranslations));
+    assert.match((await rowsOf(row.id)).fr.unusable, /over|KB|size|large/i);
+    // Saving the bad layout again finds it still broken, and does not report it as new.
+    const bad = await liveLayout();
+    const resaved = await call('POST', '/api/admin/email-layouts', { familyId: bad.family_id, name: bad.name, html: padded, text: bad.text, expectedLiveId: bad.id });
+    assert.equal(resaved.status, 200, JSON.stringify(resaved.body));
+    assert.ok(!resaved.body.unusableTranslations.some((u) => u.templateId === row.id), 'already marked');
+    assert.ok((await rowsOf(row.id)).fr.unusable);
+    const restored = await call('POST', `/api/admin/email-layouts/${before.id}/restore`, { expectedLiveId: (await liveLayout()).id });
+    assert.equal(restored.status, 200, JSON.stringify(restored.body));
+    assert.equal((await rowsOf(row.id)).fr.unusable, null, 'the layout that broke it is gone, and so is the mark');
+    const snap = await store.snapshot(pool);
+    assert.equal(store.resolve(snap, 'otp', 'fr').template.why, longWhy, 'French readers get it again');
+  });
+
+  await t.test('a running job beats while it waits on the model, so it is not taken for a dead one', async () => {
+    assert.ok(translate.STALE_MS <= 5 * 60 * 1000, 'a dead run frees Translate within minutes');
+    assert.ok(translate.HEARTBEAT_MS * 3 <= translate.STALE_MS, 'several beats fit in the stale window');
+    const row = await freshVersion('otp');
+    let open;
+    const gate = new Promise((resolve) => { open = resolve; });
+    const model = fakeModel(async (language, parts) => { await gate; return faithful(language, parts); });
+    const started = await translate.startTranslation(pool, 'template', row.id, {
+      deps: { llm: model, limits: fakeLimits(), languages: LANGUAGES, glossary: GLOSSARY, heartbeatMs: 20 },
+    });
+    await pool.query("UPDATE email_translation_jobs SET updated_at = NOW() - interval '1 hour' WHERE kind = 'template' AND version_id = $1", [row.id]);
+    let state;
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      state = (await translate.jobStatus(pool, 'template', row.id)).state;
+      if (state === 'running') break;
+    }
+    assert.equal(state, 'running', 'the heartbeat touched the job while the model was still answering');
+    open();
+    await started.done;
+    assert.equal((await translate.jobStatus(pool, 'template', row.id)).state, 'done');
   });
 
   await t.test('a run taken over as stale stops and writes nothing more', async () => {

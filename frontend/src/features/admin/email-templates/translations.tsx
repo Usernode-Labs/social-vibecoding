@@ -356,6 +356,33 @@ export const LAYOUT_PARTS: TranslatedField[] = ['html', 'text'];
  * A language's words to edit: its translation, or, with none yet, the English
  * to start from.
  */
+/**
+ * The sentence for the languages of a version an admin corrected by hand, or
+ * null when there are none. A new English version starts with no
+ * translations, so Translate fills it from the English and those corrections
+ * are not carried over.
+ */
+export function handCorrectedWarning(rows: Record<string, TranslationRow> | null | undefined): string | null {
+  const count = Object.values(rows || {}).filter((row) => row && row.origin === 'admin').length;
+  if (!count) return null;
+  return count === 1
+    ? '1 language corrected by hand will need correcting again'
+    : `${count} languages corrected by hand will need correcting again`;
+}
+
+/** Asks before an English save that leaves hand corrections behind; true to go on. */
+export async function confirmHandCorrected(rows: Record<string, TranslationRow> | null | undefined, what: 'email' | 'layout'): Promise<boolean> {
+  const warning = handCorrectedWarning(rows);
+  if (!warning) return true;
+  const consoleApi = typeof window !== 'undefined' ? (window as any).AdminConsole : null;
+  if (!consoleApi || typeof consoleApi._confirm !== 'function') return true;
+  return !!(await consoleApi._confirm({
+    title: `Save a new version of this ${what}?`,
+    message: `${warning}: the new version starts with no translations, and Translate fills them from the English.`,
+    confirmLabel: 'Save',
+  }));
+}
+
 export function languageDraftFrom(row: TranslationRow | null | undefined, english: LanguageDraft, parts: TranslatedField[]): LanguageDraft {
   return Object.fromEntries(parts.map((p) => [p, row ? String((row as any)[p] ?? '') : String(english[p] ?? '')]));
 }
@@ -588,7 +615,7 @@ export function useLanguageEditor({ base, versionId, english, parts, languages, 
       setOpened(next);
       setDraft(next);
       setSaved({
-        text: `${languageName(languages, locale)} saved. Its readers get these words from now on.`,
+        text: `${languageName(languages, locale)} saved. Its readers get these words within half a minute.`,
         unusable: Array.isArray(res.data.unusableTranslations) ? res.data.unusableTranslations : [],
       });
       if (onSaved) onSaved();

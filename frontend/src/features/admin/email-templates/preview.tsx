@@ -89,7 +89,7 @@ export function PreviewView({
       {result ? (
         <div className={stale ? 'opacity-50 space-y-3' : 'space-y-3'} data-email-preview-stale={stale ? '' : undefined}>
           {stale ? <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Last good preview, before your latest change</p> : null}
-          {result.untranslated && !englishOnly && locale !== 'en'
+          {result.untranslated && !englishOnly && !localeLocked && locale !== 'en'
             ? <p id="email-template-preview-untranslated" className="text-xs text-zinc-500 dark:text-zinc-400">{untranslatedNote(languages, locale)}</p>
             : null}
           <div className="text-sm">
@@ -169,12 +169,15 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   // An email sent in English only is previewed and tested in English, whatever
   // the picker was left on for another email.
   const sentLocale = englishOnly ? 'en' : locale;
+  // With a fixed language the fields are that language's own words, which the
+  // server shows as they are, never swapped for a saved translation.
+  const own = fixedLocale ? { ownWords: true } : {};
 
   useEffect(() => {
     const mine = ++latest.current;
     const timer = setTimeout(async () => {
       setLoading(true);
-      const res = await request(`${base}/preview`, 'POST', { ...body, locale: sentLocale });
+      const res = await request(`${base}/preview`, 'POST', { ...body, locale: sentLocale, ...own });
       if (!alive.current || mine !== latest.current) return;
       setLoading(false);
       if (res.ok && res.data) {
@@ -199,7 +202,7 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
     if (testing) return;
     setTesting(true);
     setTestResult(null);
-    const res = await request(`${base}/test`, 'POST', { ...body, locale: sentLocale });
+    const res = await request(`${base}/test`, 'POST', { ...body, locale: sentLocale, ...own });
     if (!alive.current) return;
     setTesting(false);
     if (res.ok && res.data) { setTestResult(testHeadline(res.data.outcome, String(res.data.to || 'you'))); return; }

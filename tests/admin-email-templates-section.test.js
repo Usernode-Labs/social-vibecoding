@@ -748,8 +748,8 @@ test('a language opens in the same tabs, with the English alongside, and its err
   assert.match(viewOnly, /id="email-translation-subject"[^>]*readonly=""/i);
 
   const saved = renderToHtml(createElement(LanguageForm, { ...props, failure: null,
-    saved: { text: 'Français saved. Its readers get these words from now on.', unusable: [{ templateId: 3, action: 'otp', locale: 'fr', reason: 'x' }] } }));
-  assert.match(saved, /Français saved\. Its readers get these words from now on\./);
+    saved: { text: 'Français saved. Its readers get these words within half a minute.', unusable: [{ templateId: 3, action: 'otp', locale: 'fr', reason: 'x' }] } }));
+  assert.match(saved, /Français saved\. Its readers get these words within half a minute\./);
   assert.match(saved, /no longer fit and send the English until they are fixed: Français\./);
 
   // A preview of a language is that language, its picker locked to it.
@@ -997,7 +997,7 @@ test('a preview in another language says when it shows the English words', () =>
   const inEnglish = render('PreviewView', { ...props, locale: 'en', result: { subject: 'S', html: '<p>x</p>', text: 'x', problems: [], untranslated: true } });
   assert.ok(!/email-template-preview-untranslated/.test(inEnglish));
   const route = read('src/routes/admin-email-templates.js');
-  assert.match(route, /untranslated: !!reader && !shown/, 'the server says which it showed');
+  assert.match(route, /untranslated: !!reader && !ownWords && !shown/, 'the server says which it showed');
 });
 
 test('an edit says other languages get the English until it is translated, in the editor and after the save', () => {
@@ -1015,4 +1015,29 @@ test('an edit says other languages get the English until it is translated, in th
   assert.ok(!note.test(form({ dirty: true, draft: draftFrom(report) })), 'an English-only email has no other languages');
   const src = read(SECTION);
   assert.match(src, /is live\. \$\{ENGLISH_UNTIL_TRANSLATED\}/, 'the save banner says it too');
+});
+
+test('a language being corrected previews its own words, never the English note', () => {
+  const src = read('frontend/src/features/admin/email-templates/preview.tsx');
+  assert.match(src, /const own = fixedLocale \? \{ ownWords: true \} : \{\};/);
+  assert.equal(count(src, /locale: sentLocale, \.\.\.own/g), 2, 'the preview and the test send');
+  const locked = render('PreviewView', {
+    loading: false, failure: null, mode: 'html', languages: payload().languages, englishOnly: false, localeLocked: true,
+    canWrite: true, testing: false, testResult: null, onLocale() {}, onSendTest() {}, locale: 'fr',
+    result: { subject: 'S', html: '<p>x</p>', text: 'x', problems: [], untranslated: true },
+  });
+  assert.ok(!/email-template-preview-untranslated/.test(locked));
+});
+
+test('saving the English warns first when languages were corrected by hand', () => {
+  const { handCorrectedWarning } = load();
+  assert.equal(handCorrectedWarning(null), null);
+  assert.equal(handCorrectedWarning({ fr: { origin: 'machine' } }), null);
+  assert.equal(handCorrectedWarning({ fr: { origin: 'admin' }, es: { origin: 'machine' } }), '1 language corrected by hand will need correcting again');
+  assert.equal(handCorrectedWarning({ fr: { origin: 'admin' }, es: { origin: 'admin' } }), '2 languages corrected by hand will need correcting again');
+  for (const file of ['editor', 'layouts']) {
+    const src = read(`frontend/src/features/admin/email-templates/${file}.tsx`);
+    const save = src.slice(src.indexOf('const save = async () => {'));
+    assert.ok(save.indexOf('confirmHandCorrected(lang.rows') > 0 && save.indexOf('confirmHandCorrected(lang.rows') < save.indexOf('setSaving(true)'), `${file}: asked before saving`);
+  }
 });

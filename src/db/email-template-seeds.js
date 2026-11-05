@@ -611,7 +611,7 @@ async function refreshUntouched(client, source, translations, families, seeded) 
     // What the templates it frames send in each language must still work in it.
     const { rows: framed } = await client.query(
       "SELECT * FROM email_templates WHERE layout_family_id = $1 AND status = 'live' AND deleted_at IS NULL", [family]);
-    await translateModule().recheckTranslations(client, { templates: framed, layout: { id: row.id, html: layout.html, text: layout.text } });
+    await translateModule().recheckTranslations(client, { templates: framed, layout: { id: row.id, html: layout.html, text: layout.text }, complete: true });
     out.layouts += 1;
   }
   for (const kind of Object.keys(SEEDS.templates)) {
