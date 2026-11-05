@@ -217,6 +217,68 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
     assert.equal((await store.snapshot(pool)).templates[OTP].translations.es.subject, 's');
   });
 
+  await t.test('restoreLayout puts an archived version of a live family back, and checks the templates first', async () => {
+    const one = await store.saveLayout(pool, { familyId: null, name: 'Restorable', html: '<p>{{content}}</p>', text: '{{content}}', expectedLiveId: null }, userId);
+    const two = await store.saveLayout(pool, { familyId: one.family_id, name: 'Restorable 2', html: '<b>{{content}}</b>', text: '{{content}}', expectedLiveId: one.id }, userId);
+    const [tpl] = await live('project_invite');
+    const wearer = await save({ action: 'project_invite', layoutFamilyId: one.family_id, expectedLiveId: tpl ? tpl.id : null });
+    await rejects(store.restoreLayout(pool, one.id, { expectedLiveId: one.id }, userId), 'conflict');
+    let seen = null;
+    const refusal = Object.assign(new Error('no'), { code: 'invalid', errors: [] });
+    await rejects(store.restoreLayout(pool, one.id, { expectedLiveId: two.id }, userId, { check: async (ctx) => { seen = ctx; throw refusal; } }), 'invalid');
+    assert.equal(seen.row.id, one.id);
+    assert.deepEqual(seen.templates.map((r) => r.id), [wearer.id]);
+    const liveLayout = async () => (await pool.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL", [one.family_id])).rows.map((r) => r.id);
+    assert.deepEqual(await liveLayout(), [two.id], 'a refused check changes nothing');
+    const restored = await store.restoreLayout(pool, one.id, { expectedLiveId: two.id }, userId);
+    assert.equal(restored.status, 'live');
+    assert.deepEqual(await liveLayout(), [one.id]);
+    assert.equal((await store.restoreLayout(pool, one.id, { expectedLiveId: one.id }, userId)).id, one.id, 'already live: nothing to do');
+    await rejects(store.restoreLayout(pool, 999999, {}, userId), 'not_found');
+    const other = await store.saveLayout(pool, { familyId: null, name: 'Doomed', html: '{{content}}', text: '{{content}}', expectedLiveId: null }, userId);
+    const other2 = await store.saveLayout(pool, { familyId: other.family_id, name: 'Doomed 2', html: '<i>{{content}}</i>', text: '{{content}}', expectedLiveId: other.id }, userId);
+    await store.deleteLayout(pool, other.family_id, {}, userId);
+    await rejects(store.restoreLayout(pool, other.id, { expectedLiveId: other2.id }, userId), 'not_found');
+    await rejects(store.restoreLayout(pool, other.id, {}, userId), 'not_found');
+  });
+
+  await t.test('a check refusal inside a save, restore or delete changes nothing', async () => {
+    const refuse = { check: async () => { throw Object.assign(new Error('no'), { code: 'invalid', errors: [{ field: 'html', message: 'no' }] }); } };
+    const [current] = await live(OTP);
+    await rejects(store.saveTemplate(pool, body({ action: OTP, expectedLiveId: current.id }), userId, refuse), 'invalid');
+    assert.deepEqual((await live(OTP)).map((r) => r.id), [current.id]);
+    let ctx = null;
+    const peek = { check: async (c) => { ctx = c; } };
+    const { rows: [layoutRow] } = await pool.query("SELECT * FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL ORDER BY id LIMIT 1");
+    const next = await store.saveTemplate(pool, body({ action: OTP, layoutFamilyId: layoutRow.family_id, expectedLiveId: current.id }), userId, peek);
+    assert.equal(ctx.layout.id, layoutRow.id, 'the check sees the live layout the template will wear');
+    await rejects(store.restoreTemplate(pool, current.id, { expectedLiveId: next.id }, userId, refuse), 'invalid');
+    await rejects(store.deleteTemplate(pool, next.id, { replacementId: current.id }, userId, refuse), 'invalid');
+    assert.deepEqual((await live(OTP)).map((r) => r.id), [next.id]);
+    await rejects(store.saveLayout(pool, { familyId: layoutRow.family_id, name: 'x', html: '{{content}}', text: '{{content}}', expectedLiveId: layoutRow.id }, userId, refuse), 'invalid');
+    const after = await pool.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL", [layoutRow.family_id]);
+    assert.deepEqual(after.rows.map((r) => r.id), [layoutRow.id]);
+  });
+
+  await t.test('a translation with an empty subject, html or text is refused', async () => {
+    const [current] = await live('password_reset');
+    const fields = { subject: 'S', preheader: '', why: '', html: '<p>h</p>', text: 't' };
+    for (const blank of ['subject', 'html', 'text']) {
+      await assert.rejects(store.saveTranslation(pool, 'template', current.id, 'fr', { ...fields, [blank]: '  ' }, 'admin'), (err) => {
+        assert.equal(err.code, 'invalid'); assert.equal(err.errors[0].field, blank); return true;
+      });
+    }
+    const { rows: [layoutRow] } = await pool.query("SELECT id FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL LIMIT 1");
+    await rejects(store.saveTranslation(pool, 'layout', layoutRow.id, 'fr', { html: '', text: 't' }, 'admin'), 'invalid');
+  });
+
+  await t.test('a deadlock or lock timeout comes back as retry', async () => {
+    for (const pgCode of ['40P01', '55P03']) {
+      const client = { query: async (sql) => { if (/SELECT pg_advisory/.test(sql)) throw Object.assign(new Error('busy'), { code: pgCode }); return { rows: [] }; }, release: () => {} };
+      await rejects(store.saveTemplate({ connect: async () => client }, body({ action: OTP }), userId), 'retry');
+    }
+  });
+
   await t.test('listAll returns every version including archived and deleted', async () => {
     const { rows: [old] } = await pool.query("SELECT id FROM email_templates WHERE action = $1 AND status = 'archived' AND deleted_at IS NULL LIMIT 1", [OTP]);
     await store.deleteTemplate(pool, old.id, {}, userId);
