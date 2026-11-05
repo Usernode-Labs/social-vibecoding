@@ -874,7 +874,7 @@ export interface DesignThread {
   height: number;
   latest: number;
   versions: Array<{ version: number; author: string; note: string | null; messageId: number | null }>;
-  /** 1 Nov 2026 (C2.2): the open request Propose it posts the plan on (the thread's), or null for a new one. */
+  /** 1 Nov 2026 (C2.2): the open request Request it posts the plan on (the thread's), or null for a new one. */
   planOn?: number | null;
 }
 

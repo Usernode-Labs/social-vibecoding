@@ -108,6 +108,38 @@ test('a drawing narrower than the pane is centred, and the version picker takes 
   assert.ok(picker.includes('min-w-0') && picker.includes('truncate'), 'and cut short only when the header runs out of room');
 });
 
+// #6350: the Request card's box starts with what the bot said about the
+// version being filed, so filing never begins blank; the capture's own note
+// marks the starting screen, so it is not a description of a change.
+test('the Request card starts its notes from the version being filed, never the capture', () => {
+  const api = new Proxy({}, { get: (_t, name) => () => { throw new Error(`the first render reads nothing (${String(name)})`); } });
+  const { ProposeCard } = loadTsx('frontend/src/features/messages/design-pane.tsx', {
+    stubs: {
+      './api': api,
+      './store': { loadReplyThread: () => Promise.resolve(), useMessagesSnapshot: () => ({ thread: null }) },
+    },
+  });
+  const design = {
+    rootId: 9,
+    title: 'Plots',
+    latest: 3,
+    versions: [
+      { version: 1, author: 'capture', note: 'As it is now' },
+      { version: 2, author: 'bot', note: 'Both lists drawn in full' },
+      { version: 3, author: 'bot', note: null },
+    ],
+  };
+  const notesOf = (version) => {
+    const html = renderToHtml(createElement(ProposeCard, { design, version, onClose: () => {}, onDone: () => {} }));
+    const box = html.match(/<textarea[^>]*>([\s\S]*?)<\/textarea>/);
+    assert.ok(box, 'the What changes, and why box is drawn');
+    return box[1];
+  };
+  assert.equal(notesOf(2), 'Both lists drawn in full', 'the version filed has a note');
+  assert.equal(notesOf(3), 'Both lists drawn in full', 'a version with no note falls back to the newest earlier one');
+  assert.equal(notesOf(1), '', 'the capture is skipped: it is the screen as it is now, not a change');
+});
+
 test('Messages draws the pane for a design thread, and the bot\'s new thread opens one', () => {
   const index = read('frontend/src/features/messages/index.tsx');
   assert.match(index, /const designOpen = !!designRootId && isDesignRoot\(designRoot\);/);

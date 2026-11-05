@@ -3964,11 +3964,11 @@
     "description": "Drops the pin being placed and its words."
   },
   "design.pane.propose": {
-    "text": "Propose it",
+    "text": "Request it",
     "description": "Button in the design pane that opens the card for filing the design as a public request."
   },
   "design.pane.proposed": {
-    "text": "Proposed as request #{{number}}",
+    "text": "Filed as request #{{number}}",
     "description": "Link in the design pane once the design was filed: opens the request it became."
   },
   "design.pane.frameTitle": {
@@ -4076,48 +4076,48 @@
     "description": "On a phone, in a design thread's header: switches from the thread to the design's preview."
   },
   "design.propose.heading": {
-    "text": "Propose this design",
+    "text": "Request this design",
     "description": "Heading of the card that files the design as a request."
   },
   "design.propose.warning": {
     "text": "This files a public request on {{project}} under your name. Its plan shows the first version and version {{version}} side by side, and anyone who can see the project can see them. Check they show nothing private, such as names, messages or numbers. This thread stays private.",
-    "description": "Warning in the Propose it card, before anything is filed: what becomes public."
+    "description": "Warning in the Request it card, before anything is filed: what becomes public."
   },
   "design.propose.defaultTitle": {
     "text": "Design: {{title}}",
-    "description": "The request's title the Propose it card starts with: the screen's name after \"Design:\"."
+    "description": "The request's title the Request it card starts with: the screen's name after \"Design:\"."
   },
   "design.propose.titleLabel": {
     "text": "Title",
-    "description": "Label of the request title field in the Propose it card."
+    "description": "Label of the request title field in the Request it card."
   },
   "design.propose.notesLabel": {
     "text": "What changes, and why",
-    "description": "Label of the notes field in the Propose it card; the notes become the request's description."
+    "description": "Label of the notes field in the Request it card; the notes become the request's description."
   },
   "design.propose.send": {
     "text": "File the request",
-    "description": "Submit button of the Propose it card."
+    "description": "Submit button of the Request it card."
   },
   "design.propose.cancel": {
     "text": "Cancel",
-    "description": "Closes the Propose it card without filing."
+    "description": "Closes the Request it card without filing."
   },
   "design.propose.failed": {
     "text": "It couldn't be filed just now. Try again in a minute.",
-    "description": "Shown in the Propose it card when filing failed for a reason that was not said."
+    "description": "Shown in the Request it card when filing failed for a reason that was not said."
   },
   "design.propose.headingOn": {
     "text": "Post this design as a plan",
-    "description": "Heading of the design pane's Propose it card when the design's thread is about a request (a filed issue): it posts the design on that request as the person's plan."
+    "description": "Heading of the design pane's Request it card when the design's thread is about a request (a filed issue): it posts the design on that request as the person's plan."
   },
   "design.propose.warningOn": {
     "text": "This posts version {{version}} as your plan on request #{{number}} on {{project}}, under your name, where anyone who can see the project can see it. Check it shows nothing private, such as names, messages or numbers. This thread stays private.",
-    "description": "Warning in the design pane's Propose it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
+    "description": "Warning in the design pane's Request it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
   },
   "design.propose.sendOn": {
     "text": "Post it as a plan",
-    "description": "Submit button of the design pane's Propose it card when the thread is about a request: posts the design on it as the person's plan."
+    "description": "Submit button of the design pane's Request it card when the thread is about a request: posts the design on it as the person's plan."
   },
   "design.pane.postedOn": {
     "text": "Posted as a plan on request #{{number}}",
@@ -4268,8 +4268,8 @@
     "description": "Words sent to Homeroom bot as the person's own message when they pick the screen as it is today on the card that compares versions of a design."
   },
   "botCards.compare.propose": {
-    "text": "Propose version {{version}}",
-    "description": "Button on the card that compares versions of a design, once a version was picked: opens the design's Propose it card for that version."
+    "text": "Request version {{version}}",
+    "description": "Button on the card that compares versions of a design, once a version was picked: opens the design's Request it card for that version."
   },
   "botCards.compare.failed": {
     "text": "That didn't work just now. Try again in a minute.",
