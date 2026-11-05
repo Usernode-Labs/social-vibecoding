@@ -130,6 +130,11 @@
       "id": "allow-copy-request-dm-action",
       "sha256": "99530db4c42ba06f4e2f607e04631d5583d81f753e301853143868cbfa4ee982",
       "schemaSha256": "e525ebc35b733513ecaccbb5997eace8bc70353bbe38e60770f6868054a1b743"
+    },
+    {
+      "id": "app-activity-user-date-index",
+      "sha256": "a5da296832843e71c0fbae15b3cccca789e4bf2874159c5a296390d9e6eb3cdf",
+      "schemaSha256": "9b8b46e89beaca6e658653f11f52fcc8c76a3de1e408b05af072cf31980d9219"
     }
   ]
 }

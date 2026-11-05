@@ -124,6 +124,8 @@ function mockPool(state) {
       const sql = collapse(raw);
       calls.push({ sql, params });
       if (sql.includes('AS direct_kudos')) return { rows: [state.counts || {}] };
+      if (sql.includes('AS apps_opened')) return { rows: [{ apps_opened: state.appsOpened || 0 }] };
+      if (sql.includes('LEFT JOIN app_activity')) return { rows: state.activityDays || WEEK };
       if (sql.includes("cs.status = 'merged' AND cs.live_at IS NOT NULL ORDER BY cs.merged_at")) return { rows: state.contributions || [] };
       if (sql.includes('FROM apps WHERE self_hosted = TRUE')) return { rows: state.selfApp ? [state.selfApp] : [] };
       if (sql.includes('FROM seasons')) return { rows: state.season ? [state.season] : [] };
@@ -136,6 +138,9 @@ function mockPool(state) {
     },
   };
 }
+
+const WEEK = ['2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05']
+  .map((day) => ({ day, seconds: '0' }));
 
 function makeApp(state, { user, env } = {}) {
   const pool = mockPool(state);
@@ -213,3 +218,69 @@ test('?demo=1 in staging fills an empty Me from the merged mocks', async () => {
   assert.equal(body.demo, true);
   assert.equal(body.contributions.length, profile.DEMO_CONTRIBUTIONS.length);
 });
+
+// ─── The "This week" card's numbers (#5626) ─────────────────────────────
+
+test('the week is shaped oldest first, its total added up, and pg\'s bigint read as a number', () => {
+  const rows = WEEK.map((row, i) => ({ day: row.day, seconds: String(i * 60) }));
+  const activity = profile.shapeActivity(rows, { apps_opened: 2 });
+  assert.equal(activity.days.length, 7);
+  assert.deepEqual(activity.days[0], { date: '2026-10-30', seconds: 0 });
+  assert.deepEqual(activity.days[6], { date: '2026-11-05', seconds: 360 });
+  assert.equal(activity.totalSeconds, 1260);
+  assert.equal(activity.appsOpened, 2);
+});
+
+test('the summary carries the session user\'s week, and nothing can name another person', async () => {
+  const { app, pool } = makeApp({
+    counts: {}, appsOpened: 3,
+    activityDays: WEEK.map((row, i) => ({ ...row, seconds: i === 6 ? '90' : '0' })),
+  }, { user: USER });
+  const { body } = await get(app, '/api/me/summary?user_id=99&username=someone');
+  assert.equal(body.activity.totalSeconds, 90);
+  assert.equal(body.activity.appsOpened, 3);
+  assert.ok(!body.activity.demo);
+  const reads = pool.calls.filter((c) => /app_activity/.test(c.sql));
+  assert.equal(reads.length, 2);
+  for (const c of reads) assert.deepEqual(c.params, [7], 'the SESSION user alone');
+});
+
+test('both reads lead with the user and count UTC days', () => {
+  for (const sql of [profile.SUMMARY_ACTIVITY_DAYS_SQL, profile.SUMMARY_ACTIVITY_APPS_SQL]) {
+    assert.match(sql, /user_id = \$1/);
+    assert.match(sql, /CURRENT_TIMESTAMP AT TIME ZONE 'UTC'/);
+  }
+  assert.match(collapse(profile.SUMMARY_ACTIVITY_APPS_SQL), /e\.event_type = 'dapp_opened'/);
+  const manifest = JSON.parse(read('src/db/migrations/manifest.json'));
+  assert.ok(manifest.migrations.some((m) => m.id === 'app-activity-user-date-index'), 'a tracked migration');
+  assert.match(collapse(read('src/db/migrations/app-activity-user-date-index.sql')),
+    /CREATE INDEX IF NOT EXISTS idx_app_activity_user_date ON app_activity\(user_id, date\)/);
+});
+
+test('?demo=1 fills an empty week on the read\'s own dates, and never covers real time or apps', () => {
+  const empty = profile.shapeActivity(WEEK, { apps_opened: 0 });
+  const demo = profile.withDemoActivity(empty);
+  assert.equal(demo.demo, true);
+  assert.deepEqual(demo.days.map((d) => d.date), WEEK.map((row) => row.day));
+  assert.deepEqual(demo.days.map((d) => d.seconds / 60), profile.DEMO_ACTIVITY_MINUTES);
+  assert.equal(demo.totalSeconds, 220 * 60);
+  assert.equal(demo.appsOpened, 6);
+  const timed = { ...empty, totalSeconds: 5 };
+  assert.equal(profile.withDemoActivity(timed), timed, 'REAL DATA WINS');
+  const opened = { ...empty, appsOpened: 1 };
+  assert.equal(profile.withDemoActivity(opened), opened, 'REAL DATA WINS');
+});
+
+test('the week\'s overlay is staging\'s alone, and independent of the merged mocks', async () => {
+  const production = makeApp({ counts: {}, selfApp: SELF_APP }, { user: USER, env: 'production' });
+  assert.equal((await get(production.app, '/api/me/summary?demo=1')).body.activity.totalSeconds, 0);
+  // Real merged work makes withDemoSummary stand aside; the week still fills.
+  const staging = makeApp({
+    counts: { merged: 2 }, selfApp: SELF_APP,
+    contributions: [{ session_id: 9, pr_title: 'A', merged_at: '2026-09-01T00:00:00Z', app_slug: 'a', app_name: 'A', kudos: 0 }],
+  }, { user: USER, env: 'staging' });
+  const { body } = await get(staging.app, '/api/me/summary?demo=1');
+  assert.ok(!body.demo, 'the real merged work stands');
+  assert.equal(body.activity.demo, true);
+});
+
