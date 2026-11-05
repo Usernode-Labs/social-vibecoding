@@ -308,8 +308,9 @@ async function saveCheckedTranslation(pool, kind, id, locale, fields, origin, { 
   const f = (name) => (fields && fields[name] != null ? String(fields[name]) : '');
   return inTransaction(pool, async (client) => {
     if (kind === 'template') {
-      const { rows: [row] } = await client.query(
-        `SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL${requireLive ? ' FOR SHARE' : ''}`, [id]);
+      const { rows: [row] } = requireLive
+        ? await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [id])
+        : await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL', [id]);
       if (!row) throw fail('not_found', 'That version does not exist');
       if (requireLive && row.status !== 'live') throw fail('conflict', 'That version is no longer live');
       const layout = row.layout_family_id == null ? null : await liveLayout(client, row.layout_family_id);
