@@ -463,6 +463,17 @@ test('what a change\'s update came to, in its own words when no model answers', 
   assert.deepEqual(voice.mustSay({ action: 'revise', moved: true, planVersion: 2 }), [
     'Its plan was updated to match (version 2).',
   ]);
+  // #6347: the description is reworded by the same update, and said so; a
+  // reword that failed is said plainly, and never as something to ask for.
+  assert.deepEqual(voice.mustSay({ action: 'revise', moved: true, descriptionReworded: true }), [
+    'Its description was reworded to match: say so.',
+  ]);
+  assert.deepEqual(voice.mustSay({ action: 'revise', moved: true, descriptionStale: true }), [
+    'Its description could not be reworded, so it still describes the earlier version: say so.',
+  ]);
+  for (const outcome of [{ descriptionReworded: true }, { descriptionStale: true }]) {
+    assert.doesNotMatch(voice.mustSay({ action: 'revise', moved: true, ...outcome }).join(' '), /ask you here to reword/);
+  }
   for (const action of ['revise', 'answer', 'ask', 'person', 'failed', 'gone']) {
     const text = voice.plainReport({ action, moved: true, summary: 'x — y', reply: 'a — b', why: 'c' });
     assert.doesNotMatch(text, /—|Homeroom bot/, action);

@@ -167,9 +167,10 @@ test('#6263: a revise turn\'s DESCRIPTION block is the new description, and neve
   assert.equal(out.rest, '# Plan\n\nDo it.', 'the plan is what is left, never the description');
   assert.equal(followup.planOutOf(raw), '# Plan\n\nDo it.');
   assert.equal(followup.descriptionOut('```json\n{"action":"revise","reply":"ok"}\n```').description, null, 'no block, no description');
-  // The revise prompt asks for it on a behaviour change.
-  assert.match(followup.followUpPrompt({ seed: 'x', canRevise: true, planFormat: 'the plan format' }),
-    /between `DESCRIPTION` and `END DESCRIPTION` lines before the JSON block/);
+  // The revise prompt requires it whenever the update changes what people see.
+  const prompt = followup.followUpPrompt({ seed: 'x', canRevise: true, planFormat: 'the plan format' });
+  assert.match(prompt, /between `DESCRIPTION` and `END DESCRIPTION` lines before the JSON block/);
+  assert.match(prompt, /you must also write/);
 });
 
 test('#4612: revisedText names the new plan version, and leaves the cleared votes to the platform', () => {
@@ -177,10 +178,14 @@ test('#4612: revisedText names the new plan version, and leaves the cleared vote
   assert.match(withPlan, /Its plan is updated to match: version 2 is in the change's discussion\.$/);
   assert.doesNotMatch(withPlan, /approvals/);
   assert.doesNotMatch(followup.revisedText({ summary: 's', reply: 'r' }), /Its plan is updated/, 'no version, no line');
+  assert.match(followup.revisedText({ summary: 's', reply: 'r', descriptionReworded: true }),
+    /Its description is reworded to match\.$/,
+    '#6347: the update says the description now matches');
   assert.match(followup.revisedText({ summary: 's', reply: 'r', descriptionStale: true }),
-    /Its description still describes the earlier version\. Ask me here to reword it\.$/,
-    '#6263: an out-of-date description is said where the update is');
-  assert.doesNotMatch(followup.revisedText({ summary: 's', reply: 'r' }), /description still describes/, 'only when stale');
+    /I could not reword its description, so it still describes the earlier version\.$/,
+    '#6347: a description that could not be rewritten is said plainly');
+  assert.doesNotMatch(followup.revisedText({ summary: 's', reply: 'r', descriptionStale: true }), /Ask me here/, 'nobody is asked to request a reword');
+  assert.doesNotMatch(followup.revisedText({ summary: 's', reply: 'r' }), /description/, 'only when reworded or stale');
   const texts = [withPlan, followup.revisedText({ summary: 's', reply: 'r', planVersion: 12 })];
   for (const t of texts) assert.ok(!/—/.test(t) && !/PR #|proposal/.test(t), t);
 });
@@ -588,15 +593,30 @@ test('#6263: a revise that changes what the change does rewrites its description
     },
   });
   h.deps.sessions.persistScoutPublication = async () => ({ specVersion: 2 });
+  const generated = [];
+  h.deps.llm = { async generateRevisedDescription(args) { generated.push(args); return { description: 'Not used' }; } };
   const out = await run(t, h);
   assert.equal(out.verdict, 'revise');
+  assert.equal(generated.length, 0, '#6347: the block is written, so no second writing step');
   assert.equal(writes.length, 1, 'the description is written in the same update');
   assert.equal(writes[0].input.description, 'The dark mode background is #000 now.');
   assert.equal(writes[0].userId, BOT.id);
   assert.doesNotMatch(h.calls.posts[0].text, /description still describes/, 'written, so not said to be stale');
+  assert.match(h.calls.posts[0].text, /Its description is reworded to match\.$/);
 });
 
-test('#6263: a revise with no new description marks the summary stale, and the update message says so', async (t) => {
+test('#6347: a revise with no new description writes one itself, and says it was reworded', async (t) => {
+  const editMod = require('../src/services/proposal-description-edit');
+  const realEdit = editMod.edit;
+  const realRead = editMod.readEditable;
+  t.after(() => { editMod.edit = realEdit; editMod.readEditable = realRead; });
+  const writes = [];
+  const generated = [];
+  editMod.readEditable = async () => ({ id: 5001, pr_summary_input_version: 0, pr_summary_md: 'The dark mode background is #09090b.' });
+  editMod.edit = async (args) => {
+    writes.push(args);
+    return { status: 200, body: { description: args.input.description, version: 1, prBodyStatus: 'synced' } };
+  };
   const h = harness({
     comments: [{ author: 'evan', body: 'Make it #000 and call it Darker', createdAt: '2026-09-26T11:30:00Z' }],
     result: {
@@ -605,12 +625,47 @@ test('#6263: a revise with no new description marks the summary stale, and the u
     },
   });
   h.deps.sessions.persistScoutPublication = async () => ({ specVersion: 2 });
+  h.deps.llm = {
+    async generateRevisedDescription(args) {
+      generated.push(args);
+      return { description: 'The dark mode background is #000 now.' };
+    },
+  };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.equal(generated.length, 1, 'one small step writes the description the turn left out');
+  assert.equal(generated[0].previous, 'The dark mode background is #09090b.');
+  assert.equal(generated[0].title, 'Darker dark mode');
+  assert.equal(writes.length, 1, 'the written description is saved through the author edit');
+  assert.equal(writes[0].input.description, 'The dark mode background is #000 now.');
+  assert.ok(!h.calls.queries.some((q) => /SET pr_summary_stale = TRUE/.test(q.s)), 'nothing is left out of date');
+  assert.match(h.calls.posts[0].text, /Its description is reworded to match\.$/);
+  assert.doesNotMatch(h.calls.posts[0].text, /Ask me here/);
+});
+
+test('#6347: a description that cannot be written is marked stale, and the reply says so without asking', async (t) => {
+  const editMod = require('../src/services/proposal-description-edit');
+  const realEdit = editMod.edit;
+  const realRead = editMod.readEditable;
+  t.after(() => { editMod.edit = realEdit; editMod.readEditable = realRead; });
+  editMod.readEditable = async () => ({ id: 5001, pr_summary_input_version: 0, pr_summary_md: 'The dark mode background is #09090b.' });
+  editMod.edit = async () => ({ status: 500, body: {} });
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000 and call it Darker', createdAt: '2026-09-26T11:30:00Z' }],
+    result: {
+      lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","plan":true}\n```',
+      pushOk: true, sha: NEW_HEAD,
+    },
+  });
+  h.deps.sessions.persistScoutPublication = async () => ({ specVersion: 2 });
+  h.deps.llm = { async generateRevisedDescription() { throw new Error('offline'); } };
   const out = await run(t, h);
   assert.equal(out.verdict, 'revise');
   const stale = h.calls.queries.find((q) => /SET pr_summary_stale = TRUE/.test(q.s));
   assert.ok(stale, 'the out-of-date summary is marked so the page shows it');
   assert.deepEqual(stale.params, [5001]);
-  assert.match(h.calls.posts[0].text, /Its description still describes the earlier version\. Ask me here to reword it\./);
+  assert.match(h.calls.posts[0].text, /I could not reword its description, so it still describes the earlier version\.$/);
+  assert.doesNotMatch(h.calls.posts[0].text, /Ask me here/);
 });
 
 test('#4612: a revise that says the plan changed publishes the next spec version, the card and the issue copy', async (t) => {
