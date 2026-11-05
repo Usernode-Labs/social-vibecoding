@@ -90,6 +90,7 @@ import { SearchIcon } from '@/components/ui/icons';
 import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
+import { ContinueCard } from './continue-card';
 import { CreateCompact } from './create-tile';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
@@ -227,6 +228,8 @@ export function HomeScreen() {
             there.
         */}
         <WidgetStrip />
+        {/* The change you last worked on, or nothing: ./continue-card.tsx. */}
+        <ContinueCard />
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────
 
