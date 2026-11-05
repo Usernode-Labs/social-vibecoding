@@ -142,7 +142,7 @@ test('a change of your own that waits on your fix is Needs you\'s, with Fix it',
   const { needsYou, whyOf } = loadTsx(MODEL);
   const rows = needsYou([], {
     private: [],
-    needs: [{ threadId: 9, number: 51, kind: 'work', title: 'Frost alerts', app: garden, change: { id: 3, number: 52 }, href: '#app/garden/dev/issues/51', group: 'needs', what: 'fix_yours', at: null }],
+    needs: [{ threadId: 9, number: 51, kind: 'work', title: 'Frost alerts', app: garden, change: { id: 3, number: 52 }, href: '#app/garden/dev/issues/51', group: 'needs', work: { stage: 'checking', why: null, reason: null, line: { code: 'checks_failing' }, since: null }, fixYours: true, at: null }],
     next: [], waiting: [], live: [],
   });
   assert.equal(rows[0].key, 'fix_yours:9');

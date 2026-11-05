@@ -329,10 +329,12 @@ test('#3489, 5 Nov 2026: For you\'s Your work row opens the Homeroom bot tab nar
   const { deskOf, deskWords, deskLine } = loadTsx('frontend/src/features/ai/desk.ts');
   const app = { slug: 'garden', name: 'Garden' };
   const other = { slug: 'other', name: 'Other' };
-  const thread = (id, what, group, a = app) => ({ threadId: id, number: id, kind: 'work', title: `T${id}`, app: a, change: null, href: `#app/${a.slug}/dev/issues/${id}`, group, what, at: null });
+  // Each row where its work state puts it (lib/work-state.ts).
+  const thread = (id, work, group, a = app) => ({ threadId: id, number: id, kind: 'work', title: `T${id}`, app: a, change: null, href: `#app/${a.slug}/dev/issues/${id}`, group, work: { why: null, reason: null, line: null, since: null, ...work }, at: null });
   const d = deskOf('garden', [{ kind: 'proposal', id: 1, number: 40, title: 'Dark mode', app }], {
-    private: [], needs: [thread(2, 'plan', 'needs')], next: [thread(3, 'building', 'next'), thread(4, 'building', 'next', other)],
-    waiting: [thread(5, 'vote', 'waiting')], live: [],
+    private: [], needs: [thread(2, { stage: 'waiting_for_you', why: 'plan' }, 'needs')],
+    next: [thread(3, { stage: 'building' }, 'next'), thread(4, { stage: 'building' }, 'next', other)],
+    waiting: [thread(5, { stage: 'up_for_vote' }, 'waiting')], live: [],
   });
   assert.deepEqual([d.ready, d.needs, d.progress, d.waiting, d.first], [true, 2, 1, 1, 'Dark mode'], 'this project\'s share, the first thing owed first');
   assert.deepEqual(deskWords(d), { id: 'project:workshop.desk.both', values: { needs: 2, progress: 1 } });
