@@ -1,39 +1,29 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import * as api from './api';
-import { POLL_MS } from './bot-activity-store';
 import { WORK_CHANGED_EVENT, jobName, jobTitle } from './bot-shared';
 import type { ConversationMessage, HomeroomBotWork } from './types';
 
 export { WORK_CHANGED_EVENT, jobName, jobTitle };
 
 /*
- * #3692: what the Homeroom bot is doing for the viewer, read from the
- * platform's records of its work for them and nobody else (services/
- * homeroom-bot-tray.js): Now, Needs you and History. One request, one
- * story: drawn as the "Your requests" strip under the chat's header
- * (./bot-strip.tsx), which replaced the Activity disc, its panel of tiles
- * and the header's long status line.
+ * Where each of the viewer's requests stands: one track per request (GET
+ * /api/ai/tracks, each its stored work state with what its card draws:
+ * services/work-state.js, services/homeroom-bot-track.js). A request's
+ * thread marks its tries from it, a private thread's bar draws it, a first
+ * version's news line in the chat says where it stands, and the Messages
+ * list's line for the bot's chat counts it.
  *
- * WHEN IT READS AGAIN. The same realtime Messages already runs on: the
- * bot's news landing in this DM (a new message from it, which the store
- * reloads the thread for; the thread hands its newest id down as `newsKey`),
- * and the live loop starting or finishing work for this person, which
- * reaches every one of their tabs as `homeroom_bot_work_changed` and which
- * public/js/app.js turns into the window event below (as it does after a
- * socket reconnects). Like every conversation event, it carries no data: the
- * strip re-reads its endpoint under the viewer's own session.
+ * WHEN IT READS AGAIN (5 Nov 2026: no timer). When a request's stage moves,
+ * the server pushes `work_state` to everyone who may view its project, and
+ * public/js/app.js turns that, `homeroom_bot_work_changed` and a socket that
+ * reconnected into the window event below; the bot's news landing in its
+ * chat reads it too. Every read asks the server (`fresh`), never the service
+ * worker's offline copy, but the first, which is a fine first paint that the
+ * worker's own late correction reads again.
  *
- * #8 (WP3): every one of those re-reads asks the server (`fresh`), never the
- * service worker's offline copy, which on a slow answer was the state from
- * before the news; the worker's own late correction (store.ts resync) reads
- * it again too; and while the bot has work in hand and the page is in view,
- * it reads again every POLL_MS, as the activity cards do, for the steps the
- * loop announces nothing for. Only opening the DM keeps the ordinary read.
- *
- * OWNERSHIP. Nothing here draws: the strip is React's, inside the thread
- * pane React already owns. Nothing is read until the sync's effect runs, so
- * a first render matches whatever was drawn before.
+ * OWNERSHIP. Nothing here draws. Nothing is read until the sync's effect
+ * runs, so a first render matches whatever was drawn before.
  */
 
 // ── The store: what was read ───────────────────────────
@@ -66,7 +56,7 @@ export function useBotWork(): BotWorkState {
 // Only the newest read may land: an older one finishing late is dropped.
 let seq = 0;
 
-/** Read the tray again. `fresh` (every read but the DM opening): past the worker's offline copy. */
+/** Read the tracks again. `fresh` (every read but the first): past the worker's offline copy. */
 export function loadBotWork({ fresh = true }: { fresh?: boolean } = {}): void {
   const mine = ++seq;
   api.getHomeroomBotWork({ fresh }).then((work) => {
@@ -81,6 +71,15 @@ function resetBotWork(): void {
   publish(INITIAL);
 }
 
+// A burst of pushes (a vote is a few within a second) is one read.
+const GATHER_MS = 400;
+let gather: number | null = null;
+function loadSoon(): void {
+  if (typeof window === 'undefined') return;
+  if (gather !== null) return;
+  gather = window.setTimeout(() => { gather = null; loadBotWork(); }, GATHER_MS);
+}
+
 /** The id of the newest message the bot sent here: its news moves its work on. */
 export function newestBotMessageId(messages: ConversationMessage[]): number | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -91,21 +90,19 @@ export function newestBotMessageId(messages: ConversationMessage[]): number | nu
 }
 
 /**
- * Keeps the strip in a conversation with the bot current (see the note at
- * the top). `newsKey` is the newest message the bot sent in this DM.
+ * Keeps the tracks current in a conversation with the bot (see the note at
+ * the top). `newsKey` is the newest message the bot sent in this chat.
  * Renders nothing.
  */
 export function BotWorkSync({ conversationId, newsKey }: { conversationId: number; newsKey: number | null }) {
-  const { work } = useBotWork();
-  const working = !!work && work.now.length > 0;
   // The newest bot message already accounted for. Null until this
   // conversation's transcript has drawn one: the first value it shows is
   // what was there when the read below was made, not news.
   const seenNews = useRef<number | null>(null);
 
-  // Another conversation is another strip: it reads afresh. The one
-  // ordinary read: what the worker kept is a fine first paint, and its late
-  // correction reads it again (store.ts resync).
+  // Another conversation reads afresh. The one ordinary read: what the
+  // worker kept is a fine first paint, and its late correction reads it
+  // again (store.ts resync).
   useEffect(() => {
     resetBotWork();
     seenNews.current = null;
@@ -117,25 +114,19 @@ export function BotWorkSync({ conversationId, newsKey }: { conversationId: numbe
     if (newsKey === null || seenNews.current === newsKey) return;
     const first = seenNews.current === null;
     seenNews.current = newsKey;
-    if (!first) loadBotWork();
+    if (!first) loadSoon();
   }, [newsKey]);
 
+  useWorkChanged();
+  return null;
+}
+
+/** Reads the tracks again when a request's stage moves (the window event), for as long as it is mounted. */
+export function useWorkChanged(active = true): void {
   useEffect(() => {
-    const changed = () => loadBotWork();
+    if (!active) return undefined;
+    const changed = () => loadSoon();
     window.addEventListener(WORK_CHANGED_EVENT, changed);
     return () => window.removeEventListener(WORK_CHANGED_EVENT, changed);
-  }, []);
-
-  // #8 (WP3): while the bot has work in hand, and only while the page is in
-  // view, again every POLL_MS: the plan starting after the read, a check
-  // finishing, are steps nothing announces.
-  useEffect(() => {
-    if (!working) return undefined;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') loadBotWork();
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [working]);
-
-  return null;
+  }, [active]);
 }

@@ -3505,10 +3505,13 @@ const App = {
             window.UsernodeReact?.messages?.handleEvent?.(data);
             break;
           case 'homeroom_bot_work_changed':
+          case 'work_state':
             // #3692: the Homeroom bot started or finished work for this
-            // person. The activity tray in its DM (React, features/messages/
-            // bot-work.tsx) re-reads its own endpoint; the event carries
-            // nothing, and nothing here writes the DOM.
+            // person; 5 Nov 2026: or a request's or a change's stage moved
+            // (services/work-state.js). The tracks a request's thread and
+            // the chat draw (React, features/messages/bot-work.tsx) are read
+            // again under the viewer's own session; nothing here writes the
+            // DOM. The Homeroom bot tab hears the same push (features/ai/live.ts).
             window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
             break;
           case 'app_version_changed':

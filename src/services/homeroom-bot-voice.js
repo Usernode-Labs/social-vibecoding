@@ -1887,7 +1887,7 @@ async function updateChange(pool, ctx, args) {
   if (!asked) return { ok: false, error: 'Could not queue it just now. Nothing was queued.' };
   ctx.revised = true;
   ctx.workBusy = true;
-  require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+  require('./bot-work-changed').noteWorkChanged(user.id, deps);
   return {
     ok: true,
     change: { change: Number(change.id), pr: change.pr_number || null, title: change.title || null },

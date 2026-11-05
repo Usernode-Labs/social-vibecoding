@@ -104,7 +104,6 @@ async function debitBuildOnce(steps, key, totalUsd, debit) {
 
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
-function tray() { return require('./homeroom-bot-tray'); }
 // #3736: and the activity card that follows one piece of work there.
 function activity() { return require('./homeroom-bot-activity'); }
 // How a project's first version is built: the current configuration, its

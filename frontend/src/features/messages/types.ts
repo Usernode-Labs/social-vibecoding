@@ -1,4 +1,5 @@
 import type { ReleaseOutlook } from '../../lib/release-eta';
+import type { WorkState } from '../../lib/work-state';
 import type { UnreadMark } from './unread-anchor';
 
 /**
@@ -396,28 +397,15 @@ export interface HomeroomBotPastJob extends HomeroomBotJob {
   at: string | null;
 }
 
+/**
+ * The viewer's requests, one track each (GET /api/ai/tracks: each request's
+ * stored work state with what its card draws, services/homeroom-bot-track.js).
+ */
 export interface HomeroomBotWork {
-  now: HomeroomBotCurrentJob[];
-  needsYou: HomeroomBotPastJob[];
-  history: HomeroomBotPastJob[];
-  /**
-   * 16 Oct 2026: one track per request (services/homeroom-bot-track.js),
-   * which every surface draws. Absent from an older server's answer.
-   */
-  tracks?: BotTrack[];
+  tracks: BotTrack[];
 }
 
-/**
- * Where a request the Homeroom bot has is, as one track every surface draws
- * the same way (services/homeroom-bot-track.js). A loop: queued, planning,
- * building, checks, vote, going live, live, going back to `waiting` (on the
- * person) for a question and to `building` for its next try; or held at a
- * limit, stopped, done another way, or closed. Codes only: the client words
- * them (./bot-track.tsx).
- */
-export type BotTrackState =
-  | 'queued' | 'planning' | 'waiting' | 'building' | 'checks' | 'vote' | 'going_live' | 'live'
-  | 'held' | 'stopped' | 'done_elsewhere' | 'closed';
+/** The five steps a request's track bar draws (services/homeroom-bot-track.js). */
 export type BotTrackStep = 'plan' | 'build' | 'checks' | 'vote' | 'live';
 
 export interface BotTrack {
@@ -430,12 +418,16 @@ export interface BotTrack {
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;
-  state: BotTrackState;
+  /**
+   * Where it stands: its stored work state (lib/work-state.ts), the same
+   * one every screen draws (5 Nov 2026).
+   */
+  work: WorkState;
   /** The step of the five its bar lights, or null for one before them all. */
   step: BotTrackStep | null;
-  /** Why it is where it is, as a code (bot.track.why.*), or null. */
-  why: string | null;
   waitingOn: 'you' | 'group' | null;
+  /** Why a build that did not finish stopped, as a code (homeroom-bot-track.js buildStopWhy). */
+  cause?: string;
   /**
    * Who a track waiting on "you" waits on, by username, where it is drawn
    * for somebody else (a request's page: homeroom-bot-track.js forViewer).

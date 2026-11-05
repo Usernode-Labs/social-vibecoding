@@ -608,6 +608,47 @@ function unfiledPrivate(privates, listed) {
 }
 
 /**
+ * The viewer's own requests, one track each (services/homeroom-bot-track.js:
+ * its stored work state with what its card draws), newest moved first: what
+ * a request's thread, a private thread's bar and the chat with the bot draw
+ * (GET /api/ai/tracks). A project they can no longer view is left out,
+ * whatever the records say. Never anybody else's: it takes only `user`.
+ */
+async function tracksFor(pool, { user, limit = 100, deps = {} }) {
+  const rows = (await workState.forRequester(pool, user.id, { limit }))
+    .filter((r) => r.kind === 'request' && r.issueNumber > 0);
+  if (!rows.length) return { tracks: [] };
+  const appIds = [...new Set(rows.map((r) => r.appId))];
+  const { rows: apps } = await pool.query(
+    `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at,
+            icon_image_id, icon_emoji
+       FROM apps WHERE id = ANY($1::int[])`,
+    [appIds],
+  );
+  const appAccess = deps.appAccess || require('./app-access');
+  const track = deps.track || require('./homeroom-bot-track');
+  const order = new Map(rows.map((r, i) => [`${r.appId}#${r.issueNumber}`, i]));
+  const tracks = [];
+  for (const app of apps) {
+    if (!(await appAccess.checkAppAccess(pool, app, user, 'view'))) continue;
+    const numbers = rows.filter((r) => r.appId === Number(app.id)).map((r) => r.issueNumber);
+    const found = await track.tracksForRequests(pool, { appId: Number(app.id), numbers });
+    for (const t of found.values()) {
+      tracks.push({
+        ...t,
+        iconUrl: app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null,
+        iconEmoji: app.icon_emoji || null,
+      });
+    }
+  }
+  tracks.sort((a, b) => (order.get(`${appIdOf(apps, a.appSlug)}#${a.issueNumber}`) ?? 0)
+    - (order.get(`${appIdOf(apps, b.appSlug)}#${b.issueNumber}`) ?? 0));
+  return { tracks };
+}
+
+const appIdOf = (apps, slug) => Number(apps.find((a) => a.slug === slug)?.id) || 0;
+
+/**
  * Everything the AI tab's main view lists for `user` beside the Needs you
  * feed: { private, needs, next, waiting, live }.
  */
@@ -786,6 +827,7 @@ module.exports = {
   unfiledPrivate,
   statesFor,
   viewerFacts,
+  tracksFor,
   workFor,
   threadSays,
   listsOf,

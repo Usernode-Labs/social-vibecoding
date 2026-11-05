@@ -5746,7 +5746,7 @@ async function startRequest(pool, ctx, args) {
     if (!went.ok) return { ok: false, error: 'Its plan stopped waiting just now, so nothing was started. Check request_detail for where it stands.' };
     ctx.started = name;
     ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
-    require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+    require('./bot-work-changed').noteWorkChanged(user.id, deps);
     return {
       ok: true,
       built: 'That was Build it: the plan they were shown goes ahead as written, and it was not planned again. Its build starts as soon as a builder is free.',
@@ -5796,7 +5796,7 @@ async function startRequest(pool, ctx, args) {
   });
   ctx.started = name;
   ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
-  require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+  require('./bot-work-changed').noteWorkChanged(user.id, deps);
   const after = await entryFor().catch(() => null);
   const left = goAhead
     ? { goAhead: 'Their go-ahead is recorded on this look: what your last look left for them is decided. Do not ask them for it again.' }
@@ -5857,7 +5857,7 @@ async function replanRequest(pool, ctx, args) {
   });
   ctx.started = name;
   ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
-  require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+  require('./bot-work-changed').noteWorkChanged(user.id, deps);
   return {
     ok: true,
     replanning: `The plan stopped waiting, and you plan it again next with what was asked here. The new plan comes here${requester?.username ? `, for @${requester.username} to say Build it` : ''}.`,
@@ -5973,7 +5973,7 @@ async function reviseProposal(pool, ctx, args) {
     if (!posted.ok) return { ok: false, error: `Could not send it: ${posted.why}. Nothing was queued.` };
     ctx.revised = true;
     ctx.cards.push({ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) });
-    require('./homeroom-bot-tray').noteWorkChanged(payer, deps);
+    require('./bot-work-changed').noteWorkChanged(payer, deps);
     return {
       ok: true,
       proposal: { proposal: Number(session.id), project: app.slug, projectName: name, number: issueNumber, title: session.title || null },
@@ -6452,7 +6452,7 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
     }
     if (!posted.ok) return failed(posted.why || 'refused', `I couldn't post it: ${posted.why}. Nothing was posted.`);
     await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n });
-    require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+    require('./bot-work-changed').noteWorkChanged(user.id, deps);
     return ack(revisingLine({ title: session.title, projectName: name, queued: posted.queued ?? null }), {
       objects: [{ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) }],
     });

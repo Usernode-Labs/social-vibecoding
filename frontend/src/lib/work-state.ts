@@ -164,6 +164,41 @@ export function asksRequester(state: WorkState | null | undefined): boolean {
   return !!state && (state.stage === 'waiting_for_you' || state.stage === 'stopped');
 }
 
+const WHYS: ReadonlySet<string> = new Set(['question', 'plan', 'decide', 'already_works', 'needs_detail']);
+const REASONS: ReadonlySet<string> = new Set(['build_failed', 'fix_stopped', 'look_failed', 'change_closed', 'stalled']);
+const MOVES: ReadonlySet<string> = new Set(['bot', 'requester', 'group', 'builder']);
+const CODE = /^[a-z_]{1,40}$/;
+
+/**
+ * Pure: a work state as the server sent it, field by field, or null for a
+ * stage this client does not know (drawn nowhere rather than guessed at).
+ */
+export function normalizeWorkState(input: unknown): WorkState | null {
+  const row = input && typeof input === 'object' ? input as Record<string, unknown> : null;
+  if (!row || !isStage(row.stage)) return null;
+  const text = (v: unknown) => (typeof v === 'string' ? v : '');
+  const num = (v: unknown) => (Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : undefined);
+  const lineIn = row.line && typeof row.line === 'object' ? row.line as Record<string, unknown> : null;
+  const code = text(lineIn?.code);
+  const line: WorkLine | null = lineIn && CODE.test(code) ? {
+    code,
+    ...(num(lineIn.place) ? { place: num(lineIn.place) } : {}),
+    ...(num(lineIn.round) ? { round: num(lineIn.round) } : {}),
+    ...(num(lineIn.of) ? { of: num(lineIn.of) } : {}),
+    ...(num(lineIn.failing) ? { failing: num(lineIn.failing) } : {}),
+    ...(text(lineIn.by) ? { by: text(lineIn.by).slice(0, 64) } : {}),
+    ...(text(lineIn.text) ? { text: text(lineIn.text).slice(0, 200) } : {}),
+  } : null;
+  return {
+    stage: row.stage,
+    why: WHYS.has(text(row.why)) ? text(row.why) as Why : null,
+    reason: REASONS.has(text(row.reason)) ? text(row.reason) as Reason : null,
+    line,
+    whoseMove: MOVES.has(text(row.whoseMove)) ? text(row.whoseMove) as WorkState['whoseMove'] : null,
+    since: text(row.since) || null,
+  };
+}
+
 /** A `work_state` push (services/work-state.js pushOf), as the socket delivers it. */
 export interface WorkStatePush {
   type: 'work_state';

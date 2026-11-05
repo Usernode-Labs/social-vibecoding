@@ -233,7 +233,7 @@ export function RequestTrackStrip({ track, number, href }: { track: BotTrack; nu
   const t = useMessages('messages');
   const line = trackShort(track);
   return (
-    <div className="messages-bot-note items-center gap-2 px-4 py-2" data-private-thread="track" data-private-track={track.state}>
+    <div className="messages-bot-note items-center gap-2 px-4 py-2" data-private-thread="track" data-private-track={track.work.stage}>
       <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-200" data-private-track-state="">{trackStateWord(track)}</span>
       <span className="min-w-0 flex-1 truncate" title={line}>{line}</span>
       <TrackBar track={track} className="w-16 shrink-0" />

@@ -91,50 +91,46 @@ function demoWaiting(now = Date.now()) {
 // ── What the bot has IN HAND or needs from the viewer on one project ──
 //
 // #5385: the Workshop's What's happening draws the bot's work on the
-// viewer's requests as it happens, in the Activity drawer's own words, so
-// the two cannot disagree. It reads the same per-request tracks the drawer
-// words (homeroom-bot-track.js, through homeroom-bot-tray.js workFor,
-// which is already keyed to the signed-in person and decides whose a
-// request is the bot's way), filtered to this project.
+// viewer's requests as it happens, in the stage words every screen uses, so
+// they cannot disagree. It reads the viewer's own tracks (ai-work.js
+// tracksFor: each request's stored work state, services/work-state.js,
+// keyed to the signed-in person), filtered to this project.
 
-/** The track states that are the bot's work in hand. */
-const BOT_IN_HAND = new Set(['queued', 'planning', 'building', 'checks', 'held']);
+/** The stages that are the bot's work in hand. */
+const BOT_IN_HAND = new Set(['reading', 'planning', 'building', 'checking']);
 // The most bot entries one board answer carries.
 const MAX_BOT = 20;
 
 /**
  * Pure: a track as a Workshop entry ({ number, waiting, track }), or null.
  * Only tracks on this project with a request number, never a first
- * version. Waiting on the viewer: state `waiting`, or failing checks
- * handed to a person. In hand: BOT_IN_HAND, less a hold a person has taken
- * (the bot leaves that request alone). Everything else — a change up for a
- * vote, going live, live, stopped, done elsewhere, closed — is null: once
- * the bot's build is a proposal, the rows that already draw it take over.
+ * version. Waiting on the viewer: its stage waits for them, or it
+ * stopped. In hand: BOT_IN_HAND, less one a person claimed (the bot leaves
+ * that request alone). Everything else (up for a vote, going live, live,
+ * closed) is null: once the bot's build is a proposal, the rows that
+ * already draw it take over.
  */
 function botEntryOf(track, slug) {
-  if (!track || track.appSlug !== slug) return null;
+  if (!track || track.appSlug !== slug || !track.work) return null;
   const number = Number(track.issueNumber);
   if (!Number.isInteger(number) || number <= 0 || track.firstVersion) return null;
-  const waiting = track.state === 'waiting' || (track.state === 'checks' && track.why === 'handed_over');
-  const inHand = !waiting && BOT_IN_HAND.has(track.state)
-    && !(track.state === 'held' && track.why === 'taken');
+  const { stage } = track.work;
+  const waiting = stage === 'waiting_for_you' || stage === 'stopped';
+  const inHand = !waiting && BOT_IN_HAND.has(stage) && track.work.line?.code !== 'claimed';
   if (!waiting && !inHand) return null;
   return { number, waiting, track };
 }
 
 /**
  * What the bot has in hand or needs from `user` on `app`, one entry per
- * request, in the tray's own order (Now, then Needs you), capped at
- * MAX_BOT. Never throws: a read that fails is nothing in hand, never a
- * failed board — `workFor` itself never throws either, but a caller's deps
- * might.
+ * request, the newest moved first, capped at MAX_BOT. Never throws: a
+ * read that fails is nothing in hand, never a failed board.
  */
 async function botWorkOnApp(pool, { app, user, deps = {} }) {
   const slug = app && app.slug;
   if (!slug || !user) return [];
   try {
-    const tray = deps.tray || require('./homeroom-bot-tray');
-    const work = await tray.workFor(pool, { user, deps });
+    const work = await (deps.aiWork || require('./ai-work')).tracksFor(pool, { user });
     const out = [];
     for (const track of work.tracks || []) {
       const entry = botEntryOf(track, slug);
@@ -163,7 +159,10 @@ function demoBotWork(app, now = Date.now()) {
   });
   return [
     { number: 900018, waiting: false, track: trackSvc.demoRequestTrack(app, 900018, null, now) },
-    { number: 900013, waiting: true, track: trackSvc.trackOf({ job: job(900013, { outcome: 'blocked', at: new Date(now - 90 * 60 * 1000).toISOString() }) }) },
+    { number: 900013, waiting: true, track: trackSvc.trackOf({
+      job: job(900013, { at: new Date(now - 90 * 60 * 1000).toISOString() }),
+      work: { stage: 'waiting_for_you', why: 'needs_detail', line: null, whoseMove: 'requester', since: new Date(now - 90 * 60 * 1000).toISOString() },
+    }) },
   ];
 }
 

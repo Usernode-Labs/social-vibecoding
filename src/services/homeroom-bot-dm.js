@@ -1942,7 +1942,7 @@ async function relayIssuePost({
     // newest news: a question about it is not waiting for an answer now.
     await closeOpenQuestions(pool, { userId: requester.userId, appId: app.id, issueNumber, ws })
       .catch((err) => log.warn('homeroom-bot-dm', 'Could not close an older question', { app: app.slug, issueNumber, err: err.message }));
-    require('./homeroom-bot-tray').noteWorkChanged(requester.userId);
+    require('./bot-work-changed').noteWorkChanged(requester.userId);
     // One story: in the request's thread, a quiet line.
     const line = shown ? await stepLine(pool, {
       bot, userId: requester.userId, app, issueNumber, context, content, card: shown, step: kind,
@@ -2640,7 +2640,7 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not move the card under the plan', { runId: Number(card.run_id), err: err.message });
   }
-  try { require('./homeroom-bot-tray').noteWorkChanged(user.id, deps); } catch { /* the tray re-reads on its own */ }
+  try { require('./bot-work-changed').noteWorkChanged(user.id, deps); } catch { /* the tray re-reads on its own */ }
   return { ok: true, choice: 'build', label: BUILD_IT };
 }
 
@@ -3837,7 +3837,7 @@ async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'chec
       );
     }
     if (sent?.messageId && !sent.duplicate) {
-      require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
+      require('./bot-work-changed').noteWorkChanged(requester.userId, deps);
       log.info('homeroom-bot-dm', 'Told the requester their change needs a look', {
         app: run.slug, issueNumber, why, sessionId: why === 'checks' ? id : null, runId: Number(run.run_id) || null,
       });
@@ -3988,7 +3988,7 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   await timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id, once: true, strict: !!deps.strict });
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.
-  if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
+  if (requester) require('./bot-work-changed').noteWorkChanged(requester.userId, deps);
   const settings = await settingsModule().readSettings(pool, { strict: !!deps.strict });
   // #4238: a new project's first version: the bot says so in its channel, once.
   if (requester?.firstVersion && !platform) await announceFirstVersion(pool, run, { live, deps });
@@ -4350,7 +4350,7 @@ async function noteRequestReply(pool, { appId, issueNumber, userId, chatMessageI
     });
     if (!settled.length) return { settled, line: null };
     try {
-      require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
+      require('./bot-work-changed').noteWorkChanged(requester.userId, deps);
     } catch { /* the tray re-reads on its own */ }
     // One quiet line, in the request's thread: theirs if they wrote it, else
     // who did. The thread hangs off the card, else off the ask it settled.
@@ -4442,7 +4442,7 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
     }
   }
   try {
-    require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+    require('./bot-work-changed').noteWorkChanged(user.id, deps);
   } catch { /* the tray re-reads on its own */ }
   try {
     await settingsModule().enqueueFront(pool, {
@@ -5469,7 +5469,7 @@ async function finishOnTryAgain(pool, config, { bot, user, target, message, deps
   });
   if (!out?.ok) return null;
   if (out.already) return (await reply(ALREADY_FINISHING_TEXT, out.app)) || { finishing: true, already: true };
-  try { require('./homeroom-bot-tray').noteWorkChanged(user.id, deps); } catch { /* the tray re-reads on its own */ }
+  try { require('./bot-work-changed').noteWorkChanged(user.id, deps); } catch { /* the tray re-reads on its own */ }
   return said || { finishing: true, sessionId: out.sessionId || null };
 }
 

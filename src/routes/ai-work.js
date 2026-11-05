@@ -94,6 +94,22 @@ function aiWorkRoutes(config = {}) {
     }
   });
 
+  // 5 Nov 2026: the viewer's own requests, one track each: where each stands
+  // (its stored work state) with what its card draws (services/ai-work.js
+  // tracksFor). A request's thread, a private thread's bar and the chat with
+  // the bot read it, again when a `work_state` push says a stage moved.
+  router.get('/api/ai/tracks', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      if (IS_STAGING && req.query.demo === '1') return res.json({ tracks: [] });
+      return res.json(await aiWork.tracksFor(pool, { user: req.user }));
+    } catch (err) {
+      log.error('ai-work', 'Failed to read the viewer\'s tracks', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #6262: opening a request's, a change's or a decision's thread marks it
   // read, from its page (public/js/group-chat.js mountThread) or from the
   // Homeroom bot page's list. Body: { thread_id } or { thread_type,

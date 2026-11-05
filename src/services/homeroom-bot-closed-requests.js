@@ -209,7 +209,7 @@ async function tellDoneElsewhere(pool, { appId, numbers, deps = {}, strict = fal
     );
     if (!bot) return 0;
     const dm = deps.dm || require('./homeroom-bot-dm');
-    const tray = deps.tray || require('./homeroom-bot-tray');
+    const tray = deps.workChanged || require('./bot-work-changed');
     for (const row of rows) {
       const n = Number(row.issue_number);
       const sent = await dm.sendDm(pool, {
@@ -476,7 +476,7 @@ async function announceClosed(pool, { repo, appId, appSlug, closed, watcher, dep
     log.warn('homeroom-bot-closed-requests', 'Cache bust / broadcast after closing request rows failed', { appId, err: err.message });
   }
   try {
-    const tray = deps.tray || require('./homeroom-bot-tray');
+    const tray = deps.workChanged || require('./bot-work-changed');
     const { rows } = await pool.query(
       'SELECT DISTINCT user_id FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = ANY($2::int[])',
       [appId, closed],

@@ -171,7 +171,7 @@ async function buildPlan(pool, { app, issueNumber, user, runId = null, answers =
   if (!went.ok) return { ok: false, status: 409, error: 'plan_gone' };
   await dmSvc.markPlanBuilt(pool, Number(run.id), { chosen: went.chosen, ws: deps.ws || null }).catch(() => {});
   if (!mine && requester?.username) await tellRequester(pool, { app, issueNumber, user, requester, deps });
-  try { require('./homeroom-bot-tray').noteWorkChanged(requester?.userId || user.id, deps); } catch { /* the tray re-reads on its own */ }
+  try { require('./bot-work-changed').noteWorkChanged(requester?.userId || user.id, deps); } catch { /* the tray re-reads on its own */ }
   log.info('homeroom-bot-public-plan', 'Build it, pressed on the request\'s page', {
     app: app.slug, issueNumber, runId: Number(run.id), byRequester: mine,
   });

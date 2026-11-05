@@ -183,7 +183,9 @@ export function suggestsOnly(actions: readonly HomeroomBotAction[]): boolean {
 }
 
 // #6153: where a request's track is once its change's vote is decided (bot-track.tsx).
-const VOTE_DECIDED: ReadonlySet<string> = new Set(['going_live', 'live', 'stopped', 'done_elsewhere', 'closed']);
+const VOTE_DECIDED: ReadonlySet<string> = new Set(['going_live', 'live', 'stopped', 'closed']);
+// Before the build: what a plan is for.
+const BEFORE_BUILD: ReadonlySet<string> = new Set(['reading', 'planning', 'waiting_for_you']);
 
 function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   message: ConversationMessage;
@@ -205,10 +207,10 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   const track = useTrackOf(meta.appSlug || meta.appName ? {
     appSlug: meta.appSlug, appName: meta.appName, issueNumber: meta.issueNumber, firstVersion: meta.firstVersion === true,
   } : null);
-  const pastPlan = !!track && !['queued', 'planning', 'waiting'].includes(track.state);
+  const pastPlan = !!track && !BEFORE_BUILD.has(track.work.stage);
   // #6153: and Vote, under "#14 is up for a vote." in the private thread it
   // came from, once the vote is decided.
-  const pastVote = !!track && VOTE_DECIDED.has(track.state);
+  const pastVote = !!track && VOTE_DECIDED.has(track.work.stage);
   const actions = (meta.actions || []).filter((action) => !(pastPlan && action.id === 'read_plan') && !(pastVote && action.id === 'vote'));
   if (!actions.length) return null;
   const invite = inviteMade(meta);
