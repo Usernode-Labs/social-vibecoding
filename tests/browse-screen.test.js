@@ -1539,7 +1539,7 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.match(box, /border: 1px solid var\(--app-sheet-line\)/);
   assert.doesNotMatch(box, /border: 1px solid transparent/);
   assert.match(box, /\.browse-row:hover,\s*\n\s*\.browse-row \+ \.browse-row:hover \{ border-color: var\(--accent-light\); \}/);
-  assert.doesNotMatch(browseCss.slice(0, browseCss.indexOf('@media (min-width: 768px)')), /\.browse-row[^{]*\{[^}]*\bborder:/,
+  assert.doesNotMatch(browseCss.slice(0, browseCss.indexOf('@media (min-width: 768px)')), /^\.browse-row[^{\n]*\{[^}]*\sborder:/m,
     'below md the rows keep the inset hairline between them, not a box');
   assert.match(box, /background-color: var\(--bg-primary\)/);
   assert.match(box, /border-radius/);
