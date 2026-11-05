@@ -98,7 +98,7 @@ const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_fai
 // the mark-read scoping test below sends as a request body.
 const DEMO_KINDS = [...SESSION_KINDS, 'session_stalled'];
 
-test('staging + ?demo=1: eighteen mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: nineteen mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -108,11 +108,11 @@ test('staging + ?demo=1: eighteen mock rows prepend, and only the unread ones bu
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 18, 'exactly eighteen mock rows injected');
+    assert.equal(mocks.length, 19, 'exactly nineteen mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
       [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'app_quota_changed', 'build_live', 'build_ready',
-        'pr_proposed', 'issue_opened', 'issue_mention'].sort(),
+        'pr_proposed', 'issue_opened', 'issue_mention', 'voted_digest'].sort(),
       'every session-related kind is covered, plus the message row, a platform limit alert, '
       + 'an app allowance change (#3233), the bot\'s story (#5580) and the older rows\' changes; '
       + 'no kudos row while kudos is parked (#5249)'
@@ -163,8 +163,8 @@ test('staging + ?demo=1: eighteen mock rows prepend, and only the unread ones bu
     // older notifications" button: without one the button does not render at
     // all and the caught-up state is unreachable, so the two things a
     // reviewer is asked to look at are both invisible.
-    assert.equal(mocks.filter((n) => !n.readAt).length, 13,
-      'thirteen unread rows feed the badges');
+    assert.equal(mocks.filter((n) => !n.readAt).length, 14,
+      'fourteen unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
     assert.equal(readMocks.length, 5, 'five already-read rows');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,

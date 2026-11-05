@@ -130,6 +130,11 @@
       "id": "allow-copy-request-dm-action",
       "sha256": "99530db4c42ba06f4e2f607e04631d5583d81f753e301853143868cbfa4ee982",
       "schemaSha256": "e525ebc35b733513ecaccbb5997eace8bc70353bbe38e60770f6868054a1b743"
+    },
+    {
+      "id": "voted-digest-push-kind",
+      "sha256": "993ada608b6e0af158312bfd6fbcb580bdcb342f4b9e7f6c0be575f75ab4e1d7",
+      "schemaSha256": "598bf6613799a32d5aeaa1102584c9cff72585648531440d73283cf1cf722b5e"
     }
   ]
 }

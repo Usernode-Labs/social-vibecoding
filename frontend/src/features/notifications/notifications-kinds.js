@@ -28,7 +28,7 @@ export const NOTIFICATION_KIND_FILTERS = Object.freeze({
   // A change asking for your vote, or what became of one you voted on.
   votes: Object.freeze([
     'pr_proposed', 'stale_pr', 'revision_recheck', 'change_ready', 'vote_digest',
-    'proposal_vote', 'voted_change_merged',
+    'proposal_vote', 'voted_change_merged', 'voted_digest',
   ]),
   // Someone named you with @, or answered you, in a project's chat, a request
   // or a conversation.

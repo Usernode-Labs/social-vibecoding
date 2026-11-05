@@ -127,6 +127,17 @@ function stagingMockNotifications() {
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // #5404: the Monday count of the changes you voted on that were decided.
+    // It names no project (services/voted-digest.js), so its app fields are
+    // nulled; a preview has no Monday to wait for without this row.
+    {
+      ...base,
+      id: 990220, kind: 'voted_digest',
+      createdAt: new Date(now - 3.2 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: '3',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #5580: one request's story, from Homeroom bot: it says the change is
     // live here, and (990215, further down) that it was ready to try before
     // that. Both are about the same mock request (storyIssueNumber 990301),

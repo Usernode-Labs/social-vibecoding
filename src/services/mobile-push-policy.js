@@ -642,6 +642,14 @@ function buildCopy(kind, context, now, t) {
         body: count === 1 ? t('push:voteDigest.body.one') : t('push:voteDigest.body.many'),
       };
     }
+    case 'voted_digest': {
+      // Names no project or change: a count, and Your votes has the rest.
+      const count = /^\d+$/.test(detail) ? Math.max(0, Number(detail)) : 0;
+      return {
+        title: count ? t('push:votedDigest.title', { count }) : t('push:votedDigest.title.plain'),
+        body: t('push:votedDigest.body'),
+      };
+    }
     case 'check_failed':
       return {
         title: withApp(titleLabel ? t('push:checkFailed.title.named', { title: titleLabel }) : t('push:checkFailed.title.plain')),

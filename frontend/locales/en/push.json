@@ -591,6 +591,22 @@
     "text": "See them under Needs you in Communities",
     "description": "Phone notification text under the title: a reminder of the changes waiting for the reader's vote. Needs you is a section of the Communities screen, and both are names on screen."
   },
+  "votedDigest.title_one": {
+    "text": "{{count}} change you voted on was decided",
+    "description": "Phone notification title: a weekly count of the changes the reader voted on that went live or were closed in the last week. {{count}} is how many."
+  },
+  "votedDigest.title_other": {
+    "text": "{{count}} changes you voted on were decided",
+    "description": "Phone notification title: a weekly count of the changes the reader voted on that went live or were closed in the last week. {{count}} is how many."
+  },
+  "votedDigest.title.plain": {
+    "text": "Changes you voted on were decided",
+    "description": "Phone notification title: a weekly summary of the changes the reader voted on, when how many is not known."
+  },
+  "votedDigest.body": {
+    "text": "See how they ended in Your votes",
+    "description": "Phone notification text under the title of the weekly summary of changes the reader voted on. Your votes is the name of a page on screen."
+  },
   "checkFailed.title.named": {
     "text": "Testing found a problem with \"{{title}}\"",
     "description": "Phone notification title: automatic testing failed on the reader's change. {{title}} is the name of a change, kept as written, in quotation marks of the language."
