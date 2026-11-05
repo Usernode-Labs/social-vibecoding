@@ -77,6 +77,10 @@ test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', 
     rows: [row('ready-app', 'ready'), row('new-app', 'unreviewed')],
     curated: true,
   }));
+  // Discover's labels are the one deliberate departure from the primitive's 12px
+  // dim ink (#5928 item 11, the comment on `headingClass` says why). They are
+  // still the primitive, overridden at the site, so the small caps stay its own.
+  const BROWSE_LABEL = 'text-[13px] text-zinc-700 dark:text-zinc-300 md:col-span-full';
   const picked = { ...row('picked-app', 'ready'), recommended: true };
   const html2 = renderToHtml(createElement(BrowseRows, {
     rows: [picked, row('ready-app', 'ready'), row('new-app', 'unreviewed')],
@@ -84,19 +88,26 @@ test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', 
   }));
   for (const label of ['Featured', 'More apps']) {
     assert.ok(
-      html2.includes(headerHtml({ className: 'md:col-span-full' }, label)),
+      html2.includes(headerHtml({ className: BROWSE_LABEL }, label)),
       `“${label}” no longer renders through SectionHeader: it is hand-written again`,
     );
   }
   for (const label of ['Apps to try']) {
     assert.ok(
-      html.includes(headerHtml({ className: 'md:col-span-full' }, label)),
+      html.includes(headerHtml({ className: BROWSE_LABEL }, label)),
       `“${label}” no longer renders through SectionHeader — it is hand-written again`,
     );
   }
-  // `md:col-span-full` is the ONE thing the site adds: at md+ the container is
-  // a 2/3-column grid and a heading has to span it.
+  // `md:col-span-full` is the one layout thing the site adds: at md+ the
+  // container is a 2/3-column grid and a heading has to span it.
   assert.match(html, /<h2 class="[^"]*md:col-span-full"/);
+  // The override replaces the size and the ink rather than sitting beside them,
+  // and takes the small caps as they are.
+  const label = html.match(/<h2 class="([^"]*)"/)[1].split(' ');
+  for (const gone of ['text-xs', 'text-zinc-500', 'dark:text-zinc-400']) assert.ok(!label.includes(gone), `${gone} survived the override`);
+  for (const kept of ['text-[13px]', 'text-zinc-700', 'dark:text-zinc-300', 'font-bold', 'uppercase', 'tracking-[0.06em]']) assert.ok(label.includes(kept), `${kept} is missing`);
+  // Discover only: the primitive and the filter sheet's labels keep the 12px.
+  assert.match(headerHtml({}, 'x'), /text-xs font-bold uppercase tracking-\[0\.06em\] text-zinc-500 dark:text-zinc-400/);
   // It stays an <h2> with the label as its only child: dapp.json's `?sort=`
   // check reads `#browse-list[data-sort="users"]…:not(:has(h2))` to say the
   // ungrouped list draws no tier headings at all, and that only means anything

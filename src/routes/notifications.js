@@ -172,6 +172,18 @@ function stagingMockNotifications() {
       prTitle: null, branchName: 'dev/mockuser-1700000000000',
       prNumber: null, headlessIssueNumber: null,
     },
+    // #5929: the digest that waits on the reader, with no app as a real one
+    // of several changes has, so a preview shows the amber chip and the
+    // counted subject. Unread, and newest of the "Across Homeroom" group, so
+    // it is that group's top card.
+    {
+      ...base,
+      id: 990220, kind: 'vote_digest',
+      createdAt: new Date(now - 5 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: '37', digestWaiting: 37,
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #3181: a session whose turn stopped before finishing. A real one needs
     // a turn to error, time out or lose its worker, which a preview cannot
     // arrange on demand, so this row is how the new bell row is reviewable.
@@ -220,6 +232,36 @@ function stagingMockNotifications() {
       messageContent: '[Mock] The pause button is ready to try.',
       detail: `hrbot2:${JSON.stringify({ m: 'ready', a: 'Staging demo app', t: '[Mock] A pause button for the game', i: 990301 })}`,
       storyIssueNumber: 990301,
+      sessionId: null, sessionTitle: null,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    // #5929: the two other chips, each in a mock project of its own so it is
+    // a card on screen rather than folded under the demo project's closed
+    // stack. Votes met and the merge stuck: the red chip and its reason.
+    {
+      ...base,
+      id: 990221, kind: 'stale_pr', detail: 'blocked',
+      createdAt: new Date(now - 30 * 60 * 1000).toISOString(),
+      appId: 990004, appSlug: 'staging-demo-merges', appName: 'Staging demo merges',
+      sessionId: 990112,
+      sessionTitle: '[Mock] Approved proposal that cannot merge',
+      prTitle: '[Mock] Approved proposal that cannot merge',
+      prNumber: 9904, headlessIssueNumber: null,
+    },
+    // On hold because the week's building time is used up: the grey chip and
+    // its reason.
+    {
+      ...base,
+      id: 990222, kind: 'build_stopped',
+      createdAt: new Date(now - 33 * 60 * 1000).toISOString(),
+      appId: 990005, appSlug: 'staging-demo-builds', appName: 'Staging demo builds',
+      sourceUsername: 'homeroom_bot',
+      conversationId: 990402,
+      conversationKind: 'direct',
+      conversationTitle: 'Homeroom bot',
+      conversationMessageId: 990505,
+      messageContent: '[Mock] This waits until Monday.',
+      detail: `hrbot2:${JSON.stringify({ m: 'on_hold', s: 'allowance', a: 'Staging demo builds', t: '[Mock] A calendar view', i: 990303 })}`,
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },

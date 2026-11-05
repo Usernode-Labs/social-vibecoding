@@ -31,6 +31,7 @@ const { message: catalog } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const mayor = require('../src/services/homeroom-bot-mayor');
 const designBot = require('../src/services/design-bot');
+const designThreads = require('../src/services/design-threads');
 const realDm = require('../src/services/homeroom-bot-dm');
 
 const ROOT = path.join(__dirname, '..');
@@ -246,9 +247,14 @@ function designTurn(steps, {
   const threads = {
     surfaceFor: () => surface,
     validHtml: () => true,
+    // #6353: the real module's script-free reads, which the turn uses to see
+    // whether a drawn screen shows anything without its scripts.
+    screenMarkup: designThreads.screenMarkup,
+    visibleText: designThreads.visibleText,
     async versionOf() { return current; },
     async ensureDesign() { return { threadId: 7, title: 'Main screen', app: { slug: 'ear', name: 'Ear Trainer' } }; },
     async addVersion(_pool, args) { versions.push(args.html); return { version: (current?.version || 0) + 1 }; },
+    bareNote: require('../src/services/design-threads').bareNote,
     versionLine: (version, note) => `Version ${version} · ${note}`,
     async noteVersionMessage() {},
   };
@@ -397,7 +403,7 @@ const times = (n, step) => Array.from({ length: n }, () => step);
 const reply = (text) => ({ calls: [call('reply', { text })] });
 const edit = (find, replace, note) => ({ calls: [call('edit_design', { edits: [{ find, replace }], ...(note ? { note } : {}) })] });
 const TOOL_NAMES = designBot.TOOLS.map((tool) => tool.function.name);
-const ACT_NAMES = TOOL_NAMES.filter((name) => !['list_source', 'read_source', 'list_requests', 'get_request'].includes(name));
+const ACT_NAMES = TOOL_NAMES.filter((name) => !['list_source', 'read_source', 'list_requests', 'get_request', 'read_plan'].includes(name));
 
 // An edit: a message in a thread that holds version 2 already.
 const CURRENT = { version: 2, html: '<main>Keys</main>' };

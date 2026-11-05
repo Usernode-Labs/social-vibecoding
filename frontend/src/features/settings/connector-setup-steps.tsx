@@ -1,5 +1,8 @@
 import * as React from 'react';
 
+import { Button } from '@/components/ui/button';
+import { CheckIcon } from '@/components/ui/icons';
+
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 
 /**
@@ -12,11 +15,15 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
  * reader to Settings to read it. Two screens, one set of facts — so the
  * facts live in one module and both screens render it.
  *
- * Deliberately presentational and state-free: an <ol> of prose, no props,
- * nothing written into it after it renders. That is what lets the dev
- * session page nest it inside a stateful React island
- * (features/dev-chat/connector-setup-inline.tsx) while Settings keeps
- * rendering it as the static markup settings.js reads around.
+ * Deliberately presentational and state-free: an <ol> of prose that holds no
+ * state. That is what lets the dev session page nest it inside a stateful
+ * React island (features/dev-chat/connector-setup-inline.tsx) while Settings
+ * keeps rendering it as the static markup settings.js reads around.
+ *
+ * Only Settings passes `track` (#6136). With it each step's number is a tick
+ * button whose `aria-pressed` settings.js owns, and ChatGPT's step 3 carries a
+ * Copy settings.js wires. Without it the markup is what it always was, so the
+ * hand-off and the launchpad card get no ticks, no Copy and no duplicate id.
  *
  * How the connector URL is named splits by product. Claude's steps say
  * "the MCP server URL above" and point at the value each caller renders
@@ -48,16 +55,20 @@ export const CONNECTOR_BODY = 'text-[0.9375rem] leading-snug text-zinc-500 dark:
  * screen readers announce "list, N items" — with the number drawn as a badge
  * because the two products' own docs count steps the same way.
  */
-export function SetupStep({ n, title, children }: {
+export function SetupStep({ n, title, track, children }: {
   n: number;
   title: string;
+  /** Settings' guide this step belongs to: draws the number as a tick (#6136). */
+  track?: string;
   children: React.ReactNode;
 }) {
   return (
     <li className="flex gap-3">
-      <span aria-hidden="true" className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 text-[0.6875rem] font-semibold leading-none text-zinc-600 dark:text-zinc-300">
-        {n}
-      </span>
+      {track ? <StepTick track={track} n={n} /> : (
+        <span aria-hidden="true" className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 text-[0.6875rem] font-semibold leading-none text-zinc-600 dark:text-zinc-300">
+          {n}
+        </span>
+      )}
       <span className="min-w-0 text-[0.9375rem] leading-snug text-zinc-500 dark:text-zinc-400">
         {/* The separating space lives INSIDE the <strong> — a bare {' '}
             between it and {children} would be a second adjacent text child,
@@ -69,32 +80,64 @@ export function SetupStep({ n, title, children }: {
   );
 }
 
+/**
+ * The number badge as a press target (#6136): a 44px button around the same
+ * 20px badge, its negative margins keeping the badge and the step's text exactly
+ * where the plain number keeps them. `self-start` because the row stretches its
+ * items, and a stretched button would centre the badge on a long step's height.
+ *
+ * settings.js owns `aria-pressed`, and the done look is read off it with
+ * `group-aria-pressed:` variants, so the class string is a constant and nothing
+ * writes a class at runtime. React rendered `aria-pressed` once as a constant,
+ * so a re-render on a language change leaves what settings.js wrote alone.
+ */
+function StepTick({ track, n }: { track: string; n: number }) {
+  const t = useMessages('settings');
+  return (
+    <button
+      type="button"
+      data-connector-step-tick={`${track}:${n}`}
+      aria-pressed="false"
+      aria-label={t('settings:connectors.progress.tickAria', { n })}
+      className="group -mb-3 -me-3 -ms-3 -mt-2.5 flex h-11 w-11 shrink-0 items-center justify-center self-start rounded-full"
+    >
+      <span
+        aria-hidden="true"
+        className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-100 text-[0.6875rem] font-semibold leading-none text-zinc-600 group-aria-pressed:bg-violet-600 group-aria-pressed:text-white dark:bg-zinc-800 dark:text-zinc-300"
+      >
+        <span className="group-aria-pressed:hidden">{n}</span>
+        <CheckIcon className="hidden h-3 w-3 group-aria-pressed:block" />
+      </span>
+    </button>
+  );
+}
+
 /** Inline marks the walkthroughs' sentences carry; the catalog numbers them. */
 const STRONG = <strong className="font-semibold text-zinc-600 dark:text-zinc-400" />;
 const CODE = <code className="font-mono text-zinc-600 dark:text-zinc-400" />;
 const PLUGINS_LINK = <a href="https://chatgpt.com/plugins" target="_blank" rel="noopener noreferrer" className="font-semibold text-violet-700 dark:text-violet-400 underline underline-offset-2" />;
 
 /** Claude.ai: six steps, and the route that also sets up Claude Code. */
-export function ClaudeSetupSteps() {
+export function ClaudeSetupSteps({ track }: { track?: string }) {
   const t = useMessages('settings');
   return (
     <ol className="space-y-2">
-      <SetupStep n={1} title={t('settings:connectors.claudeSteps.open.title')}>
+      <SetupStep n={1} title={t('settings:connectors.claudeSteps.open.title')} track={track}>
         <RichMessage id="settings:connectors.claudeSteps.open.body" components={[STRONG, CODE]} />
       </SetupStep>
-      <SetupStep n={2} title={t('settings:connectors.claudeSteps.start.title')}>
+      <SetupStep n={2} title={t('settings:connectors.claudeSteps.start.title')} track={track}>
         <RichMessage id="settings:connectors.claudeSteps.start.body" components={[CODE, CODE]} />
       </SetupStep>
-      <SetupStep n={3} title={t('settings:connectors.claudeSteps.paste.title')}>
+      <SetupStep n={3} title={t('settings:connectors.claudeSteps.paste.title')} track={track}>
         <RichMessage id="settings:connectors.claudeSteps.paste.body" components={[CODE]} />
       </SetupStep>
-      <SetupStep n={4} title={t('settings:connectors.claudeSteps.oauth.title')}>
+      <SetupStep n={4} title={t('settings:connectors.claudeSteps.oauth.title')} track={track}>
         {t('settings:connectors.claudeSteps.oauth.body')}
       </SetupStep>
-      <SetupStep n={5} title={t('settings:connectors.claudeSteps.save.title')}>
+      <SetupStep n={5} title={t('settings:connectors.claudeSteps.save.title')} track={track}>
         {t('settings:connectors.claudeSteps.save.body')}
       </SetupStep>
-      <SetupStep n={6} title={t('settings:connectors.claudeSteps.enable.title')}>
+      <SetupStep n={6} title={t('settings:connectors.claudeSteps.enable.title')} track={track}>
         <RichMessage id="settings:connectors.claudeSteps.enable.body" components={[CODE]} />
       </SetupStep>
     </ol>
@@ -132,18 +175,18 @@ export function ClaudeSetupSteps() {
  */
 const STEP_URL_PLACEHOLDER = 'https://<your-homeroom-host>/mcp';
 
-export function ChatgptSetupSteps({ url }: { url?: string }) {
+export function ChatgptSetupSteps({ url, track }: { url?: string; track?: string }) {
   const t = useMessages('settings');
   return (
     <>
       <ol className="space-y-2">
-        <SetupStep n={1} title={t('settings:connectors.chatgptSteps.directory.title')}>
+        <SetupStep n={1} title={t('settings:connectors.chatgptSteps.directory.title')} track={track}>
           <RichMessage id="settings:connectors.chatgptSteps.directory.body" components={[PLUGINS_LINK]} />
         </SetupStep>
-        <SetupStep n={2} title={t('settings:connectors.chatgptSteps.create.title')}>
+        <SetupStep n={2} title={t('settings:connectors.chatgptSteps.create.title')} track={track}>
           <RichMessage id="settings:connectors.chatgptSteps.create.body" components={[STRONG, STRONG]} />
         </SetupStep>
-        <SetupStep n={3} title={t('settings:connectors.chatgptSteps.url.title')}>
+        <SetupStep n={3} title={t('settings:connectors.chatgptSteps.url.title')} track={track}>
           {/* The step names the endpoint itself rather than pointing at the
               value rendered above it, but the URL is still never written
               into the copy: the caller hands over the live `${origin}/mcp`
@@ -157,8 +200,22 @@ export function ChatgptSetupSteps({ url }: { url?: string }) {
           >
             {url || STEP_URL_PLACEHOLDER}
           </code>
+          {track ? (
+            <Button
+              id="connector-chatgpt-url-copy"
+              type="button"
+              layout="shrink"
+              variant="outline"
+              size="xsText"
+              ink="muted"
+              className="ms-2 inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
+              aria-label={t('settings:connectors.url.copyAria')}
+            >
+              {t('core:common.copy')}
+            </Button>
+          ) : null}
         </SetupStep>
-        <SetupStep n={4} title={t('settings:connectors.chatgptSteps.use.title')}>
+        <SetupStep n={4} title={t('settings:connectors.chatgptSteps.use.title')} track={track}>
           <RichMessage id="settings:connectors.chatgptSteps.use.body" components={[CODE, <em />]} />
         </SetupStep>
       </ol>

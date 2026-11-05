@@ -412,9 +412,14 @@ function stagingMockProposals(viewer) {
     },
     // Auto-takedown — slim No majority (No just edges ahead of Yes, under the
     // 1/3 keep-alive line): long rejection window → "Set aside in ~6d".
-    mk(9000016, 900116,
-      '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
-      30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
+    // It also carries a cost, the one state a viewer of a demo row cannot reach
+    // otherwise: a real figure goes to its author and admins only (#6116).
+    {
+      ...mk(9000016, 900116,
+        '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
+        30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
+      cost_total_cents: 124,
+    },
     // Auto-takedown — lopsided opposition (No heavily outweighs Yes): short
     // rejection window → "Set aside in ~Xh".
     mk(9000017, 900117,
@@ -5129,6 +5134,10 @@ function voteRoutes(config) {
         // null for any change of a person's.
         proposal.bot_fix = await require('../services/homeroom-bot-progress')
           .changeBotFix(pool, proposal.id, { viewer: req.user }).catch(() => null);
+        // #6116: what it has cost so far at list price, for its author or an
+        // admin only, as the dev chat's meter (services/session-cost.js).
+        proposal.cost_total_cents = await require('../services/session-cost')
+          .sessionCostForViewer(pool, proposal, req.user);
         // #4479: the plan it was built from, for the page's plan card.
         proposal.plan = await require('./sessions')
           .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);

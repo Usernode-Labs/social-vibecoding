@@ -87,7 +87,7 @@ test('the six steps are the ones the design settled on, in order', () => {
   // and Getting started steps repeated the join screen and the card.
   // #3567 put one stop in front: what a community is, which the join screen
   // asks about without explaining and every later step takes for granted.
-  // #4604 put one before the last: Homeroom bot, in Messages, so nobody
+  // #4604 put one before the last: Homeroom bot, on its own tab, so nobody
   // finishes the tour without meeting it. Replay stays last.
   assert.deepEqual(steps.TOUR_STEPS.map((s) => s.id), [
     'communities', 'apps', 'app-menu', 'menu-actions', 'meet-bot', 'settings',
@@ -122,14 +122,22 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
   // #3567: the Communities tab, whose key and id are still `workshop`.
   assert.deepEqual([...byId.communities.targets], ['#platform-tab-workshop']);
-  // #4604: the Messages tab, where the bot's DM is the first row.
-  assert.deepEqual([...byId['meet-bot'].targets], ['#platform-tab-messages']);
+  // #4604, moved by #6019: the bot's own tab. It left the Messages list for
+  // that tab, so a stop pointing at Messages pointed at a screen without it.
+  assert.deepEqual([...byId['meet-bot'].targets], ['#platform-tab-ai']);
   assert.equal(message(byId['meet-bot'].title), 'Meet Homeroom bot');
-  assert.match(message(byId['meet-bot'].body), /^Your AI assistant to build a change, file an idea or fix a bug for you\. Find it in Messages\.$/);
+  assert.match(message(byId['meet-bot'].body), /^Your AI assistant to build a change, file an idea or fix a bug for you\. Find it in the Homeroom bot tab\.$/);
+  assert.ok(message(byId['meet-bot'].body).includes(`the ${message('core:tabs.ai')} tab`),
+    'the step calls the tab what the tab calls itself');
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
-    /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages'/,
-    'the tab the step points at is Messages');
-  assert.equal(message('core:tabs.messages'), 'Messages');
+    /\{ key: 'ai' as const, label: 'core:tabs\.ai', href: '#homeroom-bot'/,
+    'the tab the step points at is the bot\'s');
+  assert.equal(message('core:tabs.ai'), 'Homeroom bot');
+  // It is drawn on both bars: the one tab app.css takes off the phone's is
+  // Discover, and the phone's order names this one.
+  const tabsCss = read('public/css/app.css');
+  assert.doesNotMatch(tabsCss, /#platform-tab-ai \{ display: none/);
+  assert.match(tabsCss, /#platform-tab-ai \{ order: -2; \}/);
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
     /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities'/);
   assert.equal(message('core:tabs.communities'), 'Communities',
@@ -232,7 +240,7 @@ test('the panel step knows it needs the panel, and the step after shuts it', () 
   assert.equal(byId['app-menu'].needsPanel, undefined,
     'the Improve step needs no panel: its target is a row of the app\'s own '
     + 'menu, which it presents for itself');
-  // AND THE STEP AFTER IT SHUTS IT. That step points at the Messages tab
+  // AND THE STEP AFTER IT SHUTS IT. That step points at the bot's tab
   // (#4604), the last one at the Me tab, and on a phone the menu's sheet is
   // drawn over the tab bar, so the cut-out would be around something the
   // viewer cannot see. Both carry it, so Back never lands under the sheet.
@@ -743,7 +751,7 @@ test('a reload resumes where the viewer was, and a panel step at the Improve ste
   assert.equal(steps.resumeIndex(3), steps.IMPROVE_STEP_INDEX, 'step 4 resumes at the menu');
   // …and the ones that are not in it resume where they are, because the mark
   // and the tabs are on screen in a fresh document.
-  assert.equal(steps.resumeIndex(4), 4, 'the Messages tab resumes as itself');
+  assert.equal(steps.resumeIndex(4), 4, 'the bot\'s tab resumes as itself');
   assert.equal(steps.resumeIndex(5), 5, 'the Me tab resumes as itself');
   // A step kept by the eight-step tour, before #3240, is clamped like every
   // other index.

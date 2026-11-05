@@ -517,12 +517,33 @@ const FOLLOW_UP_STAGES = new Set(['followup_queued', 'revising']);
 // vote too, and a queued ask past the sweep's week is not an update any more.
 const UPDATE_TAKEN_HOURS = 3; // = homeroom-bot-voice.js STALE_ASK_HOURS
 const UPDATE_QUEUED_DAYS = 7; // = homeroom-bot.js sweepStrandedAsks' window
+// #6348 (5 Nov 2026): the longest a turn may run (src/workflow/turn/machine.ts
+// MAX_TURN_MS). A turn marker older than this is one whose process died
+// without releasing it, and it is no update on its way.
+const UPDATE_TURN_HOURS = 6; // = src/workflow/turn/machine.ts MAX_TURN_MS
+
+/**
+ * #6348: an ask holds the vote only while its change is still on the version
+ * the ask was made against. `asked_head_sha` is recorded when the ask is
+ * queued (homeroom-bot-voice.js recordAsk); NULL for asks made before the
+ * column existed, which keep the time windows alone. A NULL current head
+ * keeps holding, as it did before the head was compared at all. `$`-free
+ * SQL; `uk` is a homeroom_bot_change_asks alias and `cs` a chat_sessions one.
+ */
+function askOnHeadSql(uk, cs) {
+  return `(${uk}.asked_head_sha IS NULL
+           OR lower(${uk}.asked_head_sha) = lower(COALESCE(CASE WHEN ${cs}.source = 'imported'
+                                                               THEN ${cs}.imported_pr_head_sha
+                                                               ELSE ${cs}.reviewed_head_sha END,
+                                                            ${uk}.asked_head_sha)))`;
+}
 
 /**
  * #6282: whether an update to a change (`cs`, a chat_sessions alias) is on
- * its way, as `$`-free SQL: 'running' while a turn is in flight on it, or the
- * bot holds a fresh taken ask; 'queued' while an ask waits its turn; NULL
- * when no update is coming. It reads the bot's own records
+ * its way, as `$`-free SQL: 'running' while a fresh turn is in flight on it,
+ * or the bot holds a fresh taken ask; 'queued' while an ask waits its turn,
+ * and the change is still on the version the ask was made against (#6348);
+ * NULL when no update is coming. It reads the bot's own records
  * (homeroom_bot_change_asks) and the durable turn marker
  * (chat_sessions.active_turn), so nothing new is stored.
  *
@@ -532,22 +553,27 @@ const UPDATE_QUEUED_DAYS = 7; // = homeroom-bot.js sweepStrandedAsks' window
  */
 function updateComingSql(cs) {
   return `(CASE
-    WHEN ${cs}.active_turn IS NOT NULL
+    WHEN (${cs}.active_turn IS NOT NULL
+          AND (${cs}.active_turn->>'startedAt' IS NULL
+               OR (${cs}.active_turn->>'startedAt')::timestamptz > NOW() - make_interval(hours => ${UPDATE_TURN_HOURS})))
       OR EXISTS (SELECT 1 FROM homeroom_bot_change_asks uk
                   WHERE uk.session_id = ${cs}.id AND uk.status = 'taken'
-                    AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS}))
+                    AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS})
+                    AND ${askOnHeadSql('uk', cs)})
       THEN 'running'
     WHEN EXISTS (SELECT 1 FROM homeroom_bot_change_asks uk
                   WHERE uk.session_id = ${cs}.id AND uk.status = 'queued'
-                    AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS}))
+                    AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS})
+                    AND ${askOnHeadSql('uk', cs)})
       THEN 'queued' END)`;
 }
 
 /**
  * #6282: what the update on its way changes, for "Updating: …": the newest
  * fresh taken ask's instruction, else the newest queued one's, or NULL when
- * the turn has nobody's ask behind it. `$`-free SQL; `cs` is a chat_sessions
- * alias, as updateComingSql's is.
+ * the turn has nobody's ask behind it. #6348: it names only an ask that
+ * holds, so "Updating: …" and the hold never disagree. `$`-free SQL; `cs` is
+ * a chat_sessions alias, as updateComingSql's is.
  */
 function updateAskSql(cs) {
   return `(SELECT uk.instruction
@@ -557,6 +583,7 @@ function updateAskSql(cs) {
                     AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS}))
                 OR (uk.status = 'queued'
                     AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS})))
+              AND ${askOnHeadSql('uk', cs)}
             ORDER BY CASE uk.status WHEN 'taken' THEN 0 ELSE 1 END, uk.id DESC
             LIMIT 1)`;
 }
@@ -1835,6 +1862,9 @@ module.exports = {
   // #6282: an update on its way holds the vote it would otherwise ask for.
   UPDATE_TAKEN_HOURS,
   UPDATE_QUEUED_DAYS,
+  // #6348: a turn marker older than a turn can run is not an update coming.
+  UPDATE_TURN_HOURS,
+  askOnHeadSql,
   updateComingSql,
   updateAskSql,
   inFlight,

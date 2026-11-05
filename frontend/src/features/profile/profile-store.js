@@ -50,7 +50,7 @@
 
 import { createStore } from '../../lib/plain-store.js';
 import { changeHref } from '../../lib/change-href';
-import { t } from '../../lib/i18n/runtime';
+import { getDateLocale, t } from '../../lib/i18n/runtime';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 
 /** Short facts on one small line, each a whole message, joined the way the
@@ -283,6 +283,57 @@ export function statsView(summary, { kudosParked = KUDOS_PARKED } = {}) {
       label: t('profile:stats.challenges'),
     },
   ].filter((stat) => !(kudosParked && stat.key === 'kudos'));
+}
+
+/** "under 1m", "45m" or "3h 40m". */
+function activityDuration(seconds) {
+  if (seconds < 60) return t('profile:activity.underMinute');
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return t('profile:activity.minutes', { minutes });
+  return t('profile:activity.hours', { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+}
+
+/**
+ * The "This week" card (#5626), your own profile's alone: time in apps over
+ * today and the six UTC days before it, from GET /api/me/summary. Null when
+ * the read failed, so the card is left out: a 0 would be a claim, as in
+ * statsView. `empty` when there is nothing to say. Time of zero with apps
+ * opened keeps the apps figure and draws no chart, the zero saying nothing.
+ * A bar's height is against the busiest day, with a floor so the shortest
+ * non-zero day still reads as a bar.
+ */
+export function activityView(summary) {
+  const activity = summary && summary.activity;
+  if (!activity || !Array.isArray(activity.days)) return null;
+  const total = Number(activity.totalSeconds) || 0;
+  const apps = Number(activity.appsOpened) || 0;
+  if (!total && !apps) return { empty: true };
+  const busiest = Math.max(...activity.days.map((day) => Number(day.seconds) || 0), 0);
+  const peak = activity.days.findIndex((day) => busiest > 0 && Number(day.seconds) === busiest);
+  return {
+    empty: false,
+    time: total ? activityDuration(total) : null,
+    apps: apps ? apps.toLocaleString() : null,
+    appsLabel: t('profile:activity.appsLabel', { count: apps }),
+    days: !total ? [] : activity.days.map((day, i) => {
+      const seconds = Number(day.seconds) || 0;
+      const at = new Date(`${day.date}T00:00:00Z`);
+      const time = seconds ? activityDuration(seconds) : t('profile:activity.noTime');
+      return {
+        key: day.date,
+        label: at.toLocaleDateString(getDateLocale(), { weekday: 'short', timeZone: 'UTC' }),
+        spoken: t('profile:activity.daySpoken', {
+          day: at.toLocaleDateString(getDateLocale(), { weekday: 'long', timeZone: 'UTC' }),
+          time,
+        }),
+        heightPct: seconds ? Math.max(6, Math.round((seconds / busiest) * 100)) : 0,
+        zero: !seconds,
+        today: i === activity.days.length - 1,
+        // The one figure on the plot: it gives the bars their scale.
+        peakLabel: i === peak ? time : null,
+      };
+    }),
+  };
 }
 
 /**
@@ -896,6 +947,7 @@ export function buildProfileView(state, now = Date.now()) {
     identity: identityView(state),
     publicControls: publicControlsView(state),
     stats: statsView(d.summary || null),
+    activity: activityView(d.summary || null),
     rows: moreRowsView(d),
     friends: friendsView(d.friends || null, now),
     feedback: feedbackListView(d.feedback || null, now),

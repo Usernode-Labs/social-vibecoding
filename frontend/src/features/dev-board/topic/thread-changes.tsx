@@ -65,7 +65,7 @@ import { detailDrawn, detailEntry, markShotsArrival, takeShotsArrival } from '..
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
-import { ChangeGates } from './change-head';
+import { ChangeGates, ChangeSpentLine } from './change-head';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView, TopicBody } from './model';
 import { ChangeSheets, readChangeDetail } from './topic-head';
@@ -489,6 +489,10 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
       ) : view ? (
         <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} />
       ) : null}
+      {/* #6116: still being built it has no cards, and its cost is still news to its author. */}
+      {(item.state === 'underway' || !hasCards(item)) && view?.v.testing.spent
+        ? <ChangeSpentLine spent={view.v.testing.spent} />
+        : null}
       {view ? <ChangeSheets id={item.id} row={view.row} body={view.body} /> : null}
     </>
   );

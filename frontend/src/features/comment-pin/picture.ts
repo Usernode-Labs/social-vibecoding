@@ -92,6 +92,10 @@ import { DESIGN_FRAME_ATTR } from '../design/frame';
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
 /** The feedback endpoint's cap (src/routes/feedback.js MAX_SCREENSHOT_BYTES). */
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+/** Whether the endpoint would take this many bytes; a picture over it is refused there, whatever it shows here. */
+export function fitsUpload(blob: { size: number }): boolean {
+  return blob.size <= MAX_UPLOAD_BYTES;
+}
 export const SNAPSHOT_KEY = '__usernode_snapshot';
 /** How long the app gets to draw itself, the library's first load included. */
 export const APP_PICTURE_TIMEOUT_MS = 8000;

@@ -1869,7 +1869,7 @@ const Browse = {
   // or hold anything, so every read and write is guarded and a bad value
   // reads as no recent searches. Nothing here runs during render.
   RECENT_SEARCH_KEY: 'usernode:browse-recent-searches',
-  RECENT_SEARCH_LIMIT: 5,
+  RECENT_SEARCH_LIMIT: 12,
   RECENT_SEARCH_MAX_CHARS: 80,
   SUGGESTION_LIMIT: 5,
 
@@ -1909,6 +1909,15 @@ const Browse = {
     return Home.filterApps(Browse.listedApps(Browse._apps), q)
       .slice(0, Browse.SUGGESTION_LIMIT)
       .map((app) => ({ slug: app.slug, name: app.name || app.slug, app }));
+  },
+
+  // The tiles of the recent searches (#5967): each with the app its words
+  // find first today, the first suggestion, or none. Pure — unit-tested.
+  recentSearchTiles(queries) {
+    return (queries || []).map((query) => {
+      const best = Browse.suggestionsFor(query)[0];
+      return { query, app: best ? best.app : null };
+    });
   },
 
   // A recent search searches again, at once.

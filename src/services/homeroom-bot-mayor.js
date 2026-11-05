@@ -87,6 +87,8 @@ const crypto = require('node:crypto');
 const { withoutEmDashes } = require('./em-dashes');
 const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
+const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
+const turnEngine = require('./homeroom-bot-turn-engine');
 const { GITHUB_ISSUE_BODY_MAX } = require('./issue-body-limit');
 const { labelledAsPullRequest } = require('./request-mentions');
 
@@ -97,6 +99,19 @@ const MAX_HISTORY = 24;
 // the turn's oldest lookups, compactRounds), and room for a long, structured
 // answer when they ask for one. It was 6 rounds and 900 tokens.
 const MAX_ROUNDS = 16;
+// #6346: a chat turn spent all its rounds reading project code and answered
+// with a stand-in word. It reads at most this many source files a turn; after
+// that a read is refused and it answers from what it found. The last round is
+// told so, offers only the tools that end a turn, and a stand-in answer is
+// refused once before the fallback line speaks (the voice's own guards).
+const MAX_SOURCE_READS_PER_TURN = 8;
+const SOURCE_READ_TOOLS = Object.freeze(['list_source', 'read_source']);
+// What the last round offers: a tool that ends the turn, never a lookup. An
+// offer alone is the turn's answer, as it is today.
+const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+const CHAT_LAST_ROUND_NOTE = lastRoundNote('offer the draft they asked for');
+const CHAT_STAND_IN_NOTE = standInNote('offer the draft they asked for');
+const CHAT_READING_DONE = readingDoneNote('offer the draft they asked for');
 const MAX_OUTPUT_TOKENS = 4000;
 // A round cut off at its output limit is asked again with this much room: a
 // reasoning model spends its thinking from the same allowance, and a long
@@ -3270,6 +3285,13 @@ function draftExtrasText(extras) {
 async function runTool(pool, ctx, name, args) {
   const { user, settings, deps } = ctx;
   try {
+    // #6346: a turn's source reads are spent, a few per turn, so it cannot
+    // read file after file and answer with nothing. Every call counts,
+    // refused or not.
+    if (SOURCE_READ_TOOLS.includes(name)) {
+      if (ctx.sourceReads >= MAX_SOURCE_READS_PER_TURN) return { error: CHAT_READING_DONE };
+      ctx.sourceReads += 1;
+    }
     switch (name) {
       case 'progress': {
         ctx.progress = await progressOf(pool, { userId: user.id, settings, config: ctx.config, deps });
@@ -3403,6 +3425,14 @@ async function runTool(pool, ctx, name, args) {
         // #6272: a list the model still wrote into its text becomes buttons.
         const lifted = liftTextSuggestions(String(args.text == null ? '' : args.text), args.suggestions,
           { userId: user.id, chat: ctx.conversationId });
+        // #6346: a stand-in is not an answer: one more round, then the
+        // fallback line, as the voice does.
+        if (isStandIn(lifted.text)) {
+          ctx.failures.push('stand_in');
+          ctx.standIns = (ctx.standIns || 0) + 1;
+          if (ctx.standIns > 1) { ctx.gaveUp = true; return { ok: false }; }
+          return { error: CHAT_STAND_IN_NOTE };
+        }
         ctx.reply = { text: clip(lifted.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: lifted.suggestions };
         return { ok: true };
       }
@@ -3825,6 +3855,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     appIds: new Set(),
     checkedProblems: null,
     decisionWithoutOffer: deps.decisionWithoutOffer === true,
+    // #6346: this turn's guards (see MAX_SOURCE_READS_PER_TURN).
+    sourceReads: 0, standIns: 0, gaveUp: false,
+    // The turn's failures, for a stand-in refused by its reply tool.
+    failures: [],
   };
   // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
   // project's thread, everything this turn says goes in it, whichever way
@@ -3853,6 +3887,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // (avoidProviders); null once a request was refused as it was built.
     avoid: [],
   };
+  // #6346: a stand-in refused by its reply tool is recorded with the turn.
+  ctx.failures = t.failures;
   // P1: the answer, shown on the working card as the model writes it.
   const draft = deps.streamDraft === false ? null : draftWriter(ctx);
   if (draft) t.onDelta = draft.onDelta;
@@ -3861,8 +3897,12 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const toolsUsed = [];
   // What a failure after this point still records (turn).
   state.turn = t;
+  // The turn a tool's own model calls count toward (homeroom-bot-already-done.js).
+  ctx.turn = t;
   state.tools = toolsUsed;
-  let rounds = 0;
+  // The turn's rounds and its limit, moved by the turn engine and by this
+  // turn (a refused stand-in's extra round, the claims correction).
+  const turnRounds = { rounds: 0, limit: MAX_ROUNDS };
   let finalText = '';
   let error = null;
   let errorStatus = null;
@@ -3960,67 +4000,113 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       }
       if (ctx.owed) messages.push({ role: 'system', content: ctx.owed });
       const ids = new Set();
-      let limit = MAX_ROUNDS;
       let preambles = 0;
+      // #6346: the last round is told once, and a stand-in gets one more
+      // round, even past the limit (the voice's own guards).
+      let warnedAt = 0;
+      let handledStandIns = 0;
       // P1: where the turn's own rounds begin, for compactRounds.
       const turnFrom = messages.length;
-      const runRounds = async () => {
-        while (rounds < limit && !ctx.reply && !ctx.drawScreen) {
-          rounds += 1;
-          state.rounds = rounds;
-          // P1: room for this round's calls and the next request, or this
-          // round replies (the transport's limit on messages).
-          compactRounds(messages, { from: turnFrom });
-          const last = rounds === limit || messages.length + MAX_CALLS_PER_ROUND + 2 > MAX_MESSAGES;
-          // #3685: one failed request used to end the turn with "I couldn't
-          // answer just now", whatever the round had already read.
-          const res = await askModel(t, {
-            messages, tools, where: `r${rounds}`,
-            toolChoice: last ? { type: 'function', function: { name: 'reply' } } : 'auto',
-          });
-          const calls = normalizeCalls(res.toolCalls, rounds, ids);
-          if (!calls.length) {
-            // 1 Nov 2026: words that only say what it will do next are not
-            // the answer while it can still do it (announcesOnly).
-            if (goesOnAfter(cleanReply(res.content), { rounds, limit, nudged: preambles, messages: messages.length })) {
-              preambles += 1;
-              t.failures.push(`r${rounds}:preamble`);
-              messages.push({ role: 'assistant', content: String(res.content) });
-              messages.push({ role: 'user', content: PREAMBLE_NOTE });
-              continue;
-            }
-            finalText = res.content || '';
-            break;
+      // This round's: the words beside its calls, and the pictures its
+      // platform reads brought back (picturesMessage).
+      let beside = null;
+      let pictures = [];
+      // 5 Nov 2026: the chat is one profile on Homeroom bot's turn engine
+      // (homeroom-bot-turn-engine.js), which counts the rounds, asks, and
+      // keeps each call and result. What follows is what only the chat does.
+      const chat = {
+        messages, ids, normalize: normalizeCalls, parseArgs, resultChars: MAX_TOOL_RESULT_CHARS, cut: clip,
+        // #3685: one failed request used to end the turn with "I couldn't
+        // answer just now", whatever the round had already read.
+        ask: (options) => askModel(t, options),
+        where: (n) => `r${n}`,
+        // The turn ends with its reply, or with a screen handed to the designer.
+        done: () => !!ctx.reply || !!ctx.drawScreen,
+        onRound: ({ rounds }) => { state.rounds = rounds; },
+        // P1: room for this round's calls and the next request, or this
+        // round replies (the transport's limit on messages).
+        beforeRound: () => compactRounds(messages, { from: turnFrom }),
+        isLast: ({ rounds, limit }) => rounds === limit || messages.length + MAX_CALLS_PER_ROUND + 2 > MAX_MESSAGES,
+        // #6346: the last round is told so, and can only pick a tool that
+        // ends the turn: answer, offer a draft, or hand a screen over.
+        offer: ({ last, limit }) => {
+          const note = last && warnedAt !== limit ? CHAT_LAST_ROUND_NOTE : null;
+          if (note) warnedAt = limit;
+          const ending = last ? tools.filter((tl) => CHAT_LAST_ROUND(tl.function.name)) : tools;
+          return {
+            note,
+            tools: ending,
+            toolChoice: last
+              ? (ending.length ? 'required' : { type: 'function', function: { name: 'reply' } })
+              : 'auto',
+          };
+        },
+        onWords: (res, { rounds, limit }) => {
+          // 1 Nov 2026: words that only say what it will do next are not
+          // the answer while it can still do it (announcesOnly).
+          const said = cleanReply(res.content);
+          if (goesOnAfter(said, { rounds, limit, nudged: preambles, messages: messages.length })) {
+            preambles += 1;
+            t.failures.push(`r${rounds}:preamble`);
+            messages.push({ role: 'assistant', content: String(res.content) });
+            messages.push({ role: 'user', content: PREAMBLE_NOTE });
+            return 'continue';
           }
+          // #6346: an answer written without its reply tool is checked the
+          // same way: a stand-in gets one more round, then gives up.
+          if (isStandIn(said)) {
+            t.failures.push('stand_in');
+            ctx.standIns += 1;
+            if (ctx.standIns > 1) { ctx.gaveUp = true; finalText = ''; return 'stop'; }
+            if (said) messages.push({ role: 'assistant', content: said });
+            messages.push({ role: 'user', content: CHAT_STAND_IN_NOTE });
+            // One more round, even past the limit (it is warned again).
+            handledStandIns = ctx.standIns;
+            turnRounds.limit = Math.max(turnRounds.limit, rounds + 1);
+            return 'continue';
+          }
+          finalText = res.content || '';
+          return 'stop';
+        },
+        onCalls: (res) => {
           // 2 Nov 2026: words beside these calls are the start of the answer (besideWords).
-          const beside = besideWords(res.content);
+          beside = besideWords(res.content);
           if (beside) ctx.besides = [...(ctx.besides || []), beside];
-          messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
-          const pictures = [];
-          for (const call of calls) {
-            const name = call.function.name;
-            toolsUsed.push(name.slice(0, 40));
-            const args = parseArgs(call.function.arguments);
-            // 1 Nov 2026: the working card's words, as the call starts.
-            sayDoing(pool, ctx, name, args);
-            const result = platform && PLATFORM_TOOLS.includes(name)
-              ? await platformCall(platform, name, args, pictures)
-              : await runTool(pool, ctx, name, args);
-            if (!(platform && PLATFORM_TOOLS.includes(name))) noteRequests(ctx, result);
-            // P1: what it read, for the reply's "Looked at" line.
-            noteLookup(ctx, name, args, result);
-            // #6307: the projects the tools returned, which a reply may name.
-            noteKnownProjects(ctx, result);
-            messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), MAX_TOOL_RESULT_CHARS) });
-          }
+          pictures = [];
+        },
+        call: async (call, name, args) => {
+          toolsUsed.push(name.slice(0, 40));
+          // 1 Nov 2026: the working card's words, as the call starts.
+          sayDoing(pool, ctx, name, args);
+          const onPlatform = platform && PLATFORM_TOOLS.includes(name);
+          const result = onPlatform
+            ? await platformCall(platform, name, args, pictures)
+            : await runTool(pool, ctx, name, args);
+          if (!onPlatform) noteRequests(ctx, result);
+          // P1: what it read, for the reply's "Looked at" line.
+          noteLookup(ctx, name, args, result);
+          // #6307: the projects the tools returned, which a reply may name.
+          noteKnownProjects(ctx, result);
+          return result;
+        },
+        afterCalls: ({ rounds }) => {
           const shown = picturesMessage(takeImages({ images: pictures }));
           if (shown) messages.push(shown);
           if (beside && !ctx.reply && !ctx.besideNoted) {
             ctx.besideNoted = true;
             messages.push({ role: 'user', content: BESIDE_NOTE });
           }
-        }
+          // A reply tool that refused a stand-in: one more round, even past
+          // the limit (the next one is warned again).
+          if (ctx.gaveUp) return 'stop';
+          if (ctx.standIns > handledStandIns) {
+            handledStandIns = ctx.standIns;
+            turnRounds.limit = Math.max(turnRounds.limit, rounds + 1);
+          }
+          return undefined;
+        },
       };
+      const runRounds = () => turnEngine.runRounds(turnRounds, chat);
       await runRounds();
       // #3769, #3772: what the reply says was done is checked against what
       // this turn's tools did, and every request number it names against the
@@ -4028,7 +4114,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // claimed with nothing behind it is cut before it is sent (answer()).
       const said = answerText(ctx.besides, ctx.reply?.text ?? finalText);
       // A screen handed to the designer is answered by it, not checked here.
-      const problems = said && !ctx.drawScreen ? await claimProblems(pool, ctx, said) : [];
+      const problems = said && !ctx.drawScreen && !ctx.gaveUp ? await claimProblems(pool, ctx, said) : [];
       if (problems.length) {
         t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
         log.info('homeroom-bot-mayor', 'A DM reply claimed what this turn did not do; asking again', {
@@ -4047,7 +4133,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         ctx.besideNoted = false;
         // One round for a tool (offer_request, say) and one for the reply,
         // or the reply alone when two would not fit the transport's limit.
-        limit = rounds + (messages.length + MAX_CALLS_PER_ROUND + 2 <= MAX_MESSAGES ? 2 : 1);
+        turnRounds.limit = turnRounds.rounds + (messages.length + MAX_CALLS_PER_ROUND + 2 <= MAX_MESSAGES ? 2 : 1);
+        // #6346: the correction gets its own source reads, as the voice's
+        // does; it may have to read what it has to describe.
+        ctx.sourceReads = 0;
         try {
           await runRounds();
         } catch (err) {
@@ -4085,25 +4174,18 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   let defer = false;
   if (!text && !ctx.offer && !ctx.drawScreen) {
     // The model gave no answer. Why is recorded; what can still be said is.
-    if (!error) error = rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
+    // A turn that gave up on its stand-in says so, never the stand-in word.
+    if (!error) error = ctx.gaveUp ? 'stand_in' : turnRounds.rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
     ({ text, cards, fallback, defer } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
   }
   await recordTurn(pool, {
-    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds, tools: toolsUsed,
+    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,
     inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd, error,
     failures: t.failures, fallback: defer && fallback === 'plain' ? 'plain_later' : fallback,
   });
   state.recorded = true;
   // The bot's own weekly cap counts it too, as its other turns do.
-  if (t.usage.costUsd > 0) {
-    try {
-      if (await require('./openrouter-managed-keys').usesIncludedKey(pool, bot.id)) {
-        await require('./limits').recordSpend(pool, bot.id, Math.round(t.usage.costUsd * 1e6) / 1e4, { byok: false });
-      }
-    } catch (err) {
-      log.warn('homeroom-bot-mayor', 'Could not record a DM turn\'s spend', { err: err.message });
-    }
-  }
+  await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a DM turn', category: 'homeroom-bot-mayor' });
   if (defer) {
     // #3772: asked again on its own (the DM machine's timer, told through
     // onLater). A later try says nothing until it has an answer, and the
@@ -4640,7 +4722,7 @@ const MAX_PROJECT_NAME = 60;
  * note } for the turn's card (sendDesignOffer), or { ok: false, error }
  * for the model.
  */
-async function checkPlanOffer(pool, { user, design, args = {}, deps = {} }) {
+async function checkPlanOffer(pool, { user, design, args = {}, deps = {}, html = null }) {
   let app = null;
   if (!design?.app) {
     // A design for a screen that has no project yet: the project they named.
@@ -4684,12 +4766,21 @@ async function checkPlanOffer(pool, { user, design, args = {}, deps = {} }) {
     }
   }
   const version = design.latest;
+  // #6353: the plan shows the screen without its scripts. When that leaves
+  // it clearly emptier than the preview, the card says so and offers to
+  // write the rows into the markup first, and the model is told to say it.
+  const gap = typeof html === 'string'
+    ? (deps.designThreads || require('./design-threads')).planGap(html)
+    : null;
+  const said = n
+    ? `A card with "Post as a plan on #${n}" and "Not yet" goes under your reply. Say in a sentence that tapping it posts version ${version} on request #${n} as their plan, publicly, under their name.`
+    : `A card with "New request" and "Add to an existing request…" goes under your reply. Say in a sentence that New request files a request on ${name} with version ${version} as its plan, publicly, under their name, and that they can put it on a request they name instead.`;
   return {
     ok: true,
-    offer: { kind: 'plan', app, issueNumber: n || null, version },
-    note: n
-      ? `A card with "Post as a plan on #${n}" and "Not yet" goes under your reply. Say in a sentence that tapping it posts version ${version} on request #${n} as their plan, publicly, under their name.`
-      : `A card with "New request" and "Add to an existing request…" goes under your reply. Say in a sentence that New request files a request on ${name} with version ${version} as its plan, publicly, under their name, and that they can put it on a request they name instead.`,
+    offer: { kind: 'plan', app, issueNumber: n || null, version, ...(gap ? { gap } : {}) },
+    note: gap
+      ? `${said} The plan would show ${gap.kind === 'lists' ? 'these lists' : 'this screen'} empty, because of a script: say so, and that you can write the rows into the screen first.`
+      : said,
   };
 }
 
@@ -4708,6 +4799,30 @@ function checkProjectOffer({ design, args = {} }) {
 }
 
 /**
+ * Pure: the line above a card, from the model's own words (sendDesignOffer).
+ * Sentences naming a request other than the card's own (`issueNumber`) are
+ * dropped whole, so a card's sentence can never name a request its button
+ * does not post to; with no request, any sentence naming one is dropped. The
+ * sentences kept are rejoined, and `fallback` says it when none is left.
+ */
+function cardSentence(text, { issueNumber = null, fallback = '' } = {}) {
+  const own = Number(issueNumber) > 0 ? Number(issueNumber) : null;
+  const keeps = (sentence) => {
+    const named = [];
+    for (const m of sentence.matchAll(/#\s?(\d+)/g)) named.push(Number(m[1]));
+    for (const m of sentence.matchAll(/\brequests?\s+#?(\d+)/gi)) named.push(Number(m[1]));
+    return !named.length || (!!own && named.every((named_) => named_ === own));
+  };
+  const kept = String(text || '')
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.split(/(?<=[.!?…])\s+/).filter(keeps).join(' ').trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+  return kept || fallback;
+}
+
+/**
  * The turn's answer when it offered a design (design-bot.js): its words
  * with the card under them, in the thread, under `key`. `version` is the
  * version the card offers: the newest, after any edit of the same turn.
@@ -4720,7 +4835,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     return dm.sendDm(pool, {
       bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
       content: [
-        text || `Want to make ${o.name} from this design?`,
+        cardSentence(text, { issueNumber: null, fallback: `Want to make ${o.name} from this design?` }),
         '',
         `**${o.name}** · a new project, from version ${v} of ${design.title}`,
       ].join('\n'),
@@ -4735,23 +4850,39 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
   const app = o.app;
   const name = app.name || app.slug;
   const n = Number(o.issueNumber) > 0 ? Number(o.issueNumber) : null;
+  // The card's own words: a version and the request its button posts to,
+  // never a request the model's sentence happened to name (#6355).
+  const fallback = n
+    ? `Tap the card to post version ${v} on request #${n} as its plan, publicly, under your name.`
+    : `Tap New request to file a request on ${name} with version ${v} as its plan, publicly, under your name, `
+      + 'or add it to a request you name.';
   const { rows: [action] } = await pool.query(
     `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, source_issue_number,
                                           private_thread_id, design_version)
      VALUES ($1, $2, $3, 'post_design', $4, $5, $6, $7) RETURNING id`,
     [user.id, conversationId, app.id, clip(design.title, MAX_TITLE_CHARS) || 'Design', n, design.threadId, v],
   );
+  // #6353: a plan that would show lists empty because a script builds them
+  // says so before it is posted, and offers to write the rows in first. The
+  // post stays, as a secondary action: the warning informs, it does not block.
+  const actions = o.gap
+    ? [
+      { id: 'fill', label: 'Write the rows in first', style: 'primary', type: 'prompt', quote: true },
+      ...designPlanActions(n).map((a) => (a.id === 'yes' ? { ...a, style: 'secondary' } : a)),
+    ]
+    : designPlanActions(n);
   const sent = await dm.sendDm(pool, {
     bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
     content: [
-      text || (n ? `Want me to post this as your plan on request #${n}?` : `Want me to post this as a plan on ${name}?`),
+      cardSentence(text, { issueNumber: n, fallback }),
       '',
       n ? `**${name}** · a plan on request #${n}: version ${v} of ${design.title}` : `**${name}** · a plan: version ${v} of ${design.title}`,
+      ...(o.gap ? ['', `${o.gap.reason} I can write the rows into the screen first.`] : []),
     ].join('\n'),
     metadata: {
       kind: 'confirm', appSlug: app.slug, appName: name, actionId: action.id,
       question: n ? `Post version ${v} as a plan on #${n}?` : `Post version ${v} as a plan on ${name}?`,
-      answers: designPlanAnswers(n), actions: designPlanActions(n), status: 'open', mirrors: false,
+      answers: designPlanAnswers(n), actions, status: 'open', mirrors: false,
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -4782,7 +4913,7 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
     posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
       user, rootId: Number(thread.root_message_id), version: Number(action.design_version) || null,
       issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null,
-      appId: Number(action.app_id) || null, deps,
+      appId: Number(action.app_id) || null, allowEmptier: true, deps,
     });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not post a design as a plan', { actionId: action.id, err: err.message });
@@ -6636,6 +6767,7 @@ async function reportProblem(pool, ctx, args) {
 module.exports = {
   MAX_HISTORY,
   MAX_ROUNDS,
+  MAX_SOURCE_READS_PER_TURN,
   MAX_TURNS_PER_HOUR,
   MAX_CARDS,
   FILE_IT,
@@ -6651,6 +6783,7 @@ module.exports = {
   startProjectThread,
   projectThreadLine,
   checkProjectOffer,
+  cardSentence,
   sendDesignOffer,
   decidePostDesign,
   noteProjectMade,

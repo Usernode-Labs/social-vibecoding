@@ -15,7 +15,7 @@ import {
   CONNECTOR_BODY,
   SetupStep,
 } from '../connector-setup-steps';
-import { ConnectorsList } from '../connectors-list';
+import { ToolConnections, ToolStatus } from '../connectors-list';
 import { SocialIdentity } from '../social-identity';
 
 /**
@@ -140,10 +140,12 @@ url = "${CODEX_URL_PLACEHOLDER}"`;
  * checks on this pane therefore name a body element by selector and a summary
  * by text.
  */
-function Disclosure({ id, title, hint, nested, children }: {
+function Disclosure({ id, title, hint, nested, status, children }: {
   id?: string;
   title: string;
   hint: string;
+  /** Drawn on the summary's trailing edge, before the chevron (#6134). */
+  status?: React.ReactNode;
   /**
    * A row INSIDE another row's open body. Two things change, both literal:
    * the type steps down (a nested row must not read as a peer of the route it
@@ -159,7 +161,7 @@ function Disclosure({ id, title, hint, nested, children }: {
       id={id}
       className={nested
         ? 'group/sub [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-700'
-        : 'group [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800'}
+        : 'group'}
     >
       <summary className={nested
         ? 'list-none cursor-pointer active:bg-zinc-200 dark:active:bg-zinc-700'
@@ -174,12 +176,15 @@ function Disclosure({ id, title, hint, nested, children }: {
           subtitle={hint}
           subtitleClassName={nested ? 'whitespace-normal text-[0.8125rem]' : 'whitespace-normal'}
           trailing={(
-            <ChevronRightIcon
-              aria-hidden="true"
-              className={nested
-                ? 'h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400 transition-transform group-open/sub:rotate-90'
-                : 'h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600 transition-transform group-open:rotate-90'}
-            />
+            <>
+              {status}
+              <ChevronRightIcon
+                aria-hidden="true"
+                className={nested
+                  ? 'h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400 transition-transform group-open/sub:rotate-90'
+                  : 'h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600 transition-transform group-open:rotate-90'}
+              />
+            </>
           )}
         />
       </summary>
@@ -226,6 +231,58 @@ function GuidedSetup({ id, href, product }: { id: string; href: string; product:
         {t('settings:connectors.guided.orSteps')}
       </h5>
     </>
+  );
+}
+
+/**
+ * One AI tool's card (#6134): its Disclosure on top, its connections under it.
+ *
+ * `connectors-list` holds the cards, and it is not a React-owned host: the
+ * Disclosure bodies inside are the static markup settings.js writes into. Only
+ * the two hosts here hold state, each with one store-reading leaf as its only
+ * child. Both ship empty and draw nothing until the list has loaded, so the
+ * prerender and hydration agree, and `empty:hidden` is what stops an unconnected
+ * card drawing a hairline with nothing under it.
+ */
+function ToolCard({ id, tool, children }: {
+  id: string;
+  tool: 'claude' | 'chatgpt' | 'codex' | 'generic';
+  children: React.ReactNode;
+}) {
+  return (
+    <GroupedList id={id} className="mx-0">
+      {children}
+      <div
+        data-connector-connections={tool}
+        className="border-t border-zinc-200 empty:hidden dark:border-zinc-800"
+      >
+        <ToolConnections tool={tool} />
+      </div>
+    </GroupedList>
+  );
+}
+
+/** A card's status word, in its summary row. The host goes when it is empty. */
+function ToolStatusSlot({ tool }: { tool: 'claude' | 'chatgpt' | 'codex' | 'generic' }) {
+  return (
+    <span data-connector-status={tool} className="shrink-0 empty:hidden">
+      <ToolStatus tool={tool} />
+    </span>
+  );
+}
+
+/**
+ * "2 of 4 done" above a guide's steps (#6136). Empty and `hidden` as rendered;
+ * settings.js owns its `hidden` and its text, and its count stops at `data-total`.
+ */
+function GuideProgress({ guide, total }: { guide: string; total: number }) {
+  return (
+    <p
+      data-connector-progress={guide}
+      data-total={total}
+      hidden
+      className="mb-3 text-[0.8125rem] font-semibold text-zinc-600 dark:text-zinc-300"
+    />
   );
 }
 
@@ -348,7 +405,7 @@ export function ConnectorsSection() {
           </div>
         </details>
         <h4 className={`${GROUP_LABEL} mt-4`}>{t('settings:connectors.chooseApp')}</h4>
-        <GroupedList className="mx-0">
+        <div id="connectors-list" className="space-y-3">
         {/*
             #1289: the one-line "Settings → Connectors, paste the URL" summary
             assumed both products still bury custom MCP servers one menu deep,
@@ -370,7 +427,8 @@ export function ConnectorsSection() {
             instructions, so the reader by definition hasn't told us which
             product they're in yet.
         */}
-        <Disclosure title="Claude.ai" hint={t('settings:connectors.claude.hint')}>
+        <ToolCard id="connector-tool-claude" tool="claude">
+        <Disclosure title="Claude.ai" hint={t('settings:connectors.claude.hint')} status={<ToolStatusSlot tool="claude" />}>
           {/*
               #1607: the walkthroughs below are six and seven steps, and the
               complaint was that reading them is the cost. These two links hand
@@ -396,7 +454,8 @@ export function ConnectorsSection() {
               product rather than anything carried in a link.
           */}
           <GuidedSetup id="connector-open-claude" href="https://claude.ai/new" product="Claude" />
-            <ClaudeSetupSteps />
+            <GuideProgress guide="claude" total={6} />
+            <ClaudeSetupSteps track="claude" />
           {/*
               #2370, second pass: these two used to be a card of their own on the
               overview ("Claude Code permissions"). They are consequences of THIS
@@ -585,10 +644,14 @@ export function ConnectorsSection() {
           </Disclosure>
           </div>
         </Disclosure>
-        <Disclosure title="ChatGPT" hint={t('settings:connectors.chatgpt.hint')}>
+        </ToolCard>
+        <ToolCard id="connector-tool-chatgpt" tool="chatgpt">
+        <Disclosure title="ChatGPT" hint={t('settings:connectors.chatgpt.hint')} status={<ToolStatusSlot tool="chatgpt" />}>
           <GuidedSetup id="connector-open-chatgpt" href="https://chatgpt.com/" product="ChatGPT" />
-            <ChatgptSetupSteps />
+            <GuideProgress guide="chatgpt" total={4} />
+            <ChatgptSetupSteps track="chatgpt" />
         </Disclosure>
+        </ToolCard>
         {/*
             #1892: only the two chat products were covered, and the feedback
             was that Codex and "other agents" had nothing. Two more blocks,
@@ -621,15 +684,17 @@ export function ConnectorsSection() {
             tests/connector-setup-codex.test.js, so it cannot drift from what
             /mcp actually does.
         */}
-        <Disclosure id="connector-setup-codex" title="Codex" hint={t('settings:connectors.codex.hint')}>
+        <ToolCard id="connector-tool-codex" tool="codex">
+        <Disclosure id="connector-setup-codex" title="Codex" hint={t('settings:connectors.codex.hint')} status={<ToolStatusSlot tool="codex" />}>
+            <GuideProgress guide="codex" total={3} />
             <ol className="space-y-2">
-              <SetupStep n={1} title={t('settings:connectors.codex.add.title')}>
+              <SetupStep n={1} title={t('settings:connectors.codex.add.title')} track="codex">
                 <RichMessage id="settings:connectors.codex.add.body" components={[CODE, CODE]} />
               </SetupStep>
-              <SetupStep n={2} title={t('settings:connectors.codex.signIn.title')}>
+              <SetupStep n={2} title={t('settings:connectors.codex.signIn.title')} track="codex">
                 <RichMessage id="settings:connectors.codex.signIn.body" components={[CODE, CODE]} />
               </SetupStep>
-              <SetupStep n={3} title={t('settings:connectors.codex.limit.title')}>
+              <SetupStep n={3} title={t('settings:connectors.codex.limit.title')} track="codex">
                 <RichMessage id="settings:connectors.codex.limit.body" components={[CODE, CODE]} />
               </SetupStep>
             </ol>
@@ -674,23 +739,27 @@ export function ConnectorsSection() {
               <pre id="connector-codex-config" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2">{CODEX_CONFIG_TOML}</pre>
             </div>
         </Disclosure>
-        <Disclosure id="connector-setup-generic" title={t('settings:connectors.generic.title')} hint={t('settings:connectors.generic.hint')}>
+        </ToolCard>
+        <ToolCard id="connector-tool-generic" tool="generic">
+        <Disclosure id="connector-setup-generic" title={t('settings:connectors.generic.title')} hint={t('settings:connectors.generic.hint')} status={<ToolStatusSlot tool="generic" />}>
+            <GuideProgress guide="generic" total={4} />
             <ol className="space-y-2">
-              <SetupStep n={1} title={t('settings:connectors.generic.transport.title')}>
+              <SetupStep n={1} title={t('settings:connectors.generic.transport.title')} track="generic">
                 <RichMessage id="settings:connectors.generic.transport.body" components={[CODE]} />
               </SetupStep>
-              <SetupStep n={2} title={t('settings:connectors.generic.oauth.title')}>
+              <SetupStep n={2} title={t('settings:connectors.generic.oauth.title')} track="generic">
                 <RichMessage id="settings:connectors.generic.oauth.body" components={[CODE, CODE, CODE]} />
               </SetupStep>
-              <SetupStep n={3} title={t('settings:connectors.generic.callback.title')}>
+              <SetupStep n={3} title={t('settings:connectors.generic.callback.title')} track="generic">
                 <RichMessage id="settings:connectors.generic.callback.body" components={[CODE, CODE, CODE, CODE, CODE]} />
               </SetupStep>
-              <SetupStep n={4} title={t('settings:connectors.generic.naming.title')}>
+              <SetupStep n={4} title={t('settings:connectors.generic.naming.title')} track="generic">
                 <RichMessage id="settings:connectors.generic.naming.body" components={[CODE, CODE, CODE, CODE]} />
               </SetupStep>
             </ol>
         </Disclosure>
-        </GroupedList>
+        </ToolCard>
+        </div>
         <p className={GROUP_NOTE}>
           {t('settings:connectors.approveNote')}
         </p>
@@ -706,12 +775,6 @@ export function ConnectorsSection() {
             reference, and dapp.json reads it as rendered text.
         */}
         <p id="connector-hint-status" className="hidden px-4 pt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400"></p>
-        <h4 className={`${GROUP_LABEL} mt-6`}>
-          {t('settings:connectors.connected')}
-        </h4>
-        <div id="connectors-list" className="space-y-2">
-          <ConnectorsList />
-        </div>
         <StatusLine id="connectors-status" size="xs" />
       </div>
     </div>

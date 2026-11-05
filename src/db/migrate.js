@@ -8701,6 +8701,67 @@ async function seedStagingDesignThread(pool) {
         [thread.id, said.messageId]
       );
     }
+    // #6350: Request it starts its box from the note of the version filed, so
+    // the shots need a second version with a note: version 1 is the capture,
+    // whose "As it is now" is a marker and is skipped. Obviously fake.
+    const second = html
+      .replace('padding:24px 16px', 'padding:24px 16px 40px')
+      .replace('<strong style="font-size:15px">Needs you &middot; 3 new</strong>',
+        '<strong style="font-size:15px">Needs you &middot; 3 new</strong>'
+        + '<span style="margin-left:auto;font-size:12px;color:#0a6ee0">Unread, in the corner</span>');
+    await pool.query(
+      `INSERT INTO design_versions (private_thread_id, version, html, author, note)
+       VALUES ($1, 2, $2, 'bot', $3)
+       ON CONFLICT (private_thread_id, version) DO NOTHING`,
+      [thread.id, second, 'Staging demo: the unread count sits in the corner, under more space']
+    );
+    const saidTwo = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: 'Version 2: Staging demo: the unread count sits in the corner, under more space.',
+      threadRootId: opened.messageId,
+      moment: null,
+      idempotencyKey: `staging-design-${thread.id}-v2`,
+      metadata: { kind: 'design_version', appSlug: app.slug, appName: app.name || app.slug, designVersion: 2 },
+    }).catch((err) => {
+      log.warn('db', 'Staging design thread version line failed', { message: err.message });
+      return null;
+    });
+    if (saidTwo?.messageId) {
+      await pool.query(
+        'UPDATE design_versions SET message_id = $2 WHERE private_thread_id = $1 AND version = 2',
+        [thread.id, saidTwo.messageId]
+      );
+    }
+    // #6353: the plan card as it is when a script builds the screen's rows:
+    // the warning and "Write the rows in first" beside posting as it is. A
+    // stored bot reply, never asked for, and obviously fake like the rest.
+    await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: [
+        'Want me to post this as your plan on request #6351?',
+        '',
+        `**Staging demo** · a plan on request #6351: version 2 of ${named}`,
+        '',
+        'The plan would show its lists empty, because a script builds them. I can write the rows into the screen first.',
+      ].join('\n'),
+      threadRootId: opened.messageId,
+      moment: null,
+      idempotencyKey: `staging-design-${thread.id}-plan-card`,
+      metadata: {
+        kind: 'confirm', status: 'open', question: 'Post version 2 as a plan on #6351?',
+        answers: ['Post as a plan on #6351', 'Not yet'],
+        actions: [
+          { id: 'fill', label: 'Write the rows in first', style: 'primary', type: 'prompt', quote: true },
+          { id: 'yes', label: 'Post as a plan on #6351', style: 'secondary', type: 'server' },
+          { id: 'no', label: 'Not yet', style: 'secondary', type: 'server' },
+        ],
+        mirrors: false,
+      },
+    }).catch((err) => {
+      log.warn('db', 'Staging design plan card failed', { message: err.message });
+    });
     log.info('db', 'Staging design thread fixture seeded', { threadId: thread.id });
   } catch (err) {
     log.warn('db', 'Staging design thread seeding failed', { message: err.message });

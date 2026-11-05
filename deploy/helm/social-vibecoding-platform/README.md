@@ -152,6 +152,12 @@ An empty value leaves tracking disabled; rotating it invalidates old signed
 links. No Resend credentials or provider change is needed for Gmail engagement
 tracking; Gmail does not supply delivery, bounce or complaint callbacks.
 
+To send platform mail through Brevo instead, set `secrets.platformMailProvider`
+to `brevo` and supply `secrets.brevoMailWebhookToken` through SOPS, beside the
+`secrets.brevoApiKey` SMS already uses. Supplying the key alone does not move
+mail, and an empty provider stays on Gmail. `secrets.brevoMailTemplates` optionally
+names the mail kinds sent with a template kept in Brevo. See `docs/mail-brevo.md`.
+
 The media store (screenshots, videos and other files kept out of PostgreSQL)
 is off until `config.mediaStorage.endpoint` is set. The chart passes the
 endpoint and `config.mediaStorage.bucket` as `MEDIA_STORAGE_ENDPOINT` and

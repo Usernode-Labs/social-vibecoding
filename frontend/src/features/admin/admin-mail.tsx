@@ -359,7 +359,7 @@ interface MailMetric {
 }
 interface MailReports {
   byKind: MailMetric[]; byDay: MailMetric[]; trackingEnabled: boolean;
-  /** False unless mail goes out through Resend with its webhook connected. */
+  /** False unless mail goes out through Resend or Brevo with its webhook connected. */
   deliveryEvents?: boolean;
   recentEvents: Array<{ id: number; type: string; kind: string; recipient: string; url?: string;
     user_agent_class?: string; created_at: string; meta?: { demo?: string; proxyOrPrefetch?: boolean } }>;
@@ -368,7 +368,7 @@ const METRICS = [
   ['sent', 'Sent'], ['delivered', 'Delivered'], ['bounced', 'Bounced'], ['complained', 'Complained'],
   ['opened', 'Opened (approx.)'], ['clicked', 'Clicked'], ['unsubscribed', 'Unsubscribed'],
 ] as const;
-// Only Resend's webhook reports these, so they are left out rather than
+// Only Resend's and Brevo's webhooks report these, so they are left out rather than
 // shown as a 0 that reads as "nothing was delivered" (reports.js).
 const DELIVERY_METRICS = new Set<string>(['delivered', 'bounced', 'complained']);
 
@@ -385,7 +385,7 @@ function TrackingReports({ reports, failed, onRefresh }: { reports: MailReports 
       User agent classes are hints and cannot identify every proxy. Open rate uses only messages sent with tracking enabled.</p>
     {failed ? <p className={`${AdminUI.muted} mt-3`}>Could not load email reports.</p> : !reports
       ? <p className={`${AdminUI.loading} mt-3`}>Loading…</p> : <>
-        {!reports.deliveryEvents ? <p id="admin-mail-delivery-off" className={`${AdminUI.muted} mt-3`}>Delivered, bounced and complained are not shown: only the Resend transport, with its webhook connected, reports them. Gmail does not.</p> : null}
+        {!reports.deliveryEvents ? <p id="admin-mail-delivery-off" className={`${AdminUI.muted} mt-3`}>Delivered, bounced and complained are not shown: only the Resend and Brevo transports, with their webhooks connected, report them. Gmail does not.</p> : null}
         {!reports.trackingEnabled ? <p className={`${AdminUI.muted} mt-3`}>Click and open tracking is off. Set PLATFORM_MAIL_TRACKING_SECRET in Platform variables to track future non-transactional mail.</p> : null}
         <div className="flex gap-2 mt-3" aria-label="Report grouping">
           <button type="button" className={group === 'byKind' ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm} aria-pressed={group === 'byKind'} onClick={() => setGroup('byKind')}>By kind</button>

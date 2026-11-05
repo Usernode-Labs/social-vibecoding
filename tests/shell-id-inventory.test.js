@@ -382,6 +382,12 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6134, #6136: Settings > Connectors, one card per AI tool ───────
+  'connector-tool-claude': 'The Claude.ai card in Settings > Connectors (features/settings/sections/connectors.tsx): its status word, its setup steps and its connections. The four cards replace one list of setup rows; #connectors-list stays as what holds them.',
+  'connector-tool-chatgpt': 'The ChatGPT card, the same shape as #connector-tool-claude.',
+  'connector-tool-codex': 'The Codex card, the same shape as #connector-tool-claude.',
+  'connector-tool-generic': 'The Another agent card, the same shape as #connector-tool-claude. Any connected program that names none of the other three lands here under its own name.',
+  'connector-chatgpt-url-copy': 'Copy beside the MCP server URL in the ChatGPT guide\'s step 3 (features/settings/connector-setup-steps.tsx). Rendered only when Settings passes `track`, so the hand-off and the launchpad card do not get a duplicate id. settings.js wires it through _wireCopyControl.',
   // ── #6135: Test connection, Settings > Connectors ───────────────────
   'connector-url-test': 'The Test connection button beside Copy in Settings > Connectors (features/settings/sections/connectors.tsx). Read-only: it checks this site\'s MCP server and the account\'s connection. settings.js labels it and disables it while a check runs.',
   'connector-test-status': 'The line under the MCP server URL that reports the last Test connection result (features/settings/sections/connectors.tsx). Ships hidden and empty; settings.js fills it and colours a failure.',
@@ -852,6 +858,9 @@ const ADDED_IDS = {
   'settings-tour-section': 'Settings -> Welcome tour, the pane holding the replay control (#2255).',
   'settings-tour-replay': 'Clears this account\'s "finished" flag, asks for the tour and goes to Home.',
   'settings-tour-hint': 'The line under it saying where the tour starts.',
+  // #5973: Settings -> User guide, the tour's places to read.
+  'settings-guide-section': 'Settings -> User guide, the pane root inside its [data-settings-section="guide"] wrapper.',
+  'settings-guide-voting': 'The card saying how a change gets voted in; dapp.json selects on it.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.

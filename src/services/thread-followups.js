@@ -188,7 +188,10 @@ async function deliver(pool, row, text, { deps = {} } = {}) {
       idempotencyKey: `followup:${Number(row.id)}`,
       threadRootId: row.thread_root_id == null ? undefined : Number(row.thread_root_id),
     });
-    return sent?.id ? Number(sent.id) : null;
+    // homeroom-bot-dm.js sendDm answers { messageId }: reading `id` alone
+    // left every DM follow-up owed, so it was sent again on each pass.
+    const id = sent?.messageId ?? sent?.id;
+    return id ? Number(id) : null;
   }
   const app = await appOf(pool, row.app_id);
   if (!app) return null;

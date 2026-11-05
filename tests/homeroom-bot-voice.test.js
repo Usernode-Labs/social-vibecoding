@@ -62,6 +62,9 @@ test('a mention of the bot is its handle or its name', () => {
 test('words a DM or a chat passed on are not answered twice', () => {
   assert.equal(voice.isRelay('Make it blue\n\n(Sent in a chat with Homeroom bot. The change, as Homeroom bot understood it: blue.)'), true);
   assert.equal(voice.isRelay('Make it blue'), false);
+  // A draft posted from a private thread was written with the bot there: not answered again here.
+  assert.equal(voice.isRelay('For #41: a limit of five packets each\n\n(Posted from a private draft in a chat with Homeroom bot.)'), true);
+  assert.equal(voice.isRelay('Posted from a private draft, I think'), false, 'only the footer counts');
 });
 
 // ── The gate, on a pool that answers what it asks ────────────────────────
@@ -463,6 +466,17 @@ test('what a change\'s update came to, in its own words when no model answers', 
   assert.deepEqual(voice.mustSay({ action: 'revise', moved: true, planVersion: 2 }), [
     'Its plan was updated to match (version 2).',
   ]);
+  // #6347: the description is reworded by the same update, and said so; a
+  // reword that failed is said plainly, and never as something to ask for.
+  assert.deepEqual(voice.mustSay({ action: 'revise', moved: true, descriptionReworded: true }), [
+    'Its description was reworded to match: say so.',
+  ]);
+  assert.deepEqual(voice.mustSay({ action: 'revise', moved: true, descriptionStale: true }), [
+    'Its description could not be reworded, so it still describes the earlier version: say so.',
+  ]);
+  for (const outcome of [{ descriptionReworded: true }, { descriptionStale: true }]) {
+    assert.doesNotMatch(voice.mustSay({ action: 'revise', moved: true, ...outcome }).join(' '), /ask you here to reword/);
+  }
   for (const action of ['revise', 'answer', 'ask', 'person', 'failed', 'gone']) {
     const text = voice.plainReport({ action, moved: true, summary: 'x — y', reply: 'a — b', why: 'c' });
     assert.doesNotMatch(text, /—|Homeroom bot/, action);

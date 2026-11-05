@@ -23,6 +23,54 @@
     "text": "{{first}} · {{second}}",
     "description": "Joins two short facts on one small line of the profile screen (\"@ada · Building since March 2026\", \"Notes · sent today\"). {{first}} is everything said so far and {{second}} the next fact, each already a complete phrase. Use the separator your language uses between such facts."
   },
+  "activity.title": {
+    "text": "This week",
+    "description": "Title of a card on the viewer's own profile: how long they spent inside apps on each of the last seven days. Sentence case."
+  },
+  "activity.timeLabel": {
+    "text": "time in apps",
+    "description": "Label under a total such as \"3h 40m\" on the viewer's profile: time spent inside apps over the last seven days, not time on Homeroom's own screens. Lower case."
+  },
+  "activity.appsLabel_one": {
+    "text": "app opened",
+    "description": "Label under the number 1 on the viewer's profile: how many different apps they opened in the last seven days. Lower case."
+  },
+  "activity.appsLabel_other": {
+    "text": "apps opened",
+    "description": "Label under a number on the viewer's profile: how many different apps they opened in the last seven days. Lower case."
+  },
+  "activity.hours": {
+    "text": "{{hours}}h {{minutes}}m",
+    "description": "A short length of time on the viewer's profile, such as \"3h 40m\". {{hours}} and {{minutes}} are numbers; use your language's short forms."
+  },
+  "activity.minutes": {
+    "text": "{{minutes}}m",
+    "description": "A short length of time under an hour on the viewer's profile, such as \"45m\". {{minutes}} is a number; use your language's short form."
+  },
+  "activity.underMinute": {
+    "text": "under 1m",
+    "description": "A length of time on the viewer's profile: some time was spent, but less than one minute. Written in the same short form as \"45m\"."
+  },
+  "activity.noTime": {
+    "text": "no time",
+    "description": "Read out or shown on hover for a day on the viewer's profile chart when they spent no time in apps that day. It completes \"Monday: no time\"."
+  },
+  "activity.daySpoken": {
+    "text": "{{day}}: {{time}}",
+    "description": "One day of the viewer's activity chart, as a screen reader says it and as a hover shows it. {{day}} is a weekday name and {{time}} a length of time, such as \"Monday: 35m\"."
+  },
+  "activity.chartLabel": {
+    "text": "Time in apps each day",
+    "description": "Accessible name of the seven-day chart on the viewer's profile. It is not shown on screen."
+  },
+  "activity.note": {
+    "text": "Last 7 days, by UTC day. Only time inside apps counts.",
+    "description": "Small note under the chart on the viewer's profile. A day starts at midnight UTC, whatever the viewer's own time zone, and time on Homeroom's own screens is not included."
+  },
+  "activity.empty": {
+    "text": "No time in apps this week yet. Open an app and your days show here.",
+    "description": "The one line in the \"This week\" card on the viewer's profile when they spent no time in apps and opened none in the last seven days."
+  },
   "stats.live": {
     "text": "live",
     "description": "Label under a number on the viewer's profile: how many of their changes were approved and are running. Lower case; an adjective."

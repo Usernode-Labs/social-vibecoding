@@ -52,7 +52,7 @@ import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
-import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import type { ChangeGateView, ChangeSpentView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
@@ -229,6 +229,14 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
         </div>
       </div>
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
+      {/* #3800: the repeat at the foot of the page stays one small card. */}
+      {shown.facts?.length && !repeat ? (
+        <div className="dev-change-gate-facts">
+          {shown.facts.map((fact) => (
+            <p key={fact.key} data-change-vote-fact={fact.key} data-ask={fact.ask ? 'true' : undefined}>{fact.text}</p>
+          ))}
+        </div>
+      ) : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}
@@ -276,8 +284,14 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
       {shown.botFix === 'stopped' && !shown.fix && rerun ? (
         <div className="dev-change-gate-fix">{rerun}</div>
       ) : null}
+      {shown.spent ? <ChangeSpentLine spent={shown.spent} /> : null}
     </div>
   );
+}
+
+/** #6116: one quiet line, what the change has cost so far (AppView._changeSpentView). */
+export function ChangeSpentLine({ spent }: { spent: ChangeSpentView }): ReactNode {
+  return <p className="dev-change-gate-note" data-change-spent="" title={spent.title}>{spent.text}</p>;
 }
 
 /**

@@ -49,7 +49,7 @@
 // inside PlatformUI.transition(fn) and the native kit snapshots the DOM before
 // fn returns. `false` is the shipped state: the shell ships this screen hidden.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
@@ -68,7 +68,10 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
 import { BOX_COLUMNS, BrowseRows, BrowseRowsLoading } from './browse-list';
-import { BrowseSearchMenu, SEARCH_MENU_LISTBOX_ID, searchOptionId, type SearchMenuPosition } from './browse-search-menu';
+import {
+  BrowseSearchMenu, RECENT_FOLDED_TILES, SEARCH_MENU_LISTBOX_ID, searchOptionId,
+  type RecentTile, type SearchMenuPosition,
+} from './browse-search-menu';
 import { openBrowseFilterSheet } from './browse-filter-sheet';
 import { AppsLoadError } from './load-error';
 import { browseStore } from './mount';
@@ -169,6 +172,7 @@ export function BrowseScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [typed, setTyped] = useState('');
   const [activeOption, setActiveOption] = useState(-1);
+  const [recentExpanded, setRecentExpanded] = useState(false);
   const [menuAt, setMenuAt] = useState<SearchMenuPosition | null>(null);
 
   const state = useStoreState(browseStore) as {
@@ -206,7 +210,15 @@ export function BrowseScreen() {
   const suggestions: Array<{ slug: string; name: string; app: any }> = menuOpen && query && !onDetail
     ? (browse()?.suggestionsFor?.(typed) || [])
     : [];
-  const optionCount = query ? suggestions.length : recent.length;
+  const recentCanFold = recent.length > RECENT_FOLDED_TILES;
+  const recentShown = recentExpanded ? recent : recent.slice(0, RECENT_FOLDED_TILES);
+  const optionCount = query ? suggestions.length : recentShown.length;
+  // Each tile runs a search over the directory, so not on every arrow key.
+  const showingRecent = menuOpen && !query && !onDetail;
+  const recentTiles: RecentTile[] = useMemo(
+    () => (showingRecent ? (browse()?.recentSearchTiles?.(recentShown) || []) : []),
+    [state, showingRecent, recentExpanded],
+  );
   const menuShowing = menuOpen && !onDetail && optionCount > 0 && !!menuAt;
 
   const measureMenu = () => {
@@ -220,12 +232,14 @@ export function BrowseScreen() {
   const openMenu = (value: string) => {
     setTyped(value);
     setActiveOption(-1);
+    setRecentExpanded(false);
     setMenuOpen(true);
     measureMenu();
   };
   const closeMenu = () => {
     setMenuOpen(false);
     setActiveOption(-1);
+    setRecentExpanded(false);
   };
   // The card holds a measured place, so a window that changes width moves it.
   useEffect(() => {
@@ -234,6 +248,16 @@ export function BrowseScreen() {
     return () => window.removeEventListener('resize', measureMenu);
   }, [menuOpen]);
 
+  const toggleRecent = () => {
+    // Folding away the tile the arrows were on hands them back to the field.
+    if (recentExpanded && activeOption >= RECENT_FOLDED_TILES) setActiveOption(-1);
+    setRecentExpanded(!recentExpanded);
+  };
+  const clearRecent = () => {
+    setActiveOption(-1);
+    setRecentExpanded(false);
+    browse()?.forgetSearches?.();
+  };
   const pickRecent = (q: string) => {
     if (inputRef.current) inputRef.current.value = q;
     browse()?.pickRecentSearch?.(q);
@@ -332,6 +356,13 @@ export function BrowseScreen() {
                 e.preventDefault();
                 // One step past either end is the field itself (-1).
                 const step = e.key === 'ArrowDown' ? 1 : -1;
+                // Focus stays in the field, so the arrows are a keyboard's way
+                // past the fold: going on from the last tile unfolds the rest.
+                if (!query && step === 1 && !recentExpanded && recentCanFold && activeOption === optionCount - 1) {
+                  setRecentExpanded(true);
+                  setActiveOption(optionCount);
+                  return;
+                }
                 setActiveOption((i) => {
                   const next = i + step;
                   if (next >= optionCount) return -1;
@@ -501,11 +532,13 @@ export function BrowseScreen() {
         <BrowseSearchMenu
           position={menuAt}
           activeIndex={activeOption}
-          recent={query ? null : recent}
+          recent={query ? null : recentTiles}
+          recentToggle={recentCanFold ? (recentExpanded ? 'less' : 'more') : null}
           suggestions={query ? suggestions : null}
           onPickRecent={pickRecent}
           onPickSuggestion={pickSuggestion}
-          onClearRecent={() => browse()?.forgetSearches?.()}
+          onClearRecent={clearRecent}
+          onToggleRecent={toggleRecent}
         />
       ) : null}
       {/*

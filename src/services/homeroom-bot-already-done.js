@@ -12,6 +12,7 @@
 // unclearly is null: the row stays ticked with no sentence. Never throws.
 
 const log = require('./logger');
+const turnEngine = require('./homeroom-bot-turn-engine');
 
 const TIMEOUT_MS = 60 * 1000;
 const MAX_READS = 4;
@@ -83,39 +84,62 @@ function parseVerdict(content) {
 }
 
 /**
- * The default ask: one model request per round, on the DM's own model and
- * key. Resolves the provider's answer ({ content, toolCalls }). Never throws
- * for a missing key: the caller reads that as no answer.
+ * The turn a look runs on: the DM's own model and key, asked through
+ * homeroom-bot-mayor.js askModel, so a request that fails is asked again on a
+ * fresh route and every failure is kept, as in every turn of the bot's. It
+ * has its own usage, and no working card: the look's JSON is never shown as
+ * it is written. Throws 'no_key' with no key, which the caller reads as no
+ * answer.
  */
-async function defaultAsk(pool, ctx, deps, messages, tools, toolChoice = null) {
+async function lookTurn(pool, { user, ctx, deps }) {
   const mayor = require('./homeroom-bot-mayor');
   const config = ctx?.config || {};
   const settings = ctx?.settings || {};
   const apiKey = deps.apiKey || await mayor.botKey(pool, config, ctx?.bot?.id);
   if (!apiKey) throw new Error('no_key');
-  const chat = deps.chat || require('./openrouter').streamChat;
-  const model = require('./default-model').fromSettings(settings, config) || mayor.DEFAULT_MODEL;
-  return chat({
+  return {
+    config, user, settings, ctx,
+    message: ctx?.turn?.message || { id: 0 },
+    model: require('./default-model').fromSettings(settings, config) || mayor.DEFAULT_MODEL,
+    chat: deps.chat || require('./openrouter').streamChat,
+    sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     apiKey,
-    baseUrl: config.openrouterApiBase,
-    origin: config.openrouterOrigin,
-    model,
-    reasoning: 'low',
-    messages,
-    tools,
-    toolChoice,
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
-    timeoutMs: CALL_TIMEOUT_MS,
-    sessionId: `hrbot-already-${ctx?.user?.id || 0}-${Date.now().toString(36)}`,
-  });
+    route: 1,
+    startedMs: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    failures: [],
+    avoid: [],
+  };
 }
 
-/** One project's look: resolves { done, sentence } or null. Never throws. */
-async function one(pool, { user, app, title, details, deps, ctx }) {
+/** Pure: a look's tool calls as the turn engine keeps them. */
+function lookCalls(toolCalls, round) {
+  return (Array.isArray(toolCalls) ? toolCalls : []).map((c, i) => ({
+    id: String(c.id || `look${round - 1}${i}`), type: 'function',
+    function: { name: String(c.function?.name || ''), arguments: String(c.function?.arguments || '{}') },
+  }));
+}
+
+function lookArgs(raw) {
+  try { return JSON.parse(String(raw || '{}')) || {}; } catch { return {}; }
+}
+
+/**
+ * One project's look: resolves { done, sentence } or null. Never throws for
+ * the model's sake. 5 Nov 2026: a profile on Homeroom bot's turn engine
+ * (homeroom-bot-turn-engine.js), as the chat's and the voice's turns are.
+ */
+async function one(pool, { user, app, title, details, deps, ctx, t = null }) {
   const mayor = require('./homeroom-bot-mayor');
   const ask = typeof deps.alreadyDoneAsk === 'function'
-    ? deps.alreadyDoneAsk
-    : (messages, tools, toolChoice) => defaultAsk(pool, ctx, deps, messages, tools, toolChoice);
+    ? (o) => deps.alreadyDoneAsk(o.messages, o.tools, o.toolChoice)
+    : (o) => mayor.askModel(t, {
+      ...o,
+      attempts: 2,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      timeoutMs: CALL_TIMEOUT_MS,
+      sessionId: `hrbot-already-${user?.id || 0}-${Date.now().toString(36)}`,
+    });
   const messages = [
     { role: 'system', content: systemPrompt() },
     {
@@ -132,42 +156,35 @@ async function one(pool, { user, app, title, details, deps, ctx }) {
     },
   ];
   let reads = 0;
-  for (let round = 0; round < MAX_ROUNDS; round += 1) {
-    const res = await ask(messages, READ_TOOLS, null);
-    const calls = Array.isArray(res?.toolCalls) ? res.toolCalls : [];
-    if (!calls.length) return parseVerdict(res?.content);
-    if (reads >= MAX_READS) return null;
-    messages.push({
-      role: 'assistant',
-      content: res?.content || '',
-      tool_calls: calls.map((c, i) => ({
-        id: String(c.id || `look${round}${i}`), type: 'function',
-        function: { name: String(c.function?.name || ''), arguments: String(c.function?.arguments || '{}') },
-      })),
-    });
-    for (const call of calls) {
-      const name = call?.function?.name;
-      const args = (() => {
-        try { return JSON.parse(String(call?.function?.arguments || '{}')) || {}; } catch { return {}; }
-      })();
-      let out;
-      if (reads >= MAX_READS) {
-        out = { error: 'Enough reading: answer with the JSON line now.' };
-      } else if (name === 'list_source') {
+  // undefined until it answers or gives up; null is "no clear answer".
+  let verdict;
+  await turnEngine.runRounds({ rounds: 0, limit: MAX_ROUNDS }, {
+    messages, ids: null, normalize: lookCalls, parseArgs: lookArgs, resultChars: 24000,
+    ask,
+    where: (n) => `look${n}`,
+    done: () => verdict !== undefined,
+    offer: () => ({ tools: READ_TOOLS, toolChoice: null }),
+    onWords: (res) => { verdict = parseVerdict(res?.content); return 'stop'; },
+    // Asked to read again once its reading is spent: no answer, the row stays ticked.
+    onCalls: () => {
+      if (reads < MAX_READS) return undefined;
+      verdict = null;
+      return 'stop';
+    },
+    call: async (call, name, args) => {
+      if (reads >= MAX_READS) return { error: 'Enough reading: answer with the JSON line now.' };
+      if (name === 'list_source') {
         reads += 1;
-        out = await mayor.listSource(pool, { user, project: app.slug, dir: args.dir, match: args.match, deps });
-      } else if (name === 'read_source') {
-        reads += 1;
-        out = await mayor.readSource(pool, { user, project: app.slug, path: args.path, fromLine: args.fromLine, deps });
-      } else {
-        out = { error: 'There is no such tool. Use list_source or read_source.' };
+        return mayor.listSource(pool, { user, project: app.slug, dir: args.dir, match: args.match, deps });
       }
-      messages.push({
-        role: 'tool', tool_call_id: String(call.id || ''), content: JSON.stringify(out).slice(0, 24000),
-      });
-    }
-  }
-  return null;
+      if (name === 'read_source') {
+        reads += 1;
+        return mayor.readSource(pool, { user, project: app.slug, path: args.path, fromLine: args.fromLine, deps });
+      }
+      return { error: 'There is no such tool. Use list_source or read_source.' };
+    },
+  });
+  return verdict === undefined ? null : verdict;
 }
 
 function withTimeout(promise, ms) {
@@ -181,18 +198,44 @@ function withTimeout(promise, ms) {
 /**
  * #6305: { [slug]: { done, sentence } | null } for each app, each looked at
  * in parallel and capped at 60 s. Never throws.
+ *
+ * 5 Nov 2026: what a look costs is counted. A look that ends while the turn
+ * that asked for it (ctx.turn, the chat's or the voice's) is still waiting
+ * adds its usage and failures to that turn, which records and debits them
+ * with its own; one that ends after this answered, past its cap, is debited
+ * on its own, since that turn may already be recorded. Nothing is counted
+ * twice, and nothing is left out.
  */
 async function alreadyDoes(pool, { user, apps, title, details, deps = {}, ctx = null }) {
   const out = {};
   const list = Array.isArray(apps) ? apps.filter((a) => a && a.slug) : [];
+  const parent = ctx?.turn && ctx.turn.usage ? ctx.turn : null;
+  let answered = false;
+  const settle = async (t) => {
+    if (!t) return;
+    if (parent && !answered) {
+      parent.usage.inputTokens += t.usage.inputTokens;
+      parent.usage.outputTokens += t.usage.outputTokens;
+      parent.usage.costUsd += t.usage.costUsd;
+      if (Array.isArray(parent.failures)) for (const f of t.failures) parent.failures.push(`already:${f}`.slice(0, 80));
+      return;
+    }
+    await turnEngine.chargeTurn(pool, ctx?.bot?.id, t.usage.costUsd, {
+      what: 'a look before filing', category: 'homeroom-bot-already-done', deps,
+    });
+  };
   await Promise.all(list.map(async (app) => {
     try {
-      out[app.slug] = await withTimeout(one(pool, { user, app, title, details, deps, ctx }), TIMEOUT_MS);
+      const t = typeof deps.alreadyDoneAsk === 'function' ? null : await lookTurn(pool, { user, ctx, deps });
+      const look = one(pool, { user, app, title, details, deps, ctx, t });
+      look.then(() => settle(t), () => settle(t)).catch(() => {});
+      out[app.slug] = await withTimeout(look, TIMEOUT_MS);
     } catch (err) {
       log.warn('homeroom-bot-already-done', 'Could not look at an app before drafting', { project: app.slug, err: err.message });
       out[app.slug] = null;
     }
   }));
+  answered = true;
   return out;
 }
 

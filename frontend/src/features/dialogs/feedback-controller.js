@@ -2495,7 +2495,14 @@ export function init() {
             : t('dialogs:feedback.posted.platform');
           // The bounty outcome and the app-state note are sentences of their
           // own, said after it.
-          feedbackStatus.textContent = joinSentences([postedSentence, bountyNotice, stateNotice]);
+          // #6121: a picture whose upload failed earlier and failed again on
+          // the retry above kept its thumbnail until now and did not go with
+          // the request. Filing without it is deliberate; not saying so was not.
+          const lostPictures = screenshots.filter((shot) => !shot.id && shot.blob).length;
+          const picturesNotice = lostPictures
+            ? t('dialogs:feedback.screenshot.filedWithout', { count: lostPictures })
+            : '';
+          feedbackStatus.textContent = joinSentences([postedSentence, bountyNotice, stateNotice, picturesNotice]);
           feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           lastFiled = rememberEdit(data.edit);
@@ -2538,7 +2545,7 @@ export function init() {
             const first = !!data.firstFeedback && Number(data.firstFeedback.userId) === Number(App.user?.id);
             // A request sent to Homeroom names Homeroom, not the app that
             // happened to be open.
-            showSent(postedTo, joinSentences([bountyNotice, stateNotice]), data.homeroomBot,
+            showSent(postedTo, joinSentences([bountyNotice, stateNotice, picturesNotice]), data.homeroomBot,
               first ? { name: target === 'platform' ? 'Homeroom' : appName } : null, false, data.filed || null);
             return;
           }
@@ -2552,7 +2559,7 @@ export function init() {
           // instead of closing itself (see showSent above). #3971: "Thanks!"
           // leads it again, as it did before #3400.
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
-            showSent(thanks, joinSentences([bountyNotice, stateNotice]), null, null, false, data.filed || null);
+            showSent(thanks, joinSentences([bountyNotice, stateNotice, picturesNotice]), null, null, false, data.filed || null);
           }
           return;
         }

@@ -100,8 +100,8 @@
     "description": "Third paragraph of the \"How it works\" explanation in Settings > Connectors: how the other app gets permission. \"The app\" is the AI app being connected."
   },
   "connectors.chooseApp": {
-    "text": "Choose your app",
-    "description": "Small heading in Settings > Connectors above the list of setup guides, one row per AI product (Claude.ai, ChatGPT, Codex, another agent)."
+    "text": "Your AI tools",
+    "description": "Small heading in Settings > Connectors above the cards, one card per AI tool (Claude.ai, ChatGPT, Codex, another agent), each with its status, its connections and its setup steps."
   },
   "connectors.claude.hint": {
     "text": "6 steps · also sets up Claude Code",
@@ -287,21 +287,9 @@
     "text": "Whichever you use, approve the connection in the browser page that opens.",
     "description": "Note under the list of setup guides in Settings > Connectors: applies to every product in the list."
   },
-  "connectors.connected": {
-    "text": "Connected",
-    "description": "Small heading in Settings > Connectors above the list of chat products that are already connected to this account."
-  },
-  "connectors.list.loading": {
-    "text": "Loading connections…",
-    "description": "Shown in place of the list of connected chat products in Settings > Connectors while it loads."
-  },
-  "connectors.list.empty": {
-    "text": "No chat products connected yet.",
-    "description": "Shown in place of the list of connected chat products in Settings > Connectors when none is connected."
-  },
   "connectors.list.disconnect": {
     "text": "Disconnect",
-    "description": "Button on a connected chat product's row in Settings > Connectors: removes that product's access to Homeroom."
+    "description": "Button on a connection's row, on its AI tool's card in Settings > Connectors: removes that connection's access to Homeroom."
   },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
@@ -1951,6 +1939,102 @@
     "text": "It starts again on your home screen.",
     "description": "Note under the \"Replay the tour\" button in Settings. \"It\" is the welcome tour."
   },
+  "guide.title": {
+    "text": "User guide",
+    "description": "Heading of the page in Settings that explains the places in Homeroom and how a change gets voted in."
+  },
+  "guide.intro": {
+    "text": "Where things are in Homeroom, and how a change goes live.",
+    "description": "Explanation under the User guide heading in Settings."
+  },
+  "guide.places.heading": {
+    "text": "Where things are",
+    "description": "Small label over the card of Settings > User guide that explains the main places in Homeroom."
+  },
+  "guide.place.communities.title": {
+    "text": "Communities",
+    "description": "Row title in Settings > User guide, about communities and the Communities tab. Same word as the tab."
+  },
+  "guide.place.communities.body": {
+    "text": "A community is the people behind a project. It shows as Just you, Private community or Public community, depending on who it is for. The Communities tab takes you to yours, each with a hub, a Workshop for the work going on, and channels to talk in. Joining a community is what lets you propose changes, vote and post there.",
+    "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Workshop\" is the name of a place on a project's page."
+  },
+  "guide.place.apps.title": {
+    "text": "My apps",
+    "description": "Row title in Settings > User guide, about the My apps section of the home screen. Same words as that section's heading."
+  },
+  "guide.place.apps.body": {
+    "text": "Home lists the apps from your communities under My apps. Select one to open it. + New project starts your own: it asks what the app should do and what to call it, then makes a private community you can invite people to.",
+    "description": "Paragraph in Settings > User guide. \"+ New project\" is the tile on the home screen that starts a project."
+  },
+  "guide.place.appMenu.title": {
+    "text": "The Homeroom menu",
+    "description": "Row title in Settings > User guide, about the menu behind the Homeroom logo inside an app."
+  },
+  "guide.place.appMenu.body": {
+    "text": "Inside any app, select the Homeroom logo to open its menu. That is where you suggest an improvement or visit the app's community.",
+    "description": "Paragraph in Settings > User guide about the menu behind the Homeroom logo."
+  },
+  "guide.place.suggest.title": {
+    "text": "Suggest an improvement",
+    "description": "Row title in Settings > User guide. Same words as the button in the Homeroom menu."
+  },
+  "guide.place.suggest.body": {
+    "text": "Use this button in the Homeroom menu to ask for a change to any of your apps or to Homeroom itself. You can start building it, or share a request for someone in the community to pick up.",
+    "description": "Paragraph in Settings > User guide. \"This button\" is Suggest an improvement, named by the row title above it."
+  },
+  "guide.place.bot.title": {
+    "text": "Homeroom bot",
+    "description": "Row title in Settings > User guide, about the AI assistant. The bot's own name."
+  },
+  "guide.place.bot.body": {
+    "text": "Homeroom bot is your AI assistant: ask it to build a change, file an idea or fix a bug. It has its own tab, with Main Chat as the first row. Messages is a separate tab, for your conversations with people.",
+    "description": "Paragraph in Settings > User guide. \"Main Chat\" is the name of the person's main chat with the bot. \"Messages\" is the name of a tab."
+  },
+  "guide.place.you.title": {
+    "text": "You and Settings",
+    "description": "Row title in Settings > User guide, about the You tab and the Settings screen. \"You\" is the name of the tab."
+  },
+  "guide.place.you.body": {
+    "text": "The You tab holds your profile, and Settings is on it. Settings is where you change your account, how Homeroom looks, your language and your notifications, and where you can replay the welcome tour.",
+    "description": "Paragraph in Settings > User guide. \"You\" is the name of a tab."
+  },
+  "guide.vote.heading": {
+    "text": "How a change gets voted in",
+    "description": "Small label over the card of Settings > User guide that explains, in four rows, how a change to an app goes live."
+  },
+  "guide.vote.build.title": {
+    "text": "Someone builds it",
+    "description": "Row title in Settings > User guide: the first step of how a change goes live."
+  },
+  "guide.vote.build.body": {
+    "text": "A change starts when a member builds it, with Homeroom bot or a coding agent. When the bot writes a plan for a request, any member can press Build it, and the bot's building time comes out of that member's week. You can see yours in Settings, under AI usage & models.",
+    "description": "Paragraph in Settings > User guide. \"Build it\" is the button on the bot's plan. \"AI usage & models\" is the name of a page in Settings. \"Week\" means the weekly allowance of the bot's building time."
+  },
+  "guide.vote.up.title": {
+    "text": "It goes up for a vote",
+    "description": "Row title in Settings > User guide: the second step of how a change goes live."
+  },
+  "guide.vote.up.body": {
+    "text": "When it is ready, the change goes up for a vote with a preview you can try. If it is waiting on you, it shows under Needs you in the Communities tab.",
+    "description": "Paragraph in Settings > User guide. \"Needs you\" is the name of a list on the Communities tab of decisions waiting on the person."
+  },
+  "guide.vote.checks.title": {
+    "text": "Checks test it",
+    "description": "Row title in Settings > User guide: the third step of how a change goes live. \"Checks\" are automated tests."
+  },
+  "guide.vote.checks.body": {
+    "text": "Homeroom runs automated checks on the preview. A change can't go live until they pass, however the vote goes.",
+    "description": "Paragraph in Settings > User guide."
+  },
+  "guide.vote.rule.title": {
+    "text": "The project's rule decides",
+    "description": "Row title in Settings > User guide: the last step of how a change goes live. The rule is the project's rule for who has to approve a change."
+  },
+  "guide.vote.rule.body": {
+    "text": "Each project has its own rule for who has to say yes: one person's yes can be enough, or it can take most of the group. Whoever manages a project can propose a new rule from Settings & rules in its ⋯ menu, and that goes to a vote under the current rule. Once the rule is met and the checks pass, the change goes live.",
+    "description": "Paragraph in Settings > User guide. \"Settings & rules\" is the name of a row in a project's ⋯ menu."
+  },
   "about.title": {
     "text": "About",
     "description": "Heading of the section in Settings that shows version numbers."
@@ -2307,6 +2391,10 @@
     "text": "Welcome tour",
     "description": "Name of a part of Settings: the page that replays the welcome tour. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
+  "nav.part.guide": {
+    "text": "User guide",
+    "description": "Name of a part of Settings: the page that explains the places in Homeroom and how a change gets voted in. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
   "nav.part.usernode": {
     "text": "Homeroom app",
     "description": "Name of a part of Settings: the page about the Homeroom phone app. Homeroom is the product name. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2531,6 +2619,10 @@
     "text": "walkthrough help onboarding",
     "description": "Not shown on screen. Extra search words for \"Welcome tour\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
+  "nav.keywords.guide": {
+    "text": "help how manual vote voting explain",
+    "description": "Not shown on screen. Extra search words for \"User guide\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
   "nav.keywords.usernode": {
     "text": "mobile phone native diagnostics block production",
     "description": "Not shown on screen. Extra search words for \"Homeroom app\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
@@ -2723,25 +2815,77 @@
     "text": "{{summary}} {{advice}}",
     "description": "Status line under the \"stop the permission prompts\" advice in Settings > Connectors, about the tip Homeroom adds to its answers in a chat app (Claude, ChatGPT) telling the person how to stop those prompts. Puts two complete sentences one after the other: {{summary}} says how often the tip was sent, {{advice}} says when it will be sent again. Change only the spacing or order if your language needs it."
   },
-  "connectors.row.connectedUsed": {
-    "text": "connected {{connected}} · last used {{lastUsed}}",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: when it was connected and last used. Both parameters are dates with times. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.working": {
+    "text": "Working",
+    "description": "Status word on an AI tool's card in Settings > Connectors: it is connected and has used Homeroom."
   },
-  "connectors.row.connectedNeverUsed": {
-    "text": "connected {{connected}} · never used",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: when it was connected, and that it has not been used yet. {{connected}} is a date with time. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.unused": {
+    "text": "Not used yet",
+    "description": "Status word on an AI tool's card in Settings > Connectors: it is connected, but has not called Homeroom since."
   },
-  "connectors.row.unknownDateUsed": {
-    "text": "connected unknown date · last used {{lastUsed}}",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: shown when the date it was connected is not known. {{lastUsed}} is a date with time. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.attention": {
+    "text": "Needs attention",
+    "description": "Status word on an AI tool's card in Settings > Connectors, beside an amber dot: its sign-in ran out and it has to be connected again."
   },
-  "connectors.row.unknownDateNeverUsed": {
-    "text": "connected unknown date · never used",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: shown when the date it was connected is not known and it has not been used yet. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.none": {
+    "text": "Not connected",
+    "description": "Status word on an AI tool's card in Settings > Connectors: this account has no connection from it."
+  },
+  "connectors.row.lastActive": {
+    "text": "Last active {{lastUsed}}",
+    "description": "Line on a connection's row in Settings > Connectors. {{lastUsed}} is a date with time."
+  },
+  "connectors.row.notUsedYet": {
+    "text": "Connected {{connected}} · not used yet",
+    "description": "Line on a connection's row in Settings > Connectors when the tool has not called Homeroom since connecting. {{connected}} is a date with time."
+  },
+  "connectors.row.unknownDate": {
+    "text": "Connected on an unknown date · not used yet",
+    "description": "Line on a connection's row in Settings > Connectors when the date it was connected is not known and it has not been used."
+  },
+  "connectors.row.expired": {
+    "text": "Sign-in ran out {{when}}. Follow the steps to connect again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended. {{when}} is a date with time. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.row.expiredUnknownDate": {
+    "text": "Sign-in ran out. Follow the steps to connect again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the date is not known. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.capabilities.readWrite": {
+    "text": "Can read your apps and send proposals",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.read": {
+    "text": "Can read your apps",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.write": {
+    "text": "Can send proposals",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.expiredReadWrite": {
+    "text": "Could read your apps and send proposals",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.capabilities.expiredRead": {
+    "text": "Could read your apps",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.capabilities.expiredWrite": {
+    "text": "Could send proposals",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.progress.done": {
+    "text": "{{done}} of {{total}} done",
+    "description": "Line above the numbered steps of an open setup guide in Settings > Connectors, after the person ticks a step. {{done}} is how many steps they marked done, {{total}} how many the guide has."
+  },
+  "connectors.progress.tickAria": {
+    "text": "Step {{n}} done",
+    "description": "Screen reader label of the toggle on a setup guide's step in Settings > Connectors, announced as pressed or not pressed. {{n}} is the step's number."
   },
   "connectors.row.unnamedClient": {
     "text": "Connected client",
-    "description": "Title of a connected chat app's card in Settings > Connectors when the app gave no name. \"Client\" is a program connected to Homeroom, not a customer."
+    "description": "Title of a connection's row in Settings > Connectors when the app gave no name. \"Client\" is a program connected to Homeroom, not a customer."
   },
   "connectors.disconnect.failedRetry": {
     "text": "Could not disconnect. Try again.",

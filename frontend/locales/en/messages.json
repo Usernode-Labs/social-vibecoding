@@ -840,20 +840,20 @@
     "description": "Line under a request's title on a Done row of the activity drawer of the chat with Homeroom bot: its change was closed without going live."
   },
   "bot.strip.action.answer": {
-    "text": "Answer",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the bot's question."
+    "text": "Needs Reply",
+    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: the bot asked a question and needs the person's reply; opens the request's thread at that question."
   },
   "bot.strip.action.buildIt": {
-    "text": "Build it",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the bot's plan, where Build it starts the build. \"Build\" is a verb."
+    "text": "Review plan",
+    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the bot's plan, where Build it is the button. A verb."
   },
   "bot.strip.action.decide": {
-    "text": "Decide",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at what needs deciding."
+    "text": "Needs Reply",
+    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: the request was handed back for a person's decision and needs their reply; opens the request's thread at what needs deciding. A short label, not a verb."
   },
   "bot.strip.action.tryAgain": {
-    "text": "Try again",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the message that stopped, with its Try again."
+    "text": "Restart build",
+    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the build that stopped, where it can be restarted. A verb."
   },
   "bot.strip.action.addDetail": {
     "text": "Add detail",
@@ -3964,11 +3964,11 @@
     "description": "Drops the pin being placed and its words."
   },
   "design.pane.propose": {
-    "text": "Propose it",
+    "text": "Request it",
     "description": "Button in the design pane that opens the card for filing the design as a public request."
   },
   "design.pane.proposed": {
-    "text": "Proposed as request #{{number}}",
+    "text": "Filed as request #{{number}}",
     "description": "Link in the design pane once the design was filed: opens the request it became."
   },
   "design.pane.frameTitle": {
@@ -4076,48 +4076,48 @@
     "description": "On a phone, in a design thread's header: switches from the thread to the design's preview."
   },
   "design.propose.heading": {
-    "text": "Propose this design",
+    "text": "Request this design",
     "description": "Heading of the card that files the design as a request."
   },
   "design.propose.warning": {
     "text": "This files a public request on {{project}} under your name. Its plan shows the first version and version {{version}} side by side, and anyone who can see the project can see them. Check they show nothing private, such as names, messages or numbers. This thread stays private.",
-    "description": "Warning in the Propose it card, before anything is filed: what becomes public."
+    "description": "Warning in the Request it card, before anything is filed: what becomes public."
   },
   "design.propose.defaultTitle": {
     "text": "Design: {{title}}",
-    "description": "The request's title the Propose it card starts with: the screen's name after \"Design:\"."
+    "description": "The request's title the Request it card starts with: the screen's name after \"Design:\"."
   },
   "design.propose.titleLabel": {
     "text": "Title",
-    "description": "Label of the request title field in the Propose it card."
+    "description": "Label of the request title field in the Request it card."
   },
   "design.propose.notesLabel": {
     "text": "What changes, and why",
-    "description": "Label of the notes field in the Propose it card; the notes become the request's description."
+    "description": "Label of the notes field in the Request it card; the notes become the request's description."
   },
   "design.propose.send": {
     "text": "File the request",
-    "description": "Submit button of the Propose it card."
+    "description": "Submit button of the Request it card."
   },
   "design.propose.cancel": {
     "text": "Cancel",
-    "description": "Closes the Propose it card without filing."
+    "description": "Closes the Request it card without filing."
   },
   "design.propose.failed": {
     "text": "It couldn't be filed just now. Try again in a minute.",
-    "description": "Shown in the Propose it card when filing failed for a reason that was not said."
+    "description": "Shown in the Request it card when filing failed for a reason that was not said."
   },
   "design.propose.headingOn": {
     "text": "Post this design as a plan",
-    "description": "Heading of the design pane's Propose it card when the design's thread is about a request (a filed issue): it posts the design on that request as the person's plan."
+    "description": "Heading of the design pane's Request it card when the design's thread is about a request (a filed issue): it posts the design on that request as the person's plan."
   },
   "design.propose.warningOn": {
     "text": "This posts version {{version}} as your plan on request #{{number}} on {{project}}, under your name, where anyone who can see the project can see it. Check it shows nothing private, such as names, messages or numbers. This thread stays private.",
-    "description": "Warning in the design pane's Propose it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
+    "description": "Warning in the design pane's Request it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
   },
   "design.propose.sendOn": {
     "text": "Post it as a plan",
-    "description": "Submit button of the design pane's Propose it card when the thread is about a request: posts the design on it as the person's plan."
+    "description": "Submit button of the design pane's Request it card when the thread is about a request: posts the design on it as the person's plan."
   },
   "design.pane.postedOn": {
     "text": "Posted as a plan on request #{{number}}",
@@ -4268,8 +4268,8 @@
     "description": "Words sent to Homeroom bot as the person's own message when they pick the screen as it is today on the card that compares versions of a design."
   },
   "botCards.compare.propose": {
-    "text": "Propose version {{version}}",
-    "description": "Button on the card that compares versions of a design, once a version was picked: opens the design's Propose it card for that version."
+    "text": "Request version {{version}}",
+    "description": "Button on the card that compares versions of a design, once a version was picked: opens the design's Request it card for that version."
   },
   "botCards.compare.failed": {
     "text": "That didn't work just now. Try again in a minute.",
@@ -4979,13 +4979,17 @@
     "text": "{{project}} · #{{number}} · Homeroom bot says a person needs to decide",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a request of the person's that Homeroom bot read and handed back, because a person has to decide something before it can be built."
   },
+  "ai.row.decideWhy": {
+    "text": "{{project}} · #{{number}} · Homeroom bot handed it back: {{reason}}",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and handed back for a person to decide, with Homeroom bot's own reason. {{reason}} is that reason, cut to its first line."
+  },
   "ai.row.alreadyWorks": {
     "text": "{{project}} · #{{number}} · Already works: {{reason}}",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and found already works, with the bot's one-sentence reason. The row offers Propose to close."
+    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and found already works, with the bot's one-sentence reason. The row offers Confirm it works."
   },
   "ai.row.alreadyWorksPlain": {
     "text": "{{project}} · #{{number}} · Already works",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and found already works, when it wrote no reason. The row offers Propose to close."
+    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and found already works, when it wrote no reason. The row offers Confirm it works."
   },
   "ai.row.buildStopped": {
     "text": "{{project}} · #{{number}} · Homeroom bot's build stopped",
@@ -5040,36 +5044,36 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: a change on a project that is just this person's waits for their approval (their yes alone decides it). A verb."
   },
   "ai.pill.pick": {
-    "text": "Pick one",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a pick between competing changes."
+    "text": "Choose a version",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a pick between competing changes. A verb."
   },
   "ai.pill.answer": {
-    "text": "Answer",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: Homeroom bot asked the person a question about it."
+    "text": "Needs Reply",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: Homeroom bot asked the person a question about it and needs their reply. A short label, not a verb."
   },
   "ai.pill.buildIt": {
-    "text": "Build it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: a plan waits for the person to say Build it."
+    "text": "Review plan",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: a plan is ready to build; it opens the plan, where Build it is the button. A verb."
   },
   "ai.pill.decide": {
-    "text": "Decide",
-    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first. Opens the request."
+    "text": "Needs Reply",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first, and the bot needs their reply about what happens next. Opens the request. A short label, not a verb."
   },
   "ai.pill.proposeClose": {
-    "text": "Propose to close",
-    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot found already works. Opens the request, where Propose to close starts its close vote."
+    "text": "Confirm it works",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot found already works. Opens the request, where Propose to close starts its close vote. A verb."
   },
   "ai.pill.tryAgain": {
-    "text": "Try again",
-    "description": "The AI tab's main view, Needs you: the pill on a request whose build by Homeroom bot stopped. Opens the request, where Homeroom bot can be asked to build it again."
+    "text": "Restart build",
+    "description": "The AI tab's main view, Needs you: the pill on a request whose build by Homeroom bot stopped. Opens the request, where Homeroom bot can be asked to build it again. A verb."
   },
   "ai.pill.letTryAgain": {
-    "text": "Try again",
-    "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester or an admin may let it try once more."
+    "text": "Retry the fix",
+    "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester or an admin may let it try once more. A verb."
   },
   "ai.pill.needsYou": {
-    "text": "Needs you",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row that waits on the person, when it says no more than that."
+    "text": "Take a look",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row that waits on the person, when it says no more than that. A verb."
   },
   "ai.busy.title_one": {
     "text": "Waiting & in progress · {{count}}",
@@ -5534,6 +5538,10 @@
   "ai.why.decide": {
     "text": "Homeroom bot needs a person to decide",
     "description": "Homeroom bot tab, on a phone: the second line of a Needs you row Homeroom bot handed back for a person to decide."
+  },
+  "ai.why.decideWhy": {
+    "text": "Homeroom bot handed it back: {{reason}}",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row Homeroom bot handed back for a person to decide, with Homeroom bot's own reason. {{reason}} is that reason, cut to its first line."
   },
   "ai.why.alreadyWorks": {
     "text": "Already works: {{reason}}",

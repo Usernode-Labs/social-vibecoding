@@ -29,4 +29,25 @@ async function sessionCostCents(pool, sessionId) {
   return Number.isFinite(cents) && cents > 0 ? cents : 0;
 }
 
-module.exports = { sessionCostCents };
+// #6116: the same figure for a change's page, whose reads (/details, the
+// proposal read) answer anyone who may view the change. The meter's own read
+// (GET /api/sessions/:id) is its author's or an admin's, and so is this: a
+// voter on a change never gets what it cost its author. A change submitted
+// from a fork was not built in a dev session here, so it has no such figure,
+// whatever else the ledger holds for its row. `null` for all of these, for a
+// read that failed and for nothing recorded: the page then says nothing.
+function canReadSessionCost(session, user) {
+  if (!session || !user) return false;
+  return session.user_id === user.id || !!user.isAdmin;
+}
+
+async function sessionCostForViewer(pool, session, user) {
+  if (!canReadSessionCost(session, user) || session.source === 'imported') return null;
+  try {
+    return (await sessionCostCents(pool, session.id)) || null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { sessionCostCents, canReadSessionCost, sessionCostForViewer };

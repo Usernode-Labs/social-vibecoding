@@ -318,7 +318,11 @@ const OWNED = [
   { sel: '#about-row-native-app-version' },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
-  { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
+  // Not #connectors-list: that holds the cards, whose Disclosure bodies are
+  // static markup settings.js writes into (the ticks, the Copy labels, the
+  // case filtering). The hosts of the two store-reading leaves are what React owns.
+  { sel: '[data-connector-status]' },        // features/settings/connectors-list.tsx
+  { sel: '[data-connector-connections]' },   // ditto
   { sel: '#github-link-body' },              // features/settings/social-identity.tsx
   { sel: '#settings-local-agents-list' },    // features/settings/local-agents-list.tsx
   { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx

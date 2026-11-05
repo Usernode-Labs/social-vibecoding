@@ -172,9 +172,9 @@ const HOMEROOM_BOT_USERNAME = 'homeroom_bot';
 
 /**
  * Whether a conversation is a person's direct chat with the Homeroom bot:
- * the one direct conversation with reply threads, one per request (the
- * request's card is the thread's first message). Other direct chats keep
- * none. The client reads the same off a conversation's `homeroomBot` flag
+ * the one direct conversation with reply threads (its private threads: an
+ * ask, a draft, an idea, a design, and older requests' card threads, which
+ * take no new news). Other direct chats keep none. The client reads the same off a conversation's `homeroomBot` flag
  * (frontend/src/features/messages threadsAllowed).
  */
 async function isHomeroomBotDirect(db, conversationId) {

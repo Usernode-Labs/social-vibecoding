@@ -2155,6 +2155,10 @@
     "text": "Report app",
     "description": "Small link at the foot of the app menu, beside a flag: a verb, reports this app to Homeroom's moderators."
   },
+  "appContext.terms": {
+    "text": "Terms",
+    "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Privacy\" and \"Report app\": opens Homeroom's terms of service in a new tab."
+  },
   "appContext.privacy": {
     "text": "Privacy",
     "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Report app\": opens Homeroom's privacy notice in a new tab."
@@ -2177,11 +2181,19 @@
   },
   "sidePanel.main": {
     "text": "Main Chat",
-    "description": "Beside the AI tab's page, on the column a request or a change opened in: the chip that closes it and gives Main Chat, the person's private chat with Homeroom bot, its place back. \"Main Chat\" is that chat's name; keep it the same as its title. A back chip, with a chevron before it."
+    "description": "Beside the AI tab's page, on the column a request or a change opened in when Main Chat is behind the page: the chip that closes it and gives Main Chat, the person's private chat with Homeroom bot, its place back. \"Main Chat\" is that chat's name; keep it the same as its title. A back chip, with a chevron before it."
   },
   "sidePanel.mainLabel": {
     "text": "Back to Main Chat",
     "description": "Screen-reader label of the \"Main Chat\" chip beside the AI tab's page: it closes the page opened in the column and shows Main Chat, the person's private chat with Homeroom bot, again."
+  },
+  "sidePanel.thread": {
+    "text": "Thread",
+    "description": "Beside the AI tab's page, on the column a request or a change opened in when a private thread is behind the page: the chip that closes it and shows that thread again. \"Thread\" is the word the app uses for a private thread; its own title is too long for the chip. A back chip, with a chevron before it."
+  },
+  "sidePanel.threadLabel": {
+    "text": "Back to the thread",
+    "description": "Screen-reader label of the \"Thread\" chip beside the AI tab's page: it closes the page opened in the column and shows the private thread that was behind it again."
   },
   "sidePanel.openProject": {
     "text": "Open {{project}}",

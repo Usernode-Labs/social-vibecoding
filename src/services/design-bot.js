@@ -26,6 +26,7 @@
 // public is always the person's own tap.
 
 const log = require('./logger');
+const turnEngine = require('./homeroom-bot-turn-engine');
 const { withoutEmDashes } = require('./em-dashes');
 const { ENDED: TRACK_ENDED, STEPS: TRACK_STEPS } = require('./homeroom-bot-track');
 
@@ -110,6 +111,14 @@ const DESIGN_DONE = /\bI(?:'ve| have)\s+(?:just\s+|now\s+)?(?:changed|updated|ma
 const ASKS_LEAVE = /\b(?:want me to|do you want me to|would you like me to|shall I|should I|ok(?:ay)? if I|can I go ahead|ready for me to|shall we start|should we start|want to start|go ahead)\b[^?]*\?/i;
 const DRAW_NOTE = '[Homeroom check, not from them: you have not drawn anything yet. Call write_screen (or edit_design) '
   + 'now, then reply.]';
+// #6353: one whole screen a turn. A second write_screen after one that was
+// taken is refused, so the turn edits instead of redrawing (which is where
+// the cost went, and long redraws got cut off).
+const REWRITE_NOTE = 'You drew this turn\'s screen already. Change or extend it with edit_design: a second '
+  + 'write_screen is taken only when the first was refused or empty.';
+// Fewer visible characters than this without scripts is an empty screen, so
+// a rewrite after it is allowed.
+const EMPTY_SCREEN_CHARS = 20;
 
 // #6144: what the model writes when the last round forces `reply` before it
 // has done anything ("placeholder"), posted as the answer twice on 2 Nov.
@@ -320,15 +329,17 @@ const TOOLS = Object.freeze([
       name: 'write_screen',
       description: 'Draw a whole screen: self-contained HTML for one screen (its markup, and a <style> block of its own for '
         + 'anything the project\'s stylesheets do not cover), at the size it is for. Homeroom puts the project\'s own '
-        + 'stylesheets in, so use their classes and never copy CSS from them. Keep one call to what fits; grow the screen '
-        + 'in later rounds with edit_design. It becomes the next version when you reply. Say in `note`, in a few words, what it is.',
+        + 'stylesheets in, so use their classes and never copy CSS from them. A plan shows the screen without its '
+        + 'scripts, so write every row, label and state it must show into the markup; use a script only for an '
+        + 'interactive state the plan does not need. One write_screen a turn: grow it with edit_design. It becomes the '
+        + 'next version when you reply. Say in `note`, in a few words, what it is.',
       parameters: {
         type: 'object',
         properties: {
           title: { type: 'string', description: 'The screen\'s name, in a few words ("Settings", "Order history").' },
           size: { type: 'string', enum: ['phone', 'desktop'], description: 'phone: 390 pixels wide; desktop: 1280.' },
           html: { type: 'string', description: 'The whole screen: a full HTML document, or the body\'s markup.' },
-          note: { type: 'string', description: 'What it is, in a few plain words (it names the version).' },
+          note: { type: 'string', description: 'What it is, in a few plain words. Leave out the version number: the thread adds it.' },
         },
         required: ['title', 'size', 'html', 'note'],
         additionalProperties: false,
@@ -340,8 +351,10 @@ const TOOLS = Object.freeze([
     function: {
       name: 'edit_design',
       description: 'Change the design: exact find-and-replace edits on the current version\'s HTML, applied in order. '
-        + 'Each `find` must be copied exactly from the HTML and occur in it exactly once; `replace` takes its place '
-        + '(empty deletes it). Every call\'s edits together make the next version. Say in `note`, in a few words, what changed.',
+        + 'The way to change or extend this turn\'s screen: write rows and words into the markup, not a script that '
+        + 'builds them. Each `find` must be copied exactly from the HTML and occur in it exactly once; `replace` takes '
+        + 'its place (empty deletes it). Every call\'s edits together make the next version. Say in `note`, in a few '
+        + 'words, what changed.',
       parameters: {
         type: 'object',
         properties: {
@@ -356,7 +369,7 @@ const TOOLS = Object.freeze([
               additionalProperties: false,
             },
           },
-          note: { type: 'string', description: 'What changed, in a few plain words (it names the version).' },
+          note: { type: 'string', description: 'What changed, in a few plain words. Leave out the version number: the thread adds it.' },
         },
         required: ['edits', 'note'],
         additionalProperties: false,
@@ -409,6 +422,15 @@ const TOOLS = Object.freeze([
         required: ['text'],
         additionalProperties: false,
       },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_plan',
+      description: 'What the plan shows, drawn as a plan is: without scripts. Which screens, their words, and how many '
+        + 'lists and rows. Read it before answering when they say the plan or the preview looks wrong.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
   // Homeroom bot parity (P2, P8): versions side by side, and pictures from
@@ -505,7 +527,7 @@ const TOOLS = Object.freeze([
 ]);
 
 // #6144: the tools once reading is over (READ_UNTIL): all but the readers.
-const READ_TOOLS = new Set(['list_source', 'read_source', 'list_requests', 'get_request']);
+const READ_TOOLS = new Set(['list_source', 'read_source', 'list_requests', 'get_request', 'read_plan']);
 const ACT_TOOLS = Object.freeze(TOOLS.filter((tool) => !READ_TOOLS.has(tool.function.name)));
 const READING_OVER_NOTE = '[Homeroom check, not from them: reading is over for this turn. Draw or change the screen now with '
   + 'write_screen or edit_design, or reply.]';
@@ -803,13 +825,15 @@ function designPrompt({
     'HOW TO DRAW',
     '- write_screen draws a whole new screen from their words: self-contained HTML for one screen, at the size it is',
     `  for. Homeroom puts the stylesheets in for you (${sheetWords(drawn.surface)}): use their classes and never copy`,
-    '  CSS from them. A <style> block of your own covers the rest. Keep one call to what fits, then grow the screen in',
-    '  later rounds with edit_design.',
+    '  CSS from them. A <style> block of your own covers the rest. A plan shows the screen without its scripts, so',
+    '  every row, label and state it must show goes in the markup; use a script only for an interactive state the plan',
+    '  does not need.',
     '- edit_design changes the screen with exact find-and-replace pairs. Copy each `find` exactly from it, long enough to',
     '  occur once. Keep the screen\'s own classes and structure where you can: the real change will be built from',
     '  this design, in the project\'s own code.',
-    '- One version a turn: what you draw and change in this turn is saved as the next version when you reply. A second',
-    '  write_screen in a turn replaces the first.',
+    '- One version a turn: what you draw and change in this turn is saved as the next version when you reply. Draw a',
+    '  whole screen once: after a write_screen that was taken, change or extend it with edit_design. A second',
+    '  write_screen is taken only when the first was refused or came out empty.',
     '- Draw from their words, from the project\'s code (list_source to find how its screens are built, then read_source:',
     '  its markup, its classes, its words) and from any picture they sent. Real words that fit the project, never',
     '  placeholder text.',
@@ -820,8 +844,11 @@ function designPrompt({
     '  made up from another month:',
     ...sketchDates.calendarLines(today, 2).map((line) => `  ${line}`),
     `- A <style ${SHEET_ATTR}> block is one of the project's stylesheets, written in by Homeroom: leave it as it is.`,
-    '- You may add inline styles and small inline <script>s for interactive states. Nothing may load from the network:',
+    '- You may add inline styles and small inline <script>s for interactive states. A plan drops scripts, so anything',
+    '  the plan must show is in the markup. Nothing may load from the network:',
     '  no external src, href, @import, fetch or font. The preview blocks it anyway.',
+    '- When they say the plan or the preview looks wrong, call read_plan first and answer from what it shows; never',
+    '  guess why.',
     '- A pinned comment names the version it was pinned on and the element under the point. When it was pinned on an',
     '  older version, find the same element in this one.',
     '- If what they ask is unclear, ask one short question instead of guessing. Never say you drew or changed something',
@@ -829,7 +856,7 @@ function designPrompt({
     '- You never post, file or make anything yourself: when they say it looks good,',
     '  or ask to post it, offer it with offer_plan, and their tap on the card does it. A design for a new project:',
     '  offer it with offer_plan and project when they name an existing project to put it on, and with offer_project',
-    '  only when they want a new project. Propose it above the preview does the same. After "Add to an existing',
+    '  only when they want a new project. Request it above the preview does the same. After "Add to an existing',
     '  request", ask which one.',
     // Homeroom bot parity (P2, P8).
     '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it up',
@@ -1112,8 +1139,40 @@ async function boardRead(pool, config, { user, project, args, name, deps = {}, s
   return { ok: !out.error, project: app.name || app.slug, ...out };
 }
 
-// ── A turn ───────────────────────────────────────────────────────────────
+/**
+ * #6353: what the plan shows, as it is drawn (without scripts), for the model
+ * to answer from when they say the plan or the preview looks wrong. When the
+ * design was posted or filed, it is the plan posted on its request; otherwise
+ * it is the plan the current version would make. `gap` is the turn's own
+ * screen against what the preview would draw (design-threads.js planGap).
+ * Never throws.
+ */
+async function readPlan(pool, { design, project, html, threads, mayor, deps = {} }) {
+  if (!design) return { ok: false, error: 'There is no screen yet: draw it with write_screen first.' };
+  const gap = threads.planGap(html);
+  const n = await threads.planTargetOf(pool, design).catch(() => null);
+  if (n && ['posted', 'filed'].includes(design.state)) {
+    let appId = Number(project?.id) || null;
+    if (!appId && design.app?.slug) appId = Number((await mayor.findApp(pool, design.app.slug).catch(() => null))?.id) || null;
+    const plan = appId
+      ? await (deps.requestSpecs || require('./request-specs')).personPlanOf(pool, { appId, issueNumber: n }).catch(() => null)
+      : null;
+    if (plan?.html) {
+      return {
+        ok: true, posted: true, number: Number(n),
+        planVersion: Number(plan.version) || null,
+        designVersion: threads.planDesignVersion(plan.html),
+        screens: threads.planReadout(plan.html), gap,
+      };
+    }
+  }
+  const made = threads.planHtml({
+    design, title: design.title, notes: '', before: null, after: html, version: design.latest,
+  });
+  return { ok: true, posted: false, designVersion: design.latest || null, screens: threads.planReadout(made), gap };
+}
 
+// ── A turn ───────────────────────────────────────────────────────────────
 /**
  * Answer one message in a thread that holds a design, or draw the first one
  * in a thread that holds none yet. `design` is the thread's (design-threads
@@ -1166,10 +1225,14 @@ async function answer(pool, config, {
     avoid: [],
   };
   const tools = [];
-  let rounds = 0;
+  // The turn's rounds, moved by the turn engine (its limit is MAX_ROUNDS).
+  const turnRounds = { rounds: 0, limit: MAX_ROUNDS };
   let error = null;
   let html = current ? current.html : '';
   let drawn = null;
+  // #6353: the whole screen this turn's first write_screen made, and whether
+  // it came out empty (either way, a later write_screen is refused).
+  let wrote = null;
   let sheets = null;
   // #6142: a first drawing, handed a screen or with no version yet, draws by
   // DRAW_BY_ROUND, and an app's starts from its entry page (`entry`:
@@ -1258,18 +1321,18 @@ async function answer(pool, config, {
     // last one only replies.
     let nudges = 0;
     const holdEnd = (said) => {
-      if (nudges >= mayor.MAX_PREAMBLE_NUDGES || rounds + 1 >= MAX_ROUNDS) return null;
+      if (nudges >= mayor.MAX_PREAMBLE_NUDGES || turnRounds.rounds + 1 >= MAX_ROUNDS) return null;
       // #6151: Homeroom bot builds a filed design: words saying it will not go back.
       if (builds && saysNotBuilt(said)) {
         nudges += 1;
-        t.failures.push(`d${rounds}:not_built`);
+        t.failures.push(`d${turnRounds.rounds}:not_built`);
         return BUILT_NOTE;
       }
       // #6159: "close it from your side" is no answer: there is no such
       // control, and close_thread finishes the thread.
       if (!closedThread && mayor.NO_CONTROL_CLAIM.test(said)) {
         nudges += 1;
-        t.failures.push(`d${rounds}:no_control`);
+        t.failures.push(`d${turnRounds.rounds}:no_control`);
         return CLOSE_NOTE;
       }
       const changedNow = !!html && html !== (current?.html || '');
@@ -1277,45 +1340,52 @@ async function answer(pool, config, {
       const why = notDrawnYet(said, { changed: changedNow, offered: !!offered || !!card, handoff, drawnBefore: !!current, mayAsk, mayor });
       if (!why) return null;
       nudges += 1;
-      t.failures.push(`d${rounds}:${why}`);
+      t.failures.push(`d${turnRounds.rounds}:${why}`);
       if (why === 'filler') return fillerNote(said);
       return why === 'preamble' ? mayor.PREAMBLE_NOTE : DRAW_NOTE;
     };
-    while (rounds < MAX_ROUNDS && !replyText) {
-      rounds += 1;
-      const last = rounds === MAX_ROUNDS;
-      // #6144: reading has a budget. From the round after READ_UNTIL it is
-      // offered ACT_TOOLS alone, and told so once.
-      const reading = rounds <= READ_UNTIL;
-      if (rounds === READ_UNTIL + 1) messages.push({ role: 'user', content: READING_OVER_NOTE });
-      // #6141: handed a screen to draw, a turn that read the code until its
-      // rounds ran out ended on "placeholder". #6142: a first drawing with
-      // nothing shown by round DRAW_BY_ROUND draws in it (write_screen),
-      // leaving the rounds after it to grow the screen; the last still replies.
-      const drawNow = firstDrawing && !mayAsk && !last && rounds === DRAW_BY_ROUND && !shownNow();
-      if (drawNow) t.failures.push(`d${rounds}:draw_forced`);
-      const res = await mayor.askModel(t, {
-        messages, tools: reading ? TOOLS : ACT_TOOLS, where: `d${rounds}`, maxOutputTokens: DESIGN_OUTPUT_TOKENS,
-        toolChoice: last ? { type: 'function', function: { name: 'reply' } }
-          : drawNow ? { type: 'function', function: { name: 'write_screen' } } : 'auto',
-      });
-      const calls = mayor.normalizeCalls(res.toolCalls, rounds, seenIds);
-      if (!calls.length) {
+    // 5 Nov 2026: the design bot is one profile on Homeroom bot's turn engine
+    // (homeroom-bot-turn-engine.js), which counts the rounds, asks, and keeps
+    // each call and result. What follows is what only the design bot does.
+    // #6144: reading has a budget. From the round after READ_UNTIL it is
+    // offered ACT_TOOLS alone, and told so once.
+    let reading = true;
+    const designTurn = {
+      messages, ids: seenIds, normalize: mayor.normalizeCalls, parseArgs: mayor.parseArgs,
+      resultChars: mayor.MAX_TOOL_RESULT_CHARS, cut: clip,
+      ask: (options) => mayor.askModel(t, { ...options, maxOutputTokens: DESIGN_OUTPUT_TOKENS }),
+      where: (n) => `d${n}`,
+      done: () => !!replyText,
+      beforeRound: ({ rounds }) => {
+        reading = rounds <= READ_UNTIL;
+        if (rounds === READ_UNTIL + 1) messages.push({ role: 'user', content: READING_OVER_NOTE });
+      },
+      offer: ({ rounds, last }) => {
+        // #6141: handed a screen to draw, a turn that read the code until its
+        // rounds ran out ended on "placeholder". #6142: a first drawing with
+        // nothing shown by round DRAW_BY_ROUND draws in it (write_screen),
+        // leaving the rounds after it to grow the screen; the last still replies.
+        const drawNow = firstDrawing && !mayAsk && !last && rounds === DRAW_BY_ROUND && !shownNow();
+        if (drawNow) t.failures.push(`d${rounds}:draw_forced`);
+        return {
+          tools: reading ? TOOLS : ACT_TOOLS,
+          toolChoice: last ? { type: 'function', function: { name: 'reply' } }
+            : drawNow ? { type: 'function', function: { name: 'write_screen' } } : 'auto',
+        };
+      },
+      onWords: (res) => {
         const said = String(res.content || '').trim();
         const note = holdEnd(said);
         if (note) {
           messages.push({ role: 'assistant', content: said });
           messages.push({ role: 'user', content: note });
-          continue;
+          return 'continue';
         }
         replyText = said;
-        break;
-      }
-      messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
-      for (const call of calls) {
-        const name = call.function.name;
+        return 'stop';
+      },
+      call: async (call, name, args, round) => {
         tools.push(name.slice(0, 40));
-        const args = mayor.parseArgs(call.function.arguments);
         // A read that arrives once reading is over is refused (#6144).
         const lateRead = !reading && READ_TOOLS.has(name);
         // 1 Nov 2026: the working card's words, as the call starts.
@@ -1324,15 +1394,23 @@ async function answer(pool, config, {
         if (name === 'write_screen') {
           const screen = screenArgs(args);
           if (screen.error) result = { ok: false, error: screen.error };
-          else {
+          else if (wrote && !wrote.empty) {
+            // #6353: a whole redraw after one that was taken. Not applied;
+            // recorded, so a slow turn shows why it kept drawing.
+            t.failures.push(`d${round.rounds}:rewrite`);
+            result = { ok: false, error: REWRITE_NOTE };
+          } else {
             if (!sheets) sheets = await sheetsFor(pool, { user, surface, app: project, config, deps, entry });
             const full = withSheets(screen.html, sheets);
             if (!threads.validHtml(full)) result = { ok: false, error: 'That screen is too big. Draw less of it.' };
             else {
               html = full;
               drawn = screen;
+              // #6353: a screen that shows nothing without its scripts is
+              // empty, and a later whole redraw may replace it.
+              wrote = { empty: threads.visibleText(threads.screenMarkup(screen.html)).length < EMPTY_SCREEN_CHARS };
               notes.length = 0;
-              notes.push(screen.note);
+              notes.push(threads.bareNote(screen.note));
               result = { ok: true, chars: screen.html.length, saved: 'as the next version when you reply' };
             }
           }
@@ -1345,7 +1423,7 @@ async function answer(pool, config, {
             else if (!threads.validHtml(next)) result = { ok: false, error: 'That makes the design too big.' };
             else {
               html = next;
-              if (args.note) notes.push(clip(args.note, 120));
+              if (args.note) notes.push(threads.bareNote(clip(args.note, 120)));
               result = { ok: true, chars: collapseSheets(html).length };
             }
           }
@@ -1361,6 +1439,8 @@ async function answer(pool, config, {
           }
         } else if (name === 'list_requests' || name === 'get_request') {
           result = await boardRead(pool, config, { user, project, args, name, deps, state: board });
+        } else if (name === 'read_plan') {
+          result = await readPlan(pool, { design, project, html, threads, mayor, deps });
         } else if (name === 'reply') {
           replyText = String(args.text || '').trim();
           result = { ok: true };
@@ -1386,7 +1466,7 @@ async function answer(pool, config, {
           const checked = !offering
             ? { ok: false, error: 'There is no screen yet: draw it with write_screen first.' }
             : name === 'offer_plan'
-              ? await mayor.checkPlanOffer(pool, { user, design: offering, args, deps })
+              ? await mayor.checkPlanOffer(pool, { user, design: offering, args, deps, html })
               : mayor.checkProjectOffer({ design: offering, args });
           if (checked.ok) offered = checked.offer;
           result = checked.ok ? { ok: true, note: checked.note } : { ok: false, error: checked.error };
@@ -1422,17 +1502,21 @@ async function answer(pool, config, {
         } else {
           result = { ok: false, error: `There is no tool called ${name}.` };
         }
-        messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), mayor.MAX_TOOL_RESULT_CHARS) });
-      }
-      // A reply that says it drew, or asks leave to, with nothing drawn.
-      if (replyText) {
-        const note = holdEnd(replyText);
-        if (note) {
-          messages.push({ role: 'user', content: note });
-          replyText = '';
+        return result;
+      },
+      afterCalls: () => {
+        // A reply that says it drew, or asks leave to, with nothing drawn.
+        if (replyText) {
+          const note = holdEnd(replyText);
+          if (note) {
+            messages.push({ role: 'user', content: note });
+            replyText = '';
+          }
         }
-      }
-    }
+        return undefined;
+      },
+    };
+    await turnEngine.runRounds(turnRounds, designTurn);
   } catch (err) {
     error = mayor.codeOf(err);
     log.warn('design-bot', 'A design turn failed', { userId: user.id, messageId: message.id, code: error });
@@ -1451,7 +1535,7 @@ async function answer(pool, config, {
   // a reply the last round forced (`reply` is its only tool) unless it asks
   // a real question back: `end:filler`, `end:forced`.
   const shown = changed || (!error && (!!offered || !!card));
-  const forced = rounds === MAX_ROUNDS && !!replyText;
+  const forced = turnRounds.rounds === MAX_ROUNDS && !!replyText;
   const unkept = shown || (error && !replyText) ? null
     : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayAsk, mayor }) || (forced && !realQuestion(replyText) ? 'forced' : null);
   if (unkept) t.failures.push(`end:${unkept}`);
@@ -1465,19 +1549,11 @@ async function answer(pool, config, {
   // nothing shown, filler is unkept above.
   const said = isFiller(replyText) ? '' : replyText;
   await mayor.recordTurn(pool, {
-    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds, tools,
+    userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools,
     inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd,
     error, failures: t.failures, fallback: error ? 'design_broken' : unkept ? 'not_drawn' : null,
   });
-  if (t.usage.costUsd > 0) {
-    try {
-      if (await require('./openrouter-managed-keys').usesIncludedKey(pool, bot.id)) {
-        await require('./limits').recordSpend(pool, bot.id, Math.round(t.usage.costUsd * 1e6) / 1e4, { byok: false });
-      }
-    } catch (err) {
-      log.warn('design-bot', 'Could not record a design turn\'s spend', { err: err.message });
-    }
-  }
+  await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a design turn', category: 'design-bot' });
   if (offered && !changed && !error) {
     return mayor.sendDesignOffer(pool, {
       bot, user, conversationId, message, design, offer: offered, text: withoutEmDashes(clip(said, MAX_REPLY_CHARS)), key, deps,
@@ -1573,6 +1649,7 @@ module.exports = {
   DRAW_BY_ROUND,
   READ_UNTIL,
   ACT_TOOLS,
+  READ_TOOLS,
   READING_OVER_NOTE,
   READING_OVER_ERROR,
   TOOLS,

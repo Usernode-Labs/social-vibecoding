@@ -83,8 +83,8 @@ import { platformSlug } from '../messages/channel-hub';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import {
   changesPicture, loadLibrary, outOfPicture, textsUnchanged,
-  closeUpView, coverCrop, cropCanvas, CROP_SHADE, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
-  isFullCrop, overlaysGone, pictureScale, pinInCrop, placeBeside,
+  closeUpView, coverCrop, cropCanvas, CROP_SHADE, dragCrop, encodeUnder, fitsUpload, FULL_CROP, inRect, insetFrame,
+  isFullCrop, MAX_UPLOAD_BYTES, overlaysGone, pictureScale, pinInCrop, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
   type Base, type CropHandle, type Point, type Rect, type Size,
 } from './picture';
@@ -1033,8 +1033,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (!draft) return;
     const key = draft.key;
     const room = MAX_PICTURES - pictureCount(draft);
-    const usable = files.filter((f) => IMAGE_TYPES.includes(f.type));
-    if (usable.length < files.length) update(key, { error: t('devchat:commentPin.error.imageType') });
+    const images = files.filter((f) => IMAGE_TYPES.includes(f.type));
+    // #6121: a person's own image goes up as it is, so one over the server's
+    // limit is refused here, not after its thumbnail has promised it.
+    const usable = images.filter(fitsUpload);
+    if (images.length < files.length) update(key, { error: t('devchat:commentPin.error.imageType') });
+    if (usable.length < images.length) {
+      update(key, { error: t('devchat:commentPin.error.imageTooLarge', { megabytes: MAX_UPLOAD_BYTES / (1024 * 1024) }) });
+    }
     if (room <= 0) {
       update(key, { error: t('devchat:commentPin.error.imageLimit', { count: MAX_PICTURES }) });
       return;
@@ -1112,7 +1118,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         to: name,
         number: number || null,
         href: number && slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${number}` : null,
-        pictures: (post.shots?.length || 0) + (post.images?.length || 0),
+        // #6121: what the request actually carries.
+        pictures: Math.max(0, (post.shots?.length || 0) + (post.images?.length || 0) - outcome.droppedPictures),
         comments: live.length,
         kudos: !!outcome.bounty?.placed,
       }]);
@@ -1122,13 +1129,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       barRef.current?.focus({ preventScroll: true });
       // Whole sentences, one after another: where it went, then what came
       // of the kudos. What joins two of them is a message too.
-      const postedLine = many
+      const lost = outcome.droppedPictures;
+      const postedLine = lost
         ? (outcome.botWillBuild
-          ? t('devchat:commentPin.toast.postedManyBuilding', { count: live.length, place: name })
-          : t('devchat:commentPin.toast.postedMany', { count: live.length, place: name }))
-        : (outcome.botWillBuild
-          ? t('devchat:commentPin.toast.postedBuilding', { place: name })
-          : t('devchat:commentPin.toast.posted', { place: name }));
+          ? t('devchat:commentPin.toast.postedPicturesLostBuilding', { count: lost, place: name })
+          : t('devchat:commentPin.toast.postedPicturesLost', { count: lost, place: name }))
+        : many
+          ? (outcome.botWillBuild
+            ? t('devchat:commentPin.toast.postedManyBuilding', { count: live.length, place: name })
+            : t('devchat:commentPin.toast.postedMany', { count: live.length, place: name }))
+          : (outcome.botWillBuild
+            ? t('devchat:commentPin.toast.postedBuilding', { place: name })
+            : t('devchat:commentPin.toast.posted', { place: name }));
       let kudosLine = '';
       // #5249: parked, no kudos sentence, whatever the answer held.
       if (outcome.bounty && !KUDOS_PARKED) {

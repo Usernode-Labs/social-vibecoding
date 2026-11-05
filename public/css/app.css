@@ -5743,11 +5743,15 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   .browse-row + .browse-row::before { content: none; }
   .browse-row,
   .browse-row + .browse-row {
-    /* The widget language separates by figure/ground, so the box is a white
-       surface on the grey page rather than a hairline outline. The border
-       stays declared and transparent so the hover rule below has a width to
-       colour in without the box changing size under the cursor. */
-    border: 1px solid transparent;
+    /* The widget language separates by figure/ground, and the box is still a
+       white surface on the grey page, but the fill alone let the rows run
+       together (#5928 item 11): the wallpaper's pale end is a point or two off
+       white, and in dark the box is near-black on near-black. So at rest it
+       wears the hairline every card wears, the sheets' own --app-sheet-line,
+       which has its dark and more-contrast values. Width is unchanged from
+       when this border was transparent, so the hover rule below only recolours
+       it and the box does not change size under the cursor. */
+    border: 1px solid var(--app-sheet-line);
     background-color: var(--bg-primary);
     border-radius: 1rem;
   }
@@ -17089,6 +17093,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-gate[data-done="true"] .dev-change-bar-fill[data-state="done"] { background: var(--state-ok); }
 .dev-change-bar-fill[data-state="bad"] { background: var(--state-blocked); }
 .dev-change-gate-note { grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; line-height: 1.4; color: var(--text-muted); }
+.dev-change-gate-facts { grid-column: 1 / -1; margin-top: 8px; display: grid; gap: 2px; font-size: 13px; line-height: 1.4; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.dev-change-gate-facts p { margin: 0; }
+.dev-change-gate-facts [data-change-vote-fact="tally"] { color: var(--text-primary); }
+.dev-change-gate-facts [data-ask="true"] { color: var(--accent); font-weight: 600; }
 .dev-change-gate-link {
   appearance: none;
   border: 0;

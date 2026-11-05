@@ -26,6 +26,33 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const progress = require('../src/services/homeroom-bot-progress');
 const { standing, arrange } = require('../src/services/ai-work');
 
+test('#6348: an update stops holding once its change has a newer head', () => {
+  // A turn marker older than a turn may run is one that died without
+  // releasing it; the longest turn is src/workflow/turn/machine.ts MAX_TURN_MS.
+  const machine = read('src/workflow/turn/machine.ts');
+  const hours = Number(machine.match(/export const MAX_TURN_MS = (\d+) \* 60 \* 60 \* 1000;/)[1]);
+  assert.equal(hours, 6);
+  assert.equal(progress.UPDATE_TURN_HOURS, hours);
+  // Both clauses name the head the ask was made against...
+  const coming = progress.updateComingSql('cs');
+  const asked = progress.updateAskSql('cs');
+  for (const sql of [coming, asked]) {
+    assert.match(sql, /asked_head_sha/);
+    // ...and compare it with the change's current head: reviewed for a native
+    // change, the PR head for an imported one.
+    assert.match(sql, /reviewed_head_sha/);
+    assert.match(sql, /imported_pr_head_sha/);
+  }
+  // The turn clause counts one only while it could still be running.
+  assert.match(coming, /startedAt/);
+  assert.match(coming, /make_interval\(hours => 6\)/);
+  // recordAsk records the head the ask was made against.
+  const voice = read('src/services/homeroom-bot-voice.js');
+  const insert = voice.slice(voice.indexOf('INSERT INTO homeroom_bot_change_asks'));
+  assert.match(insert.slice(0, insert.indexOf('RETURNING id')), /asked_head_sha/);
+  assert.match(insert.slice(0, insert.indexOf('RETURNING id')), /reviewed_head_sha/);
+});
+
 test('#6282: the update-in-flight windows are the bot\'s own', () => {
   assert.equal(progress.UPDATE_TAKEN_HOURS, 3);
   assert.equal(progress.UPDATE_QUEUED_DAYS, 7);

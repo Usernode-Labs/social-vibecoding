@@ -405,7 +405,15 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   // column grid and a heading has to span it. The gutter comes from the
   // primitive, which is a fix as well as a consolidation — the hand-written
   // `px-3` did not line up with ListRow's `px-4` text column.
-  const headingClass = 'md:col-span-full';
+  //
+  // A DELIBERATE EXCEPTION to the 12px dim label (#5928 item 11), for Discover
+  // alone: these labels are all that breaks up one long run of near-identical
+  // rows, and people scan them to find their place, where a settings screen's
+  // label only names the card under it. So 13px in the row description's ink
+  // (`text-zinc-700 dark:text-zinc-300`, which data-contrast="more" reaches on
+  // its own), still small caps. The why line below keeps the muted ink, so the
+  // label leads it. The primitive stays as it is for every other screen.
+  const headingClass = 'text-[13px] text-zinc-700 dark:text-zinc-300 md:col-span-full';
   // One line under each tier label saying how its rows were picked (#5928
   // item 2: "Recommended for you has no explanation"). The heading stays an
   // <h2> with the label as its only child; this is a sibling <p> in the

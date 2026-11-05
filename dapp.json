@@ -460,7 +460,7 @@
       "key": "BREVO_API_KEY",
       "group": "Phone sign-in",
       "private": true,
-      "description": "Brevo API key, sent as the api-key header on POST https://api.brevo.com/v3/transactionalSMS/send. Private: it can send texts and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
+      "description": "Brevo API key, sent as the api-key header on POST https://api.brevo.com/v3/transactionalSMS/send and, when PLATFORM_MAIL_PROVIDER is brevo, on POST https://api.brevo.com/v3/smtp/email. Private: it can send texts and mail and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
     },
     {
       "key": "BREVO_SMS_SENDER_IDS",
@@ -502,7 +502,7 @@
       "key": "PLATFORM_MAIL_PROVIDER",
       "group": "Platform mail",
       "default": "auto",
-      "description": "Which transport sends platform mail: auto (default), gmail, http, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than printing login codes into the log. Naming a provider explicitly means a missing key is reported as broken, not silently downgraded. A staging preview ALWAYS logs instead of delivering, whatever this says."
+      "description": "Which transport sends platform mail: auto (default), gmail, http, brevo, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than logging login codes. Brevo is used only when named here, because BREVO_API_KEY also sends SMS. A named provider with a missing key is reported as broken, not downgraded. A staging preview ALWAYS logs instead of delivering."
     },
     {
       "key": "PLATFORM_MAIL_FROM",
@@ -540,6 +540,19 @@
       "private": true,
       "required": false,
       "description": "Resend webhook signing secret (whsec_...) for POST /api/mail/webhooks/resend. Configure delivered, bounced and complained events in Resend. Unset rejects every webhook; Gmail has no delivery webhooks."
+    },
+    {
+      "key": "BREVO_MAIL_WEBHOOK_TOKEN",
+      "group": "Platform mail",
+      "private": true,
+      "required": false,
+      "description": "Bearer token Brevo's transactional email webhook must send to POST /api/mail/webhooks/brevo. Configure delivered, hardBounce, softBounce, invalid, blocked and spam events in Brevo. Unset leaves the webhook answering 404 and the admin mail reports without delivery counts."
+    },
+    {
+      "key": "BREVO_MAIL_TEMPLATES",
+      "group": "Platform mail",
+      "required": false,
+      "description": "Mail kinds sent with a template kept in Brevo instead of Homeroom's, as JSON: {\"project_invite\":12}. Used only when PLATFORM_MAIL_PROVIDER is brevo. Empty leaves every mail on Homeroom's templates; a malformed value is logged and ignored. Editing such a template in Brevo takes effect at once, with no vote. See docs/mail-brevo.md."
     },
     {
       "key": "PLATFORM_MAIL_MAX_PER_HOUR",
@@ -3032,9 +3045,9 @@
       "expectText": "Edit profile"
     },
     {
-      "name": "Settings offers the way back into the welcome tour (#2255)",
+      "name": "Settings offers the way back into the welcome tour (#2255), and the user guide beside it (#5973)",
       "path": "/#settings/tour",
-      "expectSelector": "#settings-section-content [data-settings-section=\"tour\"]:not(.hidden) #settings-tour-section #settings-tour-replay",
+      "expectSelector": "#settings-section-content:has([data-settings-section=\"guide\"] #settings-guide-section #settings-guide-voting) [data-settings-section=\"tour\"]:not(.hidden) #settings-tour-section #settings-tour-replay",
       "expectText": "Replay the tour"
     },
     {
@@ -4228,8 +4241,14 @@
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
       "path": "/?demo=1#settings/connectors",
-      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden):has(#connector-url) #connector-tool-claude",
       "expectText": "Claude (claude.ai)"
+    },
+    {
+      "name": "A tool whose sign-in ran out says Needs attention on its card (#6134)",
+      "path": "/?demo=connectors-attention#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connector-tool-chatgpt summary [data-connector-status=\"chatgpt\"]:not(:empty)",
+      "expectText": "Needs attention"
     },
     {
       "name": "Connector setup offers Claude web and ChatGPT web as named routes with their step counts (#1289, #2370)",
@@ -5169,10 +5188,10 @@
       "expectText": "Also closes"
     },
     {
-      "name": "#6019: the AI tab opens on its own page: Needs you, grouped by project, with a plan waiting for your Build it and a request Homeroom bot handed back for a person to decide, another project's build that stopped (Try again), and a private idea under Only you; over it, the project chips end in a More for the projects past the first three",
+      "name": "#6019: the AI tab opens on its own page: Needs you, grouped by project, with a plan waiting for you to review it and a request Homeroom bot handed back for a person to say what's next, another project's build that stopped (Restart build), and a private idea under Only you; over it, the project chips end in a More for the projects past the first three",
       "path": "/?demo=1#homeroom-bot",
       "expectSelector": "#ai-screen:not(.hidden):has([data-ai-project-more]) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-group=\"none\"] [data-ai-line=\"private\"]) [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"plan\"] ~ [data-ai-line=\"decide\"]",
-      "expectText": "Try again"
+      "expectText": "Restart build"
     },
     {
       "name": "#6019 (#6160): the AI tab's Waiting & in progress card of its own lists your work under way then what waits on someone else (going live before being built, then other people's votes on a change or a group decision, then a build held back as Homeroom bot says in Main)",
