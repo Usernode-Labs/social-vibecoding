@@ -1385,13 +1385,25 @@ test('what a row opens rides along in Main Chat\'s composer, and only there', ()
 
 test('beside this page the panel is the page\'s own column: ‹ Main and the project, no Expand, Close or Back', () => {
   const panel = read('frontend/src/features/side-panel/side-panel.tsx');
-  assert.match(panel, /<button\s+type="button"\s+className="side-panel-main dev-topic-back un-touch-target"\s+aria-label=\{t\('agent:sidePanel\.mainLabel'\)\}\s+onClick=\{\(\) => controller\.close\(\)\}\s+>/,
-    '‹ Main gives Main its place back, in the topic\'s own chip');
+  // #6352 (5 Nov 2026): the chip names where it goes — the private thread
+  // behind the page, or Main.
+  assert.match(panel, /const toThread = s\.backTo === 'thread';/);
+  assert.match(panel, /<button\s+type="button"\s+className="side-panel-main dev-topic-back un-touch-target"\s+aria-label=\{toThread \? t\('agent:sidePanel\.threadLabel'\) : t\('agent:sidePanel\.mainLabel'\)\}\s+onClick=\{\(\) => controller\.close\(\)\}\s+>/,
+    '‹ Main gives Main its place back, in the topic\'s own chip; a thread behind the page is named instead');
+  assert.match(panel, /<span>\{toThread \? t\('agent:sidePanel\.thread'\) : t\('agent:sidePanel\.main'\)\}<\/span>/,
+    'the chip says Thread when a private thread is behind the page');
   assert.match(panel, /<PanelHeading route=\{s\.route\} place=\{s\.place\} reported=\{s\.reported\} label=\{s\.label\} \/>/);
   assert.match(panel, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`\}/, 'the project, as a door to its page');
   assert.match(panel, /\(window as any\)\.AppView\?\._landOnHub\?\.\(slug\)/, 'which opens on its Hub');
   assert.equal(message('agent:sidePanel.main'), 'Main Chat', 'the chat\'s name, as its title says it');
   assert.equal(message('agent:sidePanel.mainLabel'), 'Back to Main Chat');
+  assert.equal(message('agent:sidePanel.thread'), 'Thread', 'the word the app already uses for a private thread');
+  assert.equal(message('agent:sidePanel.threadLabel'), 'Back to the thread');
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /const backTo = docked && openRoot \? 'thread' : 'main';/,
+    'the AI page publishes what the column goes back to');
+  assert.match(index, /if \(sidePanelStore\.get\(\)\.backTo !== backTo\) sidePanelStore\.set\(\{ backTo \}\);/);
+  assert.match(index, /\}, \[docked, openRoot, panel\.open, panel\.frameKey\]\);/, 'and again after the controller resets the store');
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /export const BESIDE_AI_CLASS = 'side-panel-beside-ai';/);
   assert.match(controller, /classList\.toggle\(BESIDE_AI_CLASS, isBesideAi\(\)\)/);
