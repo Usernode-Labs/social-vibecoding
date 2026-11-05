@@ -1146,12 +1146,16 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const forced = [];
     const looping = async (req) => {
       forced.push(req.toolChoice);
-      if (typeof req.toolChoice === 'object') throw Object.assign(new Error('no endpoints'), { code: 'invalid_request', status: 404 });
+      // #6346: the last round is a required choice of the turn-ending tools,
+      // not a forced reply; a provider that refuses it still gets a retry.
+      if (req.toolChoice === 'required' || typeof req.toolChoice === 'object') {
+        throw Object.assign(new Error('no endpoints'), { code: 'invalid_request', status: 404 });
+      }
       return scripted([[forced.length < mayor.MAX_ROUNDS ? ['my_projects'] : ['reply', { text: 'Done looking.' }]]])(req);
     };
     const answered = await turn('which projects do I have?', looping);
     assert.equal((await read(answered)).content, 'Done looking.');
-    assert.deepEqual(forced.slice(-2), [{ type: 'function', function: { name: 'reply' } }, 'auto']);
+    assert.deepEqual(forced.slice(-2), ['required', 'auto']);
   });
 
   await t.test('#3685: when the model still cannot answer, a question about her work is answered from the records', async () => {

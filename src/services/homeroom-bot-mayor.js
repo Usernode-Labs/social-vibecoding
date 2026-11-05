@@ -87,6 +87,7 @@ const crypto = require('node:crypto');
 const { withoutEmDashes } = require('./em-dashes');
 const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
+const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
 const { GITHUB_ISSUE_BODY_MAX } = require('./issue-body-limit');
 const { labelledAsPullRequest } = require('./request-mentions');
 
@@ -97,6 +98,19 @@ const MAX_HISTORY = 24;
 // the turn's oldest lookups, compactRounds), and room for a long, structured
 // answer when they ask for one. It was 6 rounds and 900 tokens.
 const MAX_ROUNDS = 16;
+// #6346: a chat turn spent all its rounds reading project code and answered
+// with a stand-in word. It reads at most this many source files a turn; after
+// that a read is refused and it answers from what it found. The last round is
+// told so, offers only the tools that end a turn, and a stand-in answer is
+// refused once before the fallback line speaks (the voice's own guards).
+const MAX_SOURCE_READS_PER_TURN = 8;
+const SOURCE_READ_TOOLS = Object.freeze(['list_source', 'read_source']);
+// What the last round offers: a tool that ends the turn, never a lookup. An
+// offer alone is the turn's answer, as it is today.
+const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+const CHAT_LAST_ROUND_NOTE = lastRoundNote('offer the draft they asked for');
+const CHAT_STAND_IN_NOTE = standInNote('offer the draft they asked for');
+const CHAT_READING_DONE = readingDoneNote('offer the draft they asked for');
 const MAX_OUTPUT_TOKENS = 4000;
 // A round cut off at its output limit is asked again with this much room: a
 // reasoning model spends its thinking from the same allowance, and a long
@@ -3270,6 +3284,13 @@ function draftExtrasText(extras) {
 async function runTool(pool, ctx, name, args) {
   const { user, settings, deps } = ctx;
   try {
+    // #6346: a turn's source reads are spent, a few per turn, so it cannot
+    // read file after file and answer with nothing. Every call counts,
+    // refused or not.
+    if (SOURCE_READ_TOOLS.includes(name)) {
+      if (ctx.sourceReads >= MAX_SOURCE_READS_PER_TURN) return { error: CHAT_READING_DONE };
+      ctx.sourceReads += 1;
+    }
     switch (name) {
       case 'progress': {
         ctx.progress = await progressOf(pool, { userId: user.id, settings, config: ctx.config, deps });
@@ -3403,6 +3424,14 @@ async function runTool(pool, ctx, name, args) {
         // #6272: a list the model still wrote into its text becomes buttons.
         const lifted = liftTextSuggestions(String(args.text == null ? '' : args.text), args.suggestions,
           { userId: user.id, chat: ctx.conversationId });
+        // #6346: a stand-in is not an answer: one more round, then the
+        // fallback line, as the voice does.
+        if (isStandIn(lifted.text)) {
+          ctx.failures.push('stand_in');
+          ctx.standIns = (ctx.standIns || 0) + 1;
+          if (ctx.standIns > 1) { ctx.gaveUp = true; return { ok: false }; }
+          return { error: CHAT_STAND_IN_NOTE };
+        }
         ctx.reply = { text: clip(lifted.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: lifted.suggestions };
         return { ok: true };
       }
@@ -3825,6 +3854,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     appIds: new Set(),
     checkedProblems: null,
     decisionWithoutOffer: deps.decisionWithoutOffer === true,
+    // #6346: this turn's guards (see MAX_SOURCE_READS_PER_TURN).
+    sourceReads: 0, standIns: 0, gaveUp: false,
+    // The turn's failures, for a stand-in refused by its reply tool.
+    failures: [],
   };
   // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
   // project's thread, everything this turn says goes in it, whichever way
@@ -3853,6 +3886,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // (avoidProviders); null once a request was refused as it was built.
     avoid: [],
   };
+  // #6346: a stand-in refused by its reply tool is recorded with the turn.
+  ctx.failures = t.failures;
   // P1: the answer, shown on the working card as the model writes it.
   const draft = deps.streamDraft === false ? null : draftWriter(ctx);
   if (draft) t.onDelta = draft.onDelta;
@@ -3962,6 +3997,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       const ids = new Set();
       let limit = MAX_ROUNDS;
       let preambles = 0;
+      // #6346: the last round is told once, and a stand-in gets one more
+      // round, even past the limit (the voice's own guards).
+      let warnedAt = 0;
+      let handledStandIns = 0;
       // P1: where the turn's own rounds begin, for compactRounds.
       const turnFrom = messages.length;
       const runRounds = async () => {
@@ -3972,21 +4011,44 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           // round replies (the transport's limit on messages).
           compactRounds(messages, { from: turnFrom });
           const last = rounds === limit || messages.length + MAX_CALLS_PER_ROUND + 2 > MAX_MESSAGES;
+          // #6346: the last round is told so, and can only pick a tool that
+          // ends the turn: answer, offer a draft, or hand a screen over.
+          if (last && warnedAt !== limit) {
+            messages.push({ role: 'user', content: CHAT_LAST_ROUND_NOTE });
+            warnedAt = limit;
+          }
+          const ending = last ? tools.filter((tl) => CHAT_LAST_ROUND(tl.function.name)) : tools;
           // #3685: one failed request used to end the turn with "I couldn't
           // answer just now", whatever the round had already read.
           const res = await askModel(t, {
-            messages, tools, where: `r${rounds}`,
-            toolChoice: last ? { type: 'function', function: { name: 'reply' } } : 'auto',
+            messages, tools: ending, where: `r${rounds}`,
+            toolChoice: last
+              ? (ending.length ? 'required' : { type: 'function', function: { name: 'reply' } })
+              : 'auto',
           });
           const calls = normalizeCalls(res.toolCalls, rounds, ids);
           if (!calls.length) {
             // 1 Nov 2026: words that only say what it will do next are not
             // the answer while it can still do it (announcesOnly).
-            if (goesOnAfter(cleanReply(res.content), { rounds, limit, nudged: preambles, messages: messages.length })) {
+            const said = cleanReply(res.content);
+            if (goesOnAfter(said, { rounds, limit, nudged: preambles, messages: messages.length })) {
               preambles += 1;
               t.failures.push(`r${rounds}:preamble`);
               messages.push({ role: 'assistant', content: String(res.content) });
               messages.push({ role: 'user', content: PREAMBLE_NOTE });
+              continue;
+            }
+            // #6346: an answer written without its reply tool is checked the
+            // same way: a stand-in gets one more round, then gives up.
+            if (isStandIn(said)) {
+              t.failures.push('stand_in');
+              ctx.standIns += 1;
+              if (ctx.standIns > 1) { ctx.gaveUp = true; finalText = ''; break; }
+              if (said) messages.push({ role: 'assistant', content: said });
+              messages.push({ role: 'user', content: CHAT_STAND_IN_NOTE });
+              // One more round, even past the limit (it is warned again).
+              handledStandIns = ctx.standIns;
+              limit = Math.max(limit, rounds + 1);
               continue;
             }
             finalText = res.content || '';
@@ -4019,6 +4081,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             ctx.besideNoted = true;
             messages.push({ role: 'user', content: BESIDE_NOTE });
           }
+          // A reply tool that refused a stand-in: one more round, even past
+          // the limit (the next one is warned again).
+          if (ctx.gaveUp) break;
+          if (ctx.standIns > handledStandIns) {
+            handledStandIns = ctx.standIns;
+            limit = Math.max(limit, rounds + 1);
+          }
         }
       };
       await runRounds();
@@ -4028,7 +4097,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // claimed with nothing behind it is cut before it is sent (answer()).
       const said = answerText(ctx.besides, ctx.reply?.text ?? finalText);
       // A screen handed to the designer is answered by it, not checked here.
-      const problems = said && !ctx.drawScreen ? await claimProblems(pool, ctx, said) : [];
+      const problems = said && !ctx.drawScreen && !ctx.gaveUp ? await claimProblems(pool, ctx, said) : [];
       if (problems.length) {
         t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
         log.info('homeroom-bot-mayor', 'A DM reply claimed what this turn did not do; asking again', {
@@ -4048,6 +4117,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         // One round for a tool (offer_request, say) and one for the reply,
         // or the reply alone when two would not fit the transport's limit.
         limit = rounds + (messages.length + MAX_CALLS_PER_ROUND + 2 <= MAX_MESSAGES ? 2 : 1);
+        // #6346: the correction gets its own source reads, as the voice's
+        // does; it may have to read what it has to describe.
+        ctx.sourceReads = 0;
         try {
           await runRounds();
         } catch (err) {
@@ -4085,7 +4157,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   let defer = false;
   if (!text && !ctx.offer && !ctx.drawScreen) {
     // The model gave no answer. Why is recorded; what can still be said is.
-    if (!error) error = rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
+    // A turn that gave up on its stand-in says so, never the stand-in word.
+    if (!error) error = ctx.gaveUp ? 'stand_in' : rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
     ({ text, cards, fallback, defer } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
   }
   await recordTurn(pool, {
@@ -6636,6 +6709,7 @@ async function reportProblem(pool, ctx, args) {
 module.exports = {
   MAX_HISTORY,
   MAX_ROUNDS,
+  MAX_SOURCE_READS_PER_TURN,
   MAX_TURNS_PER_HOUR,
   MAX_CARDS,
   FILE_IT,
