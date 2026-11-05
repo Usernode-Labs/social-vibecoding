@@ -7337,10 +7337,37 @@ async function actOnVerdict({
   // #6311: a re-read whose note would say the same thing as the last one it
   // posted (same kind, same reason) says nothing. Only a look somebody asked
   // for, or one the request's own changes started, can repeat.
-  const unchangedNote = async (kind, text) => {
+  // #6321: an "already works" note is the same words under either verdict, so
+  // `alsoKind` names the other one: a repeat gets no second set of buttons.
+  const unchangedNote = async (kind, text, alsoKind = null) => {
     if (!gated) return false;
     const prev = await addressedMod().lastNoteText(pool, { appId: app.id, issueNumber });
-    return !!prev && prev.kind === kind && addressedMod().sameNote(prev.text, text);
+    return !!prev && (prev.kind === kind || prev.kind === alsoKind) && addressedMod().sameNote(prev.text, text);
+  };
+  // #6321: an "already works" note carries Propose to close and Keep it open,
+  // for any member (for nobody in particular: bot-voice's tapGuard), unless a
+  // vote on closing the request is already open. The tap reads every gate
+  // again (mayor.closeGate). Resolves the stored offer, or null.
+  const doneCloseOffer = async () => {
+    const { rows: open } = await pool.query(
+      `SELECT id FROM issues
+        WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
+      [app.id, issueNumber],
+    ).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read open close votes (no buttons under the note)', { app: app.slug, issueNumber, err: err.message });
+      return { rows: [{}] };
+    });
+    if (open.length) return null;
+    return voiceModule(deps).threadOffer(pool, {
+      app, kind: 'close_request', forUserId: null,
+      args: { issueNumber, title: issue?.title || null, why: clip(parsed.reason, 500) },
+    });
+  };
+  // The note it went under was posted, or it was not and the offer goes.
+  const settleThreadOffer = async (offer, posted) => {
+    if (!offer) return;
+    if (posted?.messageId) await voiceModule(deps).tieThreadOffer(pool, offer.id, posted.messageId);
+    else await voiceModule(deps).dropThreadOffer(pool, offer.id);
   };
   if (!gate.speak) {
     log.info('homeroom-bot', 'Live note not repeated: nobody addressed the bot', {
@@ -7406,7 +7433,7 @@ async function actOnVerdict({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
     });
     const noteText = live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
-    if (await unchangedNote('person', noteText)) {
+    if (await unchangedNote('person', noteText, parsed.done ? 'empty' : null)) {
       acted = 'unchanged';
       log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
         app: app.slug, issueNumber, verdict: parsed.verdict,
@@ -7422,8 +7449,10 @@ async function actOnVerdict({
           app, kind: 'copy_request', forUserId: Number(requester.userId), args: { issueNumber },
         }).catch(() => null)
         : null;
-      const noteMeta = copyOffer?.metadata
-        ? { kind: 'voice', ...copyOffer.metadata }
+      // #6321: a note about Homeroom itself is never `done`, so never both.
+      const threadOffer = copyOffer || (parsed.done ? await doneCloseOffer() : null);
+      const noteMeta = threadOffer?.metadata
+        ? { kind: 'voice', ...threadOffer.metadata }
         : (suggestActions.length && suggestFor.length
           ? { kind: 'note', suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions }
           : null);
@@ -7436,20 +7465,28 @@ async function actOnVerdict({
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
         },
       });
-      if (copyOffer) {
-        if (posted?.messageId) await voiceModule(deps).tieThreadOffer(pool, copyOffer.id, posted.messageId);
-        else await voiceModule(deps).dropThreadOffer(pool, copyOffer.id);
-      }
+      await settleThreadOffer(threadOffer, posted);
     }
   } else if (parsed.verdict === 'empty') {
-    const noteText = require('./homeroom-bot-words').firstPerson(live.emptyText(parsed));
-    if (await unchangedNote('empty', noteText)) {
+    // #6321: nothing to build because it is already there says that, not
+    // "couldn't find anything to build", with the same buttons as a person
+    // note that says it. Its kind stays 'empty'.
+    const noteText = parsed.done
+      ? live.personHomeroomText(parsed)
+      : require('./homeroom-bot-words').firstPerson(live.emptyText(parsed));
+    if (await unchangedNote('empty', noteText, parsed.done ? 'person' : null)) {
       acted = 'unchanged';
       log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
         app: app.slug, issueNumber, verdict: parsed.verdict,
       });
     } else {
-      await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet } });
+      const closeOffer = parsed.done ? await doneCloseOffer() : null;
+      const posted = await say('empty', parsed.done ? live.personText(parsed) : live.emptyText(parsed), {
+        ...(parsed.done ? { homeroomText: noteText } : {}),
+        ...(closeOffer?.metadata ? { metadata: { homeroomBot: { kind: 'voice', ...closeOffer.metadata } } } : {}),
+        dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet },
+      });
+      await settleThreadOffer(closeOffer, posted);
     }
   } else if (parsed.verdict === 'ready') {
     // C2.3: a plan a person posted on the request (usePersonPlan).

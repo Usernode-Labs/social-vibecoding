@@ -64,7 +64,7 @@ type Live = Extract<VState, { data: Data }>;
 
 export interface Facts {
   // OfferTapped: the offer and where its message is, locked.
-  offer: { id: number; app_id: number; for_user_id: number | null; status: string; thread_type: string | null; thread_ref: number | null; message_app_id: number | null } | null;
+  offer: { id: number; app_id: number; kind: string; for_user_id: number | null; status: string; thread_type: string | null; thread_ref: number | null; message_app_id: number | null } | null;
 }
 const NO_FACTS: Facts = { offer: null };
 
@@ -186,7 +186,11 @@ const tapGuard = (s: VState, e: Event<any>, f: Facts, ctx: TransitionContext): C
   if (!o || Number(o.app_id) !== e.payload.appId || Number(o.message_app_id) !== e.payload.appId) return reject('no_such_offer');
   const at = placeOf(o.thread_type ? { type: o.thread_type, ref: o.thread_ref } : null);
   if (!at || voiceKey(e.payload.appId, at) !== ctx.key) return reject('no_such_offer');
-  if (Number(o.for_user_id) !== e.payload.userId) return reject('not_for_you');
+  // #6321: Propose to close under an "already works" note is offered to no one
+  // person: any member may tap it. The route's membership gate and the act's
+  // closeGate decide who that is. Every other offer is its one person's.
+  const anyMember = o.for_user_id == null && o.kind === 'close_request';
+  if (!anyMember && Number(o.for_user_id) !== e.payload.userId) return reject('not_for_you');
   const d = s.name === NONE ? null : (s as Live).data;
   if (o.status !== 'open' || d?.taps[String(o.id)]) return reject('already_decided');
   return ok();
@@ -262,7 +266,7 @@ const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reje
 async function readFacts(tx: Tx, event: Event<any>): Promise<Facts> {
   if (event.type !== 'OfferTapped') return NO_FACTS;
   const { rows: [offer] } = await tx.query(
-    `SELECT o.id, o.app_id, o.for_user_id, o.status, m.thread_type, m.thread_ref, m.app_id AS message_app_id
+    `SELECT o.id, o.app_id, o.kind, o.for_user_id, o.status, m.thread_type, m.thread_ref, m.app_id AS message_app_id
        FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id
       WHERE o.id = $1 FOR UPDATE OF o`, [Number(event.payload?.offerId)]);
   return { offer: offer || null };

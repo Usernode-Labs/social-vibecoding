@@ -228,6 +228,19 @@ test('the staging already-works request carries its note and its bell row', { ti
   );
   assert.equal(notes.rows.length, 1, 'one stored note, not two');
   assert.match(notes.rows[0].content, /^Already works: /);
+  // #6321: the note in the words the bot writes now, with one offer for any
+  // member under it, and the second seed run added no other.
+  assert.equal(notes.rows[0].content, require('../src/services/homeroom-bot-live').personHomeroomText({
+    reason: 'Staging demo: visitors can already get in and play without an account.', done: true,
+  }));
+  const offers = await pool.query(
+    `SELECT kind, for_user_id, status, args FROM homeroom_bot_voice_offers WHERE app_id = $1`, [app.id],
+  );
+  assert.equal(offers.rows.length, 1, 'one offer, not two');
+  assert.equal(offers.rows[0].kind, 'close_request');
+  assert.equal(offers.rows[0].for_user_id, null);
+  assert.equal(offers.rows[0].status, 'open');
+  assert.equal(offers.rows[0].args.issueNumber, 9110);
 
   const rings = await pool.query(
     `SELECT n.kind, n.detail FROM notifications n WHERE n.app_id = $1 AND n.kind = 'build_needs_you'`,

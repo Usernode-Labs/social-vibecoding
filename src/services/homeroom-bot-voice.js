@@ -2169,7 +2169,8 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
 
 /**
  * Somebody tapped Yes or No under one of the voice's offers in a thread
- * (routes/chat.js). Decided once, by the person it was offered to, in the
+ * (routes/chat.js). Decided once, by the person it was offered to (#6321: or
+ * any member, for Propose to close under an "already works" note), in the
  * place its message is in (the bot-voice machine), whose work then acts on
  * it (actOnOffer): the buttons give way when the room hears it was decided.
  * Resolves { ok, status?, error? }.

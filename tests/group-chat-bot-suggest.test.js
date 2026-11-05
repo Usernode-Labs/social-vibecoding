@@ -35,6 +35,27 @@ function loadGroupChat(userId = 9) {
   return sandbox.window.GroupChat;
 }
 
+// #6321: Propose to close under an "already works" note is offered to no one
+// person, so any signed-in viewer who can take part here gets its buttons.
+test('an offer to nobody in particular is every signed-in viewer\'s, for a close only', () => {
+  const offer = (kind, forUserId) => ({
+    homeroomBot: {
+      kind: 'voice',
+      offer: { id: 1, kind, status: 'open', forUserId },
+      actions: [{ id: 'yes', label: 'Propose to close', style: 'primary' }, { id: 'no', label: 'Keep it open', style: 'secondary' }],
+    },
+  });
+  assert.equal(loadGroupChat(9)._botOfferView(offer('close_request', null)).forMe, true);
+  assert.equal(loadGroupChat(null)._botOfferView(offer('close_request', null)).forMe, false, 'signed out');
+  const readOnly = loadGroupChat(9);
+  readOnly._app = { readOnly: true };
+  assert.equal(readOnly._botOfferView(offer('close_request', null)).forMe, false, 'read-only');
+  assert.equal(loadGroupChat(9)._botOfferView(offer('copy_request', null)).forMe, false, 'no other kind');
+  assert.equal(loadGroupChat(9)._botOfferView(offer('close_request', 9)).forMe, true, 'its one person');
+  assert.equal(loadGroupChat(9)._botOfferView(offer('close_request', 12)).forMe, false, 'somebody else\'s');
+  assert.equal(readOnly._botOfferView(offer('close_request', 9)).forMe, true, 'one person\'s reads as it did');
+});
+
 const view = (over = {}) => ({
   homeroomBot: {
     kind: 'note',

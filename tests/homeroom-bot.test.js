@@ -86,9 +86,10 @@ test('a request that is already there is `done`: on a person or empty verdict, n
   assert.equal(bot.parseVerdict('{"verdict":"person","done":true,"platform":true,"reason":"x"}').done, false,
     'about Homeroom itself is offered the move, not a close');
   const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
-  assert.match(prompt, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its requester is offered a vote to close it\./);
+  assert.match(prompt, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its members are offered a vote to close it\. When the requester, or somebody who decides on the project, says in the discussion that it works and can be closed \("you can propose closing this"\), and the code agrees, that is `done`\./);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(src, /await say\('empty', live\.emptyText\(parsed\), \{ dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\), \.\.\.quiet \} \}\);/);
+  assert.match(src, /await say\('empty', parsed\.done \? live\.personText\(parsed\) : live\.emptyText\(parsed\), \{/);
+  assert.match(src, /dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\), \.\.\.quiet \},/);
 });
 
 test('a request that names who builds it is `builder`: a person verdict only, a bare name, and its news rings nobody', () => {
@@ -1753,7 +1754,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // rules, so a request whose point breaks them goes to a person.
   // 3 Nov 2026 (#6213): a person verdict may name the smaller first step it
   // would build (`first_step`, about 300 more), offered as a reply to tap.
-  assert.ok(prompt.length < 24400, `a triage prompt stays small: ${prompt.length} chars`);
+  // #6321: a requester's or decider's "it works, you can propose closing
+  // this" is `done` (about 175 more), so its note carries the buttons.
+  assert.ok(prompt.length < 24600, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\."\}$/);
 });

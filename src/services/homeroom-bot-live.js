@@ -240,9 +240,10 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
     return firstPerson(`I think this is about Homeroom itself, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
       + 'I can put it on Homeroom\'s own board too and keep this request open here.');
   }
-  // #6306: already there: no Go ahead, only a close vote.
+  // #6306: already there: no Go ahead, only a close vote. #6321: its buttons
+  // are under the note (homeroom-bot.js doneCloseOffer).
   if (done) {
-    return `Already works: ${reasonSentence(reason)} Anyone in the project can Propose to close it, or reply here if something is missing.`;
+    return `Already works: ${reasonSentence(reason)} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`;
   }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';

@@ -1263,7 +1263,8 @@ function chatRoutes(config) {
   //     → a tap under one of Homeroom bot's offers in a thread
   //       (homeroom-bot-voice.js decideOffer): File it, Withdraw it or
   //       Propose to close, or Not now / Keep it. Only the person it was
-  //       offered to, once, and every gate the offer met is read again.
+  //       offered to (or any member, for an "already works" note's Propose
+  //       to close, #6321), once, and every gate the offer met is read again.
   //       Members only, from the person's own browser.
   router.post('/api/apps/:slug/messages/:id/bot-offer', groupChatWriteLimiter, sameOriginBrowserOnly,
     communities.requireAppMembership(pool), async (req, res) => {
