@@ -1253,9 +1253,17 @@ async function myWork(pool, { userId, user = null, settings, config = null, deps
   }
   const inProgress = new Map((progress?.rightNow || []).map((e) => [`${e.project}#${e.number || ''}`, e]));
   const builds = (slug) => liveModule(deps).isLiveFor(settings, { slug });
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, decision 4): where each of
+  // their requests stands is its stored work state, in the words every
+  // screen uses (work-state.js says); the old reading of its records is for
+  // a request with none stored yet.
+  const workState = require('./work-state');
+  const stored = new Map((await workState.forRequester(pool, userId).catch(() => []))
+    .filter((w) => w.kind === 'request').map((w) => [`${w.appId}#${w.ref}`, w]));
   const requests = [];
   for (const row of rows) {
     const now = inProgress.get(`${row.slug}#${Number(row.issue_number)}`);
+    const state = stored.get(`${Number(row.app_id)}#${Number(row.issue_number)}`) || null;
     const item = {
       project: row.slug,
       projectName: row.name || row.slug,
@@ -1263,7 +1271,9 @@ async function myWork(pool, { userId, user = null, settings, config = null, deps
       title: row.first_version ? 'First version' : (row.issue_title || null),
       status: now
         ? stepLine(now)
-        : statusOf({ ...row, queue_position: row.queue_id ? position.get(Number(row.queue_id)) : null }),
+        : state ? workState.says(state)
+          : statusOf({ ...row, queue_position: row.queue_id ? position.get(Number(row.queue_id)) : null }),
+      ...(state ? { stage: state.stage } : {}),
       botBuildsHere: builds(row.slug),
     };
     if (now?.since) item.since = now.since;
@@ -3331,7 +3341,8 @@ async function runTool(pool, ctx, name, args) {
           if (!app) return { ok: false, error: 'No such project.' };
           filter = { appId: app.id, issueNumber: Number.isInteger(Number(args.number)) ? Number(args.number) : null };
         }
-        const target = await dm.newestOpenQuestion(pool, user.id, filter);
+        // Asked in their chat, or on the request's own thread (openQuestionFor).
+        const target = await dm.openQuestionFor(pool, user.id, filter);
         if (!target) {
           return {
             ok: false,
@@ -5297,7 +5308,8 @@ async function settleOffer(pool, config, {
     const line = require('./homeroom-bot-dm').requestLine({ appName: name, issueNumber: filed.issueNumber, issueTitle: action.title });
     return ack(
       `${line}\n\nFiled. ${builds
-        ? 'I\'ll look at it now and tell you here how it goes.'
+        // 5 Nov 2026: its news is on its page, not in this chat (step 4).
+        ? 'I\'ll look at it now. How it goes shows on its page.'
         : `I don't build on ${name} yet, so it waits in its requests for the group.`}`,
       {
         objects: [{ type: 'issue', appId: Number(app.id), issueNumber: filed.issueNumber }],
@@ -6485,7 +6497,7 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
   // and is planned again with it (homeroom-bot-dm.js changeOnRequest).
   if (action.title === 'plan_change') {
     await dm.notePlanChanged(pool, { user, target, app, deps });
-    return ack(`Posted on the public discussion of ${posted.line}, as you. I'll plan it again with it and send the new plan here.`);
+    return ack(`Posted on the public discussion of ${posted.line}, as you. I'll plan it again with it and post the new plan on the request.`);
   }
   // B20 (audit 2 Nov 2026): the draft right above already shows the
   // request's card; a second one under the ack repeated it.

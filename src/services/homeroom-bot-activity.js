@@ -375,6 +375,20 @@ async function startCard(pool, {
     // B5: offered as their hello; sendDm says it only when it is theirs.
     const hello = await madeBySomebodyElse(pool, app, requester.userId)
       ? dm.memberHello(app.name || app.slug) : null;
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's card no
+    // longer goes to their chat with the bot, but a first version's, which
+    // has no page yet. What the card carried that is the conversation is
+    // said on its own: their hello, and the week nearly spent (an account
+    // notice). Where the request stands is on its page.
+    if (!requester.firstVersion) {
+      if (hello && typeof dm.sayMemberHello === 'function') {
+        await dm.sayMemberHello(pool, { bot, userId: requester.userId, app, issueNumber: n });
+      }
+      if (lowAllowance && !allowanceUsedUp && typeof dm.noteAllowanceLow === 'function') {
+        await dm.noteAllowanceLow(pool, { bot, userId: requester.userId, app });
+      }
+      return null;
+    }
     // 2026-10-05: a request filed or queued while the project's first
     // version is not live waits for it, and its card says so.
     const waits = (filed || queued) && !requester.firstVersion
@@ -476,6 +490,12 @@ async function noteLowAllowance(pool, {
         && await dm.overWeeklyAllowance(pool, s, requester.userId).catch(() => false)) return null;
     if (typeof dm.allowanceLow !== 'function'
         || !await dm.allowanceLow(pool, s, requester.userId).catch(() => false)) return null;
+    // 5 Nov 2026: an account notice in their chat with the bot, for a request
+    // that is not a first version (its card's thread is not theirs to read
+    // any more); a first version's card says it in its thread, as before.
+    if (!requester.firstVersion && typeof dm.noteAllowanceLow === 'function') {
+      return await dm.noteAllowanceLow(pool, { bot, userId: requester.userId, app });
+    }
     return await dm.noteStep(pool, {
       bot, userId: requester.userId, app, issueNumber: n, step: 'allowance_low',
       content: LOW_ALLOWANCE_WORDS, key: `hrbot-step-low-${app.id}-${n}-${dm.weekKey()}`,

@@ -1306,6 +1306,21 @@ async function noteOverAllowance(pool, { settings, requester, payer = null, app,
   });
 }
 
+/**
+ * #6133, 5 Nov 2026: the person's building time for the week is nearly
+ * spent, said once a week in their chat with the bot as the account notice
+ * it is (kind 'allowance', `low`), not on a request's card, which no longer
+ * goes there. Resolves what sendDm did, or null.
+ */
+async function noteAllowanceLow(pool, { bot, userId, app }) {
+  if (!bot?.id || !userId) return null;
+  return sendDm(pool, {
+    bot, userId, threadRootId: false, idempotencyKey: `hrbot-allowance-low-${Number(userId)}-${weekKey()}`,
+    content: 'You\'re close to this week\'s building time.',
+    metadata: { kind: 'allowance', low: true, ...(app?.slug ? { appSlug: app.slug, appName: app.name || app.slug } : {}) },
+  });
+}
+
 // What the person hears when the bot's own weekly budget (its users row,
 // limits.checkBudget) stops work of theirs that was about to start
 // (contract 2.2, `paused`).
@@ -1906,6 +1921,12 @@ async function relayIssuePost({
   // version's news is still told, as it has no request page yet.
   const asked = await requesterOf(pool, app.id, issueNumber);
   if (asked && !asked.firstVersion) {
+    // Newer news on a request closes a question still open from before in
+    // their chat with the bot (its stage then reads where the request is,
+    // not a question nobody will answer there), as it did when the news was
+    // sent beside it.
+    await closeOpenQuestions(pool, { userId: asked.userId, appId: app.id, issueNumber, ws })
+      .catch((err) => log.warn('homeroom-bot-dm', 'Could not close an older question', { app: app.slug, issueNumber, err: err.message }));
     return { conversationId: null, messageId: null, quiet: true, userId: asked.userId, username: asked.username };
   }
   // A verdict about Homeroom itself offers a move (below); where it cannot,
@@ -2325,6 +2346,11 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   // first stops its run at once, the second is tried again.
   if (!requester) return { messageId: null, stop: 'no_requester' };
   if (!hasBot(settings, requester)) return { messageId: null, stop: 'no_bot' };
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a complicated change's
+  // plan is asked on its request's page, where it is posted; no card goes to
+  // the requester's chat with the bot, so nothing is tried and retried here
+  // (homeroom-bot.js sendRunPlan: a stop on a complicated plan waits).
+  if (plan.complicated === true) return { messageId: null, stop: 'on_request' };
   const name = app.name || app.slug;
   const questions = (plan.questions || []).slice(0, 2);
   const { rows: [action] } = await pool.query(
@@ -2415,8 +2441,10 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
   try {
     const { rows } = await pool.query(
       `SELECT d.message_id, d.conversation_id, d.user_id, d.run_id, d.app_id, d.issue_number,
-              COALESCE(NULLIF(a.name, ''), a.slug) AS app_name, a.slug AS app_slug
+              COALESCE(NULLIF(a.name, ''), a.slug) AS app_name, a.slug AS app_slug,
+              (m.metadata->'homeroomBot'->>'firstVersion') = 'true' AS first_version
          FROM homeroom_bot_dm_messages d LEFT JOIN apps a ON a.id = d.app_id
+         LEFT JOIN conversation_messages m ON m.id = d.message_id
         WHERE d.kind = $2 AND d.run_id = ANY($1::int[])`,
       [ids, PLAN_KIND],
     );
@@ -2442,6 +2470,9 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
           idempotencyKey: `hrbot-plan-stopped-${row.run_id}`,
           metadata: {
             kind: PLAN_STOPPED_KIND, appSlug: row.app_slug, appName: row.app_name, issueNumber: Number(row.issue_number),
+            // A first version's plan stopping is its news, still told here
+            // (conversations.isRequestNewsMeta).
+            ...(row.first_version ? { firstVersion: true } : {}),
           },
         });
       } catch (err) {
@@ -4074,7 +4105,35 @@ async function threadDeps(pool, { userId, conversationId, message }) {
   return other ? { threadRootId: other.rootId, threadDraft: other.draft } : {};
 }
 
-/** The newest question the bot asked this person that is still open. */
+/**
+ * 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): the newest question the
+ * bot asked this person that waits on their answer, wherever it asked it:
+ * still open in their chat with the bot (newestOpenQuestion), else on a
+ * request of theirs whose stored work state waits for their answer
+ * (work-state.js), which it asked in that request's thread (`inThread`, no
+ * DM message). For a draft they post themselves (Main's answer_question),
+ * never for words posted without their tap: those answer only a question
+ * in their chat (newestOpenQuestion).
+ */
+async function openQuestionFor(pool, userId, { appId = null, issueNumber = null } = {}) {
+  const inDm = await newestOpenQuestion(pool, userId, { appId, issueNumber });
+  if (inDm) return inDm;
+  const { rows: [asked] } = await pool.query(
+    `SELECT ws.app_id, ws.item_ref AS issue_number
+       FROM work_states ws
+      WHERE ws.requester_id = $1 AND ws.item_kind = 'request'
+        AND ws.stage = 'waiting_for_you' AND ws.why = 'question'
+        AND ($2::int IS NULL OR ws.app_id = $2) AND ($3::int IS NULL OR ws.item_ref = $3)
+      ORDER BY ws.since DESC NULLS LAST, ws.updated_at DESC
+      LIMIT 1`,
+    [Number(userId), appId, issueNumber],
+  );
+  return asked
+    ? { message_id: null, conversation_id: null, app_id: Number(asked.app_id), issue_number: Number(asked.issue_number), kind: 'question', question_status: 'open', inThread: true }
+    : null;
+}
+
+/** The newest question the bot asked this person in their chat with it that is still open. */
 async function newestOpenQuestion(pool, userId, { appId = null, issueNumber = null } = {}) {
   const { rows } = await pool.query(
     `SELECT message_id, conversation_id, app_id, issue_number, kind, question_status
@@ -4988,6 +5047,36 @@ const MEMBER_PROMPTS = Object.freeze(['What else can I ask for?', 'How long will
 /** Pure: the hello somebody hears with their first request on a project they did not make. */
 function memberHello(appName) {
   return `Hi, I'm Homeroom bot. I build the changes people in ${appName || 'this project'} ask for. Here's yours:`;
+}
+
+/**
+ * Pure (5 Nov 2026, docs/plans/bot-one-model.md, step 4): the same hello
+ * said on its own. A request's card no longer goes to their chat with the
+ * bot (but a first version's), so the hello is not above one: it says where
+ * the request is followed instead.
+ */
+function memberHelloAlone(appName) {
+  return `Hi, I'm Homeroom bot. I build the changes people in ${appName || 'this project'} ask for. `
+    + 'I\'m on yours now, and where it stands shows on its page.';
+}
+
+/**
+ * B5, 5 Nov 2026: a member's hello with their first request on a project
+ * they did not make, said on its own (memberHelloAlone), once ever: sendDm
+ * claims the hello in the message's own transaction and sends nothing when
+ * they have had theirs. A message of the conversation, so it is sent.
+ */
+async function sayMemberHello(pool, { bot, userId, app, issueNumber }) {
+  const appName = app.name || app.slug;
+  const text = memberHelloAlone(appName);
+  return sendDm(pool, {
+    bot, userId, content: text, threadRootId: false, idempotencyKey: `hrbot-hello-member-${Number(userId)}`,
+    hello: { kind: 'member' },
+    metadata: {
+      kind: 'member', appSlug: app.slug, appName, issueNumber: Number(issueNumber),
+      hello: text, actions: promptActions(MEMBER_PROMPTS), status: 'open',
+    },
+  });
 }
 
 // WP-F: somebody who joins a community through an invite link meets the
@@ -6329,6 +6418,8 @@ module.exports = {
   MAKER_PROMPTS,
   MEMBER_PROMPTS,
   memberHello,
+  memberHelloAlone,
+  sayMemberHello,
   promptActions,
   STUCK_ACTIONS,
   // 15 Oct 2026: Try again finishes a first version that was built.
@@ -6381,6 +6472,7 @@ module.exports = {
   weeklyCapCents,
   overWeeklyAllowance,
   noteOverAllowance,
+  noteAllowanceLow,
   overAllowanceText,
   allowanceLow,
   ALLOWANCE_LOW_SHARE,
@@ -6446,6 +6538,7 @@ module.exports = {
   requestStart,
   outsideCardThread,
   newestOpenQuestion,
+  openQuestionFor,
   postOnRequest,
   postOnProposal,
   settleMirroredAsks,

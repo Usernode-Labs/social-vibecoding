@@ -327,26 +327,27 @@ function closedWords({ how, appName, reasons = [], author }) {
 }
 
 /**
- * A tap under a move offer (homeroom-bot-mayor.js settleOffer). Move it to
- * Homeroom files it there, links it from the original and closes the
- * original, directly or by a vote. `ack` sends the answer. Resolves what
- * was sent.
+ * Move a request about Homeroom itself to Homeroom's own board: file it
+ * there with its title and words and a footer naming where it came from and
+ * who asked (credited to its author when they are on Homeroom), link it from
+ * the original, and close the original: at once for its author when nobody
+ * else is in it, else by a vote of its group. `fileKey` files it once per
+ * move, whoever retries. Resolves { ok: true, target, issueNumber, title,
+ * how ('closed' | 'vote' | 'already_proposed' | 'failed'), reasons, mine,
+ * appName } or { ok: false, code, error }. Throws only what a retry can
+ * cure (mayor.retryAct), so the caller's work tries again.
  */
-async function decideMove(pool, config, { bot = null, user, settings, action, yes, ack, deps = {} }) {
-  if (!yes) return ack('OK, I\'ll leave it where it is.');
+async function moveToHomeroom(pool, config, {
+  bot = null, user, app, issueNumber, fileKey, fallbackTitle = null, settings, deps = {},
+}) {
   const github = deps.github || require('./github');
   const mayor = mayorModule();
-  const failed = async (error, text) => {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
-    return ack(text);
-  };
-  const app = await appById(pool, action.app_id);
-  const gate = await moveGate(pool, { app, issueNumber: action.source_issue_number, user, deps });
-  if (!gate.ok) return failed(gate.code, `I couldn't move it: ${gate.error}`);
+  const gate = await moveGate(pool, { app, issueNumber, user, deps });
+  if (!gate.ok) return { ok: false, code: gate.code, error: gate.error };
   const target = await platformApp(pool, deps);
-  if (!target) return failed('no_platform', 'I couldn\'t move it: Homeroom\'s own board isn\'t available right now.');
+  if (!target) return { ok: false, code: 'no_platform', error: 'Homeroom\'s own board isn\'t available right now.' };
   if (!(await mayor.canFile(pool, target, user))) {
-    return failed('not_allowed', 'I couldn\'t move it: you need to join Homeroom\'s own community first. You can join it from its page.');
+    return { ok: false, code: 'not_allowed', error: 'you need to join Homeroom\'s own community first. You can join it from its page.' };
   }
   const appName = app.name || app.slug;
   const n = gate.issueNumber;
@@ -361,11 +362,10 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   try {
     filed = await mayor.fileRequest(pool, config, {
       user: credited, app: target, settings, deps,
-      // Filed once per move: a retry of its act finds it (the tap's work).
-      fileKey: `dm-action:${action.id}`,
-      title: clip(gate.issue.title || action.title, MAX_TITLE_CHARS),
+      fileKey,
+      title: clip(gate.issue.title || fallbackTitle, MAX_TITLE_CHARS),
       details: clip(gate.issue.body, MAX_BODY_CHARS),
-      askedText: gate.issue.title || action.title,
+      askedText: gate.issue.title || fallbackTitle,
       footer: movedFooter({ app, issueNumber: n, link: requestLink(domain, app.slug, n), author }),
       reason: 'moved_request',
     });
@@ -373,9 +373,8 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
     log.warn('homeroom-bot-move', 'Could not file a moved request', { app: app.slug, issueNumber: n, err: err.message });
     // A failure a retry can cure: the act's work tries again, its claim kept.
     if (mayor.retryAct(err, deps.actKey)) throw err;
-    return failed(err.message, 'I couldn\'t move it just now. Try again in a minute.');
+    return { ok: false, code: 'file_failed', error: 'it could not be filed just now. Try again in a minute.' };
   }
-  await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
   const newLink = requestLink(domain, target.slug, filed.issueNumber);
   try {
     await github.createIssueComment(gate.repo.owner, gate.repo.repo, n,
@@ -410,15 +409,35 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   log.info('homeroom-bot-move', 'Moved a request to Homeroom', {
     app: app.slug, issueNumber: n, movedTo: filed.issueNumber, original: how, userId: user.id,
   });
-  const line = dmModule(deps).requestLine({ appName: target.name || target.slug, issueNumber: filed.issueNumber, issueTitle: gate.issue.title });
+  return { ok: true, target, issueNumber: filed.issueNumber, title: gate.issue.title, how, reasons, mine, appName };
+}
+
+/**
+ * A tap under a move offer in their chat with the bot (homeroom-bot-mayor.js
+ * settleOffer), made before 5 Nov 2026: moveToHomeroom, its action row
+ * marked. `ack` sends the answer. Resolves what was sent.
+ */
+async function decideMove(pool, config, { bot = null, user, settings, action, yes, ack, deps = {} }) {
+  if (!yes) return ack('OK, I\'ll leave it where it is.');
+  const app = await appById(pool, action.app_id);
+  const moved = await moveToHomeroom(pool, config, {
+    bot, user, app, issueNumber: action.source_issue_number, fileKey: `dm-action:${action.id}`,
+    fallbackTitle: action.title, settings, deps,
+  });
+  if (!moved.ok) {
+    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(moved.code, 300)]);
+    return ack(moved.code === 'file_failed' ? 'I couldn\'t move it just now. Try again in a minute.' : `I couldn't move it: ${moved.error}`);
+  }
+  await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, moved.issueNumber]);
+  const line = dmModule(deps).requestLine({ appName: moved.target.name || moved.target.slug, issueNumber: moved.issueNumber, issueTitle: moved.title });
   return ack(
     `${line}\n\nMoved. It's on Homeroom's own board now, with a link to it left on the original. `
-      + closedWords({ how, appName, reasons, author: mine }),
+      + closedWords({ how: moved.how, appName: moved.appName, reasons: moved.reasons, author: moved.mine }),
     {
-      objects: [{ type: 'issue', appId: Number(target.id), issueNumber: filed.issueNumber }],
+      objects: [{ type: 'issue', appId: Number(moved.target.id), issueNumber: moved.issueNumber }],
       metadata: {
-        kind: 'filed', appSlug: target.slug, appName: target.name || target.slug,
-        issueNumber: filed.issueNumber, issueTitle: gate.issue.title,
+        kind: 'filed', appSlug: moved.target.slug, appName: moved.target.name || moved.target.slug,
+        issueNumber: moved.issueNumber, issueTitle: moved.title,
       },
     },
   );
@@ -755,6 +774,7 @@ module.exports = {
   proposeClose,
   closeNow,
   closedWords,
+  moveToHomeroom,
   decideMove,
   moveOfferText,
   moveOfferMeta,

@@ -140,6 +140,10 @@ const OFFER_WORDS = Object.freeze({
   try_again: { yes: 'Let it try again', no: 'Not now' },
   // #6311: the copy beside the move. The original stays open.
   copy_request: { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' },
+  // 5 Nov 2026: the move itself, under the note in the request's thread
+  // (its news no longer goes to their chat with the bot, where it was
+  // offered): filed on Homeroom's board, the original closed or voted on.
+  move_request: { yes: 'Move it to Homeroom', no: 'Keep it here' },
 });
 
 let sharedConfig = null;
@@ -2287,6 +2291,17 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
     });
     if (!proposed.ok) return settle('failed', { error: proposed.code }, 'I couldn\'t propose closing it just now.');
     return settle('done', { closeIssueId: proposed.id || null }, `Done: a vote on closing request ${requestMd(domainOf(deps), app.slug, args.issueNumber)} is open. It closes if the group votes for it.`);
+  }
+  if (offer.kind === 'move_request') {
+    const full = await mayor.findApp(pool, app.slug);
+    const move = require('./homeroom-bot-move');
+    const moved = await move.moveToHomeroom(pool, config, {
+      user, app: full, issueNumber: args.issueNumber, fileKey: `voice-offer:${offer.id}`, settings, deps,
+    });
+    if (!moved.ok) return settle('failed', { error: moved.code }, `I couldn't move it: ${moved.error}`);
+    return settle('done', { issueNumber: moved.issueNumber, original: moved.how },
+      `Moved to Homeroom's own board as request ${requestMd(domainOf(deps), moved.target.slug, moved.issueNumber)}, with a link to it left here. `
+        + move.closedWords({ how: moved.how, appName: moved.appName, reasons: moved.reasons, author: moved.mine }));
   }
   if (offer.kind === 'copy_request') {
     const full = await mayor.findApp(pool, app.slug);

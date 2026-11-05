@@ -718,13 +718,25 @@ function bellSaid(bell, item, { group = false } = {}) {
   return 'live';
 }
 
+// The request's name falls back to Homeroom's own copy of it when the
+// requester row has none (requests, then issues), never to the project alone.
 const BELL_FACTS_SQL = `
-  SELECT rq.first_version, rq.issue_title, a.slug, a.name,
+  SELECT rq.first_version,
+         COALESCE(NULLIF(rq.issue_title, ''),
+                  (SELECT NULLIF(r.title, '') FROM requests r WHERE r.app_id = rq.app_id AND r.number = rq.issue_number),
+                  (SELECT NULLIF(i.title, '') FROM issues i
+                    WHERE i.app_id = rq.app_id AND i.github_issue_number = rq.issue_number
+                    ORDER BY i.id DESC LIMIT 1)) AS issue_title,
+         a.slug, a.name,
          (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members,
          bot.id AS bot_id,
-         (SELECT p.conversation_id FROM conversation_direct_pairs p
-           WHERE p.user_low_id = LEAST(bot.id, $3::int) AND p.user_high_id = GREATEST(bot.id, $3::int)) AS conversation_id
+         lr.read_reason, lr.builder
     FROM homeroom_bot_requesters rq
+    LEFT JOIN LATERAL (
+      SELECT r.read_reason, r.builder FROM homeroom_bot_runs r
+       WHERE r.app_id = rq.app_id AND r.issue_number = rq.issue_number AND r.mode = 'live'
+       ORDER BY r.id DESC LIMIT 1
+    ) lr ON TRUE
     JOIN apps a ON a.id = rq.app_id
     LEFT JOIN users bot ON bot.username = 'homeroom_bot' AND bot.is_synthetic = TRUE
    WHERE rq.app_id = $1 AND rq.issue_number = $2 AND rq.user_id = $3`;
@@ -735,6 +747,18 @@ const BELL_FACTS_SQL = `
  * moved. Rows with no moment, of no requester, of a change or a first
  * version ring nothing.
  */
+/**
+ * Pure (16 Oct 2026, kept): a moment that asks nothing new of its requester
+ * rings nobody, though its stage still shows where it waits. An older
+ * request's first read (`read_reason` 'backlog') rings only when its change
+ * is ready, and a hand-off that names who builds it (`builder`) asks the
+ * requester nothing.
+ */
+function quietBell(bell, facts) {
+  if (bell !== 'needs_you') return false;
+  return facts?.read_reason === 'backlog' || !!(facts?.builder && String(facts.builder).trim());
+}
+
 async function bellPushes(db, changed) {
   const pushes = [];
   for (const row of changed || []) {
@@ -742,6 +766,7 @@ async function bellPushes(db, changed) {
     if (!row.bell || row.kind !== 'request' || !userId || !BELL_KINDS[row.bell]) continue;
     const { rows: [f] } = await db.query(BELL_FACTS_SQL, [row.appId, row.issueNumber, userId]);
     if (!f || f.first_version === true || !f.bot_id) continue;
+    if (quietBell(row.bell, f)) continue;
     const said = bellSaid(row.bell, row.state, { group: Number(f.members) > 1 });
     const reason = row.state.line?.code === 'reason' ? row.state.line.text : null;
     const detail = require('./homeroom-bot-notify-copy').botNotificationDetail({
@@ -751,12 +776,14 @@ async function bellPushes(db, changed) {
     // Its push goes out from the row (notifications_enqueue_mobile_push_
     // deliveries); "ready to try" also owes the email that stands in for the
     // push when no phone can take it (activity-mail.js noticeMailTargets).
+    // No chat is its home (notifications.js STAGE_BELL_SQL): its change, by
+    // which a merge settles it (change-notifications.ts settleDecidedChange).
     const { rows: rang } = await db.query(
-      `INSERT INTO notifications (user_id, conversation_id, source_user_id, kind, detail, app_id, mailed_at)
-       SELECT $1, $2, $3, $4::text, $5, $6, CASE WHEN $4::text = 'build_ready' THEN NULL ELSE NOW() END
-        WHERE NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_user_id = $3)
+      `INSERT INTO notifications (user_id, source_user_id, kind, detail, app_id, session_id, mailed_at)
+       SELECT $1, $2, $3::text, $4, $5, $6, CASE WHEN $3::text = 'build_ready' THEN NULL ELSE NOW() END
+        WHERE NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_user_id = $2)
        RETURNING id`,
-      [userId, f.conversation_id || null, f.bot_id, BELL_KINDS[row.bell], detail, row.appId],
+      [userId, f.bot_id, BELL_KINDS[row.bell], detail, row.appId, Number(row.sessionId) || null],
     );
     if (rang.length) pushes.push({ kind: 'user', routing: { userId }, data: { type: 'notifications_changed' } });
   }
@@ -941,6 +968,7 @@ module.exports = {
   bellSaid,
   bellPushes,
   pushesOf,
+  quietBell,
   publish,
   touched,
   afterTransition,

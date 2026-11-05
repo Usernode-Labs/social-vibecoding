@@ -21,6 +21,8 @@
 //      "took 1h 9m". The clock starts when the work did, a restart carries
 //      it on, and the wait is said apart (homeroom-bot-activity.js
 //      workClock): "took 24m, after waiting 46m for the first version".
+//      Since 5 Nov 2026 an ordinary request's card is no longer sent (its
+//      news is on its page); the cards already in a chat still read this way.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-dm-live-cards.test.js
 
@@ -486,14 +488,29 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       const { rows: [queued] } = await pool.query(
         `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 2, 1, 'new') RETURNING id`, [app.id],
       );
-      const filed = await activity.startCard(pool, { inDm: true,
+      // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): an ordinary
+      // request's card is its news, said on its page, so none is sent now.
+      assert.equal(await activity.startCard(pool, { inDm: true,
         app, issueNumber: 2, bot, jobKey: Number(queued.id), filed: true, settings,
         requester: {
           userId: priya.id, username: priya.username, hasPlatformAccess: true, issueTitle: 'Books we have read', firstVersion: false, askedText: 'Keep a list',
         },
-      });
-      assert.ok(filed?.messageId, 'her card, sent when she filed it');
-      await pool.query('UPDATE homeroom_bot_dm_messages SET created_at = $2 WHERE message_id = $1', [filed.messageId, at('11:10')]);
+      }), null);
+      // Hers was sent on 5 October, when she filed it: a card from before
+      // still reads its clock from the work.
+      const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, priya.id);
+      const { rows: [old] } = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+         VALUES ($1, $2, $3, jsonb_build_object('homeroomBot', $4::jsonb)) RETURNING id`,
+        [opened.conversationId, bot.id, 'Page Turners #2: Books we have read\n\nFiled. This card follows it from here.',
+          JSON.stringify({ kind: 'activity', appSlug: app.slug, appName: app.name, issueNumber: 2, issueTitle: 'Books we have read' })],
+      );
+      await pool.query(
+        `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, created_at)
+         VALUES ($1, $2, $3, $4, 2, 'activity', $5)`,
+        [old.id, priya.id, opened.conversationId, app.id, at('11:10')],
+      );
+      const filed = { messageId: Number(old.id) };
       // Filed and waiting: nothing has begun.
       const waiting = (await activity.cardsFor(pool, { user: { id: priya.id }, settings })).cards.find((c) => c.messageId === filed.messageId);
       assert.deepEqual([waiting.state, waiting.workedFrom], ['working', null]);

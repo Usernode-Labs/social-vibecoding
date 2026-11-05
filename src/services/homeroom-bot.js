@@ -2938,8 +2938,8 @@ async function insertRunRow(pool, run) {
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha, asked, asked_by, limit_stop, charged, payer_user_id, read_reason)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+        checks_head_sha, asked, asked_by, limit_stop, charged, payer_user_id, read_reason, builder)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -2958,7 +2958,11 @@ async function insertRunRow(pool, run) {
       run.charged ?? run.mode === 'live', run.payerUserId || null,
       // What started this read (readReasonOf), so a request read again and
       // again says why.
-      run.readReason || null],
+      run.readReason || null,
+      // 5 Nov 2026: who a hand-off named to build it, in the insert, so the
+      // bell its stage rings knows at once that it asks nothing of the
+      // requester (work-state.js quietBell).
+      run.builder || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -4646,7 +4650,7 @@ async function runTriage(pool, config, {
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
     plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
-    buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
+    buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed, builder: parsed.builder || null,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
     durationMs: Date.now() - startedMs, readFingerprint,
@@ -7472,12 +7476,13 @@ async function actOnVerdict({
       // A note about Homeroom itself held so offers no move: the run says why.
       if (parsed.platform) await require('./homeroom-bot-move').noteMoveOffer(pool, runId, 'repeat_held');
     } else {
-      // #6311: a platform note carries the copy offer in the thread, for the
-      // person who asked for the request. Its own Move offer in their DM is
-      // unchanged.
+      // #6311: a platform note carries an offer in the thread, for the person
+      // who asked for the request. 5 Nov 2026: the move itself, which their
+      // chat with the bot offered when the request's news went there (a
+      // first version's still does: homeroom-bot-dm.js relayIssuePost).
       const copyOffer = parsed.platform && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0
         ? await voiceModule(deps).threadOffer(pool, {
-          app, kind: 'copy_request', forUserId: Number(requester.userId), args: { issueNumber },
+          app, kind: requester.firstVersion ? 'copy_request' : 'move_request', forUserId: Number(requester.userId), args: { issueNumber },
         }).catch(() => null)
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.

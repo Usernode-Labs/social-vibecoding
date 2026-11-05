@@ -145,6 +145,16 @@
       "id": "work-states",
       "sha256": "ed2c9be021f5dfe03d4e3d90ee1b3e16bd4b7a359e184eaddbca51a97fcb870c",
       "schemaSha256": "4f3a77224f954d3427901b08a0e438a549d42f30c1e333a57ff9d07a7873c220"
+    },
+    {
+      "id": "run-builder",
+      "sha256": "df6e21a799e4a0efc4a03ebf0e2b7836102b5863f4dcc42e0309da25dc9a134d",
+      "schemaSha256": "01cb2558fc89ed17ce0138dcd81987c3f1bd3d4fc990ae173efbb4578e836656"
+    },
+    {
+      "id": "bot-cards",
+      "sha256": "b0ec50f4794626b739b6313b42588c2f8535e9e3a94b816727f09d682e7393c3",
+      "schemaSha256": "9e1ae4a11895f7b8692a58d730f47ae79967c25fa384da6cbf96e41579992a43"
     }
   ]
 }

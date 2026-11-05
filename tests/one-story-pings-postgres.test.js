@@ -10,8 +10,9 @@
 //     voter voted;
 //   - revision_recheck names whose ask the update was ("@ada", "you"), and
 //     whoever got it for a version is not also sent change_ready for it;
-//   - the requester's own "ready to try" (build_ready, a row of their chat
-//     with the bot) is linked to the change and settled when it is decided.
+//   - the requester's own "ready to try" (build_ready, rung from their
+//     request's stage since 5 Nov 2026) is linked to the change and settled
+//     when it is decided.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/one-story-pings-postgres.test.js
 
@@ -156,17 +157,26 @@ test('one story: who the platform pings about a change Homeroom bot built, again
   });
 
   await t.test('the requester\'s "ready to try" settles with the change, and its voters hear it is live, not her', async () => {
-    const sent = await dm.sendDm(pool, {
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): her "ready to try" is
+    // no message in her chat with the bot. Her request's stage rings it
+    // (services/work-state.js bellPushes), with no message behind the row.
+    assert.equal(await dm.sendDm(pool, {
       bot, userId: maya.id, content: 'It\'s built.', idempotencyKey: 'one-story-ready',
       metadata: {
         kind: 'proposal', moment: 'ready', said: 'ready_group', appSlug: app.slug, appName: app.name, issueNumber: 1,
         requestTitle: 'Dark mode', waiting: '@ben', sessionId: darkMode.id,
       },
-    });
-    assert.ok(sent?.messageId);
+    }), null, 'not sent');
+    const ws = require('../src/services/work-state');
+    await pool.query('UPDATE homeroom_bot_runs SET build_ok = TRUE WHERE app_id = $1 AND issue_number = 1', [app.id]);
+    const changed = await ws.refresh(pool, [{ appId: app.id, issueNumber: 1 }]);
+    assert.deepEqual([changed[0].state.stage, changed[0].bell], ['up_for_vote', 'ready']);
+    await ws.pushesOf(pool, changed);
     const { rows: [ring] } = await pool.query(
-      `SELECT id, kind, detail, session_id, read_at FROM notifications WHERE user_id = $1 AND kind = 'build_ready'`, [maya.id]);
+      `SELECT id, kind, detail, session_id, read_at, conversation_message_id FROM notifications
+        WHERE user_id = $1 AND kind = 'build_ready'`, [maya.id]);
     assert.equal(ring.read_at, null);
+    assert.equal(ring.conversation_message_id, null, 'no message behind it');
     assert.equal(policy.buildNotificationCopy('build_ready', { detail: ring.detail, sourceIsSynthetic: true }).title, 'Dark mode · Supper Club');
 
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes'), ($1, $3, 'no'), ($1, $4, 'yes')`,
