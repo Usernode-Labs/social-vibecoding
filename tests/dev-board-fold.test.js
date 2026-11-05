@@ -1727,7 +1727,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 751 → 752: +1 (#6271) a private thread marked done this week is listed
   // under Live this week with its lock and the day it closed. Live this week
   // had no declared check to extend. 752 leaves 128 slots.
-  checkCap.assertPinned(DAPP.tests.length, 752);
+  //
+  // 752 → 753: #6134's Needs attention card. It needs its own ?demo= fixture
+  // (connectors-attention), so it has no check to fold into.
+  checkCap.assertPinned(DAPP.tests.length, 753);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

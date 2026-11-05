@@ -100,8 +100,8 @@
     "description": "Third paragraph of the \"How it works\" explanation in Settings > Connectors: how the other app gets permission. \"The app\" is the AI app being connected."
   },
   "connectors.chooseApp": {
-    "text": "Choose your app",
-    "description": "Small heading in Settings > Connectors above the list of setup guides, one row per AI product (Claude.ai, ChatGPT, Codex, another agent)."
+    "text": "Your AI tools",
+    "description": "Small heading in Settings > Connectors above the cards, one card per AI tool (Claude.ai, ChatGPT, Codex, another agent), each with its status, its connections and its setup steps."
   },
   "connectors.claude.hint": {
     "text": "6 steps · also sets up Claude Code",
@@ -287,21 +287,9 @@
     "text": "Whichever you use, approve the connection in the browser page that opens.",
     "description": "Note under the list of setup guides in Settings > Connectors: applies to every product in the list."
   },
-  "connectors.connected": {
-    "text": "Connected",
-    "description": "Small heading in Settings > Connectors above the list of chat products that are already connected to this account."
-  },
-  "connectors.list.loading": {
-    "text": "Loading connections…",
-    "description": "Shown in place of the list of connected chat products in Settings > Connectors while it loads."
-  },
-  "connectors.list.empty": {
-    "text": "No chat products connected yet.",
-    "description": "Shown in place of the list of connected chat products in Settings > Connectors when none is connected."
-  },
   "connectors.list.disconnect": {
     "text": "Disconnect",
-    "description": "Button on a connected chat product's row in Settings > Connectors: removes that product's access to Homeroom."
+    "description": "Button on a connection's row, on its AI tool's card in Settings > Connectors: removes that connection's access to Homeroom."
   },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
@@ -2723,25 +2711,77 @@
     "text": "{{summary}} {{advice}}",
     "description": "Status line under the \"stop the permission prompts\" advice in Settings > Connectors, about the tip Homeroom adds to its answers in a chat app (Claude, ChatGPT) telling the person how to stop those prompts. Puts two complete sentences one after the other: {{summary}} says how often the tip was sent, {{advice}} says when it will be sent again. Change only the spacing or order if your language needs it."
   },
-  "connectors.row.connectedUsed": {
-    "text": "connected {{connected}} · last used {{lastUsed}}",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: when it was connected and last used. Both parameters are dates with times. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.working": {
+    "text": "Working",
+    "description": "Status word on an AI tool's card in Settings > Connectors: it is connected and has used Homeroom."
   },
-  "connectors.row.connectedNeverUsed": {
-    "text": "connected {{connected}} · never used",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: when it was connected, and that it has not been used yet. {{connected}} is a date with time. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.unused": {
+    "text": "Not used yet",
+    "description": "Status word on an AI tool's card in Settings > Connectors: it is connected, but has not called Homeroom since."
   },
-  "connectors.row.unknownDateUsed": {
-    "text": "connected unknown date · last used {{lastUsed}}",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: shown when the date it was connected is not known. {{lastUsed}} is a date with time. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.attention": {
+    "text": "Needs attention",
+    "description": "Status word on an AI tool's card in Settings > Connectors, beside an amber dot: its sign-in ran out and it has to be connected again."
   },
-  "connectors.row.unknownDateNeverUsed": {
-    "text": "connected unknown date · never used",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: shown when the date it was connected is not known and it has not been used yet. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.none": {
+    "text": "Not connected",
+    "description": "Status word on an AI tool's card in Settings > Connectors: this account has no connection from it."
+  },
+  "connectors.row.lastActive": {
+    "text": "Last active {{lastUsed}}",
+    "description": "Line on a connection's row in Settings > Connectors. {{lastUsed}} is a date with time."
+  },
+  "connectors.row.notUsedYet": {
+    "text": "Connected {{connected}} · not used yet",
+    "description": "Line on a connection's row in Settings > Connectors when the tool has not called Homeroom since connecting. {{connected}} is a date with time."
+  },
+  "connectors.row.unknownDate": {
+    "text": "Connected on an unknown date · not used yet",
+    "description": "Line on a connection's row in Settings > Connectors when the date it was connected is not known and it has not been used."
+  },
+  "connectors.row.expired": {
+    "text": "Sign-in ran out {{when}}. Follow the steps to connect again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended. {{when}} is a date with time. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.row.expiredUnknownDate": {
+    "text": "Sign-in ran out. Follow the steps to connect again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the date is not known. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.capabilities.readWrite": {
+    "text": "Can read your apps and send proposals",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.read": {
+    "text": "Can read your apps",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.write": {
+    "text": "Can send proposals",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.expiredReadWrite": {
+    "text": "Could read your apps and send proposals",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.capabilities.expiredRead": {
+    "text": "Could read your apps",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.capabilities.expiredWrite": {
+    "text": "Could send proposals",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.progress.done": {
+    "text": "{{done}} of {{total}} done",
+    "description": "Line above the numbered steps of an open setup guide in Settings > Connectors, after the person ticks a step. {{done}} is how many steps they marked done, {{total}} how many the guide has."
+  },
+  "connectors.progress.tickAria": {
+    "text": "Step {{n}} done",
+    "description": "Screen reader label of the toggle on a setup guide's step in Settings > Connectors, announced as pressed or not pressed. {{n}} is the step's number."
   },
   "connectors.row.unnamedClient": {
     "text": "Connected client",
-    "description": "Title of a connected chat app's card in Settings > Connectors when the app gave no name. \"Client\" is a program connected to Homeroom, not a customer."
+    "description": "Title of a connection's row in Settings > Connectors when the app gave no name. \"Client\" is a program connected to Homeroom, not a customer."
   },
   "connectors.disconnect.failedRetry": {
     "text": "Could not disconnect. Try again.",

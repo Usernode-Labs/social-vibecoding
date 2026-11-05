@@ -382,6 +382,12 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6134, #6136: Settings > Connectors, one card per AI tool ───────
+  'connector-tool-claude': 'The Claude.ai card in Settings > Connectors (features/settings/sections/connectors.tsx): its status word, its setup steps and its connections. The four cards replace one list of setup rows; #connectors-list stays as what holds them.',
+  'connector-tool-chatgpt': 'The ChatGPT card, the same shape as #connector-tool-claude.',
+  'connector-tool-codex': 'The Codex card, the same shape as #connector-tool-claude.',
+  'connector-tool-generic': 'The Another agent card, the same shape as #connector-tool-claude. Any connected program that names none of the other three lands here under its own name.',
+  'connector-chatgpt-url-copy': 'Copy beside the MCP server URL in the ChatGPT guide\'s step 3 (features/settings/connector-setup-steps.tsx). Rendered only when Settings passes `track`, so the hand-off and the launchpad card do not get a duplicate id. settings.js wires it through _wireCopyControl.',
   // ── #6135: Test connection, Settings > Connectors ───────────────────
   'connector-url-test': 'The Test connection button beside Copy in Settings > Connectors (features/settings/sections/connectors.tsx). Read-only: it checks this site\'s MCP server and the account\'s connection. settings.js labels it and disables it while a check runs.',
   'connector-test-status': 'The line under the MCP server URL that reports the last Test connection result (features/settings/sections/connectors.tsx). Ships hidden and empty; settings.js fills it and colours a failure.',

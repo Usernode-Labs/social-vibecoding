@@ -339,7 +339,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // behind state too.
     'M4 6h16M4 12h16M4 18h16',
     'M4.5 12.75l6 6 9-13.5',
-    'M5 13l4 4L19 7',
+    // CheckIcon ('M5 13l4 4L19 7') left this list with #6136: every setup step's
+    // tick in Settings > Connectors carries one, hidden until it is pressed.
     'M5 15l7-7 7 7',
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
