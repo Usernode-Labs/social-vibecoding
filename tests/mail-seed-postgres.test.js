@@ -13,6 +13,7 @@ const { hash } = require('../scripts/language-packs');
 const { KINDS } = require('../src/services/mail/templates');
 const { reset } = require('../src/services/push-language');
 const log = require('../src/services/logger');
+const languageCache = require('../src/services/language-cache');
 const { SEEDS, seedEmailTemplates, englishTemplate } = require('../src/db/email-template-seeds');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -45,6 +46,8 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
   const originalGetPool = dbPool.getPool;
   dbPool.getPool = () => pool;
   t.after(() => { dbPool.getPool = originalGetPool; });
+  // A checkout may not have built its language source, and these are about a boot that has one.
+  const readSource = t.mock.method(languageCache, 'readSource', () => SOURCE);
   await migrate(config);
   const store = require('../src/services/mail/template-store');
 
@@ -184,6 +187,47 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), TRANSLATED.length);
     await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
     reset();
+  });
+
+  await t.test('with no language source nothing is written, it is logged, and a later boot seeds', async (st) => {
+    const errors = st.mock.method(log, 'error', () => {});
+    await empty();
+    await seedEmailTemplates(pool, { source: null });
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), 0);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 0);
+    assert.equal(errors.mock.callCount(), 1);
+    assert.match(errors.mock.calls[0].arguments[1], /language source/);
+
+    readSource.mock.mockImplementationOnce(() => null);
+    await seedEmailTemplates(pool);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), 0, 'read at boot, the same');
+    assert.equal(errors.mock.callCount(), 2);
+
+    reset();
+    await pool.query(
+      "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', 'otp.subject', $1, $2)",
+      [hash(ENGLISH['otp.subject'].text), FRENCH['otp.subject']],
+    );
+    await seedEmailTemplates(pool, { source: SOURCE });
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
+    assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), TRANSLATED.length);
+    assert.equal(errors.mock.callCount(), 2);
+    await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
+  });
+
+  await t.test('a source that lists no other language is a real answer: English only is seeded', async () => {
+    await empty();
+    const noLanguages = { files: { ...SOURCE.files, 'config.json': { sourceLanguage: 'en', languages: { en: 'English' } } } };
+    await seedEmailTemplates(pool, { source: noLanguages });
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_template_translations'), 0);
+  });
+
+  await t.test('with nothing to seed, the 12 MB language source is not even read', async () => {
+    await seedEmailTemplates(pool);
+    const before = readSource.mock.callCount();
+    await seedEmailTemplates(pool);
+    assert.equal(readSource.mock.callCount(), before);
   });
 
   await t.test('a failed seed changes nothing and the next boot tries again', async () => {

@@ -627,10 +627,18 @@ async function seedInTransaction(client, source, translations) {
  * Nothing sends from these yet, and a boot must not depend on them: a problem is
  * logged and the next boot tries again.
  */
-async function seedEmailTemplates(pool, { source = languageCache.readSource() } = {}) {
+async function seedEmailTemplates(pool, { source: given } = {}) {
   let client = null;
   try {
     if (await nothingToSeed(pool)) return;
+    // Read only now: it is large, and most boots have nothing to seed. Without it
+    // there is no telling which languages exist, and rows written now would stop
+    // every later boot from adding them. A source listing none is a real answer.
+    const source = given === undefined ? languageCache.readSource() : given;
+    if (!source) {
+      log.error('email-templates', 'No language source to seed email templates from; a later boot will try again');
+      return;
+    }
     const translations = await translationsToSeed(pool, source);
     client = await pool.connect();
     await client.query('BEGIN');
