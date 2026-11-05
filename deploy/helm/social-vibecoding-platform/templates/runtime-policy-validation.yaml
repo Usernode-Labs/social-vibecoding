@@ -2,6 +2,9 @@
 {{- if and .Values.config.checkNodePoolRequired (empty .Values.config.checkNodePool) }}
 {{- fail "config.checkNodePoolRequired requires config.checkNodePool" }}
 {{- end }}
+{{- if and .Values.config.checkNodePoolRequired (le (int64 .Values.config.checksMaxConcurrentRuns) 0) }}
+{{- fail "config.checkNodePoolRequired requires a positive config.checksMaxConcurrentRuns" }}
+{{- end }}
 {{- if not (kindIs "map" .Values.config.appResourceProfiles) }}
 {{- fail "config.appResourceProfiles must map app IDs to small or standard" }}
 {{- end }}

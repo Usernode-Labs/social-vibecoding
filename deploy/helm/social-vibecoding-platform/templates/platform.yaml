@@ -280,6 +280,11 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: CHECKS_MAX_CONCURRENT_RUNS, value: {{ .Values.config.checksMaxConcurrentRuns | int64 | quote }}}
             - {name: CHECK_NODE_POOL, value: {{ .Values.config.checkNodePool | quote }}}
             - {name: CHECK_NODE_POOL_REQUIRED, value: {{ .Values.config.checkNodePoolRequired | quote }}}
+            {{- if .Values.config.checkNodePoolRequired }}
+            # Speculative early suites do not own a shared checks-queue slot.
+            # Required-pool mode runs their suite in the admitted checks run.
+            - {name: EARLY_UNIT_SUITE, value: "0"}
+            {{- end }}
             - {name: CHECK_POOL_METRICS_URL, value: {{ .Values.config.checkPoolMetricsUrl | quote }}}
             - {name: KUBERNETES_APP_RESOURCE_PROFILES, value: {{ .Values.config.appResourceProfiles | toJson | quote }}}
             - {name: PREVIEW_SLEEP_AFTER_MS, value: {{ .Values.config.previewSleepAfterMs | int64 | toString | quote }}}

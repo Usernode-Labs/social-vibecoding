@@ -426,6 +426,12 @@ sleeping app is ready at one replica, then clear the allowlist. Keep the
 gateway and its telemetry rules until all apps are awake. Existing deployments
 whose routes bypass the gateway stay awake until their normal redeploy.
 
+A lost scale-down response is treated as an uncertain write. The SQL wake
+claim is retained and a bounded conductor wake is requested, even if the
+provider already accepted zero replicas. Access and rollback can retry that
+wake if its first enqueue fails. Only a definitive conflict/not-found
+rejection clears the failed sleep claim immediately.
+
 The session ceiling counts logical active/promoted coding sessions, including
 sessions with evicted workers. It does not reserve a worker or preview for each
 session. Raising it requires matching namespace compute/object/PVC budgets,
@@ -623,6 +629,15 @@ instead of falling back. New work waits for a usable node before creating its
 Job or Build. Previously built images can still be reused. Existing work
 finishes under its original scheduling rules. Coding workers, apps and
 preview servers keep their existing placement.
+
+Required-pool mode also requires a positive checks-queue limit and disables
+speculative early unit suites (`EARLY_UNIT_SUITE=0`). The runtime enforces
+this even when an imported environment enables early suites. Every unit suite
+then runs after its build, within the admitted checks run, so the early
+launcher cannot race past the shared budget. This can lengthen proposal
+checks; it does not skip tests. Non-required mode keeps its existing early
+suite switch. Let previously started early Jobs finish before evaluating the
+new steady-state envelope.
 
 In required mode, `config.checkPoolMetricsUrl` should name the existing
 Prometheus base URL. Export only the pool label with kube-state-metrics'

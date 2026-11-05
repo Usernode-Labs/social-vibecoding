@@ -61,7 +61,7 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
       labels: { 'social.usernode.io/environment': 'production' } },
     spec: { replicas: 1, template: { image: 'immutable', env: 'unchanged' } } };
     const fx = { config, app, active: 0, lastRequestAt: Date.now() - 7200000, telemetryError: false,
-      conflict: false, scales: [], wakes: [], wait: async () => {},
+      conflict: false, sleepError: null, wakeError: false, scales: [], wakes: [], wait: async () => {},
       get deployment() { return deployment; },
       async row() { return (await pool.query('SELECT * FROM app_runtime_sleep WHERE app_id = $1', [app.id])).rows[0]; },
       async age() { await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '2 hours' WHERE app_id = $1`, [app.id]); },
@@ -74,16 +74,21 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
       async readProductionForSleep() { return structuredClone(deployment); },
       async scaleProductionForSleep(_config, read, replicas, at) {
         if (fx.conflict) { deployment.metadata.resourceVersion = 'new-deploy'; return 'conflict'; }
+        if (replicas === 0 && fx.sleepError === 'before') throw new Error('connection reset before the write');
         assert.equal(read.metadata.resourceVersion, deployment.metadata.resourceVersion);
         fx.scales.push(replicas); deployment = structuredClone(read);
         deployment.spec.replicas = replicas;
         deployment.metadata.resourceVersion += 'x';
         if (replicas === 0) deployment.metadata.annotations[sleep.ANNOTATION] = new Date(at).toISOString();
         else delete deployment.metadata.annotations[sleep.ANNOTATION];
+        if (replicas === 0 && fx.sleepError === 'after') throw new Error('connection reset after the write');
         return 'scaled';
       },
       async waitForPreview() { await fx.wait(); },
-    }, workflow: { async reportAppWake(id, key) { fx.wakes.push({ id, key }); } } };
+    }, workflow: { async reportAppWake(id, key) {
+      if (fx.wakeError) throw new Error('workflow unavailable');
+      fx.wakes.push({ id, key });
+    } } };
     await sleep.sweep(config, pool, { deps: fx.deps });
     return fx;
   }
@@ -142,6 +147,33 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     assert.equal(fx.deployment.spec.replicas, 1);
   });
 
+  for (const lost of ['before', 'after']) await t.test(`a response lost ${lost} scale-down retains a recoverable claim`, async () => {
+    const fx = await fixture(); await fx.age(); fx.sleepError = lost;
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+    assert.ok((await fx.row()).asleep_at, 'an uncertain provider write must not erase the wake intent');
+    assert.equal(fx.deployment.spec.replicas, lost === 'after' ? 0 : 1);
+    assert.equal(fx.wakes.length, 1, 'a bounded conductor wake recovers or fences the uncertain write');
+    assert.equal((await sleep.access(pool, fx.app.id, '/', { config: fx.config, deps: fx.deps })).ready, false);
+    assert.equal((await sleep.wake(fx.config, pool, fx.app.id, { deps: fx.deps })).status, 'started');
+    assert.equal(fx.deployment.spec.replicas, 1);
+    assert.equal((await fx.row()).asleep_at, null);
+    assert.equal((await sleep.access(pool, fx.app.id, '/', { config: fx.config, deps: fx.deps })).ready, true);
+  });
+
+  await t.test('rollback can recover an ambiguous write even when the recovery wake could not be queued', async () => {
+    const fx = await fixture(); await fx.age(); fx.sleepError = 'after'; fx.wakeError = true;
+    await sleep.sweep(fx.config, pool, { deps: fx.deps });
+    assert.equal(fx.deployment.spec.replicas, 0);
+    assert.ok((await fx.row()).asleep_at);
+    assert.equal(fx.wakes.length, 0);
+    fx.wakeError = false;
+    const disabled = { ...fx.config, appSleepAppIds: [], appSleepAfterMs: 0 };
+    assert.equal((await sleep.sweep(disabled, pool, { deps: fx.deps })).waking, 1);
+    await sleep.wake(disabled, pool, fx.app.id, { deps: fx.deps });
+    assert.equal(fx.deployment.spec.replicas, 1);
+    assert.equal((await fx.row()).asleep_at, null);
+  });
+
   await t.test('activity racing a sleep claim is rechecked under the shared app lock', async () => {
     const fx = await fixture(); await fx.age();
     const read = fx.deps.kubernetes.readProductionForSleep;
@@ -176,4 +208,13 @@ test('production scale writes are fenced and wake fences even an already-awake r
   assert.equal(writes[0].metadata.resourceVersion, '7');
   assert.ok(writes[0].metadata.annotations['social.usernode.io/production-wake-at']);
   assert.deepEqual(writes[0].spec.template, deployment.spec.template);
+  let accepted;
+  kubernetes._setClientsForTest({ apps: { async replaceNamespacedDeployment({ body }) {
+    accepted = body;
+    throw Object.assign(new Error('response lost after commit'), { code: 'ECONNRESET' });
+  } } });
+  await assert.rejects(kubernetes.scaleProductionForSleep({ kubernetes: { appNamespace: 'apps' } },
+    deployment, 0, new Date().toISOString()), /response lost/);
+  assert.equal(accepted.spec.replicas, 0);
+  assert.ok(accepted.metadata.annotations[sleep.ANNOTATION]);
 });

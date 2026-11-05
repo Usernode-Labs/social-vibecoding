@@ -343,6 +343,24 @@ test('the unit suite starts with the build, under the attempt\'s own id, unless 
   assert.ok(calls.some((c) => c[0] === 'delete-jobs' && c[1] === id), 'and with the whole preview');
 });
 
+test('required batch mode cannot launch speculative early suites even with the legacy switch enabled', async (t) => {
+  const k8s = require('../src/services/kubernetes');
+  const prior = process.env.EARLY_UNIT_SUITE;
+  process.env.EARLY_UNIT_SUITE = '1';
+  t.after(() => {
+    if (prior === undefined) delete process.env.EARLY_UNIT_SUITE;
+    else process.env.EARLY_UNIT_SUITE = prior;
+  });
+  t.mock.method(k8s, 'countRunningUnitSuiteJobs', async () => assert.fail('count-then-launch must not decide admission'));
+  const workers = previewServices({ config: { workerRuntime: 'kubernetes',
+    kubernetes: { checkNodePoolRequired: true } }, pool });
+  suites.launched.length = 0;
+  const results = await Promise.all(Array.from({ length: 10 }, (_, i) =>
+    workers[WORK.unitEarly].run(ctx({ sessionId: 5 + i, appId: 2, n: 3, head }))));
+  assert.ok(results.every((r) => r.started === false && r.why === 'off'));
+  assert.equal(suites.launched.length, 0, 'unit suites run later inside the admitted checks run');
+});
+
 // services/unit-suite-reuse.js: a head whose suite already passed under the
 // same conditions, when nobody asked for a fresh run, has its pass copied by
 // the checks run, so no early Jobs are started for it.

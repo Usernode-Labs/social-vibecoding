@@ -110,8 +110,24 @@ async function sweep(config, pool, { deps = {}, shouldStop = () => false } = {})
          RETURNING s.asleep_at::text AS asleep_at`, [app.id, app.runtime_name, deployment.metadata.uid, p.afterMs / 1000]);
       if (!claimed) return false;
       try {
-        if (await kubernetes.scaleProductionForSleep(config, deployment, 0, claimed.asleep_at) === 'scaled') return true;
-      } catch (err) { log.warn('production-sleep', 'Scale down failed; app stays awake', { appId: app.id, err: err.message }); }
+        const outcome = await kubernetes.scaleProductionForSleep(config, deployment, 0, claimed.asleep_at);
+        if (outcome === 'scaled') return true;
+        if (!['conflict', 'missing'].includes(outcome)) throw new Error('The scale-down outcome was not confirmed');
+      } catch (err) {
+        // A transport failure is not proof the write failed: Kubernetes may
+        // already have accepted replicas=0. Keep the durable claim so access
+        // and rollback can still wake it. A wake also fences a delayed sleep
+        // write when the provider still reports one replica.
+        log.warn('production-sleep', 'Scale-down outcome unknown; retaining wake claim', { appId: app.id, err: err.message });
+        try { await requestWake(app.id, claimed.asleep_at, { deps }); }
+        catch (wakeErr) {
+          log.warn('production-sleep', 'Recovery wake could not be queued; claim retained for access or rollback',
+            { appId: app.id, err: wakeErr.message });
+        }
+        return false;
+      }
+      // Conflict and not-found are definitive rejections, rather than lost
+      // responses to a possibly committed write.
       await pool.query('UPDATE app_runtime_sleep SET asleep_at = NULL WHERE app_id = $1 AND asleep_at = $2',
         [app.id, claimed.asleep_at]);
       return false;
