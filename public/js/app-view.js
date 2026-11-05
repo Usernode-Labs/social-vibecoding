@@ -7740,7 +7740,78 @@ const AppView = {
       // #6282: no Vote button while the update is on its way (change-head.tsx
       // gateActions), so the card never asks for a yes that would be cleared.
       ...(updateComing ? { hold: true } : {}),
+      ...(item.status === 'promoted' && !AppView._approveSolo(item)
+        ? { facts: AppView._changeVoteFacts(item, pill, ready, updateComing) } : {}),
     };
+  },
+
+  // #3800: what the Votes card says under its bar while a change is up for a
+  // vote, each a whole line: the tally ("2 yes · 3 no · 4 waiting", a zero
+  // left out), when a running countdown ends, and how the viewer stands.
+  _changeVoteFacts(item, pill, ready, updateComing) {
+    const rule = item.approval_mode === 'rules' && item.approval_rule ? item.approval_rule : null;
+    // Let in by another rule (the creator's yes on You or the group), the pill
+    // counts that rule's yeses alone; the tally is still everybody's.
+    const through = !!(rule && item.approval_passed_by);
+    const yes = through ? Math.max(Number(pill.yes) || 0, Number(item.yes_count) || 0) : (Number(pill.yes) || 0);
+    const no = through ? Math.max(Number(pill.no) || 0, Number(item.no_count) || 0) : (Number(pill.no) || 0);
+    // Who could still vote: the rule's own people, the approvers once the
+    // roster is read (only they count there, so never the members), or the
+    // members. Unknown says nothing rather than a number that is not true.
+    let electorate = 0;
+    if (rule) electorate = Number(rule.electorate) || 0;
+    else if (item.approval_policy === 'invited') electorate = ready ? Number(ready.approvers) || 0 : 0;
+    else {
+      const members = Number((AppView._proposalsCtx || {}).activeUsers) || 0;
+      if (members > 1) electorate = members;
+    }
+    const waiting = Math.max(0, electorate - yes - no);
+    const parts = [];
+    if (yes) parts.push(PlatformI18n.t('changes:page.votes.facts.yes', { count: yes }));
+    if (no) parts.push(PlatformI18n.t('changes:page.votes.facts.no', { count: no }));
+    if (waiting) parts.push(PlatformI18n.t('changes:page.votes.facts.waiting', { count: waiting }));
+    // A share only under a rule that is a share of its people. The other rules
+    // count yeses or run on time, where a percentage would imply a bar that
+    // does not exist. Of the people the rule counts, never of the votes cast.
+    if (rule && (rule.kind === 'percentOfActive' || rule.kind === 'percentOfEveryone') && electorate > 0) {
+      parts.push(PlatformI18n.t('changes:page.votes.facts.approval', {
+        share: Math.min(100, Math.round((100 * (Number(pill.yes) || 0)) / electorate)), needed: rule.n,
+      }));
+    }
+    const facts = [];
+    if (parts.length) {
+      facts.push({
+        key: 'tally',
+        text: parts.reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second })),
+      });
+    }
+    // A change has no fixed deadline, only these two clocks (statusPillState).
+    if ((pill.key === 'merge_countdown' || pill.key === 'reject_countdown') && Number.isFinite(pill.countdown)) {
+      const when = new Intl.DateTimeFormat(PlatformI18n.dateLocale(), {
+        weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+      }).format(new Date(pill.countdown));
+      facts.push({ key: 'ends', text: PlatformI18n.t('changes:page.votes.facts.ends', { when }) });
+    }
+    const mine = AppView._myVoteFact(item, rule, updateComing);
+    if (mine) facts.push(mine);
+    return facts;
+  },
+
+  // The viewer's own line on the Votes card, or null when there is nothing
+  // true to say: no account, a read-only admin, or a yes from an earlier
+  // version, which the card's note already words.
+  _myVoteFact(item, rule, updateComing) {
+    if (!App.user || AppView.readOnly) return null;
+    if (item.my_vote === 'yes') return { key: 'mine', text: PlatformI18n.t('changes:page.votes.facts.youSaidYes') };
+    if (item.my_vote === 'no') return { key: 'mine', text: PlatformI18n.t('changes:page.votes.facts.youSaidNo') };
+    if (item.my_vote || item.my_prior_vote) return null;
+    // The counted rules take proposing as the author's yes (governance-rules.ts).
+    if (rule && rule.authorYes && Number(item.user_id) === Number(App.user.id)) {
+      return { key: 'mine', text: PlatformI18n.t('changes:page.votes.facts.yourProposal') };
+    }
+    // While an update is on its way the card asks for no vote.
+    if (updateComing) return null;
+    return { key: 'mine', ask: true, text: PlatformI18n.t('changes:page.votes.facts.notVoted') };
   },
 
   // The Votes card of a project's first version up for testing (D1): no vote

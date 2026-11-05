@@ -17089,6 +17089,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-gate[data-done="true"] .dev-change-bar-fill[data-state="done"] { background: var(--state-ok); }
 .dev-change-bar-fill[data-state="bad"] { background: var(--state-blocked); }
 .dev-change-gate-note { grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; line-height: 1.4; color: var(--text-muted); }
+.dev-change-gate-facts { grid-column: 1 / -1; margin-top: 8px; display: grid; gap: 2px; font-size: 13px; line-height: 1.4; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.dev-change-gate-facts p { margin: 0; }
+.dev-change-gate-facts [data-change-vote-fact="tally"] { color: var(--text-primary); }
+.dev-change-gate-facts [data-ask="true"] { color: var(--accent); font-weight: 600; }
 .dev-change-gate-link {
   appearance: none;
   border: 0;
