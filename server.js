@@ -1256,6 +1256,11 @@ async function start() {
   // the first phone-auth request. Never fatal: an unreadable setting falls
   // back to the deploy's default.
   await require('./src/services/sms/select').selection(getPool(config)).catch(() => {});
+  // Every mail is worded from the email templates this process keeps in memory
+  // (src/services/mail/template-store.js). Read them now, so a cold server has a
+  // copy before its first sign-in code and a database problem later does not
+  // cost mail its templates. Never fails a boot; waits at most a mail's patience.
+  await require('./src/services/mail/template-store').getSnapshot(getPool(config));
   // This process, and what it holds, for every other one to see
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.

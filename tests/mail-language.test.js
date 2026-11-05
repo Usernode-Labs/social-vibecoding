@@ -40,21 +40,59 @@ function sourceWith(committed = {}) {
   };
 }
 
-/** A pool holding `rows` as language_translations, plus what the door reads and writes. */
+/**
+ * The email templates a database seeded with `rows` holds: every kind in
+ * English, and in Spanish where the seed would write it (email-template-seeds.js
+ * translationsToSeed), from the same translations through the same pipeline.
+ */
+async function templatesSeededWith(rows) {
+  const { SEEDS, englishTemplate, translatedTemplate, saysAnything } = require('../src/db/email-template-seeds');
+  const { ACTIONS } = require('../src/services/mail/actions');
+  const source = sourceWith();
+  const t = await translator({ query: async (_, params) => ({ rows: rows.filter((r) => r.language === params[0]) }) },
+    'es', { namespace: 'email', source });
+  reset();
+  const says = t && saysAnything(t, { source });
+  const templates = Object.keys(ACTIONS).map((kind, i) => {
+    const { name, layout, ...fields } = englishTemplate(kind, { source });
+    const spanish = says && !ACTIONS[kind].englishOnly ? translatedTemplate(kind, t, { source }) : null;
+    const translations = spanish ? { es: (({ name: _n, layout: _l, ...words }) => words)(spanish) } : {};
+    return { id: i + 1, action: kind, name, layout_family_id: layout ? 1 : null, translations, ...fields };
+  });
+  const [layout] = SEEDS.layouts;
+  return { templates, layouts: [{ id: 1, family_id: 1, name: layout.name, html: layout.html, text: layout.text, translations: {} }] };
+}
+
+/**
+ * A pool holding `rows` as language_translations, the email templates a seed of
+ * them gives, and what the door reads and writes.
+ */
 function poolWith(rows = [], { fail = null, hang = false } = {}) {
-  const db = { reads: 0, namespaces: [] };
+  const db = { reads: 0, namespaces: [], templateReads: 0 };
+  let seeded;
+  const query = async (sql, params) => {
+    if (/FROM language_translations/.test(sql)) {
+      db.reads += 1;
+      db.namespaces.push(params[1]);
+      if (hang) await new Promise(() => {});
+      if (fail) throw fail;
+      return { rows: rows.filter((r) => r.language === params[0] && params[1] === 'email') };
+    }
+    if (/FROM email_templates/.test(sql)) {
+      db.templateReads += 1;
+      seeded ||= await templatesSeededWith(rows);
+      return { rows: seeded.templates };
+    }
+    if (/FROM email_layouts/.test(sql)) {
+      seeded ||= await templatesSeededWith(rows);
+      return { rows: seeded.layouts };
+    }
+    return { rows: [], rowCount: 0 };
+  };
   return {
     db,
-    async query(sql, params) {
-      if (/FROM language_translations/.test(sql)) {
-        db.reads += 1;
-        db.namespaces.push(params[1]);
-        if (hang) await new Promise(() => {});
-        if (fail) throw fail;
-        return { rows: rows.filter((r) => r.language === params[0] && params[1] === 'email') };
-      }
-      return { rows: [], rowCount: 0 };
-    },
+    query,
+    async connect() { return { query, release() {} }; },
   };
 }
 
@@ -383,7 +421,10 @@ test('the door words a mail in the language it is told, and never hands the lang
   assert.equal(rendered[0].subject, 'Tu código');
   assert.ok(rendered[0].text.includes('123456'));
   assert.equal(sends[0].locale, undefined);
-  assert.deepEqual(pool.db.namespaces, ['email']);
+  // The words are the stored template's Spanish row: a login code reads no
+  // translation of its own at send time.
+  assert.equal(pool.db.templateReads, 1);
+  assert.deepEqual(pool.db.namespaces, []);
 });
 
 test('a mail with no language costs the door no read and hands nothing new on', async (t) => {

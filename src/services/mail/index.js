@@ -11,7 +11,8 @@
 // operator can see what happened even though the user can't.
 //
 // What this module owns, in order:
-//   1. rendering is delegated to ./templates
+//   1. rendering: the stored templates (./template-store, read from memory)
+//      rendered by ./templates, or the owner's failure order when there are none
 //   2. the throttle decision (./rate-limit, fed from mail_deliveries)
 //   3. picking the transport (./select, resolved once at boot in config.js)
 //   4. recording the outcome in mail_deliveries
@@ -31,7 +32,8 @@ const select = require('./select');
 const events = require('./events');
 const tracking = require('./tracking');
 const language = require('./language');
-const { ENGLISH_ONLY_KINDS } = require('./templates');
+const store = require('./template-store');
+const { actionFor } = require('./actions');
 
 // How long a delivery record is kept. Long enough to answer "did that
 // user ever get their code last week", short enough that the table is not
@@ -191,6 +193,52 @@ async function pruneDeliveries(pool) {
   }
 }
 
+// The suppression list, read failing OPEN as readHistory does: an address
+// that bounced getting one more mail during a database outage is a smaller
+// problem than sign-in codes stopping because the read broke.
+async function suppressionOf(pool, to) {
+  try {
+    return await events.suppression(pool, to);
+  } catch (err) {
+    log.warn('platform-mail', 'Could not read mail suppressions: sending anyway', { message: err.message });
+    return null;
+  }
+}
+
+// ─── the words ──────────────────────────────────────────────────────────
+
+// What a send renders with: the stored template and layout for `kind`, each in
+// the reader's language where that part is translated (./template-store
+// resolve), the English of both, and the translator for the words an action
+// builds in code. That translator is read only when it can matter: an action
+// with such words, whose template is translated. `readerHasLanguage` is set for
+// every reader with a language other than English, row or no row, because their
+// subject is cleaned either way (render.js). A null template sends the owner's
+// failure order (templates.js fromStored).
+// With no database configured at all, the first templates in memory
+// (template-store seededSnapshot); a configured database that cannot be had is
+// the failure order, never those.
+async function resolvedFor(config, pool, kind, locale) {
+  const action = actionFor(kind);
+  const reader = action.englishOnly ? null : language.readerLanguage(locale);
+  try {
+    const snapshot = pool ? await store.getSnapshot(pool) : (config && config.databaseUrl ? null : store.seededSnapshot());
+    const parts = store.resolve(snapshot, kind, reader);
+    const bodyTranslated = !!parts.template && parts.template !== parts.english.template;
+    const t = bodyTranslated && action.codeWords ? await language.translatorFor(pool, locale) : null;
+    return { ...parts, t, readerHasLanguage: !!reader };
+  } catch (err) {
+    // A row shaped as nothing expected must not cost a sign-in code: it is the
+    // same as having no template.
+    log.error('platform-mail', 'Could not resolve an email template', { kind, message: err.message });
+    return { template: null, layout: null, t: null, readerHasLanguage: !!reader };
+  }
+}
+
+function unknownKind(kind) {
+  return new Error(`unknown mail kind: ${kind}`);
+}
+
 // ─── the send door ──────────────────────────────────────────────────────
 
 // send(config, { kind, to, locale, ...payload }) → always resolves undefined.
@@ -205,9 +253,9 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
       return;
     }
     const messageId = events.messageId();
-    // Render first: an unknown kind is a programming error and there is
-    // no point consulting a throttle or a provider for it.
-    buildMessage(kind, { ...payload, messageId, trackingEnabled: false });
+    // First: an unknown kind is a programming error and there is no point
+    // consulting a throttle, a provider or the templates for it.
+    if (!actionFor(kind)) throw unknownKind(kind);
 
     // `mailTransport` is what config.js resolves today;
     // `topochainMailTransport` is the original hook name, still honoured
@@ -237,7 +285,7 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
       return;
     }
 
-    const blocked = await events.suppression(pool, to);
+    const blocked = await suppressionOf(pool, to);
     if (blocked) {
       await record(pool, { kind, to, messageId, provider, status: 'suppressed_bounce', error: blocked });
       return;
@@ -264,13 +312,24 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
     // Store destinations before exposing a tracked link to any provider.
     // If persistence fails, deliver ordinary links with no pixel instead.
     // Asked for last, so a mail that is not going out reads nothing. A
-    // transport renders from what it is handed, so the same words reach it.
-    const translate = ENGLISH_ONLY_KINDS.has(kind) ? null : await language.translatorFor(pool, locale);
-    const worded = translate ? { ...payload, translate } : payload;
-    // A provider's own template has none of our tracked links or pixel, so
-    // that mail is not recorded as one that could report opens or clicks.
-    const ownWords = !transport.usesProviderTemplate?.(kind, worded);
-    const rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: ownWords && !!pool && !!tracking.secret() });
+    // transport renders from what it is handed, so the same words reach it:
+    // `resolved` travels with the payload, and nothing logs or stores it.
+    const worded = { ...payload, resolved: await resolvedFor(config, pool, kind, locale) };
+    let rendered;
+    try {
+      rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: !!pool && !!tracking.secret() });
+    } catch (err) {
+      if (err.code !== 'no_template') throw err;
+      // The owner's third rule: no template and nothing a plain mail could
+      // carry, or a mail that must carry an unsubscribe link. Not sent.
+      await record(pool, { kind, to, messageId, provider, status: 'no_template', error: err.message });
+      log.error('platform-mail', 'No email template could be used: mail NOT sent', { kind, message: err.message });
+      return;
+    }
+    if (rendered.plainBecause) {
+      log.error('platform-mail', 'No email template could be used: sent a plain message with its code or link',
+        { kind, reason: rendered.plainBecause });
+    }
     const deliveryId = rendered.trackingLinks
       ? await record(pool, { kind, to, messageId, provider, status: 'sending', trackingLinks: rendered.trackingLinks, engagementTracked: true })
       : null;
@@ -313,7 +372,7 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
 //
 // It still never throws. A caller gets an outcome object with a `status`
 // drawn from the same vocabulary mail_deliveries uses:
-//   sent | skipped_staging | failed | no_transport | suppressed_rate_limit | suppressed_bounce
+//   sent | skipped_staging | failed | no_transport | suppressed_rate_limit | suppressed_bounce | no_template
 // plus `invalid_recipient` for a request that never reached a provider.
 async function sendTest(config, { to } = {}) {
   const startedAt = Date.now();
@@ -375,8 +434,22 @@ async function sendTest(config, { to } = {}) {
     };
 
     // Render before anything else, so the console can show the exact copy
-    // that was (or would have been) delivered even on the failure paths.
-    const message = buildMessage('admin_test', payload);
+    // that was (or would have been) delivered even on the failure paths. The
+    // same stored template a send uses, and the same words reach the transport.
+    const resolved = await resolvedFor(config, pool, 'admin_test', null);
+    let message;
+    try {
+      message = buildMessage('admin_test', { ...payload, resolved });
+    } catch (err) {
+      if (err.code !== 'no_template') throw err;
+      outcome.status = 'no_template';
+      outcome.error = String(err.message).slice(0, 500);
+      outcome.deliveryId = await record(pool, {
+        kind: 'admin_test', to, messageId, provider, status: 'no_template', error: outcome.error,
+      });
+      log.error('platform-mail', 'No email template could be used for the admin test mail', { message: outcome.error });
+      return outcome;
+    }
     outcome.message = { subject: message.subject, text: message.text };
 
     if (!transport) {
@@ -390,7 +463,7 @@ async function sendTest(config, { to } = {}) {
       return outcome;
     }
 
-    const blocked = await events.suppression(pool, to);
+    const blocked = await suppressionOf(pool, to);
     if (blocked) {
       outcome.status = 'suppressed_bounce';
       outcome.error = blocked;
@@ -416,7 +489,7 @@ async function sendTest(config, { to } = {}) {
     }
 
     try {
-      const detail = await transport.send({ to, kind: 'admin_test', ...payload });
+      const detail = await transport.send({ to, kind: 'admin_test', ...payload, resolved });
       if (detail && detail.providerMessageId) {
         outcome.providerMessageId = String(detail.providerMessageId).slice(0, 128);
       }
