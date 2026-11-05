@@ -347,6 +347,7 @@ const EMAIL_RULES = [
   '- Keep every {{…}} and every HTML tag and attribute exactly; translate only text. {{name}}, {{#if name}}, {{#unless name}}, {{else}} and {{/if}} are placeholders and conditions, not words: never translate, add, remove or move them out of the condition they sit in.',
   '- The words in alt, title and aria-label attributes are text a reader sees: translate those. Every other attribute and its value, every link and image address, stays character for character.',
   '- Keep the text version\'s line breaks and links as they are.',
+  '- Put a space or a line break directly before every link and every {{code}}; never join one to the word before it.',
   '- A part that is empty in the English stays empty.',
 ].join('\n');
 

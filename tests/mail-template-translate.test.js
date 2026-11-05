@@ -73,7 +73,7 @@ test('a translation is compared with its English', () => {
   assert.match(translate.englishDifference(img, { html: '<p><img src="https://x.example/a.png" alt="Logo">\u0000</p>' }), /HTML/);
 });
 
-test('probe: a translation cannot add a link placeholder to loose HTML text or glue one in its text', () => {
+test('probe: a translation cannot add a link to loose HTML text, or glue a link or a code to the word before it', () => {
   const { SEEDS, englishTemplate } = require('../src/db/email-template-seeds');
   const english = { action: 'password_reset', ...englishTemplate('password_reset') };
   const layout = SEEDS.layouts[0];
@@ -83,8 +83,17 @@ test('probe: a translation cannot add a link placeholder to loose HTML text or g
   assert.match(translate.templateProblems(english, loose, layout)[0].message, /can only be a whole href value/);
   const glued = { ...english, text: english.text.replace('{{url}}', 'https://evil.example/?u={{url}}') };
   assert.match(translate.templateProblems(english, glued, layout)[0].message, /only a space, a line break or "\(" may come right before it/);
-  const cjk = { ...english, text: english.text.replace(/[^\n]*\{\{url\}\}/, '\u3053\u3061\u3089\uff1a{{url}}') };
-  assert.deepEqual(translate.templateProblems(english, cjk, layout), [], 'a Japanese lead-in is fine');
+  // A Japanese lead-in joined to the link is refused (Linkify reads it as part
+  // of the address); with a space or a line break between, it is fine.
+  const joinedCjk = { ...english, text: english.text.replace(/[^\n]*\{\{url\}\}/, '\u3053\u3061\u3089\uff1a{{url}}') };
+  assert.match(translate.templateProblems(english, joinedCjk, layout)[0].message, /may come right before it/);
+  for (const lead of ['\u3053\u3061\u3089 {{url}}', '\u8be6\u60c5\uff1a\n{{url}}']) {
+    const spaced = { ...english, text: english.text.replace(/[^\n]*\{\{url\}\}/, lead) };
+    assert.deepEqual(translate.templateProblems(english, spaced, layout), [], lead);
+  }
+  const otp = { action: 'otp', ...englishTemplate('otp') };
+  const gluedCode = { ...otp, text: otp.text.replace('{{code}}', '\u30b3\u30fc\u30c9{{code}}') };
+  assert.match(translate.templateProblems(otp, gluedCode, layout)[0].message, /\{\{code\}\} is a one-time secret/);
 });
 
 test('email template translation against PostgreSQL', { timeout: 300000 }, async (t) => {
@@ -151,6 +160,7 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
     const system = model.calls[0].params.system.map((b) => b.text).join('\n');
     assert.match(system, /Homeroom/);
     assert.match(system, /keep every \{\{…\}\} and every HTML tag and attribute exactly; translate only text/i);
+    assert.match(system, /Put a space or a line break directly before every link and every \{\{code\}\}; never join one to the word before it\./);
     assert.doesNotMatch(system, /"translations": \[/);
     assert.deepEqual(Object.keys(JSON.parse(model.calls[0].params.messages[0].content).parts).sort(), ['html', 'preheader', 'subject', 'text', 'why']);
     assert.ok(limits.spent.length > 0 && limits.spent.every((c) => c > 0));
