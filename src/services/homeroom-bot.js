@@ -5361,14 +5361,16 @@ async function runFollowUp(pool, config, {
     // What people wrote where the voice answers is the voice's; what they
     // asked it to change comes here as asks.
     found = found.filter((r) => r.via !== 'homeroom' || (r.where === 'proposal' ? !voiceOnChange : !voiceOnRequest));
-    let taken = [];
-    if (voiceOnChange) {
-      taken = await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
-        log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
-        return [];
-      });
-      found = [...found, ...taken.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
-    }
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 2): one change-ask
+    // queue, taken whatever the change voice's switch says. With it off, the
+    // only asks recorded are the voice's own update_change ones (its words
+    // are not posted on the change, so none is read twice); they were
+    // written and never taken.
+    const taken = await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
+      log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
+      return [];
+    });
+    found = [...found, ...taken.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
     // Its own red checks: a failing verdict on the proposal's current head
     // that no follow-up has looked at yet is a reason to look again even
     // when nobody said anything. A person's reply comes first; a fix still
@@ -5405,9 +5407,9 @@ async function runFollowUp(pool, config, {
     // #5217: an ask recorded after this run took its asks (or while the row
     // was claimed) is stranded by this very return: the row is gone and
     // nothing re-queues it. Put it back, so its next follow-up takes it.
-    // Guarded: with the voice off, asks are never taken, and a requeue here
-    // would bring the issue back every pass.
-    if (voiceOnChange) await requeueAsks();
+    // 5 Nov 2026: asks are taken whatever the change voice says, so this is
+    // too (requeueAsks requeues only for an ask still waiting).
+    await requeueAsks();
     return { ran: false, reason: 'no_new_replies' };
   }
 
@@ -9609,7 +9611,8 @@ const STRANDED_ASK_MS = 30 * 60 * 1000;
  */
 async function sweepStrandedAsks(pool, bot, settings, deps = {}) {
   const now = deps.now ? deps.now() : Date.now();
-  if (!voiceModule(deps).voiceOn(settings, { type: 'session' }) || !bot?.id) return 0;
+  // 5 Nov 2026: whatever the change voice says, as the follow-up takes them.
+  if (!bot?.id) return 0;
   const { rows } = await pool.query(
     `SELECT k.app_id, k.issue_number, k.session_id,
             (ARRAY_AGG(k.asker_id ORDER BY k.id))[1] AS asker_id

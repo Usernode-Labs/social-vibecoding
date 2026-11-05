@@ -217,12 +217,14 @@ The first-version line in a project's channel stays.
 ### One change-ask queue
 
 - Every "change my change" records its ask in `homeroom_bot_change_asks`
-  when it is made (`voice.recordAsk`), whichever way it came: Main's
-  `revise_proposal`, a No vote with a line, a missed build note, project-chat
-  revise, the voice's `update_change`. Posting the words on the change stays
-  what each already does.
-- The follow-up takes asks whether or not the voice is on for changes, so
-  none is stranded.
+  (`voice.recordAsk`), whichever way it came: Main's `revise_proposal`, a No
+  vote with a line, a missed build note, project-chat revise, the voice's
+  `update_change`. That is so while the change voice is on, its default.
+  With it off, posted words are read as replies, as before, and only
+  `update_change` records an ask (its words are not posted, so nothing is
+  read twice).
+- The follow-up takes, re-queues and sweeps asks whether or not the voice
+  is on for changes, so none is stranded (done 5 Nov 2026).
 
 ## Step 5: threads as the unit
 
