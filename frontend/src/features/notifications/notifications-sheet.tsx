@@ -371,6 +371,60 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
   );
 }
 
+/** #5929 (item 13): seven whole days, the window `markOlderRead` sends. */
+const OLDER_WINDOW_DAYS = 7;
+const OLDER_WINDOW_MS = OLDER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+/** A row still unread and created more than a week before `now`. */
+export function olderThanWeek(view: { unread?: boolean; createdAtMs?: number }, now: number = Date.now()): boolean {
+  return !!view.unread && !!view.createdAtMs && view.createdAtMs < now - OLDER_WINDOW_MS;
+}
+
+/**
+ * #5929 (item 13): the foot of the Unread tab's list offers "Mark everything
+ * older than a week as read" while an unread row that old is listed — the
+ * way through a 99+ backlog that keeps this week's news. Quiet words, like
+ * a group's Mark read: the title row's Mark all read is the one pill, and
+ * this is a narrower version of it, not a second one.
+ */
+function MarkOlderRead({ onRead }: {
+  /** Before the clear: let the old rows go, so they leave Unread (useHeldUnread). */
+  onRead: () => void;
+}): ReactNode {
+  const t = useMessages('notifications');
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="px-4 py-2">
+      <button
+        id="notifications-mark-older"
+        type="button"
+        data-notif-mark-older=""
+        className={'inline-flex w-full items-center justify-center h-9 px-3 rounded-full text-sm font-medium '
+          + 'bg-transparent text-zinc-500 enabled:hover:bg-zinc-100 enabled:hover:text-zinc-900 '
+          + 'dark:text-zinc-400 enabled:dark:hover:bg-zinc-800 enabled:dark:hover:text-zinc-100 '
+          + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 '
+          + 'disabled:opacity-40 un-touch-target'}
+        disabled={busy}
+        aria-busy={busy ? 'true' : undefined}
+        onClick={(event) => {
+          // Stopped for the reason every handler in this sheet stops its
+          // click: a click that re-renders the list would otherwise bubble
+          // to an outside-click listener that dismisses the sheet.
+          event.stopPropagation();
+          if (busy) return;
+          setBusy(true);
+          onRead();
+          Promise.resolve(controller()?.markOlderRead(OLDER_WINDOW_DAYS))
+            .catch(() => false)
+            .then(() => setBusy(false));
+        }}
+      >
+        {t('notifications:sheet.markOlder')}
+      </button>
+    </div>
+  );
+}
+
 /**
  * The Unread tab's groups (#5406): rows bucketed by app, in feed order.
  * The first time an app is seen is its newest notification, so the groups
@@ -1508,6 +1562,9 @@ export function NotificationsSheetView() {
   // has them.
   const unread = all.filter((view) => held.listed(view) && !view.plainMessage);
   const unreadNow = all.filter((view) => view.unread && !view.plainMessage);
+  // #5929 (item 13): the rows a week-old window would clear. While one is
+  // listed, collapsed Unread offers to mark everything that old read.
+  const olderUnread = unreadNow.filter((view) => olderThanWeek(view));
   // #3206: a kind chip narrows All only; Unread is grouped by project instead.
   const kindOn = tab === 'all' ? kindFilter : null;
   const rows = tab === 'unread' ? unread
@@ -1900,6 +1957,14 @@ export function NotificationsSheetView() {
           {tab === 'unread' ? t('notifications:sheet.empty.unread')
             : kindOn ? t('notifications:sheet.empty.kind') : t('notifications:sheet.empty.other')}
         </p>
+      ) : null}
+      {/* #5929 (item 13): under the groups, above the way on — only on the
+          collapsed Unread tab, and only while an unread row older than a
+          week is listed, so a tab with nothing that old never offers it. */}
+      {!searching && groupedUnread && olderUnread.length ? (
+        <MarkOlderRead
+          onRead={() => held.release(olderUnread.flatMap((view) => view.groupIds || [view.id]))}
+        />
       ) : null}
       {/*
           THE WAY ON, and it depends on which tab you are standing on.

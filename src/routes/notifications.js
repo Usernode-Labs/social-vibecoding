@@ -1079,8 +1079,25 @@ function notificationsRoutes(config) {
     const {
       id, ids, all, chat_message_id: chatMessageId, app_id: appId,
       conversation_id: conversationId, session_id: sessionId,
-      kinds, exclude_kinds: excludeKinds,
+      kinds, exclude_kinds: excludeKinds, older_than_days: olderThanDays,
     } = req.body || {};
+    // #5929 (item 13): `{ all: true, older_than_days: N }` is the Unread
+    // tab's "Mark everything older than a week as read": the mark-all,
+    // kept to the rows created more than N whole days ago (1..365). It is
+    // refused rather than dropped when it is not that: a window that was
+    // quietly ignored would turn a clear of the old rows into a clear of
+    // every row, which is the one thing the control exists not to do. It
+    // goes with `all` alone: the kind scopes are another caller's, and a
+    // single id or any scoped branch above has nothing to window.
+    let olderThan = null;
+    if (olderThanDays != null) {
+      const windowOk = Number.isInteger(olderThanDays) && olderThanDays >= 1 && olderThanDays <= 365;
+      if (!windowOk || !all || id != null || ids != null || chatMessageId != null || appId != null
+        || conversationId != null || sessionId != null || kinds != null || excludeKinds != null) {
+        return res.status(400).json({ error: 'Invalid older_than_days' });
+      }
+      olderThan = olderThanDays;
+    }
     // `{ ids }`: one clear that is several notifications, read in one
     // statement (markRead). Positive int4 ids only, at most a page's worth.
     let idList = null;
@@ -1197,7 +1214,7 @@ function notificationsRoutes(config) {
       // making "Mark all read" look like it did nothing. Fan out exactly
       // like the branches above whenever something actually changed.
       const cleared = await notifications.markRead(pool, req.user.id, {
-        id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList,
+        id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList, olderThanDays: olderThan,
       });
       const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
       if (cleared > 0) {

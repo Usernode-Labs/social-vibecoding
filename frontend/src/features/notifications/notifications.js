@@ -672,6 +672,59 @@ const Notifications = {
     }
   },
 
+  // #5929 (item 13): mark every unread notification older than `days` whole
+  // days read — the Unread tab's "Mark everything older than a week as
+  // read", which lets a 99+ backlog go while this week's news stays unread.
+  //
+  // The route's `{ all: true, older_than_days }` window (markRead) is the
+  // whole of what the server does: the clear reaches every unread row of
+  // that age the server has, including ones the sheet has not paged in,
+  // and its `unread` figure is the account-wide truth the badge adopts.
+  // Cross-tab refresh is the route's own `notifications_changed` push.
+  //
+  // markAllRead's rule: nothing clears until the server answers, so a failed
+  // request leaves every unread mark where it was and says so with the same
+  // toast. Locally only the rows the window covers flip, by the same cutoff
+  // the server applies (created more than `days` days before now).
+  async markOlderRead(days = 7) {
+    const span = Number.isInteger(days) && days >= 1 && days <= 365 ? days : 7;
+    const cutoff = Date.now() - span * 24 * 60 * 60 * 1000;
+    const inWindow = (n) => !!n && !n.readAt && (Date.parse(n.createdAt) || 0) < cutoff;
+    // Nothing in hand that old (another tab or a refresh got there first):
+    // no request, and the caller's button has nothing to wait on.
+    if (!Notifications.items.some(inWindow)) return false;
+    const failed = () => window.PlatformUI?.toast?.(t('notifications:toast.markAllFailed'));
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true, older_than_days: span }),
+      });
+      if (!res.ok) { failed(); return false; }
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
+      // Flip only what is still unread and old enough: a refresh that landed
+      // while the request was running replaced `items` with the server's
+      // own rows, which already say what is true.
+      const now = new Date().toISOString();
+      for (const n of Notifications.items) {
+        if (inWindow(n)) n.readAt = now;
+      }
+      Notifications._reconcileCompletionTitle();
+      Notifications._renderBadge();
+      Notifications._renderList();
+      // #449's reason: an open group chat may be drawing dots for the
+      // notifications that were just cleared.
+      window.GroupChat?.reconcileDotsFromNotifications?.();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] markOlderRead failed', err);
+      failed();
+      return false;
+    }
+  },
+
   // #5580: what happened on the request or proposal notification `id` is
   // about (GET /api/notifications/:id/history: { steps }, newest first), for
   // the history a card in the sheet opens to. Null when there is none or the
