@@ -121,7 +121,7 @@ function cssProblem(css, where, { block = false } = {}) {
   if (block) {
     for (const text of [plain, raw]) {
       if (text.includes('[')) return `${where} cannot use an attribute selector ([...]): it could read a link's address and report it elsewhere.`;
-      if (text.includes('url(') || text.includes('image-set(')) return `${where} cannot load anything with url() or image-set(). Use an <img> with an https address, or a style attribute.`;
+      if (text.includes('url(') || text.includes('image-set(')) return `${where} cannot load anything with url() or image-set(). Use an image with an https address, or a style attribute.`;
     }
   }
   return null;

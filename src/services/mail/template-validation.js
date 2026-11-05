@@ -185,7 +185,7 @@ function placementProblems(field, source, info, raw) {
     }
     const about = isVar ? info(body) : null;
     if (about && about.kind === 'url' && !wholeLinkText(source, scan, at, shown)) {
-      add(`${shown} is a link that may carry a one-time secret, so in HTML it can only be a whole href value (<a href="${shown}">), or the whole text of that link. In text, a mail app could join it to the address before it.`);
+      add(`${shown} is a link that may carry a one-time secret, so in HTML it can only be a whole href value (href="${shown}"), or the whole text of that link. In text, a mail app could join it to the address before it.`);
     }
   }
   problems.push(...rawTextTagsInBranches(field, source));
