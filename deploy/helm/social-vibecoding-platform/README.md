@@ -626,7 +626,11 @@ other nodes, and an invalid label pair is logged once and ignored.
 Set `config.checkNodePoolRequired: true` to require that pool for capture,
 unit-suite, kpack and BuildKit Pods. An invalid label then fails configuration
 instead of falling back. New work waits for a usable node before creating its
-Job or Build. Previously built images can still be reused. Existing work
+Job or Build, retrying transient monitoring failures within that wait. Build
+admission waits at most 15 minutes, then reports an infrastructure failure;
+malformed pool labels or metrics URLs fail immediately. The distributed
+checks queue keeps waiting until admitted or cancelled. Previously built
+images can still be reused. Existing work
 finishes under its original scheduling rules. Coding workers, apps and
 preview servers keep their existing placement.
 

@@ -13,7 +13,11 @@ function required(config) {
   return config?.kubernetes?.checkNodePoolRequired ?? process.env.CHECK_NODE_POOL_REQUIRED === 'true';
 }
 function budgets() {
-  const count = (raw) => Math.max(1, Math.min(8, Number.parseInt(raw, 10) || 3));
+  // Match unitSuiteShardCount/captureShardCount, including invalid input.
+  const count = (raw) => {
+    const n = Number.parseInt(raw, 10);
+    return Number.isInteger(n) && n >= 1 ? Math.min(n, 8) : 3;
+  };
   const unit = count(process.env.UNIT_SUITE_SHARDS);
   const capture = count(process.env.CAPTURE_SHARDS);
   const unitCpu = Math.max(4, unit * quantity(process.env.UNIT_SUITE_SHARD_CPU_REQUEST || '1500m'));

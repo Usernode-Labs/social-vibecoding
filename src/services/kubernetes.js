@@ -3196,6 +3196,10 @@ const NODE_POOL_PAIR = new RegExp(
   `^((?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?${LABEL_NAME})=(${LABEL_NAME})$`);
 const warnedNodePools = new Set();
 
+function checkPoolConfigurationError(message) {
+  return Object.assign(new Error(message), { code: 'CHECK_POOL_CONFIG', infrastructure: true });
+}
+
 // CHECK_NODE_POOL as { key, value }, or null when it is empty or is not a
 // valid label pair. An invalid one is said once and ignored: a Job the API
 // refuses for a malformed toleration is a check that cannot start, and
@@ -3203,12 +3207,12 @@ const warnedNodePools = new Set();
 function checkNodePool(cfg) {
   const raw = String(cfg.checkNodePool || '').trim();
   if (!raw) {
-    if (cfg.checkNodePoolRequired) throw new Error('CHECK_NODE_POOL_REQUIRED needs a valid CHECK_NODE_POOL');
+    if (cfg.checkNodePoolRequired) throw checkPoolConfigurationError('CHECK_NODE_POOL_REQUIRED needs a valid CHECK_NODE_POOL');
     return null;
   }
   const match = NODE_POOL_PAIR.exec(raw);
   if (!match) {
-    if (cfg.checkNodePoolRequired) throw new Error('CHECK_NODE_POOL_REQUIRED needs a valid CHECK_NODE_POOL');
+    if (cfg.checkNodePoolRequired) throw checkPoolConfigurationError('CHECK_NODE_POOL_REQUIRED needs a valid CHECK_NODE_POOL');
     if (!warnedNodePools.has(raw)) {
       warnedNodePools.add(raw);
       log.warn('kubernetes', 'CHECK_NODE_POOL is not a label key=value; checks keep the default placement', { value: raw });
@@ -3274,10 +3278,12 @@ async function checkPoolCapacity(config = null) {
     checkPoolMetricsUrl: process.env.CHECK_POOL_METRICS_URL,
   };
   const pool = checkNodePool(cfg);
-  if (!pool) throw new Error('A required checks pool is missing');
+  if (!pool) throw checkPoolConfigurationError('A required checks pool is missing');
   if (cfg.checkPoolMetricsUrl) {
-    const url = new URL('/api/v1/query', cfg.checkPoolMetricsUrl);
-    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Invalid check-pool metrics URL');
+    let url;
+    try { url = new URL('/api/v1/query', cfg.checkPoolMetricsUrl); }
+    catch { throw checkPoolConfigurationError('Invalid check-pool metrics URL'); }
+    if (!['http:', 'https:'].includes(url.protocol)) throw checkPoolConfigurationError('Invalid check-pool metrics URL');
     url.searchParams.set('query', checkPool.metricsQuery(pool));
     const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
     if (!response.ok) throw new Error('Check-pool metrics unavailable');
@@ -3349,14 +3355,29 @@ async function reconcileAppResourceProfiles(config, appRows, { maxChanges = 1 } 
   return { examined: deployments.items?.length || 0, changed };
 }
 
-async function waitForCheckPool(config, { signal = null, waitMs = 15 * 60 * 1000 } = {}) {
+async function waitForCheckPool(config, { signal = null, waitMs = 15 * 60 * 1000, pollMs = 3000 } = {}) {
   if (!require('./check-pool').required(config)) return;
   const deadline = Date.now() + waitMs;
+  let reported = false;
   for (;;) {
     signal?.throwIfAborted();
-    if ((await checkPoolCapacity(config)).available) return;
-    if (Date.now() >= deadline) throw new Error('The dedicated checks pool is unavailable');
-    await observeCheck(new Promise((resolve) => setTimeout(resolve, 3000)), signal);
+    try {
+      if ((await checkPoolCapacity(config)).available) return;
+    } catch (err) {
+      signal?.throwIfAborted();
+      if (err.code === 'CHECK_POOL_CONFIG') throw err;
+      // Monitoring can roll independently of the platform. Wait before
+      // creating resources, so its transient failures consume no Job deadline.
+      if (!reported) {
+        log.warn('kubernetes', 'Batch capacity metrics unavailable; waiting before resource creation');
+        reported = true;
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw Object.assign(new Error('The dedicated checks pool is unavailable'), { infrastructure: true });
+    }
+    const delayMs = Math.max(1, Math.min(pollMs, deadline - Date.now()));
+    await observeCheck(new Promise((resolve) => setTimeout(resolve, delayMs)), signal);
   }
 }
 

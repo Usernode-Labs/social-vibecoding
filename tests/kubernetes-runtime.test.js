@@ -966,6 +966,62 @@ test('Prometheus capacity mode needs no cluster-wide node permission and fails c
   assert.throws(() => pool.fromMetrics([{ metric: { node: 'checks', resource: 'cpu' }, value: [0, 'NaN'] }]), /Invalid/);
 });
 
+test('capacity shard budgets match the runner parsers for invalid and valid counts', (t) => {
+  const pool = require('../src/services/check-pool');
+  const { unitSuiteShardCount } = require('../src/services/unit-suite');
+  const { captureShardCount } = require('../src/services/visuals');
+  const keys = ['UNIT_SUITE_SHARDS', 'CAPTURE_SHARDS'];
+  const saved = keys.map((key) => process.env[key]);
+  t.after(() => keys.forEach((key, i) => {
+    if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i];
+  }));
+  for (const raw of ['', '-1', '0', 'nonsense', '1', '3', '9', '4.5']) {
+    for (const key of keys) process.env[key] = raw;
+    const budget = pool.budgets();
+    const unit = unitSuiteShardCount(raw); const capture = captureShardCount(raw);
+    assert.equal(budget.pods, unit + capture, raw);
+    assert.equal(budget.mainMemory, unit * 1024 ** 3, raw);
+    assert.equal(budget.memory, (unit + capture * 3) * 1024 ** 3, raw);
+  }
+});
+
+test('batch admission waits through transient metrics errors before allowing resource creation', async (t) => {
+  const cfg = { kubernetes: { checkNodePoolRequired: true, checkNodePool: 'pool=batch',
+    checkPoolMetricsUrl: 'http://prometheus.monitoring.svc:9090' } };
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('temporary monitoring connection reset');
+    if (calls === 2) return { ok: false, status: 503 };
+    return { ok: true, json: async () => ({ status: 'success', data: { resultType: 'vector', result:
+      ['cpu', 'memory', 'pods'].map((resource, i) => ({ metric: { node: 'batch', resource },
+        value: [0, ['95.95', String(125 * 1024 ** 3), '110'][i]] })) } }) };
+  });
+  await kubernetes.waitForBatchPool(cfg, { waitMs: 250, pollMs: 1 });
+  assert.equal(calls, 3);
+});
+
+test('an exhausted batch wait is infrastructure failure and an aborted wait stays cancelled', async (t) => {
+  const cfg = { kubernetes: { checkNodePoolRequired: true, checkNodePool: 'pool=batch',
+    checkPoolMetricsUrl: 'http://prometheus.monitoring.svc:9090' } };
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 503 }));
+  await assert.rejects(kubernetes.waitForBatchPool(cfg, { waitMs: 10, pollMs: 1 }),
+    (err) => err.infrastructure === true && /dedicated checks pool/.test(err.message));
+  const controller = new AbortController();
+  const pending = kubernetes.waitForBatchPool(cfg, { waitMs: 250, pollMs: 50, signal: controller.signal });
+  controller.abort(new Error('cancelled batch wait'));
+  await assert.rejects(pending, /cancelled batch wait/);
+});
+
+test('batch configuration errors fail immediately rather than entering a monitoring retry', async (t) => {
+  t.mock.method(globalThis, 'fetch', () => assert.fail('invalid configuration must not query monitoring'));
+  for (const settings of [{ checkNodePool: '' }, { checkNodePool: 'pool=batch', checkPoolMetricsUrl: 'not a URL' },
+    { checkNodePool: 'pool=batch', checkPoolMetricsUrl: 'file:///tmp/metrics' }]) {
+    await assert.rejects(kubernetes.waitForBatchPool({ kubernetes: { checkNodePoolRequired: true, ...settings } },
+      { waitMs: 250, pollMs: 1 }), (err) => err.code === 'CHECK_POOL_CONFIG' && err.infrastructure === true);
+  }
+});
+
 test('only explicitly assigned ordinary production apps use smaller requests; all keep their ceilings', () => {
   const profiles = require('../src/services/app-resource-profiles');
   const cfg = { selfAppSlug: 'platform', kubernetes: { appResourceProfiles: '{"7":"small","2147482999":"small"}' } };
