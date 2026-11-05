@@ -507,6 +507,17 @@ export function mergedAgo(iso, now = Date.now()) {
   }
 }
 
+/** What a vote was cast on, by its title: the Your votes row's latest one. */
+function voteTitle(item) {
+  if (item.type === 'pr_vote') {
+    const pr = item.pr || {};
+    return pr.title ? String(pr.title)
+      : (pr.number ? t('profile:votes.title.change', { number: Number(pr.number) }) : t('profile:votes.title.aChange'));
+  }
+  const issue = item.issue || {};
+  return issue.title ? String(issue.title) : t('profile:votes.title.decision');
+}
+
 /** The opt-in public profile's owner controls (#582). */
 export function publicControlsView(state) {
   const owner = state.data && state.data.ownerPublicProfile;

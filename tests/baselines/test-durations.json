@@ -1686,7 +1686,6 @@
 "tests/profile-staging-seed.test.js":[0.3,1.5],
 "tests/profile-staking.test.js":[0.2,1.1],
 "tests/profile-token-card.test.js":[0.3,1.1],
-"tests/profile-your-votes-merged.test.js":[0.7,0.5],
 "tests/profile-your-work.test.js":[0.9,1.2],
 "tests/profiles-route.test.js":[0.5,1.5],
 "tests/project-embed.test.js":[2.1,0.5],

@@ -45,9 +45,9 @@ function rowSource(src, id) {
 const ROWS = [
   // Your work: the three views of the Your work screen, at addresses no
   // username can have (a username has no hyphen).
-  ['profile-row-proposals', '#profile/your-changes'],
-  ['profile-row-feedback', '#profile/your-requests'],
-  ['profile-row-votes', '#profile/your-votes'],
+  ['profile-row-proposals', '#homeroom-bot/history?kind=change'],
+  ['profile-row-feedback', '#homeroom-bot/history?kind=request'],
+  ['profile-row-votes', '#homeroom-bot/history?kind=vote'],
   // Rewards.
   ['profile-row-challenges', '#leaderboard/challenges'],
   ['profile-row-kudos', '#leaderboard/kudos'],

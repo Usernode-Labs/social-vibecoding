@@ -902,5 +902,17 @@
   "feedback.editLeft_other": {
     "text": "You can edit it for {{count}} more minutes.",
     "description": "Action or time remaining beside a recent request in Your feedback. {{count}}, when present, is the number of minutes rounded up."
+  },
+  "votes.title.change": {
+    "text": "Change #{{number}}",
+    "description": "Stands in for the title of a change the viewer voted on, when it has none. {{number}} is the change's number. \"Change\" is a noun."
+  },
+  "votes.title.aChange": {
+    "text": "A change",
+    "description": "Stands in for the title of a change the viewer voted on, when it has neither a title nor a number. \"Change\" is a noun."
+  },
+  "votes.title.decision": {
+    "text": "A group decision",
+    "description": "Stands in for the title of a community decision the viewer voted on, when it has none."
   }
 }
