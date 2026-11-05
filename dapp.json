@@ -3032,9 +3032,9 @@
       "expectText": "Edit profile"
     },
     {
-      "name": "Settings offers the way back into the welcome tour (#2255)",
+      "name": "Settings offers the way back into the welcome tour (#2255), and the user guide beside it (#5973)",
       "path": "/#settings/tour",
-      "expectSelector": "#settings-section-content [data-settings-section=\"tour\"]:not(.hidden) #settings-tour-section #settings-tour-replay",
+      "expectSelector": "#settings-section-content:has([data-settings-section=\"guide\"] #settings-guide-section #settings-guide-voting) [data-settings-section=\"tour\"]:not(.hidden) #settings-tour-section #settings-tour-replay",
       "expectText": "Replay the tour"
     },
     {

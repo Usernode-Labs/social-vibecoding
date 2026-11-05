@@ -852,6 +852,9 @@ const ADDED_IDS = {
   'settings-tour-section': 'Settings -> Welcome tour, the pane holding the replay control (#2255).',
   'settings-tour-replay': 'Clears this account\'s "finished" flag, asks for the tour and goes to Home.',
   'settings-tour-hint': 'The line under it saying where the tour starts.',
+  // #5973: Settings -> User guide, the tour's places to read.
+  'settings-guide-section': 'Settings -> User guide, the pane root inside its [data-settings-section="guide"] wrapper.',
+  'settings-guide-voting': 'The card saying how a change gets voted in; dapp.json selects on it.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
