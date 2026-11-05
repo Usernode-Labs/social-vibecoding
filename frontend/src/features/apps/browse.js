@@ -760,29 +760,41 @@ const Browse = {
       .slice(0, Browse.NEW_FALLBACK_COUNT);
   },
 
-  // The Opened recently switch's set: see RECENT_WINDOW_DAYS. An entry with no
-  // time of its own (recent-apps-store.js seeds one from the parked app) is
-  // not recent: nobody knows when it was left. `now` is injectable for the
-  // tests. Pure but for reading the list.
-  recentApps(apps, now) {
+  // When each app was last used on this device, slug to time, within
+  // RECENT_WINDOW_DAYS: what the Opened recently switch filters by and what a
+  // row's "Last opened" says (#4025). The time is when the app was left, the
+  // one clock the list keeps. An entry with no time of its own
+  // (recent-apps-store.js seeds one from the parked app) is not recent: nobody
+  // knows when it was left. The list can hold a slug twice, and the later time
+  // wins. `now` is injectable for the tests. Pure but for reading the list.
+  openedTimes(now) {
     const at = Number.isFinite(now) ? now : Date.now();
     const windowMs = Browse.RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     const entries = typeof Browse._recentEntries === 'function' ? Browse._recentEntries() : [];
-    const slugs = new Set();
+    const times = new Map();
     for (const entry of entries || []) {
       const left = entry && entry.at ? new Date(entry.at).getTime() : NaN;
       // A time ahead of now is a clock that was wrong, not an app just left.
-      if (!Number.isNaN(left) && left <= at && at - left <= windowMs) slugs.add(entry.slug);
+      if (!Number.isNaN(left) && left <= at && at - left <= windowMs
+        && !(times.get(entry.slug) >= left)) times.set(entry.slug, left);
     }
-    return (apps || []).filter((a) => a && slugs.has(a.slug));
+    return times;
+  },
+
+  // The Opened recently switch's set.
+  recentApps(apps, now) {
+    const times = Browse.openedTimes(now);
+    return (apps || []).filter((a) => a && times.has(a.slug));
   },
 
   // ./mount.ts calls this when the list of apps you left changes. Coming back
   // from an app, App.navigateToBrowse opens this screen BEFORE the transition
   // that parks the app, so without it the app you just left would be missing
-  // from a list drawn with this switch on, until something else redrew it.
+  // from a list drawn with the switch on, and its row would not say "Last
+  // opened", until something else redrew it. So does the list a cold load drew
+  // before it knew whose device list to read.
   recentChanged() {
-    if (Browse._open && !Browse._slug && Browse._only.includes('recent')) Browse.render();
+    if (Browse._open && !Browse._slug) Browse.render();
   },
 
   // The chip's set, before any sort or search. Each chip reads a predicate
@@ -1062,12 +1074,20 @@ const Browse = {
   //   merged                12 users · 37 changes merged · Updated 3d ago
   //   new                   12 users · Created 5d ago
   //
+  // An app you opened on this device in the last RECENT_WINDOW_DAYS days says
+  // "Last opened 2h ago" in place of "Updated 3d ago" (#4025): the line is
+  // one line and truncates, so another fact would be cut off on a phone, and
+  // on a row you know, when you were last there is the more useful time. Newest
+  // keeps Created, the figure that order ranks by. `times` is
+  // Browse.openedTimes(), passed in so a list render reads the device's list
+  // once rather than once a row.
+  //
   // A zero-merge app omits the merge segment rather than printing "0 merged",
   // which reads as a defect rather than as an absence. So does a zero user
   // count (polish N12): "0 users" beside the row's "Joined" read as a
   // contradiction, and a zero says nothing in this shell.
-  // Pure — unit-tested.
-  metaLine(app, key) {
+  // Pure but for reading the device's list, unit-tested.
+  metaLine(app, key, times) {
     if (!app) return '';
     const sort = Browse.resolveSort(key == null ? Browse._sort : key);
     const bits = [];
@@ -1080,9 +1100,12 @@ const Browse = {
       const merged = parseInt(app.merged_prs || 0, 10) || 0;
       if (merged > 0) bits.push(PlatformI18n.t('discover:row.meta.changesLive', { count: merged }));
     }
+    const opened = (times || Browse.openedTimes()).get(app.slug);
     if (sort === 'new') {
       const created = formatRelativeTime(app.created_at);
       if (created) bits.push(PlatformI18n.t('discover:row.meta.created', { when: created }));
+    } else if (opened) {
+      bits.push(PlatformI18n.t('discover:row.meta.lastOpened', { when: formatRelativeTime(opened) }));
     } else {
       const rel = formatRelativeTime(app.last_deploy_at || app.created_at);
       if (rel) bits.push(PlatformI18n.t('discover:row.meta.updated', { when: rel }));
@@ -1116,7 +1139,7 @@ const Browse = {
   // `app` travels on the descriptor because the shared card primitives take
   // the record, not a pre-rendered fragment — see ./app-card-view.tsx.
   // Pure — unit-tested in tests/browse-screen.test.js.
-  rowView(app) {
+  rowView(app, times) {
     const isDemo = !!app.demo;
     // The pill is membership now (Join, or Open once joined), not the Home shortcut it
     // used to be: see Home.setMembership. `added` keeps its name because the
@@ -1132,7 +1155,7 @@ const Browse = {
       slug: app.slug,
       name: app.name || app.slug,
       about: Browse.aboutLine(app),
-      meta: Browse.metaLine(app, Browse._sort),
+      meta: Browse.metaLine(app, Browse._sort, times),
       status: app.status || '',
       statusDot: app.status === 'running' ? 'running'
         : app.status === 'error' ? 'error' : 'creating',
@@ -1175,8 +1198,9 @@ const Browse = {
     const picked = grouped ? Browse.recommendedApps(apps) : [];
     const pickedSlugs = new Set(picked.map((a) => a.slug));
     const rest = picked.length ? apps.filter((a) => !pickedSlugs.has(a.slug)) : apps;
-    const rows = rest.map((a) => Browse.rowView(a));
-    rows.unshift(...picked.map((a) => ({ ...Browse.rowView(a), recommended: true })));
+    const times = Browse.openedTimes();
+    const rows = rest.map((a) => Browse.rowView(a, times));
+    rows.unshift(...picked.map((a) => ({ ...Browse.rowView(a, times), recommended: true })));
     // The "Open site" row, when the query is a web address (#5364). It rides
     // the list descriptor; browse-list.tsx draws it above the app rows.
     const site = Browse.siteFor(query);
