@@ -311,7 +311,9 @@ async function createBotNamePR(config, pool, app, { name }, actor, { steps } = {
       if (next) m.bot_name = next;
       else delete m.bot_name;
     },
-    branchPrefix: 'bot-name',
+    // Under rename/, one of the branches a thread reads as a decision rather
+    // than as work (schema thread_kind_for_branch), since this is one too.
+    branchPrefix: 'rename/bot-name',
     commitMessage: title,
     prTitle: title,
     prBody:
@@ -607,7 +609,7 @@ async function findBotNamePr(pool, appId) {
   const { rows } = await pool.query(
     `SELECT id, pr_number, pr_url, pr_title FROM chat_sessions
       WHERE app_id = $1 AND status IN ('promoted', 'merging')
-        AND branch_name LIKE 'bot-name/%'
+        AND branch_name LIKE 'rename/bot-name/%'
       ORDER BY id DESC
       LIMIT 1`,
     [appId]

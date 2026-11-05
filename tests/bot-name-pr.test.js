@@ -146,7 +146,7 @@ function handler() {
     if (/FROM apps a WHERE a\.slug = \$1/.test(sql)) return { rows: [{ ...appRow, is_member: isMember }] };
     if (/SELECT \* FROM apps WHERE (slug|id) = \$1/.test(sql)) return { rows: [appRow] };
     if (/FROM users\s+WHERE regexp_replace/.test(sql)) return { rows: accountNames.has(params[0].toLowerCase()) ? [{ '?column?': 1 }] : [] };
-    if (/branch_name LIKE 'bot-name\/%'/.test(sql)) return { rows: openProposal ? [openProposal] : [] };
+    if (/branch_name LIKE 'rename\/bot-name\/%'/.test(sql)) return { rows: openProposal ? [openProposal] : [] };
     if (/INSERT INTO chat_sessions/.test(sql)) return { rows: [{ id: 4344 }] };
     if (/COUNT\(DISTINCT a\.user_id\) AS cnt/.test(sql)) return { rows: [{ cnt: '3' }] };
     return { rows: [] };
@@ -184,7 +184,7 @@ test('a member proposes a name: one dapp.json line changes, on its own branch, a
   const res = await propose({ name: '  Pip ' });
   assert.equal(res.status, 201);
   assert.deepEqual(await res.json(), { ok: true, sessionId: 4344, prNumber: 778, prUrl: 'https://github.com/o/r/pull/778' });
-  assert.match(branches[0], /^bot-name\/demo-\d+$/);
+  assert.match(branches[0], /^rename\/bot-name\/demo-\d+$/, 'under rename/, so its thread is a decision (thread_kind_for_branch)');
   assert.deepEqual(pushed[0], { name: 'Demo', bot_name: 'Pip', tests: [{ name: 'x', path: '/' }] });
 });
 

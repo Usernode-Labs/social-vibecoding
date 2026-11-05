@@ -39,10 +39,10 @@ const actions = (html) => [...html.matchAll(/<button data-plus="([^"]+)"/g)].map
 test('the rendered + menu keeps only distinct actions, including app-management gates', () => {
   // B8: Suggest an improvement leads; Build it now is second.
   // #4045: "Settings & rules" is one row, its settings in the panel under it.
-  assert.deepEqual(actions(board()), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'topics', 'secrets', 'fork']);
-  assert.deepEqual(actions(board({ showsMembers: false })), ['issue', 'new-change', 'import-pr', 'settings', 'rename', 'topics', 'secrets', 'fork']);
+  assert.deepEqual(actions(board()), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'bot-name', 'topics', 'secrets', 'fork']);
+  assert.deepEqual(actions(board({ showsMembers: false })), ['issue', 'new-change', 'import-pr', 'settings', 'rename', 'bot-name', 'topics', 'secrets', 'fork']);
   const platform = board({ selfHosted: true });
-  assert.deepEqual(actions(platform), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'topics', 'secrets']);
+  assert.deepEqual(actions(platform), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'bot-name', 'topics', 'secrets']);
   assert.match(platform, /Proposal approvals/);
   assert.match(platform, /Platform variables/);
   assert.doesNotMatch(platform, /Members &amp; visibility/);
@@ -73,7 +73,7 @@ test('hiding import leaves Suggest an improvement first, so the settings divider
   // where the rest begins.
   const html = board({ canCollaborate: false });
   // #4045: "Settings & rules" is one row now, its settings in a panel under it.
-  assert.deepEqual(actions(html), ['issue', 'new-change', 'settings', 'members', 'rename', 'topics', 'secrets', 'fork']);
+  assert.deepEqual(actions(html), ['issue', 'new-change', 'settings', 'members', 'rename', 'bot-name', 'topics', 'secrets', 'fork']);
   assert.doesNotMatch(html, /data-plus-group="build"/);
   assert.doesNotMatch(html, /Add to the board/);
   const settings = html.match(/<button data-plus="settings" data-plus-group="settings"[^>]*>/);
@@ -209,7 +209,7 @@ for (const touch of [false, true]) {
         const sheet = h.sheets.at(-1);
         assert.deepEqual(Array.from(sheet.actions, (item) => item.label), [
           'Suggest an improvement', 'Build it now', 'Import Feature from a PR', 'Settings & rules',
-          'Members & approvals', 'App display name', 'Topics', 'App secrets', 'Make your own',
+          'Members & approvals', 'App display name', "Bot's name", 'Topics', 'App secrets', 'Make your own',
         ]);
         // #1930: every action row carries its own glyph, class-stripped.
         for (const item of sheet.actions.filter((a) => !a.heading)) {
@@ -221,8 +221,9 @@ for (const touch of [false, true]) {
         // clicks the row), so _wirePlusMenu dispatches the rest.
         // "Settings & rules" opens the settings as a sheet of their own
         // (#4045); this harness has no panel, so its rows stay on this one.
-        // #4417: Topics is React's own onClick too, like Build it now.
-        sheet.actions.filter((item) => !item.heading && !['Build it now', 'Settings & rules', 'Topics'].includes(item.label))[index].handler();
+        // #4417: Topics is React's own onClick too, like Build it now, and so
+        // is #4942's Bot's name.
+        sheet.actions.filter((item) => !item.heading && !['Build it now', 'Settings & rules', "Bot's name", 'Topics'].includes(item.label))[index].handler();
       } else {
         assert.equal(h.attributes['aria-expanded'], 'true');
         assert.equal(h.classes.has('hidden'), false);

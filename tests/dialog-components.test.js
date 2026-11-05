@@ -175,10 +175,10 @@ test('every dialog root is rendered by exactly one dialog component', () => {
   // 13 → 14 with #2721's shared report dialog, 14 → 13 with the create
   // dialog's retirement, 13 → 14 with #4405's Custom domain dialog, and
   // 14 → 15 with #4417's Topics dialog. #6000's reopen-issue dialog brings
-  // the list to 17. The count guards the list above against being trimmed to
+  // the list to 17, and #4942's Bot's name dialog to 18. The count guards the list above against being trimmed to
   // make this test pass; the per-id assertions below are what actually check
   // the 1:1 mapping.
-  assert.equal(DIALOG_IDS.length, 17);
+  assert.equal(DIALOG_IDS.length, 18);
   for (const id of DIALOG_IDS) {
     const owners = [...componentSrc].filter(([, src]) => src.includes(`id="${id}"`));
     assert.equal(owners.length, 1, `#${id} should be rendered by exactly one features/dialogs/* component, got ${owners.map((o) => o[0])}`);
