@@ -2155,6 +2155,10 @@
     "text": "Report app",
     "description": "Small link at the foot of the app menu, beside a flag: a verb, reports this app to Homeroom's moderators."
   },
+  "appContext.terms": {
+    "text": "Terms",
+    "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Privacy\" and \"Report app\": opens Homeroom's terms of service in a new tab."
+  },
   "appContext.privacy": {
     "text": "Privacy",
     "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Report app\": opens Homeroom's privacy notice in a new tab."
