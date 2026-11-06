@@ -343,9 +343,18 @@ function FadeRail({ className = '', children, ...props }: React.ComponentProps<'
   );
 }
 
-/** A project's own Show more, under its rows: centred, its arrow pointing down (up once open). */
-function GroupMore({ hidden, open, onClick }: { hidden: number; open: boolean; onClick: () => void }): ReactNode {
+/**
+ * A project's own Show more, under its rows: centred, its arrow pointing down
+ * (up once open). #6408: where the fold holds rows with something new, it
+ * says so ("Show 73 more · 44 new").
+ */
+function GroupMore({ hidden, fresh = 0, open, onClick }: { hidden: number; fresh?: number; open: boolean; onClick: () => void }): ReactNode {
   const t = useMessages('messages');
+  const label = open
+    ? t('messages:ai.work.showLess')
+    : fresh > 0
+      ? t('messages:ai.work.showMoreFresh', { count: hidden, fresh })
+      : t('messages:ai.work.showMore', { count: hidden });
   return (
     <button
       type="button"
@@ -354,7 +363,7 @@ function GroupMore({ hidden, open, onClick }: { hidden: number; open: boolean; o
       aria-expanded={open}
       data-ai-group-more=""
     >
-      {open ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: hidden })}
+      {label}
       <ChevronDownIcon className={`h-4 w-4 transition-transform motion-reduce:transition-none${open ? ' rotate-180' : ''}`} aria-hidden="true" />
     </button>
   );
@@ -366,7 +375,7 @@ function GroupMore({ hidden, open, onClick }: { hidden: number; open: boolean; o
  * folded away: past the first rows it joins them, so where you are is
  * always shown.
  */
-function GroupList({ lines, quiet = false, heads, first, freshStyle = false, freshProjects }: {
+function GroupList({ lines, quiet = false, heads, first, freshStyle = false, freshProjects, foldFresh = false }: {
   lines: Line[];
   quiet?: boolean;
   heads: boolean;
@@ -375,6 +384,12 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
   freshStyle?: boolean;
   /** How many rows each project has that are new, for its name's pill. */
   freshProjects?: Record<string, number>;
+  /**
+   * #6408: Live this week folds after its first few whatever is new, so a
+   * busy week reads as a list and not fifty rows. Its rows still put what is
+   * new first, and the fold counts them.
+   */
+  foldFresh?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
   const [opened, setOpened] = useState<Record<string, boolean>>({});
@@ -387,7 +402,9 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
         // more has opened every row, they keep their own order, so pressing
         // one does not slide it up under the pointer. #6262: a fresh row is
         // never folded either.
-        const { items, shown, hidden } = groupRows(g.items, first, open);
+        const { items, shown, hidden } = groupRows(g.items, first, open, !foldFresh);
+        // #6408: how many of the folded rows have something new, for Show more's ending.
+        const freshHidden = foldFresh ? items.slice(shown).filter((line) => line.fresh).length : 0;
         const anyFresh = freshStyle && g.items.some((line) => line.fresh);
         const firstOld = anyFresh ? items.findIndex((line) => !line.fresh) : -1;
         // The line only where an older row is actually drawn: with every
@@ -434,7 +451,7 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
                   </div>
                 </div>
               ) : null}
-              {hidden ? <GroupMore hidden={hidden} open={open} onClick={() => setOpened((o) => ({ ...o, [key]: !open }))} /> : null}
+              {hidden ? <GroupMore hidden={hidden} fresh={freshHidden} open={open} onClick={() => setOpened((o) => ({ ...o, [key]: !open }))} /> : null}
             </div>
           </div>
         );
@@ -443,7 +460,7 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
   );
 }
 
-function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads, fresh = 0, freshBySlug, freshStyle = false }: {
+function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads, fresh = 0, freshBySlug, freshStyle = false, foldFresh = false }: {
   /** Which list, for the page's checks: work, busy, live. */
   list: string;
   /** Said over the rows, whatever they are: why the lists show less than they should. */
@@ -471,6 +488,8 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   freshBySlug?: Record<string, number>;
   /** #6262: Needs you draws new first, with an Earlier line (GroupList). */
   freshStyle?: boolean;
+  /** #6408: Live this week puts new rows first and folds after its first few whatever is new. */
+  foldFresh?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
   const [stillOpen, setStillOpen] = useState(false);
@@ -484,8 +503,9 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   const [holding, setHolding] = useState(false);
   const hold = list === 'work';
   // #6262: Needs you draws what is new first, before the order is held, so
-  // a held list keeps the order it was drawn in (#6245).
-  const ordered = freshStyle ? freshFirst(lines) : lines;
+  // a held list keeps the order it was drawn in (#6245). #6408: Live this
+  // week does the same without the styles, so its first few include any new.
+  const ordered = freshStyle || foldFresh ? freshFirst(lines) : lines;
   const held = hold && holding && drawn.current ? holdOrder(ordered, drawn.current) : ordered;
   const startHold = () => {
     if (!hold) return;
@@ -506,7 +526,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
     <>
       {note}
       {!lines.length ? empty : null}
-      <GroupList lines={held} quiet={quiet} heads={heads} first={first} freshStyle={freshStyle} freshProjects={freshBySlug} />
+      <GroupList lines={held} quiet={quiet} heads={heads} first={first} freshStyle={freshStyle} freshProjects={freshBySlug} foldFresh={foldFresh} />
       {still && still.lines.length ? (
         <div data-ai-still-part="">
           <button
@@ -895,7 +915,7 @@ export function AiLists({
       ) : null}
       {liveLines.length ? (
         <div className={`${PLANE} pb-2`} data-ai-sheet="live">
-          <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={GROUP_FIRST.live} heads={heads} />
+          <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={GROUP_FIRST.live} heads={heads} foldFresh />
           {liveBehind ? (
             // #6233: one Reload under the list, for every row this tab is
             // older than.

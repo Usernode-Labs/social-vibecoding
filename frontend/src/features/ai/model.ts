@@ -267,16 +267,20 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  *
  * #6262: a row with something new is never folded either. Show more is for
  * what you have already seen; hiding a new row behind it is what the dot was
- * meant to stop.
+ * meant to stop. That fits Needs you, where new means it wants you.
+ *
+ * #6408: Live this week calls it with `liftFresh` false. There, new only
+ * means a change went live since the viewer last looked, which is most of the
+ * list on a busy day, so it folds after its first few whatever is new.
  */
-export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
   // Which rows past the first few must still be shown: the fresh ones and
   // the one you are on. They keep their order; the rest folds away.
   const lifted = new Set<number>();
   if (!open) {
     if (litAt >= first) lifted.add(litAt);
-    items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
+    if (liftFresh) items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
   }
   const rest = items.slice(first);
   const drawn = open
