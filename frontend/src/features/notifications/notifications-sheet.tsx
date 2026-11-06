@@ -734,7 +734,7 @@ function LiveItems({ view, items, groupIds }: {
   // on a phone a long request title must not scroll the panel sideways, and
   // a line is a tap target, so it is at least 44px tall.
   return (
-    <ul className="flex flex-col gap-1 ps-[4.25rem]">
+    <ul className="flex min-w-0 flex-col gap-1 ps-12">
       {items.map((item) => (
         <li key={item.id} className="min-w-0">
           <button
