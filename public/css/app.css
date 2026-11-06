@@ -18459,6 +18459,24 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll) {
   padding-inline: 12px;
 }
+/* AND THE COLUMN HAS MAIN CHAT'S SURFACE (#6432, 6 Nov 2026). The page lies
+   flat, but its document still painted the whole wallpaper on its <body>:
+   a second star in the column's corner, the grain and the washes, sized to
+   the column and not lined up with the page's own, so a request read as
+   transparent beside Main's sheet. Here the body paints what Main Chat is
+   made of instead: the ground (#ai-screen .ai-main-pane) with the chat's
+   fill over it (.messages-thread-pane), the same two tokens in light and
+   dark, so the column, Main Chat and the list's cards are one colour. The
+   cards inside the thread keep their own sheets. !important because the
+   wallpaper's route rule (body:has(#…-screen)) and its dark and wide
+   variants outrank any class selector. The browser scroller's fixed layer
+   (body::before) repaints the wallpaper over the body, so it takes the same
+   surface. The Workshop's own panel (.dev-ws-side) and the full page keep
+   the wallpaper. */
+html.in-side-panel.side-panel-beside-ai body,
+html.in-side-panel.side-panel-beside-ai body::before {
+  background: linear-gradient(var(--dc-sheet-fill), var(--dc-sheet-fill)) var(--home-ground) !important;
+}
 /* A DESIGN'S PREVIEW, A COLUMN OF ITS OWN (1 Nov 2026, threads, one loop
    C1; features/ai/preview.ts). Opened from a version in a thread, the design
    pane stands beside the thread: list | thread | preview where the three fit

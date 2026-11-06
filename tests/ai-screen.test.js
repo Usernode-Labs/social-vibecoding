@@ -1561,6 +1561,20 @@ test('beside this page the panel is the page\'s own column: ‹ Main and the pro
     'and the page in it leaves out its own "‹ Workshop"');
 });
 
+test('#6432: a request beside the bot list lies on Main Chat\'s surface, not a second wallpaper', () => {
+  const css = read('public/css/app.css');
+  const rule = css.match(/html\.in-side-panel\.side-panel-beside-ai body,\nhtml\.in-side-panel\.side-panel-beside-ai body::before \{([^}]*)\}/);
+  assert.ok(rule, 'the column\'s document paints its body, and the browser scroller\'s fixed wallpaper layer over it');
+  // No image layer: no star, no grain, no washes. Just the ground with the
+  // chat's fill over it, the two tokens Main Chat is drawn with.
+  assert.match(rule[1], /^\s*background: linear-gradient\(var\(--dc-sheet-fill\), var\(--dc-sheet-fill\)\) var\(--home-ground\) !important;\s*$/);
+  assert.doesNotMatch(rule[1], /--home-wallpaper|--home-star|--home-grain|url\(/);
+  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*background: var\(--home-ground\);/, 'Main Chat\'s pane is the ground');
+  // Scoped to the bot page's column: the full page and the Workshop's own
+  // side panel keep the wallpaper.
+  assert.doesNotMatch(css, /html\.in-side-panel body \{[^}]*background/, 'not every panel document');
+});
+
 test('a request opened beside the bot list fills the column, not a box inside it (3 Nov 2026)', () => {
   const css = read('public/css/app.css');
   // One rule set, both panels: the AI column's document and the Workshop's
