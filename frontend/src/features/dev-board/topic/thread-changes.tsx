@@ -267,14 +267,32 @@ export function ChangeLine({ item, view, letter = null }: { item: ThreadItem; vi
 }
 
 /** The plan a change was built from, under its name, with the plan's own Read. */
-function PlanLine({ plan }: { plan: RequestSpecCard }): ReactNode {
+export function PlanLine({ plan, builtFrom }: { plan: RequestSpecCard; builtFrom?: ThreadItem['builtFrom'] }): ReactNode {
   const t = useMessages('project');
   const [loading, setLoading] = useState(false);
-  const fromPlan = t('project:topic.thread.page.fromPlan', { title: plan.title });
+  const version = builtFrom?.version ?? null;
+  const fromPlan = version
+    ? t('project:topic.thread.page.fromPlanVersion', { version, title: plan.title })
+    : t('project:topic.thread.page.fromPlan', { title: plan.title });
+  const newer = builtFrom?.newer || null;
+  const newerText = newer
+    ? (newer.sameAuthor || !newer.author
+      ? t('project:topic.thread.page.newerPlan', { version: newer.version })
+      : t('project:topic.thread.page.newerPlanOther', { author: newer.author }))
+    : null;
   return (
-    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-plan={plan.key}>
+    <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-plan={plan.key}>
       <span aria-hidden="true">📋</span>
+      {/* The phrase truncates from its end, so "Built from v1 of the plan"
+          always stays readable and only the plan's title is cut. */}
       <span className="min-w-0 truncate" title={fromPlan}>{fromPlan}</span>
+      {/* On a phone the row is too narrow to hold this beside Read, so it
+          drops to its own second line rather than squeezing the title out. */}
+      {newer && newerText ? (
+        <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-300 max-sm:order-last max-sm:w-full" data-thread-change-newer-plan={newer.version}>
+          <span aria-hidden="true">· </span>{newerText}
+        </span>
+      ) : null}
       <button
         type="button"
         className="shrink-0 font-semibold text-violet-700 hover:underline disabled:opacity-60 dark:text-violet-300"
@@ -528,7 +546,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
       {view?.body.summaryStale && summary
         ? <p className="dev-change-stale" role="note" data-thread-change-stale={item.id}>{t('project:topic.change.summaryStale')}</p>
         : null}
-      {plan ? <PlanLine plan={plan} /> : null}
+      {plan ? <PlanLine plan={plan} builtFrom={item.builtFrom} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} number={item.number ?? null} s={view.v.shots} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
         <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'building'}>
@@ -715,7 +733,7 @@ function CompetingRow({ item, i, view, plan = null, onOpen }: {
             </span>
           ) : null}
         </span>
-        {plan ? <PlanLine plan={plan} /> : null}
+        {plan ? <PlanLine plan={plan} builtFrom={item.builtFrom} /> : null}
       </span>
       {preview ? <span className="shrink-0"><ActionButton a={preview} /></span> : null}
     </div>
