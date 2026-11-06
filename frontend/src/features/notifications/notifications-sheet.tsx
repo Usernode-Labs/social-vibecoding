@@ -728,15 +728,23 @@ function LiveItems({ view, items, groupIds }: {
 }): ReactNode {
   const t = useMessages('notifications');
   const ids = groupIds && groupIds.length ? groupIds : [view.id];
+  // The tile's left edge lines up with the words above it (the row's tile is
+  // 36px plus its 16px gap, inside the row's own 16px), so the list reads as
+  // part of the row. Each line may wrap to two and then ends in an ellipsis:
+  // on a phone a long request title must not scroll the panel sideways, and
+  // a line is a tap target, so it is at least 44px tall.
   return (
-    <ul className="flex flex-col gap-1 ps-[3.75rem]">
+    <ul className="flex flex-col gap-1 ps-[4.25rem]">
       {items.map((item) => (
         <li key={item.id} className="min-w-0">
           <button
             type="button"
             data-notif-live-item={item.id}
-            className={'block w-full truncate rounded-xl bg-zinc-100 px-2.5 py-1.5 text-start text-[13px] '
-              + 'text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 '
+            data-notif-live-unread={item.unread ? '' : undefined}
+            className={'block min-h-[44px] w-full rounded-xl bg-zinc-100 px-2.5 py-2 '
+              + 'text-start text-[13px] leading-snug line-clamp-2 break-words '
+              + (item.unread ? 'font-semibold text-zinc-900 dark:text-zinc-50 ' : 'text-zinc-800 dark:text-zinc-200 ')
+              + 'hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 '
               + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
             onClick={(event) => {
               event.stopPropagation();
