@@ -42,7 +42,10 @@ const CHAT_LIMITS = Object.freeze({
 const THREAD_LIMITS = Object.freeze({
   rounds: 8,
   readsPerTurn: 4,
-  outputTokens: 900,
+  // Task 2020 follow-up: a reply longer than two short lines carries its
+  // laid-out copy beside its words (homeroom-bot-html.js), so a round has
+  // room for both (it was 900). Room that is not written is not paid for.
+  outputTokens: 4000,
   requestTimeoutMs: 45_000,
   turnsPerHour: 30,
   replyChars: 2000,

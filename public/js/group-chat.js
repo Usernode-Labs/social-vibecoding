@@ -1273,6 +1273,11 @@ const GroupChat = {
       // messages from one person on (groupsWithPrevious); `time` is display.
       at: msg.createdAt || msg.created_at || null,
       bodyHtml: kind === 'message' && !deleted ? renderMessageBody(msg.content) : '',
+      // Task 2020 follow-up: Homeroom bot's answer laid out, drawn in place of
+      // the words by the body (features/group-chat/long-body.tsx), which stay
+      // its fallback. Only the bot's own thread replies carry it: a person's
+      // message metadata is built by the server from fixed fields (ws.js).
+      botHtml: GroupChat._botHtmlOf(meta, kind, deleted),
       systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
       mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
       editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
@@ -1380,6 +1385,15 @@ const GroupChat = {
       // request's or a change's discussion, for the people it names.
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  // Task 2020 follow-up: the laid-out copy of a reply of Homeroom bot's in a
+  // thread (homeroom-bot-voice.js say), or null.
+  _botHtmlOf(meta, kind, deleted) {
+    const bot = meta && meta.homeroomBot;
+    if (kind !== 'message' || deleted || !bot || bot.kind !== 'voice' || bot.offer) return null;
+    const html = typeof bot.html === 'string' ? bot.html : '';
+    return html.trim() && html.length <= 60000 ? html : null;
   },
 
   // The buttons under Homeroom bot's offer, from its message's metadata
@@ -3796,7 +3810,8 @@ const GroupChat = {
     const gc = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.groupChat : null;
     if (!gc || !gc.patchTranscriptMessage) return;
-    const patch = { bodyHtml: renderMessageBody(content) };
+    // An edited message's laid-out copy no longer says what its words do.
+    const patch = { bodyHtml: renderMessageBody(content), botHtml: null };
     if (editedAt) patch.editedTitle = GroupChat._editedTitle(editedAt);
     gc.patchTranscriptMessage(messageId, patch);
   },

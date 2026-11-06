@@ -82,7 +82,9 @@ test('the designer has compare_versions and make_pictures between its own tools 
   assert.doesNotMatch(prompt, /—/);
   const src = read('src/services/design-bot.js');
   assert.match(src, /const withCard = card && !error \? \{ card \} : \{\};/);
-  assert.match(src, /withCard\.card \? \{ metadata: \{ kind: 'chat', \.\.\.withCard \} \} : \{\}/, 'a reply with no new version carries it');
+  // Task 2020 follow-up: beside the reply's laid-out copy, when it has one.
+  assert.match(src, /const meta = \{ \.\.\.withCard, \.\.\.\(copy \? \{ html: copy \} : \{\}\) \};/);
+  assert.match(src, /Object\.keys\(meta\)\.length \? \{ metadata: \{ kind: 'chat', \.\.\.meta \} \} : \{\}/, 'a reply with no new version carries it');
   assert.match(src, /designTitle: held\.title, \.\.\.withCard,/, 'a version\'s message carries it too');
   assert.match(src, /offered: !!offered \|\| !!card/, 'a card is an answer: no nudge to draw');
 });
