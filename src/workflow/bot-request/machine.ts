@@ -159,6 +159,9 @@ const EVENTS = {
   LookOn: (p: any) => ({ ...request(p), n: int(p?.n, 'n'), sessionId: int(p?.sessionId, 'sessionId') }),
   // A person's Stop of the bot's turn on a session (the session's routes).
   StopRequested: (p: any) => ({ sessionId: optInt(p?.sessionId), by: optText(p?.by, 100) }),
+  // #6377: a payer's week has room again (a weekly limit raised or set to 0,
+  // a charge refunded): what the spent week held back may look again now.
+  AllowanceFreed: (p: any) => request(p),
   // Its clock: a hold or a backoff.
   Due: () => ({}),
 };
@@ -584,6 +587,20 @@ function due(s: Live, _e: Event<any>, _f: Facts, ctx: TransitionContext): Outcom
   return step(s.name, d, { timer: null });
 }
 
+// The payer's week has room again (a weekly limit raised or cleared, a charge
+// refunded): the hold it put on the request is lifted now rather than on
+// Monday, and the lane looks at what waits again. A backoff is a different
+// wait and stays; a look under way decides at its own end.
+function allowanceFreed(s: Live, _e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
+  const d0 = s.data;
+  const d: Data = d0.owed?.heldUntil ? { ...d0, owed: { ...d0.owed, heldUntil: null } } : d0;
+  if (s.name === 'queued') return queue(d, ctx);
+  if (s.name === 'building' && d.build?.heldUntil) {
+    return step('building', { ...d, build: { ...d.build, heldUntil: null } }, { timer: null, messages: [look(d)] });
+  }
+  return step(s.name, d);
+}
+
 function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<RState> {
   const p = e.payload as WorkResultPayload;
   const d = s.data;
@@ -618,7 +635,7 @@ export function botRequest(deps: Deps = { staging: false }) {
   const row = {
     Owed: any(owed), NotOwed: live(notOwed), Activity: any(activity), Granted: live(granted), BuildOwed: any(buildOwed),
     BuildEnded: live(buildEnded), FixAsked: any(fixAsked), RequestMerged: live(requestMerged), StopRequested: live(stopRequested),
-    LookOn: live(lookOn), Due: live(due),
+    LookOn: live(lookOn), AllowanceFreed: live(allowanceFreed), Due: live(due),
     WorkSucceeded: live(workDone), WorkFailed: live(workDone), WorkExhausted: live(workDone),
   };
   const states: Name[] = ['idle', 'queued', 'reading', 'following_up', 'building'];
@@ -626,7 +643,8 @@ export function botRequest(deps: Deps = { staging: false }) {
   transitions[NONE] = {
     Owed: any(owed), Activity: any(activity), BuildOwed: any(buildOwed), FixAsked: any(fixAsked),
     NotOwed: { ignore: 'not_owed' }, Granted: { ignore: 'not_owed' }, BuildEnded: { ignore: 'not_building' },
-    RequestMerged: { ignore: 'nothing_owed' }, StopRequested: { ignore: 'not_looking' }, LookOn: { ignore: 'not_looking' }, Due: { ignore: 'gone' },
+    RequestMerged: { ignore: 'nothing_owed' }, StopRequested: { ignore: 'not_looking' }, LookOn: { ignore: 'not_looking' },
+    AllowanceFreed: { ignore: 'gone' }, Due: { ignore: 'gone' },
     '*': { ignore: 'not_owed' },
   };
   return defineMachine<RState, Facts>({
@@ -651,7 +669,7 @@ export function botRequest(deps: Deps = { staging: false }) {
     },
     authorize: {
       Owed: anyProducer, NotOwed: anyProducer, Activity: anyProducer, Granted: fromLane, BuildOwed: anyProducer,
-      BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, LookOn: anyProducer,
+      BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, LookOn: anyProducer, AllowanceFreed: anyProducer,
       StopRequested: (e) => (['route', 'system', 'admin'].includes(e.source.kind) ? ok() : reject('not_a_producer')),
       Due: (e) => (e.source.kind === 'timer' ? ok() : reject('not_the_clock')),
     },
