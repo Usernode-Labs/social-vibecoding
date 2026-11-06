@@ -108,6 +108,9 @@ async function migrate(config) {
   // week, so Live this week has a closed thread to show. Staging has no
   // model, so the bot's reply is stored rather than asked for.
   await seedStagingClosedPrivateThread(pool);
+  // #6426's shots: Main Chat shows "Welcome back" after a day away, so the
+  // capture member's chat with the bot has a visit old enough to show it.
+  await seedStagingMainChatLastVisit(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
@@ -2192,6 +2195,74 @@ async function seedStagingClosedPrivateThread(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging closed private thread seeding failed', { message: err.message });
+  }
+}
+
+// #6426 (6 Nov 2026): Main Chat's "Welcome back" card shows after 8 hours
+// away. A fresh staging copy has no visit recorded yet, so this gives the
+// shots' member fixture (usernode-capture) an old one in their chat with
+// Homeroom bot, made of a message so the transcript is not empty. Idempotent
+// through `last_visit_at IS NULL`: a real visit already recorded is kept.
+// Strictly a no-op outside staging.
+async function seedStagingMainChatLastVisit(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        'INSERT INTO conversations (kind, created_by) VALUES (\'direct\', $1) RETURNING id',
+        [member.id],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status)
+       VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')
+       ON CONFLICT (conversation_id, user_id) DO UPDATE SET status = 'member'`,
+      [conversationId, member.id, bot.id],
+    );
+    const said = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+       VALUES ($1, $2, 'Staging demo: anything else?', 'staging-demo-main-chat-caught-up', NOW() - INTERVAL '2 days')
+       ON CONFLICT DO NOTHING RETURNING id`,
+      [conversationId, bot.id],
+    );
+    if (said.rows[0]?.id) {
+      await pool.query(
+        `UPDATE conversation_members SET last_read_message_id = $1
+          WHERE conversation_id = $2 AND user_id = $3 AND last_read_message_id IS NULL`,
+        [said.rows[0].id, conversationId, member.id],
+      );
+    }
+    await pool.query(
+      `UPDATE conversation_members SET last_visit_at = NOW() - INTERVAL '1 day'
+        WHERE conversation_id = $1 AND user_id = $2 AND last_visit_at IS NULL`,
+      [conversationId, member.id],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Main Chat last visit seeding failed', { message: err.message });
   }
 }
 
