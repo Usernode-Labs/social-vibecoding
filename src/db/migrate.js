@@ -2382,9 +2382,19 @@ async function seedStagingMergedThreads(pool) {
       );
       await pool.query('SELECT thread_for_number($1, $2)', [appId, n]);
     }
+    // Only the rows this seed wrote. The platform's own app already carries
+    // real requests under these numbers on a long-lived copy, and merging
+    // those would corrupt them: a request whose body is not this seed's is
+    // left exactly as it is.
+    const owned = (await pool.query(
+      `SELECT number FROM requests
+        WHERE app_id = $1 AND number = ANY($2::int[]) AND body = 'Staging demo: obviously fake.'`,
+      [appId, numbers],
+    )).rows.map((r) => r.number);
+    if (!owned.includes(6207)) return;
     const lead = (await pool.query('SELECT thread_for_number($1, $2) AS id', [appId, 6207])).rows[0].id;
     // Nine of them share #6207's thread; #6212 keeps its own until sam answers.
-    for (const n of numbers) {
+    for (const n of owned) {
       if (n === 6212) continue;
       await pool.query(
         `UPDATE threads SET merged_into = $1, state = 'closed', closed_at = NOW()
@@ -2396,7 +2406,7 @@ async function seedStagingMergedThreads(pool) {
       );
     }
     // Messages, each tagged with its request (thread_ref keeps the number).
-    for (const n of numbers) {
+    for (const n of owned) {
       if (n === 6212) continue;
       await pool.query(
         `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, thread_id, created_at)
@@ -2409,6 +2419,9 @@ async function seedStagingMergedThreads(pool) {
       );
     }
     // The change lives in #6207's thread and closes 3 of the thread's 10.
+    // Only over this seed's own requests: a long-lived copy's real #6210 or
+    // #6212 must never be claimed by a staging change.
+    if (![6207, 6210, 6212].every((n) => owned.includes(n))) return;
     const change = await pool.query(
       `INSERT INTO chat_sessions
          (app_id, user_id, branch_name, session_title, status, linked_issues, thread_id, promoted_at, created_at, last_activity_at)

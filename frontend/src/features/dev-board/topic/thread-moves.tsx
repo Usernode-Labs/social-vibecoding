@@ -155,11 +155,11 @@ export function ThreadMoves({ slug, data, onChanged, open: chosen, onOpen, pills
               {move.state === 'pending' && move.canAnswer ? (
                 <>
                   <Button type="button" variant="pillNeutral" size="sm" ink="neutral" disabled={busy}
-                    onClick={() => answer('yes')}>
+                    className="min-h-11" onClick={() => answer('yes')}>
                     {t('project:topic.thread.move.consentYes')}
                   </Button>
                   <Button type="button" variant="pillNeutral" size="sm" ink="neutral" disabled={busy}
-                    onClick={() => answer('separate')}>
+                    className="min-h-11" onClick={() => answer('separate')}>
                     {t('project:topic.thread.move.consentSeparate')}
                   </Button>
                 </>
