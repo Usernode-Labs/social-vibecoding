@@ -30,9 +30,11 @@ const APP_VIEW_SRC = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app-view.j
 
 // ── 1. service + route ──────────────────────────────────────────────────
 
-test('proposal_opened resolves only pr_proposed, scoped by session_id', () => {
+test('proposal_opened resolves pr_proposed and "ready to try", scoped by session_id', () => {
+  // #6441: opening a change's page (or its before-and-after) answers its
+  // "ready to try" as well as its "New proposal".
   assert.deepEqual(notifications.ACTION_COMPLETIONS.proposal_opened, {
-    kinds: ['pr_proposed'], scope: 'session_id',
+    kinds: ['pr_proposed', 'build_ready'], scope: 'session_id',
   });
 });
 
@@ -42,7 +44,7 @@ test('markReadForAction(proposal_opened) clears that user\'s unread pr_proposed 
   const cleared = await notifications.markReadForAction(pool, 7, 'proposal_opened', 55);
   assert.equal(cleared, 1);
   assert.match(calls[0].sql, /user_id = \$1 AND session_id = \$2 AND kind = ANY\(\$3\) AND read_at IS NULL/);
-  assert.deepEqual(calls[0].params, [7, 55, ['pr_proposed']]);
+  assert.deepEqual(calls[0].params, [7, 55, ['pr_proposed', 'build_ready']]);
 });
 
 function loadRoutes(pool) {
@@ -102,7 +104,7 @@ test('POST /api/notifications/read { session_id } clears the proposal nudge and 
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { unread: 3, messageUnread: 1, cleared: 1 });
     const update = pool.calls.find((c) => /UPDATE notifications/.test(c.sql));
-    assert.deepEqual(update.params, [7, 55, ['pr_proposed']]);
+    assert.deepEqual(update.params, [7, 55, ['pr_proposed', 'build_ready']]);
     assert.deepEqual(pushes, [{ userId: 7, msg: { type: 'notifications_changed' } }]);
   });
 });
@@ -154,6 +156,9 @@ test('markProposalSeen posts session_id, marks the matching row read, and adopts
     { id: 1, kind: 'pr_proposed', sessionId: 55, readAt: null },
     { id: 2, kind: 'revision_recheck', sessionId: 55, readAt: null },
     { id: 3, kind: 'pr_proposed', sessionId: 56, readAt: null },
+    // #6441: its "ready to try" is answered by the same look.
+    { id: 4, kind: 'build_ready', sessionId: 55, readAt: null },
+    { id: 5, kind: 'build_ready', sessionId: 56, readAt: null },
   ];
   const N = stubNotifications(3, items);
   const requests = [];
@@ -166,6 +171,8 @@ test('markProposalSeen posts session_id, marks the matching row read, and adopts
   assert.ok(items[0].readAt, 'the proposal nudge is read');
   assert.equal(items[1].readAt, null, 'a re-vote ask is not answered by looking');
   assert.equal(items[2].readAt, null, 'another proposal is untouched');
+  assert.ok(items[3].readAt, 'that change\'s ready to try is read');
+  assert.equal(items[4].readAt, null, 'another change\'s is untouched');
   assert.equal(N.unread, 2);
   assert.deepEqual(N.renders, ['badge', 'list']);
 });
@@ -198,4 +205,25 @@ test('any click on a proposal card in #dev-body marks it seen, in the capture ph
   }
   assert.match(m[1], /window\.Notifications\?\.markProposalSeen\?\.\(/);
   assert.doesNotMatch(m[1], /preventDefault|stopPropagation/, 'marking read never changes what the click does');
+});
+
+// ── 4. #6441: the other two ways a change is seen ───────────────────────
+
+const THREAD_CHANGES_SRC = fs.readFileSync(
+  path.join(ROOT, 'frontend', 'src', 'features', 'dev-board', 'topic', 'thread-changes.tsx'), 'utf8'
+);
+const DETAIL_SRC = fs.readFileSync(
+  path.join(ROOT, 'frontend', 'src', 'features', 'ai', 'detail.ts'), 'utf8'
+);
+
+test('a change drawn on its request\'s page marks its "ready to try" seen', () => {
+  // A change with a request lands on the request's page, so that page is the
+  // change's page: opening it answers its "ready to try".
+  assert.match(THREAD_CHANGES_SRC, /window\.Notifications\?\.markProposalSeen\?\.\(item\.id\)/);
+});
+
+test('opening a change\'s before-and-after marks its "ready to try" seen', () => {
+  assert.match(DETAIL_SRC, /if \(kind === 'shots' && valid\(ref\.changeId\)\)/);
+  assert.match(DETAIL_SRC, /window\.Notifications\?\.markProposalSeen\?\.\(Number\(ref\.changeId\)\)/);
+  assert.match(APP_VIEW_SRC, /if \(part === 'shots'\) window\.Notifications\?\.markProposalSeen\?\.\(Number\(id\)\)/);
 });

@@ -929,9 +929,44 @@ async function bellPushes(db, changed) {
   return pushes;
 }
 
-/** The pushes changed rows are carried by: their work_state, and the bell of each that rang. */
+/**
+ * #6441: "Ready to try" outlives the change being ready. When a request's
+ * stage leaves for building (an update asked for, or a fix), the
+ * "ready to try" it rang is no longer true, so its unread row is withdrawn:
+ * marked read and mailed, never deleted (the row stays in All, and no email
+ * goes out for it). The move back to up_for_vote rings a fresh one through
+ * bellOf. A stage move that does not rebuild (up_for_vote to checking) is
+ * not a withdraw. A request row only: a change with no request is not rung
+ * by its stage.
+ */
+async function withdrawReady(db, changed) {
+  const pushes = [];
+  const told = new Set();
+  for (const row of changed || []) {
+    if (row.kind !== 'request') continue;
+    const sessionId = Number(row.sessionId) || 0;
+    if (!sessionId || row.state?.stage !== 'building') continue;
+    if (!row.prev || row.prev.stage === 'building') continue;
+    const { rows } = await db.query(
+      `UPDATE notifications
+          SET read_at = NOW(), mailed_at = COALESCE(mailed_at, NOW())
+        WHERE session_id = $1 AND kind = 'build_ready' AND read_at IS NULL
+        RETURNING user_id`,
+      [sessionId],
+    );
+    for (const r of rows) {
+      const userId = Number(r.user_id) || 0;
+      if (!userId || told.has(userId)) continue;
+      told.add(userId);
+      pushes.push({ kind: 'user', routing: { userId }, data: { type: 'notifications_changed' } });
+    }
+  }
+  return pushes;
+}
+
+/** The pushes changed rows are carried by: their work_state, the bell of each that rang, and each ready one withdrawn. */
 async function pushesOf(db, changed) {
-  return [...changed.map(pushOf), ...(await bellPushes(db, changed))];
+  return [...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await withdrawReady(db, changed))];
 }
 
 /**

@@ -129,7 +129,7 @@ import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
 import type { NotificationRowView } from './notifications-list';
-import { CardHistory, ProjectStack, foldStories, type CardPlace } from './notification-stacks';
+import { CardHistory, ProjectStack, foldLive, foldStories, type CardPlace, type LiveItem } from './notification-stacks';
 
 type ScreenRowView = NotificationRowView & {
   /** The unelided instant for the `<time>`'s title (#1808, stampFields). */
@@ -193,6 +193,8 @@ type ScreenRowView = NotificationRowView & {
   storyRef?: { number: number; title: string | null } | null;
   /** #5580: set on a card standing for one story's notifications (foldStories), newest first. */
   story?: { members: ScreenRowView[] } | null;
+  /** #6441: set on a row standing for several requests that went live together (foldLive). */
+  liveItems?: LiveItem[] | null;
 };
 
 type RowTone = 'needs' | 'blocked' | 'hold';
@@ -516,9 +518,10 @@ export function groupUnreadByApp(
   }
   // #5580: one story's notifications become one card first (foldStories in
   // ./notification-stacks.tsx); the rows about nothing in particular still
-  // fold by kind.
+  // fold by kind. #6441: the requests that went live close together are one
+  // row before that, so the fold by kind cannot split them.
   for (const group of groups) {
-    if (group.appId != null) group.entries = foldRepeats(foldStories(group.entries), t);
+    if (group.appId != null) group.entries = foldRepeats(foldLive(foldStories(group.entries), t), t);
   }
   return [...groups.filter((group) => group.needsYou), ...groups.filter((group) => !group.needsYou)];
 }
@@ -592,7 +595,7 @@ export function groupOlderByTime(rows: ScreenRowView[], t: Translate, now: Date 
     const at = card.at;
     sections[at >= today ? 0 : at >= yesterday ? 1 : at >= week ? 2 : 3].entries.push(card);
   }
-  for (const section of sections) section.entries = foldEachProject(section.entries, (list) => foldRepeats(list, t));
+  for (const section of sections) section.entries = foldEachProject(section.entries, (list) => foldRepeats(foldLive(list, t), t));
   return sections.filter((section) => section.entries.length > 0);
 }
 
@@ -628,7 +631,10 @@ export function foldRepeats(entries: Entry[], t: Translate): Entry[] {
   for (const entry of entries) {
     const view = entry.view;
     // #5580: a story card is already several notifications; it folds no further.
-    const foldable = !!view.kind && !view.conversation && !(view.actions && view.actions.length) && !view.story;
+    // #6441: nor does a folded "went live" row, which stands for several of
+    // its own and says how many.
+    const foldable = !!view.kind && !view.conversation && !(view.actions && view.actions.length)
+      && !view.story && !(view.liveItems && view.liveItems.length);
     const key = foldable ? `${view.kind}\n${view.label}` : null;
     const at = key != null ? firstAt.get(key) : undefined;
     if (at == null) {
@@ -651,7 +657,9 @@ export function foldRepeats(entries: Entry[], t: Translate): Entry[] {
         ...entry.view,
         count,
         label: labelled && words ? t(words.many, { count }) : entry.view.label,
-        groupLabelled: labelled,
+        // #6441: a folded live row has already put its number in its
+        // subject, so it keeps its kind's plain label and no count pill.
+        groupLabelled: labelled || !!entry.view.groupLabelled,
       },
     };
   });
@@ -703,6 +711,54 @@ function RowActions({ view, actions }: {
   ));
   if (actions.length > 1) return <div className="flex items-center gap-2 ps-[3.75rem]">{buttons}</div>;
   return <>{buttons}</>;
+}
+
+/**
+ * #6441: the requests a folded "went live" row stands for, one line each,
+ * under its words ("#6435 · Communities: Featured wraps into the same grid").
+ * Each line is a button of its own, so a tap opens that request and reads
+ * the whole group; the card's own tap opens the newest. This is why the row
+ * is shaped like a card with its own actions: nothing may be a button inside
+ * a button.
+ */
+function LiveItems({ view, items, groupIds }: {
+  view: ScreenRowView;
+  items: LiveItem[];
+  groupIds: number[] | null;
+}): ReactNode {
+  const t = useMessages('notifications');
+  const ids = groupIds && groupIds.length ? groupIds : [view.id];
+  // The tile's left edge lines up with the words above it (the row's tile is
+  // 36px plus its 16px gap, inside the row's own 16px), so the list reads as
+  // part of the row. Each line may wrap to two and then ends in an ellipsis:
+  // on a phone a long request title must not scroll the panel sideways, and
+  // a line is a tap target, so it is at least 44px tall.
+  return (
+    <ul className="flex min-w-0 flex-col gap-1 ps-12">
+      {items.map((item) => (
+        <li key={item.id} className="min-w-0">
+          <button
+            type="button"
+            data-notif-live-item={item.id}
+            data-notif-live-unread={item.unread ? '' : undefined}
+            className={'block min-h-[44px] w-full rounded-xl bg-zinc-100 px-2.5 py-2 '
+              + 'text-start text-[13px] leading-snug line-clamp-2 break-words '
+              + (item.unread ? 'font-semibold text-zinc-900 dark:text-zinc-50 ' : 'text-zinc-800 dark:text-zinc-200 ')
+              + 'hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 '
+              + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+            onClick={(event) => {
+              event.stopPropagation();
+              controller()?.openGroupRow(item.id, ids);
+            }}
+          >
+            {item.number
+              ? t('notifications:row.group.liveItem', { number: item.number, title: item.title })
+              : t('notifications:row.group.liveItemUnnumbered', { title: item.title })}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /**
@@ -896,7 +952,11 @@ type ScreenRowProps = {
 function ScreenRow({ view, touch, removes, held = false, onRelease, card = null }: ScreenRowProps): ReactNode {
   const t = useMessages('notifications');
   const clearable = view.unread;
-  const shape = view.actions && view.actions.length ? 'actions' : 'plain';
+  // #6441: several requests that went live together: one row, each listed
+  // under its words. It takes the row shape a card with its own buttons
+  // does, because the list under the words is made of buttons.
+  const liveItems = view.liveItems && view.liveItems.length ? view.liveItems : null;
+  const shape = (view.actions && view.actions.length) || liveItems ? 'actions' : 'plain';
   // #5289: a row standing for several notifications of one kind clears,
   // opens and reads as all of them (see foldRepeats).
   const groupIds = view.groupIds && view.groupIds.length > 1 ? view.groupIds : null;
@@ -1098,6 +1158,9 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
   // #1688: a row with an action of its own ("Still yes" on a re-confirm ask)
   // keeps the row as the tap that opens the thing, and puts the action
   // beside it as a real button — never a button inside a button.
+  // The node the kit holds on desktop, for the folded "went live" shape's own
+  // branch below (the two shapes that predate it spell it out in place).
+  const desktopRef = touch ? undefined : setRow;
   const actions = view.actions || [];
   const row = actions.length ? (
     <div
@@ -1110,7 +1173,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       // the text.
       className={card
         ? 'notifications-row col-start-1 row-start-1 w-full ps-5 pe-4 py-3 flex flex-col gap-2'
-        : actions.length > 1
+        : actions.length > 1 || liveItems
           ? 'notifications-row w-full ps-4 pe-16 py-3.5 flex flex-col gap-2'
           : 'notifications-row w-full ps-4 pe-16 py-3.5 flex items-center gap-3'}
     >
@@ -1129,6 +1192,32 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       {card && actions.length === 1 ? (
         <div className="flex items-center gap-2 ps-[3.75rem]"><RowActions view={view} actions={actions} /></div>
       ) : <RowActions view={view} actions={actions} />}
+      {liveItems ? <LiveItems view={view} items={liveItems} groupIds={groupIds} /> : null}
+    </div>
+  ) : liveItems ? (
+    // #6441: a folded "went live" row has no action of its own, but the list
+    // under its words is made of buttons, so it takes the same outer <div>
+    // and inner <button> shape as a row with actions: never a button inside
+    // a button.
+    <div
+      ref={desktopRef}
+      data-notif-id={view.id}
+      className={card
+        ? 'notifications-row col-start-1 row-start-1 w-full ps-5 pe-4 py-3 flex flex-col gap-2'
+        : 'notifications-row w-full ps-4 pe-16 py-3.5 flex flex-col gap-2'}
+    >
+      <button
+        className={card ? 'min-w-0 flex-1 w-full text-start flex items-start gap-3' : 'min-w-0 flex-1 text-start flex items-center gap-4'}
+        aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          open();
+        }}
+        {...hold}
+      >
+        {card ? <CardWords view={view} card={card} hasHistory={hasHistory} saveOnHover={cardSave && !touch} /> : body}
+      </button>
+      <LiveItems view={view} items={liveItems} groupIds={groupIds} />
     </div>
   ) : (
     <button

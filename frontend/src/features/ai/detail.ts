@@ -357,6 +357,12 @@ export function openDetail(input: {
     top.open({ kind, ref, version: input.version ?? null, payload: input.payload, from: input.from ?? null });
     return;
   }
+  // #6441: opening a change's before-and-after is seeing it, so its "Ready
+  // to try" leaves the bell. The top document's store only (the branch above
+  // has already handed the side panel's frame over to it), so it runs once.
+  if (kind === 'shots' && valid(ref.changeId)) {
+    if (typeof window !== 'undefined') window.Notifications?.markProposalSeen?.(Number(ref.changeId));
+  }
   holder.seq += 1;
   const entry: DetailEntry = {
     kind,
