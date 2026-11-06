@@ -894,7 +894,14 @@ export function AiLists({
           owe={owedShown > 0}
           lines={needLines}
           note={failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
-          empty={!ready ? (
+          /* While searching, this card is drawn only when it has a match, so
+             its empty line is never the search's answer: the page says "No
+             threads match" in one note of its own (#6398). */
+          empty={ready ? (
+            <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty={nothingHere ? 'project' : ''}>
+              {nothingHere && onlyApp ? t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug }) : t('messages:ai.work.empty')}
+            </p>
+          ) : (
             // L06 (overnight audit, 2 Nov 2026): until the lists are read the
             // card said nothing at all, an empty card that read as final.
             // Two rows' lines at the one-line row's spacing instead: two
@@ -908,10 +915,6 @@ export function AiLists({
                 <Skeleton className="w-2/5" />
               </SkeletonGroup>
             )
-          ) : searching ? null : (
-            <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty={nothingHere ? 'project' : ''}>
-              {nothingHere && onlyApp ? t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug }) : t('messages:ai.work.empty')}
-            </p>
           )}
           first={searching ? Infinity : GROUP_FIRST.needs}
           heads={heads}
