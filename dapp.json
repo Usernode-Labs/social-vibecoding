@@ -508,7 +508,7 @@
       "key": "PLATFORM_MAIL_PROVIDER",
       "group": "Platform mail",
       "default": "auto",
-      "description": "Which transport sends platform mail: auto (default), gmail, http, brevo, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than logging login codes. Brevo is used only when named here, because BREVO_API_KEY also sends SMS. A named provider with a missing key is reported as broken, not downgraded. A staging preview ALWAYS logs instead of delivering."
+      "description": "Which transport sends platform mail until an admin saves one in Admin → Email delivery: auto (default), gmail, http, brevo, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than logging login codes. Brevo is used only when named, because BREVO_API_KEY also sends SMS. A named provider with a missing key is broken, not downgraded. Staging ALWAYS logs."
     },
     {
       "key": "PLATFORM_MAIL_FROM",
@@ -2189,9 +2189,10 @@
       "expectSelector": "#pu-l4"
     },
     {
-      "name": "Email delivery section renders the configuration status",
+      "name": "Email delivery section renders the configuration status and who sends email",
       "path": "/#admin/mail",
-      "expectSelector": "#admin-mail-status"
+      "expectSelector": "#admin-mail-status ~ #admin-mail-provider input[type=radio]",
+      "expectText": "Email is sent by"
     },
     {
       "name": "Email delivery section offers a test send, ledger and engagement reports",

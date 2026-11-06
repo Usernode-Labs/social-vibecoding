@@ -166,7 +166,9 @@ test('the status route returns presence, never a credential value', () => {
     mailBlock.indexOf("router.get('/api/admin/mail/activity'"));
   // describe() is value-free by construction; the route must not enrich
   // the response by reading process.env directly for anything else.
-  assert.match(decl, /mail\.describe\(process\.env\)/);
+  // The saved provider is the one other input: a name out of platform_settings
+  // (services/mail/select.js savedChoice), never a credential.
+  assert.match(decl, /mail\.describe\(process\.env, \{ saved: await mail\.savedChoice\(pool\) \}\)/);
   const envReads = [...decl.matchAll(/process\.env\.(\w+)/g)].map((m) => m[1]);
   assert.deepEqual(envReads, [], 'the route reads no individual env value');
   assert.match(decl, /SELECT email FROM users WHERE id = \$1/,
@@ -286,7 +288,9 @@ test('delivered, bounced and complained show only when Resend can report them', 
   assert.equal(deliveryEventsAvailable('gmail', secret), false);
   assert.equal(deliveryEventsAvailable('log', secret), false);
   assert.equal(deliveryEventsAvailable(null, secret), false);
-  assert.match(adminJs, /readReports\(pool, \{\s*provider: \(config && \(config\.mailProvider/,
+  // The transport in force, which follows an admin's saved provider
+  // (tests/admin-mail-provider.test.js), not only the one resolved at boot.
+  assert.match(adminJs, /mail\.transportFor\(config, pool\)\.then\(\(\{ provider \}\) => \(\s*require\('\.\.\/services\/mail\/reports'\)\.readReports\(pool, \{ provider: provider \|\| null \}\)/,
     'the activity route tells the report which transport is sending');
   assert.match(moduleJs, /DELIVERY_METRICS = new Set<string>\(\['delivered', 'bounced', 'complained'\]\)/);
   assert.match(moduleJs, /METRICS\.filter\(\(\[key\]\) => reports\.deliveryEvents \|\| !DELIVERY_METRICS\.has\(key\)\)/);
