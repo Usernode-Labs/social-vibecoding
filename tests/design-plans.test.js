@@ -87,8 +87,14 @@ test('the bot builds from a person\'s plan before it plans one itself, and pairs
   assert.match(live, /if \(builtFrom\) await noteBuiltFrom\(pool, \{ sessionId: session\.id, from: builtFrom \}\);/);
   assert.match(live, /threadMessage: version && !checkFirst && !fromPlan \? live\.specCard/, 'no second plan card');
   assert.match(live, /\.\.\.\(fromPlan \? \{ homeroomText: live\.fromPlanHomeroomText\(fromPlan\) \}/);
+  // #6410: one definition of "is a plan record", shared by every list that
+  // reads sessions, so the next one cannot miss it.
+  const { planRecordSql } = require('../src/services/request-specs');
+  assert.equal(planRecordSql('cs'), "(cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)");
+  assert.equal(planRecordSql('c'), "(c.source IS NOT DISTINCT FROM 'request_spec' AND c.branch_name IS NULL)");
+  assert.equal(planRecordSql(''), "(source IS NOT DISTINCT FROM 'request_spec' AND branch_name IS NULL)");
   const threads = read('src/services/threads.js');
-  assert.match(threads, /AND NOT \(cs\.source IS NOT DISTINCT FROM 'request_spec' AND cs\.branch_name IS NULL\)/, 'a posted plan is never a change');
+  assert.match(threads, /AND NOT \$\{planRecordSql\('cs'\)\}/, 'a posted plan is never a change');
 });
 
 test('Make the project opens the make sheet in place, and Make it posts the design', () => {

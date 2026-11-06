@@ -191,6 +191,57 @@ test('without the flag the list is the active/promoted/paused set it always was'
   }
 });
 
+// #6410: posting a plan on a request writes a `chat_sessions` row with
+// source 'request_spec' and no branch (request-specs.js). No agent ever runs
+// in it, so it is not an agent chat: Messages › Agents, the bell's Agents tab
+// and the dev tab's Active Sessions all read this one route, and none of them
+// should list the plan. The plan is on its request's page. A planning record
+// that gains a branch (a build started from it) is real work and lists.
+test('a posted plan leaves the agent list; a plan record with a branch still lists', async () => {
+  capturedQueries = [];
+  const branchless = sessionRow({
+    id: 61, status: 'paused', source: 'request_spec', branch_name: null,
+    session_title: 'Plan for #177 Design: Recipe home, warm and visual',
+  });
+  const branched = sessionRow({
+    id: 62, status: 'paused', source: 'request_spec', branch_name: 'dev/x',
+    session_title: 'Plan for #20 Bread Bot',
+  });
+  const rows = [branchless, branched];
+  // The mock applies the query's own exclusion, so these assertions fail as
+  // the lists would if the route stopped carrying it.
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/ORDER BY last_activity_at DESC/.test(s)) {
+      const excludesPlans = /AND NOT \(cs\.source IS NOT DISTINCT FROM 'request_spec' AND cs\.branch_name IS NULL\)/.test(s);
+      return {
+        rows: excludesPlans
+          ? rows.filter((r) => !(r.source === 'request_spec' && r.branch_name === null))
+          : rows,
+      };
+    }
+    return { rows: [] };
+  };
+  activeWorkers.clear();
+  const realIsInFlight = worker.isInFlight;
+  worker.isInFlight = () => false;
+  const server = await startServer();
+  try {
+    const { res, body } = await fetchActiveSessions(server);
+    assert.strictEqual(res.status, 200);
+    const q = capturedQueries.find(isActiveSessionsQuery);
+    assert.match(q.sql, /AND NOT \(cs\.source IS NOT DISTINCT FROM 'request_spec' AND cs\.branch_name IS NULL\)/,
+      'the shared plan-record definition filters this route');
+    assert.deepStrictEqual(body.sessions.map((s) => s.id), [62],
+      'only the plan record that gained a branch is an agent chat');
+    assert.deepStrictEqual(body.totals, { active: 0, promoted: 0, paused: 1, busy: 0, total: 1 },
+      'the branchless plan record counts no slot');
+  } finally {
+    worker.isInFlight = realIsInFlight;
+    server.close();
+  }
+});
+
 test('a merging or merged row holds no slot in the totals', async () => {
   poolQueryHandler = async () => ({
     rows: [
