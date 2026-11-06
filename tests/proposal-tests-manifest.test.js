@@ -127,16 +127,60 @@ test('the list is bounded by MAX_DECLARED_TESTS, not by the old parse cap', () =
 // crossed 300 and the tail was being dropped silently, so the ceiling is
 // stated as headroom over the real count rather than as a bare number.
 test("every declared selector fits the cap the reader and the capture clip at", () => {
-  // readTests and capture/capture.js both `slice(0, 256)` a selector. A
+  // readTests and capture/capture.js both cut at MAX_TEST_SELECTOR_LEN. A
   // longer one is not refused: it is cut mid-token, becomes an invalid
   // selector, and its check fails on every build with "was not found" —
   // which is how five checks of one proposal failed 6 of 6 runs while the
   // page they described was right. The cap is asserted here, on the
   // manifest as written, so the cut never happens silently again.
   const tests = require('../dapp.json').tests;
-  const over = tests.filter((t) => typeof t.expectSelector === 'string' && t.expectSelector.length > 256)
+  const over = tests.filter((t) => typeof t.expectSelector === 'string'
+    && t.expectSelector.length > appManifest.MAX_TEST_SELECTOR_LEN)
     .map((t) => `${t.expectSelector.length}: ${t.name}`);
-  assert.deepEqual(over, [], 'shorten these selectors: the runner clips them at 256 characters');
+  assert.deepEqual(over, [],
+    `shorten these selectors: the runner clips them at ${appManifest.MAX_TEST_SELECTOR_LEN} characters`);
+});
+
+// Both ends of the pipeline cut at one number (512 since #6442, when this
+// repo's side-panel check grew to 286 and a 256 cap split it mid-token). The
+// capture image is built on its own, so it repeats the number; these keep the
+// two from drifting apart and pin the value itself.
+test('the reader and the capture runner share one selector cap', () => {
+  const capture = require('../capture/capture.js');
+  assert.equal(appManifest.MAX_TEST_SELECTOR_LEN, 512);
+  assert.equal(capture.MAX_SELECTOR_LEN, appManifest.MAX_TEST_SELECTOR_LEN,
+    "capture repeats the reader's cap, and the two must stay equal");
+});
+
+test('a selector past the old 256 survives the reader and the capture runner whole', () => {
+  // 299 characters of valid CSS: over the old 256, under the new 512. A
+  // selector cut here is invalid, and its check fails on every build as
+  // "was not found".
+  const longSelector = `#root ${'.child > '.repeat(32)}.leaf`;
+  assert.ok(longSelector.length > 256 && longSelector.length <= 512,
+    `fixture is ${longSelector.length} characters`);
+  const [read] = appManifest.readTests({ tests: [{ path: '/p', expectSelector: longSelector }] });
+  assert.equal(read.expectSelector, longSelector, 'the reader keeps the whole selector');
+
+  const capture = require('../capture/capture.js');
+  const [resolved] = capture.resolveTests({
+    TESTS: JSON.stringify([{ url: '/p', expectSelector: longSelector }]),
+  });
+  assert.equal(resolved.expectSelector, longSelector, 'the runner resolves it whole');
+  assert.equal(capture.parseReady({ expectSelector: longSelector }).expectSelector, longSelector,
+    'and a visual scenario waits for it whole');
+
+  // Past the cap, both ends still cut at exactly the shared number.
+  const tooLong = `#root ${'.child > '.repeat(60)}.leaf`;
+  assert.ok(tooLong.length > appManifest.MAX_TEST_SELECTOR_LEN);
+  const [cut] = appManifest.readTests({ tests: [{ path: '/p', expectSelector: tooLong }] });
+  assert.equal(cut.expectSelector.length, appManifest.MAX_TEST_SELECTOR_LEN);
+  const [cutCapture] = capture.resolveTests({
+    TESTS: JSON.stringify([{ url: '/p', expectSelector: tooLong }]),
+  });
+  assert.equal(cutCapture.expectSelector.length, appManifest.MAX_TEST_SELECTOR_LEN);
+  assert.equal(capture.parseReady({ expectSelector: tooLong }).expectSelector.length,
+    appManifest.MAX_TEST_SELECTOR_LEN);
 });
 
 test("this repo's own manifest fits under the ceiling, with room to grow", () => {

@@ -788,6 +788,6 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   assert.ok(one);
   assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):has\(\[data-landing-story\] button\[data-landing-story-join\]\):not\(:has\(\[data-landing-story\] a\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
   // Its one other button is pinned by the story's own test above, under the
-  // runner's 256-character cap on a selector.
+  // runner's selector cap (`MAX_TEST_SELECTOR_LEN`).
   assert.ok(one.expectSelector.length <= 256);
 });
