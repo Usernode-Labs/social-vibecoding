@@ -214,6 +214,28 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
       'a change with no built-from request: only its author\'s own requests would be confirmed');
   });
 
+  // #6439: an ended vote to close says how it ended, off the governance
+  // machine's audit in its payload. The request's page keeps its card.
+  await t.test('#6439 an ended close vote\'s outcome is read from its payload audit', async () => {
+    const make = (payload, status = 'closed') => pool.query(
+      `INSERT INTO issues (app_id, kind, title, payload, status, created_by)
+       VALUES ($1, 'close_issue', 'Close #10', $2::jsonb, $3, $4) RETURNING id`,
+      [app.id, JSON.stringify({ issueNumber: 10, ...payload }), status, ana.id]);
+    const closed = (await make({ appliedAt: '2026-01-15T00:00:00.000Z', appliedBy: 'group-vote' })).rows[0];
+    const refused = (await make({ appliedAt: '2026-01-15T00:00:00.000Z', appliedBy: 'refused:conflict' })).rows[0];
+    const withdrawn = (await make({ withdrawnAt: '2026-01-15T00:00:00.000Z' })).rows[0];
+    const elsewhere = (await make({ supersededBy: 'merge' })).rows[0];
+    const open = (await make({}, 'open')).rows[0];
+    const thread = await threads.threadForNumber(pool, { appId: app.id, number: 10 });
+    const page = await threads.threadPage(pool, { thread, viewerId: ana.id });
+    const outcomeOf = (id) => page.items.find((i) => i.type === 'close' && i.id === Number(id)).outcome;
+    assert.equal(outcomeOf(closed.id), 'closed', 'applied by the vote');
+    assert.equal(outcomeOf(refused.id), 'kept', 'could not be applied');
+    assert.equal(outcomeOf(withdrawn.id), 'kept', 'withdrawn');
+    assert.equal(outcomeOf(elsewhere.id), 'elsewhere', 'the request closed another way');
+    assert.equal(outcomeOf(open.id), null, 'still open');
+  });
+
   // #6124: a title chosen before the change has a pull request lands in
   // proposed_pr_title. The request page's rows read it before the session's
   // old name, so a corrected title is the name on the card — both in the
