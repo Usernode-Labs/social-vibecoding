@@ -31,6 +31,7 @@ const botTools = require('./bot-tools');
 const log = require('./logger');
 const turnEngine = require('./homeroom-bot-turn-engine');
 const { withoutEmDashes } = require('./em-dashes');
+const replyHtml = require('./homeroom-bot-html');
 const { STEPS: TRACK_STEPS, NOT_STARTED: TRACK_NOT_STARTED, standingOf } = require('./homeroom-bot-track');
 
 // The most of a version the model reads; a bigger one is not edited, and the
@@ -395,7 +396,8 @@ const TOOLS = Object.freeze([
       description: 'Send your answer to the person and finish the turn: a sentence or two. Call it exactly once, last.',
       parameters: {
         type: 'object',
-        properties: { text: { type: 'string' } },
+        // Task 2020 follow-up: a longer answer laid out, as the chat's own (homeroom-bot-html.js).
+        properties: { text: { type: 'string' }, html: { type: 'string', description: replyHtml.REPLY_HTML_DESCRIPTION } },
         required: ['text'],
         additionalProperties: false,
       },
@@ -1218,6 +1220,9 @@ async function answer(pool, config, {
   let entry;
   const notes = [];
   let replyText = '';
+  // Task 2020 follow-up: the reply's laid-out copy, and the words it was written beside.
+  let replyCopy = null;
+  let copyBeside = null;
   // #6257: whether this first drawing may ask what the screen is for.
   let mayAsk = false;
   // #6151: where the request a filed design became stands (filedOf), and
@@ -1414,6 +1419,8 @@ async function answer(pool, config, {
           result = await readPlan(pool, { design, project, html, threads, mayor, deps });
         } else if (name === 'reply') {
           replyText = String(args.text || '').trim();
+          replyCopy = replyHtml.cleanReplyHtml(args.html);
+          copyBeside = replyText;
           result = { ok: true };
         } else if (name === 'close_thread') {
           // #6159: this thread, theirs, done (private-threads.js markDone).
@@ -1534,8 +1541,13 @@ async function answer(pool, config, {
   const withCard = card && !error ? { card } : {};
   if (!changed) {
     if (error === 'no_key') return say(mayor.KEY_TEXT);
+    // Task 2020 follow-up: an answer with no new version may come laid out,
+    // beside its words exactly as written (never the not-drawn or broken line).
+    const copy = !unkept && !error && replyCopy && replyText && replyText === copyBeside
+      && !(builds && saysNotBuilt(replyHtml.htmlWords(replyCopy))) ? replyCopy : null;
+    const meta = { ...withCard, ...(copy ? { html: copy } : {}) };
     return say(unkept ? NOT_DRAWN_TEXT : clip(replyText, MAX_REPLY_CHARS) || BROKEN_TEXT,
-      withCard.card ? { metadata: { kind: 'chat', ...withCard } } : {});
+      Object.keys(meta).length ? { metadata: { kind: 'chat', ...meta } } : {});
   }
   // #6150: a version about to be saved with a sheet block left empty (an
   // older version's empty duplicate, edited) takes that sheet's CSS from the

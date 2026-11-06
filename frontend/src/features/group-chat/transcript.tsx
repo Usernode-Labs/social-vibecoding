@@ -890,7 +890,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       {msg.deleted ? <p className="gc-msg-deleted-text">{t('chat:group.row.deleted')}</p> : (
         <>
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
-          <Body html={msg.bodyHtml} />
+          {/* Task 2020 follow-up: Homeroom bot's reply laid out, in place of its words (./long-body.tsx). */}
+          <Body html={msg.bodyHtml} rich={msg.botHtml} />
           {/*
               #6268: a message posted for somebody by their own coding agent
               that Homeroom bot will not answer says so under it, quietly, so
