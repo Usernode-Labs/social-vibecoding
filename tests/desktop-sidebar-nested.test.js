@@ -46,85 +46,6 @@ test('which rows: a community you are visiting has one for as long as you are on
   assert.deepEqual(railRows(['a', 'b'], 'x', ['x', 'b', 'y']), ['a', 'b', 'x', 'y'], 'once each, the five first');
 });
 
-test('which conversations: the bot, then the four most recent of either section, held for the visit', () => {
-  const { railConversations, RAIL_CONVERSATIONS } = loadTsx('frontend/src/features/messages/rail-inbox.ts');
-  assert.equal(RAIL_CONVERSATIONS, 5);
-  const at = (h) => new Date(Date.UTC(2026, 9, 18, h)).toISOString();
-  // The inbox's merge: agents first (the bot pinned), then people, each newest first.
-  const inbox = [
-    { key: 'person:bot', section: 'agents', at: at(1), pinned: true },
-    { key: 'mayor:1', section: 'agents', at: at(9) },
-    { key: 'mayor:2', section: 'agents', at: at(3) },
-    { key: 'person:7', section: 'people', at: at(10) },
-    { key: 'person:8', section: 'people', at: at(8) },
-    { key: 'person:9', section: 'people', at: at(7) },
-    { key: 'person:4', section: 'people', at: null },
-  ];
-  const keys = (rows) => rows.map((row) => row.key);
-  const seen = new Map();
-  assert.deepEqual(keys(railConversations(inbox, seen)),
-    ['person:bot', 'mayor:1', 'person:7', 'person:8', 'person:9'],
-    'pinned first, then by clock across both, drawn under the inbox\'s headings');
-  // #21 (19 Oct polish board): a reply during the visit moves nothing. The
-  // clocks first seen rank the rows until the page is loaded again.
-  const later = inbox.map((entry) => (entry.key === 'mayor:2' || entry.key === 'person:9'
-    ? { ...entry, at: at(20) } : entry));
-  assert.deepEqual(keys(railConversations(later, seen)),
-    ['person:bot', 'mayor:1', 'person:7', 'person:8', 'person:9'],
-    'the same five, in the same order, after mayor:2 and person:9 moved');
-  // The next load reads the clocks afresh.
-  assert.deepEqual(keys(railConversations(later, new Map())),
-    ['person:bot', 'mayor:2', 'mayor:1', 'person:9', 'person:7']);
-  // A clock not known yet is not held: the real one ranks it when it comes.
-  const fresh = new Map();
-  railConversations(inbox, fresh);
-  assert.equal(fresh.has('person:4'), false);
-  assert.deepEqual(railConversations([], new Map()), []);
-});
-
-test('#5693: under Agents the sidebar seats the chats that ask for you only; the bot\'s chat is the AI tab (#6019)', () => {
-  const { railCandidates, railConversations } = loadTsx('frontend/src/features/messages/rail-inbox.ts');
-  const { agentAsksForYou, buildInbox } = loadTsx('frontend/src/features/messages/inbox.ts');
-  const at = (h) => new Date(Date.UTC(2026, 9, 18, h)).toISOString();
-  // The list's own sources, merged the way the Messages screen merges them.
-  const sessions = [
-    { key: 'proposed', lastActivityAt: at(12), busy: false, awaitingInput: false },
-    { key: 'paused', lastActivityAt: at(11) },
-    { key: 'asks', lastActivityAt: at(4), busy: false, awaitingInput: true },
-    { key: 'building', lastActivityAt: at(3), busy: true, awaitingInput: false },
-    { key: 'order', lastActivityAt: at(2), kind: 'task' },
-  ];
-  const mayors = [
-    { id: 1, lastActivityAt: at(13), busy: false },
-    { id: 2, lastActivityAt: at(1), busy: true },
-  ];
-  const inbox = buildInbox({
-    conversations: [
-      { id: 99, lastActivityAt: at(0), homeroomBot: true },
-      { id: 7, lastActivityAt: at(10) },
-    ],
-    sessions,
-    mayors,
-  });
-  const seats = (bySession, byMayor) => railCandidates(inbox, (entry) => agentAsksForYou(entry, bySession, byMayor));
-  const bySession = new Map(sessions.map((item) => [item.key, item]));
-  const byMayor = new Map(mayors.map((item) => [String(item.id), item]));
-  const keys = (rows) => rows.map((row) => row.key);
-  assert.deepEqual(keys(seats(bySession, byMayor)),
-    ['session:asks', 'session:building', 'session:order', 'mayor:2', 'person:7'],
-    'waiting on you, at work, an open work order and a busy agent chat are seated; the proposed, paused and idle ones are not, however recent; the bot\'s chat (99) is not a row of Messages');
-  // The sidebar seats the five most recent of them, under their headings.
-  assert.deepEqual(keys(railConversations(seats(bySession, byMayor), new Map())),
-    ['session:asks', 'session:building', 'session:order', 'mayor:2', 'person:7']);
-  // An agent that finishes leaves its seat on the next redraw.
-  const done = new Map(bySession);
-  done.set('building', { ...bySession.get('building'), busy: false });
-  const idleMayor = new Map([['1', mayors[0]], ['2', { ...mayors[1], busy: false }]]);
-  assert.deepEqual(keys(seats(done, idleMayor)), ['session:asks', 'session:order', 'person:7']);
-  // With nothing going on, Agents seats nothing; People are untouched.
-  assert.deepEqual(keys(seats(new Map(), new Map())), ['person:7']);
-});
-
 test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept', () => {
   const places = {
     channels: [
@@ -159,20 +80,18 @@ test('the places: the column\'s own list, topics after two behind "Show N more",
   assert.match(rail, /owed=\{here \? place\.owed : needs\}/);
 });
 
-test('the markup: the conversations follow Messages, empty in the prerender, and nothing is nested there', () => {
+test('the markup: Messages has nothing nested under it, and Recents follows it (7 Nov 2026)', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
-  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><div id="platform-rail-pinned"/,
-    'Messages, then its conversations, then Recents (#6019; One Home #6361 put AI above Messages)');
+  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-pinned"/,
+    'Messages, then Recents (#6019; One Home #6361 put AI above Messages)');
   assert.ok(html.indexOf('id="platform-tab-ai"') < html.indexOf('id="platform-tab-messages"'), 'AI above Messages');
-  assert.doesNotMatch(html, /platform-rail-nest/);
-  const src = read('frontend/src/features/nav/rail-conversations.tsx');
-  assert.match(src, /const open = sidebarRows && screen === 'messages-screen' && tab === 'messages';/);
-  assert.match(src, /href="#messages"\s*data-rail-all-messages=""\s*aria-current=\{page \? 'page' : undefined\}/);
-  assert.equal(message('core:rail.allMessages'), 'All messages');
-  // The inbox publishes the rows from the whole merge, not the search's answer.
-  const inbox = read('frontend/src/features/messages/index.tsx');
-  assert.match(inbox, /const railOpenKey = inbox\.find\(isOpen\)\?\.key \|\| null;/);
-  assert.match(inbox, /const rows = railConversations\(railCandidates\(inbox, asksForYou\)\)\n/);
+  assert.doesNotMatch(html, /platform-rail-nest|platform-rail-conversations/);
+  // The sidebar nests under a community's row alone: the conversations it
+  // held under Messages (v3) and the module that worked them out are gone.
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/nav/rail-conversations.tsx')));
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/messages/rail-inbox.ts')));
+  assert.doesNotMatch(read('frontend/src/features/nav/tab-bar.tsx'), /RailConversations/);
+  assert.doesNotMatch(read('frontend/src/features/messages/index.tsx'), /publishRailInbox|railOpenKey|railRow/);
 });
 
 test('the motion: one clock for both parts, on the content\'s own height', () => {
@@ -188,16 +107,20 @@ test('the motion: one clock for both parts, on the content\'s own height', () =>
   assert.match(css, /\.platform-rail-communities > \.platform-rail-nest \{\n    margin-top: -1px;\n  \}/, 'the section\'s gap does not arrive with it');
 });
 
-test('the pages: one pane at a time in the inbox, and the All row goes to All communities', () => {
+test('the pages: the inbox\'s list beside a conversation, the list as the page with none open, and the All row goes to All communities', () => {
   const inbox = read('frontend/src/features/messages/index.tsx');
-  assert.match(inbox, /const railClass = sidebarRows && !drawer\.on \? \(discussionOpen \? ' messages-list-in-rail' : ' messages-list-page'\) : '';/);
+  // 7 Nov 2026: with the sidebar's nest under Messages gone, an open
+  // conversation has the list beside it again; with none open the list is
+  // the page (All messages).
+  assert.match(inbox, /const railClass = sidebarRows && !drawer\.on && !discussionOpen \? ' messages-list-page' : '';/);
+  assert.doesNotMatch(inbox, /messages-list-in-rail/);
   const store = read('frontend/src/features/messages/store.ts');
-  // One pane at a time is a phone's alone: from 768px the list is in the
-  // sidebar, so no desktop width is too narrow for both (#4229's crowding).
+  // One pane at a time is a phone's alone: from 768px the list sits beside
+  // the conversation, so no desktop width is too narrow for both (#4229).
   assert.match(store, /function listAside\(\): boolean \{\n  return isMobile\(\);\n\}/);
   assert.doesNotMatch(store, /LIST_BESIDE_MIN_WIDTH|sidebarRowsUp|listCrowded/);
   const css = block1024();
-  assert.match(css, /\.messages-layout\.messages-list-in-rail > \.messages-list-pane \{\n    display: none;\n  \}/);
+  assert.doesNotMatch(read('public/css/app.css'), /messages-list-in-rail/);
   assert.match(css, /\.messages-layout\.messages-list-page > \.messages-thread-pane \{\n    display: none;\n  \}/);
   assert.match(css, /\.messages-layout\.messages-list-page > \.messages-list-pane \{\n    flex: 1 1 auto;\n    width: auto;\n    max-width: 720px;/);
   // No width has the strip's column of conversations any more (from 768px).
@@ -219,7 +142,8 @@ test('the look: one indent a level, one unbroken line, the parent unfilled; AI a
   assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-place, \.platform-rail-sub\) \{[^}]*margin-inline-start: 24px;[^}]*\}/);
   assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-places-group \.dev-ws-place, \.platform-rail-group\[data-rail-headed\] \.platform-rail-sub\) \{\n    margin-inline-start: 36px;\n  \}/, 'a headed group is a step in');
   assert.match(css, /padding-block: 8px 3px; padding-inline: 30px 8px;[^}]*text-transform: none;/, 'sub-headers where the rows above start, in sentence case');
-  assert.match(css, /\.platform-rail-community\[data-rail-open\]\[aria-current="page"\],\n  \.platform-tabs:has\(#platform-rail-conversations > \[data-nest="open"\] \[aria-current="page"\]\) #platform-tab-messages\[aria-current="page"\] \{\n    background: transparent;/);
+  assert.match(css, /\.platform-rail-community\[data-rail-open\]\[aria-current="page"\] \{\n    background: transparent;/);
+  assert.doesNotMatch(css, /platform-rail-conversations/);
   assert.match(css, /--platform-rail-full: 212px;/, 'the deeper rows need 212px');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   // #6019: the Homeroom bot tab wears the bot's picture in line, not a
