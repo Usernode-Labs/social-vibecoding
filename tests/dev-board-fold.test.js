@@ -1751,7 +1751,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // join, #apps/<slug> its project's hub), and +1 brings the details page's
   // up-arrow check (#1036) back on Challenges, which goes up to Me. 732
   // leaves 148 slots.
-  checkCap.assertPinned(DAPP.tests.length, 732);
+  // 732 → 729: −3 (One Home follow-up, #6361) the Communities screen's list
+  // went to Home, and its three checks (its rows' Workshop links, their two
+  // counts, the audience chips) with it. Its page check now follows
+  // #communities to Home and finds the Needs you tile there; the two Needs
+  // you checks follow the page to #needs. 729 leaves 151 slots.
+  checkCap.assertPinned(DAPP.tests.length, 729);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
