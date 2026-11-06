@@ -139,7 +139,15 @@ export function attachStickToBottom(
   atPresent: { current: boolean } = { current: true },
   env: ObserverEnv = globalThis as unknown as ObserverEnv,
 ): () => void {
-  const follow = () => { if (pinned.current) el.scrollTop = el.scrollHeight; };
+  // #6405: where our own follow last put the scroller. Its scroll event can
+  // be measured after the card grew past that point; that is not the reader
+  // leaving the bottom, and it used to stop the following for good.
+  let followedAt: number | null = null;
+  const follow = () => {
+    if (!pinned.current) return;
+    el.scrollTop = el.scrollHeight;
+    followedAt = el.scrollTop;
+  };
   // The keyboard arriving for the composer beside this transcript.
   const hold = attachKeyboardHold(el, {
     pinned: () => pinned.current && atPresent.current,
@@ -151,6 +159,8 @@ export function attachStickToBottom(
       if (pinned.current && !isNearBottom(el, 1)) follow();
       return;
     }
+    // Our own follow, delivered after the content grew: still pinned.
+    if (pinned.current && followedAt !== null && el.scrollTop >= followedAt) return;
     pinned.current = atPresent.current && isNearBottom(el);
   };
   el.addEventListener('scroll', onScroll, { passive: true });

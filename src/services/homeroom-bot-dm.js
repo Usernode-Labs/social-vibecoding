@@ -819,12 +819,18 @@ const MAX_DOING_PROJECT = 60;
 const MAX_DRAFT_CHARS = 1800;
 const MAX_DRAFT_BYTES = 5600;
 
-/** Pure: the end of an answer being written, as a typing event carries it: '…' and the newest words, when it is long. */
+/**
+ * Pure: the end of an answer being written, as a typing event carries it:
+ * '…' and the newest words when it is long, and where that tail starts in
+ * the whole answer (`from`; 0 when nothing was cut), so the screen can stitch
+ * the tail under the words it already holds instead of sliding them (#6405).
+ */
 function draftTail(text) {
   let out = String(text || '').replace(/\r/g, '').trim();
-  if (!out) return '';
-  const fits = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_DRAFT_BYTES;
-  if (out.length <= MAX_DRAFT_CHARS && fits(out)) return out;
+  if (!out) return { text: '', from: 0 };
+  // `from` travels beside the text, so the byte budget leaves room for it.
+  const fits = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_DRAFT_BYTES - 16;
+  if (out.length <= MAX_DRAFT_CHARS && fits(out)) return { text: out, from: 0 };
   let keep = MAX_DRAFT_CHARS;
   let tail = out.slice(-keep);
   while (keep > 100 && !fits(`… ${tail}`)) {
@@ -834,7 +840,8 @@ function draftTail(text) {
   // From a word, not the middle of one.
   const space = tail.search(/\s/);
   if (space > 0 && space < 40) tail = tail.slice(space + 1);
-  return `… ${tail.trimStart()}`;
+  const words = tail.trimStart();
+  return { text: `… ${words}`, from: out.length - words.length };
 }
 
 /** Pure: `what` as a typing event carries it ({ kind, number?, project? }), or null for "thinking". */
@@ -849,8 +856,9 @@ function typingDoing(what) {
     return project ? { kind: what.kind, project } : { kind: what.kind };
   }
   if (what.kind === 'writing') {
-    const text = typeof what.text === 'string' ? draftTail(what.text) : '';
-    return text ? { kind: 'writing', text } : null;
+    const tail = typeof what.text === 'string' ? draftTail(what.text) : { text: '', from: 0 };
+    // `from` only when the text was cut, so a whole answer keeps its own start.
+    return tail.text ? { kind: 'writing', text: tail.text, ...(tail.from > 0 ? { from: tail.from } : {}) } : null;
   }
   return { kind: what.kind };
 }
