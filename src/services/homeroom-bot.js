@@ -2530,7 +2530,8 @@ function triagePromptFor({
   personPlan = null,
 }) {
   return [
-    seed, live.screenshotNote(seed).join('\n').trim(), personPlanTriageNote(personPlan), triagePrompt(),
+    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
+    personPlanTriageNote(personPlan),
     locale ? `The requester's locale is \`${locale}\`.` : null,
     live.requestRulesLines().join('\n').trim(),
     signal ? signalNote(signal) : null,
