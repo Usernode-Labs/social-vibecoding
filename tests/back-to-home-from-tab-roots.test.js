@@ -177,7 +177,9 @@ test('QA Q1: every screen that sets an _inX flag is sent home by both "/" branch
   // A screen added later has to be added to both lists, or Back to "/" from
   // it stacks two screens again. The flags are read from app.js itself.
   const flags = [...new Set(APP_JS.match(/App\._in[A-Z][A-Za-z]*(?= = true)/g) || [])];
-  assert.ok(flags.length >= 8, `found the flags (${flags.join(', ')})`);
+  // Seven since One Home (#6361) retired Discover's screen and the bot tab's
+  // History replaced Me › Your work's.
+  assert.ok(flags.length >= 7, `found the flags (${flags.join(', ')})`);
   const bare = APP_JS.slice(APP_JS.indexOf('      if (!hash) {'),
     APP_JS.indexOf('      const parts = hash.split(\'/\');'));
   const create = APP_JS.slice(APP_JS.indexOf("if (parts[0] === 'create') {"),

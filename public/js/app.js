@@ -7521,7 +7521,7 @@ const App = {
     // Already mounted: an in-screen change (a tab, the deep-linked
     // section, a user drill-in), not a screen entry — hand it to the
     // module instead of replaying the whole swap. Same idiom as
-    // navigateToBrowse / navigateToAdminConsole / navigateToSettings,
+    // navigateToAdminConsole / navigateToSettings,
     // and load-bearing for the entry animation (#979): a fragment
     // navigation fires BOTH popstate and hashchange, so restoreFromHash
     // runs twice in one tick, and without this guard the second run's
