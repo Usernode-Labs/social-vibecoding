@@ -26976,6 +26976,26 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   border: 0;
   padding: 0;
 }
+/* #6381: the before and after's own toolbar has no way out of the column,
+   so this small head above it carries the close the design preview has in
+   its header — an × at the right, or the back arrow at the left where the
+   column is the whole screen. */
+.gc-detail-shots-head {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 4px 8px 2px;
+}
+.gc-detail-shots-close {
+  margin-inline-start: auto;
+  width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--text-primary, #18181b);
+}
+.gc-detail-shots-close:hover { background: var(--state-neutral-bg, rgba(24,24,27,.06)); }
+.gc-detail-shots-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gc-detail-shots-close svg { width: 18px; height: 18px; }
 .gc-detail-back {
   width: 32px; height: 32px; padding: 0; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
