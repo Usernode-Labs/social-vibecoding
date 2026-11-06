@@ -399,20 +399,21 @@ export function AiScreen(): ReactNode {
   // With a preview beside the thread both edges are handles (#6359), each
   // the width of the column after it, the list taking what is left. In three
   // columns the thread's width runs to where the preview begins, and its
-  // bound keeps the list's floor and the preview's (the stylesheet's 360px);
-  // the preview's keeps the list's and the thread's. In halves the list has
-  // stepped aside, so the thread's edge is no handle and the preview's keeps
-  // only the thread's floor.
+  // bound keeps the list's floor beside the preview as it is now drawn, the
+  // same room app.css leaves it (`--ai-room` - 480px - `--ai-preview-w`), so
+  // the handle stops where the column does; it is read again whenever the
+  // preview's width changes (`watch` below). The preview's keeps the list's
+  // floor and the thread's. In halves the list has stepped aside, so the
+  // thread's edge is no handle and the preview's keeps only the thread's floor.
   const threeUp = detailHere && layout === 'three';
   const threadProbe = useCallback(() => {
     const probe = probeLayout();
     const pane = previewRef.current;
     const box = pane ? pane.getBoundingClientRect() : null;
-    return {
-      ...probe,
-      neighbourMin: (probe.neighbourMin ?? 0) + PREVIEW_MIN_W,
-      endAt: box && box.width > 0 ? inlineStartOf(box) : undefined,
-    };
+    if (!box || box.width <= 0) return { ...probe, neighbourMin: (probe.neighbourMin ?? 0) + PREVIEW_MIN_W };
+    const endAt = inlineStartOf(box);
+    const roomEnd = probe.innerWidth - Math.max(0, probe.rightInset || 0);
+    return { ...probe, neighbourMin: (probe.neighbourMin ?? 0) + Math.max(0, roomEnd - endAt), endAt };
   }, []);
   const previewProbe = useCallback(() => {
     const probe = probeLayout();
@@ -775,6 +776,7 @@ export function AiScreen(): ReactNode {
             controls="ai-main-pane"
             widthKey={threeUp ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY}
             probe={threeUp ? threadProbe : undefined}
+            watch={threeUp ? previewRef : undefined}
           />
           {/* Main Chat's name over it. 1 Nov 2026: a thread in its place is
               alone under its own (ReplyThreadPanel `inMain`), with no bar of

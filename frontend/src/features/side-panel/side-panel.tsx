@@ -401,6 +401,7 @@ export function SidePanelDivider({
   controls = 'platform-side-panel',
   widthKey,
   probe: measure = probeLayout,
+  watch,
 }: {
   panelRef: RefObject<HTMLElement | null>;
   shown: boolean;
@@ -413,6 +414,9 @@ export function SidePanelDivider({
    *  has more than one neighbour (the bot page with a preview open, #6359);
    *  the side panel's own reading by default. Keep it stable (useCallback). */
   probe?: () => LayoutProbe;
+  /** A neighbour whose width this edge's bound is read from: its range is
+   *  read again whenever that one is resized (the preview beside the thread). */
+  watch?: RefObject<HTMLElement | null>;
 }): ReactNode {
   const t = useMessages('agent');
   const [range, setRange] = useState<WidthRange | null>(null);
@@ -447,8 +451,14 @@ export function SidePanelDivider({
     settle();
     if (!shown) return undefined;
     window.addEventListener('resize', settle);
-    return () => window.removeEventListener('resize', settle);
-  }, [shown, settle]);
+    const other = watch?.current;
+    const observer = other && typeof ResizeObserver === 'function' ? new ResizeObserver(() => settle()) : null;
+    if (observer && other) observer.observe(other);
+    return () => {
+      window.removeEventListener('resize', settle);
+      observer?.disconnect();
+    };
+  }, [shown, settle, watch]);
 
   // A drag that never ended (the island unmounting mid-drag) must not leave
   // the whole document stuck in the resize cursor.

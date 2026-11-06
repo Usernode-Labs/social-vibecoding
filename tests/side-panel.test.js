@@ -1484,12 +1484,14 @@ test('with a preview open both edges are handles: their own keys, every column\'
   const preview = { innerWidth: 1600, appLeft: 72, neighbourMin: 480 + 320, selfMin: 360 };
   assert.deepEqual({ ...bounds(preview) }, { min: 360, max: 728 });
   assert.equal(shownWidth(900, preview), 700, 'the preview runs to the window\'s edge');
-  // The thread's edge keeps the list's floor and the preview's (480 + 360),
-  // and its width runs to where the preview begins, not to the window's edge.
-  const thread = { innerWidth: 1600, appLeft: 72, neighbourMin: 480 + 360, endAt: 900 };
-  assert.deepEqual({ ...bounds(thread) }, { min: 320, max: 688 });
-  assert.equal(shownWidth(500, thread), 400);
-  assert.equal(clampWidth(shownWidth(500, thread) + 100, bounds(thread)), 500, 'a 100px drag toward the list gives 100px');
+  // The thread's edge keeps the list's floor and the preview as it is drawn
+  // (480 + 468, ai/index.tsx threadProbe), the room app.css leaves the
+  // thread: 1600 - 212 (the rail) - 480 - 468 = 440px, where the column stops.
+  // Its width runs to where the preview begins, not to the window's edge.
+  const thread = { innerWidth: 1600, appLeft: 212, neighbourMin: 480 + 468, endAt: 1600 - 468 };
+  assert.deepEqual({ ...bounds(thread) }, { min: 320, max: 440 });
+  assert.equal(shownWidth(1132 - 400, thread), 400);
+  assert.equal(clampWidth(shownWidth(732, thread) + 100, bounds(thread)), 440, 'End and a drag stop where the column does');
   assert.equal(clampWidth(0, bounds(preview)), 360, 'Home: the preview\'s own floor, not the panel\'s');
 });
 
