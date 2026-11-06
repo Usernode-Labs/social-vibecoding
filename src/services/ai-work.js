@@ -392,6 +392,13 @@ function inFlight(state) {
  * Pure: a thread's state before its stored row exists (it is made on the
  * read, workFor; this covers a read that failed): its change's, or waiting
  * to be read. Null for a thread with neither a request nor a change.
+ *
+ * Waiting to be read only for a request that is open. A thread with a
+ * number but no request row (an old request from before the move off
+ * GitHub, never mirrored into `requests`) is not one: listing it drew a row
+ * with no title, "Not started yet", that opened the project's Workshop
+ * (6 Nov 2026, twelve of them under Not moving). The tab before #6359 left
+ * such a thread out the same way.
  */
 function fallbackState(row) {
   if (row.change_status) {
@@ -408,7 +415,7 @@ function fallbackState(row) {
     }
     return change;
   }
-  if (row.request_state === 'open' || row.number != null) {
+  if (row.request_state === 'open') {
     return { stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, since: iso(row.request_at || row.created_at) };
   }
   return null;
