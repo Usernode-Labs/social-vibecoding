@@ -104,3 +104,22 @@ test('#6313: a read queued after a plan that could not be written is retrying th
   }, { botUsername: 'homeroom-bot' });
   assert.equal(lists.waiting[0].says, words);
 });
+
+// 6 Nov 2026: a thread with a request number but no request row (an old
+// request from before the move off GitHub, never mirrored into `requests`)
+// is not listed. Before, it fell back to "waiting to be read" and drew a row
+// with no title, "Not started yet", that opened the project's Workshop:
+// twelve of them under Not moving on Evan's tab.
+test('a thread whose request has no row is not listed as Not started yet', () => {
+  const { fallbackState } = require('../src/services/ai-work');
+  const orphan = { state: 'open', kind: 'request', number: 52, request_id: null, request_state: null, own: true,
+    created_at: '2026-04-20T10:00:00Z' };
+  assert.equal(fallbackState(orphan), null);
+  assert.equal(standing(orphan, 7, NOW, 99, null), null, 'no row on the tab');
+  // An open request with no stored row yet still waits to be read.
+  assert.deepEqual(fallbackState(row), {
+    stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, since: '2026-11-03T15:00:00.000Z',
+  });
+  // A closed one is not listed either.
+  assert.equal(fallbackState({ ...row, request_state: 'closed' }), null);
+});
