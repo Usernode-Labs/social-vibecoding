@@ -4815,6 +4815,11 @@ async function runTriage(pool, config, {
         // request's first look has no note before it, and speaks.
         askedLook: item.reason === ASKED_REASON,
         comments,
+        // #6399: a read a person asked for again, once the reason its last
+        // one handed back had gone (homeroom-bot-dm.js askBotToBuild
+        // `readAgain`), always says what it found: the page offered it
+        // because that note is out of date, so it may not be held back.
+        askedAgain: item.reason === READ_AGAIN_REASON && Number(item.requested_by) > 0,
         model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
         quietHold: item.reason === APP_AGAIN_REASON || item.reason === BACKLOG_REASON,
         proposalCeiling: botProposalCeiling(settings),
@@ -6478,18 +6483,35 @@ async function runChecksFix(pool, config, {
     grantedBy = used?.granted_by || null;
   }
 
-  // #6234: one line on the change as its fix starts, so the request's page
-  // hears the bot is on it (its Testing card reads the queue row; the
-  // thread hears it here). Once across the look's attempts (`note` is
-  // look.once), so a look resumed after a restart does not say it twice,
-  // and not on the second try after running out of time: checks_retry said
-  // so. The end line (checks_revise, checks_retry, the hand-off) follows.
+  // #6234/#6409: one line on the change as its fix really starts, so the
+  // request's page hears the bot is on it (its Testing card reads the queue
+  // row; the thread hears it here). It goes out from the turn's own start
+  // callback (runFollowUpTurn's onStart), which runs only once the change's
+  // session is held and its worker is up: a try that finds the change busy
+  // posts nothing and only backs off, so a retried try no longer repeats the
+  // promise (#6409). A claim row per failing head and attempt keeps a retry
+  // or a restart from saying it twice. Its wording says which try this is: a
+  // first start promises; a try after running out of time, or on a new head
+  // the bot's own fix landed that still fails, says it did not pass and that
+  // it is trying once more. The end line (checks_revise, checks_retry, the
+  // hand-off) follows.
   // Not for a round only its shots asked for (onlyShots): its checks pass,
   // nothing said a person had to fix it, and a seed that adds nothing ends
   // in silence, which would leave a start line with no end.
-  if (!onlyShots && !await look.once('retriedAtStart', () => checksRetried(pool, session.id, head))) {
-    await note('checks_fixing', { runId: null, text: followup.checksFixingText({ failing, broken, skipped }) });
+  let startLine = null;
+  let startAttempt = null;
+  if (!onlyShots) {
+    const retried = await look.once('retriedAtStart', () => checksRetried(pool, session.id, head));
+    const fixLanded = await look.once('fixLandedAtStart', () => botFixLanded(pool, session.id, head));
+    startAttempt = retried || fixLanded ? 'again' : 'start';
+    startLine = startAttempt === 'again'
+      ? followup.checksFixingAgainText()
+      : followup.checksFixingText({ failing, broken, skipped });
   }
+  const onStart = !startLine || !deps.ws ? null : async () => {
+    if (!await claimChecksStart(pool, { app, session, head, attempt: startAttempt })) return;
+    await note('checks_fixing', { runId: null, text: startLine });
+  };
 
   let turn = null;
   const seed = sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, issueThread?.messages || []);
@@ -6522,6 +6544,7 @@ async function runChecksFix(pool, config, {
     // `mode` is runFollowUp's: a build turn, since revisions remain.
     pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps: { github, ...deps },
     reasoningEffort,
+    onStart,
     steps: look.steps, owner: look.owner, key: 'checks',
     // A fix round's own message, which the reconcile reads back to know
     // the move changed how the change works, not what it does
@@ -6667,6 +6690,57 @@ async function checksRetried(pool, sessionId, head) {
     return rows.length > 0;
   } catch {
     // A read that fails hands over, as before: never a loop of retries.
+    return true;
+  }
+}
+
+/**
+ * #6409: whether the bot's own fix already landed and this new head still
+ * fails. A revise run records the head it looked at (checksHeadSha); one
+ * recorded for another head than this one means the bot pushed a fix since,
+ * so a start line here is a NEW attempt, not the first promise.
+ */
+async function botFixLanded(pool, sessionId, head) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_runs
+        WHERE proposal_session_id = $1 AND verdict = 'revise'
+          AND checks_head_sha IS NOT NULL
+          AND lower(checks_head_sha) <> lower($2)
+        LIMIT 1`,
+      [Number(sessionId), String(head || '')],
+    );
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #6409: claim this failing head's start line before saying it. The events
+ * row is the durable mark, so a retry or a restart on the same head and
+ * attempt says nothing; true means the claim is this attempt's and the line
+ * goes out. A claim for an earlier head does not count: that line was about
+ * the old version. A query that fails returns true, so the line is said once
+ * per look as before, never left unsaid.
+ */
+async function claimChecksStart(pool, { app, session, head, attempt }) {
+  const sha = String(head || '').toLowerCase();
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO events (app_id, session_id, event_type, metadata)
+        SELECT $1, $2, 'homeroom_bot_checks_fix_started', jsonb_build_object('head', $3::text, 'attempt', $4::text)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM events
+           WHERE session_id = $2
+             AND event_type = 'homeroom_bot_checks_fix_started'
+             AND metadata->>'head' = $3
+             AND metadata->>'attempt' = $4)
+        RETURNING id`,
+      [app.id, Number(session.id), sha, attempt],
+    );
+    return rows.length > 0;
+  } catch {
     return true;
   }
 }
@@ -7478,7 +7552,8 @@ async function heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeilin
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false, comments = [],
+  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false,
+  askedAgain = false, comments = [],
   decider = null, backlog = false, goAhead = null, deps,
 }) {
   const { github, ws } = deps;
@@ -7508,7 +7583,7 @@ async function actOnVerdict({
   // there is the voice's to answer (homeroom-bot-voice.js), not a reason to
   // say the note again.
   const voiceAnswers = (relook || askedLook) && voiceModule(deps).voiceOn(await readSettings(pool).catch(() => null), { type: 'issue' });
-  const gated = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
+  const gated = (relook || askedLook) && !askedAgain && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
   // #6146: after "a person needs to decide", which tells them to reply in the
   // discussion, a plain message there from its requester or a decider it
   // names is their answer (answerersOf), not people talking among themselves.
@@ -11321,6 +11396,10 @@ module.exports = {
   // #6234: whether a fix of a head ran out of time once, for the change
   // page's "trying once more" (homeroom-bot-progress.js changeBotFix).
   checksRetried,
+  // #6409: the start line's durable claim per failing head, and whether the
+  // bot's own fix already landed on an earlier one.
+  botFixLanded,
+  claimChecksStart,
   queueWait,
   queueSnapshot,
   recordReviewState,

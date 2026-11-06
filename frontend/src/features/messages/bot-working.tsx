@@ -43,6 +43,11 @@ import type { BotDoing, Typist } from './store';
  * again as the next round streamed: the card flashed between output and
  * thinking. The store now holds the draft on the bot's Typist
  * (store.ts `botTypist`) and this draws it whatever the doing kind is.
+ *
+ * 6 Nov 2026 (#6405): the draft only grows. A tail the server cut from
+ * part-way through is stitched under the words already held, and a rewrite
+ * (the correction pass) waits until it has caught up with them, so the card
+ * never shrinks and never streams the answer again from its first word.
  */
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;

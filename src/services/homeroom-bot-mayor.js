@@ -88,6 +88,7 @@ const botTools = require('./bot-tools');
 const log = require('./logger');
 const crypto = require('node:crypto');
 const { withoutEmDashes } = require('./em-dashes');
+const replyHtml = require('./homeroom-bot-html');
 const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
@@ -721,6 +722,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Keep small talk and quick answers short: a few sentences. When they ask for analysis, options, a plan, a',
     '  comparison or detail, take the room it needs: a longer answer laid out with short headings, lists or a',
     '  table (Markdown), still in plain words, and lead with the answer itself.',
+    '- Any reply longer than two short lines also goes in the reply tool\'s html field, laid out as its description',
+    '  says, beside the same words in text.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- From this chat you cannot build, merge, vote, close requests yourself or change settings, or change anybody else\'s',
     '  change. Changes come from requests, and your own changes are updated through',
@@ -748,6 +751,23 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     platformRules(),
   ].join('\n');
 }
+
+// Task 2020 (the owner's task-assistant v1): how the reply's `html` is
+// written. The chat draws it in place of the words, in a frame with scripts
+// off that loads nothing, with these colour names set to its own tokens for
+// light and dark (frontend/src/features/messages/bot-html.tsx REPLY_TOKENS).
+const REPLY_HTML_DESCRIPTION = [
+  'For any reply longer than two short lines: the same answer, laid out, as an HTML fragment. The chat shows it in',
+  'place of text. Use what fits: short headings, short paragraphs, lists, steps, a table, option cards, a timeline or',
+  'a small inline SVG diagram. Self-contained and under 30000 characters: no scripts (they never run), no buttons or',
+  'forms (nothing in it can be tapped but a link), no images, fonts or anything else from another address. Styles',
+  'inline or in one <style> block, and colours only as var(--ink) var(--ink-2) var(--muted) var(--line)',
+  'var(--surface) var(--surface-2) var(--accent) var(--accent-tint) var(--green) var(--red) var(--orange), so it',
+  'follows light and dark mode. It is drawn 280 to 680 px wide: it must read well on a phone. Calm: mostly neutral,',
+  'one accent at most, the font the chat gives it. A link only as a short labelled <a href>, to a link a tool',
+  'returned, never a raw address. It says exactly what text says, no more: text stays the plain version that',
+  'notifications, search and translation read. Small talk, short answers and a line under a draft have no html.',
+].join(' ');
 
 const TOOLS = [
   {
@@ -1065,6 +1085,8 @@ const TOOLS = [
         type: 'object',
         properties: {
           text: { type: 'string', description: 'Your reply in plain words: short for small talk, longer and laid out when they ask for analysis, options or detail. Under a draft, one short line about it at most: the card shows the draft\'s title and words, so never write them here.' },
+          // Task 2020: the same answer, laid out (homeroom-bot-html.js).
+          html: { type: 'string', description: REPLY_HTML_DESCRIPTION },
           cards: {
             type: 'array',
             maxItems: MAX_CARDS,
@@ -2187,7 +2209,15 @@ function sayDoing(pool, ctx, name, args = {}) {
       project = ctx.projectNames.get(asked);
     }
     const what = doingFor(name, args, { project });
-    if (what !== undefined) await doing(what);
+    if (what === undefined) return;
+    // #6405: once the turn has named a step, a tool with no name of its own
+    // leaves that step up, rather than dropping the card back to "Thinking".
+    if (what === null) {
+      if (ctx.doingNamed) return;
+    } else {
+      ctx.doingNamed = true;
+    }
+    await doing(what);
   };
   ctx.saying = (ctx.saying || Promise.resolve()).then(say).catch((err) => {
     log.warn('homeroom-bot-mayor', 'Could not say what the bot is doing', { tool: clip(name, 40), err: clip(err?.message, 200) });
@@ -2263,7 +2293,7 @@ function draftOf({ content = '', toolCalls = [] } = {}) {
 
 /**
  * What shows the answer as it is written, for one turn: `onDelta` for the
- * transport, `clear()` before a pass that writes it again, `close()` once
+ * transport, `restart()` before a pass that writes it again, `close()` once
  * the turn's own message is on its way. Null when nothing can show it (no
  * working card: deps.doing). Never rejects.
  */
@@ -2272,6 +2302,10 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
   if (typeof doing !== 'function') return null;
   let latest = '';
   let shown = '';
+  // #6405: after `restart()`, the words already on the card stay until the
+  // rewritten answer has caught up with them, so it never shrinks or streams
+  // again from its first word.
+  let floor = 0;
   let queued = false;
   let closed = false;
   let lastAt = 0;
@@ -2279,13 +2313,22 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
     const gap = lastAt + every - Date.now();
     if (gap > 0) await wait(gap);
     queued = false;
-    if (closed || latest === shown) return;
+    // A round that calls another tool writes no answer: say nothing and keep
+    // the words on the card, instead of dropping it back to "Thinking".
+    if (closed || !latest || latest === shown) return;
     shown = latest;
     lastAt = Date.now();
-    await doing(shown ? { kind: 'writing', text: shown } : null);
+    ctx.doingNamed = true;
+    await doing({ kind: 'writing', text: shown });
   };
   const set = (text) => {
     if (closed) return;
+    if (floor) {
+      // A rewritten answer shows only once it is at least as long as what is
+      // already on the card.
+      if (!text || text.length < floor) return;
+      floor = 0;
+    }
     latest = text;
     if (queued || latest === shown) return;
     queued = true;
@@ -2299,7 +2342,10 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
       // 2 Nov 2026: the words already kept from earlier rounds stay on the card (answerText).
       if (text !== null) set(text && ctx.besides?.length ? answerText(ctx.besides, text) : text);
     },
-    clear() { set(''); },
+    // #6405: the correction pass writes the answer again. What is shown stays,
+    // and the rewrite takes over only once it has caught up with it (or with
+    // the longer update still on its way to the card).
+    restart() { floor = Math.max(shown.length, latest.length); },
     // `clear`: what was shown goes too (the turn found no answer to send).
     close({ clear = false } = {}) {
       if (closed) return;
@@ -2356,6 +2402,30 @@ function answerText(besides = [], text = '') {
   }
   const inside = said && squashWords(kept.join(' ')).includes(said);
   return [...kept, ...(reply && !inside ? [reply] : [])].join('\n\n');
+}
+
+/**
+ * Pure (task 2020): the words a turn's answer is checked by (claimProblems):
+ * the answer's text, and the words its laid-out copy shows, which the chat
+ * draws in the text's place.
+ */
+function checkedWords(ctx, finalText = '') {
+  const said = answerText(ctx?.besides, ctx?.reply?.text ?? finalText);
+  const shown = ctx?.reply?.html ? replyHtml.htmlWords(ctx.reply.html) : '';
+  return shown ? `${said}\n\n${shown}` : said;
+}
+
+/**
+ * Pure (task 2020): the laid-out copy a reply is sent with, or null. Only
+ * beside the words exactly as the reply wrote them: not when words written
+ * beside a call lead the answer (the copy would leave them out), when a
+ * repeat or a draft's echo was taken out, or when a claim was cut, since the
+ * copy would still say what the words no longer do.
+ */
+function replyHtmlFor(ctx, text) {
+  const html = ctx?.reply?.html;
+  if (!html || !text || ctx.checkedProblems?.length) return null;
+  return text === clip(cleanReply(ctx.reply.text), MAX_REPLY_CHARS) ? html : null;
 }
 
 /**
@@ -3467,7 +3537,14 @@ async function runTool(pool, ctx, name, args) {
           if (ctx.standIns > 1) { ctx.gaveUp = true; return { ok: false }; }
           return { error: CHAT_STAND_IN_NOTE };
         }
-        ctx.reply = { text: clip(lifted.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: lifted.suggestions };
+        // Task 2020: the same answer laid out, when it wrote one (homeroom-bot-html.js).
+        // A list moved out of the words leaves the fragment out: it would
+        // still show that list beside the buttons.
+        const html = lifted.moved ? null : replyHtml.cleanReplyHtml(args.html);
+        ctx.reply = {
+          text: clip(lifted.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: lifted.suggestions,
+          ...(html ? { html } : {}),
+        };
         return { ok: true };
       }
       default: {
@@ -4149,7 +4226,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // this turn's tools did, and every request number it names against the
       // requests that exist. One more pass to put it right; whatever is still
       // claimed with nothing behind it is cut before it is sent (answer()).
-      const said = answerText(ctx.besides, ctx.reply?.text ?? finalText);
+      const said = checkedWords(ctx, finalText);
       // A screen handed to the designer is answered by it, not checked here.
       const problems = said && !ctx.drawScreen && !ctx.gaveUp ? await claimProblems(pool, ctx, said) : [];
       if (problems.length) {
@@ -4159,8 +4236,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         });
         const first = ctx.reply ? { ...ctx.reply } : { text: finalText, cards: [] };
         messages.push({ role: 'user', content: checkNote(problems) });
-        // P1: the answer shown as it was written goes; the next pass writes it again.
-        draft?.clear();
+        // P1: the next pass writes the answer again; what is already shown
+        // stays until the rewrite has caught up with it (#6405).
+        draft?.restart();
         ctx.reply = null;
         finalText = '';
         // #6307: the first pass's words beside its calls go too, so the second
@@ -4181,7 +4259,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           log.info('homeroom-bot-mayor', 'The second pass failed; sending the first answer, checked', { userId: user.id, code: codeOf(err) });
         }
         if (!ctx.reply && !finalText) ctx.reply = first;
-        ctx.checkedProblems = await claimProblems(pool, ctx, answerText(ctx.besides, ctx.reply?.text ?? finalText));
+        ctx.checkedProblems = await claimProblems(pool, ctx, checkedWords(ctx, finalText));
       }
     } catch (err) {
       error = codeOf(err);
@@ -4206,6 +4284,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     });
     text = stripClaims(text, ctx.checkedProblems);
   }
+  const html = replyHtmlFor(ctx, text);
   let cards = [];
   let fallback = null;
   let defer = false;
@@ -4271,8 +4350,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   cards = [...ctx.cards, ...replyCards];
   const unique = [...new Map(cards.map((c) => [JSON.stringify(c), c])).values()].slice(0, MAX_CARDS);
   // What they might say next, as buttons to tap (dm.retireSuggestions
-  // closes them once the bot says something newer).
-  const next = suggestionLabels(ctx.reply?.suggestions);
+  // closes them once the bot says something newer). #4046, #6404: one set of
+  // answers at a time: a Questions card under this reply is the answer set,
+  // so the reply's suggestions are dropped rather than stored beside it.
+  const next = toolCard?.type === 'questions' ? [] : suggestionLabels(ctx.reply?.suggestions);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
@@ -4282,6 +4363,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       kind: 'chat', ...project,
       ...(actions.length ? { actions, status: 'open' } : {}),
       ...extra,
+      // Task 2020: the answer laid out, drawn in place of the words.
+      ...(html ? { html } : {}),
     },
     // C2.4: a new project's thread opened this turn: the answer is its first reply.
     ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
@@ -7002,6 +7085,9 @@ module.exports = {
   draftWriter,
   besideWords,
   answerText,
+  checkedWords,
+  replyHtmlFor,
+  REPLY_HTML_DESCRIPTION,
   BESIDE_NOTE,
   noteLookup,
   lookedItems,

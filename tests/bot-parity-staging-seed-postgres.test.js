@@ -257,3 +257,50 @@ test('the staging already-works request carries its note and its bell row', { ti
   assert.equal(copy.bellLabel, 'Already works');
   assert.match(copy.body, /^Already works: .* Propose to close it\?$/);
 });
+
+// #6399: the out-of-date hand-back fixture (src/db/migrate.js
+// seedStagingBotOutdatedReason). A fresh staging copy has no request whose
+// reason a later release lifted, so the before & after shots of "Ask
+// Homeroom bot to read this again" had nothing to capture. Seeded twice: one
+// request and one run, its clock before the 6 Nov release, and the track the
+// page reads marks that reason out of date.
+test('the staging out-of-date request reads as a reason a release lifted', { timeout: 60000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+
+  const app = (await pool.query(
+    `INSERT INTO apps (name, slug, self_hosted) VALUES ('Homeroom', 'usernode-seed-outdated', TRUE) RETURNING id`,
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('usernode-capture', 'not-a-login', FALSE)`,
+  );
+
+  const { seedStagingBotOutdatedReason } = require('../src/db/migrate');
+  const previous = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  try {
+    await seedStagingBotOutdatedReason(pool);
+    await seedStagingBotOutdatedReason(pool);
+  } finally {
+    if (previous === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previous;
+  }
+
+  const requests = await pool.query('SELECT number, title FROM requests WHERE app_id = $1', [app.id]);
+  assert.deepEqual(requests.rows, [{
+    number: 9112, title: 'Staging demo: a request handed back over a plan the bot could not read',
+  }]);
+  const runs = await pool.query(
+    `SELECT verdict, reason, created_at FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 9112`, [app.id],
+  );
+  assert.equal(runs.rows.length, 1, 'one run, not two');
+  assert.deepEqual(runs.rows[0].verdict, 'person');
+  assert.ok(Date.parse(runs.rows[0].created_at) < Date.parse('2026-11-06T13:05:00Z'), 'given before the fix');
+
+  const tracks = await require('../src/services/homeroom-bot-track')
+    .tracksForRequests(pool, { appId: app.id, numbers: [9112] });
+  const work = tracks.get(9112)?.work;
+  assert.deepEqual([work.stage, work.why], ['waiting_for_you', 'decide']);
+  assert.equal(work.line.outdated, 'posted_plan');
+  assert.equal(require('../src/services/work-state').outdatedReason(work), 'posted_plan');
+});

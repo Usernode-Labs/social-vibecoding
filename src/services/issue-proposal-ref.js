@@ -22,6 +22,7 @@
 // here names the PROPOSAL's lifecycle and stops there.
 
 const { IN_PROGRESS_PAUSED_WINDOW_DAYS } = require('./issue-progress');
+const { planRecordSql } = require('./request-specs');
 
 // Best first: a merged change is the record of what happened, a proposal
 // under review is the next most definite thing, and live chats come last.
@@ -75,7 +76,7 @@ async function resolveIssueProposalRefs(pool, appId, numbers, viewerId) {
       WHERE cs.app_id = $1 AND cs.is_headless = FALSE
         -- 1 Nov 2026: a person's posted plan (request-specs.js) is no
         -- change: it has no branch, and Homeroom bot builds from it.
-        AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+        AND NOT ${planRecordSql('cs')}
         AND (cs.linked_issues && $2::int[]
              OR cs.created_from_issue_number = ANY($2::int[]))
         AND (cs.status IN ('active', 'promoted', 'merging', 'merged')

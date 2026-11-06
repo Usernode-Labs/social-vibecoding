@@ -1,5 +1,7 @@
 'use strict';
 
+const { planRecordSql } = require('./request-specs');
+
 // One work state per request and per change (5 Nov 2026, step 3 of one bot
 // per thread: docs/plans/bot-one-model.md).
 //
@@ -55,6 +57,41 @@ function firstSentence(text, max = 140) {
   const flat = String(text || '').replace(/\s+/g, ' ').trim();
   const sentence = (flat.match(/^.+?[.!?](?=\s|$)/) || [flat])[0];
   return sentence.length > max ? `${sentence.slice(0, max - 1).trimEnd()}…` : sentence;
+}
+
+// ── Reasons a later release made out of date ──────────────────────────────
+
+// A read handed a request back for a limit Homeroom has since lifted: the
+// reason is no longer true, so the request's card offers to read it again
+// (homeroom-bot-dm.js askBotToBuild `readAgain`). Each entry names a code the
+// client words (`request.status.note.outdated*`), the release that lifted it,
+// and a pattern for the reasons it explains; a later fix adds a line here.
+// The first: the bot could not read a plan a person posted (6 Nov 2026,
+// 13:05 UTC, #6384).
+const LIFTED_LIMITS = Object.freeze([
+  Object.freeze({
+    code: 'posted_plan',
+    liftedAt: '2026-11-06T13:05:00Z',
+    pattern: /\bplan\b[^.]*\b(cannot|can't|could not|couldn't|unable to)\b[^.]*\bread|\b(cannot|can't|could not|couldn't|unable to)\b[^.]*\bread\b[^.]*\bplan\b/i,
+  }),
+]);
+
+/**
+ * Pure: the code of the lifted limit that explains a request's hand-back
+ * reason ('posted_plan'), else null. Only a `reason` line written before
+ * that limit was lifted counts (`work.since`), never one given after.
+ */
+function outdatedReason(work) {
+  if (!work || work.stage !== 'waiting_for_you') return null;
+  if (!work.line || work.line.code !== 'reason') return null;
+  const text = String(work.line.text || '');
+  const since = Date.parse(work.since || '');
+  if (!text || !Number.isFinite(since)) return null;
+  for (const limit of LIFTED_LIMITS) {
+    const at = Date.parse(limit.liftedAt);
+    if (Number.isFinite(at) && since < at && limit.pattern.test(text)) return limit.code;
+  }
+  return null;
 }
 
 // ── Deciding ──────────────────────────────────────────────────────────────
@@ -483,7 +520,7 @@ const REQUEST_FACTS_SQL = `
         FROM chat_sessions c
        WHERE c.app_id = it.app_id AND it.issue_number = ANY(c.linked_issues)
          AND c.is_headless = FALSE
-         AND NOT (c.source IS NOT DISTINCT FROM 'request_spec' AND c.branch_name IS NULL)
+         AND NOT ${planRecordSql('c')}
          AND c.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
        ORDER BY CASE c.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END, c.id DESC
        LIMIT 1
@@ -972,6 +1009,8 @@ module.exports = {
   STAGES,
   WHYS,
   REASONS,
+  LIFTED_LIMITS,
+  outdatedReason,
   LIVE_DAYS,
   WORDS,
   stageSays,

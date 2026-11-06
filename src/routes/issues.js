@@ -26,6 +26,7 @@ const repoRef = require('../services/repo-ref');
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
+const { planRecordSql } = require('../services/request-specs');
 const { workedOnSql } = require('../workflow/session-work.ts');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -395,6 +396,16 @@ function stagingMockIssues(repoUrl) {
       'Staging demo: obviously fake. An update to this request was asked '
       + 'for, and the bot said it would tell the person when it was in.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 46),
+    // #6399: the request whose hand-back reason a later release lifted. Its
+    // track (seedStagingBotOutdatedReason in src/db/migrate.js) is
+    // waiting_for_you/decide with a reason given before 6 Nov 2026 13:05 UTC,
+    // so its status card says the reason may be out of date and offers
+    // "Ask Homeroom bot to read this again". A staging copy has no GitHub to
+    // read the request from, so its page's own fetch finds it here.
+    mk(9112, 'Staging demo: a request handed back over a plan the bot could not read',
+      'Staging demo: obviously fake. The bot handed this back because it '
+      + 'could not read a plan a person posted, and Homeroom can read one now.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 26),
   ];
 }
 
@@ -1299,7 +1310,9 @@ function issueRoutes(config) {
           pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`,
         );
         if (!app) return res.status(404).json({ error: 'App not found' });
-        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, { app, user: req.user, issueNumber: n });
+        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, {
+          app, user: req.user, issueNumber: n, readAgain: req.body?.readAgain === true,
+        });
         if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
         return res.json(out);
       } catch (err) {
@@ -2235,7 +2248,7 @@ function issueRoutes(config) {
           WHERE app_id = $1 AND user_id = $2
             AND created_from_issue_number IS NOT NULL
             AND status <> 'archived'
-            AND NOT (source IS NOT DISTINCT FROM 'request_spec' AND branch_name IS NULL)
+            AND NOT ${planRecordSql('')}
           ORDER BY created_from_issue_number, created_at DESC`,
         [app.id, req.user.id]
       );
@@ -2263,7 +2276,7 @@ function issueRoutes(config) {
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0
             AND u.is_synthetic IS NOT TRUE
-            AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+            AND NOT ${planRecordSql('cs')}
             AND (cs.status IN ('active','promoted','merging')
                  OR (cs.status = 'paused'
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,

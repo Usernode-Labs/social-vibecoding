@@ -171,6 +171,8 @@ function trackOf({ job, work = null, runs = [], held = null, doneBy = null, unti
   const underWay = loop && !runs.some((run) => run.verdict === 'revise' && Date.parse(run.created_at) >= Date.parse(since || 0));
   const lead = runs[0] || null;
   const lastBuild = runs.find((run) => Number(run.build_session_id) > 0);
+  const wait = workState.outdatedReason(state);
+  const line = wait && state.line ? { ...state.line, outdated: wait } : (state.line || null);
   const track = {
     key: job.key,
     appSlug: job.appSlug || null,
@@ -180,7 +182,7 @@ function trackOf({ job, work = null, runs = [], held = null, doneBy = null, unti
     issueNumber: Number(job.issueNumber) || null,
     title: job.title || null,
     firstVersion: !!job.firstVersion,
-    work: { stage: state.stage, why: state.why || null, reason: state.reason || null, line: state.line || null, since },
+    work: { stage: state.stage, why: state.why || null, reason: state.reason || null, line, since },
     step,
     waitingOn,
     busy,

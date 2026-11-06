@@ -19,6 +19,7 @@
 // that throws is logged, the marker stays unset, and the next boot retries.
 
 const log = require('./logger');
+const { planRecordSql } = require('./request-specs');
 const issueRefs = require('./issue-proposal-ref');
 const { IN_PROGRESS_PAUSED_WINDOW_DAYS } = require('./issue-progress');
 const { workedOnSql } = require('../workflow/session-work.ts');
@@ -529,7 +530,7 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
         OR (cs.status = 'paused' AND cs.last_activity_at > NOW() - make_interval(days => $2)))
    -- 1 Nov 2026 (C2): a plan a person posted lives on a planning record with
    -- no branch (request-specs.js): it is the request's plan, never a change.
-   AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+   AND NOT ${planRecordSql('cs')}
 UNION ALL
 SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::bigint, NULL::int,
        i.title, i.status, i.created_by, NULL::timestamptz, i.created_at,

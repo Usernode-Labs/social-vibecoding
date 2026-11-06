@@ -38,6 +38,22 @@ test('every stage lights one step of the bar, or none before the work starts', (
   assert.equal(step(work('closed')), null);
 });
 
+test('#6399: a track says when the reason it waits on is out of date', () => {
+  const line = { code: 'reason', text: 'A design decision: version 3 plan cannot be read here.' };
+  const stale = track.trackOf({
+    job: job(), work: work('waiting_for_you', { why: 'decide', line, since: '2026-11-05T11:19:00Z' }),
+  });
+  assert.deepEqual(stale.work.line, { ...line, outdated: 'posted_plan' });
+  const fresh = track.trackOf({
+    job: job(), work: work('waiting_for_you', { why: 'decide', line, since: '2026-11-06T14:00:00Z' }),
+  });
+  assert.deepEqual(fresh.work.line, line, 'a reason given after the fix carries no mark');
+  const other = track.trackOf({
+    job: job(), work: work('waiting_for_you', { why: 'decide', line: { code: 'reason', text: 'Not a small change.' }, since: ago(30) }),
+  });
+  assert.deepEqual(other.work.line, { code: 'reason', text: 'Not a small change.' });
+});
+
 test('a track is a loop: failing checks or asked-for changes go back to building as the next try', () => {
   const runs = [
     { verdict: 'ready', created_at: ago(300) }, // the first build
