@@ -64,7 +64,7 @@
  * draft, the typing ping, the multi-line submit semantics and the Escape rule.
  */
 
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
 import { useMessages } from '../../lib/i18n/react';
@@ -173,6 +173,35 @@ function RequestShell(props: ThreadShellProps) {
   const scroll = useRef<HTMLDivElement>(null);
   const change = !!props.change;
   const decision = !!props.decision;
+  // #6440: a decision opens at its TOP — its root post and Votes card are
+  // what the page is for, not the newest reply. The thread renderer places
+  // a chat at its bottom, and its history lands a paint or two later, so
+  // hold the top for the first moment of the page; any scroll, wheel or
+  // touch from the reader ends that at once and leaves the page to them.
+  useEffect(() => {
+    if (!decision) return undefined;
+    const el = scroll.current;
+    if (!el) return undefined;
+    const started = performance.now();
+    let raf = 0;
+    const stop = () => { cancelAnimationFrame(raf); };
+    const holdTop = () => {
+      el.scrollTop = 0;
+      const gc = (window as Window & { GroupChat?: { _threadPinned?: boolean } }).GroupChat;
+      if (gc) gc._threadPinned = false;
+      if (performance.now() - started < 1500) raf = requestAnimationFrame(holdTop);
+    };
+    raf = requestAnimationFrame(holdTop);
+    el.addEventListener('pointerdown', stop, { once: true });
+    el.addEventListener('wheel', stop, { once: true, passive: true });
+    el.addEventListener('touchmove', stop, { once: true, passive: true });
+    return () => {
+      stop();
+      el.removeEventListener('pointerdown', stop);
+      el.removeEventListener('wheel', stop);
+      el.removeEventListener('touchmove', stop);
+    };
+  }, [decision]);
   const cls = change ? 'dev-request dev-change platform-kb-column'
     : decision ? 'dev-request dev-decision platform-kb-column'
       : 'dev-request platform-kb-column';
