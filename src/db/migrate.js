@@ -2962,12 +2962,27 @@ async function seedStagingBotOverlap(pool) {
                              AND user_id = $2 AND content = $3 AND deleted_at IS NULL)`,
       [appId, bot, linkLine, bigger],
     );
-    // The message was there already (a later boot): nothing more to seed.
-    if (!said) return;
+    // A later boot finds the note already there. It still makes sure the
+    // card and the choices are attached: an earlier boot that stopped
+    // between the two would otherwise leave the note without buttons, and
+    // every boot after it would skip the repair.
+    const noteId = said?.id || (await pool.query(
+      `SELECT id FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2
+          AND user_id = $3 AND content = $4 AND deleted_at IS NULL
+        ORDER BY id LIMIT 1`,
+      [appId, smaller, bot, note],
+    )).rows[0]?.id;
+    if (!noteId) return;
+    const { rows: [existingNote] } = await pool.query(
+      'SELECT metadata FROM chat_messages WHERE id = $1', [Number(noteId)],
+    );
+    // The note already carries its choices: nothing to repair.
+    if (existingNote?.metadata?.homeroomBot?.offer?.id) return;
     const { rows: [card] } = await pool.query(
       `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id)
        VALUES ('thread', $1, 'overlap', $2, $3, $4) RETURNING id`,
-      [appId, JSON.stringify({ issueNumber: smaller, other: bigger, overlap: 'part_of' }), member, Number(said.id)],
+      [appId, JSON.stringify({ issueNumber: smaller, other: bigger, overlap: 'part_of' }), member, Number(noteId)],
     );
     const actions = [
       { id: 'yes', label: `Fold it into #${bigger}`, style: 'primary', offerId: Number(card.id) },
@@ -2976,7 +2991,7 @@ async function seedStagingBotOverlap(pool) {
     ];
     await pool.query(
       'UPDATE chat_messages SET metadata = $2 WHERE id = $1',
-      [Number(said.id), JSON.stringify({
+      [Number(noteId), JSON.stringify({
         homeroomBot: {
           kind: 'voice',
           offer: { id: Number(card.id), kind: 'overlap', status: 'open', forUserId: member },
