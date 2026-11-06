@@ -1517,9 +1517,10 @@ test('a preview beside the thread: both edges drag, each the width of the column
   // The chosen widths are honoured, held to every column's floor.
   assert.match(css, /--ai-preview-w: max\(360px, min\(var\(--ai-preview-chosen-w, var\(--ai-preview-auto\)\), calc\(var\(--ai-room\) - 800px\)\)\);/);
   assert.match(css, /--ai-col-w: max\(320px, min\(var\(--ai-col-chosen-w, /);
-  // Each handle sits on its own line.
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="three"\] #ai-main-divider \{\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);/);
+  // Each handle sits on its own line, the pane's hairline it drags (#6397).
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="three"\] #ai-main-divider \{\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-preview-divider \{\s+--divider-at: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
+  assert.doesNotMatch(css, /--divider-at:[^;]*\+ 8px/, 'no edge sits in the gutter any more');
   // The preview's own divider, not drawn where the preview is the whole screen.
   assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{docked\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
   assert.match(src, /const threeUp = detailHere && layout === 'three';/);
@@ -1545,7 +1546,7 @@ test('a plan opened from a request in the side panel is a third column, not a sh
   assert.match(css, /body:has\(#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\):not\(\.hidden\)\) \.side-panel \{\n\s+width: var\(--ai-col-w\);\n\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
   // Its edge is the thread's edge in three, and is not drawn in halves,
   // where the preview's own handle is the one that drags.
-  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\n\}/);
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
   assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+display: none;\n\}/);
   // The page tells the panel's own island which edge it is: the thread's
   // width key, the thread's probe to the preview, and the preview to watch.
@@ -1830,4 +1831,30 @@ test('an item in the bot page\'s column has an address of its own, and its own p
   const { aboutRoute } = loadTsx('frontend/src/features/ai/index.tsx');
   assert.deepEqual(plain(aboutRoute('app/garden/dev/issues/12')), { type: 'issue', appSlug: 'garden', issueNumber: 12, title: null });
   assert.equal(aboutRoute('app/garden/dev/governance/3'), null);
+});
+
+// #6389: the person's own change, made through a coding agent, whose votes
+// are in and whose tests fail or which conflicts with main. It says what it
+// waits on in place of Vote, and the phone's second line says both when both.
+test('#6389: Needs you says what your own change waits on instead of Vote', () => {
+  const { needsYou, whyOf } = loadTsx(MODEL);
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  const app = { slug: 'usernode', name: 'Homeroom' };
+  const item = (waitingOn) => ({ kind: 'proposal', id: 6358, number: 6358, title: 'Guard apps', app, waitingOn, agent: 'claude-code' });
+  const [checks] = needsYou([item(['checks'])], null);
+  assert.deepEqual(plain(checks.pill), { id: 'messages:ai.pill.testsFailing' });
+  assert.equal(checks.sub.id, 'messages:ai.row.waitsOnFixTests');
+  assert.equal(whyOf(checks).id, 'messages:ai.why.fixTests');
+  const [both] = needsYou([item(['checks', 'conflict'])], null);
+  assert.deepEqual(plain(both.pill), { id: 'messages:ai.pill.testsFailing' });
+  assert.equal(both.sub.id, 'messages:ai.row.waitsOnFixBoth');
+  assert.equal(whyOf(both).id, 'messages:ai.why.fixBoth');
+  const [conflict] = needsYou([item(['conflict'])], null);
+  assert.deepEqual(plain(conflict.pill), { id: 'messages:ai.pill.conflicts' });
+  assert.equal(conflict.sub.id, 'messages:ai.row.waitsOnFixConflict');
+  assert.equal(whyOf(conflict).id, 'messages:ai.why.fixConflict');
+  // A plain change for a vote still says Vote, and says nothing more.
+  const [plainVote] = needsYou([{ kind: 'proposal', id: 2, number: 601, title: 'Plain', app }], null);
+  assert.deepEqual(plain(plainVote.pill), { id: 'messages:ai.pill.vote' });
+  assert.equal(whyOf(plainVote), null);
 });

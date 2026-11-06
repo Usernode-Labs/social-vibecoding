@@ -1358,7 +1358,7 @@ test('with a detail beside the page it holds, the panel\'s edge is that column\'
   const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
   assert.equal(panelEdgeStore.get().slot, null);
   // Its edge is drawn where the panel begins, as the thread\'s is in three.
-  assert.match(CSS, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\n\}/);
+  assert.match(CSS, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
   assert.match(CSS, /body:has\(#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\):not\(\.hidden\)\) \.side-panel \{\n\s+width: var\(--ai-col-w\);\n\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
 });
 
@@ -1627,9 +1627,12 @@ test('the divider is drawn on the line between the two halves, not inside the pa
   assert.match(rule, /position: fixed;/);
   assert.match(rule, /inset-inline-end: calc\(var\(--divider-at, var\(--side-panel-w\)\) - var\(--divider-w\) \/ 2\);/,
     'centred on the line; beside an app the line is the panel\'s own edge');
-  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);/,
-    'beside the bot\'s list, the middle of the 16px gutter before Main');
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/,
+    'beside the bot\'s list, on the pane\'s own edge');
   assert.match(CSS, /\.side-panel-divider::after \{[^}]*inset-inline-start: calc\(50% - 1\.5px\);/, 'the bar on the line too');
+  // #6397: below the pane's 28px rounded top corner, not beside the curve.
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\)::after \{\s*top: 1\.75rem;\s*\}/,
+    'the bar starts where the pane\'s corner ends');
 });
 
 test('beside the bot page the column\'s heading links the item to its own page, and ⋯ copies it', () => {

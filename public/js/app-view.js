@@ -6417,7 +6417,12 @@ const AppView = {
       action = toChange;
     } else if (!AppView.readOnly) {
       const primary = AppView._issuePrimaryActionSpec(issue, { noNav: true });
-      action = primary
+      // #6401: See progress would scroll to the progress card drawn right
+      // under this card, which already says where Homeroom bot is; on the
+      // request's own page it is not offered. The Workshop list keeps it
+      // (`_issuePrimaryActionSpec` itself), where the page is not current.
+      const redundant = !!(primary && primary.act && primary.act.fn === 'openBotChatFromRequest');
+      action = redundant ? null : primary
         ? { label: primary.label, title: primary.title, disabled: !!primary.disabled, act: primary.act }
         : toChange;
       // 1 Nov 2026: Build it now moved into the ⋯, as an agent session.
@@ -7834,7 +7839,27 @@ const AppView = {
     // Not for a change whose code is missing: testing is not what it waits
     // on, and the page's notice says what is (_changeThreadView codeMissing).
     if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped' && !AppView._codeMissing(item)) {
-      note.push(item.check_state === 'failing' ? PlatformI18n.t('changes:page.votes.note.liveOnceFixed') : PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
+      if (item.check_state !== 'failing') {
+        note.push(PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
+      } else if (AppView._botBuilt(item)) {
+        // Homeroom bot's own change: it is fixing it (or stopped).
+        note.push(PlatformI18n.t('changes:page.votes.note.liveOnceFixed'));
+      } else if (mine) {
+        // #6389: your own change, made outside Homeroom, waits on your fix.
+        // Name the tool it was made in where the page knows it.
+        const agent = AppView.externalAgentProduct(item.external_agent);
+        note.push(agent
+          ? PlatformI18n.t('changes:page.votes.note.liveOnceYouFixIn', { agent })
+          : item.external_agent
+            ? PlatformI18n.t('changes:page.votes.note.liveOnceYouFixThere')
+            : PlatformI18n.t('changes:page.votes.note.liveOnceYouFix'));
+      } else {
+        // Somebody else's change: name who has to act.
+        const author = item.author || item.username || null;
+        note.push(author
+          ? PlatformI18n.t('changes:page.votes.note.liveOnceAuthorFixes', { author })
+          : PlatformI18n.t('changes:page.votes.note.liveOnceFixed'));
+      }
     }
     const fill = Math.min(yes, maj);
     return {
@@ -22996,7 +23021,9 @@ const AppView = {
         return {
           key: 'primary', cls: 'gc-vote-btn', label: plan ? PlatformI18n.t('changes:issue.action.seePlan') : PlatformI18n.t('changes:issue.action.seeProgress'),
           title: plan ? PlatformI18n.t('changes:issue.action.seePlanTitle') : PlatformI18n.t('changes:issue.action.seeProgressTitle'),
-          act: { fn: 'openBotChatFromRequest', args: [n] },
+          // #6401: the label names the card it lands on — the plan, or the
+          // bot's progress card under the status card.
+          act: { fn: 'openBotChatFromRequest', args: [n, plan ? 'plan' : 'progress'] },
         };
       }
       // What it is really doing: its plan waits for whoever asked for it,
@@ -23366,23 +23393,71 @@ const AppView = {
    * (`[data-request-plan]`) or at the bot's progress card
    * (`.dev-request-track`). It used to open the chat with Homeroom bot,
    * where the plan's Build it was; a request's news is on its page now.
+   *
+   * #6401 (6 Nov 2026): the label names the card, so `target` decides
+   * between them with no fallback to the other, and pressing it while the
+   * page is already open (the side panel's `/app/…?panel=1`, whose route is
+   * in the path and not the empty hash) scrolls and outlines instead of
+   * writing the hash and redrawing the page.
    */
-  openBotChatFromRequest(issueNumber) {
+  openBotChatFromRequest(issueNumber, target) {
     const slug = AppView.appData && AppView.appData.slug;
     const n = Number(issueNumber);
     if (!slug || !n) return;
+    const toPlan = target === 'plan';
+    const selector = toPlan ? '[data-request-plan]' : '.dev-request-track';
     const at = () => {
-      const el = document.querySelector('[data-request-plan]') || document.querySelector('.dev-request-track');
-      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      return !!el;
+      const el = document.querySelector(selector);
+      // Drawn from the board's older row, the card holds its place unseen
+      // (`data-request-track="pending"`): wait for the fresh row.
+      if (!el || el.getAttribute('data-request-track') === 'pending') return false;
+      AppView._scrollToLandedCard(el);
+      return true;
     };
-    const page = `#app/${slug}/dev/issues/${n}`;
-    if (location.hash === page) { at(); return; }
-    location.hash = page;
-    // Once the page has drawn: a few tries, then it is where it opened.
-    let tries = 0;
+    // The route the way the side panel's own document names it
+    // (`_canonicalizeChangeAddress`): the hash, or the path when it is empty.
+    const page = `app/${slug}/dev/issues/${n}`;
+    const route = location.hash
+      ? location.hash.replace(/^#/, '').split('?')[0]
+      : (location.pathname || '').replace(/^\/+/, '');
     const wait = () => { if (!at() && (tries += 1) < 20) setTimeout(wait, 150); };
+    let tries = 0;
+    if (route === page) { wait(); return; }
+    location.hash = `#${page}`;
+    // Once the page has drawn: a few tries, then it is where it opened.
     setTimeout(wait, 150);
+  },
+
+  /**
+   * #6401: where the eye should land — the card centred, then a brief
+   * outline in the app's "you are here" ink. It is a Web Animations
+   * animation rather than a class, because the card lives in the
+   * React-owned request page and the older script must not write into it
+   * (`scripts/audit-react-ownership.mjs`). Under reduced motion the outline
+   * holds and then goes, with no fade and no movement.
+   */
+  _scrollToLandedCard(el) {
+    if (!el) return;
+    const reduced = typeof matchMedia === 'function'
+      && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+    }
+    if (typeof el.animate !== 'function') return;
+    const root = document.documentElement;
+    const ink = (typeof getComputedStyle === 'function' && root
+      ? getComputedStyle(root).getPropertyValue('--lit-ink').trim() : '') || 'currentColor';
+    const frames = [
+      { outline: `3px solid ${ink}`, outlineOffset: '2px' },
+      { outline: `3px solid ${ink}`, outlineOffset: '2px' },
+      { outline: '3px solid transparent', outlineOffset: '2px' },
+    ];
+    try {
+      el.animate(frames, {
+        duration: reduced ? 1200 : 1600,
+        easing: reduced ? 'steps(1, end)' : 'ease-out',
+      });
+    } catch (_) { /* an engine without keyframe support simply lands */ }
   },
 
   // The issue card's SECOND action: the claim toggle, promoted out of the

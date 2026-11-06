@@ -374,13 +374,18 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
         <GuestIcon app={app} size="md" />
         <span className="max-w-full line-clamp-2 break-words text-[12.5px] font-semibold leading-[15px] text-zinc-800 dark:text-zinc-200">{app.name}</span>
       </TryLink>
+      {/* #6389: the control's box is 44px so a finger finds it; the drawn
+          badge stays 24px, centred where it was, so nothing about the tile
+          looks different. */}
       <button
         type="button"
-        className={`absolute -top-1.5 end-1 w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)] ${suggestion ? CORNER_PIN : CORNER_UNPIN}`}
+        className="absolute -top-4 -end-1.5 w-11 h-11 flex items-center justify-center"
         aria-label={suggestion ? th('home:guest.pinApp', { app: app.name }) : th('home:guest.unpinApp', { app: app.name })}
         onClick={() => { toggleDevicePin('apps', app.slug); }}
       >
-        {suggestion ? <PlusIcon className="w-3.5 h-3.5" aria-hidden="true" /> : <MinusGlyph />}
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)] ${suggestion ? CORNER_PIN : CORNER_UNPIN}`}>
+          {suggestion ? <PlusIcon className="w-3.5 h-3.5" aria-hidden="true" /> : <MinusGlyph />}
+        </span>
       </button>
     </span>
   );

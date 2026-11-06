@@ -5812,6 +5812,23 @@ async function startRequest(pool, ctx, args) {
   if (await dm.overWeeklyAllowance(pool, settings, payer)) {
     return { ok: false, error: 'Their building time for this week is used up, so it cannot start this week. Nothing was started. It resets on Monday; someone else in the project can ask for it before then.' };
   }
+  // #6389: the person asked the bot to make its own version of their change
+  // (homeroom-bot-voice.js makeOwnVersion). The look builds from the
+  // original change's branch, which the ask records; its own pending and
+  // cap checks still decide whether there is room.
+  if (Number.isInteger(Number(args.ownVersionOf)) && Number(args.ownVersionOf) > 0) {
+    const queuedOwn = await botModule(deps).enqueueFront(pool, {
+      appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_own_version', payerId: user.id,
+    });
+    ctx.started = name;
+    ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
+    require('./bot-work-changed').noteWorkChanged(user.id, deps);
+    return {
+      ok: true,
+      ...(queuedOwn ? {} : { already: 'A look on it is running now; this one follows it.' }),
+      built: 'Your own version starts as soon as a builder is free. It begins from their change, fixes what fails and brings it up to date with main.',
+    };
+  }
   const open = await liveModule(deps).openBotProposal(pool, ctx.bot.id, app.id, n);
   if (open?.status === 'promoted') {
     return { ok: false, code: 'already_built', error: 'You already built it: its proposal is up for the group\'s vote. To change it, use revise_proposal. Nothing was started.' };

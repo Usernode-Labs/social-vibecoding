@@ -146,6 +146,14 @@ export interface NeedItem {
    * Approve, as its card and the project's own Needs you do; Vote elsewhere.
    */
   approve?: boolean;
+  /**
+   * #6389: a change the viewer made through a coding agent whose votes are
+   * in but which waits on their fix (`checks` and/or `conflict`). Its row
+   * says what it waits on instead of Vote.
+   */
+  waitingOn?: string[];
+  /** #6389: the coding tool the change was made in, such as `claude-code`. */
+  agent?: string | null;
   /** #6262: the thread its page is, and how many messages in it are new. */
   threadId?: number | null;
   unread?: number;
@@ -377,6 +385,24 @@ const PILLS: Record<string, string> = {
 };
 
 /**
+ * #6389: what a change the viewer made through a coding agent waits on once
+ * its votes are in: its pill, its tooltip, and the phone's second line. The
+ * pill says one reason (tests first); the tooltip and second line say both
+ * when both are true, so the row still fits on a phone.
+ */
+function waitingRow(reasons: string[]) {
+  const checks = reasons.includes('checks');
+  const conflict = reasons.includes('conflict');
+  if (checks) {
+    return {
+      pill: 'messages:ai.pill.testsFailing',
+      sub: conflict ? 'messages:ai.row.waitsOnFixBoth' : 'messages:ai.row.waitsOnFixTests',
+    };
+  }
+  return { pill: 'messages:ai.pill.conflicts', sub: 'messages:ai.row.waitsOnFixConflict' };
+}
+
+/**
  * Pure: which hand-back a Needs you row of the bot's is, by its stage: the
  * row's key and pill. A plan waits for Build it; a decision, for a person;
  * #6306: one already there only needs closing; a stopped build, for a
@@ -509,6 +535,10 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   const listed = listedKeys(needs, work);
   for (const item of needs || []) {
     const app = item.app || null;
+    // #6389: your own change made through a coding agent, its votes in and
+    // its fix still owed. It keeps its row because you are the one to act,
+    // and says what it waits on in place of Vote.
+    const waiting = item.waitingOn && item.waitingOn.length ? waitingRow(item.waitingOn) : null;
     rows.push({
       key: `need:${item.kind}:${item.id}`,
       title: (item.kind === 'ballot' && item.ballot?.title) || item.title || '',
@@ -516,12 +546,16 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       who: 'all',
       // A vote on a change of Homeroom bot's, where a request of yours waits
       // for one of its slots: deciding it lets that request be built.
-      sub: app && held.has(app.slug) && holdsSlot(item)
-        ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
-        : whereLine(app, shownNumber(item)),
-      pill: item.kind === 'proposal' && item.approve === true
-        ? { id: 'messages:ai.pill.approve' }
-        : { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
+      sub: waiting
+        ? { id: waiting.sub, values: where(app, shownNumber(item)) }
+        : app && held.has(app.slug) && holdsSlot(item)
+          ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
+          : whereLine(app, shownNumber(item)),
+      pill: waiting
+        ? { id: waiting.pill }
+        : item.kind === 'proposal' && item.approve === true
+          ? { id: 'messages:ai.pill.approve' }
+          : { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
       rootId: null,
       // #6262: a feed item's thread, and what is new in it.
@@ -613,6 +647,10 @@ export function owedCount(rows: WorkRow[]): number {
 /** The phone's second line for a Needs you row, by the reason its tooltip gives. */
 const WHY: Record<string, string> = {
   'messages:ai.row.voteFreesSlot': 'messages:ai.why.voteFreesSlot',
+  // #6389: the phone's second line for a change waiting on its author's fix.
+  'messages:ai.row.waitsOnFixTests': 'messages:ai.why.fixTests',
+  'messages:ai.row.waitsOnFixConflict': 'messages:ai.why.fixConflict',
+  'messages:ai.row.waitsOnFixBoth': 'messages:ai.why.fixBoth',
 };
 
 /**

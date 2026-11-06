@@ -64,6 +64,15 @@ export type NeedsFeedItem = {
   advisory?: boolean;
   uncounted?: boolean;
   /**
+   * #6389: a change the viewer made through a coding agent whose votes are
+   * in but which waits on their fix. It is left out here and in the review
+   * flow, which show vote cards; the Homeroom bot tab's Needs you says what
+   * it waits on.
+   */
+  waitingOn?: string[];
+  /** #6389: the coding tool the change was made in, such as `claude-code`. */
+  agent?: string | null;
+  /**
    * The change's code did not come across when Homeroom moved off GitHub
    * (src/services/code-missing.js): the item says "Code missing", as its
    * project's own card does. A vote on it is still recorded.
@@ -197,7 +206,10 @@ export function reelRows(
   items: NeedsFeedItem[],
   html: (md: string) => string = () => '',
 ): FeedRow[] {
-  return items.map((item) => {
+  return items
+    // #6389: a change waiting on its author's fix has nothing to vote on.
+    .filter((item) => !(item.waitingOn && item.waitingOn.length))
+    .map((item) => {
     if (item.kind === 'ballot' || item.kind === 'question') return requestRow(item);
     const change = item.kind !== 'governance';
     const key = `${change ? 'proposal' : 'governance'}:${item.id}`;

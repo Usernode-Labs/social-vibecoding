@@ -197,9 +197,14 @@
       "schemaSha256": "d62c285f7764aa1dd26d5ddbdbe166f2beefb1f91cf7dab59b50773a112806ef"
     },
     {
+      "id": "bot-own-version",
+      "sha256": "79cb1bd427bbdbd282572d4e0d1b9298e3e2f968d37058a118fe422b3596f586",
+      "schemaSha256": "7d75320c371d7ca9a400176a55079a83556e06e443ad3b4f5126893b8b031562"
+    },
+    {
       "id": "work-state-marks-check-phase",
       "sha256": "bc864215c9d5528939e79ec8037f49844543a2b5153e979611e66fe086c585ee",
-      "schemaSha256": "ae3bf03e738fed9f6eb31dc6374bf0a828c8808f21190a16d9ee2e9c3e5babe0"
+      "schemaSha256": "54bcbe575d8c2c2ca50072f0ec50c1d0312c0d857c06374761736b09d55d70f2"
     }
   ]
 }
