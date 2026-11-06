@@ -33,12 +33,12 @@
  * There the panel is in Main's place, the chat docked beside the list, and
  * is drawn as that column rather than as a panel of its own (Evan: "not in
  * a new side panel that can be maximized and has its own Workshop back
- * button"): ‹ Main Chat, which gives Main its place back, and the project the
- * page is in, which opens it; no title, Expand, Close, Back or divider, and
- * the page in it leaves out its own "‹ Workshop" (controller BESIDE_AI_CLASS).
- * When the page was opened from inside a private thread, the chip says ‹
- * Thread instead, since closing the page shows that thread rather than Main
- * (5 Nov 2026, store `backTo`).
+ * button"): the project the page is in, which opens it, the page's own name,
+ * its ⋯ and a ×, which closes it; no title, Expand, Close, Back or divider,
+ * and the page in it leaves out its own "‹ Workshop" (controller
+ * BESIDE_AI_CLASS). Closing it gives the lists back, or Main Chat or a
+ * private thread when one of those was open behind it (6 Nov 2026, #6425:
+ * the × replaced the "‹ Main Chat" chip).
  * Both rows are always rendered and app.css shows the one that applies
  * (`body:has(#ai-screen:not(.hidden))`), so the prerender is one markup.
  *
@@ -127,9 +127,6 @@ export function SidePanel(): ReactNode {
   const rootRef = useRef<HTMLElement | null>(null);
   const backRef = useRef<HTMLButtonElement | null>(null);
   const loadingRef = useRef<HTMLDivElement | null>(null);
-  // The chip names where it goes: the private thread behind the page, if there
-  // is one, else Main (5 Nov 2026).
-  const toThread = s.backTo === 'thread';
 
   useHiddenClass(rootRef, !(s.open && !!s.frameSrc));
   useHiddenClass(backRef, !s.canBack);
@@ -202,21 +199,27 @@ export function SidePanel(): ReactNode {
         >
           <XIcon className="w-4 h-4" aria-hidden="true" />
         </Button>
-        {/* Beside the AI tab's page only (app.css): ‹ Main Chat, which gives
-            Main its place back, and the column's heading as Main's own reads,
-            the project's tile, what is open, and its project and number
-            (30 Oct 2026). The chip is the topic's own back chip. */}
-        <button
-          type="button"
-          className="side-panel-main dev-topic-back un-touch-target"
-          aria-label={toThread ? t('agent:sidePanel.threadLabel') : t('agent:sidePanel.mainLabel')}
-          onClick={() => controller.close()}
-        >
-          <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-          <span>{toThread ? t('agent:sidePanel.thread') : t('agent:sidePanel.main')}</span>
-        </button>
+        {/* Beside the AI tab's page only (app.css): the column's heading as
+            Main's own reads, the project's tile, what is open, and its
+            project and number (30 Oct 2026). */}
         <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} head={s.head} />
         <PanelMore route={s.route} />
+        {/* 6 Nov 2026 (#6425): the × that closes the page, in the "‹ Main
+            Chat" chip's place: the lists alone behind it, or Main Chat or a
+            thread when one of those was open there. The round disc the
+            panel's own Close draws. */}
+        <Button
+          type="button"
+          variant="unstyled"
+          size="icon"
+          ink="none"
+          className={`side-panel-ai-close ${DISC}`}
+          aria-label={t('agent:sidePanel.close')}
+          title={t('agent:sidePanel.close')}
+          onClick={() => controller.close()}
+        >
+          <XIcon className="w-4 h-4" aria-hidden="true" />
+        </Button>
       </div>
       <div id="side-panel-body" className="side-panel-body">
         {/* data-un-keyboard-relay: a tap in the panel that closes the

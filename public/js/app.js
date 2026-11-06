@@ -174,6 +174,27 @@ const App = {
   // supplies a cached /me. A later live answer still reconciles the viewer.
   BOOT_SESSION_TIMEOUT_MS: 2000,
 
+  // The boot stops WAITING at the deadline above, but the read itself is
+  // not aborted there (#6429): a server answering the identity check in
+  // 2.049 s used to leave the tab on the snapshot — and therefore with no
+  // events socket, frozen lists and no bell — until the next reload, even
+  // though the connectivity probe said online the whole time. A read that
+  // lands late settles the check. This is how long a stalled one is
+  // allowed to stay out, so it cannot hold the next read forever.
+  BOOT_SESSION_LATE_LIMIT_MS: 30000,
+
+  // How often a check that ran out of time is asked again while the probe
+  // says online: after 2 s, 5 s, 15 s, then every 30 s (#6429). A tab that
+  // stays online used to hear nothing from `usernode:offline-change`, which
+  // fires only when the probe's answer CHANGES, so a slow boot's check was
+  // never retried at all.
+  SESSION_RETRY_DELAYS_MS: [2000, 5000, 15000, 30000],
+  _sessionRetryStep: 0,
+  _sessionRetryTimer: null,
+  // One reconcile read at a time: the retry ladder, the foreground hook and
+  // a network handover can now coincide.
+  _reconcileInFlight: null,
+
   saveSessionSnapshot(user) {
     if (!user || !user.id) return;
     const cacheScope = App._sessionCacheScope();
@@ -620,15 +641,21 @@ const App = {
   // The header stays empty and the option is read from the first argument:
   // suites that pin this chain slice its source between the exact headers
   // `_fetchSession()` and `_fetchWebSession()`.
+  //
+  // `late` says the read belongs to a snapshot boot that has stopped
+  // WAITING at BOOT_SESSION_TIMEOUT_MS but not stopped reading (#6429), so
+  // it gets the longer deadline in _fetchWebSession. The no-snapshot boot
+  // keeps the short one.
   async _fetchSession() {
     const optional = !!(arguments[0] && arguments[0].optional);
-    let response = await App._fetchWebSession({ optional });
+    const late = !!(arguments[0] && arguments[0].late);
+    let response = await App._fetchWebSession({ optional, late });
     if (optional) response = await App._settleOptionalSession(response);
     if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
       try {
         const restored = await App._withinNativeRestoreLimit(
           NativeChrome.restoreWebSession({ force: response.status === 401 }));
-        if (restored) return App._fetchWebSession();
+        if (restored) return App._fetchWebSession({ late });
       } catch (error) {
         // Native uncertainty must not erase a display snapshot. A valid web
         // response can still be used while native recovery is unavailable.
@@ -679,9 +706,15 @@ const App = {
   // first argument, for the same reason.
   async _fetchWebSession() {
     const optional = !!(arguments[0] && arguments[0].optional);
+    const late = !!(arguments[0] && arguments[0].late);
     let timer = null;
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
-    if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
+    if (ctrl) {
+      // A late read is one the boot has already stopped waiting for: it may
+      // land whenever it lands, and its answer still settles the check.
+      timer = setTimeout(() => ctrl.abort(),
+        late ? App.BOOT_SESSION_LATE_LIMIT_MS : App.BOOT_SESSION_TIMEOUT_MS);
+    }
     try {
       if (optional) return await fetch('/api/auth/me?optional=1', ctrl ? { signal: ctrl.signal } : undefined);
       return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
@@ -693,7 +726,78 @@ const App = {
   // Replace the snapshot-derived session with a verified one. This runs on
   // EVERY boot that started from a snapshot — which, since the shell boots
   // optimistically, is every boot on a device that has been signed in here
-  // — and again from the reconnect path when the network returns.
+  // — and again from the reconnect path when the network returns, from the
+  // foreground hook, and from the retry ladder below.
+  //
+  // It stops WAITING at BOOT_SESSION_TIMEOUT_MS, but the read is not
+  // aborted there (#6429): a server that answered /api/auth/me in 2.049 s
+  // left the tab unverified — no events socket, so Needs you, the bot's
+  // lists and the bell froze — for as long as the probe kept saying online,
+  // because `usernode:offline-change` fires only when the probe's answer
+  // CHANGES. Now the late answer settles the check, and a check that did
+  // not answer at all is retried while online.
+  //
+  // One read at a time: two answers settling together would start the held
+  // work twice.
+  async _reconcileSession({ fromBoot = false } = {}) {
+    if (!App._sessionFromSnapshot) return;
+    if (App._reconcileInFlight) return App._reconcileInFlight;
+    const attempt = App._runSessionReconcile({ fromBoot });
+    App._reconcileInFlight = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (App._reconcileInFlight === attempt) App._reconcileInFlight = null;
+    }
+  },
+
+  async _runSessionReconcile({ fromBoot = false } = {}) {
+    const read = App._fetchSession({ late: true }).catch(() => null);
+    let timer = null;
+    let reloading = false;
+    let settled = null;
+    const settle = async (res) => {
+      const outcome = await App._settleSnapshotSession(res, { fromBoot });
+      settled = outcome;
+      if (outcome === 'reloading') reloading = true;
+      return outcome;
+    };
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), App.BOOT_SESSION_TIMEOUT_MS);
+    });
+    try {
+      const first = await Promise.race([read, deadline]);
+      clearTimeout(timer);
+      timer = null;
+      if (first === 'timeout') {
+        // Still no answer — stay on the snapshot and say so on screen. This
+        // is where the offline strip belongs: the shell is up and READABLE,
+        // and the thing the viewer needs to know is that it is not live.
+        await settle(null);
+        // The read is still out. Ask again on the ladder meanwhile; a retry
+        // that finds it still out joins it rather than starting a second.
+        App._scheduleSessionRetry();
+        const late = await read;
+        if (late && App._sessionFromSnapshot) await settle(late);
+        return;
+      }
+      await settle(first);
+    } finally {
+      if (timer) clearTimeout(timer);
+      // Still unverified: keep the ladder going. Offline this schedules
+      // nothing — `usernode:offline-change` asks again as it always has. A
+      // reload takes the document away, and a 200 with no `user` said
+      // nothing to ask about, so neither keeps asking.
+      if (!reloading && settled !== 'empty' && App._sessionFromSnapshot) {
+        App._scheduleSessionRetry();
+      }
+    }
+  },
+
+  // What an answer to the check means. Shared by the answer that arrives
+  // inside the boot's deadline, the one that lands after it, and each
+  // retry, so all three settle the check the same way — and only the first
+  // of them does.
   //
   // Four outcomes, and each matters:
   //   401/403     → the session really did end. Drop every cached trace and
@@ -702,27 +806,14 @@ const App = {
   //                 rebuild a shell that was painted for someone else.
   //   same id     → promote to a live session: start everything the
   //                 unverified guards held back, and resync the screen.
-  //   no answer   → offline. Raise the strip and stay on the snapshot; the
-  //                 reconnect path calls this again.
-  //
-  // Uses the same deadline'd read as the boot (_fetchSession): an
-  // open-but-stalled socket must not hold this open forever either, and on
-  // the boot path this IS the boot's read.
-  async _reconcileSession({ fromBoot = false } = {}) {
-    if (!App._sessionFromSnapshot) return;
-    let res;
-    try {
-      res = await App._fetchSession();
-    } catch (err) {
-      res = null;
-    }
+  //   no answer   → offline, or answered but not about the session. Raise
+  //                 the strip and stay on the snapshot; the ladder retries.
+  async _settleSnapshotSession(res, { fromBoot = false } = {}) {
+    if (!App._sessionFromSnapshot) return null;
     if (!res) {
-      // Still unreachable — stay on the snapshot and say so on screen. This
-      // is where the offline strip belongs: the shell is up and READABLE,
-      // and the thing the viewer needs to know is that it is not live.
       try { window.Offline?.nudge(); } catch (e) { /* ignore */ }
       App._publishBootSession({ unknown: true });
-      return;
+      return 'unknown';
     }
     if (!res.ok && !App._answeredSignedOut(res)) {
       // Answered, but not ABOUT the session (#1608). A signed-in reload that
@@ -732,22 +823,27 @@ const App = {
       // answer at all, because that is exactly what this is.
       try { window.Offline?.nudge(); } catch (e) { /* ignore */ }
       App._publishBootSession({ unknown: true });
-      return;
+      return 'unknown';
     }
+    // A definitive answer: nothing more is retried. Every path that reloads
+    // passes through here first, so the timer never survives a reload.
+    App._clearSessionRetry();
     if (!res.ok) {
       App._dropCachedSession();
       App._sessionFromSnapshot = false;
       App._publishBootSession({ signedOut: true });
       location.reload();
-      return;
+      return 'reloading';
     }
     let user = null;
     try { user = (await res.json()).user; } catch (err) { user = null; }
-    if (!user) return;
+    // A 200 with no `user` says nothing about the session: no action, and no
+    // further attempts either — asking again would get the same empty answer.
+    if (!user) return 'empty';
     if (String(user.id) !== String(App.user?.id)) {
       App._dropCachedSession();
       location.reload();
-      return;
+      return 'reloading';
     }
     // Platform access is the one field whose value decides which SHELL is
     // on screen rather than what is inside it — enterAuthed sends a viewer
@@ -757,7 +853,7 @@ const App = {
     if (!!user.hasPlatformAccess !== !!App.user?.hasPlatformAccess) {
       App.saveSessionSnapshot(user);
       location.reload();
-      return;
+      return 'reloading';
     }
     // So is being a private member, for the same reason: it decides the mark
     // menu, Home's sections and the app's ✕. Being let in off the waitlist
@@ -765,7 +861,7 @@ const App = {
     if (!!user.privateMember !== !!App.user?.privateMember) {
       App.saveSessionSnapshot(user);
       location.reload();
-      return;
+      return 'reloading';
     }
     App._sessionFromSnapshot = false;
     if (window.NativeChrome &&
@@ -822,6 +918,33 @@ const App = {
     if (!fromBoot) {
       try { App.resyncCurrentView(); } catch (err) { /* ignore */ }
     }
+  },
+
+  // Ask again while the check has not settled (#6429). Deliberately not a
+  // poll: once /api/auth/me answers, the events socket takes over and this
+  // stops. While the probe says offline it schedules nothing — coming back
+  // online already asks (usernode:offline-change), and a timer would only
+  // spend requests on a network that carries none.
+  _scheduleSessionRetry() {
+    if (App._sessionRetryTimer) return;
+    if (!App._sessionFromSnapshot) return;
+    if (window.Offline?.isOffline?.() === true) return;
+    const delays = App.SESSION_RETRY_DELAYS_MS;
+    const last = delays.length - 1;
+    const delay = delays[Math.min(App._sessionRetryStep, last)];
+    App._sessionRetryStep = Math.min(App._sessionRetryStep + 1, last);
+    App._sessionRetryTimer = setTimeout(() => {
+      App._sessionRetryTimer = null;
+      App._reconcileSession().catch(() => {});
+    }, delay);
+  },
+
+  // The check settled (or the document is going away): forget where the
+  // ladder was, so a later boot asks again after 2 s rather than at 30.
+  _clearSessionRetry() {
+    if (App._sessionRetryTimer) clearTimeout(App._sessionRetryTimer);
+    App._sessionRetryTimer = null;
+    App._sessionRetryStep = 0;
   },
 
   // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
@@ -5787,6 +5910,13 @@ const App = {
         // not fit.
         App.setChromeless(false);
         App.navigateToAi();
+        // 6 Nov 2026 (#6425): on a desktop the tab's own page is its lists
+        // alone. The bare address closes whatever was open beside them — the
+        // tab pressed, or Back to `#homeroom-bot` — and the page takes it
+        // once, as it takes every ask.
+        if (parts.length === 1) {
+          window.UsernodeReact?.ai?.closeColumn?.();
+        }
         if (parts[1] === 'request' || parts[1] === 'change' || parts[1] === 'decision') {
           window.UsernodeReact?.ai?.openItem?.('#' + parts.join('/'));
         }
@@ -9832,6 +9962,12 @@ window.App = App;
 App._foregroundResync = () => {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
   if (window.SessionState) SessionState.syncIfStale?.();
+  // #6429: coming back to the tab is also a reason to ask who is signed in,
+  // when the boot's check ran out of time. A slow server used to leave the
+  // tab unverified — no socket, frozen lists, no bell — until a reload.
+  if (App._sessionFromSnapshot && !(window.Offline?.isOffline?.() === true)) {
+    App._reconcileSession().catch(() => {});
+  }
 };
 // Guarded: app.js is loaded into bare vm sandboxes by several unit tests,
 // which stub `document` / `window` with only the members they need.

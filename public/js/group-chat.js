@@ -1415,7 +1415,8 @@ const GroupChat = {
     if (!status) return null;
     const me = window.App && App.user ? Number(App.user.id) : null;
     const actions = (Array.isArray(bot.actions) ? bot.actions : [])
-      .filter((a) => a && (a.id === 'yes' || a.id === 'no') && typeof a.label === 'string' && a.label)
+      // #6211: an overlap note also offers `first` (build this one first).
+      .filter((a) => a && (a.id === 'yes' || a.id === 'no' || a.id === 'first') && typeof a.label === 'string' && a.label)
       .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
     // #6305: a many-project offer carries the rows it would file.
     const rows = Array.isArray(bot.offer.rows) ? bot.offer.rows.slice(0, 12) : null;
@@ -1479,7 +1480,7 @@ const GroupChat = {
   // room hears it was decided (`chat_message_updated`); a refusal is said.
   async decideBotOffer(messageId, choice, rows) {
     const slug = GroupChat.appSlug;
-    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no')) return;
+    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no' && choice !== 'first')) return;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(messageId)}/bot-offer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

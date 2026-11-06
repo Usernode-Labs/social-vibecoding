@@ -50,9 +50,6 @@ import { createStore } from '../../lib/plain-store.js';
  *   pill and the key of its own ⋯ rows, with the route it published them on.
  *   Null for a page that has neither, and wherever a new page or a new frame
  *   starts, so one page's pill never shows on the next.
- * @property {'main'|'thread'} backTo  What the AI page's column goes back to
- *   when the page beside it closes: 'thread' while a private thread is behind
- *   it, 'main' otherwise. The chip beside that page names it.
  */
 
 /** @type {SidePanelState} */
@@ -68,7 +65,6 @@ export const INITIAL = {
   place: null,
   label: null,
   head: null,
-  backTo: 'main',
 };
 
 export const sidePanelStore = createStore(INITIAL);

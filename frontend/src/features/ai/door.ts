@@ -5,6 +5,7 @@
  * well, where a thread opened beside Main; that copy is gone. So every door
  * into the chat lands here and says where in it:
  *
+ *   #homeroom-bot                       the lists alone, nothing beside them
  *   #homeroom-bot/main                  Main Chat
  *   #homeroom-bot/thread/<id>           a thread of it, alone in the column
  *   …either with /m/<id>                at that message
@@ -226,7 +227,7 @@ export function isBotChatRoute(route: string | null | undefined, botId: number |
 
 // ── Where the router asked the tab to go ────────────────────────────────
 
-let asked: { at: BotAt | null; item: BotItem | null; seq: number } | null = null;
+let asked: { at: BotAt | null; item: BotItem | null; close?: boolean; seq: number } | null = null;
 let seq = 0;
 const listeners = new Set<() => void>();
 
@@ -234,6 +235,13 @@ const listeners = new Set<() => void>();
 export function askBotTab(at: Partial<BotAt> | null | undefined): void {
   seq += 1;
   asked = { at: cleanAt(at), item: null, seq };
+  listeners.forEach((fn) => fn());
+}
+
+/** The router's half: close what is open beside the lists (a bare `#homeroom-bot`). */
+export function askBotClose(): void {
+  seq += 1;
+  asked = { at: null, item: null, close: true, seq };
   listeners.forEach((fn) => fn());
 }
 
@@ -247,7 +255,7 @@ export function askBotItem(item: Partial<BotItem> | null | undefined): void {
 }
 
 /** What the router last asked, with its count, so a page takes each ask once. */
-export function useBotTabAsk(): { at: BotAt | null; item: BotItem | null; seq: number } | null {
+export function useBotTabAsk(): { at: BotAt | null; item: BotItem | null; close?: boolean; seq: number } | null {
   return useSyncExternalStore(
     (fn) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
     () => asked,
@@ -273,5 +281,5 @@ export function goBotAddress(href: string): void {
 
 if (typeof window !== 'undefined') {
   const host = ((window as any).UsernodeReact ||= {});
-  host.ai = { ...(host.ai || {}), openAt: askBotTab, openItem: (hash: string) => { const item = botItemAt(hash); if (item) askBotItem(item); }, botTabFromMessages: (href: string) => botTabFromMessages(href, botConversation) };
+  host.ai = { ...(host.ai || {}), openAt: askBotTab, openItem: (hash: string) => { const item = botItemAt(hash); if (item) askBotItem(item); }, closeColumn: askBotClose, botTabFromMessages: (href: string) => botTabFromMessages(href, botConversation) };
 }

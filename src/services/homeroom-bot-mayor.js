@@ -5962,7 +5962,7 @@ async function startRequest(pool, ctx, args) {
     return {
       ok: false,
       code: 'go_ahead_cannot',
-      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step }),
+      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username }),
       next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
     };
   }
