@@ -3629,15 +3629,16 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, 
 
 /**
  * Pure (#4242): what the "needs a look" message says: `checks`, its checks
- * failed in a way that looks like the platform's (the bot leaves those for
- * the platform's own re-run, homeroom-bot.js queueChecksFix); `built`,
+ * failed in a way that looks like the platform's (the bot leaves those
+ * alone and an admin can run them again from the change's page,
+ * homeroom-bot.js queueChecksFix and oweChecksFix); `built`,
  * its build finished and no change came of it.
  */
 function needsLookText(line, why) {
   if (why === 'checks') {
     return `${line}\n\nI built it, but its checks failed in a way that looks like a problem on Homeroom's side, `
-      + 'not in the change, so it isn\'t ready to try yet. Homeroom runs them again, and I\'ll tell you here if they pass. '
-      + 'If nothing changes, the change needs a person to look at it.';
+      + 'not in the change, so it isn\'t ready to try yet. An admin can run them again from the change\'s page, '
+      + 'and I\'ll tell you here if they pass. If nothing changes, the change needs a person to look at it.';
   }
   return `${line}\n\nI built it, but it didn't become a change you can try, and I can't fix that from here. `
     + 'It needs a person to look at it. Your request is still open.';

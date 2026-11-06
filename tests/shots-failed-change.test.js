@@ -340,17 +340,46 @@ test('#6234: while Homeroom bot fixes its change\'s checks, the Testing card say
     assert.equal(handed.authorNote, message('changes:page.testing.note.botHandedOff'));
     assert.equal(handed.authorNote, 'Homeroom bot couldn’t fix this on its own. The person who asked for it, or any member of this project, can take it from here.');
     assert.doesNotMatch(handed.authorNote, /Its author/);
-    // Nothing of the bot's recorded: today's words, byte for byte.
+    // A change the bot leaves to Homeroom's preview (#6388): the card says
+    // the preview looks at fault, and the re-run stays live for an admin.
+    const platform = AppView._changeTestingView(change({ state: 'platform', since: null }));
+    assert.deepEqual([platform.figure, platform.tone, platform.botFix], ['Found a problem', 'bad', 'platform']);
+    assert.equal(platform.authorNote,
+      `${message('changes:page.testing.note.botPlatform')} ${message('changes:page.testing.note.botPlatformRerun')}`);
+    assert.doesNotMatch(platform.authorNote, /Its author/);
+    assert.deepEqual(platform.actions.map((a) => [a.key, a.disabled]), [['recheck', undefined]], 'the re-run is live');
+    // Nothing of the bot's recorded: it names the bot, not "its author".
     const plain = AppView._changeTestingView(change(null));
-    assert.equal(plain.authorNote, message('changes:page.testing.note.authorFixes'));
+    assert.equal(plain.authorNote, message('changes:page.testing.note.botNotFixing'));
+    assert.doesNotMatch(plain.authorNote, /Its author/);
     assert.equal(plain.botFix, null);
     assert.deepEqual(plain.actions.map((a) => [a.key, a.disabled]), [['recheck', undefined]]);
     assert.deepEqual(AppView._changeTestingView(change()).authorNote, plain.authorNote);
-    // A member who could not press Re-run checks is not told about it.
+    // A person's change seen by someone else names the person.
+    const person = (extra = {}) => ({
+      id: 5002, user_id: 88, username: 'ada', status: 'promoted', check_state: 'failing',
+      checks_checked_at: '2026-11-03T10:00:00Z', test_results: [{ name: 'Home loads', path: '/', status: 'fail' }],
+      ...extra,
+    });
+    assert.equal(AppView._changeTestingView(person()).authorNote,
+      message('changes:page.testing.note.authorFixesNamed', { name: 'ada' }));
+    assert.equal(AppView._changeTestingView(person()).authorNote,
+      'ada made this change and needs to fix this before it can go live.');
+    assert.equal(AppView._changeTestingView(person({ username: null })).authorNote,
+      message('changes:page.testing.note.authorFixes'), 'a change with no username keeps the old line');
+    // The author's own view still has no author line.
+    global.App = { user: { id: 88, username: 'ada' } };
+    assert.equal(AppView._changeTestingView(person()).authorNote, null);
+    // A member who could not press Re-run checks is not told about it, and
+    // is told an admin can run them again.
     global.App = { user: { id: 2, username: 'bo' } };
     const member = AppView._changeTestingView(change({ state: 'fixing', since }));
     assert.equal(member.authorNote, message('changes:page.testing.note.botFixing', { count: 10 }));
     assert.deepEqual(member.actions, []);
+    const memberPlatform = AppView._changeTestingView(change({ state: 'platform', since: null }));
+    assert.equal(memberPlatform.authorNote,
+      `${message('changes:page.testing.note.botPlatform')} ${message('changes:page.testing.note.botPlatformAsk')}`);
+    assert.deepEqual(memberPlatform.actions, []);
   } finally {
     if (hadApp) global.App = previous; else delete global.App;
   }
@@ -358,8 +387,8 @@ test('#6234: while Homeroom bot fixes its change\'s checks, the Testing card say
   const card = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.match(card, /data-change-bot-fix=\{shown\.botFix \|\| undefined\}/);
   // #6284 adds the stopped state a change enters once the bot has used its
-  // own fix rounds, so the union now carries it too.
-  assert.match(read('frontend/src/features/dev-board/topic/model.ts'), /botFix\?: 'fixing' \| 'queued' \| 'handed_off' \| 'stopped' \| null;/);
+  // own fix rounds, and #6388 the platform state, so the union carries both.
+  assert.match(read('frontend/src/features/dev-board/topic/model.ts'), /botFix\?: 'fixing' \| 'queued' \| 'platform' \| 'handed_off' \| 'stopped' \| null;/);
 });
 
 test('the before & after card marks a failed change as not working, with what happened', () => {

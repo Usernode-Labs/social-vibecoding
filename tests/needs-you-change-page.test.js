@@ -512,7 +512,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   const failed = testing({ check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] });
   assert.deepEqual([failed.figure, failed.tone, failed.details], ['Found a problem', 'bad', true]);
   assert.deepEqual(failed.note, ['One of this change’s checks failed on its preview.']);
-  assert.equal(failed.authorNote, 'Its author needs to fix this before it can go live.');
+  assert.equal(failed.authorNote, 'maya made this change and needs to fix this before it can go live.');
   assert.equal(testing({ check_state: 'skipped' }).figure, 'Not tested');
   assert.equal(testing({ check_state: 'error' }).figure, 'Couldn’t finish');
   assert.equal(testing({ check_state: null, staging_url: null }).figure, 'Not started');
@@ -648,10 +648,10 @@ test('a failed run, read by anybody else: the same words, who has to fix it, and
   const card = plain(av._changeTestingView(FAILED));
   assert.equal(card.fix, null);
   assert.deepEqual(card.actions, []);
-  assert.equal(card.authorNote, 'Its author needs to fix this before it can go live.');
+  assert.equal(card.authorNote, 'maya made this change and needs to fix this before it can go live.');
   const testing = unescape(render(av, FAILED).page);
   assert.match(testing, /data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message/);
-  assert.match(testing, /<p class="dev-change-gate-note">Its author needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.match(testing, /<p class="dev-change-gate-note">maya made this change and needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
   assert.ok(!testing.includes('data-change-fix-checks') && !testing.includes('dev-change-gate-fix'));
   // Its author, on a change with no conversation to ask: the re-run, as before.
   const own = context({ id: 7, username: 'maya' });

@@ -8248,6 +8248,26 @@ const AppView = {
           act: { fn: 'letBotTryAgain', args: [item.id] }, passNode: true,
         });
       }
+      // #6388: a person's change names the person who must fix it; a
+      // change Homeroom bot built never says "its author" unless the bot
+      // gave it to a person (handed_off), and with nothing of the bot's
+      // recorded says it is not fixing it instead.
+      const botBuilt = AppView._botBuilt(item);
+      const platform = !!botFix && botFix.state === 'platform';
+      let authorNote = null;
+      if (botNote) {
+        authorNote = platform
+          ? `${botNote} ${rerun
+            ? PlatformI18n.t('changes:page.testing.note.botPlatformRerun')
+            : PlatformI18n.t('changes:page.testing.note.botPlatformAsk')}`
+          : botNote;
+      } else if (botBuilt) {
+        authorNote = PlatformI18n.t('changes:page.testing.note.botNotFixing');
+      } else if (!mine) {
+        authorNote = item.username
+          ? PlatformI18n.t('changes:page.testing.note.authorFixesNamed', { name: item.username })
+          : PlatformI18n.t('changes:page.testing.note.authorFixes');
+      }
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.failing'),
@@ -8255,7 +8275,7 @@ const AppView = {
         explain: AppView._checksExplainView(item, v),
         ...(mainFailure ? { mainFailure } : {}),
         fix,
-        authorNote: botNote || (mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes')),
+        authorNote,
         botFix: botFix ? botFix.state : null,
       };
     }
@@ -19489,6 +19509,7 @@ const AppView = {
       return botFix.reason === 'retry' ? `${started} ${PlatformI18n.t('changes:page.testing.note.botRetry')}` : started;
     }
     if (botFix.state === 'queued') return PlatformI18n.t('changes:page.testing.note.botQueued');
+    if (botFix.state === 'platform') return PlatformI18n.t('changes:page.testing.note.botPlatform');
     if (botFix.state === 'handed_off') return PlatformI18n.t('changes:page.testing.note.botHandedOff');
     if (botFix.state === 'stopped') {
       const count = Math.max(1, Number(botFix.tries) || 3);
