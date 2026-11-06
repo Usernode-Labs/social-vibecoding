@@ -39,8 +39,10 @@ import { NOT_MOVING_KINDS } from '../session-work.ts';
 
 export const MACHINE = 'preview';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
+export const wakeKey = (eventId: number) => `wake:${eventId}`;
 
 export const WORK = Object.freeze({
+  wake: 'preview.wake',
   prepare: 'preview.prepare',
   // The repo's unit suite, started with the build of an attempt and read by
   // the checks run against it (services.ts).
@@ -154,6 +156,8 @@ const REQUEST_REASONS: ReadonlySet<string> = new Set(['ensure', 'deploy', 'previ
 const optInt = (v: unknown, what: string) => (v == null ? null : int(v, what));
 
 const EVENTS = {
+  WakeRequested: (p: any) => ({ sessionId: int(p?.sessionId, 'sessionId'),
+    reason: word(p?.reason, 'reason'), repairRoute: p?.repairRoute === true }),
   // A head announced by any source (a turn, an upload, an update, a sync,
   // an imported pull request, the merge gate, fleet, recovery).
   // `carryFrom`: a mechanical merge of main into a tested head (votes.js
@@ -1090,6 +1094,11 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       : toRetiring(s, 'stale-env', false, ctx, deps)),
   };
   const house = (name: Name): Record<string, Entry> => ({
+    WakeRequested: SERVES.has(name) ? {
+      guard: (s, e, f) => s.data.serving && f.session && OPEN.has(f.session.status) ? ok() : reject('not_serving'),
+      to: (s, e) => step({ name, data: s.data, work: [{ kind: WORK.wake, key: wakeKey(e.id),
+        input: { sessionId: s.data.sessionId, reason: e.payload.reason, repairRoute: e.payload.repairRoute } }] }),
+    } : notHere('not_serving'),
     IdleDue: SERVES.has(name) ? idleDue : notHere('not_serving'),
     ChecksDue: name === 'settled' || name === 'idle' ? checksDue : notHere('not_owed_here'),
     EnvStale: SERVES.has(name) ? envStale : notHere(name === 'preparing' || name === 'checking' ? 'busy' : 'not_serving'),
@@ -1638,13 +1647,14 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // 8: a preview lost again soon after it was rebuilt is its head's error
     // (lostAgain), counted by `losses`, which an older Pod would neither keep
     // nor read: it would rebuild such a preview every time it is lost.
-    version: 8,
+    // 9: request-triggered wakes are conductor work, including route repair.
+    version: 9,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
     // What web appends: a revision or a preview asked for, a recheck, what the
     // ensure-staging and recheck routes find, a hand-off's build, a demo reset,
     // and the admin console's actions.
-    web: ['RevisionSubmitted', 'PreviewRequested', 'RecheckRequested', 'ChecksSkipped', 'RecheckFolded', 'PreviewLost', 'RetireRequested', 'OperationStarted', 'OperationEnded', 'AdminRetry', 'AdminRetire', 'AdminEnd'],
+    web: ['WakeRequested', 'RevisionSubmitted', 'PreviewRequested', 'RecheckRequested', 'ChecksSkipped', 'RecheckFolded', 'PreviewLost', 'RetireRequested', 'OperationStarted', 'OperationEnded', 'AdminRetry', 'AdminRetire', 'AdminEnd'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {
@@ -1656,6 +1666,7 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       return readFacts(tx, id, { lock: !operation, holders: [...new Set(holders)] });
     },
     authorize: {
+      WakeRequested: system,
       RevisionSubmitted: producedOrProposal,
       PreviewRequested: produced,
       ChecksSkipped: produced,

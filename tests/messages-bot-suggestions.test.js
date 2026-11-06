@@ -124,8 +124,8 @@ test('#6404: a message asking with a Questions card hides its suggested replies,
     /<span>Try again<\/span>/, 'a quoted step still draws');
 
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\)\) && !!message\.sender\.bot\}/,
-    'the row hides on the message carrying the card, and on no other');
+  assert.match(index, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\) \|\| \(welcomeShown && message\.id === newestMainBotId\)\) && !!message\.sender\.bot\}/,
+    'the row hides on the message carrying the card (or under #6426\'s welcome card), and on no other');
 });
 
 test('a step to take on the message is a filled button; a suggestion keeps the pill', () => {

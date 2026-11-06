@@ -45,7 +45,9 @@ test('an empty status line takes no room, and stays in the page', () => {
   // Still a sibling of the scroller rather than a row inside it, so a name
   // shows whether or not the reader is at the bottom.
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /<\/TranscriptOverlay>\n\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\n\s*<MessageComposer \/>/);
+  // #6426: Main Chat's Welcome back card sits between the typing line and
+  // the message box; the status line is still the scroller's sibling.
+  assert.match(screen, /<\/TranscriptOverlay>\n\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\n\s*(?:\{mainChat && botDm && conversationId \? <WelcomeBack[^\n]*\/> : null\}\n\s*)?<MessageComposer \/>/);
 });
 
 test('the composer bar has no padding over its card', () => {

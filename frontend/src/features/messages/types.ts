@@ -796,6 +796,13 @@ export interface ConversationSummary {
    */
   lastReadMessageId?: number | null;
   /**
+   * #6426: when the viewer last looked at this conversation, as the server
+   * records it (its read state). Main Chat's "Welcome back" card shows after
+   * eight hours away. Absent from an older server, and hidden on an
+   * invitation like the read cursor.
+   */
+  lastVisitAt?: string | null;
+  /**
    * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
    * other person has not accepted yet. One opening message is allowed; after
    * it `canSend` turns false and the thread says who it is waiting for.

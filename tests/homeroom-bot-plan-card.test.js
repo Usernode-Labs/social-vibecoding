@@ -63,7 +63,7 @@ test('#4046: while a plan or a question offers its own answers, the bot\'s quest
   assert.match(screen, /if \(!botDm\) return \{ plans: NO_PLAN_LAYOUT, blocks: null as ReadonlyMap<number, ChangeBlock> \| null \};/);
   // #6404: a message carrying a Questions card hides its own suggested
   // replies too, so the card is the only set of answers on it.
-  assert.match(screen, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\)\) && !!message\.sender\.bot\}/);
+  assert.match(screen, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\) \|\| \(welcomeShown && message\.id === newestMainBotId\)\) && !!message\.sender\.bot\}/);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /<BotQuestion message=\{message\} conversationId=\{conversationId\} hidePrompts=\{hidePrompts\} \/>/);
 });
