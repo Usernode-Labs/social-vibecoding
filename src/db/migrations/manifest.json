@@ -170,6 +170,11 @@
       "id": "one-home-pins",
       "sha256": "4972486faed76f44db09cf052f038c7909c3f033305dddaaee0deb1c7ecb339f",
       "schemaSha256": "ca01f012df67f90516ca95dfe527cb8abe250afaedd2f085c96f5043e568b72f"
+    },
+    {
+      "id": "email-translation-jobs",
+      "sha256": "5d7edda2d64f1509c1a56f1b822cef3a60e2186cc53652300d5bb92e4d83787e",
+      "schemaSha256": "1eeda40e135285bf2ee6749e452e5f3db1168a8a16022e824fbc5fcfa1e7b18e"
     }
   ]
 }
