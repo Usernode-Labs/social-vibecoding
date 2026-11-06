@@ -1737,6 +1737,14 @@ function readVerdict(text) {
       // a reply in the requester's own words (at most 60 characters). The
       // note offers it as a button to tap beside Go ahead.
       firstStep: verdict === 'person' ? firstStepOf(obj.first_step) : null,
+      // 6 Nov 2026 (#6395): whether a go-ahead from the person the note names
+      // can settle this, or it still fails `ready` for somebody else to act
+      // on (credentials, auth, billing, permissions, operator work outside
+      // the app, a non-append-only database change, or too big for one
+      // build). Only a person verdict that is neither about Homeroom itself
+      // nor already done carries it; a missing key is today's behaviour.
+      goAheadDecides: verdict === 'person' && obj.platform !== true && obj.done !== true
+        ? obj.go_ahead !== false : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
     };
@@ -2492,7 +2500,7 @@ ${designGuidance}
 // it. A re-read and the repair ask restate it too (VERDICT_KEYS_LINE):
 // without it, a re-read answered in keys of its own (`next_step`,
 // `ask_reporter`) that nothing reads, and so did the ask to repair it.
-const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "..."}';
+const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false}';
 const VERDICT_KEYS_LINE = 'Use these keys and the others your instructions name (such as `answers`, `blocker`, `assumptions`, `platform`): a block with keys of its own, or no `verdict`, cannot be read.';
 
 function triageClosing(issueNumber) {
@@ -2703,7 +2711,7 @@ function deciderNote(decider) {
       who,
       '- A request that fails a `ready` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is a `question` to them, not `person`. Ask it plainly, say what it would add, and give `answers` they can tap: the choice that needs no approval (for example the browser\'s built-in way) first when there is one, then the one that needs it (for example "Add the library"), then "Leave it".',
       '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
-      '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`.',
+      '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`, with `go_ahead` false; `reason` says who acts and where. So is a change too big for one build, and `first_step` names the part that can be built here.',
       rulesLine(decider.role ? `@${decider.requester} can` : 'its creator or admins can'),
     ].join('\n');
   }
@@ -2717,7 +2725,7 @@ function deciderNote(decider) {
     `@${decider.requester} asked for this. On this project ${named} ${deciders.length > 1 ? 'decide' : 'decides'} what gets built; the group still votes on every change.`,
     `- A request that fails a \`ready\` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is \`person\`, and its \`reason\` says it waits for ${either} to say go ahead in this request's discussion.`,
     `- When the request's discussion shows ${either} choosing (answering your question, or saying to go ahead), that criterion is decided: judge the rest as usual. A go-ahead from anyone else, @${decider.requester} included, does not decide it.`,
-    '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`.',
+    '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`, with `go_ahead` false; `reason` says who acts and where. So is a change too big for one build, and `first_step` names the part that can be built here.',
     rulesLine(`${either} can`),
   ].join('\n');
 }
@@ -2736,7 +2744,7 @@ function goAheadNote(goAhead) {
   return [
     '==== A GO-AHEAD FROM THEIR CHAT ====',
     '',
-    `@${by}, who your last note on this request named, said to go ahead in their private chat with you just now. Their words are not in the discussion below. What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still \`person\`.`,
+    `@${by}, who your last note on this request named, said to go ahead in their private chat with you just now. Their words are not in the discussion below. What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still \`person\`, with \`go_ahead\` false; \`reason\` says who acts and where. So is a change too big for one build, and \`first_step\` names the part that can be built here.`,
   ].join('\n');
 }
 
@@ -3069,6 +3077,14 @@ async function insertRunRow(pool, run) {
   if (id && run.complicated) {
     await pool.query('UPDATE homeroom_bot_runs SET complicated = TRUE WHERE id = $1', [id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record a complicated verdict', { runId: id, err: err.message }));
+  }
+  // 6 Nov 2026 (#6395): whether a go-ahead could settle a person verdict, and
+  // the smaller first step it named, the same way.
+  if (id && (run.goAheadDecides === true || run.goAheadDecides === false || run.firstStep)) {
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET go_ahead_decides = $2, first_step = $3 WHERE id = $1',
+      [id, typeof run.goAheadDecides === 'boolean' ? run.goAheadDecides : null, run.firstStep || null],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record whether a go-ahead settles it', { runId: id, err: err.message }));
   }
   // What the read saw of its request (readFingerprintOf), and the held run
   // a reused verdict came from (reuseHeldVerdict), the same way.
@@ -4748,6 +4764,7 @@ async function runTriage(pool, config, {
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
     plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed, builder: parsed.builder || null,
+    firstStep: parsed.firstStep, goAheadDecides: parsed.goAheadDecides,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
     durationMs: Date.now() - startedMs, readFingerprint,
@@ -4809,6 +4826,9 @@ async function runTriage(pool, config, {
         firstVersion: !!requester?.firstVersion,
         // Who a person hand-off waits on, for the requester's DM.
         decider,
+        // 6 Nov 2026 (#6395): a go-ahead this look carries, so a read that
+        // still hands it back answers in one plain line instead of the note.
+        goAhead,
         // 16 Oct 2026: an older request's first read rings only when it is
         // ready to try; what else it finds is said quietly (actOnVerdict).
         backlog: item.reason === BACKLOG_REASON,
@@ -7442,7 +7462,7 @@ async function actOnVerdict({
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
   proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false,
   askedAgain = false, comments = [],
-  decider = null, backlog = false, deps,
+  decider = null, backlog = false, goAhead = null, deps,
 }) {
   const { github, ws } = deps;
   // 16 Oct 2026: news that asks nothing new of its requester is said in
@@ -7581,11 +7601,18 @@ async function actOnVerdict({
       : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
     const suggestActions = live.personSuggestions({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
+      goAheadDecides: parsed.goAheadDecides,
     });
+    // 6 Nov 2026 (#6395): a go-ahead the read says cannot settle it gets one
+    // plain answer instead of this note again. The note would offer the same
+    // Go ahead that was just refused.
+    const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
+    const noteText = goAheadCannot
+      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep })
+      : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
-    const noteText = live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
     if (await unchangedNote('person', noteText, parsed.done ? 'empty' : null)) {
       acted = 'unchanged';
       log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
