@@ -906,6 +906,36 @@ test('the expand CSS: closed it is the same block, open a window-sized card over
     'a browser without the popover API gets no button that does nothing');
 });
 
+// #6382: opened from the detail column, the viewer went full screen as a
+// dim with nothing readable in it. The column flattened the popover's box
+// whatever its state, and its `!important` position and inset overrode
+// `.shots-viewer:popover-open`. Only the CLOSED viewer belongs to the column.
+test('in the detail column only the closed viewer is flattened; open it stays the window-sized card', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  // Comments carry `{` and `}` in prose; the rules are what is left.
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((match) => ({ selector: match[1].trim(), body: match[2] }));
+  const flattening = rules.filter((rule) => rule.selector.includes('.gc-detail-shots')
+    && /\.shots-viewer|\[popover\]/.test(rule.selector)
+    && /\b(position|inset|display|width|margin)\s*:/.test(rule.body));
+  assert.ok(flattening.length > 0, 'the column still lays out the closed viewer');
+  for (const rule of flattening) {
+    assert.match(rule.selector, /:not\(:popover-open\)/,
+      `the column must not touch the open card: ${rule.selector}`);
+  }
+  const scoped = rules.find((rule) => rule.selector === '.gc-detail-shots :is(.shots-viewer, [popover]):not(:popover-open)');
+  assert.ok(scoped, 'the column flattens exactly the closed viewer');
+  assert.match(scoped.body, /display: block !important;/,
+    'closed, the column overrides the UA hiding a closed popover and the thread\'s own rule');
+  assert.match(scoped.body, /position: static !important;/);
+  assert.match(scoped.body, /inset: auto !important;/);
+  // What the open card relies on is untouched: the popover-open rule still
+  // fixes it to the window, in the top layer, over the dim.
+  assert.match(css, /\.shots-viewer:popover-open \{ position: fixed; inset: 0 var\(--platform-float-right\) 0 var\(--platform-float-left\); margin: auto;/);
+  assert.match(css, /\.shots-viewer::backdrop \{ background: rgba\(0, 0, 0, 0\.55\); \}/);
+});
+
 test('the crop is CSS: it applies while both sides show, stacked or beside each other', () => {
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   assert.match(css, /\.shots-crop \{ position: absolute; inset: 0; display: block; \}/,

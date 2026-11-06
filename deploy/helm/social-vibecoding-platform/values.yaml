@@ -306,6 +306,15 @@ config:
   # to the others when the pool is full or down. Empty keeps the default
   # spread over every node. See the chart README.
   checkNodePool: ""
+  # Require the pool instead of spilling checks onto app-serving nodes. The
+  # checks queue waits for a ready pool; configure a valid label pair first.
+  checkNodePoolRequired: false
+  # Prometheus with kube-state-metrics node labels/readiness/capacity. Empty
+  # uses the Kubernetes node API, which requires separate operator-granted RBAC.
+  checkPoolMetricsUrl: ""
+  # Explicit generated production app ID -> small|standard assignments.
+  # Previews, internal runtimes and Homeroom retain the standard profile.
+  appResourceProfiles: {}
   # Match application defaults here; each cluster declares its own capacity.
   # The web Pods' pools (the conductor's are platform.conductor's). With the
   # conductor off, the platform Pods do its work and take its wfPoolMax and
@@ -321,6 +330,13 @@ config:
   workerIdleEvictionMs: 600000
   sessionAutopauseIdleMs: 300000
   stagingIdleTeardownMs: 21600000
+  # Keep previews and their data, but stop unused app processes after one hour.
+  # Active work/checks/visuals remain excluded. Zero disables sleeping.
+  previewSleepAfterMs: 3600000
+  # Reviewed request-driven production app IDs, empty until a pilot is chosen.
+  # Zero afterMs wakes sleeping apps and disables further sleeps.
+  appSleepAppIds: []
+  appSleepAfterMs: 3600000
 
 secrets:
   create: false
@@ -417,6 +433,7 @@ ingress:
     secretName: social-vibecoding-tls
 
 networkPolicy:
+  checkPoolMetricsNamespace: monitoring
   enabled: true
   ciliumApiServerEgress: true
   # Must match APP_NAMESPACE in the foundation's social-build-policy ConfigMap.

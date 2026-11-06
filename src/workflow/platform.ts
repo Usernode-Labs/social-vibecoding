@@ -1751,6 +1751,12 @@ export async function reportUnreachable(appId: number, requestKey: string): Prom
     { requestKey, source: { kind: 'system', name: 'visit' }, appId });
 }
 
+export async function reportAppWake(appId: number, requestKey: string): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(DELIVERY, appKey(appId), { type: 'WakeRequested', payload: { appId } },
+    { requestKey, source: { kind: 'system', name: 'app-wake' }, appId });
+}
+
 // main at a commit production does not run (the main-drift clock, keyed by
 // the movement: what production ran when it was seen, and the commit; an
 // admin's Check for updates, by hand): what app delivery decided. Main

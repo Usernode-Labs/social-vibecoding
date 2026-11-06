@@ -22,6 +22,11 @@
 //   one included, and every shots run while the experiment is off) the tool
 //   does exactly what it did: one capture at CSS scale.
 //
+// - with SHOTS_SCREENSHOT_SETTLE=1 (every shots browser; never the coding
+//   agent's in-loop one) each ordinary screenshot first waits, at most 3 s,
+//   until the page's own requests have finished and its markup has stopped
+//   changing (#6379), then captures as it always did;
+//
 // - with a `closeup` argument (the shots tools' own, through the browser
 //   observer: shots-browser-observer.js startControl), it saves one region
 //   of the visible screen at `closeup.scale` device pixels per CSS pixel,
@@ -73,6 +78,30 @@ const CLOSEUP_HANDLER = '    if (params.closeup) {\n'
   + '      return;\n'
   + '    }\n';
 
+// #6379: the agent does not always call browser_wait_for before shooting, so
+// a conversation that renders just after the page goes idle was missing from
+// the shot. With SHOTS_SCREENSHOT_SETTLE=1 (every shots browser,
+// write-shots-mcp-config.js; never the coding agent's in-loop one) each
+// ordinary screenshot first waits until the page's own requests are done and
+// its markup has stopped changing, at most 3 s, and is then taken as before.
+// The close-up branch above has already returned, so close-ups do not wait
+// again; they follow a screen shot that did.
+const SETTLE_HANDLER = '    if (process.env.SHOTS_SCREENSHOT_SETTLE === "1") {\n'
+  + '      const settleInPage = async ({ quietMs, maxMs }) => {\n'
+  + '        const startedAt = Date.now();\n'
+  + '        const signature = () => document.getElementsByTagName("*").length + ":"'
+  + ' + (document.body ? document.body.textContent.length : 0);\n'
+  + '        let previous = signature();\n'
+  + '        while (Date.now() - startedAt < maxMs) {\n'
+  + '          await new Promise((done) => setTimeout(done, quietMs));\n'
+  + '          const now = signature();\n'
+  + '          if (now === previous && (window.__usernodeShotsInFlight || 0) === 0) return;\n'
+  + '          previous = now;\n'
+  + '        }\n'
+  + '      };\n'
+  + '      await tab.page.evaluate(settleInPage, { quietMs: 250, maxMs: 3000 }).catch(() => {});\n'
+  + '    }\n';
+
 const EDITS = [
   ['Cannot be used with element screenshots.")\n})',
     `Cannot be used with element screenshots."),\n${CLOSEUP_SCHEMA}})`],
@@ -84,6 +113,8 @@ const EDITS = [
     '        data: options.scale === "css" ? buffer'
     + ' : await (locator ? locator.screenshot({ ...options, path: void 0, scale: "css" })'
     + ' : tab.page.screenshot({ ...options, path: void 0, scale: "css" }))\n'],
+  ['    const buffer = locator ? await locator.screenshot(options) : await tab.page.screenshot(options);\n',
+    `${SETTLE_HANDLER}    const buffer = locator ? await locator.screenshot(options) : await tab.page.screenshot(options);\n`],
 ];
 
 function patchSource(source) {
@@ -108,7 +139,8 @@ function screenshotToolPath(mcpDir = MCP_DIR) {
 function main(mcpDir = process.argv[2] || MCP_DIR) {
   const file = screenshotToolPath(mcpDir);
   fs.writeFileSync(file, patchSource(fs.readFileSync(file, 'utf8')));
-  process.stdout.write(`browser_take_screenshot saves at device scale when SHOTS_SCREENSHOT_SCALE=device: ${file}\n`);
+  process.stdout.write(`browser_take_screenshot saves at device scale when SHOTS_SCREENSHOT_SCALE=device,`
+    + ` and waits for a settled page when SHOTS_SCREENSHOT_SETTLE=1: ${file}\n`);
 }
 
 if (require.main === module) {
@@ -118,4 +150,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { EDITS, CLOSEUP_HANDLER, patchSource, screenshotToolPath };
+module.exports = { EDITS, CLOSEUP_HANDLER, SETTLE_HANDLER, patchSource, screenshotToolPath };

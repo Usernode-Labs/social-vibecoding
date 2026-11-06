@@ -11,7 +11,7 @@
 // rebuilt and the checks capture runs again. So proposals waiting for votes
 // held real resources for as long as they waited.
 //
-// SLEEP. A preview nobody has used for PREVIEW_SLEEP_AFTER_MS (two hours by
+// SLEEP. A preview nobody has used for PREVIEW_SLEEP_AFTER_MS (one hour by
 // default: no request to its host that the platform saw, no Preview click,
 // no checks, shots or worker turn on its change) is scaled to no replicas
 // (staging-reap.js sweepSleep picks them, sleep() below puts one to sleep).
@@ -52,7 +52,7 @@
 
 const log = require('./logger');
 
-const DEFAULT_SLEEP_AFTER_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_SLEEP_AFTER_MS = 60 * 60 * 1000;
 // How long a wake waits for the pod to serve (its image on the node or
 // pulled again, then its probes).
 const WAKE_TIMEOUT_MS = 4 * 60 * 1000;

@@ -341,6 +341,17 @@ test('every route the tools call is on the allowlist', () => {
   assert.ok(delegatedCalls >= 4, 'found the Mayor-only call sites');
 });
 
+test('#6384: the Mayor may read a plan, and may never post or change one', () => {
+  // get_spec calls these two GETs; both are plain reads, and the routes check
+  // the caller may see the request.
+  assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'GET', '/api/apps/recipe-box/issues/12/specs'), true);
+  assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'GET', '/api/sessions/412/specs/2'), true);
+  // post_spec edits a plan, so its route stays off the Mayor's list.
+  assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'POST', '/api/apps/recipe-box/issues/12/spec'), false);
+  // The worker's six reads still include no plan.
+  assert.equal(policy.isDelegatedApiRequest('worker_read', 'GET', '/api/apps/recipe-box/issues/12/specs'), false);
+});
+
 // ── #967 pass 2: the write half ────────────────────────────────────────
 
 test('promote is on the list only because the route is owner-scoped', () => {

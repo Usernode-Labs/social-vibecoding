@@ -26957,8 +26957,11 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    `data-detail` says which, and `:has()` lets a frame that has always
    been one flex row split by it. */
 
-/* The shots viewer used to be a popover over the page; in the column it
-   is simply its contents, scrolling under the reader's header. */
+/* The shots viewer is still a popover, even here; in the column only its
+   CLOSED state is flattened into the column's contents, scrolling under
+   the reader's header. Open, it must keep `.shots-viewer:popover-open`: it
+   goes to the top layer and is drawn as the window-sized card over a dim.
+   Flattening that too left a dim with nothing readable in it (#6382). */
 .gc-detail-shots {
   flex: 1 1 auto;
   min-height: 0;
@@ -26966,7 +26969,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   overflow: auto;
   padding: 0 4px 12px;
 }
-.gc-detail-shots :is(.shots-viewer, [popover]) {
+.gc-detail-shots :is(.shots-viewer, [popover]):not(:popover-open) {
   display: block !important;
   position: static !important;
   inset: auto !important;

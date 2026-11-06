@@ -68,6 +68,11 @@ test('the Mayor sees exactly its list, and every name on it is a real tool', () 
   for (const never of ['prepare_work', 'submit_work', 'start_platform_build', 'demo_vote', 'get_checkout_status']) {
     assert.ok(!specs.has(never), `${never} is for a human-driven client, not the Mayor`);
   }
+  // #6384: the Mayor reads a plan posted on a request, as the Homeroom bot's
+  // chat does, and the tool is a plain read.
+  assert.equal(audiences.toolVisibleTo('agent_mayor', 'get_spec'), true);
+  assert.ok(specs.has('get_spec'));
+  assert.equal(specs.get('get_spec').annotations.readOnlyHint, true);
 });
 
 test('the worker sees exactly six reads', () => {
@@ -117,6 +122,7 @@ const SAMPLE_ARGS = {
   get_app: { slug: 'recipe-box' },
   list_requests: { slug: 'recipe-box' },
   get_request: { slug: 'recipe-box', number: 12 },
+  get_spec: { slug: 'recipe-box', requestNumber: 12 },
   get_discussion: { slug: 'recipe-box', threadType: 'issue', ref: 12 },
   get_message: { slug: 'recipe-box', threadType: 'issue', ref: 12, messageId: 40 },
   get_proposal: { proposalId: 50 },
@@ -149,6 +155,8 @@ function fakePlatform(overrides = {}) {
     'GET /api/me/active-sessions': { sessions: [] },
     'GET /api/sessions/50': { session: { id: 50, app_slug: 'recipe-box', status: 'active', branch_name: 'b' } },
     'GET /api/sessions/50/status': { busy: false },
+    'GET /api/apps/recipe-box/issues/12/specs': { specs: [{ sessionId: 50, version: 2 }] },
+    'GET /api/sessions/50/specs/2': { spec: { content: '# A plan' } },
     'POST /api/apps/recipe-box/sessions': { session: { id: 77, status: 'active' } },
     'PATCH /api/sessions/77/linked-issues': { linkedIssues: [12, 13] },
     'POST /api/sessions/50/promote': { ok: true, prNumber: 901, prUrl: 'https://github.com/o/r/pull/901' },

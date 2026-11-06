@@ -10,6 +10,14 @@ interface Deps { config: any; pool: Pool }
 
 export function appDeliveryServices({ config, pool }: Deps): Record<string, WorkHandler> {
   return {
+    // Intentional cold starts have their own shared capacity, independent of
+    // healing and deploys. The kernel enforces this across all conductors.
+    [WORK.wake]: {
+      maxAttempts: 1, leaseMs: 120000, concurrency: 2,
+      async run({ input, signal }): Promise<Json> {
+        return legacy('services/production-sleep').wake(config, pool, Number(input.appId), { signal });
+      },
+    },
     // Production of the app, from main's tip as it is now
     // (staging.deployProduction, under the cross-process build lock). A
     // retry after a crash that had already deployed a merge's own commit
