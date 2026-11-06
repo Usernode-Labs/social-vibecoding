@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { TemplateList } from './email-templates/list';
-import { draftFrom, ENGLISH_UNTIL_TRANSLATED, expectedLiveFor, TemplateEditor, TemplateForm } from './email-templates/editor';
+import { draftFrom, ENGLISH_UNTIL_TRANSLATED, expectedLiveFor, TemplateEditor, TemplateForm, TRANSLATIONS_KEPT } from './email-templates/editor';
 import { LayoutEditor, LayoutList } from './email-templates/layouts';
 import { layoutReplacements, ReplaceDialog, templateReplacements } from './email-templates/replace-dialog';
 import { PreviewPane, PreviewView } from './email-templates/preview';
@@ -263,10 +263,14 @@ function EmailTemplatesSection() {
     return (
       <TemplateEditor key={`t-${view.action}-${editorKey}`} payload={payload} action={view.action} isNew={view.isNew}
         restore={view.restore || null} canWrite={write} onDone={back} onReload={reload}
-        onSaved={(row, unusable) => {
+        onSaved={(row, unusable, kept) => {
           const englishOnly = !!payload.actions.find((a) => a.action === row.action)?.englishOnly;
-          saved(englishOnly ? `${row.name} v${row.version} is live.` : `${row.name} v${row.version} is live. ${ENGLISH_UNTIL_TRANSLATED}`, unusable,
-            englishOnly ? null : { base: '/api/admin/email-templates', versionId: row.id })();
+          if (englishOnly || kept) {
+            saved(englishOnly ? `${row.name} v${row.version} is live.` : `${row.name} v${row.version} is live. ${TRANSLATIONS_KEPT}`, unusable, null)();
+            return;
+          }
+          saved(`${row.name} v${row.version} is live. ${ENGLISH_UNTIL_TRANSLATED}`, unusable,
+            { base: '/api/admin/email-templates', versionId: row.id })();
         }} />
     );
   }

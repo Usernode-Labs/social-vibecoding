@@ -145,6 +145,36 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     assert.equal((await call('POST', '/api/admin/email-templates/abc/restore', {})).status, 404);
   });
 
+  await t.test('a save identical to the live version is 409 unchanged and records nothing', async () => {
+    const current = await live('otp');
+    const before = (await eventsOf()).length;
+    const res = await call('POST', '/api/admin/email-templates', otpBody(current));
+    assert.equal(res.status, 409);
+    assert.equal(res.body.code, 'unchanged');
+    assert.match(res.body.error, /Nothing has changed/);
+    assert.equal((await live('otp')).id, current.id);
+    assert.equal((await eventsOf()).length, before);
+    const layout = await liveLayout();
+    const same = await call('POST', '/api/admin/email-layouts', { familyId: layout.family_id, name: layout.name, html: layout.html, text: layout.text, expectedLiveId: layout.id });
+    assert.equal(same.status, 409); assert.equal(same.body.code, 'unchanged');
+  });
+
+  await t.test('a new name keeps the translations and says so; new words do not', async () => {
+    const current = await live('otp');
+    await pool.query(
+      `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
+       VALUES ($1, 'fr', $2, $3, $4, $5, $6, 'machine')`,
+      [current.id, current.subject, current.preheader, current.why, current.html, current.text]);
+    const renamed = await call('POST', '/api/admin/email-templates', otpBody(current, { name: `${current.name} (renamed)` }));
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+    assert.equal(renamed.body.translationsKept, true);
+    const kept = await pool.query('SELECT locale FROM email_template_translations WHERE template_id = $1', [renamed.body.template.id]);
+    assert.deepEqual(kept.rows.map((r) => r.locale), ['fr']);
+    const reworded = await call('POST', '/api/admin/email-templates', otpBody(await live('otp'), { subject: 'Your Homeroom code, reworded' }));
+    assert.equal(reworded.status, 200, JSON.stringify(reworded.body));
+    assert.equal(reworded.body.translationsKept, false);
+  });
+
   await t.test('a valid save goes live, archives the last version and records an event', async () => {
     const current = await live('otp');
     const res = await call('POST', '/api/admin/email-templates', otpBody(current, { subject: 'Your Homeroom code, edited' }));

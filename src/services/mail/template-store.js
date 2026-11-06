@@ -84,7 +84,23 @@ function checkExpected(liveRow, expectedLiveId) {
   if ((expectedLiveId == null ? null : Number(expectedLiveId)) !== liveId) throw fail('conflict', 'Another version was saved first');
 }
 
-async function saveTemplate(pool, input, userId, { check = noCheck } = {}) {
+// The English words a template's translations are translations of. A new
+// version that keeps them keeps its translations; one that changes any of
+// them starts with none, since what they say no longer matches.
+const TEMPLATE_WORDS = ['subject', 'preheader', 'why', 'html', 'text'];
+const LAYOUT_WORDS = ['html', 'text'];
+const sameWords = (row, input, fields) => fields.every((field) => (row[field] ?? '') === (input[field] ?? ''));
+const UNCHANGED = 'Nothing has changed since the live version, so there is nothing to save';
+
+/**
+ * Saves a new live version of the template for `action`. A save identical to
+ * the live version is refused (`unchanged`): it would only make a copy, and a
+ * copy starts with no translations. A save that keeps the English words (a
+ * new name or layout) carries the live version's translations over, and
+ * `afterSave` is called with them carried, inside the same transaction, so the
+ * caller can check them against the layout the new version is sent in.
+ */
+async function saveTemplate(pool, input, userId, { check = noCheck, afterSave = noCheck } = {}) {
   const { action, name, layoutFamilyId = null, subject, preheader = '', why = '', html, text, expectedLiveId = null } = input;
   if (!actionFor(action)) throw fail('unknown_action', `Unknown email action: ${action}`);
   return inTransaction(pool, async (client) => {
@@ -92,8 +108,13 @@ async function saveTemplate(pool, input, userId, { check = noCheck } = {}) {
     const layout = layoutFamilyId == null ? null : await liveLayout(client, layoutFamilyId);
     if (layoutFamilyId != null && !layout) throw fail('not_found', 'That layout does not exist');
     const { rows: [liveRow] } = await client.query(
-      "SELECT id FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [action]);
+      "SELECT * FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [action]);
     checkExpected(liveRow, expectedLiveId);
+    const words = { subject, preheader, why, html, text };
+    const keepsWords = !!liveRow && sameWords(liveRow, words, TEMPLATE_WORDS);
+    if (keepsWords && liveRow.name === name && (liveRow.layout_family_id ?? null) === layoutFamilyId) {
+      throw fail('unchanged', UNCHANGED);
+    }
     await check({ layout, client });
     if (liveRow) await client.query("UPDATE email_templates SET status = 'archived' WHERE id = $1", [liveRow.id]);
     const { rows: [{ version }] } = await client.query('SELECT COALESCE(MAX(version), 0) + 1 AS version FROM email_templates WHERE action = $1', [action]);
@@ -101,15 +122,29 @@ async function saveTemplate(pool, input, userId, { check = noCheck } = {}) {
       `INSERT INTO email_templates (action, name, layout_family_id, version, status, subject, preheader, why, html, text, created_by)
        VALUES ($1, $2, $3, $4, 'live', $5, $6, $7, $8, $9, $10) RETURNING *`,
       [action, name, layoutFamilyId, version, subject, preheader, why, html, text, userId == null ? null : userId]);
+    if (keepsWords) {
+      await client.query(
+        `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin, updated_at, unusable)
+         SELECT $2, locale, subject, preheader, why, html, text, origin, updated_at, unusable
+           FROM email_template_translations WHERE template_id = $1`,
+        [liveRow.id, row.id]);
+    }
+    await afterSave({ row, layout, client, carried: keepsWords });
     return row;
   });
 }
 
+/**
+ * Saves a new live version of a layout (a new family when `familyId` is
+ * null). As with templates, a save identical to the live version is refused,
+ * and one that keeps the words (a new name) carries the translations over.
+ */
 async function saveLayout(pool, input, userId, { check = noCheck } = {}) {
   const { familyId = null, name, html, text, expectedLiveId = null } = input;
   return inTransaction(pool, async (client) => {
     let family = familyId;
     let version = 1;
+    let carryFrom = null;
     if (family == null) {
       checkExpected(null, expectedLiveId);
       await check({ templates: [], client });
@@ -117,9 +152,13 @@ async function saveLayout(pool, input, userId, { check = noCheck } = {}) {
     } else {
       await lock(client, 'email_layouts', family);
       const { rows: [liveRow] } = await client.query(
-        "SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [family]);
+        "SELECT * FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [family]);
       if (!liveRow) throw fail('not_found', 'That layout does not exist');
       checkExpected(liveRow, expectedLiveId);
+      if (sameWords(liveRow, { html, text }, LAYOUT_WORDS)) {
+        if (liveRow.name === name) throw fail('unchanged', UNCHANGED);
+        carryFrom = liveRow.id;
+      }
       await check({ templates: await wearers(client, family), client });
       await client.query("UPDATE email_layouts SET status = 'archived' WHERE id = $1", [liveRow.id]);
       version = (await client.query('SELECT MAX(version) + 1 AS version FROM email_layouts WHERE family_id = $1', [family])).rows[0].version;
@@ -128,6 +167,13 @@ async function saveLayout(pool, input, userId, { check = noCheck } = {}) {
       `INSERT INTO email_layouts (family_id, name, version, status, html, text, created_by)
        VALUES ($1, $2, $3, 'live', $4, $5, $6) RETURNING *`,
       [family, name, version, html, text, userId == null ? null : userId]);
+    if (carryFrom != null) {
+      await client.query(
+        `INSERT INTO email_layout_translations (layout_id, locale, html, text, origin, updated_at, unusable)
+         SELECT $2, locale, html, text, origin, updated_at, unusable
+           FROM email_layout_translations WHERE layout_id = $1`,
+        [carryFrom, row.id]);
+    }
     return row;
   });
 }

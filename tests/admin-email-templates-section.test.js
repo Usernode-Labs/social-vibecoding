@@ -695,7 +695,8 @@ test('save offers translate, after a template save and a layout save, and names 
   assert.ok(!/Translate the other languages now/.test(englishOnly), 'an English-only email is not offered it');
 
   const section = read(SECTION);
-  assert.match(section, /englishOnly \? null : \{ base: '\/api\/admin\/email-templates', versionId: row\.id \}/);
+  assert.match(section, /is live\. \$\{ENGLISH_UNTIL_TRANSLATED\}`, unusable,\s*\{ base: '\/api\/admin\/email-templates', versionId: row\.id \}/);
+  assert.match(section, /if \(englishOnly \|\| kept\) \{\n\s*saved\(.*, unusable, null\)\(\);/, 'nothing to translate when English-only or the translations came along');
   assert.match(section, /\{ base: '\/api\/admin\/email-layouts', versionId: row\.id \}\)\(\)\} \/>/, 'a layout save offers it too');
   assert.match(section, /setBanner\(\{ kind: 'ok', text: done, unusable: unusableOf\(res\.data\) \}\);/, 'restores and deletes name them too');
   const { unusableOf } = load();
@@ -703,7 +704,7 @@ test('save offers translate, after a template save and a layout save, and names 
   assert.deepEqual(unusableOf({ template: {} }), [], 'an older answer without the list names none');
   assert.deepEqual(unusableOf(null), []);
   for (const file of ['editor.tsx', 'layouts.tsx']) {
-    assert.match(read(`frontend/src/features/admin/email-templates/${file}`), /onSaved\(res\.data\.(template|layout), unusableOf\(res\.data\)\);/);
+    assert.match(read(`frontend/src/features/admin/email-templates/${file}`), /onSaved\(res\.data\.(template|layout), unusableOf\(res\.data\)(, res\.data\.translationsKept === true)?\);/);
   }
   const once = render('SavedBanner', { text: 'Sign-in code v4 is live.', languages: LANGUAGES, translate: null, unusable: [{ locale: 'fr', reason: 'x' }] });
   assert.equal((once.match(/Saved\./g) || []).length, 0, 'the notice does not repeat "Saved."');
@@ -1009,12 +1010,30 @@ test('an edit says other languages get the English until it is translated, in th
     onChange() {}, onTab() {}, onSave() {}, onCancel() {}, onReload() {}, onRetry() {}, preview: null, ...extra,
   });
   const note = /id="email-template-english-note"[^>]*>Readers in other languages get the English of this email until it is translated\./;
-  assert.match(form({ dirty: true }), note);
+  const reworded = { ...draftFrom(live), subject: `${live.subject} now` };
+  assert.match(form({ dirty: true, draft: reworded }), note);
   assert.ok(!note.test(form({ dirty: false })), 'nothing changed yet');
+  assert.ok(!note.test(form({ dirty: true, draft: { ...draftFrom(live), name: 'Renamed' } })), 'a new name keeps the translations');
   const report = data.templates.find((t) => t.action === 'content_report');
   assert.ok(!note.test(form({ dirty: true, draft: draftFrom(report) })), 'an English-only email has no other languages');
   const src = read(SECTION);
   assert.match(src, /is live\. \$\{ENGLISH_UNTIL_TRANSLATED\}/, 'the save banner says it too');
+  assert.match(src, /englishOnly \|\| kept/, 'unless the save kept the translations');
+});
+
+test('Save waits for a change, so a copy of the live version cannot drop its translations', () => {
+  const data = payload();
+  const live = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
+  const { draftFrom } = load();
+  const form = (extra) => render('TemplateForm', {
+    payload: data, draft: draftFrom(live), opened: draftFrom(live), isNew: false, canWrite: true, tab: 'html', failure: null, saving: false,
+    onChange() {}, onTab() {}, onSave() {}, onCancel() {}, onReload() {}, onRetry() {}, preview: null, ...extra,
+  });
+  const disabledSave = /<button type="button" id="email-template-save" class="[^"]*" disabled="">/;
+  assert.match(form({ dirty: false }), disabledSave, 'nothing changed: Save is off');
+  assert.ok(!disabledSave.test(form({ dirty: true })), 'an edit turns it on');
+  assert.ok(!disabledSave.test(form({ dirty: false, isNew: true })), 'a new template can always be saved');
+  assert.match(read(path.join(path.dirname(SECTION), 'email-templates/layouts.tsx')), /disabled=\{saving \|\| \(live != null && !dirty\)\}/, 'the layout editor too');
 });
 
 test('a language being corrected previews its own words, never the English note', () => {
