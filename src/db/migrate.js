@@ -139,6 +139,8 @@ async function migrate(config) {
   // Homeroom), so Needs you has the row that says what it waits on, its page
   // the Votes card and the bot's plain reply.
   await seedStagingOwnChangeWaitingOnFix(pool);
+  // #6421's shots: one thread holding several requests, and a consent question.
+  await seedStagingMergedThreads(pool);
   // #6282's shots: an update queued on that same change, so the AI tab has
   // "Update queued" to show instead of a Vote, and its Votes card the note.
   await seedStagingBotUpdateComing(pool);
@@ -2341,6 +2343,97 @@ async function seedStagingBotStaleDescription(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot stale-description seeding failed', { message: err.message });
+  }
+}
+
+// #6421's shots: a change for requests in several threads, gathered into one
+// thread with each requester's consent. A fresh staging copy has none of it.
+// The Homeroom project's thread #6207 holds nine requests (ten with #6212,
+// which sits in its own thread with the consent question still waiting for
+// its requester, sam), Change #6223 closes three of them, every message keeps
+// its request's tag, and the AI tab has one row with "10 requests" to show.
+// Obviously fake, idempotent by number, and a no-op outside staging.
+async function seedStagingMergedThreads(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    if (!apps.rows.length) return;
+    const appId = apps.rows[0].id;
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin')",
+    );
+    const member = people.rows.find((r) => r.username === 'usernode-capture');
+    if (!member) return;
+    const sam = (await pool.query(
+      `INSERT INTO users (username, password, is_synthetic)
+       VALUES ('staging-demo-sam', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE
+       RETURNING id`,
+    )).rows[0];
+    // Ten requests; #6207 leads. #6212 is sam's and stays in its own thread.
+    const numbers = [6207, 6208, 6209, 6210, 6211, 6212, 6213, 6214, 6215, 6216];
+    for (const n of numbers) {
+      const by = n === 6212 ? sam.id : member.id;
+      await pool.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+         SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '4 days', NOW() - INTERVAL '2 days'
+          WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+        [appId, n, `Staging demo: request #${n} joins a merged thread`, by],
+      );
+      await pool.query('SELECT thread_for_number($1, $2)', [appId, n]);
+    }
+    const lead = (await pool.query('SELECT thread_for_number($1, $2) AS id', [appId, 6207])).rows[0].id;
+    // Nine of them share #6207's thread; #6212 keeps its own until sam answers.
+    for (const n of numbers) {
+      if (n === 6212) continue;
+      await pool.query(
+        `UPDATE threads SET merged_into = $1, state = 'closed', closed_at = NOW()
+          WHERE app_id = $2 AND number = $3 AND id <> $1 AND merged_into IS NULL`,
+        [lead, appId, n],
+      );
+      await pool.query(
+        `UPDATE requests SET thread_id = $1 WHERE app_id = $2 AND number = $3`, [lead, appId, n],
+      );
+    }
+    // Messages, each tagged with its request (thread_ref keeps the number).
+    for (const n of numbers) {
+      if (n === 6212) continue;
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, thread_id, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', $4, $5, NOW() - INTERVAL '2 days'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                               AND content = $3 AND deleted_at IS NULL)`,
+        [appId, n === 6210 ? sam.id : member.id,
+         `Staging demo: a note on #${n}, kept after the merge.`, n, lead],
+      );
+    }
+    // The change lives in #6207's thread and closes 3 of the thread's 10.
+    const change = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, status, linked_issues, thread_id, promoted_at, created_at, last_activity_at)
+       SELECT $1, $2, 'staging-fixture/merged-threads', 'Staging demo: vote card lists every request a change closes',
+              'promoted', ARRAY[6207,6210,6212]::int[], $3, NOW() - INTERVAL '1 day', NOW() - INTERVAL '3 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = 'staging-fixture/merged-threads')
+        RETURNING id`,
+      [appId, member.id, lead],
+    );
+    const sessionId = change.rows[0]?.id;
+    // The consent question waiting for sam on #6212.
+    const talk = (await pool.query('SELECT thread_for_number($1, $2) AS id', [appId, 6212])).rows[0].id;
+    if (sessionId && talk && talk !== lead) {
+      await pool.query(
+        `INSERT INTO thread_moves (app_id, thread_id, kind, input, proposed_by, state, deadline, for_session_id, created_at)
+         SELECT $1, $2, 'merge', $3::jsonb, $4, 'pending', NOW() + INTERVAL '30 days', $5, NOW() - INTERVAL '1 day'
+          WHERE NOT EXISTS (SELECT 1 FROM thread_moves WHERE thread_id = $2 AND for_session_id = $5)`,
+        [appId, talk, JSON.stringify({
+          into: String(lead), intoNumber: 6207,
+          forChange: { id: sessionId, number: 6223 }, requests: [6212], author: member.id,
+        }), member.id, sessionId],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging merged-thread seeding failed', { message: err.message });
   }
 }
 
