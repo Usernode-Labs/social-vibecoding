@@ -54,7 +54,7 @@
  *   [ Testing  All checks passed ] [Try it]
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
@@ -525,6 +525,13 @@ function ChangeGatesSkeleton(): ReactNode {
 }
 
 /**
+ * #6421: how many requests the thread holds, for the changes drawn in it.
+ * `ThreadChanges` sets it from the thread's read; 0 elsewhere, where there
+ * is no thread around the change to count.
+ */
+const ThreadRequests = createContext(0);
+
+/**
  * #6421: when a thread holds several requests, a change that closes only
  * some of them says so under its title ("Closes 3 of the 10 requests in this
  * thread"), from its own `closes` and the thread's request count. Nothing on
@@ -549,11 +556,12 @@ function ClosesOf({ item, requests }: { item: ThreadItem; requests: number }): R
  * that says so), and the sheets its ⋯ opens. `ballot`: folded under the
  * ballot, which is where it is voted on.
  */
-function ChangeBody({ item, view, plan = null, ballot = false, request, threadRequests = 0 }: {
-  item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean; request: number; threadRequests?: number;
+function ChangeBody({ item, view, plan = null, ballot = false, request }: {
+  item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean; request: number;
 }): ReactNode {
   const t = useMessages('project');
   const summary = view?.body.summaryHtml || '';
+  const threadRequests = useContext(ThreadRequests);
   return (
     <>
       <AlsoCloses item={item} request={request} />
@@ -581,16 +589,14 @@ function ChangeBody({ item, view, plan = null, ballot = false, request, threadRe
 }
 
 /** One change, on its own: its line, then everything its page had. */
-function ChangeBlock({ item, plan = null, request, threadRequests = 0 }: {
-  item: ThreadItem; plan?: RequestSpecCard | null; request: number; threadRequests?: number;
-}): ReactNode {
+function ChangeBlock({ item, plan = null, request }: { item: ThreadItem; plan?: RequestSpecCard | null; request: number }): ReactNode {
   const [view] = useChangeViews([item]);
   const box = useRef<HTMLDivElement>(null);
   useInView(item.id, !!view || item.state === 'underway', box);
   return (
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
       <ChangeLine item={item} view={view} />
-      <ChangeBody item={item} view={view} plan={plan} request={request} threadRequests={threadRequests} />
+      <ChangeBody item={item} view={view} plan={plan} request={request} />
       {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
           words say so, and the bot building or fixing it leaves this out. */}
       <WorkWithBotButton
@@ -608,8 +614,8 @@ function ChangeBlock({ item, plan = null, request, threadRequests = 0 }: {
  * the rest of its section. `open` is the ballot's, so a tap on the change's
  * row in the ballot opens it too.
  */
-function FoldedChange({ item, i, view, plan, request, threadRequests = 0, open, onToggle }: {
-  item: ThreadItem; i: number; view: ChangeView | null; plan: RequestSpecCard | null; request: number; threadRequests?: number; open: boolean; onToggle: () => void;
+function FoldedChange({ item, i, view, plan, request, open, onToggle }: {
+  item: ThreadItem; i: number; view: ChangeView | null; plan: RequestSpecCard | null; request: number; open: boolean; onToggle: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const kicker = useKicker(item, letterOf(i));
@@ -629,7 +635,7 @@ function FoldedChange({ item, i, view, plan, request, threadRequests = 0, open, 
         {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
         <ChangeMenu item={item} view={view} />
       </div>
-      {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot request={request} threadRequests={threadRequests} /></div> : null}
+      {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot request={request} /></div> : null}
     </div>
   );
 }
@@ -887,7 +893,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
       <div className="mt-2 flex flex-col" data-thread-folds={options.length}>
         {options.map((o, i) => (
           <FoldedChange key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null} request={Number(anchor[0])}
-            threadRequests={Number(data.thread.requests) || 0} open={open.has(o.id)} onToggle={() => toggle(o.id)} />
+            open={open.has(o.id)} onToggle={() => toggle(o.id)} />
         ))}
       </div>
     </div>
@@ -1009,14 +1015,16 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged, p
   const rest = changes.filter((c) => !competing.has(c.id));
   const closeAlone = close && !(ballot && ballot.close && ballot.close.id === close.id) ? close : null;
   return (
-    <section className="mt-4 border-t border-[color:var(--app-sheet-line)]" data-thread-changes={changes.length}>
-      {ballot ? (
-        <Competing key={ballot.options.map((o) => o.id).join(',')} slug={slug} data={data} anchor={anchor}
-          options={ballot.options} close={ballot.close} onChanged={onChanged} plans={plans} />
-      ) : null}
-      {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} threadRequests={Number(data.thread.requests) || 0} /></Fragment>)}
-      {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
-      <Elsewhere list={elsewhere} />
-    </section>
+    <ThreadRequests.Provider value={Number(data.thread.requests) || 0}>
+      <section className="mt-4 border-t border-[color:var(--app-sheet-line)]" data-thread-changes={changes.length}>
+        {ballot ? (
+          <Competing key={ballot.options.map((o) => o.id).join(',')} slug={slug} data={data} anchor={anchor}
+            options={ballot.options} close={ballot.close} onChanged={onChanged} plans={plans} />
+        ) : null}
+        {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} /></Fragment>)}
+        {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
+        <Elsewhere list={elsewhere} />
+      </section>
+    </ThreadRequests.Provider>
   );
 }
