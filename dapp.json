@@ -885,10 +885,10 @@
       ]
     },
     {
-      "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions)",
+      "name": "Me: Your work's rows open the Homeroom bot tab's History on Changes, Requests and Votes",
       "path": "/?demo=1#profile",
       "expectText": "Your work",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
+      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#homeroom-bot/history?kind=change\"] + #profile-row-feedback[href=\"#homeroom-bot/history?kind=request\"] + #profile-row-votes[href=\"#homeroom-bot/history?kind=vote\"]"
     },
     {
       "name": "The retired History address opens the Challenges tab, and the tabs are Challenges and Standings",
@@ -913,16 +913,16 @@
       "expectSelector": "#profile-friends-sheet #profile-friends:has(#profile-friend-search-input):has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
     },
     {
-      "name": "Your changes groups what you started: in progress, then merged, then closed (UI overhaul)",
+      "name": "Your changes' old address lands on History, narrowed to changes",
       "path": "/?demo=1#profile/your-changes",
-      "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"changes\"] [data-profile-work-group=\"inProgress\"] ~ [data-profile-work-group=\"merged\"] ~ [data-profile-work-group=\"closed\"]",
-      "expectText": "In progress"
+      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-kind=\"change\"][aria-pressed=\"true\"]",
+      "expectText": "Changes"
     },
     {
-      "name": "Your requests lists what you asked for, open then done, with Suggest an improvement at the foot (UI overhaul)",
+      "name": "Your requests' old address lands on History, narrowed to requests",
       "path": "/?demo=1#profile/your-requests",
-      "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"requests\"] [data-profile-work-group=\"open\"] ~ [data-profile-work-group=\"done\"] ~ div > button[data-profile-work-ask]",
-      "expectText": "someone is on it"
+      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-kind=\"request\"][aria-pressed=\"true\"]",
+      "expectText": "Requests"
     },
     {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Linked accounts (#982, #1939)",
@@ -2244,16 +2244,16 @@
       "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"overview\"] + [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] + [data-ws-dash-cell=\"votes\"] + [data-ws-dash-cell=\"shipped\"] > b"
     },
     {
-      "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), first under What's happening",
-      "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine]:first-child [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
-      "expectText": "You have no work going on."
+      "name": "Workshop: Your work is one row under Overview, opening Homeroom bot narrowed to this project",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
+      "expectText": "Your work"
     },
     {
-      "name": "Hub: Your work stays when nothing is in progress, and says so (#3489)",
-      "path": "/?demo=1&shot=mine-empty&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card] [data-ws-mine-empty=\"\"]",
-      "expectText": "No work in progress."
+      "name": "Hub: For you's Your work row opens Homeroom bot narrowed to this project",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > a[data-ws-mine-card][data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
+      "expectText": "Your work"
     },
     {
       "name": "Foreign proposal: Explore in a coding agent is a row of the sheet’s ⋯ (#827, #4455); the Votes step names who voted, with How voting works as the ? at the line’s end",
@@ -2450,8 +2450,8 @@
     {
       "name": "With room on the line the strip keeps them, and Filters does not offer them",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-filter-row [data-quick-filter=\"assignedToMe\"] ~ [data-quick-filter=\"createdByMe\"]",
-      "expectText": "Created by you"
+      "expectSelector": "#dev-filter-row [data-quick-filter=\"assignedToMe\"] ~ [data-quick-filter=\"yours\"]",
+      "expectText": "Yours"
     },
     {
       "name": "The board person filter lives in the Filters dialog (matches assignees or authors, #1404)",
@@ -2688,9 +2688,9 @@
       "expectText": "Staging demo private request"
     },
     {
-      "name": "The Workshop tab opens on its Overview: All items with the approval rule as its last line, then What's happening, with no notices panel (#3487, #3528)",
+      "name": "The Workshop tab opens on its Overview: All items with the approval rule as its last line, then Your work, with no notices panel (#3487, #3528)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-part=\"overview\"]:first-child + [data-ws-dashboard]:has(> [data-ws-approval-rules]:last-child > [data-ws-community-rule]) + [data-ws-part=\"happening\"]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-part=\"overview\"]:first-child + [data-ws-dashboard]:has(> [data-ws-approval-rules]:last-child > [data-ws-community-rule]) + [data-ws-desk]",
       "expectText": "goes live when its checks pass"
     },
     {
@@ -2726,10 +2726,10 @@
       "expectText": "is working on this"
     },
     {
-      "name": "A card about your own session: the hub's Your work leads with it, and opens the Workshop, whose row opens its page (#1887)",
-      "path": "/?demo=1&shot=mine-session&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card][data-ws-mine-open=\"workshop\"] [data-ws-mine-first^=\"mine:my-session:\"][data-ws-mine-session]",
-      "expectText": "[Mock] Busy own session"
+      "name": "Homeroom bot's History: your finished work by month below Live this week, with kind chips for Me › Your work's old tabs",
+      "path": "/?demo=1#homeroom-bot/history",
+      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-month] [data-ai-line=\"history-change\"]",
+      "expectText": "Staging demo: a calendar sync, closed"
     },
     {
       "name": "Visible own session renders under the Yours-visible divider",
@@ -5063,9 +5063,16 @@
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
     },
     {
-      "name": "Workshop: What's happening files your work in sections of one card, one line a row: Waiting on you, then Up next, going live before up for a vote (#4772, #6019)",
-      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine-section=\"waiting\"]:has(.dev-ws-hrow) ~ [data-ws-mine-section=\"next\"] .dev-ws-hrow[data-ws-row]"
+      "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks",
+      "path": "/?demo=1#homeroom-bot",
+      "expectSelector": "#ai-screen [data-ai-sheet=\"open\"] [data-ai-line=\"fix_yours\"]",
+      "expectText": "Fix it"
+    },
+    {
+      "name": "Homeroom bot opened from a project's Your work is narrowed to that project: its chip is picked",
+      "path": "/?demo=1#homeroom-bot?project=staging-demo-your-app",
+      "expectSelector": "#ai-screen [data-ai-project-chips] [data-ai-chip=\"staging-demo-your-app\"][aria-pressed=\"true\"]",
+      "expectText": "Staging demo app"
     },
     {
       "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026)",

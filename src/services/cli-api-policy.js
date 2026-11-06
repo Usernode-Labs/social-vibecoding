@@ -422,6 +422,11 @@ const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/sessions/:id' },
   { method: 'GET', pattern: '/api/sessions/:id/status' },
   { method: 'GET', pattern: '/api/sessions/:id/spec' },
+  // A plan posted on a request (get_spec): its versions and the one it
+  // reads. Both are plain reads; the routes already check the caller may see
+  // the request.
+  { method: 'GET', pattern: '/api/apps/:slug/issues/:number/specs' },
+  { method: 'GET', pattern: '/api/sessions/:id/specs/:version' },
   { method: 'PATCH', pattern: '/api/sessions/:id/linked-issues' },
   // The change lifecycle (start_change, promote_change, recheck_change,
   // sync_change, withdraw_change). start_change names the change on the

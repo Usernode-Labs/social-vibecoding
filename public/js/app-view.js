@@ -498,7 +498,7 @@ const AppView = {
   // only from a figure and cleared with its chip's ×, so the Filters dialog
   // does not own it and it never counts on `Filters (n)` — the same way a
   // search does not.
-  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false, stage: null },
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, yours: false, stage: null },
   // Which app's filters `_kanbanFilters` currently holds. The persisted set
   // is per slug, so this is what tells a repaint whether it is looking at a
   // stale app's narrowing (restore) or at the viewer's own unsaved edit
@@ -508,9 +508,9 @@ const AppView = {
   // Workshop's: "Open on Board" from a theme narrows the board to that
   // theme's items, and the chip that says so is dismissable like the rest.
   _defaultKanbanFilters() {
-    // #1935: `assignedToMe` / `createdByMe` are the strip's two quick
+    // #1935: `assignedToMe` / `yours` are the strip's two quick
     // toggles — one tap, no dialog — for the viewer's own board.
-    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false, stage: null };
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, yours: false, stage: null };
   },
   // `?q=<text>` — a deep link to a surface already narrowed to a search, the
   // way `?col=` reaches a column and `?ws=` a tab. Free text, matched by
@@ -526,6 +526,17 @@ const AppView = {
   // it, and from then on it is a typed search: edited, cleared and restored
   // through the same paths as one, with the URL never consulted again.
   _kanbanSearchUrlSeed: undefined,
+  _kanbanYoursUrlSeed: undefined,
+  _takeKanbanYoursSeed() {
+    if (AppView._kanbanYoursUrlSeed === undefined) {
+      try {
+        AppView._kanbanYoursUrlSeed = /[?&]yours=1(&|$)/.test(String(window.location.search || ''));
+      } catch { AppView._kanbanYoursUrlSeed = false; }
+    }
+    const seed = AppView._kanbanYoursUrlSeed;
+    AppView._kanbanYoursUrlSeed = false;
+    return seed;
+  },
   _takeKanbanSearchSeed() {
     if (AppView._kanbanSearchUrlSeed === undefined) {
       try {
@@ -554,9 +565,15 @@ const AppView = {
       const parsed = raw ? JSON.parse(raw) : null;
       if (parsed && typeof parsed === 'object') stored = { ...def, ...parsed };
     } catch { stored = def; }
+    // `?yours=1`: All items narrowed to your work, as a link (the Homeroom
+    // bot tab's rows, a declared check). Consumed on the first load, as `?q=`
+    // is, and then an ordinary filter the viewer can clear.
+    const yoursSeed = AppView._takeKanbanYoursSeed();
+    if (yoursSeed) stored = { ...stored, yours: true };
+    if (stored.yours) AppView._loadYours();
     const seed = AppView._takeKanbanSearchSeed();
-    if (!seed) return stored;
-    const seeded = { ...stored, q: seed };
+    if (!seed && !yoursSeed) return stored;
+    const seeded = seed ? { ...stored, q: seed } : stored;
     try { window.sessionStorage.setItem(key, JSON.stringify(seeded)); } catch {}
     return seeded;
   },
@@ -1290,13 +1307,6 @@ const AppView = {
       if (shot === 'themes') {
         AppView._workshopShot = 'themes';
       }
-      // `?shot=mine-session` leads the viewer's work with their own session
-      // — the state the #1887 check reads: the hub's Your work row names it,
-      // and opens the Workshop, whose row opens the change's page rather than
-      // the session (see _workshopView's `mine`).
-      if (shot === 'mine-session') {
-        AppView._workshopShot = 'mine-session';
-      }
       // `?shot=since-visit` gives the page a last visit to be since (#2183).
       // The since-list is drawn only for a RETURNING reader — a first visit
       // has no baseline and gets the dashboard alone — so a fresh browser,
@@ -1336,13 +1346,6 @@ const AppView = {
           const row = document.querySelector('button[data-ws-week]');
           if (row) row.click();
         }, 300);
-      }
-      // `?shot=mine-empty` draws "What you are working on" with nothing in
-      // it — the state #2182 keeps on screen — whatever sessions the viewer
-      // has. The demo seeds one busy session of the viewer's, so without
-      // this no URL could reach the empty strip.
-      if (shot === 'mine-empty') {
-        AppView._workshopShot = 'mine-empty';
       }
       // `?shot=quick-in-dialog` — the two quick filters after they have moved
       // into the Filters dialog for want of room on the strip's one line.
@@ -11163,13 +11166,6 @@ const AppView = {
           myRemaining: (ghData && typeof ghData.myRemaining === 'number') ? ghData.myRemaining : null,
           // B8: Homeroom bot builds requests here, for this viewer ({ typicalMinutes }).
           homeroomBot: (ghData && ghData.homeroomBot && typeof ghData.homeroomBot === 'object') ? ghData.homeroomBot : null,
-          // #4772: what Homeroom bot waits on this viewer for here
-          // (services/workshop-waiting.js), for the Workshop's Waiting on you.
-          waitingOnYou: (ghData && ghData.waitingOnYou && typeof ghData.waitingOnYou === 'object') ? ghData.waitingOnYou : null,
-          // #5385: what Homeroom bot has in hand for this viewer on this
-          // project, and where it needs them (botWorkOnApp, the drawer's
-          // own tracks), one entry per request: { number, waiting, track }.
-          homeroomBotWork: Array.isArray(ghData && ghData.homeroomBotWork) ? ghData.homeroomBotWork : [],
         };
       }
       // GitHub twins of open env-var proposals render as governance
@@ -12002,205 +11998,6 @@ const AppView = {
   _specDraftTag() {
     return { label: PlatformI18n.t('changes:workshop.row.tag.specDraft'), tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
   },
-  /**
-   * #5385: what Homeroom bot has in hand or needs the viewer for on this
-   * project, by request number: Map(number → { waiting, track }), from the
-   * request list's `homeroomBotWork` (services/workshop-waiting.js
-   * botWorkOnApp — the Activity drawer's own tracks, already keyed to the
-   * signed-in person, so only their requests are here). Empty under
-   * ?shot=mine-empty, as the strip is.
-   */
-  _workshopBotWork() {
-    const out = new Map();
-    if (AppView._workshopShot === 'mine-empty') return out;
-    const list = (AppView._ghIssuesMeta && AppView._ghIssuesMeta.homeroomBotWork) || [];
-    for (const entry of Array.isArray(list) ? list : []) {
-      const n = Number(entry && entry.number);
-      if (Number.isInteger(n) && n > 0 && entry.track && !out.has(n)) {
-        out.set(n, { waiting: !!entry.waiting, track: entry.track });
-      }
-    }
-    return out;
-  },
-
-  /**
-   * #4772: what Homeroom bot waits on the viewer for on this project, for
-   * the Workshop's Waiting on you: Map(item key, as _workshopItemKey makes
-   * it → { why: 'plan' | 'question', at }), one reason an item, the first
-   * that applies. From the request list's `waitingOnYou`
-   * (services/workshop-waiting.js: its plans waiting for their Build it and
-   * its open questions in their DM) and, on a request of theirs, the bot's
-   * question on its discussion that nobody has answered (`botAwaits`,
-   * #4530). A back and forth with the bot is not a reason (#5229), so a
-   * `talks` list an older response still carries is ignored.
-   */
-  _workshopWaitingOn() {
-    const out = new Map();
-    const w = (AppView._ghIssuesMeta && AppView._ghIssuesMeta.waitingOnYou) || null;
-    const list = (v) => (Array.isArray(v) ? v : []);
-    const put = (key, entry) => { if (!out.has(key)) out.set(key, entry); };
-    const n = (v) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : 0);
-    if (w && typeof w === 'object') {
-      for (const p of list(w.plans)) if (n(p && p.number)) put(`issue:${n(p.number)}`, { why: 'plan', at: p.at || null });
-      for (const q of list(w.questions)) if (n(q && q.number)) put(`issue:${n(q.number)}`, { why: 'question', at: q.at || null });
-    }
-    // #5385: what the bot's own track says waits on the viewer — it cannot
-    // build the request as written, a look found nothing to go on, failing
-    // checks handed back to a person. Plans and questions are already named
-    // above and `put` keeps the first entry, so a request listed there keeps
-    // its words and is listed once.
-    for (const [number, entry] of AppView._workshopBotWork()) {
-      if (entry.waiting) put(`issue:${number}`, { why: 'bot', at: (entry.track && entry.track.since) || null });
-    }
-    const me = App.user && App.user.username;
-    if (me) {
-      for (const issue of AppView._visibleGhIssues()) {
-        const asked = AppView._botWaiting(issue);
-        if (asked && asked.kind === 'question' && issue.created_by_username === me) {
-          put(`issue:${issue.number}`, { why: 'question', at: null });
-        }
-      }
-    }
-    return out;
-  },
-
-  /**
-   * #4772: the board's own item for a key of _workshopWaitingOn that is not
-   * already the viewer's work ({ kind, item }), or null when the board does
-   * not have it (a closed request, a change no longer open).
-   */
-  _workshopWaitingItem(key) {
-    const [type, raw] = String(key || '').split(':');
-    const id = Number(raw);
-    if (!Number.isInteger(id) || id <= 0) return null;
-    if (type === 'issue') {
-      const issue = AppView._visibleGhIssues().find((i) => Number(i.number) === id);
-      return issue ? { kind: 'issue', item: issue } : null;
-    }
-    if (type !== 'session') return null;
-    const proposal = (AppView._proposals || []).find((p) => Number(p.id) === id);
-    if (proposal) return { kind: 'proposal', item: proposal };
-    const session = (AppView._mySessions || []).find((m) => Number(m.id) === id);
-    return session ? { kind: 'my-session', item: session } : null;
-  },
-
-  /**
-   * #4772: a change of the viewer's up for a vote that waits on THEM for a
-   * fix: its checks fail, its preview did not build, or it conflicts in a
-   * way somebody has to resolve (blockReasons, less the ones that resolve
-   * themselves). A change Homeroom bot built is the bot's to fix.
-   */
-  _workshopNeedsFix(p) {
-    if (!p || p.status !== 'promoted' || AppView._botBuilt(p)) return false;
-    const fix = new Set(['checks_failing', 'preview_failed', 'mergeability_conflict', 'conflict_failed', 'merge_conflict']);
-    return AppView.blockReasons(p).some((r) => fix.has(r.key) && !r.soft && !r.running);
-  },
-
-  /**
-   * #6006: a change of the viewer's that a coding agent submitted for them
-   * is not their yes until they tap it (governance-rules.ts), so until they
-   * vote it waits on them. One made on Homeroom carries its author's yes and
-   * stays Up next, and a project's first version asks nobody's vote (D1).
-   */
-  _workshopOwesYes(p) {
-    return !!p && p.status === 'promoted' && !!p.external_agent && !p.my_vote
-      && p.first_version !== true && !AppView.readOnly;
-  },
-
-  /**
-   * #4772: one row of the viewer's work, filed in its What's happening
-   * section (`group`): Waiting on you when Homeroom bot waits on them for it
-   * (`waitingOn`, _workshopWaitingOn), it is a change of theirs that needs
-   * their fix, or one a coding agent submitted that still needs their own
-   * Yes (_workshopOwesYes); Going live when it is merged or being merged; Yours, up for a
-   * vote for the rest of their changes and decisions up for a vote; else
-   * Your work. A row waiting on them for the bot leads its tags with why.
-   */
-  _workshopFiled(row, kind, item, waitingOn) {
-    if (!row) return null;
-    const key = AppView._workshopItemKey(kind, item);
-    const w = waitingOn && key ? waitingOn.get(key) : null;
-    let group = 'work';
-    const owesYes = kind === 'proposal' && AppView._workshopOwesYes(item);
-    if (w || owesYes || (kind === 'proposal' && AppView._workshopNeedsFix(item))) group = 'waiting';
-    else if (kind === 'merged' || (kind === 'proposal' && item.status === 'merging')) group = 'live';
-    else if (kind === 'proposal' || kind === 'gov') group = 'vote';
-    const tag = w ? AppView._workshopWaitingTag(w)
-      : owesYes ? { label: PlatformI18n.t('changes:workshop.row.tag.yourYes'), tone: 'warn' } : null;
-    const brief = tag && row.brief ? { ...row.brief, tags: [tag, ...row.brief.tags] } : row.brief;
-    return { ...row, brief, group };
-  },
-
-  /** #4772: the tag that says why a row waits on the viewer (_workshopWaitingOn's entry). */
-  _workshopWaitingTag(w) {
-    if (w.why === 'plan') return { label: PlatformI18n.t('changes:workshop.row.tag.planWaits'), tone: 'warn' };
-    if (w.why === 'question') return { label: PlatformI18n.t('changes:workshop.row.tag.botAsked'), tone: 'warn' };
-    // #5385: a wait the bot's own track says needs no extra tag — the row
-    // already wears the bot tag, and the track's step where there is no
-    // plan or question tag to say why.
-    if (w.why === 'bot') return null;
-    return null;
-  },
-
-  /**
-   * One row of the viewer's own work on the Workshop tab (_workshopView's
-   * `mine`), in the shared work rows, or null when its card cannot be built.
-   */
-  _workshopMineRow(kind, item) {
-    // #4715: a merged row draws the very card This week draws for it
-    // (`_mergedRowModel`, whose pill says "Going live" while the release
-    // is still rolling out), so there is no new markup to keep in step.
-    const card = kind === 'my-session'
-      ? AppView._mySessionCardModel(item)
-      : kind === 'gov'
-        ? AppView._govCardModel(item)
-        : kind === 'issue'
-          ? AppView._issueCardModel(item)
-          : kind === 'merged'
-            ? AppView._mergedRowModel(item)
-            : AppView._proposalCardModel(item);
-    if (!card) return null;
-    const brief = AppView._workshopBrief(kind, item, card);
-    // #5385: a request Homeroom bot has in hand for the viewer wears the
-    // bot tag and carries its track, whose step the What's happening row
-    // ends with in the drawer's words (week-pages.tsx HappenedRow). This
-    // brief only: the board builds its own from the same card model.
-    const bot = kind === 'issue' ? AppView._workshopBotWork().get(Number(item.number)) : null;
-    if (bot) {
-      return AppView._attachRowConversation(
-        {
-          t: 'card', key: `mine:${card.key}`, card,
-          brief: { ...brief, requested: true, tags: [AppView._botForYouTag()], botTrack: bot.track },
-        }, kind, item,
-      );
-    }
-    // #4728: a change the bot built from the viewer's own request wears
-    // the bot tag in Your work, so the row says it was taken up at a
-    // glance and not only in its maker line. First among a proposal's
-    // tags; after a merged row's settled pill, so "Going live…" keeps
-    // the tags line's start. The brief is copied, not mutated: the
-    // board and the week pages build their own from the same models.
-    if ((kind === 'proposal' || kind === 'merged')
-      && item.requested_by_me === true && AppView._botBuilt(item)) {
-      const tag = AppView._botForYouTag();
-      const tags = brief.tags.slice();
-      if (kind === 'proposal') tags.unshift(tag);
-      else tags.splice(1, 0, tag);
-      return AppView._attachRowConversation(
-        { t: 'card', key: `mine:${card.key}`, card, brief: { ...brief, tags } }, kind, item,
-      );
-    }
-    return AppView._attachRowConversation(
-      { t: 'card', key: `mine:${card.key}`, card, brief }, kind, item,
-    );
-  },
-
-  // #4728: the tag on a Your work row for a change Homeroom bot built from
-  // a request the viewer made — the row is theirs through the bot, and the
-  // tag says so at a glance, beside the sparkle Messages draws for an agent.
-  _botForYouTag() {
-    return { label: PlatformI18n.t('changes:workshop.row.tag.homeroomBot'), tone: 'plain', glyph: 'bot' };
-  },
   // The request a private session of the viewer's is for, when that request
   // is one of `numbers` (the requests drawn beside it), else null.
   _privateDraftFor(session, numbers) {
@@ -12943,9 +12740,6 @@ const AppView = {
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.
   WORKSHOP_VOTES_MAX: 3,
-  // The viewer's own work in flight. Same cap and the same reveal-in-place
-  // as the vote strip: this is a reminder, not an inbox.
-  WORKSHOP_MINE_MAX: 3,
   // The hub's Recently live: its picture cards, newest first.
   WORKSHOP_RECENT_LIVE_MAX: 3,
   // Rows in the "since your last visit" list.
@@ -13558,7 +13352,7 @@ const AppView = {
     const slug = App.currentApp || '';
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
-      votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
+      votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { viewer: !!(App.user && App.user.id), bot: false },
       since: null, week: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [], recentLive: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
@@ -13694,132 +13488,24 @@ const AppView = {
       for (let i = entries.length - 1; i >= 0; i -= 1) if (!kept.has(entries[i].row)) entries.splice(i, 1);
     }
 
-    // ── What you are working on ──
+    // ── Your work ──
     //
-    // Above "Needs your vote", because the first question a returning member
-    // has is about their OWN work, and the lander answered every other one
-    // first: what the app is doing, what the group needs, what nobody has
-    // picked up. Their half-finished session was somewhere down inside a
-    // theme, under a heading about the theme.
-    //
-    // Built from the buckets rather than from `entries`, for the same reason
-    // the vote strip is: your own work is yours whatever the board is
-    // narrowed to, and a filter that hid it would be hiding the one thing
-    // on this screen you cannot find another way.
+    // 5 Nov 2026: the viewer's own work is the Homeroom bot tab's
+    // (frontend/src/features/ai/), which lists everything of theirs across
+    // every project, and the Workshop and the Hub each draw one row that
+    // counts it in the tab's words and opens the tab narrowed to this
+    // project (features/dev-board/workshop/your-work.tsx). What used to be
+    // built here — the viewer's sessions, proposals, decisions, claimed
+    // requests, merges going live and Homeroom bot's work for them, filed
+    // into Waiting on you, Your work and Up next — listed the same work a
+    // second time, from this board's buckets, in other words than the tab's.
+    // What the page still asks of it: whether there is a viewer at all (a
+    // guest has no work to have none of), and whether Homeroom bot builds
+    // here for them, which the start-here banner words its way in by.
     const meId = App.user && App.user.id;
-    const mineOf = (bucket, pick) => bucket.filter(pick);
-    // #5385: a request made for the viewer that Homeroom bot has in hand on
-    // this project is their work to watch as it happens — the Activity
-    // drawer's rows, not only the proposal once it is one. In hand only:
-    // what the bot needs them for is Waiting on you's (_workshopWaitingOn).
-    // A request the board does not have (closed, past the list) gets no row,
-    // and one the strip already carries — a claim of theirs, or a bot
-    // request they have picked up — is not added twice. The de-dup at the
-    // end of the list below drops a request once the bot's proposal or
-    // merged change is drawn instead (#4457).
-    const myIssueNumbers = new Set(mineOf(buckets.inProgress,
-      (e) => e.kind === 'issue' && AppView._issueIsMine(e.item)).map((e) => Number(e.item.number)));
-    const botIssueItems = [];
-    for (const [n, entry] of AppView._workshopBotWork()) {
-      if (entry.waiting || myIssueNumbers.has(n)) continue;
-      const issue = AppView._visibleGhIssues().find((i) => Number(i.number) === n);
-      if (issue) botIssueItems.push({ kind: 'issue', item: issue });
-    }
-    const mineItems = [
-      ...mineOf(buckets.inProgress, (e) => e.kind === 'my-session')
-        .map((e) => ({ kind: 'my-session', item: e.item })),
-      // #4538: a change Homeroom bot built from a request made for the
-      // viewer is their work to watch too, even though the bot made it —
-      // `requested_by_me` comes from the /promoted payload (the shared
-      // bot-request rule, services/bot-requested-by.js). The row still names
-      // Homeroom bot as its maker; the de-dup below keeps it out of "Needs
-      // your vote", where the viewer's own vote on it still counts.
-      ...mineOf(buckets.inReview, (x) => x.kind === 'proposal' && meId != null
-        && (String(x.item.user_id) === String(meId) || x.item.requested_by_me === true))
-        .map((x) => ({ kind: 'proposal', item: x.item })),
-      // #2227: a governance proposal you opened — a propose-to-close, a
-      // rename, a secret change — is your work in flight exactly as a code
-      // proposal is, and it was the one kind of thing you could start and
-      // then not find here. Same bucket, same review lane, same de-dup
-      // against "Needs your vote" below; only the author column differs,
-      // because `issues` rows carry `created_by` where a session carries
-      // `user_id`.
-      ...mineOf(buckets.inReview, (x) => x.kind === 'gov' && meId != null
-        && String(x.item.created_by) === String(meId))
-        .map((x) => ({ kind: 'gov', item: x.item })),
-      // #2496: an issue you are working on — a claim of yours, a live
-      // session of yours against it, an assignee mark naming you — is your
-      // work in flight in the same sense, and it used to appear only inside
-      // a theme, under that theme's heading. `_bucketDevItems` has already
-      // routed every issue with live work (a claim, a session, an open
-      // promoted proposal) out of the open lane, so the candidates are read
-      // from there rather than re-deriving the predicate; whether one is
-      // YOURS is the board's own mine-ness test, shared with the kanban's
-      // "Assigned to you" filter. An issue somebody ELSE claimed or is
-      // working stays out of the strip: it is still on the board, in the
-      // Underway column and in its theme, exactly as before.
-      ...mineOf(buckets.inProgress, (e) => e.kind === 'issue' && AppView._issueIsMine(e.item))
-        .map((e) => ({ kind: 'issue', item: e.item })),
-      // #4715: a merged change of yours that is still GOING LIVE stays in
-      // Your work until the release lands — the strip's job is what you
-      // have underway, and a change whose rollout is still running is
-      // underway. The same reading of the pill that draws "Going live" in
-      // This week (statusPillState: 'deploying', or a child app's
-      // 'delivery_pending') decides what counts, so a stalled or failed
-      // release stays out, and a row without `live_at` reads as it always
-      // did (live) and adds nothing. Bot changes built from the viewer's
-      // request count as theirs here, as in review above (`requested_by_me`
-      // now rides the /merged payload too). A close-issue row is a task,
-      // not a change of yours going live.
-      ...mineOf(buckets.done, (m) => meId != null && m.row_type !== 'close_issue'
-        && (String(m.user_id) === String(meId) || m.requested_by_me === true)
-        && ['deploying', 'delivery_pending']
-          .includes((AppView.statusPillState(m) || {}).key))
-        .map((m) => ({ kind: 'merged', item: m })),
-      // #5385: the bot's in-hand work on the viewer's requests, above —
-      // sorted with the rest by the same activity, and dropped by the
-      // linked_issues filter below once its build is a proposal.
-      ...botIssueItems,
-    ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item))
-      // #4457: a request your own change addresses is that change's, and is
-      // drawn as it ("Change #4456 · yours · for #4455"), not a second time.
-      .filter((x, _i, all) => x.kind !== 'issue' || !all.some((y) => y.kind !== 'issue'
-        && AppView._sanitizeIssueNumbers(Array.isArray(y.item.linked_issues) ? y.item.linked_issues : [])
-          .includes(Number(x.item.number))));
-    // #2182: the strip stays on screen when there is nothing in it, so the
-    // pane's shape does not change with the viewer's workload. `viewer` is
-    // what the empty strip is drawn on: a guest has no work to have none of.
-    // `?shot=mine-empty` empties it on purpose, for the declared check, and
-    // `?shot=mine-session` leads it with the viewer's own sessions, the row
-    // the hub's Your work then names (#1887's check).
-    const mineList = AppView._workshopShot === 'mine-empty' ? []
-      : AppView._workshopShot === 'mine-session'
-        ? mineItems.filter((x) => x.kind === 'my-session').concat(mineItems.filter((x) => x.kind !== 'my-session'))
-        : mineItems;
-    // #4772: What's happening files the viewer's work in sections: Waiting
-    // on you (what needs their answer before it can move), Your work (the
-    // rest in flight), Yours, up for a vote, and Going live. Each row of
-    // `mine.rows` carries its section (`group`); what Homeroom bot waits on
-    // them for on an item that is not otherwise theirs (a plan or question
-    // on their request, a back and forth on somebody's change) is `extra`.
-    // `mine.rows` itself is unchanged, so the hub's Your work counts as it did.
-    const waitingOn = AppView._workshopShot === 'mine-empty' ? new Map() : AppView._workshopWaitingOn();
-    const mineKeySet = new Set(mineList.map(({ kind, item }) => AppView._workshopItemKey(kind, item)));
-    const extraItems = [];
-    for (const key of waitingOn.keys()) {
-      if (mineKeySet.has(key)) continue;
-      const found = AppView._workshopWaitingItem(key);
-      if (found) extraItems.push(found);
-    }
     const mine = {
       viewer: meId != null,
-      // Homeroom bot builds requests here for this viewer: the empty strip
-      // then says to suggest an improvement rather than build one.
       bot: !!AppView._botDoor(),
-      count: mineList.length,
-      shown: AppView.WORKSHOP_MINE_MAX,
-      rows: mineList.map(({ kind, item }) => AppView._workshopFiled(AppView._workshopMineRow(kind, item), kind, item, waitingOn)).filter(Boolean),
-      extra: extraItems.map(({ kind, item }) => AppView._workshopFiled(AppView._workshopMineRow(kind, item), kind, item, waitingOn)).filter(Boolean),
     };
 
     // ── Needs your vote ──
@@ -15238,10 +14924,12 @@ const AppView = {
       // session is not an assignable board item.
       if (f.assignee && f.assignee !== AppView.KANBAN_ASSIGNEE_UNASSIGNED
         && AppView._devCardAuthor(kind, it) !== f.assignee) return false;
-      // #1935: a session is nobody's to assign, so it is "yours" on both
-      // quick toggles exactly when you started it — the same reading the
-      // named-person filter above gives it.
-      if ((f.assignedToMe || f.createdByMe) && !AppView._devCardIsMine(kind, it)) return false;
+      // #1935: a session is nobody's to assign, so it is "yours" on
+      // Assigned to you exactly when you started it — the same reading the
+      // named-person filter above gives it. Yours is the Homeroom bot tab's
+      // own reading (_devCardIsYours), which a session you started passes.
+      if (f.assignedToMe && !AppView._devCardIsMine(kind, it)) return false;
+      if (f.yours && !AppView._devCardIsYours(kind, it)) return false;
       return themeOk();
     }
     // priority / assignee filter on the community-voted top value. Cards
@@ -15263,13 +14951,16 @@ const AppView = {
       const authoredByUser = AppView._devCardAuthor(kind, it) === f.assignee;
       if (!assignedToUser && !authoredByUser) return false;
     }
-    // #1935: the strip's quick toggles. "Created by you" is authorship on
-    // every kind. "Assigned to you" is the community-voted assignee on the
+    // #1935: the strip's quick toggles. 5 Nov 2026: "Yours" (it was "Created
+    // by you", authorship alone, which left out what Homeroom bot built from
+    // your request and everything you only voted on or wrote in) is the
+    // Homeroom bot tab's own reading of your work: the threads you are in
+    // (_devCardIsYours). "Assigned to you" is the community-voted assignee on the
     // kinds that carry one (issues); a proposal or merged change carries no
     // assignee — whoever opened it is the one doing it — so there it reads
     // as authorship too. Governance rows are never assigned, so they drop
     // out of "Assigned to you" rather than all matching it.
-    if (f.createdByMe && !AppView._devCardIsMine(kind, it)) return false;
+    if (f.yours && !AppView._devCardIsYours(kind, it)) return false;
     if (f.assignedToMe) {
       const me = AppView._viewerUsername();
       if (!me || kind === 'gov') return false;
@@ -15296,7 +14987,7 @@ const AppView = {
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
     return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme
-      || f.assignedToMe || f.createdByMe || AppView._kanbanStageValue(f.stage));
+      || f.assignedToMe || f.yours || AppView._kanbanStageValue(f.stage));
   },
 
   // The stored `stage` filter, or null for anything that is not one of the
@@ -15350,40 +15041,50 @@ const AppView = {
     const me = AppView._viewerUsername();
     return !!me && AppView._devCardAuthor(kind, item) === me;
   },
-  // #2496: whether the viewer is one of the people an issue's live work
-  // marks name. Shared by the Workshop's "What you are working on" strip
-  // (which lists the issue there) — and deliberately NOT part of
-  // `_devCardMatches`, which reads the same fields for the "Assigned to
-  // you" filter with a narrower, assignee-only contract (#1935).
+  // ── YOURS (5 Nov 2026) ────────────────────────────────────────────────
   //
-  // Four live marks, any one of which means yes:
-  //   claims[]    — a hand-set claim. The server composes `mine` per
-  //                 viewer (composeInProgress in routes/issues.js), so it
-  //                 is authoritative; a payload without the flag (a test
-  //                 fixture, an older cache) is read as "one of the named
-  //                 claimers is me".
-  //   sessions[]  — a linked dev session, per-session `mine` from the same
-  //                 composition. Paused and in-review sessions count: both
-  //                 are still yours, which is exactly what the strip says.
-  //   the boolean — the server's own OR of the two above, on payloads that
-  //                 carry it and none of the detail lists.
-  //   assignee    — the board's "assigned to you" reading: the community-
-  //                 voted assignee chip names you. Covers an issue handed
-  //                 to you without a claim row under it.
-  _issueIsMine(issue) {
-    const it = issue || {};
-    const me = AppView._viewerUsername();
-    const ip = it.in_progress || null;
-    if (ip) {
-      if (Array.isArray(ip.claims) && ip.claims.length) {
-        if (ip.claims.some((c) => c && (c.mine || (me && c.username === me)))) return true;
-      }
-      if (Array.isArray(ip.sessions) && ip.sessions.length) {
-        if (ip.sessions.some((s) => s && (s.mine || (me && s.username === me)))) return true;
-      }
-      if (ip.mine) return true;
-    }
-    return !!(me && it.assignee && it.assignee.top === me);
+  // All items' "Yours" filter reads your work the way the Homeroom bot tab
+  // does (services/ai-work.js threadsInSql): every thread you are in — you
+  // filed it, built in it, claimed it, voted in it, wrote in it, or chose
+  // Notify me — not authorship alone. What you started is yours at once,
+  // before the server's list of this project's threads has come back, and so
+  // is a change Homeroom bot built from your request (`requested_by_me`).
+  // `_yours` is that list for the project on screen: request numbers, change
+  // (session) ids and decision (governance issue) ids.
+  _yours: null,
+  _devCardIsYours(kind, item) {
+    const it = item || {};
+    if (AppView._devCardIsMine(kind, it)) return true;
+    if (it.requested_by_me === true) return true;
+    const y = AppView._yours;
+    if (!y || y.slug !== App.currentApp) return false;
+    if (kind === 'issue') return y.requests.has(Number(it.number));
+    if (kind === 'gov' || (kind === 'merged' && it.row_type === 'close_issue')) return y.decisions.has(Number(it.id));
+    if (y.sessions.has(Number(it.id))) return true;
+    const linked = AppView._sanitizeIssueNumbers(Array.isArray(it.linked_issues) ? it.linked_issues : []);
+    return linked.some((n) => y.requests.has(Number(n)));
+  },
+  // Read which of this project's threads are yours (GET
+  // /api/apps/:slug/threads/yours), once a project, while Yours is on; the
+  // board repaints when it lands.
+  _loadYours(force = false) {
+    const slug = App.currentApp;
+    if (!slug || !(App.user && App.user.id)) return;
+    if (!force && AppView._yours && AppView._yours.slug === slug) return;
+    const mine = { slug, requests: new Set(), sessions: new Set(), decisions: new Set() };
+    AppView._yours = mine;
+    if (typeof fetch !== 'function') return;
+    const demo = /[?&]demo=1(&|$)/.test(String((window.location && window.location.search) || '')) ? '?demo=1' : '';
+    fetch(`/api/apps/${encodeURIComponent(slug)}/threads/yours${demo}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (AppView._yours !== mine || !body) return;
+        for (const n of body.requests || []) mine.requests.add(Number(n));
+        for (const n of body.sessions || []) mine.sessions.add(Number(n));
+        for (const n of body.decisions || []) mine.decisions.add(Number(n));
+        if (AppView._kanbanFilters && AppView._kanbanFilters.yours && App.currentApp === slug) AppView._repaintBoardSurface();
+      })
+      .catch(() => { /* what you started still reads as yours */ });
   },
   // ── WHERE THE TWO QUICK FILTERS LIVE ────────────────────────────────
   //
@@ -15427,8 +15128,9 @@ const AppView = {
   // A quick toggle's tap: flip it and repaint. Persistence rides the repaint,
   // as it does for every other filter change.
   _toggleKanbanQuickFilter(key) {
-    if (key !== 'assignedToMe' && key !== 'createdByMe') return;
+    if (key !== 'assignedToMe' && key !== 'yours') return;
     AppView._kanbanFilters[key] = !AppView._kanbanFilters[key];
+    if (key === 'yours' && AppView._kanbanFilters.yours) AppView._loadYours();
     AppView._repaintBoardSurface();
   },
 
@@ -15545,7 +15247,7 @@ const AppView = {
       // the Filters dialog for want of room; the strip measures and says so
       // through `_setQuickFiltersInDialog`.
       quick: (AppView._viewerUsername() && !AppView._quickFiltersInDialog)
-        ? { assignedToMe: !!f.assignedToMe, createdByMe: !!f.createdByMe }
+        ? { assignedToMe: !!f.assignedToMe, yours: !!f.yours }
         : null,
     };
   },
@@ -15628,7 +15330,7 @@ const AppView = {
     if (!AppView._kanbanFiltersActive()) return false;
     const f = AppView._kanbanFilters || {};
     const nonQ = !!(f.priority || f.category || f.assignee || f.needsVote || f.theme
-      || f.assignedToMe || f.createdByMe || AppView._kanbanStageValue(f.stage));
+      || f.assignedToMe || f.yours || AppView._kanbanStageValue(f.stage));
     if (nonQ) return true;
     return String(f.q || '').trim().length >= AppView.KANBAN_COMMENT_SEARCH_MIN;
   },
@@ -15731,7 +15433,7 @@ const AppView = {
     if (key === 'q') {
       AppView._kanbanFilters.q = '';
       AppView._kanbanFilterSeq += 1;
-    } else if (key === 'needsVote' || key === 'assignedToMe' || key === 'createdByMe') {
+    } else if (key === 'needsVote' || key === 'assignedToMe' || key === 'yours') {
       AppView._kanbanFilters[key] = false;
     } else {
       AppView._kanbanFilters[key] = null;
@@ -15747,7 +15449,7 @@ const AppView = {
     // strip's own toggles on screen the count would be reporting a filter the
     // reader can already see the state of, one control to the right.
     const quick = AppView._quickFiltersInDialog
-      ? (f.assignedToMe ? 1 : 0) + (f.createdByMe ? 1 : 0)
+      ? (f.assignedToMe ? 1 : 0) + (f.yours ? 1 : 0)
       : 0;
     return (f.priority ? 1 : 0) + (f.category ? 1 : 0)
       + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0) + (f.theme ? 1 : 0) + quick;
@@ -15782,7 +15484,7 @@ const AppView = {
     // toggle is two controls away would be the same state said twice.
     if (AppView._quickFiltersInDialog) {
       if (f.assignedToMe) chips.push({ key: 'assignedToMe', label: PlatformI18n.t('changes:board.filterChip.assignedToYou') });
-      if (f.createdByMe) chips.push({ key: 'createdByMe', label: PlatformI18n.t('changes:board.filterChip.createdByYou') });
+      if (f.yours) chips.push({ key: 'yours', label: PlatformI18n.t('changes:board.filterChip.yours') });
     }
     // `theme` is the GROUPING-membership filter (it follows a card's linked
     // issues, which a plain value match would not), kept as a separate key
@@ -15849,7 +15551,7 @@ const AppView = {
         assignee: f.assignee || null,
         needsVote: !!f.needsVote,
         assignedToMe: !!f.assignedToMe,
-        createdByMe: !!f.createdByMe,
+        yours: !!f.yours,
       },
       categories: AppView._kanbanCategoryChoices(),
       assignees: AppView._kanbanAssigneeOptions(),
@@ -15878,7 +15580,7 @@ const AppView = {
       // undo a tap they watched land.
       ...(AppView._quickFiltersInDialog ? {
         assignedToMe: !!n.assignedToMe,
-        createdByMe: !!n.createdByMe,
+        yours: !!n.yours,
       } : null),
     };
     AppView._repaintBoardSurface();
@@ -28221,8 +27923,6 @@ const AppView = {
           }
           PlatformUI.toast(PlatformI18n.t(status === 'merged'
             ? 'changes:vote.toast.alreadyMerged' : 'changes:vote.toast.noLongerUp'));
-          // Your votes moves it out of Still open (#6101).
-          window.UsernodeReact?.profileProposals?.voted?.();
           return false;
         }
         await AppView.refreshDevData('vote');
@@ -28276,10 +27976,9 @@ const AppView = {
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
       window.Notifications?.refresh?.();
-      // The vote now belongs in Your votes and the Kudos My history tab
-      // (#5452): tell both, the same way the kudos give path does. Never
-      // optimistic — only on the server's yes.
-      window.UsernodeReact?.profileProposals?.voted?.();
+      // The vote now belongs in the Kudos My history tab (#5452): tell it,
+      // the same way the kudos give path does. Never optimistic — only on
+      // the server's yes.
       window.Leaderboard?.invalidateHistory?.();
       return true;
     } catch {
@@ -28375,7 +28074,6 @@ const AppView = {
       AppView._noteOwnVote(sessionId, vote);
       AppView._publishVoteSaved(sessionId, vote, record.body.expectedEpoch);
       window.Notifications?.refresh?.();
-      window.UsernodeReact?.profileProposals?.voted?.();
       window.Leaderboard?.invalidateHistory?.();
       window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.queuedSent'));
     } else {
@@ -28479,7 +28177,6 @@ const AppView = {
         : AppView.refreshDevData('vote');
       Promise.resolve(refresh).then(settle, settle);
       window.Notifications?.refresh?.();
-      window.UsernodeReact?.profileProposals?.voted?.();
       window.Leaderboard?.invalidateHistory?.();
       return true;
     } catch {
@@ -28634,9 +28331,8 @@ const AppView = {
       // Voting clears this proposal's nudge server-side; re-pull so the
       // unread badge drops it. Never optimistic — only on an ok response.
       window.Notifications?.refresh?.();
-      // As castVote (#5452): the vote reaches Your votes and the Kudos
-      // history as soon as the server saved it.
-      window.UsernodeReact?.profileProposals?.voted?.();
+      // As castVote (#5452): the vote reaches the Kudos history as soon as
+      // the server saved it.
       window.Leaderboard?.invalidateHistory?.();
     } catch (err) {
       // Network/abort: the server-side apply may well have completed, so

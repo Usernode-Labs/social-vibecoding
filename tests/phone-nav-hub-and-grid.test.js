@@ -50,9 +50,11 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
 
 test('on a phone For you\'s Workshop row is always there, and named for the place it opens', () => {
   const cards = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  assert.match(cards, /const work = cards \|\| !!mine\?\.viewer \|\| places;/);
-  assert.match(cards, /<WorkRow mine=\{mine\} onOpen=\{onWork\} place=\{places\} \/>/);
-  assert.match(cards, /title=\{place \? placeName\('workshop'\) : t\('project:hub\.work\.title'\)\}/);
+  // 5 Nov 2026: a row of its own, beside Your work (which opens the Homeroom
+  // bot tab, where your work is): the Workshop row was both until then.
+  assert.match(cards, /\{places \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
+  assert.match(cards, /if \(!needs && !work && !places && !talk\) return null;/, 'there whenever the Hub is the way to the places');
+  assert.match(cards, /title=\{placeName\('workshop'\)\}\s+subtitle=\{t\('project:hub\.workshop\.sub'\)\}/);
 });
 
 test('on a phone All communities is a grid of tiles, each a door to its Hub', () => {

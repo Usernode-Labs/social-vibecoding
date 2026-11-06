@@ -268,17 +268,20 @@ test('get_request summarises a request\'s specs for an external client', async (
   } finally { broken.restore(); }
 });
 
-test('the delegated kinds are offered no spec tools, and get_request reads no specs for them', async () => {
+test('the delegated kinds are offered only the plan read, and get_request reads no specs for them', async () => {
   const issues = [{ number: 4041, title: 'Being made', body: 'x' }];
   for (const kind of ['agent_mayor', 'worker_read']) {
     const c = connector(() => ({ issues, truncatedList: false }), { delegation: { kind } });
     try {
-      for (const name of ['post_spec', 'get_spec', 'get_spec_format']) {
+      // #6384: the Mayor reads a plan, as the Homeroom bot's chat does.
+      // Writing or formatting one still belongs to a human-driven client.
+      assert.equal(c.handlers.has('get_spec'), kind === 'agent_mayor', `${kind}: get_spec`);
+      for (const name of ['post_spec', 'get_spec_format']) {
         assert.equal(c.handlers.has(name), false, `${kind} is not offered ${name}`);
       }
       const out = await c.handlers.get('get_request')({ slug: 'cool-app', number: 4041 });
       assert.equal(out.structuredContent.specs, null);
-      assert.ok(!c.calls.some((x) => x.pathname.endsWith('/specs')), `${kind} reads no spec list`);
+      assert.ok(!c.calls.some((x) => x.pathname.endsWith('/specs')), `${kind} reads no spec list through get_request`);
     } finally { c.restore(); }
   }
 });
@@ -329,7 +332,7 @@ test('prepare_work reads each request\'s newest spec and hands it to the work or
 
 // ── 6. The allowlist ───────────────────────────────────────────────────
 
-test('the spec routes are on the external allowlist exactly, and on no delegated list', () => {
+test('the spec routes are on the external allowlist exactly, and the plan read on the Mayor\'s', () => {
   const allowed = [
     ['POST', '/api/apps/cool-app/issues/4041/spec'],
     ['GET', '/api/apps/cool-app/issues/4041/specs'],
@@ -337,9 +340,11 @@ test('the spec routes are on the external allowlist exactly, and on no delegated
   ];
   for (const [method, target] of allowed) {
     assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
-    for (const kind of ['agent_mayor', 'worker_read']) {
-      assert.equal(policy.isDelegatedApiRequest(kind, method, target), false, `${kind}: ${method} ${target}`);
-    }
+    // #6384: the Mayor reads a plan (get_spec); post_spec stays external
+    // only, and the worker reaches no spec route at all.
+    assert.equal(policy.isDelegatedApiRequest('agent_mayor', method, target), method === 'GET',
+      `agent_mayor: ${method} ${target}`);
+    assert.equal(policy.isDelegatedApiRequest('worker_read', method, target), false, `worker_read: ${method} ${target}`);
   }
   for (const [method, target] of [
     ['GET', '/api/apps/cool-app/issues/4041/spec'],

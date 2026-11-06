@@ -77,11 +77,12 @@ test('the push counts and names nothing', () => {
   assert.equal(buildNotificationCopy('voted_digest', { detail: '' }).title, message('push:votedDigest.title.plain'));
 });
 
-test('the row opens Your votes, and the clock runs the sweep', () => {
+test('the row opens History on its Votes, and the clock runs the sweep', () => {
   const src = read('frontend', 'src', 'features', 'notifications', 'notifications.js');
   const branch = src.slice(src.indexOf("if (item.kind === 'voted_digest') {"), src.indexOf('if (item.appSlug) {\n      // Every path below navigates'));
-  assert.match(branch, /App\.navigateToProfileProposals\('votes'\)/);
-  assert.match(branch, /#profile\/your-votes/);
+  // Me › Your votes became the bot tab's History (5 Nov 2026).
+  assert.match(branch, /window\.location\.hash = '#homeroom-bot\/history\?kind=vote'/);
+  assert.doesNotMatch(branch, /navigateToProfileProposals/);
   assert.match(read('frontend', 'src', 'features', 'notifications', 'notifications-kinds.js'), /'voted_digest'/,
     'under the Votes filter');
   assert.match(read('src', 'workflow', 'clock', 'services.ts'), /name: 'voted-digest', everyMs: HOUR/);

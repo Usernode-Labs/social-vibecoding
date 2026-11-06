@@ -30,7 +30,7 @@ export const RAIL_SLIDE: KeyframeAnimationOptions = { duration: 200, easing: 'cu
 /** The screens the rail's width moves over (app.css, "THE SCREENS MOVE OVER"). */
 const SCREENS = '#home-screen, #browse-screen, #workshop-screen, #leaderboard-screen, #profile-screen, '
   + '#admin-screen, #settings-screen, #messages-screen, #agent-session-screen, #ai-screen, '
-  + '#profile-proposals-screen, #app-view';
+  + '#app-view';
 
 /**
  * The screen on view, and the child of it that reads as its content: the

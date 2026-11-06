@@ -653,15 +653,11 @@ test('Me counts the viewer’s OWN completions, and its changes link out', () =>
   const stats = profileStoreJs.slice(profileStoreJs.indexOf('export function statsView'),
     profileStoreJs.indexOf('export function moreRowsView'));
   assert.match(stats, /summary\.challenges && summary\.challenges\.done/);
-  // Every change is a real anchor to its proposal's page, on Your changes
-  // (UI overhaul; the merged ones were "Your contributions" on Me).
-  const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function proposalsView'));
-  assert.match(shaping, /`#app\/\$\{slug\}\/dev\/proposals\/\$\{id\}`/);
-  const screen = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/profile/my-proposals.tsx'), 'utf8');
-  assert.match(screen, /as=\{row\.href \? 'a' : 'div'\}\s*href=\{row\.href \|\| undefined\}/);
-  assert.match(screen, /changes: 'profile:work\.changes\.empty',/);
-  assert.match(screen, /<p className=\{NOTE\}>\{t\(EMPTY\[kind\]\)\}<\/p>/, 'an empty list says so');
-  assert.equal(message('profile:work.changes.empty'), 'You have not started a change yet.');
+  // Your changes (UI overhaul; the merged ones were "Your contributions" on
+  // Me) is the Homeroom bot tab's History now (5 Nov 2026), whose every row
+  // opens its page; Me's row opens it on changes.
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/profile/account-panel.tsx'), 'utf8'),
+    /id="profile-row-proposals"\s+href="#homeroom-bot\/history\?kind=change"/);
 });
 
 test('the stale "organiser flag" comments are gone', () => {

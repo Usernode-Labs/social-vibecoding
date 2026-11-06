@@ -34,8 +34,9 @@ test('ListRow writes the hint a caller passes, and nothing when it passes none',
 
 test('the hand-drawn truncated titles carry their text as the hint', () => {
   const workRow = read('frontend/src/features/dev-board/workshop/work-row.tsx');
-  // list, board, line and act rows: the anchor and the inert span of each.
-  assert.equal(workRow.match(/title=\{card\.title\.text\}/g).length, 6);
+  // The board's row: the anchor and the inert span. (The line and act rows
+  // went with the Workshop's own lists of your work, 5 Nov 2026.)
+  assert.equal(workRow.match(/title=\{card\.title\.text\}/g).length, 2);
 
   assert.match(read('frontend/src/features/home/widget-strip.tsx'),
     /className="[^"]*truncate[^"]*" title=\{tile\.name\}>/);

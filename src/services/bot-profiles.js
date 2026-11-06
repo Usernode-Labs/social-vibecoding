@@ -57,7 +57,7 @@ const DESIGN_LIMITS = Object.freeze({
 });
 
 const CHAT_TOOLS = Object.freeze([
-  'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question',
+  'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
   'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'draw_screen', 'close_thread',
   'report_problem', 'start_project_thread', 'reply',
@@ -95,7 +95,7 @@ const PROFILES = Object.freeze({
   }),
   request: profile('request', {
     surface: 'thread', scope: 'thread', prompt: 'request', places: ['issue'], limits: THREAD_LIMITS,
-    tools: Object.freeze([...THREAD_TOOLS, 'start_request', 'offer_close_request', 'offer_copy_request', 'offer_withdraw', 'change_plan']),
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'start_request', 'offer_close_request', 'offer_copy_request', 'offer_withdraw', 'change_plan']),
     // Words passed on as a change are the follow-up's; the bot's own change
     // up for a vote answers anyone; the requester or an admin straight after
     // a post of the bot's is answering it; else only a mention or a reply,
@@ -104,7 +104,7 @@ const PROFILES = Object.freeze({
   }),
   change: profile('change', {
     surface: 'thread', scope: 'thread', prompt: 'change', places: ['session'], limits: THREAD_LIMITS,
-    tools: Object.freeze([...THREAD_TOOLS, 'offer_withdraw']),
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw']),
     speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change', 'addressed']),
   }),
   channel: profile('channel', {
