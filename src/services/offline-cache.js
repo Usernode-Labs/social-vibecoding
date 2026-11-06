@@ -24,6 +24,10 @@
 //     refresh the app's copies when the app's build changed.
 //   * The bridge (usernode-bridge/v1/bridge.js) moves that token into the
 //     query before the app's code reads it, and does the refresh.
+//   * A page that never says it opened (no bridge) is reported by the
+//     shell; two people on one build switch the cacheable address off for
+//     the app until its next deploy (offline-cache-refusals.js,
+//     apps.offline_cache_off_sha, read by forApp below).
 //
 // THE SWITCH. APP_OFFLINE_CACHE=on (chart config.appOfflineCache). Off, the
 // access answer never asks for caching, the shared files keep their
@@ -70,7 +74,19 @@ function forApp(app, env = process.env) {
   // gate's sign-in hop, which frames the shell again and nests it inside
   // itself (#6226). Only the tokened address is right for these.
   if (app.view_visibility === 'private') return false;
+  // A page two people's frames saw not open at the cacheable address on
+  // this build (services/offline-cache-refusals.js): the tokened address on
+  // every device until the app deploys again.
+  if (refusedOnThisBuild(app)) return false;
   return !optedOut(app.manifest_snapshot);
+}
+
+// Is `app` on the build its page was found not to open on? A row without
+// both columns (an older projection) says no.
+function refusedOnThisBuild(app) {
+  const off = String(app && app.offline_cache_off_sha || '').toLowerCase();
+  const live = String(app && app.main_sha || '').toLowerCase();
+  return !!off && off === live;
 }
 
 function directives(value) {
@@ -126,6 +142,7 @@ module.exports = {
   enabled,
   optedOut,
   forApp,
+  refusedOnThisBuild,
   appCacheControl,
   sharedFileCacheControl,
 };

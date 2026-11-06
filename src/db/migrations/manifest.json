@@ -185,6 +185,11 @@
       "id": "production-app-sleep",
       "sha256": "ec7a043e2e2298faa72c07424eb2b9b6bd48fbdb4bc84c0386490dca291c4df1",
       "schemaSha256": "1c4c9809d3c5a4a594ef3c8960cd28724b7b0e6371350c9819e89206eb552574"
+    },
+    {
+      "id": "app-offline-cache-refusals",
+      "sha256": "a3b88252c75232bdb5062d09a02643059224f1b5bebdba4e38efb5847fac9423",
+      "schemaSha256": "1317962c70dc4876fb1c82f293646f62756cc3d8b776eac37e31b338d1620456"
     }
   ]
 }
