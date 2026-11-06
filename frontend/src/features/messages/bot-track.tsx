@@ -241,7 +241,7 @@ const TINT: Record<Tone, string> = {
 const WAIT_GLYPHS: Record<string, Glyph> = {
   question: ChatIcon, plan: ListLinesIcon, needs_detail: PencilSquareIcon, decide: UserIcon, already_works: CheckIcon,
 };
-const HELD_LINES: ReadonlySet<string> = new Set(['held_builds', 'held_waiting', 'on_hold', 'cooldown']);
+const HELD_LINES: ReadonlySet<string> = new Set(['held_builds', 'held_waiting', 'on_hold', 'cooldown', 'overlap_wait']);
 const WAITING_LINES: ReadonlySet<string> = new Set(['queued', 'waiting']);
 
 /** Pure: a track's tone and glyph, for its badge and its bar, by its stage. */

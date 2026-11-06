@@ -26,6 +26,8 @@ export interface WorkLine {
   code: string;
   /** `queued`: its place in Homeroom bot's line (1 is next). */
   place?: number;
+  /** `overlap_wait`: the pull request whose change touches the same files. */
+  pr?: number;
   /** `reviewing`: the round, of how many. */
   round?: number;
   of?: number;
@@ -95,7 +97,7 @@ const REASON_WORDS: Record<Reason, string> = {
   stalled: 'core:work.reason.stalled',
 };
 
-const NOT_STARTED: ReadonlySet<string> = new Set(['queued', 'waiting', 'on_hold', 'cooldown', 'first_version_wait']);
+const NOT_STARTED: ReadonlySet<string> = new Set(['queued', 'waiting', 'on_hold', 'cooldown', 'first_version_wait', 'overlap_wait']);
 const READY: ReadonlySet<string> = new Set(['queued', 'held_builds', 'held_waiting']);
 
 // The second lines that need no value.
@@ -159,6 +161,12 @@ export function lineWords(state: WorkState): Phrase | null {
       return line.minutes
         ? { id: 'core:work.line.checksRunning', values: { count: line.minutes } }
         : null;
+    // #6423: a change touching the same files is open. Its PR is named
+    // when it has one; a build with no pull request yet says so plainly.
+    case 'overlap_wait':
+      return line.pr
+        ? { id: 'core:work.line.overlapWait', values: { pr: line.pr } }
+        : { id: 'core:work.line.overlapWaitBuild' };
     case 'claimed':
       return line.by ? { id: 'core:work.line.claimed', values: { username: line.by } } : null;
     case 'reason':
