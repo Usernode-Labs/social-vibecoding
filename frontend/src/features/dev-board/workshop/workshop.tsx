@@ -116,6 +116,7 @@ import { ProjectPlaces } from './project-places';
 import { ProjectReviewFlow } from '../../review-flow/review-flow';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
+import { takeWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from './panel-target';
 import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
 import { TouchesPicture, readTouches, touchesSaid, type Touches } from './touches';
@@ -2815,15 +2816,6 @@ function GroupStrip({ group }: { group: string }): ReactNode {
  * the floor and the sheets rise from it, stopping above the keyboard.
  */
 const WIDE_QUERY = '(min-width: 700px)';
-/**
- * #4457: where a Workshop row opens its page in a panel beside the list
- * rather than as the page: room for the list and a 560px panel beside it.
- * #4417: the chrome beside the page was the strip and the 264px places
- * column, which stepped aside while the panel was open so the list kept its
- * room. On every desktop window now the sidebar of rows nests the places and
- * there is no column (v3).
- */
-const SIDE_QUERY = '(min-width: 1180px)';
 
 /**
  * (#5164) How often the hub's own places quietly re-read what waits on you
@@ -3213,7 +3205,7 @@ export function DevWorkshop(): ReactNode {
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
-  const sideWide = useMediaFlag(SIDE_QUERY);
+  const sideWide = useMediaFlag(WORKSHOP_SIDE_QUERY);
   // Whether the Workshop tab's Your work shows every row or its first
   // WORKSHOP_WORK_FIRST.
   const [mineAll, setMineAll] = useState(false);
@@ -3517,6 +3509,41 @@ export function DevWorkshop(): ReactNode {
     setWeeksShown(WEEKS_FIRST);
     setFreshAll(false);
   }, [v.slug]);
+  // #6380: THE COLUMN'S "OPEN IN WORKSHOP". Beside the Homeroom bot's list a
+  // request, change or decision has no Workshop row to press, so the row
+  // leaves it for this one (./panel-target.ts) and the tab opens it here, in
+  // the panel, as its own row would. It runs AFTER the resets above, in the
+  // same commit, so a page mounting straight onto the stash is not wiped by
+  // them; a page already up takes it from the event. Only when the panel can
+  // be there at all — this project's page, the Workshop tab, a wide window,
+  // and the page on screen — so a stash is left for the visit that shows it
+  // rather than taken by one that cannot.
+  useEffect(() => {
+    let live = true;
+    const take = () => {
+      if (!v.slug || tab !== 'workshop' || !sideWide || !pageShown) return;
+      const slug = v.slug;
+      void takeWorkshopPanelItem(slug).then((ref) => {
+        if (live && ref && slug === v.slug) setSideItem(ref);
+      });
+    };
+    take();
+    // A door followed while the page is up: taken a turn later, once the
+    // router's own pass (which may mount this page afresh) is over.
+    let timer = 0;
+    const onTarget = (event: Event) => {
+      const detail = (event as CustomEvent<{ slug?: string } | null>).detail;
+      if (!detail || detail.slug !== v.slug) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(take, 0);
+    };
+    window.addEventListener('usernode:workshop-panel-target', onTarget);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      window.removeEventListener('usernode:workshop-panel-target', onTarget);
+    };
+  }, [v.slug, tab, sideWide, pageShown]);
   // A deep link that names a row (the ?shot= captures): open its theme and
   // unfold it once, on the publish that carries it.
   const autoKey = v.autoExpand ? `${v.autoExpand.theme}:${v.autoExpand.key}` : null;

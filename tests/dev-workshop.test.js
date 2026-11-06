@@ -2874,7 +2874,11 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   // A plain click on a wide window; anything else is the row's own link.
   // #4417: still 1180px, so a 1280px window keeps it. The places are nested
   // in the sidebar, so nothing beside the page steps aside for it now.
-  assert.match(WORKSHOP, /const SIDE_QUERY = '\(min-width: 1180px\)';/);
+  // #6380: the breakpoint is still 1180px, in one place now — the module the
+  // column beside the Homeroom bot's list asks too (./panel-target.ts).
+  const PANEL_TARGET = read('frontend/src/features/dev-board/workshop/panel-target.ts');
+  assert.match(PANEL_TARGET, /export const WORKSHOP_SIDE_QUERY = '\(min-width: 1180px\)';/);
+  assert.match(WORKSHOP, /const sideWide = useMediaFlag\(WORKSHOP_SIDE_QUERY\);/);
   assert.match(WORKSHOP, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);/);
   assert.doesNotMatch(WORKSHOP, /publishSide/);
   assert.match(WORKSHOP, /if \(!sideWide\) return;\s*event\.preventDefault\(\);/);

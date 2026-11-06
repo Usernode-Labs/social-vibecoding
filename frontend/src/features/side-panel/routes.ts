@@ -270,6 +270,50 @@ export function parentRoute(route: string): string | null {
   }
 }
 
+/** What "Open in workshop" opens: the project, and the item there. */
+export interface WorkshopItem {
+  slug: string;
+  /** The page the Workshop's panel opens, when the route names it outright. */
+  ref?: { kind: 'issue' | 'proposal' | 'gov'; id: number };
+  /** A change's pull request number, for the Workshop to resolve. */
+  pr?: number;
+}
+
+/**
+ * The item a route names, for the column's "Open in workshop" (#6380): the
+ * project it is in, and the `TopicRef` the Workshop's panel opens — or the
+ * pull request number of a change its page is still addressing by (#4367),
+ * which the Workshop resolves to the session when it gets there.
+ *
+ * A request, a change or a decision of a project only: the Workshop itself,
+ * its list addresses, the unsent change, a conversation and an agent session
+ * have no item a project page shows.
+ */
+export function workshopItemOf(route: string | null | undefined): WorkshopItem | null {
+  const text = String(route || '');
+  const page = panelPage(text);
+  if (!page || !page.slug) return null;
+  if (page.kind === 'workshop' || page.kind === 'new-change'
+    || page.kind === 'thread' || page.kind === 'agent' || page.kind === 'messages') return null;
+  const parts = text.split('/');
+  const num = (v: string | undefined) => (v && NUMERIC.test(v) ? Number(v) : 0);
+  // An app's discussion's old per-change address is a change (panelPage).
+  if (parts[2] === 'individual-chat') {
+    const id = num(parts[3]);
+    return id ? { slug: page.slug, ref: { kind: 'proposal', id } } : null;
+  }
+  const sec = parts[3];
+  const id = num(parts[4]);
+  if (!id) return null;
+  if (sec === 'issues') return { slug: page.slug, ref: { kind: 'issue', id } };
+  if (sec === 'proposals' || sec === 'sessions' || sec === 'shared') {
+    return { slug: page.slug, ref: { kind: 'proposal', id } };
+  }
+  if (sec === 'governance') return { slug: page.slug, ref: { kind: 'gov', id } };
+  if (sec === 'changes') return { slug: page.slug, pr: id };
+  return null;
+}
+
 /** Two routes name the same page — a canonical rewrite is not a navigation. */
 export function samePage(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;

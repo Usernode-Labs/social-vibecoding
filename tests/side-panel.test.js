@@ -313,7 +313,9 @@ function topWindow({ width = 1280, app = 'notes-ab12', tab = 'app', chromeless =
       pushState: (s, t, url) => pushed.push(url),
       replaceState: (s, t, url) => { win.location = new URL(url, win.location.href); },
     },
-    matchMedia: (q) => ({ matches: q === '(min-width: 1024px)' ? width >= 1024 : q === '(min-width: 768px)' ? width >= 768 : false }),
+    matchMedia: (q) => ({ matches: q === '(min-width: 1024px)' ? width >= 1024
+      : q === '(min-width: 768px)' ? width >= 768
+        : q === '(min-width: 1180px)' ? width >= 1180 : false }),
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
     App: {
       user, chromeless, currentApp: app, currentTab: tab,
@@ -1611,6 +1613,16 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   assert.equal(agent['sidePanel.moreLabel'].text, 'More actions');
   assert.equal(agent['sidePanel.menu.copyLink'].text, 'Copy link');
   assert.equal(agent['sidePanel.linkCopied'].text, 'Link copied');
+  // #6380: Open in workshop is the menu's second row, under Copy link, only
+  // for a project's own request, change or decision, and it asks the
+  // controller to open it there.
+  assert.equal(agent['sidePanel.menu.openInWorkshop'].text, 'Open in workshop');
+  const menu = SRC.slice(SRC.indexOf('data-side-panel-copy-link=""'), SRC.indexOf('</div>\n      ) : null}\n    </div>'));
+  assert.match(menu, /data-side-panel-open-workshop=""/);
+  assert.ok(menu.indexOf('data-side-panel-copy-link') < menu.indexOf('data-side-panel-open-workshop'),
+    'the new row comes after Copy link');
+  assert.match(menu, /\{route && workshopItemOf\(route\) \? \(/);
+  assert.match(menu, /controller\.openInWorkshop\(\)/);
   // The ⋯ is in the row only beside the bot page, and at its end.
   assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
   assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
@@ -1625,4 +1637,113 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   assert.match(html, /href="\/app\/x\/dev\/issues\/6214">Request #6214<\/a>/);
   assert.match(html, /aria-haspopup="menu" aria-expanded="false"/, 'the ⋯ opens a menu, closed at first');
   api._resetForTests();
+});
+
+// ── #6380: Open in workshop, from the column to the project's Workshop ──
+
+test('workshopItemOf names the project and the item a route opens there (#6380)', () => {
+  const cases = [
+    ['app/notes-ab12/dev/issues/6214', { slug: 'notes-ab12', ref: { kind: 'issue', id: 6214 } }],
+    ['app/notes-ab12/dev/proposals/12', { slug: 'notes-ab12', ref: { kind: 'proposal', id: 12 } }],
+    ['app/notes-ab12/dev/sessions/12', { slug: 'notes-ab12', ref: { kind: 'proposal', id: 12 } }],
+    ['app/notes-ab12/dev/shared/12', { slug: 'notes-ab12', ref: { kind: 'proposal', id: 12 } }],
+    ['app/notes-ab12/dev/governance/5', { slug: 'notes-ab12', ref: { kind: 'gov', id: 5 } }],
+    ['app/notes-ab12/dev/changes/6362', { slug: 'notes-ab12', pr: 6362 }],
+    // An app's discussion's old per-change address is a change (panelPage).
+    ['app/notes-ab12/individual-chat/12', { slug: 'notes-ab12', ref: { kind: 'proposal', id: 12 } }],
+  ];
+  for (const [route, want] of cases) assert.deepEqual(R.workshopItemOf(route), want, route);
+  // No item a project page shows: the Workshop itself, its list addresses,
+  // the unsent change, conversations, agent sessions, and nothing at all.
+  for (const route of [
+    'app/notes-ab12/workshop', 'app/notes-ab12', 'app/notes-ab12/board',
+    'app/notes-ab12/dev', 'app/notes-ab12/dev/sessions', 'app/notes-ab12/dev/sessions/new',
+    'app/notes-ab12/dev/chat', 'app/notes-ab12/dev/issues', 'app/notes-ab12/dev/issues/0',
+    'messages/4242', 'messages/app/notes-ab12', 'messages/agent/7', 'agent/7',
+    'individual-chat/12', '', null, undefined,
+  ]) assert.equal(R.workshopItemOf(route), null, String(route));
+});
+
+test('the stash for the Workshop is taken once, for its project, and only while it is fresh (#6380)', async () => {
+  const P = api.panelTarget;
+  const fired = [];
+  globalThis.window = { dispatchEvent: (e) => fired.push(e.type) };
+  P._resetWorkshopPanelTarget();
+  // Nothing waiting: nothing opened.
+  assert.equal(await P.takeWorkshopPanelItem('notes-ab12'), null);
+  // Another project's Workshop does not take it, and leaves it waiting.
+  P.stashWorkshopPanelItem('notes-ab12', { ref: { kind: 'issue', id: 6214 } });
+  assert.deepEqual(fired, ['usernode:workshop-panel-target'], 'a page already up is told');
+  assert.equal(await P.takeWorkshopPanelItem('other-app'), null);
+  assert.deepEqual(await P.takeWorkshopPanelItem('notes-ab12'), { kind: 'issue', id: 6214 });
+  assert.equal(await P.takeWorkshopPanelItem('notes-ab12'), null, 'taken once');
+  // A stash older than the TTL is ignored, so a later visit is not moved by it.
+  const now = Date.now;
+  try {
+    P.stashWorkshopPanelItem('notes-ab12', { ref: { kind: 'proposal', id: 12 } });
+    Date.now = () => now() + P.WORKSHOP_PANEL_TTL_MS + 1;
+    assert.equal(await P.takeWorkshopPanelItem('notes-ab12'), null);
+  } finally {
+    Date.now = now;
+  }
+  // A change by its pull request number is resolved to its session, and a
+  // failed read opens nothing.
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    asked.push(String(url));
+    return String(url).includes('/changes/6362')
+      ? { ok: true, json: async () => ({ sessionId: 12 }) }
+      : { ok: false, json: async () => ({}) };
+  };
+  try {
+    P.stashWorkshopPanelItem('notes-ab12', { pr: 6362 });
+    assert.deepEqual(await P.takeWorkshopPanelItem('notes-ab12'), { kind: 'proposal', id: 12 });
+    assert.equal(asked[0], '/api/apps/notes-ab12/changes/6362');
+    P.stashWorkshopPanelItem('notes-ab12', { pr: 1 });
+    assert.equal(await P.takeWorkshopPanelItem('notes-ab12'), null);
+  } finally {
+    delete globalThis.fetch;
+    P._resetWorkshopPanelTarget();
+  }
+});
+
+test('Open in workshop leaves the item for the Workshop and opens it, and on a narrow window opens the page (#6380)', async () => {
+  // Wide: the item is stashed, the project's Workshop tab is chosen, its
+  // route is navigated to, and the column goes.
+  const wide = topWindow({ width: 1280 });
+  api.take('app/notes-ab12/dev/issues/6214');
+  fakeFrame();
+  api.embeddedApi.ready('app/notes-ab12/dev/issues/6214', 'A request');
+  let landed = null;
+  wide.win.AppView = { _landOnTab: (slug, tab) => { landed = [slug, tab]; } };
+  api.openInWorkshop();
+  assert.deepEqual(landed, ['notes-ab12', 'workshop'], 'the Workshop place, before the navigation');
+  assert.deepEqual(wide.pushed, ['/?demo=1#app/notes-ab12/workshop']);
+  assert.equal(wide.routed.length, 1);
+  assert.equal(api.sidePanelStore.get().frameSrc, null, 'the column is gone');
+  assert.deepEqual(await api.panelTarget.takeWorkshopPanelItem('notes-ab12'),
+    { kind: 'issue', id: 6214 }, 'waiting for the Workshop');
+  cleanup();
+
+  // Narrow: no panel beside the Workshop list, so it opens the item's page.
+  const narrow = topWindow({ width: 900, app: null, visible: false, screen: 'ai-screen' });
+  assert.equal(api.take('app/notes-ab12/dev/changes/6362'), true, 'the column beside the bot\'s list');
+  fakeFrame();
+  api.embeddedApi.ready('app/notes-ab12/dev/changes/6362', 'A change');
+  narrow.win.AppView = { _landOnTab: () => { throw new Error('not a Workshop navigation'); } };
+  api.openInWorkshop();
+  assert.deepEqual(narrow.pushed, ['/?demo=1#app/notes-ab12/dev/changes/6362'], 'the page, as Expand opens it');
+  assert.equal(await api.panelTarget.takeWorkshopPanelItem('notes-ab12'), null, 'nothing stashed');
+  cleanup();
+
+  // A page that is not a project's item (a private thread, no page at all)
+  // opens nothing at all.
+  const thread = topWindow();
+  api.take('messages/4242');
+  fakeFrame();
+  api.embeddedApi.ready('messages/4242', 'A thread');
+  api.openInWorkshop();
+  assert.deepEqual(thread.pushed, []);
+  assert.equal(api.sidePanelStore.get().route, 'messages/4242', 'the column stays where it was');
+  cleanup();
 });
