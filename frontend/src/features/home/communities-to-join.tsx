@@ -47,7 +47,7 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
   signedIn: boolean;
   query: string;
   /** Signed in only: a card's Join. */
-  onJoin: (app: GuestApp) => void;
+  onJoin?: (app: GuestApp) => void;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -98,7 +98,7 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
         </span>
         <Button type="button" variant="pillAccent" size="sm" ink="solid" className="min-h-11 py-0 un-touch-target" data-home-join={app.slug}
           aria-label={t('home:join.buttonNamed', { community: app.name })}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin?.(app); }}>
           {t('home:join.button')}
         </Button>
       </>

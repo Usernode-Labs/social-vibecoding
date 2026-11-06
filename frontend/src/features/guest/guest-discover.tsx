@@ -319,7 +319,7 @@ export function TryLink({ app, className, onOpenInside, inside = false, children
   );
 }
 
-export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, onIntent, onOpenInside }: {
+export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, onOpenInside }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read. */
@@ -333,8 +333,6 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
    * app opens for it, signed in, and joining waits until it is let in.
    */
   signedIn?: boolean;
-  /** ONE HOME (#6361): Join on a card asks to sign up, titled for the project. */
-  onIntent?: (intent: { kind: 'join'; app: GuestApp }) => void;
   /** Open an app in the landing's own viewer (TryLink). */
   onOpenInside?: (app: GuestApp) => void;
 }) {
@@ -443,7 +441,6 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
             exclude={EMPTY}
             signedIn={false}
             query={q}
-            onJoin={(app) => { onIntent?.({ kind: 'join', app }); }}
           />
         </div>
       )}

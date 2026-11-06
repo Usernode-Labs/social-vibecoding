@@ -1618,6 +1618,9 @@ export function LandingScreen() {
   // carries the pin: kept on this device (../guest/device-pins.ts), shown on
   // Home's Pinned apps, and moved to the account at sign-in like every
   // device pin. Signed in, the app's own About and menu pin to the account.
+  // The bar's actions (this pin, Sign in, from md Sign up) sit over the
+  // title's end, so while they are up the title keeps clear of both sides
+  // (`data-guest-app-open` on the header), the name staying centred.
   const devicePins = useStoreState(devicePinsStore);
   useEffect(() => { loadDevicePins(); }, []);
   const openAppPinned = !!openApp && devicePins.apps.includes(openApp.slug);
@@ -1695,6 +1698,7 @@ export function LandingScreen() {
       <header
         id="landing-header"
         data-guest-top={guestTop ? '' : undefined}
+        data-guest-app-open={openApp && !session && guestPages ? '' : undefined}
         className={`un-safe-top-extend relative flex items-center gap-3 px-4 pt-2 pb-4 shrink-0${guestPages ? ` ${GUEST_BAR}` : ''}`}
       >
         <div className="w-7 h-7 shrink-0 flex items-center justify-center">
@@ -1731,7 +1735,7 @@ export function LandingScreen() {
         */}
         <div
           id="landing-header-title"
-          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start"
+          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start [[data-guest-app-open]_&]:px-[7.5rem] md:[[data-guest-app-open]_&]:px-[13rem]"
         >
           {openApp || guestProject ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </div>
@@ -2263,7 +2267,6 @@ export function LandingScreen() {
               apps={apps}
               failed={appsFailed && !apps}
               signedIn={waitingGuest}
-              onIntent={askFor}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
               hero={waitingGuest ? (
