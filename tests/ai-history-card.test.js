@@ -10,8 +10,7 @@
 //      query rides along on any of the tab's places.
 //   2. A project picked that no list names is still a chip, and Needs you
 //      says there is nothing of yours in it rather than showing every project.
-//   3. History is one list per project, with no date headings splitting it:
-//      each row keeps its own date on the right, in quiet rows whose right
+//   3. History groups by month, then by project, in quiet rows whose right
 //      word says how each thing ended; a community you left says so; its
 //      chips pick a kind; Earlier months reads the next page.
 //   4. A change of your own that waits on your fix is Needs you's, Fix it.
@@ -88,7 +87,7 @@ test('a project a link picked is a chip even when no list names it, and Needs yo
   assert.match(all, new RegExp(message('messages:ai.work.empty')));
 });
 
-test('History: one list per project, no date headings, quiet rows that say how each thing ended', () => {
+test('History: by month, then by project, quiet rows that say how each thing ended', () => {
   const h = loadTsx(HISTORY);
   const rows = [
     { key: 'thread:1', threadId: 1, number: 392, title: 'Watering reminders', app: garden, href: '#app/garden/dev/issues/392', at: '2026-10-24T12:00:00Z', kind: 'change', outcome: 'live', by: 'bot' },
@@ -96,9 +95,8 @@ test('History: one list per project, no date headings, quiet rows that say how e
     { key: 'thread:3', threadId: 3, number: null, title: 'A new card picture', app: garden, href: '#app/garden/dev/governance/3', at: '2026-10-18T12:00:00Z', kind: 'vote', outcome: 'passed', decision: true, myVote: 'yes' },
     { key: 'thread:4', threadId: 4, number: 31, title: 'Swap requests', app: club, href: '#app/book-swap/dev/issues/31', at: '2026-10-03T12:00:00Z', kind: 'change', outcome: 'live', left: true },
     { key: 'private:5', rootId: 5, number: null, title: 'Ideas for a seed swap', app: null, href: null, at: '2026-09-10T12:00:00Z', kind: 'solo', outcome: 'done' },
-    // Garden club again, an older month: the same list, not a second heading.
-    { key: 'thread:6', threadId: 6, number: 355, title: 'Autumn seeds', app: garden, href: '#app/garden/dev/issues/355', at: '2026-09-02T12:00:00Z', kind: 'change', outcome: 'live' },
   ];
+  assert.deepEqual(h.byMonth(rows).map((m) => [m.key, m.rows.length]), [['2026-10', 4], ['2026-09', 1]]);
   assert.deepEqual(h.historyWords(rows[2]), { id: 'messages:ai.history.yesPassed' });
   assert.equal(h.historyWords(rows[0], 'en-US').id, 'messages:ai.history.live');
   assert.match(String(h.historyWords(rows[0], 'en-US').values.date), /Oct/);
@@ -115,12 +113,7 @@ test('History: one list per project, no date headings, quiet rows that say how e
   assert.match(html, new RegExp(message('messages:ai.history.title')));
   const at = (needle) => html.indexOf(needle);
   assert.ok(at('data-ai-sheet="live"') === -1 || at('data-ai-sheet="live"') < at('data-ai-sheet="history"'), 'below Live this week');
-  assert.doesNotMatch(html, /data-ai-history-month/, 'no date headings split History');
-  assert.equal((html.match(/data-ai-group="garden"/g) || []).length, 1, 'one list per project, whatever month');
-  const gardenAt = at('data-ai-group="garden"');
-  assert.ok(at('Autumn seeds') > gardenAt && at('Autumn seeds') < at('data-ai-group="book-swap"'),
-    'a September row joins Garden club\'s October rows in its one list');
-  assert.match(html, /Live Oct 24/, 'each row keeps the date it already shows on the right');
+  assert.ok(at('data-ai-history-month="2026-10"') < at('data-ai-history-month="2026-09"'), 'newest month first');
   assert.match(html, /data-ai-line="history-change"/);
   assert.match(html, new RegExp(message('messages:ai.history.yesPassed')));
   assert.match(html, new RegExp(message('messages:ai.history.closed')));

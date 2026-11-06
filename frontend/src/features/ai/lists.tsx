@@ -68,7 +68,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  GROUP_FIRST, byProject, changeOnGithub, freshByProject, freshCount, freshFirst, groupRows, holdOrder, nextWords, notMoving, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
+  GROUP_FIRST, byDay, byProject, changeOnGithub, dayKey, freshByProject, freshCount, freshFirst, groupRows, holdOrder, nextWords, notMoving, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -78,7 +78,7 @@ import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
 import { HISTORY_KINDS, type HistoryKind } from './filter-address';
-import { historyGlyph, historyTooltip, historyWords, type HistoryRow, type HistoryState } from './history';
+import { byMonth, historyGlyph, historyTooltip, historyWords, monthName, type HistoryRow, type HistoryState } from './history';
 
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
@@ -111,6 +111,8 @@ interface Line {
   done?: { rootId: number; mark: () => void } | null;
   /** History: a row in a private community the person left (its project's name says so). */
   left?: boolean;
+  /** When it started needing the viewer, for the day its row is grouped under. */
+  at?: string | null;
 }
 
 const G = 'h-[18px] w-[18px]';
@@ -246,6 +248,40 @@ function EarlierRule(): ReactNode {
 }
 
 /**
+ * Pure (6 Nov 2026): which day a row's divider says, "Today", "Yesterday", or
+ * the weekday and date ("Tuesday 3 November"), read in the interface's own
+ * language and the reader's time zone.
+ */
+function dayHeading(at: string | null | undefined, t: (id: string, values?: Record<string, string | number>) => string, locale: string | undefined): string {
+  const d = new Date(String(at || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  const today = new Date();
+  const days = Math.round((new Date(today.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400000);
+  if (days <= 0) return t('messages:ai.short.today');
+  if (days === 1) return t('messages:ai.short.yesterday');
+  // The year too, only when it is another one (as History's months say it).
+  const other = d.getFullYear() !== today.getFullYear();
+  return d.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) });
+}
+
+/**
+ * 6 Nov 2026 (Evan): the day inside a project's rows, in Needs you and
+ * Waiting & in progress: the small caps label with a thin rule after it, as
+ * the design's "With date headings" column drew it.
+ */
+function DayRule({ at }: { at: string | null | undefined }): ReactNode {
+  const t = useMessages('messages');
+  const label = dayHeading(at, t, getDateLocale());
+  if (!label) return null;
+  return (
+    <div className="flex items-center gap-2 py-1.5" data-ai-day={dayKey(at)}>
+      <span className="shrink-0 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{label}</span>
+      <span className="h-px flex-1 bg-[color:var(--app-sheet-line)]" aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
  * #6262: a count of new threads, on a chip or beside a heading. The number
  * is decoration; the spoken words say what it counts.
  */
@@ -364,7 +400,7 @@ function GroupMore({ hidden, open, onClick }: { hidden: number; open: boolean; o
  * folded away: past the first rows it joins them, so where you are is
  * always shown.
  */
-function GroupList({ lines, quiet = false, heads, first, freshStyle = false, freshProjects }: {
+function GroupList({ lines, quiet = false, heads, first, freshStyle = false, freshProjects, dayHeads = false }: {
   lines: Line[];
   quiet?: boolean;
   heads: boolean;
@@ -373,6 +409,8 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
   freshStyle?: boolean;
   /** How many rows each project has that are new, for its name's pill. */
   freshProjects?: Record<string, number>;
+  /** 6 Nov 2026: split each project's rows by day, under a small caps divider. */
+  dayHeads?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
   const [opened, setOpened] = useState<Record<string, boolean>>({});
@@ -385,7 +423,9 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
         // more has opened every row, they keep their own order, so pressing
         // one does not slide it up under the pointer. #6262: a fresh row is
         // never folded either.
-        const { items, shown, hidden } = groupRows(g.items, first, open);
+        // 6 Nov 2026: a day-headed list keeps each day's rows together, so a
+        // project reads Today's rows, then Yesterday's, then the date.
+        const { items, shown, hidden } = groupRows(dayHeads ? byDay(g.items) : g.items, first, open);
         const anyFresh = freshStyle && g.items.some((line) => line.fresh);
         const firstOld = anyFresh ? items.findIndex((line) => !line.fresh) : -1;
         // The line only where an older row is actually drawn: with every
@@ -393,6 +433,19 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
         const earlierAt = firstOld >= 0 && firstOld < shown ? firstOld : -1;
         const freshHere = freshStyle && g.app ? freshProjects?.[g.app.slug] || 0 : 0;
         const draw = (line: Line) => <LineRow key={line.key} line={line} quiet={quiet} freshTitles={freshStyle} />;
+        // 6 Nov 2026: the day each drawn row opens, in the order the rows are
+        // drawn. A divider past the fold stays inside the fold, and a day that
+        // spans the fold is not said twice: the first folded row shares the
+        // day the last drawn one did.
+        let lastDay = '';
+        const drawn = items.map((line) => {
+          const day = dayHeads ? dayKey(line.at) : '';
+          const divider = !!day && day !== lastDay;
+          if (day) lastDay = day;
+          return { line, divider };
+        });
+        const visible = hidden ? drawn.slice(0, shown) : drawn;
+        const folded = hidden ? drawn.slice(shown) : [];
         return (
           <div key={key} data-ai-group={key}>
             {heads ? (
@@ -412,9 +465,10 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
             ) : null}
             {/* The rows sit in a little under their project's name. */}
             <div className={heads ? 'ms-3' : undefined}>
-              {(hidden ? items.slice(0, shown) : items).map((line, i) => (
+              {visible.map(({ line, divider }, i) => (
                 <Fragment key={line.key}>
                   {i === earlierAt ? <EarlierRule /> : null}
+                  {divider ? <DayRule at={line.at} /> : null}
                   {draw(line)}
                 </Fragment>
               ))}
@@ -428,7 +482,12 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
                   data-ai-group-rest=""
                 >
                   <div className={FOLD_CLIP}>
-                    {items.slice(shown).map(draw)}
+                    {folded.map(({ line, divider }) => (
+                      <Fragment key={line.key}>
+                        {divider ? <DayRule at={line.at} /> : null}
+                        {draw(line)}
+                      </Fragment>
+                    ))}
                   </div>
                 </div>
               ) : null}
@@ -441,7 +500,7 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
   );
 }
 
-function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads, fresh = 0, freshBySlug, freshStyle = false }: {
+function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads, fresh = 0, freshBySlug, freshStyle = false, dayHeads = false }: {
   /** Which list, for the page's checks: work, busy, live. */
   list: string;
   /** Said over the rows, whatever they are: why the lists show less than they should. */
@@ -469,6 +528,8 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   freshBySlug?: Record<string, number>;
   /** #6262: Needs you draws new first, with an Earlier line (GroupList). */
   freshStyle?: boolean;
+  /** 6 Nov 2026: split each project's rows by day (Needs you, Waiting & in progress). */
+  dayHeads?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
   const [stillOpen, setStillOpen] = useState(false);
@@ -504,7 +565,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
     <>
       {note}
       {!lines.length ? empty : null}
-      <GroupList lines={held} quiet={quiet} heads={heads} first={first} freshStyle={freshStyle} freshProjects={freshBySlug} />
+      <GroupList lines={held} quiet={quiet} heads={heads} first={first} freshStyle={freshStyle} freshProjects={freshBySlug} dayHeads={dayHeads} />
       {still && still.lines.length ? (
         <div data-ai-still-part="">
           <button
@@ -524,7 +585,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
             data-ai-still-rest=""
           >
             <div className={FOLD_CLIP}>
-              <GroupList lines={still.lines} quiet={quiet} heads={heads} first={still.lines.length} />
+              <GroupList lines={still.lines} quiet={quiet} heads={heads} first={still.lines.length} dayHeads={dayHeads} />
             </div>
           </div>
         </div>
@@ -689,6 +750,7 @@ export function AiLists({
     fresh: row.unread > 0,
     open: () => openRow(row),
     done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
+    at: row.at,
   }));
   const threadLine = (glyph: (th: AiThread) => ReactNode) => (th: AiThread): Line => ({
     key: String(th.threadId),
@@ -707,6 +769,7 @@ export function AiLists({
     lit: !!lit && rowKey(th) === lit,
     fresh: (th.unread || 0) > 0,
     open: () => openThread(th),
+    at: th.at,
   });
   const progressShown = progress.filter((x) => shows(x.app));
   const waitingShown = waiting.filter((x) => shows(x.app));
@@ -759,10 +822,9 @@ export function AiLists({
   // by its name, rather than the lists quietly showing every project.
   const onlyApp = picked.length === 1 ? ranked.find((p) => p.app.slug === picked[0])?.app || null : null;
   const nothingHere = !!onlyApp && !needLines.length && !busyLines.length && !stillLines.length && !liveLines.length;
-  // HISTORY (5 Nov 2026, ./history.ts): what has finished, one list per
-  // project, in the quiet rows Live this week draws. No date headings split
-  // it: each row keeps the date it ended (or went live) on its right.
-  // Narrowed by the chips above, as every list is; its own chips pick a kind.
+  // HISTORY (5 Nov 2026, ./history.ts): what has finished, by month, then by
+  // project, in the quiet rows Live this week draws. Narrowed by the chips
+  // above, as every list is; its own chips pick a kind.
   const locale = getDateLocale();
   const historyLines = (history?.rows || []).filter((row) => shows(row.app)).map((row): Line & { at: string | null } => {
     const glyph = historyGlyph(row);
@@ -788,6 +850,7 @@ export function AiLists({
       at: row.at,
     };
   });
+  const historyMonths = byMonth(historyLines);
   const owedShown = picked.length ? needLines.filter((line) => line.owe).length : owed;
   // One project picked: its chip names it, so its name is not said again over every section.
   const heads = picked.length !== 1;
@@ -876,6 +939,7 @@ export function AiLists({
           fresh={freshShown}
           freshBySlug={freshProjects}
           freshStyle
+          dayHeads
         />
       </div>
       {busyLines.length || stillLines.length ? (
@@ -888,6 +952,7 @@ export function AiLists({
             still={stillLines.length ? { head: t('messages:ai.up.stillCount', { count: stillLines.length }), lines: stillLines } : null}
             first={GROUP_FIRST.busy}
             heads={heads}
+            dayHeads
           />
         </div>
       ) : null}
@@ -952,11 +1017,12 @@ export function AiLists({
               {history.ready && !history.failed && !historyLines.length && !history.next ? (
                 <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-history-empty="">{t('messages:ai.history.empty')}</p>
               ) : null}
-              {historyLines.length ? (
-                // One list per project, newest first: the month headings that
-                // used to split it are gone, and each row's own date stays.
-                <GroupList lines={historyLines} quiet heads={heads} first={GROUP_FIRST.live} />
-              ) : null}
+              {historyMonths.map((month) => (
+                <div key={month.key} data-ai-history-month={month.key}>
+                  <h3 className="m-0 pt-4 text-[13px] font-bold text-zinc-900 dark:text-zinc-100">{monthName(month.at, locale)}</h3>
+                  <GroupList lines={month.rows} quiet heads={heads} first={GROUP_FIRST.live} />
+                </div>
+              ))}
               {history.ready && history.next ? (
                 <button
                   type="button"

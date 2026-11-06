@@ -188,9 +188,12 @@ test('each section groups its rows by project, and a project shows its first few
   assert.match(lists, /const ordered = freshStyle \? freshFirst\(lines\) : lines;/);
   assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'the new first, then the drawn order held');
-  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open\);/,
+  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open\);/,
     'the group draws through the pure order rule');
-  assert.match(lists, /\{\(hidden \? items\.slice\(0, shown\) : items\)\.map\(/);
+  // 6 Nov 2026: the drawn rows carry their day divider, and the fold splits
+  // the same drawn list (a day past the fold stays inside it).
+  assert.match(lists, /const visible = hidden \? drawn\.slice\(0, shown\) : drawn;/);
+  assert.match(lists, /const folded = hidden \? drawn\.slice\(shown\) : \[\];/);
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
   assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
   assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
@@ -391,6 +394,81 @@ test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded o
   const at = Number(/const DOT = '[^']*-start-(\d+)/.exec(src)[1]);
   const room = Number(/ps-(\d+)/.exec(groupClip[1])[1]);
   assert.ok(room >= at, `the fold keeps ${room * 4}px for a dot ${at * 4}px outside its row`);
+});
+
+// 6 Nov 2026 (Evan): "in Needs you and Waiting & in progress, keep the
+// project groups, and inside each group split the rows by day with the small
+// caps dividers and a thin rule ... Leave History's month headings as they
+// are." A project's rows are split by the reader's own calendar day: Today,
+// Yesterday, then the weekday and date. Nothing else grows a day heading.
+test('6 Nov 2026: Needs you and Waiting & in progress split each project by day, History keeps its months', () => {
+  const { dayKey, byDay } = loadTsx(MODEL);
+  // Noon, so the test's own clock cannot turn a day into its neighbour.
+  const at = (daysAgo) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - daysAgo); return d.toISOString(); };
+  const today = at(0);
+  const yesterday = at(1);
+  const older = at(9);
+  assert.notEqual(dayKey(today), dayKey(yesterday), 'a day apart is a different day');
+  assert.equal(dayKey(null), '', 'no moment, no day');
+  assert.deepEqual([dayKey(today).length, dayKey(today).split('-').length], [10, 3], 'the key is YYYY-MM-DD');
+  // A day's rows are one run: newest day first, the order within a day kept.
+  assert.deepEqual(byDay([{ k: 'a', at: today }, { k: 'b', at: yesterday }, { k: 'c', at: today }, { k: 'd', at: null }])
+    .map((r) => r.k), ['a', 'c', 'b', 'd'], 'Today, then Yesterday, then the undated row');
+
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const line = (key, title, when) => ({
+    key, title, app, who: 'all', at: when, unread: 0, threadId: null,
+    sub: { id: 'messages:ai.row.where', values: { project: app.name, number: 1 } },
+    pill: { id: 'messages:ai.pill.vote' }, href: '#app/garden/dev/issues/1', rootId: null,
+  });
+  const html = renderComponent(LISTS, 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 3,
+    rows: [line('need:proposal:1', 'Today one', today), line('need:proposal:3', 'Yesterday one', yesterday),
+      line('need:proposal:2', 'Today two', today), line('need:proposal:4', 'Older one', older)],
+    lit: null,
+    progress: [thread(1, 71, 'vote', { at: today, group: 'next' }), thread(2, 72, 'building', { at: yesterday, group: 'next' })],
+    waiting: [], live: [],
+    openRow() {}, openThread() {},
+  });
+  const sheet = (name) => html.slice(html.indexOf(`data-ai-sheet="${name}"`), html.indexOf('data-ai-sheet="', html.indexOf(`data-ai-sheet="${name}"`) + 1));
+  const needs = sheet('open');
+  const busy = sheet('busy');
+  // Inside the project group, one divider each day, in the order the rows come.
+  assert.ok(needs.indexOf('data-ai-group="garden"') < needs.indexOf('data-ai-day='), 'the day sits inside the project group');
+  assert.equal((needs.match(/data-ai-day="/g) || []).length, 3, 'Today, Yesterday and the older day, once each');
+  assert.ok(needs.indexOf(message('messages:ai.short.today')) < needs.indexOf('Today one'));
+  assert.ok(needs.indexOf('Today one') < needs.indexOf('Today two'), 'the day\'s rows are one run, whatever order they came in');
+  assert.ok(needs.indexOf('Today two') < needs.indexOf(message('messages:ai.short.yesterday')), 'a second row of the same day adds no divider');
+  assert.ok(needs.indexOf(message('messages:ai.short.yesterday')) < needs.indexOf('Yesterday one'));
+  assert.ok(needs.indexOf('Yesterday one') < needs.indexOf('Older one'));
+  const label = (key) => {
+    const found = new RegExp(`data-ai-day="${key}"><span[^>]*>([^<]+)</span>`).exec(needs);
+    return found ? found[1] : '';
+  };
+  assert.equal(label(dayKey(today)), message('messages:ai.short.today'));
+  assert.equal(label(dayKey(yesterday)), message('messages:ai.short.yesterday'));
+  assert.match(label(dayKey(older)), /\d/, 'an older day says its date');
+  // Waiting & in progress splits the same way, under its own project group.
+  assert.match(busy, /data-ai-group="garden"/);
+  assert.equal((busy.match(/data-ai-day="/g) || []).length, 2);
+  assert.ok(busy.indexOf(message('messages:ai.short.today')) < busy.indexOf(message('messages:ai.short.yesterday')));
+
+  // History keeps its month headings, and Live this week keeps none of these.
+  const history = {
+    rows: [{ key: 'thread:9', threadId: 9, number: 392, title: 'Watering reminders', app, href: '#app/garden/dev/issues/392', at: older, kind: 'change', outcome: 'live', by: 'bot' }],
+    next: null, ready: true, loading: false, failed: false, more() {}, retry() {},
+  };
+  const withHistory = renderComponent(LISTS, 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], progress: [], waiting: [], live: [thread(3, 73, 'live', { at: today })],
+    history, openRow() {}, openThread() {}, openHistory() {},
+  });
+  const historySheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="history"'));
+  assert.match(historySheet, /data-ai-history-month="/, 'History still groups by month');
+  assert.doesNotMatch(historySheet, /data-ai-day=/, 'and grows no day divider');
+  const liveSheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="live"'), withHistory.indexOf('data-ai-sheet="history"'));
+  assert.doesNotMatch(liveSheet, /data-ai-day=/, 'Live this week keeps its day on the right');
 });
 
 test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {

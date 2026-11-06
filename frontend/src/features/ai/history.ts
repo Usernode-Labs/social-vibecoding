@@ -6,19 +6,19 @@
  *
  *   HISTORY
  *   ( All ) ( Changes ) ( Requests ) ( Votes ) ( Only you )
+ *   October
  *   [tile] Garden club
  *     ✓ #392  Watering reminders                    Live Oct 24
  *     ✕ #380  Sign in with a code                        Closed
  *     ☑       A new card picture              You: yes · passed
  *   [tile] Book swap · You left
  *     ✓ #31   Swap requests                          Live Oct 3
+ *   September …
  *                Earlier months ⌄
  *
- * One list per project, newest project first (./model.ts byProject, as every
- * list on the page). No date headings split it: each row keeps the date it
- * ended (or went live) on its right. Rows are quiet as Live this week's are:
- * a finished thing gets no fill, and the word on the right is how it ended.
- * The project chips at
+ * Months, then projects (./model.ts byProject, as every list on the page),
+ * then rows, which are quiet as Live this week's are: a finished thing gets
+ * no fill, and the word on the right is how it ended. The project chips at
  * the top narrow it like the rest; its own chips pick a kind, which were Me ›
  * Your work's three tabs (Your changes, Your requests, Your votes), plus your
  * private threads with Homeroom bot. That screen is gone; its addresses land
@@ -58,6 +58,33 @@ export interface HistoryRow {
 export interface HistoryPage {
   rows: HistoryRow[];
   next: string | null;
+}
+
+/** Pure: the month a row finished in, as `YYYY-MM` in the reader's own time. */
+export function monthKey(at: string | null | undefined): string {
+  const d = new Date(String(at || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Pure: the rows by month, newest month first, each month's rows in their order. */
+export function byMonth<T extends { at: string | null }>(rows: readonly T[]): { key: string; at: string; rows: T[] }[] {
+  const months: { key: string; at: string; rows: T[] }[] = [];
+  const index = new Map<string, number>();
+  for (const row of rows) {
+    const key = monthKey(row.at);
+    if (!key) continue;
+    if (!index.has(key)) { index.set(key, months.length); months.push({ key, at: String(row.at), rows: [] }); }
+    months[index.get(key)!].rows.push(row);
+  }
+  return months;
+}
+
+/** Pure: a month's name in the interface's language: "October", or "October 2025" in another year. */
+export function monthName(at: string, locale: string | undefined, now = new Date()): string {
+  const d = new Date(at);
+  const other = d.getFullYear() !== now.getFullYear();
+  return d.toLocaleDateString(locale, { month: 'long', ...(other ? { year: 'numeric' } : {}) });
 }
 
 /** Pure: a day as History's rows say it, "Oct 24". */
