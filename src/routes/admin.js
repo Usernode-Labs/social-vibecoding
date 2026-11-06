@@ -2973,10 +2973,11 @@ function adminRoutes(config) {
 
   // ── Email delivery ─────────────────────────────────────────
   //
-  // The operator's view of platform outbound mail. Three routes, and the
+  // The operator's view of platform outbound mail. Four routes, and the
   // split between them is the whole point: reads are open to any admin
-  // (including view-only), the one that actually puts a message on the
-  // wire is full-admin-only.
+  // (including view-only), the two that change something (which provider
+  // sends, and the one that actually puts a message on the wire) are
+  // full-admin-only.
   //
   // These live under /api/admin/mail and are ADDITIVE. The older
   // /api/v4/admin/settings/mail-status and /mail-activity pair that the
@@ -3002,13 +3003,14 @@ function adminRoutes(config) {
     return { to };
   }
 
-  // Configuration presence only — which provider is active, which keys
+  // Configuration presence only — which provider is active, who named it
+  // (an admin's saved choice, the deploy's variable, or neither), which keys
   // are absent, which flows break while it stays that way. describe()
   // returns no values by construction, so this response can never carry a
   // credential even though the page that renders it is admin-only.
   router.get('/api/admin/mail/status', async (req, res) => {
     try {
-      const status = mail.describe(process.env);
+      const status = mail.describe(process.env, { saved: await mail.savedChoice(pool) });
 
       // Pre-fill the test form with the admin's own address when we have
       // one. The client session payload doesn't carry an email, so it
@@ -3060,9 +3062,12 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
-        require('../services/mail/reports').readReports(pool, {
-          provider: (config && (config.mailProvider || config.mailTransport?.provider)) || null,
-        }),
+        // The provider in force, an admin's saved choice included: delivered,
+        // bounced and complained are shown only for the one whose webhook
+        // reports them.
+        mail.transportFor(config, pool).then(({ provider }) => (
+          require('../services/mail/reports').readReports(pool, { provider: provider || null })
+        )),
       ]);
 
       const last24h = {};
@@ -3071,6 +3076,45 @@ function adminRoutes(config) {
       res.json({ deliveries: recent.rows, last24h, kind, limit, reports });
     } catch (err) {
       log.error('admin', 'mail activity failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Change who sends platform mail. Full admins only, and a provider that is
+  // not ready cannot be chosen: the point of the switch is a working path,
+  // not a way to stop sign-in codes by accident. 409 carries the names of the
+  // settings that are missing, never a value. The saved choice wins over
+  // PLATFORM_MAIL_PROVIDER and is read at send time, so it needs no redeploy;
+  // a staging preview saves it and goes on logging.
+  router.put('/api/admin/mail/provider', requireAdminWrite, async (req, res) => {
+    try {
+      const name = typeof req.body?.provider === 'string'
+        ? req.body.provider.trim().toLowerCase()
+        : '';
+      const before = mail.describe(process.env, { saved: await mail.savedChoice(pool) });
+      const option = before.providers.find((o) => o.name === name);
+      if (!option) {
+        return res.status(400).json({ error: 'Unknown mail provider.', code: 'unknown_provider' });
+      }
+      if (!option.ready) {
+        return res.status(409).json({
+          error: 'That provider is not ready yet.',
+          code: 'not_ready',
+          missing: option.missing,
+        });
+      }
+      await mail.setProvider(pool, name, req.user.id);
+      events.record(pool, {
+        type: events.EVENT_TYPES.MAIL_PROVIDER_CHANGED,
+        userId: req.user.id,
+        metadata: { from: before.provider || null, to: name },
+      });
+      log.warn('admin', 'Admin changed the mail provider', {
+        by: req.user.username, from: before.provider || null, to: name,
+      });
+      res.json({ ok: true, status: mail.describe(process.env, { saved: name }) });
+    } catch (err) {
+      log.error('admin', 'mail provider change failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

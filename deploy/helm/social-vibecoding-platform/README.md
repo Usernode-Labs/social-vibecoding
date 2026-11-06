@@ -155,8 +155,11 @@ tracking; Gmail does not supply delivery, bounce or complaint callbacks.
 To send platform mail through Brevo instead, set `secrets.platformMailProvider`
 to `brevo` and supply `secrets.brevoMailWebhookToken` through SOPS, beside the
 `secrets.brevoApiKey` SMS already uses. Supplying the key alone does not move
-mail, and an empty provider stays on Gmail. Brevo only delivers: the words come
-from the console's email templates. See `docs/mail-brevo.md`.
+mail, and an empty provider stays on Gmail. A full admin can also make the
+switch in Admin → Email delivery, with no chart change: that saved choice wins
+over `secrets.platformMailProvider`, and the webhook token still comes from
+here. Brevo only delivers: the words come from the console's email templates.
+See `docs/mail-brevo.md`.
 
 The media store (screenshots, videos and other files kept out of PostgreSQL)
 is off until `config.mediaStorage.endpoint` is set. The chart passes the
