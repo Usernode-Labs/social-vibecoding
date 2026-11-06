@@ -567,6 +567,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    `.messages-layout` around it (project-discussion.tsx). */
 .messages-layout,
 .dev-ws-discussion,
+/* #6431: the column's heading beside the bot page is the same kind of row as
+   Main's, and its ⋯ menu is Messages' own (.messages-thread-menu). Those
+   tokens are only declared where they are drawn, so the menu's fill resolved
+   to nothing there and the page showed through it. */
+.side-panel-head,
 #ai-screen .ai-askbar {
   /* The OPAQUE surfaces drawn on the two planes: a bubble from the other
      side, a shared-item card, a floating disc, the composer. White on the
@@ -590,6 +595,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .dark .messages-layout,
 .dark .dev-ws-discussion,
+.dark .side-panel-head,
 .dark #ai-screen .ai-askbar {
   --messages-surface: var(--dc-raised);
   --messages-surface-2: #3a3a3c;
@@ -25652,8 +25658,23 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
 .side-panel-head > .side-panel-main { margin: 0; align-self: center; }
 /* The ⋯ beside the column's heading (3 Nov 2026), at the row's end: Copy
    link, the item's own page address. It is a sibling of the heading, so it
-   stays put when the heading's words are long. */
-.side-panel-more { margin-inline-start: auto; align-self: center; }
+   stays put when the heading's words are long.
+   #6431: and it is a LAYER ABOVE THE PAGE, solidly (Evan, 6 Nov 2026: the
+   menu "is overlapping weirdly? Maybe because it is fully transparent?").
+   Its surface tokens come from .side-panel-head, which is in the lists that
+   declare Messages' (above), and the wrapper stacks above the panel's body
+   so no page content paints over it. */
+.side-panel-more {
+  position: relative;
+  z-index: 2;
+  margin-inline-start: auto;
+  align-self: center;
+}
+/* The menu's own hairline, on top of the lift its base rule already draws, so
+   it reads as a sheet lying over the page rather than a hole in it. */
+.side-panel-more .messages-thread-menu {
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .18), inset 0 0 0 1px var(--messages-hair);
+}
 /* The column's heading, as Main's header reads (30 Oct 2026): the project's
    tile, then what is open over where it is, the rows' 15 over 13. The
    project's name is the door to it, underlined under the pointer. */

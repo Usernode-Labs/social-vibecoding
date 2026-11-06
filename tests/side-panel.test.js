@@ -1671,7 +1671,7 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   // The ⋯ is in the row only beside the bot page, and at its end.
   assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
   assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
-  assert.match(CSS, /\.side-panel-more \{ margin-inline-start: auto; align-self: center; \}/);
+  assert.match(CSS, /\.side-panel-more \{[^}]*margin-inline-start: auto;[^}]*align-self: center;/);
   // The item's page link is what the heading draws; a page with none is plain words.
   api._resetForTests();
   api.sidePanelStore.set({
@@ -1815,6 +1815,44 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
   assert.deepEqual(api.SidePanel.panelMenuRows(), [], 'a head for another page lists nothing here');
   api.sidePanelRefs.frame = null;
   api._resetForTests();
+});
+
+test('the column\'s ⋯ menu is a solid sheet above the page, in both looks (#6431)', () => {
+  // The menu is drawn in the shell's own document, where Messages' surface
+  // tokens are not declared (they live on .messages-layout,
+  // .dev-ws-discussion, .dev-request and #ai-screen .ai-askbar). Its fill and
+  // hover resolved to nothing, so the page's rows showed straight through it
+  // under its shadow (Evan, 6 Nov 2026: "overlapping weirdly... fully
+  // transparent"). The wrapper declares the same pair, opaque in each look,
+  // and stacks above the panel's body.
+  const rule = (sel) => {
+    const at = CSS.indexOf(`${sel} {`);
+    assert.ok(at >= 0, `${sel} is drawn`);
+    return CSS.slice(at, CSS.indexOf('}', at) + 1);
+  };
+  const more = rule('.side-panel-more');
+  assert.match(more, /position: relative;/, 'the wrapper is the menu\'s anchor');
+  assert.match(more, /z-index: 2;/, 'and its layer, above the panel\'s body');
+  // The heading is in the lists that declare Messages' tokens, so the menu's
+  // fill (and the ⋯ button's hover step) is the opaque one Messages draws.
+  const tokens = (start) => CSS.slice(CSS.indexOf(start), CSS.indexOf('}', CSS.indexOf(start)));
+  const light = tokens('.messages-layout,');
+  assert.match(light, /\.side-panel-head,/);
+  assert.match(light, /--messages-surface: #ffffff;/, 'the menu\'s fill, light');
+  assert.match(light, /--messages-surface-2: var\(--bg-secondary\);/, 'and its hover step');
+  const dark = tokens('.dark .messages-layout,');
+  assert.match(dark, /\.dark \.side-panel-head,/);
+  assert.match(dark, /--messages-surface: var\(--dc-raised\);/, 'the menu\'s fill, dark');
+  assert.match(dark, /--messages-surface-2: #3a3a3c;/, 'and its hover step');
+  // A hairline on top of the base rule's lift, so it reads as a sheet over the
+  // page rather than a hole in it. The menu itself is still Messages' absolute
+  // layer, and its base rule still paints the surface declared above.
+  assert.match(rule('.side-panel-more .messages-thread-menu'),
+    /box-shadow: 0 12px 30px rgba\(0, 0, 0, \.18\), inset 0 0 0 1px var\(--messages-hair\);/);
+  const base = rule('.messages-thread-menu');
+  assert.match(base, /position: absolute;/);
+  assert.match(base, /z-index: 30;/);
+  assert.match(base, /background: var\(--messages-surface\);/);
 });
 
 test('a new page, a new frame and leaving drop the head with the title (#6431)', () => {
