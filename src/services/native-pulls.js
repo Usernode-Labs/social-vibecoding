@@ -144,9 +144,10 @@ function rawOf(owner, repo, slug, row, { head = null, base = null, mergeable = n
  * codes, when the branch adds nothing to main ('no_commits') or already has
  * an open one ('pr_exists').
  */
-async function create(owner, repo, { branch, head, title = '', body = '', draft = false } = {}) {
+async function create(owner, repo, { branch, head, title = '', body = '', draft = false, base = 'main' } = {}) {
   const app = await requireApp(owner, repo);
   const headBranch = String(head || branch || '').replace(/^[^:]+:/, '');
+  const baseBranch = String(base || 'main').trim() || 'main';
   if (!headBranch) throw new PullError('A pull request needs a branch');
   const { rows: [open] } = await db().query(
     `SELECT number FROM native_pulls WHERE app_id = $1 AND head_branch = $2 AND state = 'open' LIMIT 1`,
@@ -156,15 +157,15 @@ async function create(owner, repo, { branch, head, title = '', body = '', draft 
     e.existingNumber = open.number;
     throw e;
   }
-  const { dir, head: headSha, base: baseSha } = await shasOf(owner, repo, { head_branch: headBranch, base_branch: 'main', number: null });
+  const { dir, head: headSha, base: baseSha } = await shasOf(owner, repo, { head_branch: headBranch, base_branch: baseBranch, number: null });
   if (!headSha || (baseSha && (await repoMirror.aheadBy(dir, baseSha, headSha)) === 0)) {
-    throw new PullError(`No commits between main and ${headBranch}: the branch has no pushed commits.`, { code: 'no_commits' });
+    throw new PullError(`No commits between ${baseBranch} and ${headBranch}: the branch has no pushed commits.`, { code: 'no_commits' });
   }
   const number = await appNumbers.next(app.id, { db: db() });
   const { rows: [row] } = await db().query(
-    `INSERT INTO native_pulls (app_id, number, title, body, head_branch, draft)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${COLUMNS}`,
-    [app.id, number, String(title || ''), String(body || ''), headBranch, !!draft]);
+    `INSERT INTO native_pulls (app_id, number, title, body, head_branch, base_branch, draft)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${COLUMNS}`,
+    [app.id, number, String(title || ''), String(body || ''), headBranch, baseBranch, !!draft]);
   log.info('native-pulls', 'Pull request opened', { app: app.slug, number, branch: headBranch });
   return rawOf(owner, repo, app.slug, row, { head: headSha, base: baseSha });
 }
