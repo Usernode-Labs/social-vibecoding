@@ -191,8 +191,18 @@ function questionText({ question, plan = null }) {
 }
 
 // A reason the model wrote, as a whole sentence: it ends with a full stop.
-function reasonSentence(reason) {
-  const text = clipText(plainWords(reason));
+// 6 Nov 2026 (#6430): in a reply to the person who said go ahead, `reader`
+// (their username) becomes "your" or "you", so the note never talks about the
+// reader in the third person ("evan's go-ahead").
+function reasonSentence(reason, { reader = null } = {}) {
+  let text = clipText(plainWords(reason));
+  const name = typeof reader === 'string' ? reader.trim() : '';
+  if (text && name) {
+    const at = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text
+      .replace(new RegExp(`@?${at}'s\\b`, 'gi'), 'your')
+      .replace(new RegExp(`@?${at}\\b`, 'gi'), 'you');
+  }
   if (!text) return 'No reason given.';
   return /[.!?…)"']$/.test(text) ? text : `${text}.`;
 }
@@ -232,7 +242,9 @@ function personText({ reason, platform = false, project = null, done = false, wi
   // change that is not append-only, or too big for one build), so the copy
   // names no Go ahead and leads with the part it can build.
   if (goAheadDecides === false) {
-    return `I can't build all of this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`;
+    return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+      + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
+      + canBuildPart(firstStep);
   }
   // GitHub never carries a platform username (#723): its copy names nobody.
   // Homeroom's names who can say Go ahead (personHomeroomText).
@@ -247,7 +259,7 @@ function personText({ reason, platform = false, project = null, done = false, wi
  */
 function canBuildPart(firstStep) {
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
-  return step ? `I can do this part here: ${step}.` : 'Reply here if a smaller part would help.';
+  return step ? `I can build this part now: ${step}.` : 'Reply here if a smaller part would help.';
 }
 
 /**
@@ -271,7 +283,9 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   // 6 Nov 2026 (#6395): no Go ahead can settle this one, and nobody is named
   // as able to say it. It says what it can build here instead.
   if (goAheadDecides === false) {
-    return firstPerson(`I can't build all of this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`);
+    return firstPerson(`I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+      + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
+      + canBuildPart(firstStep));
   }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';
@@ -328,8 +342,21 @@ function personSuggestions({ firstStep = null, platform = false, done = false, w
  * request, instead of the note again. It says what a go-ahead cannot change,
  * then the part the bot can still build. Server text, like the labels.
  */
-function goAheadCannotText({ reason, firstStep = null } = {}) {
-  return `A go-ahead can't change this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`;
+function goAheadCannotText({ reason, firstStep = null, reader = null } = {}) {
+  return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason, { reader })} `
+    + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
+    + canBuildPart(firstStep);
+}
+
+// 6 Nov 2026 (#6430): a plain reply that starts with "go ahead" and is no
+// longer than this is a go-ahead, when the bot's last note named the speaker.
+const GO_AHEAD_REPLY_MAX_CHARS = 60;
+
+/** Pure: whether a message's words are a plain go-ahead. */
+function saysGoAhead(text) {
+  const words = typeof text === 'string' ? text.trim() : '';
+  return !!words && words.length <= GO_AHEAD_REPLY_MAX_CHARS
+    && words.slice(0, 8).toLowerCase() === 'go ahead';
 }
 
 function emptyText({ reason }) {
@@ -5812,6 +5839,9 @@ module.exports = {
   withdrawnHomeroomText,
   personSuggestions,
   goAheadCannotText,
+  canBuildPart,
+  saysGoAhead,
+  GO_AHEAD_REPLY_MAX_CHARS,
   GO_AHEAD_LABEL,
   SMALLER_STEP_LABEL,
   NOT_NOW_LABEL,

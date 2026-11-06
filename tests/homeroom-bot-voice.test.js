@@ -101,7 +101,10 @@ const EVAN = { id: 2, username: 'evan', isSynthetic: false, hasPlatformAccess: t
 const msg = (over = {}) => ({ id: 50, user_id: 2, content: 'hello', msg_type: 'message', metadata: {}, created_at: new Date(), ...over });
 const deps = (over = {}) => ({
   dmSvc: { hasBot: (s, p) => !!p && !p.isSynthetic, ...over.dmSvc },
-  liveSvc: { async openBotProposal() { return over.open || null; }, isLiveFor: () => true },
+  liveSvc: {
+    async openBotProposal() { return over.open || null; }, isLiveFor: () => true,
+    saysGoAhead: require('../src/services/homeroom-bot-live').saysGoAhead,
+  },
 });
 
 test('the gate: on the bot\'s own change any person\'s message; on anybody else\'s, a mention or a reply', async () => {
@@ -279,7 +282,10 @@ test('#6395: a plain Go ahead from the person the last note named is answered', 
     speaker: over.speaker || EVAN,
     deps: {
       dmSvc: { hasBot: () => true, requesterOf: async () => requester },
-      liveSvc: { async openBotProposal() { return null; } },
+      liveSvc: {
+        async openBotProposal() { return null; },
+        saysGoAhead: require('../src/services/homeroom-bot-live').saysGoAhead,
+      },
       botSvc: { goAheadCounts: async (_pool, _app, _requester, id) => Number(id) === EVAN.id },
     },
   });
