@@ -1750,7 +1750,11 @@ async function seedStagingBotWaitingRows(pool) {
         number: 9103,
         title: 'Staging demo: a request handed back to a person',
         verdict: 'person',
-        reason: 'Staging demo: a person must decide which of the two columns to keep.',
+        // 6 Nov 2026 (#6395): the reason matches the note below, which offers
+        // no Go ahead because one cannot settle operator work outside the app.
+        reason: 'Staging demo: moving App secrets in the infra repo and deleting a GitHub Actions secret are operator work outside this app.',
+        firstStep: 'Remove the dead bot token line from the deploy workflow',
+        cannot: true,
       },
       { number: 9104, title: 'Staging demo: a request the bot has not read' },
       { number: 9105, title: 'Operator: staging demo, rotate the demo mail key' },
@@ -1772,11 +1776,13 @@ async function seedStagingBotWaitingRows(pool) {
       }
       if (d.held || d.verdict) {
         await pool.query(
-          `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, cap_suppressed, created_at)
-           SELECT $1, $2, 'live', $3, $4, $5, NOW() - INTERVAL '1 day'
+          `INSERT INTO homeroom_bot_runs
+             (app_id, issue_number, mode, verdict, reason, cap_suppressed, go_ahead_decides, first_step, created_at)
+           SELECT $1, $2, 'live', $3, $4, $5, $6, $7, NOW() - INTERVAL '1 day'
             WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
                                WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = $3)`,
-          [appId, d.number, d.verdict || 'ready', d.reason || null, d.held || null],
+          [appId, d.number, d.verdict || 'ready', d.reason || null, d.held || null,
+            d.cannot ? false : null, d.firstStep || null],
         );
       }
     }
@@ -1784,6 +1790,9 @@ async function seedStagingBotWaitingRows(pool) {
     // carrying the suggested replies only its requester sees and taps. The
     // request page draws the thread's messages, so this is the state the
     // before & after shots need; nothing here is a signal the bot reads.
+    // 6 Nov 2026 (#6395): the request is operator work a go-ahead cannot
+    // settle, so the note leads with the part the bot can build and offers
+    // no Go ahead. The before copy's own seed still has the old note.
     // The bot's account, in the posture botAccount() reads (the later
     // staging fixtures seed it too, ON CONFLICT-safe), so this note has its
     // author even when they have not run yet.
@@ -1804,22 +1813,53 @@ async function seedStagingBotWaitingRows(pool) {
                                AND metadata->>'stagingDemo' = 'person-note')`,
         [
           appId, botRow.rows[0].id,
-          'I think a person needs to decide this one: Staging demo: a person must decide which of the two columns to keep. '
-            + '@usernode-capture can say Go ahead in a chat with me, or reply here.',
+          'I can\'t build all of this one: Staging demo: moving App secrets in the infra repo and deleting a GitHub '
+            + 'Actions secret are operator work outside this app. I can do this part here: Remove the dead bot token '
+            + 'line from the deploy workflow.',
           JSON.stringify({
             stagingDemo: 'person-note',
             homeroomBot: {
               kind: 'note',
               suggest: { status: 'open', forUserIds: [userId] },
               actions: [
-                { id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt' },
-                { id: 'smaller', label: 'Just the triage part', style: 'secondary', type: 'prompt' },
+                {
+                  id: 'smaller',
+                  label: 'Remove the dead bot token line from the deploy workflow',
+                  style: 'primary',
+                  type: 'prompt',
+                },
                 { id: 'not_now', label: 'Not now', style: 'secondary', type: 'prompt' },
               ],
             },
           }),
         ],
       );
+      // 6 Nov 2026 (#6395): the same request after its requester said Go
+      // ahead, and the one plain line the bot answers with instead of the
+      // note again. Staging has no model, so both messages are stored.
+      // Idempotent by their stagingDemo marks.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, 'Go ahead', 'message', 'issue', 9103, $3, NOW() - INTERVAL '2 hours'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'go-ahead-ask')`,
+        [appId, userId, JSON.stringify({ stagingDemo: 'go-ahead-ask' })],
+      );
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '1 hour'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'go-ahead-reply')`,
+        [
+          appId, botRow.rows[0].id,
+          'A go-ahead can\'t change this one: moving App secrets and deleting a GitHub Actions secret are operator '
+            + 'work outside this app. I can do this part here: Remove the dead bot token line from the deploy workflow.',
+          JSON.stringify({ stagingDemo: 'go-ahead-reply' }),
+        ],
+      );
+
       // #6391: a later word from the bot in the same thread that carries the
       // other members' set. Nobody in particular was answered, so a member
       // who opens it (usernode-capture) is not one it answered and gets

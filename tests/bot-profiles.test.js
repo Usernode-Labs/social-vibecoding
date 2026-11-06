@@ -78,6 +78,14 @@ test('#6384: a plan is read in the chat, on a request and on a change, and nowhe
   for (const type of ['chat', 'category', 'message']) assert.ok(!names({ type, ref: 1 }).includes('get_spec'), type);
 });
 
+// 6 Nov 2026 (#6395): a plain "Go ahead" on a request is heard after the
+// rules that already answer a person, and before the silence.
+test('the request profile hears a plain Go ahead right after a followed post', () => {
+  const speaks = profiles.profileOf('request').speaks;
+  assert.equal(speaks[speaks.indexOf('followed_a_post') + 1], 'go_ahead_reply');
+  assert.ok(speaks.indexOf('go_ahead_reply') < speaks.indexOf('addressed_or_stop'));
+});
+
 test('the surfaces\' limits are their profiles\'', () => {
   const mayor = require('../src/services/homeroom-bot-mayor');
   const voice = require('../src/services/homeroom-bot-voice');

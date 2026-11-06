@@ -267,6 +267,34 @@ test('#6311: the requester or an admin writing after the bot\'s post in a reques
     { speak: false, why: 'answers_question' });
 });
 
+// 6 Nov 2026 (#6395): a plain "Go ahead" on a request, from the person the
+// bot's last note named, is answered with no @ and no Reply, a day after the
+// note. Anybody else's, a long message, or one after a question note is not.
+test('#6395: a plain Go ahead from the person the last note named is answered', async () => {
+  const place = { type: 'issue', ref: 24 };
+  const personNote = { kind: 'person', created_at: new Date(Date.now() - 24 * 60 * 60 * 1000) };
+  const requester = { userId: EVAN.id, username: 'evan' };
+  const g = (over = {}) => voice.gate(gatePool({ posts: [personNote], ...over.pool }), {
+    app: APP, place, row: msg({ content: over.content || 'Go ahead' }), bot: BOT, settings: LIVE,
+    speaker: over.speaker || EVAN,
+    deps: {
+      dmSvc: { hasBot: () => true, requesterOf: async () => requester },
+      liveSvc: { async openBotProposal() { return null; } },
+      botSvc: { goAheadCounts: async (_pool, _app, _requester, id) => Number(id) === EVAN.id },
+    },
+  });
+  assert.deepEqual(await g(), { speak: true, why: 'go_ahead' });
+  assert.deepEqual(await g({ content: 'go ahead!' }), { speak: true, why: 'go_ahead' }, 'case does not matter');
+  // Somebody the note did not name: silent, as today.
+  assert.deepEqual(await g({ speaker: { ...EVAN, id: 5 } }), { speak: false, why: 'not_addressed' });
+  // A message that begins with it but is long is not a go-ahead reply.
+  assert.deepEqual(await g({ content: `Go ahead ${'x'.repeat(60)}` }), { speak: false, why: 'not_addressed' });
+  // After a question note it is still the build's answer.
+  assert.deepEqual(await g({ pool: { posts: [{ kind: 'question' }] } }), { speak: false, why: 'not_addressed' });
+  // A message that does not start with it stays unanswered.
+  assert.deepEqual(await g({ content: 'looks good' }), { speak: false, why: 'not_addressed' });
+});
+
 // ── Tools, prompt, words ─────────────────────────────────────────────────
 
 const names = (tools) => tools.map((t) => t.function.name);
