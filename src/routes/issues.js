@@ -395,6 +395,16 @@ function stagingMockIssues(repoUrl) {
       'Staging demo: obviously fake. An update to this request was asked '
       + 'for, and the bot said it would tell the person when it was in.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 46),
+    // #6399: the request whose hand-back reason a later release lifted. Its
+    // track (seedStagingBotOutdatedReason in src/db/migrate.js) is
+    // waiting_for_you/decide with a reason given before 6 Nov 2026 13:05 UTC,
+    // so its status card says the reason may be out of date and offers
+    // "Ask Homeroom bot to read this again". A staging copy has no GitHub to
+    // read the request from, so its page's own fetch finds it here.
+    mk(9112, 'Staging demo: a request handed back over a plan the bot could not read',
+      'Staging demo: obviously fake. The bot handed this back because it '
+      + 'could not read a plan a person posted, and Homeroom can read one now.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 26),
   ];
 }
 
