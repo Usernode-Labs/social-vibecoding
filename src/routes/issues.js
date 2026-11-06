@@ -1299,7 +1299,9 @@ function issueRoutes(config) {
           pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`,
         );
         if (!app) return res.status(404).json({ error: 'App not found' });
-        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, { app, user: req.user, issueNumber: n });
+        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, {
+          app, user: req.user, issueNumber: n, readAgain: req.body?.readAgain === true,
+        });
         if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
         return res.json(out);
       } catch (err) {

@@ -6332,12 +6332,22 @@ const AppView = {
     // out (homeroom-bot-progress.js botWorkByIssue), so with nobody else on
     // it the stored work state says where it is, as the track card does.
     const hold = !st && !merged && !closed ? AppView._requestHoldLead(issue.track) : null;
+    // #6399: the stored track's own word, the one the track card says. When
+    // Homeroom bot handed the request back to the viewer and nobody else is
+    // on it, this card says the same thing and offers what unblocks it,
+    // never "Nobody is working on this yet" with Ask.
+    const work = (issue.track && issue.track.work) || null;
+    const trackWaits = !st && !merged && !closed && !hold && !upForVote && !planHeld
+      && !(waitingOnBot && waitingOnBot.kind === 'question')
+      && !!work && work.stage === 'waiting_for_you';
+    const waitingLead = trackWaits ? AppView._requestWaitingLead(work) : null;
     let lead;
     if (merged) lead = PlatformI18n.t('changes:request.status.lead.live');
     else if (waitingOnBot && waitingOnBot.kind === 'question') lead = PlatformI18n.t('changes:request.status.lead.botQuestion');
     else if (planHeld) lead = PlatformI18n.t('changes:request.status.lead.botWaitsPlan');
     else if (upForVote) lead = AppView._requestUpForVoteLead(issue);
     else if (hold) lead = hold;
+    else if (waitingLead) lead = waitingLead;
     else if (!st) lead = PlatformI18n.t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
@@ -6362,7 +6372,10 @@ const AppView = {
     const refNumber = ref ? (parseInt(issue.addressed_by.prNumber, 10) || 0) : 0;
     // The sentence above already says it is live, or up for a vote.
     let note = null;
-    if (merged) {
+    if (work && work.line && work.line.outdated) {
+      // #6399: a hand-back reason a release has since removed.
+      note = PlatformI18n.t(AppView.REQUEST_OUTDATED_IDS[work.line.outdated] || 'changes:request.status.note.outdated');
+    } else if (merged) {
       note = closed
         ? (refNumber ? PlatformI18n.t('changes:request.status.note.closedByNumber', { number: refNumber }) : PlatformI18n.t('changes:request.status.note.closedByChange'))
         : null;
@@ -6415,6 +6428,38 @@ const AppView = {
     } else if (hold) {
       // #6375: the bot already has it: asking it again would do nothing.
       action = toChange;
+    } else if (trackWaits) {
+      // #6399: one step, the one that unblocks the bot's wait: Go ahead, a
+      // reply to its note, or asking it to read a reason that is out of date.
+      if (!AppView.readOnly) {
+        if (work.line && work.line.outdated) {
+          action = {
+            label: PlatformI18n.t('changes:request.status.action.readAgain'),
+            title: PlatformI18n.t('changes:request.status.action.readAgainTitle'),
+            act: { fn: 'askBotToReadAgain', args: [issue.number] },
+          };
+        } else if (work.why === 'decide') {
+          action = {
+            label: PlatformI18n.t('changes:request.status.action.goAhead'),
+            title: PlatformI18n.t('changes:request.status.action.goAheadTitle'),
+            act: {
+              fn: 'answerBotOnRequest',
+              args: [issue.number, Number(waitingOnBot && waitingOnBot.messageId) || 0, 1, 'Go ahead'],
+            },
+          };
+        } else {
+          // Waiting for an answer or more detail: reply to its note. With no
+          // note recorded here, the composer starts at @homeroom_bot.
+          const primary = waitingOnBot ? AppView._issuePrimaryActionSpec(issue, { noNav: true }) : null;
+          action = primary
+            ? { label: primary.label, title: primary.title, disabled: !!primary.disabled, act: primary.act }
+            : {
+              label: PlatformI18n.t('changes:issue.action.replyToBot'),
+              title: AppView._botWaitingHint({ kind: 'person' }),
+              act: { fn: 'answerBotOnRequest', args: [issue.number, 0, 1] },
+            };
+        }
+      }
     } else if (!AppView.readOnly) {
       const primary = AppView._issuePrimaryActionSpec(issue, { noNav: true });
       action = primary
@@ -6440,7 +6485,7 @@ const AppView = {
       closed: closed && !merged ? (when ? PlatformI18n.t(closedIds.when, { when }) : PlatformI18n.t(closedIds.alone)) : null,
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
-      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold),
+      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold || trackWaits),
       // #6387: the row expects a change section (request-head.tsx), so the
       // page holds its place while the thread is still being read.
       changeExpected: !!ref,
@@ -6451,7 +6496,7 @@ const AppView = {
       // where starting work on it is still open to this viewer: an open
       // request with no change built for it, nobody's bot on it, and no
       // session of the viewer's own already working on it.
-      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot && !hold
+      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot && !hold && !trackWaits
         && !issue.myPrSessionId && !(st && st.key === 'in_review'),
     };
   },
@@ -6472,6 +6517,30 @@ const AppView = {
     if (id) return PlatformI18n.t(id);
     const date = track.held && track.held.until ? AppView._workDateText(Date.parse(track.held.until)) : '';
     return date ? PlatformI18n.t('changes:request.status.lead.botOnHoldUntil', { date }) : null;
+  },
+
+  // #6399: the sentence for a request Homeroom bot handed back to the viewer
+  // (services/work-state.js `why`, and the track card's own words), with the
+  // bot's stored reason when it gave one. Null when the why has no sentence.
+  REQUEST_WAITING_REASON_IDS: {
+    decide: ['changes:request.status.lead.waitingDecide', 'changes:request.status.lead.waitingDecidePlain'],
+    needs_detail: ['changes:request.status.lead.waitingDetail', 'changes:request.status.lead.waitingDetailPlain'],
+    already_works: ['changes:request.status.lead.waitingDone', 'changes:request.status.lead.waitingDonePlain'],
+  },
+  // #6399: the note under that sentence for a reason a release has lifted
+  // (work-state.js LIFTED_LIMITS), by its code.
+  REQUEST_OUTDATED_IDS: {
+    posted_plan: 'changes:request.status.note.outdatedPostedPlan',
+  },
+  _requestWaitingLead(work) {
+    if (!work) return null;
+    if (work.why === 'question') return PlatformI18n.t('changes:request.status.lead.botQuestion');
+    if (work.why === 'plan') return PlatformI18n.t('changes:request.status.lead.botWaitsPlan');
+    const ids = AppView.REQUEST_WAITING_REASON_IDS[work.why];
+    if (!ids) return null;
+    const line = work.line;
+    const reason = line && line.code === 'reason' ? String(line.text || '').trim() : '';
+    return reason ? PlatformI18n.t(ids[0], { reason }) : PlatformI18n.t(ids[1]);
   },
 
   // The status card's sentence for a change up for a vote that no person's
@@ -23305,25 +23374,69 @@ const AppView = {
    * a moment after the page paints; when it does not (or none is
    * recorded), the box starts with @homeroom_bot, which counts the same.
    */
-  async answerBotOnRequest(issueNumber, messageId, onPage) {
+  async answerBotOnRequest(issueNumber, messageId, onPage, text) {
     const n = Number(issueNumber);
     if (!Number.isInteger(n) || n <= 0) return;
     if (!onPage) await AppView.openTopic('issue', n);
     const id = Number(messageId) || 0;
+    const want = typeof text === 'string' ? text.trim() : '';
     const chat = typeof GroupChat !== 'undefined' ? GroupChat : null;
     const staged = () => !!(chat && chat.replyDraft && Number(chat.replyDraft.refMsgId) === id);
     for (let i = 0; id > 0 && chat && typeof chat.replyToMessage === 'function' && i < 8; i += 1) {
       chat.replyToMessage(id, 'thread');
-      if (staged()) return;
+      if (staged()) {
+        // #6399: Go ahead is ready to send, after the staged Reply.
+        const input = document.getElementById('gc-thread-input');
+        if (want && input && !String(input.value || '').trim()) {
+          input.value = want;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.focus();
+        }
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     const input = document.getElementById('gc-thread-input');
     if (!input) return;
     if (!String(input.value || '').trim()) {
-      input.value = '@homeroom_bot ';
+      input.value = want ? `@homeroom_bot ${want}` : '@homeroom_bot ';
       input.dispatchEvent(new Event('input', { bubbles: true }));
     }
     input.focus();
+  },
+
+  /**
+   * #6399: "Ask Homeroom bot to read this again", for a hand-back reason a
+   * release has since lifted. One read goes first in the bot's queue, paid
+   * from the viewer's building time, and that read says what it found
+   * (homeroom-bot-dm.js askBotToBuild `readAgain`).
+   */
+  async askBotToReadAgain(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || AppView._askingBot) return;
+    AppView._askingBot = true;
+    try {
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/issues/${Number(issueNumber)}/homeroom-bot${AppView._demoQS()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ readAgain: true }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.bot.askFailedHttp', { status: resp.status }));
+        // A page whose reason was already read again, or a page out of date.
+        if (data.code === 'not_outdated' || data.code === 'already_building') AppView.refreshDevData('issue');
+        return;
+      }
+      PlatformUI.toast(data.mine
+        ? PlatformI18n.t('changes:issue.bot.onItMine')
+        : PlatformI18n.t('changes:issue.bot.onIt'));
+      AppView.refreshDevData('issue');
+    } catch (err) {
+      PlatformUI.toast(PlatformI18n.t('changes:issue.bot.askFailedWith', { error: err.message }));
+    } finally {
+      AppView._askingBot = false;
+    }
   },
 
   /**

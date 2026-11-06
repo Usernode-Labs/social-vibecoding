@@ -35,7 +35,7 @@
 // again (number-guessing #52 got it three times in 35 minutes).
 
 const log = require('./logger');
-const { mentionPattern } = require('./homeroom-bot-holds');
+const { mentionPattern, GOING_KIND } = require('./homeroom-bot-holds');
 const { OWN_STAMP_SLACK_MS } = require('./homeroom-bot-live');
 
 // The note verdicts the gate covers (homeroom-bot.js actOnVerdict). A ready
@@ -148,6 +148,9 @@ function editedSince(lastNote, comments, updatedAt) {
  * Pure: does anything since the bot's last note speak to the bot?
  *
  *   { speak: true,  why: 'first_note' }    the bot never posted a note here
+ *   { speak: true,  why: 'promised' }      its last word here is "I'm taking
+ *                                          this up now": the read that follows
+ *                                          says what it found (#6399)
  *   { speak: true,  why: 'not_waiting' }   (waitingOnly) its last word here
  *                                          is not one of NOTE_KINDS
  *   { speak: true,  why: 'mention' }       somebody mentioned @homeroom_bot
@@ -179,6 +182,10 @@ function addressed({
   voiceAnswers = false, answerers = [],
 }) {
   if (!lastNote) return { speak: true, why: 'first_note' };
+  // #6399: after "I'm taking this up now, as asked", the read that follows
+  // posts what it found, even when its words repeat an earlier note: the
+  // promise is never left as the bot's last word.
+  if (lastNote.kind === GOING_KIND) return { speak: true, why: 'promised' };
   if (waitingOnly && !NOTE_KINDS.includes(lastNote.kind)) return { speak: true, why: 'not_waiting' };
   const own = new Set((ownCommentIds || []).map(String));
   const sinceMs = Date.parse(lastNote.created_at);

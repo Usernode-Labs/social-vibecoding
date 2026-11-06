@@ -280,6 +280,73 @@ test('the status card asks the bot no more once its change waits for approval', 
   assert.equal(built.action.act, undefined);
 });
 
+// #6399: the status card and the track card said different things at once:
+// "WAITING FOR YOU TO DECIDE" beside "Nobody is working on this yet." with
+// Ask Homeroom bot to build this. The status card now reads the same track.
+test('#6399 the status card agrees with the track when Homeroom bot waits for you', () => {
+  const av = appView();
+  av._ghIssuesMeta = { homeroomBot: { typicalMinutes: 7 } };
+  const reason = 'A design decision: the request does not say which of the two layouts to keep.';
+  const track = (why, line, since = '2026-11-05T11:19:00Z') => ({ work: { stage: 'waiting_for_you', why, line, since } });
+
+  const decide = av._requestStatusView(issue({ track: track('decide', { code: 'reason', text: reason }) }));
+  assert.equal(decide.lead, `Waiting for you to decide. ${reason}`);
+  assert.equal(decide.action.label, 'Go ahead');
+  assert.deepEqual(JSON.parse(JSON.stringify(decide.action.act)),
+    { fn: 'answerBotOnRequest', args: [4417, 0, 1, 'Go ahead'] });
+  assert.equal(decide.botSays, true);
+  assert.equal(decide.ownAgent, false);
+  assert.notEqual(decide.lead, 'Nobody is working on this yet.');
+
+  // Its note in the thread is the reply Go ahead goes to.
+  const noted = av._requestStatusView(issue({
+    botAwaits: { kind: 'person', messageId: 9 }, track: track('decide', { code: 'reason', text: reason }),
+  }));
+  assert.deepEqual(JSON.parse(JSON.stringify(noted.action.act)),
+    { fn: 'answerBotOnRequest', args: [4417, 9, 1, 'Go ahead'] });
+
+  // Waiting for more detail replies to it instead.
+  const detail = av._requestStatusView(issue({ track: track('needs_detail', { code: 'reason', text: 'It needs the screen to change.' }) }));
+  assert.equal(detail.lead, 'Waiting for more detail from you. It needs the screen to change.');
+  assert.equal(detail.action.label, 'Reply to Homeroom bot');
+  assert.deepEqual(JSON.parse(JSON.stringify(detail.action.act)), { fn: 'answerBotOnRequest', args: [4417, 0, 1] });
+
+  // A held queue row keeps its own sentence, as before.
+  assert.equal(av._requestStatusView(issue({ track: { work: { stage: 'reading', why: null, line: { code: 'on_hold' }, since: null } } })).lead,
+    'On hold until Monday: this week\'s building time is used up');
+
+  // A person's session on it wins over the stored track.
+  const worked = av._requestStatusView(issue({
+    in_progress: { claims: [{ username: 'evan', mine: true, claimedAt: '2026-11-05T11:00:00Z' }], sessions: [], users: [], count: 0 },
+    track: track('decide', { code: 'reason', text: reason }),
+  }));
+  assert.equal(worked.lead, 'You’re working on this.');
+
+  // Read-only viewers see the sentence and no action.
+  av.appData = { slug: 'example', can_collaborate: false };
+  const readOnly = av._requestStatusView(issue({ track: track('decide', { code: 'reason', text: reason }) }));
+  assert.equal(readOnly.lead, `Waiting for you to decide. ${reason}`);
+  assert.equal(readOnly.action, null);
+});
+
+// #6399: #6351's reason named a limit Homeroom lifted on 6 Nov 2026. The
+// card says so and offers to read the request again.
+test('#6399 an out-of-date hand-back reason offers to read it again', () => {
+  const av = appView();
+  const stale = av._requestStatusView(issue({
+    track: {
+      work: {
+        stage: 'waiting_for_you', why: 'decide', since: '2026-11-05T11:19:00Z',
+        line: { code: 'reason', text: 'version 3 plan cannot be read here', outdated: 'posted_plan' },
+      },
+    },
+  }));
+  assert.equal(stale.note, 'Homeroom bot can read posted plans now, so this may be out of date.');
+  assert.equal(stale.action.label, 'Ask Homeroom bot to read this again');
+  assert.deepEqual(JSON.parse(JSON.stringify(stale.action.act)), { fn: 'askBotToReadAgain', args: [4417] });
+  assert.notEqual(stale.action.label, 'Ask Homeroom bot to build this');
+});
+
 // One request, one story: the status card says what is really happening.
 test('the status card says what Homeroom bot is really doing, or waiting for', () => {
   const av = appView();

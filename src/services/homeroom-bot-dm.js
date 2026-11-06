@@ -4960,7 +4960,7 @@ async function botWaitingOn(pool, app, n, deps = {}) {
  * answers 409 `awaiting_reply`, and the card offers to answer the bot
  * instead (public/js/app-view.js).
  */
-async function askBotToBuild(pool, { app, user, issueNumber, deps = {} }) {
+async function askBotToBuild(pool, { app, user, issueNumber, deps = {}, readAgain = false }) {
   const n = Number(issueNumber);
   if (!Number.isInteger(n) || n <= 0) return { ok: false, status: 400, error: 'Invalid request number' };
   if (!app?.id || !user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
@@ -4971,7 +4971,20 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {} }) {
   }
   const busy = (await require('./homeroom-bot-progress').botWorkByIssue(pool, app.id)).get(n);
   if (busy) return { ok: false, status: 409, error: 'Homeroom bot is already on it.', code: 'already_building' };
-  const waiting = await botWaitingOn(pool, app, n, deps);
+  // #6399: "Ask Homeroom bot to read this again", offered when the reason its
+  // last read handed the request back is one a later release removed
+  // (work-state.js outdatedReason, on the stored track). Only such a request
+  // is read again this way: a stale page asking on any other gets a 409 and
+  // refreshes.
+  if (readAgain) {
+    const tracks = await require('./homeroom-bot-track')
+      .tracksForRequests(pool, { appId: app.id, numbers: [n] }).catch(() => new Map());
+    const line = tracks.get(n)?.work?.line || null;
+    if (!line || !line.outdated) {
+      return { ok: false, status: 409, error: 'Homeroom bot has nothing out of date to read again here.', code: 'not_outdated' };
+    }
+  }
+  const waiting = readAgain ? null : await botWaitingOn(pool, app, n, deps);
   if (waiting) {
     return { ok: false, status: 409, error: WAITING_TEXT[waiting.kind] || WAITING_TEXT.question, code: 'awaiting_reply' };
   }
@@ -4989,7 +5002,8 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {} }) {
     requester = await requesterOf(pool, app.id, n);
   }
   const queued = await settingsModule().enqueueFront(pool, {
-    appId: app.id, issueNumber: n, userId: user.id, reason: 'asked', payerId: user.id,
+    appId: app.id, issueNumber: n, userId: user.id,
+    reason: readAgain ? settingsModule().READ_AGAIN_REASON : 'asked', payerId: user.id,
   });
   // A look already started on it holds the row, and nothing is queued again.
   if (!queued?.id) return { ok: false, status: 409, error: 'Homeroom bot is already on it.', code: 'already_building' };
@@ -4999,7 +5013,8 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {} }) {
       app, issueNumber: n, bot, jobKey: String(queued.id), settings, queued: true, requester,
     });
   }
-  log.info('homeroom-bot-dm', 'Asked to build a request from its page', { app: app.slug, issueNumber: n, userId: user.id });
+  log.info('homeroom-bot-dm', readAgain ? 'Asked to read a request again from its page' : 'Asked to build a request from its page',
+    { app: app.slug, issueNumber: n, userId: user.id });
   return { ok: true, typicalMinutes: await typicalMinutes(pool), mine: Number(requester?.userId) === Number(user.id) };
 }
 
