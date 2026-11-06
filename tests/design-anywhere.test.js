@@ -303,7 +303,7 @@ test('the preview: its own column beside the thread, three where they fit, halve
   // #6230: the preview is one kind of the detail column, drawn by
   // ../detail/detail-pane.tsx; the page still sets data-ai-preview for it.
   assert.match(ai, /data-ai-preview=\{detailHere \? layout : undefined\}/);
-  assert.match(ai, /<aside className="ai-preview-pane" data-ai-preview-pane=\{layout\} aria-label=\{t\('messages:design\.pane\.label'\)\}>\n\s+<DetailPane layout=\{layout\} \/>/);
+  assert.match(ai, /<aside className="ai-preview-pane" data-ai-preview-pane=\{layout\} aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.label'\)\}>\n\s+<DetailPane layout=\{layout\} \/>/);
   assert.match(read('frontend/src/features/detail/detail-pane.tsx'),
     /onClose=\{closeDetail\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
   assert.match(ai, /const detailHere = !!detail && !!botId && \(detail\.kind === 'design'\n\s+\? detail\.ref\.conversationId === botId && openRoot === detail\.ref\.rootId/,

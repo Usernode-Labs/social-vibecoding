@@ -101,7 +101,7 @@ import {
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
-/** This page's address: where a thread opened from it comes back to. */
+** This page's address: where a thread opened from it comes back to. */
 const BOT_PAGE = BOT_TAB;
 
 function demoQuery(): string {
@@ -383,6 +383,10 @@ export function AiScreen(): ReactNode {
   const detailHere = !!detail && !!botId && (detail.kind === 'design'
     ? detail.ref.conversationId === botId && openRoot === detail.ref.rootId
       && (phone ? level === 1 : docked && !panel.open)
+    : detail.kind === 'draft'
+    // #6248: a request draft is read beside the thread it was said in, or Main.
+    ? detail.ref.conversationId === botId && (openRoot ?? null) === (detail.ref.rootId ?? null)
+      && (phone ? level === 1 : docked && !panel.open)
     : !!column && (column.at === 'page' || column.at === 'thread'));
   const detailSlot: ColumnDetail | undefined = !detailHere || !detail ? undefined
     : detail.kind === 'design' ? { kind: 'design', version: detail.version }
@@ -398,7 +402,8 @@ export function AiScreen(): ReactNode {
   useEffect(() => {
     if (!visible || !botId || !detail) return;
     if (detail.kind === 'design' && openRoot && openRoot !== detail.ref.rootId) closeDetail();
-    if (detail.kind !== 'design' && !detailHere) closeDetail();
+    if (detail.kind === 'draft' && openRoot && openRoot !== detail.ref.rootId) closeDetail();
+    if (detail.kind !== 'design' && detail.kind !== 'draft' && !detailHere) closeDetail();
   }, [visible, botId, detail, openRoot, detailHere]);
   // The tab pressed (the page's own address, from a thread's): the list
   // comes back, and the detail goes.
@@ -758,7 +763,7 @@ export function AiScreen(): ReactNode {
           read beside it — a design's preview, a plan, or a change's before
           and after. Three side by side, halves, or the whole screen. */}
       {detailHere && detail ? (
-        <aside className="ai-preview-pane" data-ai-preview-pane={layout} aria-label={t('messages:design.pane.label')}>
+        <aside className="ai-preview-pane" data-ai-preview-pane={layout} aria-label={detail.kind === 'draft' ? t('messages:draft.pane.label') : t('messages:design.pane.label')}>
           <DetailPane layout={layout} />
         </aside>
       ) : null}
