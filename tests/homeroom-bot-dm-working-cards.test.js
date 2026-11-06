@@ -144,4 +144,10 @@ test('a change nothing will offer without a person rings its requester, once, an
   const checks = bot.slice(bot.indexOf('async function queueChecksFix('), bot.indexOf('async function runChecksFix('));
   assert.match(checks, /if \(followup\.checksLookLikeInfra\(due\)\) \{[\s\S]*if \(due\.failing\.length\) await require\('\.\/homeroom-bot-dm'\)\.noteNeedsLook\(pool, \{ sessionId: row\.id, why: 'checks', strict: true \}\);\n\s+return \{ queued: false, why: 'infra' \};/);
   assert.match(bot, /\.sweepUnproposedBuilds\?\.\(pool, \{ ws: deps\.ws \|\| null \}\)\);/);
+  // #6388: the other path that leaves an infra failure alone tells the
+  // requester too, there without failing the turn on the send.
+  const owed = bot.slice(bot.indexOf('async function oweChecksFix('), bot.indexOf('/**', bot.indexOf('async function oweChecksFix(')));
+  assert.match(owed, /if \(followup\.checksLookLikeInfra\(out\.due\)\) \{[\s\S]*if \(out\.due\.failing\.length\) await require\('\.\/homeroom-bot-dm'\)\.noteNeedsLook\(pool, \{ sessionId, why: 'checks' \}\);/);
+  assert.doesNotMatch(dm.needsLookText(line, 'checks'), /Homeroom runs them again/);
+  assert.match(dm.needsLookText(line, 'checks'), /An admin can run them again from the change's page/);
 });
