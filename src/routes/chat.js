@@ -585,6 +585,15 @@ function chatRoutes(config) {
       }
 
       const body = { messages, has_more_before: hasMoreBefore, has_more_after: hasMoreAfter };
+      // #6391: in a request's or a change's thread, the bot's reply carries a
+      // second button set for members it did not answer. Whether this reader
+      // is one is said once here, so the thread can draw it; posting needs
+      // membership anyway, so anyone else sees no buttons.
+      if (threadType === 'issue' || threadType === 'session') {
+        body.viewer_member = viewerId
+          ? await communities.isMember(pool, appId, viewerId).catch(() => false)
+          : false;
+      }
       if (focus) body.focus = focus;
       if (root) body.root = root;
       // The general stream's first page says where this reader's reading

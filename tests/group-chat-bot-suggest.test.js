@@ -90,6 +90,77 @@ test('a closed set, another message, or a read-only viewer draws nothing', () =>
   assert.equal(readOnly._botSuggestView(view()).forMe, false);
 });
 
+// #6391: the second set belongs to the members the reply did not answer.
+const othersMeta = (status = 'open') => ({
+  homeroomBot: {
+    kind: 'voice',
+    suggest: { status, forUserIds: [9] },
+    actions: [{ id: 'suggest-1', label: 'Yes, tell me here', style: 'secondary', type: 'prompt' }],
+    othersActions: [
+      { id: 'others-1', label: "I'd like this too", style: 'secondary', type: 'prompt' },
+      { id: 'others-2', label: 'Can I try it?', style: 'secondary', type: 'prompt' },
+      { id: 'others-3', label: "What's left to do?", style: 'secondary', type: 'prompt' },
+    ],
+  },
+});
+
+test('#6391: a member the reply did not answer gets the other members\' set', () => {
+  const meta = othersMeta();
+  const member = loadGroupChat(10);
+  assert.equal(member._member, null);
+  assert.equal(member._botSuggestView(meta).forMe, false, 'membership not known yet: none');
+  member._member = true;
+  const mine = member._botSuggestView(meta);
+  assert.equal(mine.forMe, true);
+  assert.equal(mine.audience, 'others');
+  assert.deepEqual(mine.actions.map((a) => a.label), ["I'd like this too", 'Can I try it?', "What's left to do?"]);
+
+  // The person it answered keeps the first set, and never both.
+  const answered = loadGroupChat(9);
+  answered._member = true;
+  const theirs = answered._botSuggestView(meta);
+  assert.equal(theirs.audience, 'answered');
+  assert.deepEqual(theirs.actions.map((a) => a.label), ['Yes, tell me here']);
+
+  // A non-member, a signed-out reader and a read-only viewer see none.
+  const outsider = loadGroupChat(10);
+  outsider._member = false;
+  assert.equal(outsider._botSuggestView(meta).forMe, false);
+  assert.equal(loadGroupChat(null)._botSuggestView(meta).forMe, false);
+  const readOnly = loadGroupChat(10);
+  readOnly._member = true;
+  readOnly._app = { readOnly: true };
+  assert.equal(readOnly._botSuggestView(meta).forMe, false);
+  // A closed set draws nothing, and an old message with no others' set is as it was.
+  assert.equal(member._botSuggestView(othersMeta('closed')).status, 'closed');
+  const old = member._botSuggestView(view());
+  assert.equal(old.forMe, false);
+  assert.equal(old.audience, null);
+});
+
+test('#6391: the thread page\'s viewer_member is what the second set reads', () => {
+  const state = () => ({
+    messages: [], oldestId: null, hasMore: true, loading: false, loaded: false,
+    failed: false, again: false, stale: false, syncedMax: -Infinity, root: null,
+  });
+  const take = (gc, data) => {
+    const log = [];
+    log.held = new Set();
+    gc._takeNewest(state(), { type: 'issue', ref: 7 }, [], { messages: [], has_more_before: true, ...data }, log, true);
+    return gc._member;
+  };
+  assert.equal(take(loadGroupChat(10), { viewer_member: true }), true);
+  assert.equal(take(loadGroupChat(10), { viewer_member: false }), false);
+  const gc = loadGroupChat(10);
+  assert.equal(take(gc, { viewer_member: true }), true);
+  assert.equal(take(gc, {}), true, 'a page that says nothing keeps what it knew');
+  // The route says it for a request's or a change's thread only.
+  const route = read('src/routes/chat.js');
+  assert.match(route, /if \(threadType === 'issue' \|\| threadType === 'session'\) \{/);
+  assert.match(route, /body\.viewer_member = /);
+  assert.match(route, /communities\.isMember\(pool, appId, viewerId\)/);
+});
+
 test('a tap sends the label as that person\'s reply in the message\'s own thread', () => {
   const gc = loadGroupChat(9);
   gc.messages = [{ id: 5, thread_type: 'issue', thread_ref: 7 }];
@@ -119,7 +190,7 @@ test('a tap sends the label as that person\'s reply in the message\'s own thread
 test('the transcript draws the row only for the person it is for', () => {
   const tx = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(tx, /function BotSuggestButtons/);
-  assert.match(tx, /data-gc-bot-suggest=""/);
+  assert.match(tx, /data-gc-bot-suggest=\{suggest\.audience \|\| ''\}/);
   assert.match(tx, /controller\(\)\?\.sendBotSuggestion\?\.\(id, label\)/);
   assert.match(tx, /msg\.botSuggest && msg\.botSuggest\.forMe && msg\.botSuggest\.status === 'open' && msg\.botSuggest\.actions\.length/);
   const { renderComponent } = require('./lib/render-tsx');
@@ -137,6 +208,24 @@ test('the transcript draws the row only for the person it is for', () => {
   });
   assert.match(html, /data-gc-bot-suggest=""/);
   assert.equal((html.match(/<button/g) || []).length, 3);
+  // #6391: the other members' set says so, and draws the same pill buttons.
+  const others = renderComponent('frontend/src/features/group-chat/transcript.tsx', 'BotSuggestButtons', {
+    id: 6,
+    suggest: {
+      status: 'open',
+      forMe: true,
+      audience: 'others',
+      actions: [
+        { id: 'others-1', label: "I'd like this too", primary: false },
+        { id: 'others-2', label: 'Can I try it?', primary: false },
+        { id: 'others-3', label: "What's left to do?", primary: false },
+      ],
+    },
+  });
+  assert.match(others, /data-gc-bot-suggest="others"/);
+  assert.equal((others.match(/<button/g) || []).length, 3);
+  assert.ok(others.includes('>I&#x27;d like this too</button>') || others.includes(">I'd like this too</button>"));
+  assert.match(read('frontend/src/features/group-chat/transcript-store.ts'), /audience: 'answered' \| 'others' \| null;/);
   assert.ok(html.includes('>Go ahead</button>'));
   assert.ok(html.includes('>Just the triage part</button>'));
   const gc = read('public/js/group-chat.js');
@@ -165,6 +254,7 @@ test('#6272: a request-page reply whose text list was lifted shows buttons to th
   await voice.runTool(pool, ctx, 'reply', {
     text: 'Once it is built, the checks run. When they pass, it goes up for a vote.\n\nSuggestions:\n'
       + '- So once the checks pass I can vote on it?\n- Where do I see the checks?\n',
+    suggestionsForOthers: ["I'd like this too", "What's left to do?"],
   });
   assert.equal(ctx.reply.text, 'Once it is built, the checks run. When they pass, it goes up for a vote.');
   await voice.say(pool, {

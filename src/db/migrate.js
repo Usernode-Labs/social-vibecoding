@@ -1816,6 +1816,36 @@ async function seedStagingBotWaitingRows(pool) {
           }),
         ],
       );
+      // #6391: a later word from the bot in the same thread that carries the
+      // other members' set. Nobody in particular was answered, so a member
+      // who opens it (usernode-capture) is not one it answered and gets
+      // those buttons. The before & after shots need the state on the after
+      // copy; nothing here is a signal the bot reads. Idempotent by its
+      // stagingDemo mark.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '19 hours'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'others-suggestions')`,
+        [
+          appId, botRow.rows[0].id,
+          'Staging demo: I am on it now. I will say here when this request is ready to vote.',
+          JSON.stringify({
+            stagingDemo: 'others-suggestions',
+            homeroomBot: {
+              kind: 'voice',
+              suggest: { status: 'open', forUserIds: [] },
+              actions: [],
+              othersActions: [
+                { id: 'others-1', label: 'I\'d like this too', style: 'secondary', type: 'prompt' },
+                { id: 'others-2', label: 'Can I try it?', style: 'secondary', type: 'prompt' },
+                { id: 'others-3', label: 'What\'s left to do?', style: 'secondary', type: 'prompt' },
+              ],
+            },
+          }),
+        ],
+      );
       // #6311: the note about Homeroom itself, with the copy offer under it
       // (Put it on Homeroom's board / Keep it here only). The before & after
       // shots need the state on the after copy; nothing here is a signal the
