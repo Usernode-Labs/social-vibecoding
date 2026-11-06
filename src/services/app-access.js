@@ -92,6 +92,9 @@ const NON_SECRET_APP_COLUMNS = [
   // A production deploy app delivery is running (src/workflow/app-delivery/):
   // the version pill's "deploying".
   'deploy_state', 'deploy_started_at', 'deploy_from_sha',
+  // Offline apps (services/offline-cache-refusals.js): the build whose page
+  // was found not to open at the cacheable address. A commit sha.
+  'offline_cache_off_sha',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

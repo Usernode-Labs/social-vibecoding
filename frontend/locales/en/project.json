@@ -3387,21 +3387,29 @@
     "text": "Build it in an agent session",
     "description": "Row in the ⋯ menu of a request's page, next to \"Build it with your own Claude Code\": starts a session where the viewer builds the request with an AI coding agent. An agent session is a working conversation with an AI coding agent. \"Build\" is a verb."
   },
-  "topic.workWithBot.button": {
-    "text": "Work on this with Homeroom bot",
-    "description": "Quiet button under a change on a request's page and on a change's own page: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), about this change, to ask about it or sketch a revision. \"Work on\" is a verb."
+  "topic.workWithBot.ask": {
+    "text": "Ask Homeroom bot privately",
+    "description": "Quiet button under a change on a request's page and on a change's own page, when the change is not up for a vote: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), to ask about this change. \"Privately\" says the thread is theirs alone."
   },
-  "topic.workWithBot.title": {
-    "text": "Ask Homeroom bot about this change, or sketch a revision, in a thread only you can see",
-    "description": "Tooltip of the \"Work on this with Homeroom bot\" button under a change. Homeroom bot is the platform's assistant."
+  "topic.workWithBot.askTitle": {
+    "text": "Ask Homeroom bot about this change in a thread only you can see",
+    "description": "Tooltip of the \"Ask Homeroom bot privately\" button under a change. Homeroom bot is the platform's assistant."
+  },
+  "topic.workWithBot.suggest": {
+    "text": "Suggest a change privately",
+    "description": "Quiet button under a change that is up for a vote, on a request's page and on a change's own page: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), to sketch a revision of this change. \"Privately\" says the thread is theirs alone."
+  },
+  "topic.workWithBot.suggestTitle": {
+    "text": "Sketch a revision of this change with Homeroom bot, in a thread only you can see",
+    "description": "Tooltip of the \"Suggest a change privately\" button under a change that is up for a vote. Homeroom bot is the platform's assistant."
   },
   "topic.workWithBot.opening": {
     "text": "Opening…",
-    "description": "The \"Work on this with Homeroom bot\" button's words while its private thread with Homeroom bot opens."
+    "description": "The \"Ask Homeroom bot privately\" and \"Suggest a change privately\" buttons' words while their private thread with Homeroom bot opens."
   },
   "topic.workWithBot.failed": {
     "text": "The thread with Homeroom bot could not be started just now. Try again in a minute.",
-    "description": "Toast when \"Work on this with Homeroom bot\" could not open its private thread with Homeroom bot, the platform's assistant."
+    "description": "Toast when \"Ask Homeroom bot privately\" or \"Suggest a change privately\" could not open its private thread with Homeroom bot, the platform's assistant."
   },
   "topic.request.ownAgent.lead": {
     "text": "Claude Code opens with a prompt to build this request already typed. Check it and press send. It runs on your own Claude plan.",
@@ -5978,6 +5986,10 @@
   "topic.thread.page.changeLettered": {
     "text": "Change {{letter}} · {{by}}",
     "description": "Small-caps line over one of several competing changes on a request's page, under the request: its changes and its vote to close. {{letter}} is the change's letter (A, B, C), {{by}} who built it."
+  },
+  "topic.thread.page.changeLoading": {
+    "text": "Loading the change",
+    "description": "Read by a screen reader while a request's page loads the section about the change built for it: its status pill, its title and its Votes and Testing cards, drawn as a grey outline until they arrive."
   },
   "topic.thread.page.underway": {
     "text": "Being built. Its votes open once it is up for a vote.",

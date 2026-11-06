@@ -129,6 +129,14 @@ const { reviewedHeadForSession, visualHeadForSession } = require('./pr-vote-revi
 // The member floor's words: why a flagged proposal needs another member's Yes.
 const explicitApprovalCopy = require('./explicit-approval');
 
+// An admin's force merge, read off the proposal machine's instance state — the
+// same subselect shape as HELD_UNTIL_SQL in services/integration.js. Select it
+// as `merge_force`; FORCE_DROPPED_SQL as `merge_force_dropped`.
+const FORCE_SQL = `(SELECT wi.data->'force' FROM wf_instances wi
+  WHERE wi.machine = 'proposal' AND wi.key = 'session:' || cs.id)`;
+const FORCE_DROPPED_SQL = `(SELECT wi.data->'forceDropped' FROM wf_instances wi
+  WHERE wi.machine = 'proposal' AND wi.key = 'session:' || cs.id)`;
+
 function intOrNull(v) {
   if (v == null) return null;
   const n = Number(v);
@@ -676,6 +684,62 @@ function recordIsSuperseded(record, session) {
   return false;
 }
 
+/**
+ * Where a held force merge actually is, from the gates as they now read.
+ * A blocked gate is where it stopped; otherwise main's own check is the first
+ * thing it waits for, then a conflict with main, then the merge itself.
+ */
+function forcedStep(gates) {
+  const list = Array.isArray(gates) ? gates : [];
+  const blocked = list.find((g) => g && g.state === 'blocked');
+  if (blocked) return { step: 'stopped', stoppedOn: blocked.key };
+  const main = list.find((g) => g && g.key === 'main_healthy');
+  if (main && main.state === 'active') return { step: 'main', stoppedOn: null };
+  const integration = list.find((g) => g && g.key === 'integration');
+  if (integration && integration.state !== 'done') return { step: 'conflict', stoppedOn: null };
+  return { step: 'merging', stoppedOn: null };
+}
+
+/**
+ * The gates an admin's force merge skips read as done and say so, rather
+ * than as still waiting. The vote, the member floor and the lock's admin Yes
+ * are always skipped; checks only on the commit the force was given on
+ * (rules/merge-claim.ts forceWaivesChecks), so a later commit's checks run
+ * as usual. @returns {Array} the gates, transformed
+ */
+function withForce(gates, s) {
+  const force = s && s.merge_force;
+  if (!force || typeof force !== 'object') return gates;
+  const by = force.by || null;
+  const skip = (g) => ({ ...g, state: 'done', detail: { ...(g.detail || {}), skipped: 'force', by } });
+  const reviewed = reviewedHeadForSession(s);
+  const headMatches = !!force.head && !!reviewed
+    && String(force.head).toLowerCase() === String(reviewed).toLowerCase();
+  return (Array.isArray(gates) ? gates : []).map((g) => {
+    if (!g) return g;
+    if (g.key === 'approvals' || g.key === 'explicit' || g.key === 'admin_yes') return skip(g);
+    if (g.key === 'checks' && headMatches) return skip(g);
+    return g;
+  });
+}
+
+// The block's force fields: what is held (and the step it waits on), or the
+// force an authored push dropped when none is held now.
+function withForceBlock(block, s) {
+  const force = s && s.merge_force;
+  if (!force || typeof force !== 'object') {
+    const dropped = s && s.merge_force_dropped;
+    return dropped && typeof dropped === 'object' ? { ...block, forceDropped: dropped } : block;
+  }
+  const gates = withForce(block.gates, s);
+  const at = forcedStep(gates);
+  return {
+    ...block,
+    gates,
+    forced: { by: force.by || null, at: force.at || null, head: force.head || null, step: at.step, stoppedOn: at.stoppedOn },
+  };
+}
+
 /** The nested block the serializer hangs on a proposal row, beside `integration`. */
 function readRequirements(session) {
   const s = session || {};
@@ -685,20 +749,20 @@ function readRequirements(session) {
     // No recording yet, or one about a head or epoch this proposal has since
     // left behind. Say what the columns support rather than nothing — and say
     // that it IS provisional, so a surface can tone it accordingly.
-    return {
+    return withForceBlock({
       measuredAt: null,
       gates: provisional(s),
       evaluated: false,
       provisional: true,
       ...(record ? { superseded: true } : {}),
-    };
+    }, s);
   }
-  return {
+  return withForceBlock({
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
     gates: withLivePlatformRetry(withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s), s),
     evaluated: true,
     provisional: false,
-  };
+  }, s);
 }
 
 // A checks 'error' that is the platform's fault (check_error_platform: a
@@ -818,6 +882,8 @@ async function store(pool, sessionId, t) {
 module.exports = {
   GATES,
   ACTOR_WORD,
+  FORCE_SQL,
+  FORCE_DROPPED_SQL,
   trace,
   describe,
   integrationStep,
@@ -827,6 +893,8 @@ module.exports = {
   provisional,
   summarize,
   readRequirements,
+  withForce,
+  withForceBlock,
   recordIsSuperseded,
   withLiveApprovals,
   withLiveExplicit,

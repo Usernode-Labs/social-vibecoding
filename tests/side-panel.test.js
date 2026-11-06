@@ -1345,6 +1345,23 @@ test('the divider ships on the panel\'s left edge as a focusable vertical separa
   assert.doesNotMatch(divider.slice(divider.indexOf('\n  return (')), /readStoredWidth|localStorage/);
 });
 
+test('with a detail beside the page it holds, the panel\'s edge is that column\'s edge (#6394)', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  // The AI page writes this store while the panel is the middle column of
+  // three; the panel's own island reads it and hands the divider the
+  // thread's width key, its probe and the preview to watch.
+  assert.match(SRC, /import \{ panelEdgeStore \} from '\.\/edge-store';/);
+  assert.match(SRC, /const edge = useStoreState\(panelEdgeStore\)\.slot;/);
+  assert.match(SRC, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+\/>/,
+    'passing undefined leaves the divider on its own defaults');
+  // The store starts empty, so the island\'s first render is the prerender.
+  const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
+  assert.equal(panelEdgeStore.get().slot, null);
+  // Its edge is drawn where the panel begins, as the thread\'s is in three.
+  assert.match(CSS, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\n\}/);
+  assert.match(CSS, /body:has\(#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\):not\(\.hidden\)\) \.side-panel \{\n\s+width: var\(--ai-col-w\);\n\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
+});
+
 test('the probe: beside an app, the app\'s left edge; beside the AI tab\'s page, the docked rail\'s', () => {
   const { probeLayout } = api.resize;
   const el = (box, classes = []) => ({ getBoundingClientRect: () => box, classList: { contains: (c) => classes.includes(c) } });

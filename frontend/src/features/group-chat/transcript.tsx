@@ -182,7 +182,7 @@ export function BotSuggestButtons({ id, suggest }: { id: number | null; suggest:
     controller()?.sendBotSuggestion?.(id, label);
   };
   return (
-    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-suggest="">
+    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-suggest={suggest.audience || ''}>
       {suggest.actions.map((action) => (
         <Button
           key={action.id}

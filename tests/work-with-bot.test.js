@@ -225,10 +225,22 @@ test('a change gets the quiet version: under its cards, on its request\'s page a
   const mod = loadTsx('frontend/src/features/dev-board/topic/work-with-bot.tsx');
   globalThis.window = { App: { user: { id: 1 } }, AppView: { readOnly: false } };
   try {
+    // #6392 (6 Nov 2026): it says what it does, not "Work on this", which
+    // read as starting work the bot had already started.
     const html = renderToHtml(createElement(mod.WorkWithBotButton, { slug: 'x', number: 406 }));
-    assert.match(html, /^<div class="mt-2" data-work-with-bot="406"><button[^>]*class="[^"]*rounded-full bg-zinc-100[^"]*"[^>]*>Work on this with Homeroom bot<\/button><\/div>$/,
+    assert.match(html, /^<div class="mt-2" data-work-with-bot="406"><button[^>]*class="[^"]*rounded-full bg-zinc-100[^"]*"[^>]*>Ask Homeroom bot privately<\/button><\/div>$/,
       'a neutral pill, never the accent');
-    assert.match(html, /title="Ask Homeroom bot about this change, or sketch a revision, in a thread only you can see"/);
+    assert.match(html, /title="Ask Homeroom bot about this change in a thread only you can see"/);
+    // Up for a vote, what it offers is a revision of the change.
+    const voting = renderToHtml(createElement(mod.WorkWithBotButton, { slug: 'x', number: 406, voting: true }));
+    assert.match(voting, />Suggest a change privately</);
+    assert.match(voting, /title="Sketch a revision of this change with Homeroom bot, in a thread only you can see"/);
+    // While the bot builds or fixes it, the Testing card and the thread
+    // already say so: no button at all.
+    assert.equal(renderToHtml(createElement(mod.WorkWithBotButton, { slug: 'x', number: 406, botAtWork: true })), '',
+      'the bot is on it');
+    assert.equal(renderToHtml(createElement(mod.WorkWithBotButton, { slug: 'x', number: 406, voting: true, botAtWork: true })), '',
+      'and a change being fixed is not asking for a revision either');
     assert.equal(renderToHtml(createElement(mod.WorkWithBotButton, { slug: 'x', number: null })), '', 'a change with no number yet');
     window.AppView.readOnly = true;
     assert.equal(renderToHtml(createElement(mod.WorkWithBotButton, { slug: 'x', number: 406 })), '', 'nor on a board they cannot act on');
@@ -241,11 +253,16 @@ test('a change gets the quiet version: under its cards, on its request\'s page a
   const changes = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
   // One page per thread: under the change's section, after its body (its
   // summary, before and after, Votes and Testing cards); not inside a
-  // ballot's fold, where the ballot is what asks something.
-  assert.match(changes, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} request=\{request\} \/>\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton slug=\{pageSlug\(\)\} number=\{item\.number\} \/>/);
+  // ballot's fold, where the ballot is what asks something. #6392: its vote
+  // lines pick the words, and the bot building or fixing it leaves it out.
+  assert.match(changes, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} request=\{request\} \/>\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton\s+slug=\{pageSlug\(\)\}\s+number=\{item\.number\}\s+voting=\{!!view\?\.v\.votes\.facts\?\.length\}\s+botAtWork=\{changeBotAtWork\(item, view\)\}\s*\/>/);
+  // `botAtWork` is the bot still building it, or fixing or about to fix its
+  // failing checks; a fix it handed back, stopped or found to be the
+  // platform's is not the bot at work.
+  assert.match(changes, /function changeBotAtWork\(item: ThreadItem, view: ChangeView \| null\): boolean \{\s*if \(item\.byBot && item\.state === 'underway' && !item\.ready\) return true;\s*const fix = view\?\.v\.testing\.botFix;\s*return fix === 'fixing' \|\| fix === 'queued';\s*\}/);
   const page = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(page, /\{v\.shots \? <ShotsCard s=\{v\.shots\} \/> : null\}\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton slug=\{pageSlug\(\)\} number=\{v\.number\} \/>/,
-    'the last of the change page\'s root post, under its cards');
+  assert.match(page, /\{v\.shots \? <ShotsCard s=\{v\.shots\} \/> : null\}\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton\s+slug=\{pageSlug\(\)\}\s+number=\{v\.number\}\s+voting=\{!!v\.votes\.facts\?\.length\}\s+botAtWork=\{v\.testing\.botFix === 'fixing' \|\| v\.testing\.botFix === 'queued'\}\s*\/>/,
+    'the last of the change page\'s root post, under its cards, with the same two signals');
 });
 
 test('the bot tab says Waiting for you to OK the plan', () => {

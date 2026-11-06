@@ -8371,6 +8371,10 @@
     "text": "Up for a vote: needs {{count}} more yes.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; it needs {{count}} more yes votes. \"Yes\" is the vote, as a noun."
   },
+  "request.status.lead.upForVoteChecksFailing": {
+    "text": "Up for a vote, but a test is failing. It needs a fix before it can go live.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is up for the group's vote, but one of its tests failed, so it cannot go live until its author fixes it; the card counts no yes votes while that is so."
+  },
   "request.status.lead.reviewYours": {
     "text": "Your change for this is waiting for approval.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. The viewer's own change (a proposal that fulfils the request) is up for the group's vote. \"Change\" is a noun."
@@ -9430,5 +9434,57 @@
   "badge.pill.releaseTitle": {
     "text": "{{release}}.",
     "description": "Tooltip on a change card's \"Going live\" pill, for a merged change to Homeroom itself. {{release}} is a whole sentence saying when the next release carries it. Only the closing punctuation is translated here."
+  },
+  "vote.forceMerge.queued": {
+    "text": "Admin merge queued. It merges once main's checks of the last merge and any conflict with main are through.",
+    "description": "Notice an administrator sees right after confirming Admin merge on a change: the merge is waiting its turn, not done yet. \"main\" is the repository's main branch."
+  },
+  "vote.forceMerge.alreadyQueued": {
+    "text": "An admin merge is already queued for this change.",
+    "description": "Notice when an administrator picks Admin merge on a change that already has one waiting its turn. Nothing new is sent."
+  },
+  "step.force.skipped": {
+    "text": "Skipped by the admin merge",
+    "description": "Line under a step of a change's merge checklist when an administrator's Admin merge skips that step, such as the vote or the checks."
+  },
+  "step.force.headline.main": {
+    "text": "Merging… waiting for main's checks of the last merge",
+    "description": "Headline of a change's merge steps while an administrator's Admin merge waits for the repository's main branch to finish checking the last change merged into it."
+  },
+  "step.force.headline.conflict": {
+    "text": "Merging… resolving a conflict with main",
+    "description": "Headline of a change's merge steps while an administrator's Admin merge waits for the platform to resolve a conflict between the change and the repository's main branch."
+  },
+  "step.force.headline.merging": {
+    "text": "Merging now",
+    "description": "Headline of a change's merge steps while an administrator's Admin merge is being carried out."
+  },
+  "step.force.headline.stopped": {
+    "text": "Admin merge stopped",
+    "description": "Headline of a change's merge steps when an administrator's Admin merge cannot go ahead; the step it stopped on says why."
+  },
+  "page.votes.figure.adminMerge": {
+    "text": "Skipped by the admin merge",
+    "description": "The Votes card's figure on a change where an administrator used Admin merge: the vote is not being counted, so it is not asking anyone for a yes."
+  },
+  "page.votes.note.adminMerge": {
+    "text": "{{by}} used Admin merge on {{head}}, so this change does not wait for votes.",
+    "description": "Note under the Votes card when an administrator's Admin merge is waiting. {{by}} is the administrator's username and {{head}} is the first seven characters of the commit identifier."
+  },
+  "page.votes.note.adminMergeDropped": {
+    "text": "{{by}}'s admin merge was for an earlier commit ({{head}}). This version waits for its vote again.",
+    "description": "Note under the Votes card after the author pushed new code, which ends an administrator's earlier Admin merge. {{by}} is the administrator's username and {{head}} is the first seven characters of the earlier commit's identifier."
+  },
+  "page.votes.note.adminMergeNoHead": {
+    "text": "{{by}} used Admin merge, so this change does not wait for votes.",
+    "description": "Note under the Votes card when an administrator's Admin merge is waiting but the commit it applies to was not recorded. {{by}} is the administrator's username."
+  },
+  "page.votes.note.adminMergeDroppedNoHead": {
+    "text": "{{by}}'s admin merge was for an earlier commit. This version waits for its vote again.",
+    "description": "Note under the Votes card after the author pushed new code, ending an administrator's earlier Admin merge whose commit was not recorded. {{by}} is the administrator's username."
+  },
+  "page.votes.note.adminMergeNoName": {
+    "text": "An admin",
+    "description": "Stands in for an administrator's username under the Votes card when it was not recorded."
   }
 }

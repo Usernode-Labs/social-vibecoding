@@ -230,6 +230,9 @@ const GroupChat = {
   // the channel, every send and typing frame carries it, and the socket's
   // frames are sorted by it (`_isChannel`).
   _channel: null,
+  // #6391: whether this reader is a member of the project's community; null
+  // until a thread page says (viewer_member).
+  _member: null,
 
   // The channel a mount names (`app.channel`), normalised, or null.
   _channelOf(app) {
@@ -320,6 +323,9 @@ const GroupChat = {
    */
   mount(appSlug, app) {
     GroupChat._app = (app && app.slug === appSlug) ? app : null;
+    // #6391: whether this reader is a member, from the thread page's answer
+    // (`viewer_member`); null until a read of a thread says.
+    GroupChat._member = null;
     // #4417 follow-up: the channel this mount shows (null: the general stream).
     const channel = GroupChat._channelOf(GroupChat._app);
     // Side-panel hooks: bind the draggable divider on every mount
@@ -406,6 +412,7 @@ const GroupChat = {
     GroupChat._channel = channel || null;
     GroupChat.messages = [];
     GroupChat.threads = new Map();
+    GroupChat._member = null;
     // B9: another project's cards and door are not this one's.
     GroupChat._botCards = new Map();
     GroupChat._botHere = false;
@@ -1398,7 +1405,9 @@ const GroupChat = {
   // The suggested replies under Homeroom bot's message in a request's or a
   // change's discussion (homeroom-bot-live.js, homeroom-bot-voice.js): the
   // prompt actions its metadata carries, for the people it names
-  // (forUserIds) and only while the set is open. Closed draws nothing.
+  // (forUserIds) and only while the set is open. #6391: a member it did not
+  // answer gets the other members' set (`othersActions`) instead, and never
+  // both. Closed draws nothing.
   _botSuggestView(meta) {
     const bot = meta && meta.homeroomBot;
     if (!bot || !bot.suggest || typeof bot.suggest !== 'object') return null;
@@ -1406,14 +1415,20 @@ const GroupChat = {
     if (!status) return null;
     const me = window.App && App.user ? Number(App.user.id) : null;
     const ids = (Array.isArray(bot.suggest.forUserIds) ? bot.suggest.forUserIds : []).map(Number);
-    const actions = (Array.isArray(bot.actions) ? bot.actions : [])
+    const prompts = (list) => (Array.isArray(list) ? list : [])
       .filter((a) => a && a.type === 'prompt' && typeof a.label === 'string' && a.label)
       .map((a) => ({ id: String(a.id || a.label), label: a.label.slice(0, 60), primary: a.style === 'primary' }));
-    return {
-      status,
-      forMe: me != null && ids.includes(me) && !GroupChat._readOnly(),
-      actions,
-    };
+    const readOnly = GroupChat._readOnly();
+    if (me != null && ids.includes(me) && !readOnly) {
+      return { status, forMe: true, audience: 'answered', actions: prompts(bot.actions) };
+    }
+    // Only a member can post here (`requireIssueMembership`), so anyone whose
+    // membership is not known yet, or who is not one, sees none.
+    const others = prompts(bot.othersActions);
+    if (GroupChat._member === true && !readOnly && others.length) {
+      return { status, forMe: true, audience: 'others', actions: others };
+    }
+    return { status, forMe: false, audience: null, actions: [] };
   },
 
   // A tap on one of the bot's suggested replies sends its words as this
@@ -2200,6 +2215,9 @@ const GroupChat = {
    * lacks it (the socket delivered it before the page landed).
    */
   _takeNewest(s, thread, latest, data, log, first = false) {
+    // #6391: the thread page says whether this reader is a member, so the
+    // bot's other-members buttons show for them (and only them).
+    if (typeof data.viewer_member === 'boolean') GroupChat._member = data.viewer_member;
     const full = typeof data.has_more_before === 'boolean' ? data.has_more_before : latest.length >= 50;
     const before = s.messages.filter((m) => log.held.has(String(m.id)));
     const arrived = s.messages.filter((m) => !log.held.has(String(m.id)));

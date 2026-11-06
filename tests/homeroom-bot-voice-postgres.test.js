@@ -85,6 +85,14 @@ async function asMachine(pool, sql, params) {
 }
 
 /** A model that answers each request of a turn with the next step of `script`. */
+// #6391: in a request's or a change's thread a reply always carries both
+// button sets, so the scripted model gives them and is not asked again.
+const withButtons = (args) => ({
+  suggestions: ['Thanks', 'What happens next?'],
+  suggestionsForOthers: ["I'd like this too", "What's left to do?"],
+  ...args,
+});
+
 function scripted(script) {
   const seen = [];
   let i = 0;
@@ -180,7 +188,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     sent.length = 0;
     const model = scripted([
       { tool: 'update_change', args: { instruction: 'Make the header blue on every page, not only the home page' } },
-      { tool: 'reply', args: { text: 'Got it: I\'ll make the header blue on every page. Updating it resets its approvals, so the group looks again.' } },
+      { tool: 'reply', args: withButtons({ text: 'Got it: I\'ll make the header blue on every page. Updating it resets its approvals, so the group looks again.' }) },
     ]);
     const place = { type: 'session', ref: change.id };
     const id = await say(evan, 'Can the header be blue on every page, not just home?', place);
@@ -238,7 +246,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     const id = await say(evan, 'What does the change description say right now?', place);
     const model = scripted([
       { text: 'That\'s the earlier wording, from before the update.' },
-      { tool: 'reply', args: { text: 'I cannot see the change\'s description from here. Ask me and I will look it up.' } },
+      { tool: 'reply', args: withButtons({ text: 'I cannot see the change\'s description from here. Ask me and I will look it up.' }) },
     ]);
     const out = await turn(place, model, { through: id - 1 });
     assert.equal(out.outcome, 'replied');
@@ -270,7 +278,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     };
     const model = scripted([
       { tool: 'get_change', args: { changeId: change.id } },
-      { tool: 'reply', args: { text: 'It says: "The header is blue." That is the earlier wording.' } },
+      { tool: 'reply', args: withButtons({ text: 'It says: "The header is blue." That is the earlier wording.' }) },
     ]);
     const out = await turn(place, model, { through: id - 1, deps: { noPlatform: false, openMcp: async () => platform } });
     assert.equal(out.outcome, 'replied');
@@ -312,7 +320,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
         snaps.push(req.messages.map((m) => ({ ...m })));
         return req.tools.some((tl) => tl.function.name === 'read_message')
           ? call('read_message', { id })
-          : call('reply', { text: 'Yes: the header shows on every page.' });
+          : call('reply', withButtons({ text: 'Yes: the header shows on every page.' }));
       },
     ]);
     const out = await turn(place, model, { through: id - 1, key: 'reads-1' });
@@ -366,7 +374,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     const id = await say(evan, 'And would Main still link out?', place);
     const model = scripted([
       { tool: 'reply', args: { text: '...' } },
-      { tool: 'reply', args: { text: 'Yes: a thread you started from Main still links out.' } },
+      { tool: 'reply', args: withButtons({ text: 'Yes: a thread you started from Main still links out.' }) },
     ]);
     const out = await turn(place, model, { through: id - 1, key: 'stand-in-2' });
     assert.equal(out.outcome, 'replied');
@@ -972,6 +980,40 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     );
     assert.deepEqual(replied, { outcome: 'replied', error: null });
   });
+
+  // 6 Nov 2026 (#6395): a plain "Go ahead" on a request, from the person the
+  // bot's last note named, is answered with no @ needed, however long after
+  // the note it comes. Anybody else's stays unanswered.
+  await t.test('#6395: a plain Go ahead from the person the last note named is heard on a request', async () => {
+    await pool.query(
+      'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6400, $2, $3)',
+      [app.id, evan.id, 'Note board'],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, created_at)
+       VALUES ($1, 6400, 'person', NOW() - INTERVAL '1 day')`,
+      [app.id],
+    );
+    const settings = { mode: 'live', voiceSession: true, voiceIssue: true, voiceChat: true, pausedApps: [] };
+    const someone = { id: sam.id, username: sam.username, isSynthetic: false, hasPlatformAccess: true };
+    const named = { id: evan.id, username: evan.username, isSynthetic: false, hasPlatformAccess: true };
+    const heard = async (who, content) => {
+      const id = await say(who, content, { type: 'issue', ref: 6400 });
+      const { rows: [row] } = await pool.query(
+        'SELECT id, user_id, content, msg_type, metadata, created_at FROM chat_messages WHERE id = $1', [id],
+      );
+      return voice.gate(pool, {
+        app, place: { type: 'issue', ref: 6400 }, row,
+        bot: { id: homeroomBot.id, username: 'homeroom_bot' }, settings,
+        speaker: who.id === evan.id ? named : someone,
+        deps: {},
+      });
+    };
+    assert.deepEqual(await heard(evan, 'Go ahead'), { speak: true, why: 'go_ahead' });
+    assert.deepEqual(await heard(evan, 'go ahead!'), { speak: true, why: 'go_ahead' });
+    assert.deepEqual(await heard(sam, 'Go ahead'), { speak: false, why: 'not_addressed' });
+    assert.deepEqual(await heard(evan, `Go ahead ${'x'.repeat(60)}`), { speak: false, why: 'not_addressed' });
+  });
 });
 
 // 3 Nov 2026 (#6213): one live set of suggested replies per thread. A newer
@@ -1093,6 +1135,7 @@ test('retireThreadSuggestions closes only older open sets in the same thread', {
       kind: 'note',
       suggest: { status, forUserIds: [9] },
       actions: [{ id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt' }],
+      othersActions: [{ id: 'others-1', label: "I'd like this too", style: 'secondary', type: 'prompt' }],
     },
   });
   const older = await insert(7, suggest());
@@ -1116,15 +1159,93 @@ test('retireThreadSuggestions closes only older open sets in the same thread', {
   const retired = await metaOf(older);
   assert.equal(retired.homeroomBot.suggest.status, 'closed');
   assert.deepEqual(retired.homeroomBot.actions, []);
+  // #6391: the other members' set closes with it.
+  assert.deepEqual(retired.homeroomBot.othersActions, []);
   assert.equal((await metaOf(kept)).homeroomBot.suggest.status, 'closed', 'anything before the newer word');
   assert.equal((await metaOf(closed)).homeroomBot.suggest.status, 'closed');
   assert.equal((await metaOf(elsewhere)).homeroomBot.suggest.status, 'open', 'another thread is untouched');
   assert.deepEqual((await metaOf(offered)).homeroomBot.actions, [{ id: 'yes', label: 'File it' }], 'an offer keeps its own lifecycle');
   assert.equal((await metaOf(after)).homeroomBot.suggest.status, 'open', 'the newer word keeps its own set open');
+  assert.equal((await metaOf(after)).homeroomBot.othersActions.length, 1, "and its own others set");
   assert.deepEqual(frames.map((f) => f.frame.id), [older, kept], 'each closed set is broadcast once');
   assert.ok(frames.every((f) => f.frame.type === 'chat_message_updated' && f.frame.thread.ref === 7));
 
   // Nothing to retire, and a thread the voice has no place in: a quiet no-op.
   await voice.retireThreadSuggestions(pool, { appId: app.id, thread: { type: 'chat', ref: null }, keepMessageId: 1, deps: {} });
   await voice.retireThreadSuggestions(pool, { appId: app.id, thread: { type: 'issue', ref: 7 }, keepMessageId: 0, deps: {} });
+});
+
+// #6391: the queries say() runs for a thread's two button sets, on the real
+// schema: the Go ahead a waiting note leaves behind (its newest open set is
+// found, its people join the reply's) and the older sets' retirement, which
+// empties both lists.
+test('say() carries a waiting note\'s Go ahead and retires both sets on the real schema', { timeout: 120000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+  const { rows: [app] } = await pool.query(
+    "INSERT INTO apps (name, slug) VALUES ('Suggest sets demo', 'suggest-sets-demo') RETURNING id",
+  );
+  const { rows: [evan] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access) VALUES ('evan_say', 'x', TRUE) RETURNING id`,
+  );
+  const { rows: [ada] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access) VALUES ('ada_say', 'x', TRUE) RETURNING id`,
+  );
+  const { rows: [bot] } = await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot_say', 'x', TRUE) RETURNING id`,
+  );
+  const insert = async (meta, { threadRef = 9103, userId = bot.id } = {}) => (await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata)
+     VALUES ($1, $2, 'the bot said something', 'message', 'issue', $3, $4) RETURNING id`,
+    [app.id, userId, threadRef, JSON.stringify(meta)],
+  )).rows[0];
+  const note = await insert({
+    homeroomBot: {
+      kind: 'note',
+      suggest: { status: 'open', forUserIds: [ada.id] },
+      actions: [{ id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt' }],
+      othersActions: [{ id: 'others-1', label: 'I\'d like this too', style: 'secondary', type: 'prompt' }],
+    },
+  });
+  const asked = await insert({}, { userId: evan.id });
+  await pool.query("UPDATE chat_messages SET content = 'Can you take this one?' WHERE id = $1", [asked.id]);
+
+  const sent = [];
+  const deps = {
+    ws: {
+      async sendBotMessage(p, appId, args) {
+        const { rows: [row] } = await p.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+           VALUES ($1, $2, $3, 'message', $4, $5, $6) RETURNING id`,
+          [appId, args.user.id, args.content, JSON.stringify(args.metadata || {}), args.thread.type, args.thread.ref],
+        );
+        sent.push({ id: row.id, content: args.content, metadata: args.metadata });
+        return { id: row.id, createdAt: new Date() };
+      },
+      broadcast() {},
+    },
+    notifications: { async createMentionNotifications() { return []; } },
+  };
+  await voice.say(pool, {
+    app: { id: app.id, slug: 'suggest-sets-demo' },
+    place: { type: 'issue', ref: 9103 },
+    bot,
+    text: 'Thanks. I am on it. Want me to tell you here when it is ready to vote?',
+    answer: [{ message: { id: asked.id, content: 'Can you take this one?' }, username: 'evan_say', userId: Number(evan.id) }],
+    deps,
+  });
+
+  const posted = sent[0].metadata.homeroomBot;
+  // Go ahead first, for the person it answered and the person the note asked,
+  // then the fallback answers the reply's own question.
+  assert.deepEqual(posted.actions.map((a) => a.id), ['go_ahead', 'suggest-1', 'suggest-2']);
+  assert.equal(posted.actions[0].label, 'Go ahead');
+  assert.deepEqual([...posted.suggest.forUserIds].sort((a, b) => a - b), [Number(evan.id), Number(ada.id)].sort((a, b) => a - b));
+  assert.deepEqual(posted.othersActions.map((a) => a.label), ["I'd like this too", 'Can I try it?', "What's left to do?"]);
+
+  // The note's own set, older than this one, is closed: both lists empty.
+  const retired = (await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [note.id])).rows[0].metadata;
+  assert.equal(retired.homeroomBot.suggest.status, 'closed');
+  assert.deepEqual(retired.homeroomBot.actions, []);
+  assert.deepEqual(retired.homeroomBot.othersActions, []);
 });

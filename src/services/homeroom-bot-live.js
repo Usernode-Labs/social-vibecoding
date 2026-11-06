@@ -206,7 +206,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null, done = false }) {
+function personText({ reason, platform = false, project = null, done = false, goAheadDecides = null, firstStep = null }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -221,6 +221,13 @@ function personText({ reason, platform = false, project = null, done = false }) 
     return `Homeroom bot found this already works: ${reasonSentence(reason)}\n\n`
       + 'Anyone in the project can propose to close it, or reply here if something is missing.';
   }
+  // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (credentials,
+  // auth, billing, permissions, operator work outside the app, a database
+  // change that is not append-only, or too big for one build), so the copy
+  // names no Go ahead and leads with the part it can build.
+  if (goAheadDecides === false) {
+    return `I can't build all of this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`;
+  }
   // GitHub never carries a platform username (#723): its copy names nobody.
   // Homeroom's names who can say Go ahead (personHomeroomText).
   return `Homeroom bot thinks a person needs to decide this one: ${reasonSentence(reason)} `
@@ -228,11 +235,21 @@ function personText({ reason, platform = false, project = null, done = false }) 
 }
 
 /**
+ * 6 Nov 2026 (#6395): the part of a request the bot can still build, as the
+ * sentence that follows "I can't build all of this one: ...". `firstStep` is
+ * the smaller step the read named, if any. Pure.
+ */
+function canBuildPart(firstStep) {
+  const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
+  return step ? `I can do this part here: ${step}.` : 'Reply here if a smaller part would help.';
+}
+
+/**
  * The Homeroom copy of a note for a person: who can say Go ahead, by name.
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false }) {
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null }) {
   // #4239, #6311: about Homeroom itself. The requester is offered the copy
   // in the thread and the move in their DM. Plain words, in the first
   // person: no checkout, no head commit, no build agent.
@@ -244,6 +261,11 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   // are under the note (homeroom-bot.js doneCloseOffer).
   if (done) {
     return `Already works: ${reasonSentence(reason)} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`;
+  }
+  // 6 Nov 2026 (#6395): no Go ahead can settle this one, and nobody is named
+  // as able to say it. It says what it can build here instead.
+  if (goAheadDecides === false) {
+    return firstPerson(`I can't build all of this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`);
   }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';
@@ -261,15 +283,18 @@ const NOT_NOW_LABEL = 'Not now';
  * when the note is about Homeroom itself or says the request is done (Go
  * ahead applies to neither). `firstStep` is the smaller step the bot would
  * build, when it named one; the fixed label stands in when it did not.
+ * 6 Nov 2026 (#6395): when `goAheadDecides` is false a go-ahead cannot settle
+ * the request, so Go ahead is not offered and the smaller step is primary.
  */
-function personSuggestions({ firstStep = null, platform = false, done = false } = {}) {
+function personSuggestions({ firstStep = null, platform = false, done = false, goAheadDecides = null } = {}) {
   if (platform || done) return [];
+  const cannot = goAheadDecides === false;
   const mayor = require('./homeroom-bot-mayor');
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
   const usableStep = step && step.length <= mayor.MAX_SUGGESTION_CHARS ? step : '';
   const candidates = [
-    { id: 'go_ahead', label: GO_AHEAD_LABEL, style: 'primary' },
-    { id: 'smaller', label: usableStep || SMALLER_STEP_LABEL, style: 'secondary' },
+    ...(cannot ? [] : [{ id: 'go_ahead', label: GO_AHEAD_LABEL, style: 'primary' }]),
+    { id: 'smaller', label: usableStep || SMALLER_STEP_LABEL, style: cannot ? 'primary' : 'secondary' },
     { id: 'not_now', label: NOT_NOW_LABEL, style: 'secondary' },
   ];
   const labels = mayor.suggestionLabels(candidates.map((c) => c.label));
@@ -280,6 +305,15 @@ function personSuggestions({ firstStep = null, platform = false, done = false } 
     out.push({ ...candidate, type: 'prompt' });
   }
   return out;
+}
+
+/**
+ * 6 Nov 2026 (#6395): the one plain reply to a go-ahead that cannot settle a
+ * request, instead of the note again. It says what a go-ahead cannot change,
+ * then the part the bot can still build. Server text, like the labels.
+ */
+function goAheadCannotText({ reason, firstStep = null } = {}) {
+  return `A go-ahead can't change this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`;
 }
 
 function emptyText({ reason }) {
@@ -5750,6 +5784,7 @@ module.exports = {
   personText,
   personHomeroomText,
   personSuggestions,
+  goAheadCannotText,
   GO_AHEAD_LABEL,
   SMALLER_STEP_LABEL,
   NOT_NOW_LABEL,

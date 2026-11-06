@@ -187,9 +187,19 @@
       "schemaSha256": "1c4c9809d3c5a4a594ef3c8960cd28724b7b0e6371350c9819e89206eb552574"
     },
     {
+      "id": "app-offline-cache-refusals",
+      "sha256": "a3b88252c75232bdb5062d09a02643059224f1b5bebdba4e38efb5847fac9423",
+      "schemaSha256": "1317962c70dc4876fb1c82f293646f62756cc3d8b776eac37e31b338d1620456"
+    },
+    {
+      "id": "homeroom-bot-run-go-ahead",
+      "sha256": "2fc7cc09a279f15a72d26a69e5ef9aa158ceda71ebcb63535f44b1dfca577ae5",
+      "schemaSha256": "d62c285f7764aa1dd26d5ddbdbe166f2beefb1f91cf7dab59b50773a112806ef"
+    },
+    {
       "id": "bot-own-version",
       "sha256": "79cb1bd427bbdbd282572d4e0d1b9298e3e2f968d37058a118fe422b3596f586",
-      "schemaSha256": "103dfb9b54ec889c6b0831a469596d6a13d6498a8b0aac3c4aed5cceccf33b58"
+      "schemaSha256": "7d75320c371d7ca9a400176a55079a83556e06e443ad3b4f5126893b8b031562"
     }
   ]
 }

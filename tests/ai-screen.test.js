@@ -1484,7 +1484,7 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // the keyboard the kit measures from the screen.
   assert.match(css, /html\.un-kb body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{ bottom: var\(--un-kb-inset, 0px\); \}/);
   assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-preview-w: max\(320px, min\(var\(--ai-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 320px\)\)\);\s+--ai-col-w: calc\(var\(--ai-room\) - var\(--ai-preview-w\)\);/,
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]:not\(\.hidden\)\) \{\s+--ai-preview-w: max\(320px, min\(var\(--ai-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 320px\)\)\);\s+--ai-col-w: calc\(var\(--ai-room\) - var\(--ai-preview-w\)\);/,
     'halves until the preview\'s edge is dragged, the thread the rest');
   const page = css.slice(css.indexOf('body:has(#ai-screen:not(.hidden)) {'), css.indexOf('/* A phone: the whole of the page, over the drawer'));
   assert.equal((page.match(/100vw/g) || []).length, 0,
@@ -1529,6 +1529,37 @@ test('a preview beside the thread: both edges drag, each the width of the column
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /new ResizeObserver\(\(\) => settle\(\)\)/,
     'read again when the preview is resized');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /probe: measure = probeLayout,/);
+});
+
+test('a plan opened from a request in the side panel is a third column, not a sheet over it (#6394)', () => {
+  const css = read('public/css/app.css');
+  // The three columns' widths are declared on body so the side panel — an
+  // island beside #ai-screen, not inside it — reads the same figures; the
+  // screen inherits them and still pads its own list.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) \{\n\s+--ai-preview-auto:/);
+  assert.match(css, /#ai-screen\[data-ai-preview="three"\] \{\n\s+padding-inline-end: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\)\);\n\}/);
+  // While a page is in the panel, the list keeps what the two columns leave.
+  assert.match(css, /html\[data-side-panel\] #ai-screen\[data-ai-preview="three"\] \{\n\s+padding-inline-end: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\)\);\n\}/);
+  // The panel itself is the middle column: the thread's width, ending where
+  // the preview begins (in three and in halves alike).
+  assert.match(css, /body:has\(#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\):not\(\.hidden\)\) \.side-panel \{\n\s+width: var\(--ai-col-w\);\n\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
+  // Its edge is the thread's edge in three, and is not drawn in halves,
+  // where the preview's own handle is the one that drags.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\n\}/);
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+display: none;\n\}/);
+  // The page tells the panel's own island which edge it is: the thread's
+  // width key, the thread's probe to the preview, and the preview to watch.
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /import \{ panelEdgeStore \} from '\.\.\/side-panel\/edge-store';/);
+  assert.match(src, /const pageInColumn = column\?\.at === 'page';/);
+  assert.match(src, /slot: visible && threeUp && pageInColumn\s+\? \{ widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef \}\s+: null,/);
+  // The panel reads it, and falls back to its own defaults with no slot.
+  const panel = read('frontend/src/features/side-panel/side-panel.tsx');
+  assert.match(panel, /const edge = useStoreState\(panelEdgeStore\)\.slot;/);
+  assert.match(panel, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+\/>/);
+  // The prerender is the panel as it was: no slot until the page sets one.
+  const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
+  assert.equal(panelEdgeStore.get().slot, null);
 });
 
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {

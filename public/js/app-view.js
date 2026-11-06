@@ -1842,8 +1842,9 @@ const AppView = {
   //   * A way back: the frame must say it opened (the bridge's
   //     `__usernode_offline_cache: 'open'`). Online, a page that never says so
   //     (one that needs the token to load, or loads no bridge) is framed the
-  //     old way on this device for a week. Offline, it gives way to the
-  //     "needs a connection" placeholder.
+  //     old way on this device for a week, and reported: two people on one
+  //     build make it the old way on every device until the app deploys
+  //     again. Offline, it gives way to the "needs a connection" placeholder.
   //
   // Per device and per viewer, like the offline-ready map: dropped with the
   // session (clearOfflineReady).
@@ -1946,9 +1947,29 @@ const AppView = {
       // The page did not open without the token in its query: the old
       // address, on this device, for a while.
       map[slug] = { at: Date.now(), oldAddressUntil: Date.now() + AppView.OFFLINE_CACHE_RETRY_MS };
+      AppView._reportOfflineCacheDidNotOpen(slug);
     }
     AppView._writeOfflineCache(map);
     if (AppView.appData && AppView.appData.slug === slug) AppView.renderAppTab();
+  },
+
+  // Online, and the page never said it opened: tell the platform as well.
+  // Once two people have seen it on the same build, every device frames the
+  // app the old way until it deploys again (`offline_cache` comes back
+  // false; services/offline-cache-refusals.js), instead of each one opening
+  // it signed out first. Best effort: the device's own fallback above
+  // stands either way.
+  _reportOfflineCacheDidNotOpen(slug) {
+    const build = String(AppView.buildFor(slug) || '');
+    if (!slug || !/^[0-9a-f]{40}$/i.test(build)) return;
+    try {
+      fetch(`/api/apps/${encodeURIComponent(slug)}/offline-cache/did-not-open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ build }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch { /* no fetch here: the device's fallback alone */ }
   },
 
   // Bridge -> shell: `{ __usernode_offline_cache: 'open', fresh }`, from the
@@ -2249,10 +2270,7 @@ const AppView = {
     const home = AppView._home();
     const fromHome = home && Array.isArray(home._apps)
       ? home._apps.find((a) => a && a.slug === slug) : null;
-    if (fromHome) return fromHome;
-    const fromBrowse = window.Browse && typeof Browse.appBySlug === 'function'
-      ? Browse.appBySlug(slug) : null;
-    return fromBrowse || null;
+    return fromHome || null;
   },
 
   // Only launch eagerly when the frame we'd mount is the same frame
@@ -4922,7 +4940,7 @@ const AppView = {
       // it (App._syncPlatformTabs, App._isChannelThread) and the hub is what
       // it hangs off. The reset above publishes 'none', which is right for
       // the hub and the board; this thread has somewhere to go up TO.
-      App.setBackIcon?.('arrow', App._hubHref?.(App.currentApp) || '#communities');
+      App.setBackIcon?.('arrow', App._hubHref?.(App.currentApp) || '/');
       AppView._renderChatSubView(content);
       return;
     }
@@ -6318,7 +6336,7 @@ const AppView = {
     if (merged) lead = PlatformI18n.t('changes:request.status.lead.live');
     else if (waitingOnBot && waitingOnBot.kind === 'question') lead = PlatformI18n.t('changes:request.status.lead.botQuestion');
     else if (planHeld) lead = PlatformI18n.t('changes:request.status.lead.botWaitsPlan');
-    else if (upForVote) lead = AppView._requestUpForVoteLead(ref);
+    else if (upForVote) lead = AppView._requestUpForVoteLead(issue);
     else if (hold) lead = hold;
     else if (!st) lead = PlatformI18n.t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {
@@ -6423,6 +6441,9 @@ const AppView = {
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
       botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold),
+      // #6387: the row expects a change section (request-head.tsx), so the
+      // page holds its place while the thread is still being read.
+      changeExpected: !!ref,
       // 1 Nov 2026: "Build it in an agent session" is a row of the page's ⋯,
       // where its one action is Work on this with Homeroom bot.
       agentSession,
@@ -6454,10 +6475,14 @@ const AppView = {
   },
 
   // The status card's sentence for a change up for a vote that no person's
-  // session stands for (Homeroom bot built it): how many more yes it needs,
-  // from the vote panel's own reading of it, or plainly that it is up when
-  // that is not known yet.
-  _requestUpForVoteLead(ref) {
+  // session stands for (Homeroom bot built it): a failed check if it has one
+  // (it cannot go live until fixed, whatever the votes say), else how many
+  // more yes it needs from the vote panel's own reading of it, or plainly
+  // that it is up when that is not known yet.
+  _requestUpForVoteLead(issue) {
+    const ref = AppView._issueProposalRefView(issue);
+    const line = issue && issue.track && issue.track.work && issue.track.work.line;
+    if (line && line.code === 'checks_failing') return PlatformI18n.t('changes:request.status.lead.upForVoteChecksFailing');
     const st = AppView.voteState || {};
     const item = ref && st.bySession ? st.bySession[String(ref.sessionId)] : null;
     if (item && typeof AppView.statusPillState === 'function') {
@@ -6986,6 +7011,7 @@ const AppView = {
       const step = {
         key: AppView.STEP_KEYS[g.key] || g.key, gate: g.key, state: g.state, label: g.label,
         line: g.note || null, actions: [],
+        ...(g.skipped ? { skipped: true, attrs: { 'data-req-skipped': 'force' } } : {}),
       };
       if (g.action) step.actions.push({ key: `req:${g.key}`, cls: 'gc-vote-btn', label: g.action.label, title: g.action.title, act: g.action.act });
       const authorsTurn = g.actor === 'author' && (g.state === 'blocked' || g.state === 'waiting');
@@ -7010,7 +7036,7 @@ const AppView = {
               act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
           }
         }
-        if (g.state === 'done' && AppView._freshnessOf(item).baseVerdict === 'superseded') {
+        if (g.state === 'done' && !g.skipped && AppView._freshnessOf(item).baseVerdict === 'superseded') {
           step.attrs = { 'data-checks-base': 'superseded' };
         }
       }
@@ -7664,6 +7690,25 @@ const AppView = {
     return Array.from({ length: total }, (_, i) => ({ weight: 1, pct: i < filled ? 100 : 0, state }));
   },
 
+  // The Votes card while an admin's force merge is held: the vote is not
+  // being counted, so it names who forced it and on which commit instead of
+  // asking for another member's yes.
+  _forceVotesView(item, force, yes, maj) {
+    const by = force.by || PlatformI18n.t('changes:page.votes.note.adminMergeNoName');
+    const head = force.head ? String(force.head).slice(0, 7) : null;
+    return {
+      name: PlatformI18n.t('changes:page.votes.name'),
+      figure: PlatformI18n.t('changes:page.votes.figure.adminMerge'),
+      tone: 'muted',
+      done: false,
+      segments: [{ weight: 1, pct: 100, state: 'idle' }],
+      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
+      note: [head
+        ? PlatformI18n.t('changes:page.votes.note.adminMerge', { by, head })
+        : PlatformI18n.t('changes:page.votes.note.adminMergeNoHead', { by })],
+    };
+  },
+
   // The Votes card: its figure ("Needs 1 more yes", in the accent when the
   // viewer can give it, or "1 of 1 yes"), one part of the bar per yes it
   // needs, and one line under it: who can give it, any yes a newer push
@@ -7697,8 +7742,22 @@ const AppView = {
     // now is cleared when it lands, so the card says so and offers no Vote
     // until then; the tally and who can vote stay as they are.
     const updateComing = item.status === 'promoted' && !!item.update_coming;
+    // A held admin force merge skips the vote, so the card says that instead
+    // of asking for another member's yes; a force an authored push ended is
+    // named under the ordinary card so nobody wonders why it stopped.
+    const force = item.merge_force && typeof item.merge_force === 'object' ? item.merge_force : null;
+    const forceDropped = !force && item.merge_force_dropped && typeof item.merge_force_dropped === 'object'
+      ? item.merge_force_dropped : null;
+    if (force && item.status !== 'merged') return AppView._forceVotesView(item, force, yes, maj);
     const note = [];
     if (updateComing) note.push(PlatformI18n.t('changes:page.votes.note.updateComing'));
+    if (forceDropped) {
+      const by = forceDropped.by || PlatformI18n.t('changes:page.votes.note.adminMergeNoName');
+      const head = forceDropped.head ? String(forceDropped.head).slice(0, 7) : null;
+      note.push(head
+        ? PlatformI18n.t('changes:page.votes.note.adminMergeDropped', { by, head })
+        : PlatformI18n.t('changes:page.votes.note.adminMergeDroppedNoHead', { by }));
+    }
     if (item.status === 'merged' || item.status === 'merging') {
       const said = ready && ready.yesNames && ready.yesNames.length
         ? AppView._saidYesLine(ready.yesNames) : null;
@@ -17727,6 +17786,15 @@ const AppView = {
     };
     const live = AppView._withLiveState(gates, p);
     const s = AppView._summarizeRequirements(live, viewer);
+    // A held admin force merge says where it is instead of whose turn it is:
+    // the vote steps it skips are done, and the one it waits on is named.
+    const forced = block && block.forced && typeof block.forced === 'object' ? block.forced : null;
+    const FORCE_HEADLINE = {
+      main: 'changes:step.force.headline.main',
+      conflict: 'changes:step.force.headline.conflict',
+      merging: 'changes:step.force.headline.merging',
+      stopped: 'changes:step.force.headline.stopped',
+    };
     // One short line per step, the same words on the card and on the page;
     // the collapsed line's detail IS the current step's line, so the two can
     // never describe one fact differently.
@@ -17735,16 +17803,17 @@ const AppView = {
     return {
       t: 'requirements',
       key: `req:${p.id}`,
-      headline: s.headline,
+      headline: forced ? PlatformI18n.t(FORCE_HEADLINE[forced.step] || FORCE_HEADLINE.merging) : s.headline,
       detail: at >= 0 ? lines[at] : null,
       done: s.done,
       total: s.total,
       // Shut unless the step it is stuck on is one THIS viewer can clear.
       // Not remembered per viewer: a remembered "closed" would hide the one
       // case the rule exists for.
-      open: s.needsViewer,
+      open: forced ? (forced.step === 'stopped' && s.needsViewer) : s.needsViewer,
       gates: live.map((g, i) => ({
         key: g.key, label: g.label, actor: g.actor, state: g.state,
+        skipped: !!(g.detail && g.detail.skipped === 'force'),
         note: lines[i],
         action: AppView._requirementAction(g, viewer),
       })),
@@ -17783,6 +17852,9 @@ const AppView = {
   _stepLine(g, p, opts) {
     const o = opts || {};
     const detail = (g && g.detail) || {};
+    // A gate an admin's force merge skips says so, whatever its key: it is
+    // done, but not because the group or the checks did it.
+    if (detail.skipped === 'force') return PlatformI18n.t('changes:step.force.skipped');
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     const gates = o.gates || [];
     // A step not reached yet says nothing, except where the columns already
@@ -27682,6 +27754,14 @@ const AppView = {
     if (!App.user?.isAdmin) return;
     const key = `admin-merge:${sessionId}`;
     if (AppView._voteInFlight.has(key)) return;
+    // One force at a time: a queued one is already what this click would ask
+    // for, so say so instead of sending a second request (the route refuses
+    // one too, in case two tabs race).
+    const row = AppView._findItem('proposal', Number(sessionId));
+    if (row && row.merge_force && typeof row.merge_force === 'object') {
+      PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.alreadyQueued'));
+      return;
+    }
     const ok = await ConfirmModal.show({
       title: PlatformI18n.t('changes:vote.forceMerge.title'),
       message: PlatformI18n.t('changes:vote.forceMerge.message'),
@@ -27698,7 +27778,14 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
+        if (data.error === 'already_queued') {
+          PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.alreadyQueued'));
+        } else {
+          PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
+        }
+      } else {
+        // Queued is not merged: say so, and what it waits on, straight away.
+        PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.queued'));
       }
       AppView.refreshDevData('vote');
     } catch (err) {

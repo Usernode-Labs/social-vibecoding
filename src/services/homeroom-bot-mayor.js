@@ -639,7 +639,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Add their words to a request that already exists when they ask you to (comment_on_request): drafted for its',
     '  public discussion under their name; once they tap Post it, you look at the request again. Say so.',
     '- Start one of their requests now when they ask you to (start_request): it goes to the front of your queue,',
-    '  and the result says whether you are on it or what it still waits for. Say exactly that.',
+    '  and the result says whether you are on it or what it still waits for. Say exactly that. When its result has',
+    '  `said`, say that and nothing else.',
     '- Withdraw one of your own changes that is still open when the person who asked for its request, or the',
     '  project\'s owner, asks you to (withdraw_proposal). It is withdrawn only once they tap Withdraw it under your',
     '  message, so ask them to. The one exception: a second change for a request that already has one approved',
@@ -5853,10 +5854,22 @@ async function startRequest(pool, ctx, args) {
   // named who. A go-ahead from that person is the decision the note asked
   // for, so the queued look records it rather than asking again.
   const { rows: lastLook } = await pool.query(
-    `SELECT verdict, reason FROM homeroom_bot_runs
+    `SELECT verdict, reason, go_ahead_decides, first_step FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, n],
   );
+  // 6 Nov 2026 (#6395): the last look left it for a person, and its read says
+  // a go-ahead cannot settle it (credentials, auth, billing, permissions,
+  // operator work outside the app, a non-append-only database change, or too
+  // big for one build). Queueing would only read it to the same answer.
+  if (lastLook[0]?.verdict === 'person' && lastLook[0].go_ahead_decides === false) {
+    return {
+      ok: false,
+      code: 'go_ahead_cannot',
+      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step }),
+      next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
+    };
+  }
   const goAhead = lastLook[0]?.verdict === 'person'
     && await botModule(deps).goAheadCounts(pool, app, requester, user.id);
   const queued = await botModule(deps).enqueueFront(pool, {
