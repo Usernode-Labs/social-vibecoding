@@ -7834,7 +7834,27 @@ const AppView = {
     // Not for a change whose code is missing: testing is not what it waits
     // on, and the page's notice says what is (_changeThreadView codeMissing).
     if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped' && !AppView._codeMissing(item)) {
-      note.push(item.check_state === 'failing' ? PlatformI18n.t('changes:page.votes.note.liveOnceFixed') : PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
+      if (item.check_state !== 'failing') {
+        note.push(PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
+      } else if (AppView._botBuilt(item)) {
+        // Homeroom bot's own change: it is fixing it (or stopped).
+        note.push(PlatformI18n.t('changes:page.votes.note.liveOnceFixed'));
+      } else if (mine) {
+        // #6389: your own change, made outside Homeroom, waits on your fix.
+        // Name the tool it was made in where the page knows it.
+        const agent = AppView.externalAgentProduct(item.external_agent);
+        note.push(agent
+          ? PlatformI18n.t('changes:page.votes.note.liveOnceYouFixIn', { agent })
+          : item.external_agent
+            ? PlatformI18n.t('changes:page.votes.note.liveOnceYouFixThere')
+            : PlatformI18n.t('changes:page.votes.note.liveOnceYouFix'));
+      } else {
+        // Somebody else's change: name who has to act.
+        const author = item.author || item.username || null;
+        note.push(author
+          ? PlatformI18n.t('changes:page.votes.note.liveOnceAuthorFixes', { author })
+          : PlatformI18n.t('changes:page.votes.note.liveOnceFixed'));
+      }
     }
     const fill = Math.min(yes, maj);
     return {

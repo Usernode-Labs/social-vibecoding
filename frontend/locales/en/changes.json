@@ -8851,6 +8851,22 @@
     "text": "It goes live once a fix passes testing.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page when the change has the votes it needs but its automated checks are failing."
   },
+  "page.votes.note.liveOnceYouFixIn": {
+    "text": "It goes live once you fix it in {{agent}} and the fix passes testing.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the change has the votes it needs but its automated checks fail, and the viewer made it outside Homeroom in {{agent}}, such as \"Claude Code\"."
+  },
+  "page.votes.note.liveOnceYouFixThere": {
+    "text": "It goes live once you fix it where you made it and the fix passes testing.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the change has the votes it needs but its automated checks fail, and the viewer made it outside Homeroom in a tool the page cannot name."
+  },
+  "page.votes.note.liveOnceYouFix": {
+    "text": "It goes live once you fix it and the fix passes testing.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the change has the votes it needs but its automated checks fail, and the viewer is the one who has to fix it."
+  },
+  "page.votes.note.liveOnceAuthorFixes": {
+    "text": "It goes live once {{author}} fixes it and the fix passes testing.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the change has the votes it needs but its automated checks fail, and someone else has to fix it. {{author}} is their username."
+  },
   "page.votes.note.liveOnceTested": {
     "text": "It goes live once testing passes.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page when the change has the votes it needs and its automated checks have not passed yet."

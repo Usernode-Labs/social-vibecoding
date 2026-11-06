@@ -230,8 +230,12 @@ export function toReviewItems(
   shape: (visuals: unknown, shots: unknown) => Visuals,
 ): ReviewItem[] {
   // #6019: a ballot and the bot's question are decided on their request's
-  // page; this flow draws the changes and decisions it knows.
-  return items.filter((item) => item.kind === 'proposal' || item.kind === 'governance').map((item) => {
+  // page; this flow draws the changes and decisions it knows. #6389: a
+  // change waiting on its author's fix has nothing to vote on, so it is
+  // left out of this flow too.
+  return items
+    .filter((item) => !(item.waitingOn && item.waitingOn.length))
+    .filter((item) => item.kind === 'proposal' || item.kind === 'governance').map((item) => {
     const change = item.kind !== 'governance';
     const v = change && (item.shots || item.visuals) ? shape(item.visuals || null, item.shots || null) : null;
     const screens = pickScreens(Array.isArray(v?.screens) ? v!.screens! : []);
