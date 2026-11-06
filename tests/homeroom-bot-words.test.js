@@ -27,6 +27,11 @@ function notes() {
     live.questionText({ question: 'a', plan: { questions: [{ question: 'One?' }, { question: 'Two?' }] } }),
     live.personText({ reason: 'That changes sign-in.' }),
     live.personText({ reason: 'Sign-in is a platform setting', platform: true, project: 'Plant Pal' }),
+    // #6395: a go-ahead cannot settle it, so the copy offers none.
+    live.personText({ reason: 'Moving credentials outside this app is operator work.', goAheadDecides: false, firstStep: 'Remove the dead line' }),
+    live.personHomeroomText({ reason: 'Moving credentials outside this app is operator work.', goAheadDecides: false, firstStep: 'Remove the dead line' }),
+    live.goAheadCannotText({ reason: 'Moving credentials outside this app is operator work.', firstStep: 'Remove the dead line' }),
+    live.goAheadCannotText({ reason: 'The whole thing is too big for one build.' }),
     live.emptyText({ reason: 'Nothing named.' }),
     live.proposalText({ link: 'https://x/1', prNumber: 12 }),
     live.liveText({ title: 'Dark mode' }),
@@ -149,6 +154,24 @@ test('#6311: a note built from internal words comes out in plain words, first pe
   assert.doesNotMatch(firstPerson(live.emptyText({ reason: 'The head commit names nothing.' })), /head commit/i);
   assert.equal(plainWords('in this checkout'), 'in the project\'s code');
   assert.equal(plainWords(''), '');
+});
+
+test('#6395: a go-ahead that cannot settle it says what can be built, and names no Go ahead', () => {
+  const own = live.personHomeroomText({
+    reason: 'It moves credentials outside this app.', goAheadDecides: false,
+    firstStep: 'Remove the dead bot token line',
+  });
+  assert.equal(own, 'I can\'t build all of this one: It moves credentials outside this app. '
+    + 'I can do this part here: Remove the dead bot token line.');
+  assert.doesNotMatch(own, /Go ahead/i);
+  assert.doesNotMatch(own, /@/, 'it names nobody who can say Go ahead');
+  assert.equal(live.goAheadCannotText({ reason: 'It moves credentials outside this app.', firstStep: 'Remove the dead line' }),
+    'A go-ahead can\'t change this one: It moves credentials outside this app. '
+    + 'I can do this part here: Remove the dead line.');
+  assert.equal(live.goAheadCannotText({ reason: 'The whole thing is too big for one build.' }),
+    'A go-ahead can\'t change this one: The whole thing is too big for one build. '
+    + 'Reply here if a smaller part would help.');
+  assert.doesNotMatch(live.goAheadCannotText({ reason: 'x', firstStep: 'Do the small part' }), /—/);
 });
 
 test('a follow-up\'s answer loses its header: the bubble already says who is talking', () => {

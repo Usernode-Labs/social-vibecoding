@@ -972,6 +972,40 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     );
     assert.deepEqual(replied, { outcome: 'replied', error: null });
   });
+
+  // 6 Nov 2026 (#6395): a plain "Go ahead" on a request, from the person the
+  // bot's last note named, is answered with no @ needed, however long after
+  // the note it comes. Anybody else's stays unanswered.
+  await t.test('#6395: a plain Go ahead from the person the last note named is heard on a request', async () => {
+    await pool.query(
+      'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6400, $2, $3)',
+      [app.id, evan.id, 'Note board'],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, created_at)
+       VALUES ($1, 6400, 'person', NOW() - INTERVAL '1 day')`,
+      [app.id],
+    );
+    const settings = { mode: 'live', voiceSession: true, voiceIssue: true, voiceChat: true, pausedApps: [] };
+    const someone = { id: sam.id, username: sam.username, isSynthetic: false, hasPlatformAccess: true };
+    const named = { id: evan.id, username: evan.username, isSynthetic: false, hasPlatformAccess: true };
+    const heard = async (who, content) => {
+      const id = await say(who, content, { type: 'issue', ref: 6400 });
+      const { rows: [row] } = await pool.query(
+        'SELECT id, user_id, content, msg_type, metadata, created_at FROM chat_messages WHERE id = $1', [id],
+      );
+      return voice.gate(pool, {
+        app, place: { type: 'issue', ref: 6400 }, row,
+        bot: { id: homeroomBot.id, username: 'homeroom_bot' }, settings,
+        speaker: who.id === evan.id ? named : someone,
+        deps: {},
+      });
+    };
+    assert.deepEqual(await heard(evan, 'Go ahead'), { speak: true, why: 'go_ahead' });
+    assert.deepEqual(await heard(evan, 'go ahead!'), { speak: true, why: 'go_ahead' });
+    assert.deepEqual(await heard(sam, 'Go ahead'), { speak: false, why: 'not_addressed' });
+    assert.deepEqual(await heard(evan, `Go ahead ${'x'.repeat(60)}`), { speak: false, why: 'not_addressed' });
+  });
 });
 
 // 3 Nov 2026 (#6213): one live set of suggested replies per thread. A newer
