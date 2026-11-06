@@ -2270,10 +2270,7 @@ const AppView = {
     const home = AppView._home();
     const fromHome = home && Array.isArray(home._apps)
       ? home._apps.find((a) => a && a.slug === slug) : null;
-    if (fromHome) return fromHome;
-    const fromBrowse = window.Browse && typeof Browse.appBySlug === 'function'
-      ? Browse.appBySlug(slug) : null;
-    return fromBrowse || null;
+    return fromHome || null;
   },
 
   // Only launch eagerly when the frame we'd mount is the same frame
@@ -4943,7 +4940,7 @@ const AppView = {
       // it (App._syncPlatformTabs, App._isChannelThread) and the hub is what
       // it hangs off. The reset above publishes 'none', which is right for
       // the hub and the board; this thread has somewhere to go up TO.
-      App.setBackIcon?.('arrow', App._hubHref?.(App.currentApp) || '#communities');
+      App.setBackIcon?.('arrow', App._hubHref?.(App.currentApp) || '/');
       AppView._renderChatSubView(content);
       return;
     }

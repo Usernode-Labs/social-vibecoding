@@ -3717,13 +3717,10 @@ test('#2915: declared checks open the Workshop page and the hub with a search on
   assert.ok(whole, 'a check opens the Workshop tab narrowed by ?q=');
   assert.match(whole.expectSelector, /\.dev-ws\[data-ws-tab="workshop"\]:not\(:has\(\[data-ws-empty\]\)\)/,
     'and expects no "nothing here" note on it');
-  // #4417, moved by One Home (#6361): the places list is behind the place
-  // bar's button on every width now (the sidebar nests none), so the check
-  // reads the bar naming the Workshop beside that button; the Workshop row's
-  // dot for the search is drawn in the tray it opens (ProjectPlaces
-  // `filtered`).
-  assert.match(whole.expectSelector, /:has\(> \[data-place-bar="workshop"\] \.dev-ws-places-btn \+ \[data-place-title\]\)/);
-  assert.match(whole.expectSelector, /\[data-ws-part="overview"\] \+ \[data-ws-dashboard\]$/, 'and its Overview stands whole');
+  // #4417: and the dot on the Workshop's row in the places list says the
+  // search is still on (folded into the same check: the row is lit there).
+  assert.match(whole.expectSelector, /\[data-places\] \[data-place="workshop"\]\[aria-current="page"\] \[data-ws-filtered\]/);
+  assert.match(whole.expectSelector, /:has\(> \[data-place-bar="workshop"\]\) \[data-ws-part="overview"\] \+ \[data-ws-dashboard\]$/, 'and its Overview stands whole');
 });
 
 test('#5391: the Overview names no categories; the "Most open work is in" chips and what fed them are gone', () => {
@@ -5767,7 +5764,8 @@ test('the Hub has its own address, #app/<slug>/dev/hub, for links that mean the 
   assert.deepEqual(parts, ['app', 'garden', 'workshop'], 'rewritten to the page\'s own address');
   assert.equal(view._workshopTab(), 'status', 'on its Hub');
   assert.equal(view._takePlaceDecision('garden'), true, 'a decision the /workshop link rule then honours');
-  assert.match(appSrc, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/);
+  // With no project, Home: the communities are Home's (One Home, #6361).
+  assert.match(appSrc, /_hubHref\(slug\) \{\s*(?:\/\/[^\n]*\n\s*)*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '\/';/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /id: 'open_community'[^\n]*target: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`/);
   assert.match(read('src/services/shared-objects.js'), /href: link\.type === 'hub' \? `#app\/\$\{slug\}\/dev\/hub`/);
 });

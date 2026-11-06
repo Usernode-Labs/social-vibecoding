@@ -82,9 +82,6 @@ test('L06: the bot\'s Needs you card shows its rows\' shape until the lists are 
   assert.match(src, /<SkeletonGroup label=\{t\('messages:ai\.work\.loading'\)\}[^>]*data-ai-loading="">/);
   const catalog = JSON.parse(read('frontend/locales/en/messages.json'));
   assert.equal(catalog['ai.work.loading'].text, 'Loading what needs you');
-  // Discover's list: the store's prerender value draws nothing, as before.
-  assert.match(read('frontend/src/features/apps/browse-store.js'), /\n  loading: false,/);
-  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /: state\.loading\n\s+\? <BrowseRowsLoading label=\{t\('discover:list\.loading'\)\} \/>/);
 });
 
 test('B14: the bot\'s Ask bar sticks on the tab bar, not behind it', () => {
@@ -104,12 +101,13 @@ test('the layout audit has the Android app\'s shape, with its navigation bar', a
   assert.match(read('scripts/layout-audit/run.mjs'), /un-platform=\$\{profile\.platform \|\| 'ios'\}/);
 });
 
-test('M01: on a narrow phone the lit Messages pill clears "Homeroom bot"; the audience chips fit at 393', () => {
+test('M01: on a narrow phone the lit Messages pill clears "Homeroom bot"', () => {
   // Home's and You's short words give the bot's and Messages' seats room;
   // four seats since One Home (#6361).
   assert.match(APP_CSS, /@media \(max-width: 767\.98px\) \{[\s\S]{0,600}#platform-tabs \{ grid-template-columns: 1fr 1\.4fr 1\.15fr 1fr; \}/);
   assert.match(APP_CSS, /@media \(max-width: 374\.98px\) \{[\s\S]{0,300}#platform-tabs \{ grid-template-columns: 1fr 1\.35fr 1\.15fr 1fr; \}/);
-  assert.match(read('frontend/src/features/workshop/index.tsx'), /className=\{key !== 'all' && !count \? 'hidden' : 'gap-1\.5 px-3'\}/);
+  // The audience chips that had to fit at 393 went with All communities'
+  // list (One Home, #6361).
 });
 
 test('U03: the header\'s title is on the left from 640px, as on phones and the iPad', () => {
