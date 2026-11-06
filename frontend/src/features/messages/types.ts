@@ -218,6 +218,12 @@ export interface HomeroomBotReady {
    * tellReady). The card then says so instead of "ready to try".
    */
   broken?: string[];
+  /**
+   * #6407: what the plan this change was built from draws and the change
+   * does not, when the pre-vote check found a miss (homeroom-bot-dm.js
+   * tellReady). `author` and `version` name that plan, when known.
+   */
+  offPlan?: { author: string | null; version: number | null; misses: string[] };
 }
 
 /**

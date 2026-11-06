@@ -98,7 +98,7 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
             ? t('home:join.votes', { count: app.open_votes })
             : t('home:join.members', { count: app.member_count || 0 })}
         </span>
-        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="h-8 py-0" data-home-join={app.slug}
+        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="h-8 min-h-[44px] py-0 md:min-h-0" data-home-join={app.slug}
           aria-label={t('home:join.buttonNamed', { community: app.name })}
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
           {t('home:join.button')}
@@ -106,13 +106,13 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
       </>
     ) : (
       <>
-        <Button type="button" variant="pillNeutral" size="sm" ink="neutral" className="h-8 flex-1 py-0" data-home-pin={app.slug}
+        <Button type="button" variant="pillNeutral" size="sm" ink="neutral" className="h-8 min-h-[44px] flex-1 py-0 md:min-h-0" data-home-pin={app.slug}
           aria-pressed={!!pinned?.has(app.slug)}
           aria-label={t('home:join.pinNamed', { community: app.name })}
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPin?.(app); }}>
           {pinned?.has(app.slug) ? t('home:join.pinned') : t('home:join.pin')}
         </Button>
-        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="h-8 py-0" data-home-join={app.slug}
+        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="h-8 min-h-[44px] py-0 md:min-h-0" data-home-join={app.slug}
           aria-label={t('home:join.buttonNamed', { community: app.name })}
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
           {t('home:join.button')}

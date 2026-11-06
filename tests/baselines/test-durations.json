@@ -1573,6 +1573,7 @@
 "tests/pinned-apps-store.test.js":[0.1,1.1],
 "tests/plan-card-notify-me.test.js":[0.3,1.1],
 "tests/plan-card-text.test.js":[0.7,0.6],
+"tests/plan-match.test.js":[0.2,1],
 "tests/platform-about-route.test.js":[0.2,1.4],
 "tests/platform-access-gate.test.js":[0.3,1.5],
 "tests/platform-assets-every-runtime.test.js":[0.2,1.4],
