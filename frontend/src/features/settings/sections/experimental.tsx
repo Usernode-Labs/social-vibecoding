@@ -44,6 +44,8 @@ import { LocalAgentsList } from '../local-agents-list';
  * window.Skin (src/head.html) stores it and sets data-skin="brand" on <html>
  * before first paint; app.css draws the look from that attribute, in light
  * mode only. settings.js paints and saves the switch through window.Skin.
+ * The look is "Baseplate" (request #6278): white cards on a light warm grey
+ * plate, sun yellow for what needs you, ink for where you are.
  *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
