@@ -9530,5 +9530,13 @@
   "page.votes.note.adminMergeNoName": {
     "text": "An admin",
     "description": "Stands in for an administrator's username under the Votes card when it was not recorded."
+  },
+  "governance.menu.copyLink": {
+    "text": "Copy link",
+    "description": "Row in the ⋯ menu on a governance vote's page: copies the address of the page to the clipboard."
+  },
+  "governance.menu.copyLinkDone": {
+    "text": "Link copied",
+    "description": "Brief notice after pressing Copy link on a governance vote's page: the link is on the clipboard."
   }
 }

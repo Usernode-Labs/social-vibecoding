@@ -50,6 +50,7 @@ import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead, RequestWords } from './request-head';
 import { ChangeThreadHead } from './change-head';
+import { GovernanceHead } from './governance-head';
 import { ThreadItems, pageSlug } from './thread-items';
 import { changeDetailAsk, changeDetailRow, mergeChangePatch } from './change-detail-refresh';
 import { DescriptionEditor } from './description-editor';
@@ -485,7 +486,7 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
  * and the policy's wording is the "How voting works" popover's — neither is
  * repeated here.
  */
-function Roster({ r }: { r: RosterView }): ReactNode {
+export function Roster({ r }: { r: RosterView }): ReactNode {
   const t = useMessages('project');
   if (r.phase === 'hidden') return null;
   if (r.phase === 'loading') return <span className="dev-ledger-roster">{t('project:topic.roster.loading')}</span>;
@@ -720,10 +721,14 @@ const GOVERNANCE_KINDS = new Set(['secret_change', 'rename', 'close_issue', 'mai
 
 export function TopicHead(): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
-  if (!card || !body) return null;
+  if (!body) return null;
   // #4453: a request's page is a Messages reply thread with the request as
   // its root post, not the card and its sheets.
   if (body.request) return <RequestHead key={`request:${body.request.number}`} r={body.request} />;
+  // #6440: a governance vote's page is the same thread, the vote as its root
+  // post. It has no card: the head IS the page.
+  if (body.decision) return <GovernanceHead key={`decision:${body.decision.id}`} row={body.decision} />;
+  if (!card) return null;
   // `back`: this IS the topic page, whose one back control is the chip at the
   // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
   // through here, a change page and an issue/governance thread head alike.

@@ -1401,7 +1401,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
  * words, because the empty state (the app icon shows instead) is a real
  * outcome a voter is deciding on, not a missing picture.
  */
-function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustration' }> }): ReactNode {
+export function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustration' }> }): ReactNode {
   const t = useMessages('project');
   const side = (label: string, which: 'current' | 'proposed', art: typeof x.proposed) => (
     <figure className="m-0 flex min-w-0 flex-1 flex-col gap-1" data-illustration-side={which}>

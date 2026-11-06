@@ -5315,6 +5315,10 @@ const AppView = {
     // notification that still carries one) forwards there in place of this
     // page (no Back entry), with its close card in view. Every other
     // decision draws the governance view below.
+    // #6440: a vote about ONE request or thread (a reopen, a merge or split
+    // somebody objected to) is drawn on that page, not on one of its own.
+    // Every producer of `dev/governance/<id>` keeps its address; this is
+    // where it lands, in place of this page (no Back entry).
     if (ref.kind === 'gov' && ref.id) {
       const asked = { kind: 'gov', id: ref.id };
       AppView._devTopic = asked;
@@ -5324,6 +5328,25 @@ const AppView = {
       if (closeHome) {
         window.UsernodeReact?.devBoard?.showClose?.(ref.id);
         AppView.openTopic('issue', closeHome, { replaceRoute: true });
+        return;
+      }
+      // Only a reopen or a merge/split vote can belong to a page of its own.
+      // A row the lists already hold says which it is (its `kind`), so the
+      // others are drawn straight from it with no by-id read.
+      const known = AppView._findTopicItem();
+      let home = known ? known.home : undefined;
+      if (home === undefined && (!known || ['reopen_issue', 'thread_move'].includes(known.kind))) {
+        home = await AppView._govHomeOf(ref.id);
+      }
+      if (AppView._devTopic !== asked || !document.getElementById('dev-topic-thread')) return;
+      // While it counts, the vote is drawn HERE — the thread layout with its
+      // Votes card — because the request's page does not carry one yet
+      // (#6439 builds that for close votes, and the reopen path follows it).
+      // An ENDED vote is only a fact about the request or thread, so it lands
+      // on that page.
+      const open = known ? known.status === 'open' : !!(home && home.open);
+      if (home && home.number && !open) {
+        await AppView.openTopic(home.kind === 'request' ? 'issue' : 'proposal', home.number, { replaceRoute: true });
         return;
       }
     }
@@ -5601,6 +5624,32 @@ const AppView = {
       return true;
     }
     return false;
+  },
+
+  // #6440: where a governance vote belongs, when it is about one request or
+  // thread: `{ kind: 'request'|'change', number }` from the vote's own row
+  // (routes/issues.js governance/:id `home`), or null when it has a page of
+  // its own. Asked once per vote and app; a failed read is "its own page".
+  _govHomes: new Map(),
+  async _govHomeOf(id) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(id);
+    if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const key = `${slug}:${n}`;
+    if (!AppView._govHomes.has(key)) {
+      const read = fetch(`/api/apps/${encodeURIComponent(slug)}/governance/${n}${AppView._demoQS()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const home = data && data.proposal && data.proposal.home;
+          const number = Number(home && home.number);
+          if (!home || !Number.isInteger(number) || number <= 0) return null;
+          return { kind: home.kind === 'request' ? 'request' : 'change', number, open: !!(data && data.proposal && data.proposal.status === 'open') };
+        })
+        .catch(() => null);
+      AppView._govHomes.set(key, read);
+      read.then((home) => { if (home == null) AppView._govHomes.delete(key); });
+    }
+    return AppView._govHomes.get(key);
   },
 
   // 1 Nov 2026 (one page per thread): the request whose page change `id`
@@ -6058,7 +6107,12 @@ const AppView = {
       // #4455: a change's page lives in the thread's header host too, as an
       // issue's and a governance topic's do.
       react.mountTopicHead(head);
-      react.publishTopicHead({ card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
+      // #6440: a governance vote's page is the thread layout a request's is,
+      // and its head draws the row itself (governance-head.tsx), so the page
+      // publishes the row and no card.
+      react.publishTopicHead(t.kind === 'gov'
+        ? { card: null, body: { decision: item }, item: null }
+        : { card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
     }
     // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
     // to dim them per paint is gone; this refreshes the one fact they read.
@@ -9763,6 +9817,10 @@ const AppView = {
       // #4453: a request's page is a Messages reply thread, the request its
       // root post, with its GitHub comments in the same stream.
       ...(t.kind === 'issue' ? { language: 'request', placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder') } : {}),
+      // #6440: a governance vote's page is that same reply thread, the vote
+      // its root post (topic/governance-head.tsx), with the proposal's own
+      // governance thread as its stream.
+      ...(t.kind === 'gov' ? { language: 'decision', placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder') } : {}),
       // #363: request the in-scroll header slot so _renderTopicHead can paint
       // the topic card/body above the messages in the same scroll region.
       withHeader: true,
@@ -21193,6 +21251,39 @@ const AppView = {
     // A window still running means the apply is deferred, not immediate.
     if (Number.isFinite(endsMs) && endsMs > Date.now()) return false;
     return true;
+  },
+
+  // #6440: the ⋯ on a governance vote's own page (topic/governance-head.tsx).
+  // Everything a person can do with the vote that is not the vote itself:
+  // its link, and — for the person who proposed it, while it is open —
+  // Withdraw.
+  _govDecisionMenu(row) {
+    if (!row) return [];
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const items = [
+      {
+        label: PlatformI18n.t('changes:governance.menu.copyLink'),
+        icon: 'link',
+        title: PlatformI18n.t('changes:governance.menu.copyLink'),
+        act: () => {
+          const url = `${window.location.origin}/#app/${slug}/dev/governance/${row.id}`;
+          Promise.resolve(PlatformUI.copyText(url)).then((ok) => {
+            if (ok && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:governance.menu.copyLinkDone'));
+          });
+        },
+      },
+    ];
+    const mine = !!(App.user && row.created_by === App.user.id);
+    if (mine && row.status === 'open') {
+      items.push({
+        label: PlatformI18n.t('changes:governance.menu.withdraw'),
+        icon: 'withdraw',
+        title: PlatformI18n.t('changes:governance.menu.withdrawTitle'),
+        danger: true,
+        act: () => AppView.withdrawGovProposal(row.id),
+      });
+    }
+    return items;
   },
 
   // One governance card (env-var change, or a legacy rename row still open

@@ -2273,7 +2273,7 @@
     {
       "name": "An illustration proposal's discussion page carries the same preview (#2086)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100077",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100077'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
+      "expectSelector": "#gc-thread-head [data-gov-root='9100077'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
       "expectText": "Change the featured illustration"
     },
     {

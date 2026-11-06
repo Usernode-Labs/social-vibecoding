@@ -43,6 +43,61 @@ const { isGovernanceKind } = require('../services/governance-kinds');
 const BOARD_SEARCH_MIN_CHARS = 2;
 const BOARD_SEARCH_MAX_HITS = 200;
 
+// #6440: where a governance vote belongs, when it is about one request or
+// thread rather than the project. `reopen_issue` is about the request it
+// would bring back; `thread_move` is about the thread it would merge or
+// split. Both are drawn on that page, and `dev/governance/<id>` forwards
+// there. Every other kind (and a row whose target cannot be resolved) is
+// `null`: the vote has a page of its own.
+async function governanceHome(pool, proposal) {
+  const payload = (proposal && proposal.payload) || {};
+  if (proposal.kind === 'reopen_issue') {
+    const n = Number(payload.issueNumber);
+    return Number.isInteger(n) && n > 0 ? { kind: 'request', number: n } : null;
+  }
+  if (proposal.kind === 'thread_move') {
+    // The thread the move is about, through any merges, and its number: a
+    // request's and a change's numbers are one sequence (app-numbers), so
+    // the client opens the page that number names.
+    let thread = null;
+    if (payload.moveId != null && pool) {
+      try {
+        const { rows } = await pool.query('SELECT thread_id FROM thread_moves WHERE id = $1', [Number(payload.moveId)]);
+        const threadId = rows[0] && rows[0].thread_id;
+        if (threadId != null) thread = await require('../services/threads').threadById(pool, threadId);
+      } catch (err) {
+        log.warn('issues', 'Could not resolve a thread move\'s thread', { message: err.message });
+      }
+    }
+    const n = Number(thread && thread.number != null ? thread.number : payload.threadNumber);
+    return Number.isInteger(n) && n > 0 ? { kind: 'request', number: n } : null;
+  }
+  return null;
+}
+
+// #6440: how a governance vote stands or ended, in one word the decision
+// page reads: `open`, `applying` (passed, being carried out), `applied`,
+// `refused`, `withdrawn` or `superseded`. The same facts `_govApplyState`
+// reads on the client, so the page never says "waiting for votes" once the
+// vote has ended.
+function governanceOutcome(proposal) {
+  if (!proposal) return 'open';
+  const p = proposal.payload || {};
+  if (p.appliedAt) {
+    return String(p.appliedBy || '').startsWith('refused:') ? 'refused' : 'applied';
+  }
+  if (p.withdrawnAt || proposal.status === 'withdrawn') return 'withdrawn';
+  if (p.supersededAt) return 'superseded';
+  if (proposal.status && proposal.status !== 'open') return 'applied';
+  const yes = Number(proposal.qualified_yes_count != null ? proposal.qualified_yes_count : proposal.up_count) || 0;
+  const need = Number(proposal.approvals_required != null ? proposal.approvals_required : proposal.votes_required) || 0;
+  const ends = proposal.merge_window_ends_at ? Date.parse(proposal.merge_window_ends_at) : NaN;
+  if (need > 0 && yes >= need && !proposal.contested && Number.isFinite(ends) && ends <= Date.now()) {
+    return 'applying';
+  }
+  return 'open';
+}
+
 // An issue id from the path, or null when it is not a positive integer that
 // fits `issues.id` (SERIAL). Answered as 404 rather than handed to Postgres
 // as a bad cast, which would surface as a 500.
@@ -1245,6 +1300,13 @@ function issueRoutes(config) {
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      // #6440: where this vote belongs. A vote about one request or thread is
+      // drawn on that page, not on a page of its own: the client forwards
+      // `dev/governance/<id>` there. Every other kind stays here (`null`).
+      proposal.home = await governanceHome(pool, proposal);
+      // #6440: how it ended, in one word the page's Votes card reads, so it
+      // never says "waiting for votes" after the vote ended.
+      proposal.outcome = governanceOutcome(proposal);
       res.json({ proposal });
     } catch (err) {
       log.error('issues', 'Failed to get governance proposal by id', { message: err.message });

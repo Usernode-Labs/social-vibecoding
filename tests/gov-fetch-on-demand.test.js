@@ -436,3 +436,95 @@ test('the governance refresh no-ops when a list holds the row', async () => {
   await AppView._refreshTopicOnDemandRow();
   assert.equal(fetches, 0, 'the completed page holds it');
 });
+
+// #6440: a vote about one request or thread is not drawn on a page of its
+// own. The address stays; `_renderTopicSubView` asks the row where it belongs
+// (`home`, from routes/issues.js governance/:id) and opens that page in place
+// of this one, with no Back entry — as a change's address lands on its
+// request's page.
+test('an ENDED vote about a request forwards to that request’s page, and mounts no decision thread', async () => {
+  const row = closeRow({
+    id: 9100081, kind: 'reopen_issue', status: 'closed', row_type: undefined,
+    payload: { issueNumber: 12, issueTitle: 'Dark mode toggle resets', appliedAt: '2026-11-01T00:00:00Z', appliedBy: 'group-vote' },
+    home: { kind: 'request', number: 12 },
+  });
+  const opened = [];
+  const { AppView } = makeAppView({
+    thread: makeEl('dev-topic-thread'),
+    fetchImpl: async (url) => {
+      if (/\/governance\/9100081/.test(url)) return { ok: true, json: async () => ({ proposal: row }) };
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  AppView._devDataSlug = 'demo';
+  AppView._govProposals = [row];
+  AppView._merged = [];
+  AppView._loadDevData = async () => true;
+  let mounted = 0;
+  AppView._mountTopicThread = () => { mounted++; };
+  AppView._renderTopicHead = () => {};
+  AppView.openTopic = async (kind, id, options) => { opened.push({ kind, id, options }); };
+
+  await AppView._renderTopicSubView(makeEl('content'), { kind: 'gov', id: 9100081 });
+
+  assert.equal(opened.length, 1, 'one page opened');
+  assert.equal(opened[0].kind, 'issue', 'the request’s page');
+  assert.equal(opened[0].id, 12);
+  assert.equal(opened[0].options.replaceRoute, true, 'in place of this address, with no Back entry');
+  assert.equal(mounted, 0, 'no decision page is drawn');
+});
+
+test('a vote about the project draws its own page and forwards nowhere', async () => {
+  const row = closeRow({ id: 9100070, kind: 'rename', status: 'open', row_type: undefined,
+    title: '[Mock] Rename app', payload: { newName: 'Staging Demo App' } });
+  const opened = [];
+  const { AppView } = makeAppView({
+    thread: makeEl('dev-topic-thread'),
+    fetchImpl: async (url) => {
+      if (/\/governance\/9100070/.test(url)) return { ok: true, json: async () => ({ proposal: { ...row, home: null } }) };
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  AppView._devDataSlug = 'demo';
+  AppView._govProposals = [row];
+  AppView._merged = [];
+  AppView._loadDevData = async () => true;
+  let mounted = 0;
+  AppView._mountTopicThread = () => { mounted++; };
+  AppView._renderTopicHead = () => {};
+  AppView.openTopic = async (...args) => { opened.push(args); };
+
+  await AppView._renderTopicSubView(makeEl('content'), { kind: 'gov', id: 9100070 });
+
+  assert.deepEqual(opened, [], 'it stays on its own page');
+  assert.equal(mounted, 1, 'the thread is mounted');
+});
+
+test('an OPEN vote about a request is drawn here, with its Votes card, until it ends', async () => {
+  const row = closeRow({
+    id: 9100082, kind: 'reopen_issue', status: 'open', row_type: undefined,
+    payload: { issueNumber: 12, issueTitle: 'Dark mode toggle resets' },
+    home: { kind: 'request', number: 12 },
+  });
+  const opened = [];
+  const { AppView } = makeAppView({
+    thread: makeEl('dev-topic-thread'),
+    fetchImpl: async (url) => {
+      if (/\/governance\/9100082/.test(url)) return { ok: true, json: async () => ({ proposal: row }) };
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  AppView._devDataSlug = 'demo';
+  AppView._govProposals = [row];
+  AppView._merged = [];
+  AppView._loadDevData = async () => true;
+  let mounted = 0;
+  AppView._mountTopicThread = () => { mounted++; };
+  AppView._renderTopicHead = () => {};
+  AppView.openTopic = async (...args) => { opened.push(args); };
+
+  await AppView._renderTopicSubView(makeEl('content'), { kind: 'gov', id: 9100082 });
+
+  assert.deepEqual(opened, [], 'no forward while it counts');
+  assert.equal(mounted, 1, 'the decision page is drawn, with the vote on it');
+});
