@@ -2553,10 +2553,10 @@ async function seedStagingNewerPlan(pool) {
       `INSERT INTO chat_sessions
          (id, app_id, user_id, branch_name, session_title, pr_title, pr_number, status, linked_issues, promoted_at,
           built_from_session_id, built_from_version, created_at, last_activity_at)
-       SELECT $8::int, $1::int, $2::int, 'staging-fixture/newer-plan', $3::text, $3::text, 178, 'promoted', ARRAY[$4::int]::int[],
+       SELECT $6::int, $1::int, $2::int, 'staging-fixture/newer-plan', $3::text, $3::text, 178, 'promoted', ARRAY[$4::int]::int[],
               NOW() - INTERVAL '1 hour', $5::int, 1, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour'
-        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $8::int)`,
-      [appId, userId, title, number, PLAN_SESSION_ID, null, null, CHANGE_SESSION_ID],
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $6::int)`,
+      [appId, userId, title, number, PLAN_SESSION_ID, CHANGE_SESSION_ID],
     );
     const bot = await pool.query(
       `INSERT INTO users (username, password, is_synthetic, display_name)
