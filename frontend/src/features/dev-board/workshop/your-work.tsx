@@ -9,8 +9,9 @@
  *   [bot] Your work                    Needs you: 2 · In progress: 1  ›
  *         Next: Dark mode
  *
- * The Workshop draws it as a card of its own under Overview (YourWorkCard);
- * the Hub's For you card draws the same row among its doors (hub-cards.tsx).
+ * The Workshop draws it as a card of its own under Overview (YourWorkCard).
+ * Until 6 Nov 2026 the Hub's For you card drew the same row among its doors
+ * (hub-cards.tsx); that row is the Workshop's now, at every width.
  * It replaced the Workshop's Waiting on you, Your work and Up next, and the
  * Hub's Your work row, which counted from the board's own buckets.
  *

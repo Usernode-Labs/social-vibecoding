@@ -2205,10 +2205,10 @@
       "expectText": "Your work"
     },
     {
-      "name": "Hub: For you's Your work row opens Homeroom bot narrowed to this project",
+      "name": "Hub: For you's Workshop row opens the project's Workshop",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > a[data-ws-mine-card][data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
-      "expectText": "Your work"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-workshop-row]",
+      "expectText": "Workshop"
     },
     {
       "name": "Foreign proposal: Explore in a coding agent is a row of the sheet’s ⋯ (#827, #4455); the Votes step names who voted, with How voting works as the ? at the line’s end",
