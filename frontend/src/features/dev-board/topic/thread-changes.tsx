@@ -284,12 +284,12 @@ export function PlanLine({ plan, builtFrom }: { plan: RequestSpecCard; builtFrom
       <span aria-hidden="true">📋</span>
       {/* The phrase truncates from its end, so "Built from v1 of the plan"
           always stays readable and only the plan's title is cut. */}
-      <span className="min-w-0 flex-1 truncate" title={fromPlan}>{fromPlan}</span>
+      <span className="min-w-0 truncate" title={fromPlan}>{fromPlan}</span>
       {/* On a phone the row is too narrow to hold this beside Read, so it
           drops to its own second line rather than squeezing the title out. */}
       {newer && newerText ? (
         <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-300 max-sm:order-last max-sm:w-full" data-thread-change-newer-plan={newer.version}>
-          <span aria-hidden="true">·</span>{' '}{newerText}
+          <span aria-hidden="true">· </span>{newerText}
         </span>
       ) : null}
       <button

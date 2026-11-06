@@ -289,8 +289,8 @@ test('#6406: a post tells the bot about the version, and never fails on it', asy
     app: APP, repo: REPO, issueNumber: 4041, user: ADA, text: HTML,
   }, d);
   assert.equal(d.sent.newerPlans.length, 1);
-  assert.equal(d.sent.newerPlans[0].sessionId, out.sessionId);
-  assert.equal(d.sent.newerPlans[0].version, out.version);
+  assert.equal(d.sent.newerPlans[0].posted.sessionId, out.sessionId);
+  assert.equal(d.sent.newerPlans[0].posted.version, out.version);
   assert.equal(d.sent.newerPlans[0].posted.user.username, 'ada');
 
   const throwing = fakeDeps({ planUpdates: { async noticeNewerPlan() { throw new Error('bot down'); } } });
