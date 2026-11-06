@@ -1253,6 +1253,10 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   overflow-wrap: anywhere;
 }
 .messages-message-self .messages-bubble { background: var(--accent-tint); }
+/* Task 2020: a Homeroom bot answer laid out (features/messages/bot-html.tsx)
+   is drawn in a frame, which has no width of its own to shrink the bubble
+   to, so the bubble takes the row's width, up to a reading measure. */
+.messages-bubble.messages-bubble-rich { width: 100%; max-width: min(100%, 720px); }
 .messages-message-bubble .messages-attachments,
 .messages-message-bubble .messages-object-list { width: 100%; max-width: 78%; }
 /* A saved message in a bubble is outlined in the accent: the inset bar a
