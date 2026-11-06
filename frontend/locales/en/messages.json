@@ -1715,6 +1715,10 @@
     "text": "No longer needed.",
     "description": "Line under a question from Homeroom bot once it no longer applies."
   },
+  "bot.dbRead.note": {
+    "text": "A database read happened in this thread. Check this holds nothing private before you post it.",
+    "description": "Line under a card in a platform admin's private chat with Homeroom bot that would post something publicly (a request to file, a reply, a plan), shown when the bot read the production database in that thread, so the admin checks the draft quotes nothing private."
+  },
   "bot.actions.questionsYouCanAsk": {
     "text": "Questions you can ask",
     "description": "Accessible name of the group of buttons under a message from Homeroom bot when each button is a question the person can ask it."

@@ -88,6 +88,12 @@ export interface HomeroomBotMeta {
   issueTitle?: string;
   firstVersion?: boolean;
   mirrors?: boolean;
+  /**
+   * #6427: an offer that posts somewhere public, made in a thread where a
+   * database read happened (an admin's query_prod_db), says so before the
+   * tap (./bot-question.tsx DbReadNote).
+   */
+  dbRead?: boolean;
   question?: string;
   answers?: string[];
   status?: 'open' | 'answered' | 'closed';
