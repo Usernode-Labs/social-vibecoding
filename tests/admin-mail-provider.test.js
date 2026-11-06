@@ -205,7 +205,17 @@ test('an unreadable setting, or no pool, leaves the deploy\'s choice in force', 
   assert.equal(await select.savedChoice(pool), null, 'a broken table is no choice, and no throw');
   select.invalidate();
   settingsBroken = false;
-  assert.equal(await select.savedChoice(pool), 'brevo');
+  const t0 = 2_000_000;
+  assert.equal(await select.savedChoice(pool, { now: t0 }), 'brevo');
+
+  // Once a choice has been read, a read that fails keeps it: a hiccup must
+  // not move mail back to the boot provider until the next good read.
+  settingsBroken = true;
+  assert.equal(await select.savedChoice(pool, { now: t0 + select.CACHE_MS }), 'brevo');
+  settingsBroken = false;
+  settings.delete('mail_provider');
+  assert.equal(await select.savedChoice(pool, { now: t0 + 2 * select.CACHE_MS }), null, 'a good read is believed');
+
   assert.equal(await select.savedChoice(null), null, 'a caller with no pool never sees a cached choice');
 });
 
@@ -418,6 +428,62 @@ test('the delivery reports follow the provider in force', async () => {
     else process.env.BREVO_MAIL_WEBHOOK_TOKEN = token;
     server.close();
   }
+});
+
+// ── the card ───────────────────────────────────────────────────────────
+//
+// Rendered for real: which option is checked and which are disabled is
+// decided at render time, and a declared check (a view-only admin, no
+// clicks) never sees a full admin's Save button.
+
+function drawCard(status, write) {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx.js');
+  const mod = loadTsx('frontend/src/features/admin/admin-mail.tsx', {
+    stubs: {
+      './admin-console.js': {
+        AdminUI: new Proxy({}, {
+          get: (_t, key) => (['btn', 'badge'].includes(key)
+            ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` })
+            : String(key)),
+        }),
+      },
+      '../../lib/legacy-portals': { mountLegacyPortal() {}, unmountLegacyPortal() {} },
+    },
+  });
+  return renderToHtml(createElement(mod.ProviderCard, { status, write, onSaved() {} }));
+}
+
+const radio = (html, name) => (html.match(new RegExp(`<input[^>]*value="${name}"[^>]*>`)) || [''])[0];
+
+test('the card checks the provider in force and locks the ones that are not ready', () => {
+  const status = select.describe({ ...GMAIL_ENV, BREVO_API_KEY: 'k', USERNODE_ENV: 'production' });
+  const html = drawCard(status, true);
+  assert.match(html, /id="admin-mail-provider"/);
+  assert.match(html, /Email is sent by/);
+  assert.match(radio(html, 'gmail'), /checked=""/, 'under auto, the provider that is sending is the one shown');
+  assert.doesNotMatch(radio(html, 'gmail'), /disabled/);
+  assert.doesNotMatch(radio(html, 'brevo'), /checked|disabled/, 'Brevo is ready, so it can be picked');
+  assert.match(radio(html, 'http'), /disabled=""/, 'the HTTP API lacks its settings');
+  assert.match(html, /Needs <span><code[^>]*>TOPOCHAIN_MAIL_API_URL<\/code>/, 'and the card names them');
+  assert.match(html, /<button id="admin-mail-provider-save"[^>]*disabled=""/, 'nothing to save until another one is picked');
+  assert.match(html, /The deploy’s default: Gmail/);
+
+  const saved = drawCard(select.describe({ ...GMAIL_ENV, BREVO_API_KEY: 'k', USERNODE_ENV: 'production' }, { saved: 'brevo' }), true);
+  assert.match(radio(saved, 'brevo'), /checked=""/);
+  assert.match(saved, /Saved by an admin\. That choice wins over the deploy’s default\./);
+});
+
+test('a view-only admin reads the card and cannot change it', () => {
+  const html = drawCard(select.describe({ ...GMAIL_ENV, BREVO_API_KEY: 'k', USERNODE_ENV: 'production' }), false);
+  for (const name of ['gmail', 'http', 'brevo']) assert.match(radio(html, name), /disabled=""/);
+  assert.doesNotMatch(html, /admin-mail-provider-save/);
+  assert.match(html, /Changing who sends email needs full admin access\./);
+});
+
+test('on a staging preview every provider can be tried, and the card says it only logs', () => {
+  const html = drawCard(select.describe({ USERNODE_ENV: 'staging' }), true);
+  for (const name of ['gmail', 'http', 'brevo']) assert.doesNotMatch(radio(html, name), /disabled/);
+  assert.match(html, /This preview saves the choice and still only logs\./);
 });
 
 // ── wiring ─────────────────────────────────────────────────────────────

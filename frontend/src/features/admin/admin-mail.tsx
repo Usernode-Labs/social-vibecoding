@@ -730,4 +730,8 @@ const AdminMail = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminMail = AdminMail;
 
-export { AdminMail };
+// ProviderCard is exported for tests/admin-mail-provider.test.js, which
+// renders it: which option is checked and which are disabled is decided at
+// render time, and no declared check sees a full admin's Save button (the
+// checker is a view-only admin).
+export { AdminMail, ProviderCard };

@@ -175,9 +175,11 @@ let cache = null; // { at, value }: the saved provider, or null when none is
 
 /**
  * The provider an admin saved, or null. Cached for ten seconds, and never
- * throws: with no pool, no row, an unknown value or an unreadable table the
- * answer is null, which leaves the deploy's own choice in force, so a broken
- * database cannot take sign-in codes down with it.
+ * throws: with no pool, no row or an unknown value the answer is null, which
+ * leaves the deploy's own choice in force. A read that fails keeps the last
+ * answer this process had (null before the first one), so a database hiccup
+ * neither takes sign-in codes down nor moves mail back to another provider
+ * for ten seconds.
  */
 async function savedChoice(pool, { now = Date.now() } = {}) {
   if (!pool) return null;
@@ -190,6 +192,7 @@ async function savedChoice(pool, { now = Date.now() } = {}) {
   } catch (err) {
     // platform_settings may not exist yet on a very first boot.
     log.warn('platform-mail', 'mail_provider read failed', { message: err.message });
+    value = cache ? cache.value : null;
   }
   cache = { at: now, value };
   return value;
