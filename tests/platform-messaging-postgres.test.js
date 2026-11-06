@@ -61,6 +61,8 @@ const DDL = `
     joined_at TIMESTAMPTZ,
     left_at TIMESTAMPTZ,
     last_read_message_id INTEGER,
+    -- #6426: when this member last looked at the conversation.
+    last_visit_at TIMESTAMPTZ,
     invite_note TEXT,
     PRIMARY KEY (conversation_id, user_id)
   );
