@@ -752,22 +752,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
   ].join('\n');
 }
 
-// Task 2020 (the owner's task-assistant v1): how the reply's `html` is
-// written. The chat draws it in place of the words, in a frame with scripts
-// off that loads nothing, with these colour names set to its own tokens for
-// light and dark (frontend/src/features/messages/bot-html.tsx REPLY_TOKENS).
-const REPLY_HTML_DESCRIPTION = [
-  'For any reply longer than two short lines: the same answer, laid out, as an HTML fragment. The chat shows it in',
-  'place of text. Use what fits: short headings, short paragraphs, lists, steps, a table, option cards, a timeline or',
-  'a small inline SVG diagram. Self-contained and under 30000 characters: no scripts (they never run), no buttons or',
-  'forms (nothing in it can be tapped but a link), no images, fonts or anything else from another address. Styles',
-  'inline or in one <style> block, and colours only as var(--ink) var(--ink-2) var(--muted) var(--line)',
-  'var(--surface) var(--surface-2) var(--accent) var(--accent-tint) var(--green) var(--red) var(--orange), so it',
-  'follows light and dark mode. It is drawn 280 to 680 px wide: it must read well on a phone. Calm: mostly neutral,',
-  'one accent at most, the font the chat gives it. A link only as a short labelled <a href>, to a link a tool',
-  'returned, never a raw address. It says exactly what text says, no more: text stays the plain version that',
-  'notifications, search and translation read. Small talk, short answers and a line under a draft have no html.',
-].join(' ');
+// Task 2020: how the reply's `html` is written, shared with the thread voice.
+const { REPLY_HTML_DESCRIPTION } = replyHtml;
 
 const TOOLS = [
   {
@@ -2410,9 +2396,7 @@ function answerText(besides = [], text = '') {
  * draws in the text's place.
  */
 function checkedWords(ctx, finalText = '') {
-  const said = answerText(ctx?.besides, ctx?.reply?.text ?? finalText);
-  const shown = ctx?.reply?.html ? replyHtml.htmlWords(ctx.reply.html) : '';
-  return shown ? `${said}\n\n${shown}` : said;
+  return replyHtml.withHtmlWords(answerText(ctx?.besides, ctx?.reply?.text ?? finalText), ctx?.reply?.html);
 }
 
 /**
