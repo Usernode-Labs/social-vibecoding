@@ -580,9 +580,11 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await communities.join(pool, swap, me.id);
     // #6245: the feed is ordered by when the vote opened (promoted_at), never
     // by a change's last activity, so that is what these rows set.
+    // #6402: a change is owed only once its checks passed, so these fixtures
+    // are ready changes; this test is about the feed's order and contents.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, promoted_at)
-       VALUES ($1, $2, 'promoted', $3, '## Why\n- because', 7, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, '## Why\n- because', 7, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(garden, 'Older change', '2 days');
     const newer = await promote(swap, 'Newer change', '1 hour');
@@ -630,9 +632,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     // A rule asking for two Yes votes keeps the vote, as on the card.
     await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [strict.id]);
     // #6245: a vote's place is when it opened, not the change's last activity.
+    // #6402: ready changes only, so the feed still owes these votes.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at)
-       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, bot.id, title, ago])).rows[0].id;
     await promote(mine, 'Sunday reminder', '1 hour');
     await promote(strict, 'Two to say yes', '2 hours');
@@ -662,9 +665,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await pool.query('UPDATE apps SET approver_policy = \'invited\' WHERE id = $1', [approvers.id]);
     await pool.query('INSERT INTO app_approvers (app_id, user_id) VALUES ($1, $2)', [approvers.id, author.id]);
     // #6245: a vote's place is when it opened, not the change's last activity.
+    // #6402: ready changes only, so the feed still owes these votes.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at)
-       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(plain, 'Older deciding change', '2 days');
     const newer = await promote(approvers, 'Newer advisory change', '1 hour');
@@ -690,7 +694,8 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     for (const a of [kept, suspended]) {
       await communities.join(pool, a, me.id);
       const { rows: [s] } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, status, pr_title) VALUES ($1, $2, 'promoted', 'Owed vote') RETURNING id`,
+        `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, check_state)
+         VALUES ($1, $2, 'promoted', 'Owed vote', 'passing') RETURNING id`,
         [a.id, author.id]);
       owedIds[a.slug] = s.id;
     }
@@ -731,8 +736,8 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
        VALUES ($1, $2, 'active', 'Add dark mdoe toggel', 'Add a dark mode toggle', 'feature/typo')`,
       [mine.id, me.id]);
     await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, proposed_pr_title, pr_title)
-       VALUES ($1, $2, 'promoted', 'Add dark mdoe toggel', 'Add a dark mode toggle', NULL)`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, proposed_pr_title, pr_title, check_state)
+       VALUES ($1, $2, 'promoted', 'Add dark mdoe toggel', 'Add a dark mode toggle', NULL, 'passing')`,
       [theirs.id, author.id]);
 
     const items = (await pool.query(overview.ITEMS_SQL,

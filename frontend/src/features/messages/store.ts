@@ -1413,8 +1413,7 @@ export function isMobile(): boolean {
 
 /**
  * One pane at a time: a phone. (#4229's strip too narrow for both is gone:
- * on a desktop the list is in the sidebar, never beside the conversation,
- * ./index.tsx `messages-list-in-rail`.)
+ * from 768px the list sits beside the conversation, ./index.tsx.)
  */
 function listAside(): boolean {
   return isMobile();
