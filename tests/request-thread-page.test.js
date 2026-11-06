@@ -197,6 +197,41 @@ function appView(username = 'evan', globals = {}) {
   return c.av;
 }
 
+/** app-view.js in a sandbox whose `location` and `querySelector` a test owns. */
+function sandboxAppView(location, query) {
+  const c = {
+    console,
+    App: { user: { id: 42, username: 'evan' }, currentApp: 'example' },
+    relTime: () => 'just now',
+    document: {
+      getElementById: () => null,
+      querySelector: (sel) => query[sel] || null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener() {},
+      createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
+      body: { appendChild: () => {} },
+      documentElement: {},
+    },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    addEventListener() {},
+    dispatchEvent() {},
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init && init.detail; } },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    location, URLSearchParams,
+  };
+  c.window = c;
+  c.globalThis = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  require('./lib/repo-link').installRepoLink(c);
+  vm.createContext(c);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), c);
+  vm.runInContext('globalThis.av = AppView', c);
+  c.av.appData = { slug: 'example', can_collaborate: true };
+  c.av._govProposals = [];
+  return c.av;
+}
+
 const issue = (patch = {}) => ({
   number: 4417, state: 'open', title: 'Add topics', created_by_username: 'evan',
   body: '**Source:** Homeroom admin (evan)\n\nConsider "topics" as other channels.',
@@ -309,9 +344,63 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   const button = (bot) => av._issuePrimaryActionSpec(issue({ bot }), { noNav: true });
   // #6210: a plan opens its request's page at the plan, for anyone.
   assert.equal(button({ what: 'queued', plan: true, askedBy: 'sam' }).label, 'See the plan');
-  assert.equal(JSON.stringify(button({ what: 'queued', plan: true, askedBy: 'sam' }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number] }));
+  assert.equal(JSON.stringify(button({ what: 'queued', plan: true, askedBy: 'sam' }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number, 'plan'] }));
+  // #6401: See progress names the progress card, not the plan.
+  assert.equal(JSON.stringify(button({ what: 'building', askedBy: 'sam', mine: true }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number, 'progress'] }));
   assert.equal(button({ what: 'queued', held: true }).label, 'Homeroom bot will build this');
   assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
+});
+
+// #6401: pressing See progress from the Workshop list does not redraw the
+// page when the side panel is already on it (its route is the path, the hash
+// empty), lands on the card the label names even when the plan is there, and
+// outlines that card.
+test('#6401 See progress and See the plan land on the card their label names, without redrawing the page', () => {
+  const calls = [];
+  const card = (track) => ({
+    getAttribute: (name) => (name === 'data-request-track' ? track : null),
+    scrollIntoView: (opts) => calls.push({ card: track || 'plan', scroll: opts }),
+    animate: (frames, opts) => calls.push({ card: track || 'plan', animate: opts, frames }),
+  });
+  const location = { hash: '', pathname: '/app/example/dev/issues/4417' };
+  const query = { '.dev-request-track': card('reading'), '[data-request-plan]': card(null) };
+  const av = sandboxAppView(location, query);
+  av.openBotChatFromRequest(4417, 'progress');
+  assert.equal(location.hash, '', 'the side panel is already on the request: no hash, no redraw');
+  assert.equal(calls[0].card, 'reading');
+  assert.equal(calls[0].scroll.block, 'center');
+  assert.equal(calls[0].scroll.behavior, 'smooth');
+  assert.equal(calls[1].card, 'reading', 'the progress card, not the plan card beside it');
+  assert.equal(calls[1].animate.duration, 1600);
+  assert.match(calls[1].frames[0].outline, /^3px solid /);
+  assert.equal(calls[1].frames[2].outline, '3px solid transparent', 'it fades back to normal');
+
+  // See the plan lands on the plan, with no fallback to the progress card.
+  calls.length = 0;
+  av.openBotChatFromRequest(4417, 'plan');
+  assert.equal(location.hash, '');
+  assert.deepEqual(calls.map((c) => c.card), ['plan', 'plan']);
+
+  // From the board, the hash is written and the page draws.
+  const board = { hash: '#app/example/dev/workshop', pathname: '/app/example/dev/workshop' };
+  const away = sandboxAppView(board, query);
+  away.openBotChatFromRequest(4417, 'progress');
+  assert.equal(board.hash, '#app/example/dev/issues/4417');
+});
+
+// #6401: the progress card drawn from the board's older row (`pending`) is
+// not landed on: the loop waits for the fresh row.
+test('#6401 a pending progress card is waited for, not scrolled to', () => {
+  const calls = [];
+  const pending = {
+    getAttribute: () => 'pending',
+    scrollIntoView: () => calls.push('scroll'),
+    animate: () => calls.push('animate'),
+  };
+  const av = sandboxAppView({ hash: '#app/example/dev/issues/4417', pathname: '/' },
+    { '.dev-request-track': pending, '[data-request-plan]': null });
+  av.openBotChatFromRequest(4417, 'progress');
+  assert.deepEqual(calls, [], 'the hidden card holds its place unseen');
 });
 
 // #6387: a change whose checks failed cannot go live, however many yes votes
