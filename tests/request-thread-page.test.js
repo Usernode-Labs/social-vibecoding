@@ -314,6 +314,37 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
 });
 
+// #6387: a change whose checks failed cannot go live, however many yes votes
+// it still needs; the status card says that instead of counting them.
+test('#6387 the status card says a failing check holds the change back', () => {
+  const av = appView();
+  av.voteState = { bySession: { 9: { id: 9, status: 'promoted' } }, byPrNumber: {} };
+  av.statusPillState = () => ({ yes: 1, majority: 3 });
+  const change = { sessionId: 9, state: 'review', prNumber: 12, title: 'Topics' };
+  const failing = { work: { stage: 'checking', line: { code: 'checks_failing', failing: 1 } } };
+  assert.equal(av._requestStatusView(issue({ addressed_by: change, track: failing })).lead,
+    'Up for a vote, but a test is failing. It needs a fix before it can go live.');
+  assert.equal(av._requestStatusView(issue({ addressed_by: change, track: { work: { stage: 'checking', line: { code: 'checks_running' } } } })).lead,
+    'Up for a vote: needs 2 more yes.', 'a check that has not failed counts the votes as before');
+  assert.equal(av._requestStatusView(issue({ addressed_by: change })).lead, 'Up for a vote: needs 2 more yes.');
+});
+
+test('#6387 the row says a change is expected, so the page can hold its place', () => {
+  const av = appView();
+  assert.equal(av._requestStatusView(issue()).changeExpected, false);
+  assert.equal(av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'review', prNumber: 12 } })).changeExpected, true);
+  assert.equal(av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'underway' } })).changeExpected, true);
+});
+
+test('#6387 the page holds the change section\'s place while its thread loads', () => {
+  const head = fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8');
+  assert.match(head, /const holding = !r\.status\.closed && !!r\.status\.changeExpected && threadRead\.loading;/);
+  // The held place counts as a working section, so the status card, the plan
+  // and the bot's track give way to it as they do once it has loaded.
+  assert.match(head, /const working = layout\.changes\.length > 0 \|\| !!layout\.close \|\| holding;/);
+  assert.match(head, /\) : holding \? \(\s+<ChangeSectionSkeleton \/>/);
+});
+
 // #6385: posting a plan writes a branchless planning record, and that is not
 // work on the request. With the route no longer reporting it as in_progress
 // or as myPrSessionId, the card reads like any request nobody has started:

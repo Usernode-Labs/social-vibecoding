@@ -63,6 +63,7 @@ import { projectChangesOnGithub } from '../../../lib/change-ref';
 import { reload as reloadTab } from '../../../lib/tab-build';
 import { detailDrawn, detailEntry, markShotsArrival, takeShotsArrival } from '../../ai/detail';
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
 import { ChangeGates, ChangeSpentLine } from './change-head';
@@ -474,6 +475,38 @@ function AlsoCloses({ item, request }: { item: ThreadItem; request: number }): R
 }
 
 /**
+ * #6387: the change section's shape while the request's thread is still being
+ * read (./request-head.tsx `holding`): its line — the small-caps kicker and
+ * its status pill — its title, then its Votes and Testing cards. The loaded
+ * section fills the same place, so nothing swaps or jumps.
+ */
+export function ChangeSectionSkeleton(): ReactNode {
+  const t = useMessages('project');
+  return (
+    <section className="mt-4 border-t border-[color:var(--app-sheet-line)]" data-thread-change-skeleton="">
+      <SkeletonGroup label={t('project:topic.thread.page.changeLoading')} className="mt-3">
+        <div className="flex items-center gap-2">
+          <Skeleton shape="muted" className="w-32" />
+          <Skeleton shape="block" className="h-5 w-24 rounded-full" />
+        </div>
+        <Skeleton className="mt-2.5 h-3.5 w-3/5" />
+        <ChangeGatesSkeleton />
+      </SkeletonGroup>
+    </section>
+  );
+}
+
+/** The Votes and Testing cards' place, until the change's own read lands. */
+function ChangeGatesSkeleton(): ReactNode {
+  return (
+    <div className="dev-change-pair">
+      <Skeleton shape="block" className="h-16 rounded-2xl" />
+      <Skeleton shape="block" className="h-16 rounded-2xl" />
+    </div>
+  );
+}
+
+/**
  * What a change's section draws under its line: which other requests it
  * also closes, its summary, the plan it was built from, its before and
  * after, then its Votes and Testing cards (or, still being built, the line
@@ -500,7 +533,11 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
         </p>
       ) : view ? (
         <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} />
-      ) : null}
+      ) : (
+        // #6387: the cards keep their place while the change's own read is
+        // still landing, so they fill in rather than pushing the page down.
+        <ChangeGatesSkeleton />
+      )}
       {/* #6116: still being built it has no cards, and its cost is still news to its author. */}
       {(item.state === 'underway' || !hasCards(item)) && view?.v.testing.spent
         ? <ChangeSpentLine spent={view.v.testing.spent} />

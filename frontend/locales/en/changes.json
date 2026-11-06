@@ -8371,6 +8371,10 @@
     "text": "Up for a vote: needs {{count}} more yes.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; it needs {{count}} more yes votes. \"Yes\" is the vote, as a noun."
   },
+  "request.status.lead.upForVoteChecksFailing": {
+    "text": "Up for a vote, but a test is failing. It needs a fix before it can go live.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is up for the group's vote, but one of its tests failed, so it cannot go live until its author fixes it; the card counts no yes votes while that is so."
+  },
   "request.status.lead.reviewYours": {
     "text": "Your change for this is waiting for approval.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. The viewer's own change (a proposal that fulfils the request) is up for the group's vote. \"Change\" is a noun."
