@@ -280,16 +280,17 @@ export function PlanLine({ plan, builtFrom }: { plan: RequestSpecCard; builtFrom
       : t('project:topic.thread.page.newerPlanOther', { author: newer.author }))
     : null;
   return (
-    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-plan={plan.key}>
+    <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-plan={plan.key}>
       <span aria-hidden="true">📋</span>
-      <span className="min-w-0 truncate" title={fromPlan}>{fromPlan}</span>
+      {/* The phrase truncates from its end, so "Built from v1 of the plan"
+          always stays readable and only the plan's title is cut. */}
+      <span className="min-w-0 flex-1 truncate" title={fromPlan}>{fromPlan}</span>
+      {/* On a phone the row is too narrow to hold this beside Read, so it
+          drops to its own second line rather than squeezing the title out. */}
       {newer && newerText ? (
-        <>
-          <span aria-hidden="true">·</span>
-          <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-300" data-thread-change-newer-plan={newer.version}>
-            {newerText}
-          </span>
-        </>
+        <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-300 max-sm:order-last max-sm:w-full" data-thread-change-newer-plan={newer.version}>
+          <span aria-hidden="true">·</span>{' '}{newerText}
+        </span>
       ) : null}
       <button
         type="button"

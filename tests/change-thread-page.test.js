@@ -467,7 +467,7 @@ test('#6406: a change built from v1, with a v2 on the request, says so on its pl
       plan,
       builtFrom: { sessionId: 5, version: 1, newer: { version: 2, author: 'ana', sameAuthor: false } },
     }));
-  assert.match(other, /ana's plan is newer/);
+  assert.match(other, /ana(?:&#x27;|')s plan is newer/);
 
   const none = withRepo('https://git.onhomeroom.com/apps/recipe-bot', () =>
     renderComponent(CHANGES, 'PlanLine', { plan, builtFrom: { sessionId: 5, version: 1 } }));
