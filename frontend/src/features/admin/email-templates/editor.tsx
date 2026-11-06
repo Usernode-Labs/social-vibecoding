@@ -8,6 +8,7 @@ import {
   confirmDiscard, errorsFor, FailureNotice, FieldErrors, isDirty, keepDraft, liveLayouts, liveTemplate,
   PlaceholderList, readFailure, request, useUnloadGuard, type Failure, type KeptDraft, type TemplateRow, type TemplatesPayload,
 } from './shared';
+import { VisualTab } from './visual-tab';
 
 // The template editor: what the email is for, its name, the layout it wears,
 // subject, preheader and the "why you got this" line, then the body in tabs,
@@ -43,10 +44,12 @@ export function draftFrom(row: TemplateRow): TemplateDraft {
   };
 }
 
-// The body tabs. The visual editor joins this list as its first entry when
-// it lands, and becomes the default; until then the HTML is.
-export type BodyTab = 'html' | 'text';
+// The body tabs. Visual is where an editor opens: the email as it looks, its
+// text retyped in place. HTML is always the full truth, and where structure
+// and conditions change.
+export type BodyTab = 'visual' | 'html' | 'text';
 const TABS: Array<{ key: BodyTab; label: string }> = [
+  { key: 'visual', label: 'Visual' },
   { key: 'html', label: 'HTML' },
   { key: 'text', label: 'Text' },
 ];
@@ -79,11 +82,13 @@ const described = (id: string, errors: string[]) => (errors.length
 export const ENGLISH_UNTIL_TRANSLATED = 'Readers in other languages get the English of this email until it is translated.';
 
 export function TemplateForm({
-  payload, draft, isNew, canWrite, tab, failure, saving, onChange, onTab, onSave, onCancel, onReload, onRetry, preview,
+  payload, draft, opened, isNew, canWrite, tab, failure, saving, onChange, onTab, onSave, onCancel, onReload, onRetry, preview,
   dirty = false,
 }: {
   payload: TemplatesPayload;
   draft: TemplateDraft;
+  // What the editor opened with, which the Visual tab's Revert goes back to.
+  opened?: TemplateDraft;
   isNew: boolean;
   canWrite: boolean;
   tab: BodyTab;
@@ -184,12 +189,18 @@ export function TemplateForm({
                     : 'border-transparent text-zinc-500 dark:text-zinc-400'}`}
                   onClick={() => onTab(t.key)}>
                   {t.label}
-                  {(t.key === 'html' ? e.html : e.text).length ? <span className="ms-1 text-red-600 dark:text-red-400" aria-label="has problems">•</span> : null}
+                  {(t.key === 'text' ? e.text : e.html).length ? <span className="ms-1 text-red-600 dark:text-red-400" aria-label="has problems">•</span> : null}
                 </button>
               ))}
             </div>
             <div className="mt-2" role="tabpanel" aria-labelledby={`email-template-tab-${tab}`}>
-              {tab === 'html' ? (
+              {tab === 'visual' ? (
+                <div>
+                  <VisualTab source={draft.html} opened={(opened || draft).html} onChange={(html) => onChange('html', html)}
+                    placeholders={action ? action.placeholders : []} readOnly={readOnly} />
+                  <FieldErrors id="email-template-visual-error" messages={e.html} />
+                </div>
+              ) : tab === 'html' ? (
                 <Field id="email-template-html" label="HTML" errors={e.html}
                   hint={draft.layoutFamilyId == null ? 'The whole email, from <html> to </html>.' : 'The middle of the email; the layout adds the rest.'}>
                   <textarea id="email-template-html" className={`${AdminUI.textarea} font-mono text-xs`} rows={18}
@@ -282,7 +293,7 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     const name = latest.current.draft.name || payload.actions.find((a) => a.action === action)?.label || 'this email';
     keepDraft({ kind: 'template', action, isNew, label: name, draft: latest.current.draft, opened, openedLiveId: openedLive.id });
   }, [action, isNew, payload, opened, openedLive]);
-  const [tab, setTab] = useState<BodyTab>('html');
+  const [tab, setTab] = useState<BodyTab>('visual');
   const [failure, setFailure] = useState<Failure | null>(null);
   const [saving, setSaving] = useState(false);
   // The live version this editor started from, fixed when it opened (or kept
@@ -328,11 +339,11 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
     html: draft.html, text: draft.text, layoutFamilyId: draft.layoutFamilyId,
   };
   return (
-    <TemplateForm payload={payload} draft={draft} isNew={isNew} canWrite={canWrite} tab={tab} failure={failure}
+    <TemplateForm payload={payload} draft={draft} opened={opened} isNew={isNew} canWrite={canWrite} tab={tab} failure={failure}
       saving={saving} onChange={change} onTab={setTab} onSave={save} onCancel={leave} onReload={reload} onRetry={save}
       dirty={dirty}
       preview={(
-        <PreviewPane base="/api/admin/email-templates" body={{ action: draft.action, fields }} mode={tab}
+        <PreviewPane base="/api/admin/email-templates" body={{ action: draft.action, fields }} mode={tab === 'text' ? 'text' : 'html'}
           languages={payload.languages} englishOnly={!!(info && info.englishOnly)} canWrite={canWrite}
           onFieldFailure={setFailure} />
       )} />

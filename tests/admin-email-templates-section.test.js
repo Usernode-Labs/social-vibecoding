@@ -22,7 +22,7 @@ const { ACTIONS } = require('../src/services/mail/actions');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const SECTION = 'frontend/src/features/admin/admin-email-templates.tsx';
-const PARTS = ['list', 'editor', 'layouts', 'replace-dialog', 'preview', 'shared']
+const PARTS = ['list', 'editor', 'layouts', 'replace-dialog', 'preview', 'shared', 'visual-tab']
   .map((name) => `frontend/src/features/admin/email-templates/${name}.tsx`);
 
 const ADMIN_UI = new Proxy({}, {
@@ -510,6 +510,43 @@ test('a kept draft belongs to the account that left it', () => {
   }
 });
 
+test('Visual is the first body tab and the one both editors open on; the preview shows HTML for it', () => {
+  const data = payload();
+  const live = data.templates.find((t) => t.action === 'waitlist_released' && t.status === 'live');
+  const { TemplateEditor, draftFrom } = load();
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const html = renderToHtml(createElement(TemplateEditor, {
+    payload: data, action: live.action, isNew: false, canWrite: true, onDone() {}, onSaved() {}, onReload() {},
+  }));
+  const tabs = [...html.matchAll(/id="email-template-tab-(\w+)"/g)].map((m) => m[1]);
+  assert.deepEqual(tabs, ['visual', 'html', 'text']);
+  assert.match(html, /aria-selected="true"[^>]*id="email-template-tab-visual"|id="email-template-tab-visual"[^>]*aria-selected="true"/);
+  assert.match(html, /<iframe[^>]*title="Visual editor"[^>]*sandbox="allow-same-origin"/);
+  assert.ok(!/id="email-template-html"/.test(html), 'the HTML textarea waits behind its tab');
+
+  // The form's Visual tab edits draft.html, offers the action's placeholders and reverts to what was opened.
+  const form = render('TemplateForm', {
+    payload: data, draft: draftFrom(live), opened: draftFrom(live), isNew: false, canWrite: true, tab: 'visual',
+    failure: null, saving: false, onChange() {}, onTab() {}, onSave() {}, onCancel() {}, onReload() {}, onRetry() {},
+    preview: null,
+  });
+  assert.match(form, /aria-label="Revert to opened"/);
+  const editor = read('frontend/src/features/admin/email-templates/editor.tsx');
+  assert.match(editor, /useState<BodyTab>\('visual'\)/);
+  assert.match(editor, /mode=\{tab === 'text' \? 'text' : 'html'\}/);
+  assert.match(editor, /<VisualTab source=\{draft\.html\} opened=\{/);
+
+  const layouts = read('frontend/src/features/admin/email-templates/layouts.tsx');
+  assert.match(layouts, /useState<LayoutTab>\('visual'\)/);
+  assert.match(layouts, /<VisualTab source=\{draft\.html\} opened=\{/);
+  assert.match(layouts, /mode=\{tab === 'text' \? 'text' : 'html'\}/);
+  const layoutHtml = render('LayoutEditor', {
+    payload: data, familyId: data.layouts.find((l) => l.status === 'live' && !l.deleted_at).family_id, canWrite: true,
+    onDone() {}, onSaved() {}, onReload() {},
+  });
+  assert.match(layoutHtml, /title="Visual editor"/);
+});
+
 // ── Final review ────────────────────────────────────────────────────────
 
 test('a preview in another language says when it shows the English words', () => {
@@ -532,7 +569,7 @@ test('an edit says other languages get the English until it is translated, in th
   const live = data.templates.find((t) => t.action === 'otp' && t.status === 'live');
   const { draftFrom } = load();
   const form = (extra) => render('TemplateForm', {
-    payload: data, draft: draftFrom(live), isNew: false, canWrite: true, tab: 'html', failure: null, saving: false,
+    payload: data, draft: draftFrom(live), opened: draftFrom(live), isNew: false, canWrite: true, tab: 'html', failure: null, saving: false,
     onChange() {}, onTab() {}, onSave() {}, onCancel() {}, onReload() {}, onRetry() {}, preview: null, ...extra,
   });
   const note = /id="email-template-english-note"[^>]*>Readers in other languages get the English of this email until it is translated\./;
