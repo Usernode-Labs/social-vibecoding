@@ -1,25 +1,23 @@
 'use strict';
 
 // src/db/email-template-seeds.js, src/db/migrate.js: the first templates reach
-// the database at boot, once, safely with several servers starting together, in
-// the languages the translation lookup has, and never come back once deleted.
+// the database at boot, once, in English, safely with several servers starting
+// together, and never come back once deleted. Their other languages are
+// Translate's, in the admin console; a seed run never writes or undoes one.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
-const { hash } = require('../scripts/language-packs');
 const { KINDS } = require('../src/services/mail/templates');
-const { reset } = require('../src/services/push-language');
 const log = require('../src/services/logger');
 const languageCache = require('../src/services/language-cache');
-const { SEEDS, seedEmailTemplates, englishTemplate, kindsWithoutTemplate } = require('../src/db/email-template-seeds');
+const { SEEDS, FINGERPRINT, seedEmailTemplates, englishTemplate, kindsWithoutTemplate } = require('../src/db/email-template-seeds');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const ROOT = path.join(__dirname, '..');
 const ENGLISH = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/email.json'), 'utf8'));
-const FRENCH = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/mail-seed-french.json'), 'utf8'));
 const SOURCE = {
   files: {
     'config.json': { sourceLanguage: 'en', languages: { en: 'English', fr: 'Français', es: 'Español' } },
@@ -27,7 +25,20 @@ const SOURCE = {
     'en/email.json': ENGLISH,
   },
 };
-const TRANSLATED = KINDS.filter((kind) => !['admin_test', 'content_report'].includes(kind));
+
+// The seeds as a later release might word them: `change` is { kind: { field: value } }.
+async function withSeeds(change, work) {
+  const before = {};
+  for (const [kind, fields] of Object.entries(change)) {
+    before[kind] = { ...SEEDS.templates[kind] };
+    Object.assign(SEEDS.templates[kind], fields);
+  }
+  try {
+    return await work();
+  } finally {
+    for (const [kind, fields] of Object.entries(before)) SEEDS.templates[kind] = fields;
+  }
+}
 
 test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -46,7 +57,7 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
   const originalGetPool = dbPool.getPool;
   dbPool.getPool = () => pool;
   t.after(() => { dbPool.getPool = originalGetPool; });
-  // A checkout may not have built its language source, and these are about a boot that has one.
+  // A checkout may not have built its language source; the seed never reads it.
   const readSource = t.mock.method(languageCache, 'readSource', () => SOURCE);
   await migrate(config);
   const store = require('../src/services/mail/template-store');
@@ -86,32 +97,32 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'otp' AND deleted_at IS NULL"), 0);
     const before = await count('SELECT count(*)::int AS n FROM email_templates');
 
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), before);
     assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'otp' AND deleted_at IS NULL"), 0);
   });
 
   await t.test('a deleted layout is not brought back', async () => {
     await pool.query("UPDATE email_layouts SET status = 'archived', deleted_at = NOW()");
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     assert.equal(await count("SELECT count(*)::int AS n FROM email_layouts WHERE deleted_at IS NULL"), 0);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
 
     // A new kind whose layout an admin deleted waits for an admin, and the rest of
     // the seeding still works.
     await pool.query("DELETE FROM email_templates WHERE action = 'password_reset'");
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'password_reset'"), 0);
   });
 
   await t.test('a renamed layout has not been deleted', async () => {
     await empty();
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     const { layouts } = await store.snapshot(pool);
     const [v1] = Object.values(layouts);
     await store.saveLayout(pool, { familyId: v1.family_id, name: 'Our frame', html: v1.html, text: v1.text, expectedLiveId: v1.id }, null);
     await pool.query("DELETE FROM email_templates WHERE action = 'password_reset'");
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     const { rows } = await pool.query("SELECT layout_family_id FROM email_templates WHERE action = 'password_reset'");
     assert.deepEqual(rows, [{ layout_family_id: v1.family_id }]);
     assert.equal(await count('SELECT count(DISTINCT family_id)::int AS n FROM email_layouts'), 1);
@@ -119,13 +130,13 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
 
   await t.test('only the missing kind is added, and an edited one is left alone', async () => {
     await empty();
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     // An admin's save is what makes an action theirs (a raw edit of version 1 is
     // what the refresh puts back; see below).
     const [v1] = (await pool.query("SELECT * FROM email_templates WHERE action = 'otp'")).rows;
     await store.saveTemplate(pool, { action: 'otp', name: v1.name, layoutFamilyId: v1.layout_family_id, subject: 'Edited', preheader: v1.preheader, why: v1.why, html: v1.html, text: v1.text, expectedLiveId: v1.id }, null);
     await pool.query("DELETE FROM email_templates WHERE action = 'password_reset'");
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'password_reset' AND version = 1 AND status = 'live'"), 1);
     assert.equal((await pool.query("SELECT subject FROM email_templates WHERE action = 'otp' AND status = 'live'")).rows[0].subject, 'Edited');
     assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
@@ -133,7 +144,7 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
 
   await t.test('servers booting together seed once', async () => {
     await empty();
-    await Promise.all(Array.from({ length: 6 }, () => seedEmailTemplates(pool, { source: SOURCE })));
+    await Promise.all(Array.from({ length: 6 }, () => seedEmailTemplates(pool)));
     // A server that lost the lock left the work to the winner, which has finished.
     assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 1);
@@ -143,94 +154,23 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
   await t.test('with nothing to do, a boot costs one query and no connection held', async () => {
     const seen = [];
     const spy = { query: (...args) => { seen.push(args[0]); return pool.query(...args); }, connect: () => { throw new Error('no connection needed'); } };
-    await seedEmailTemplates(spy, { source: SOURCE });
+    await seedEmailTemplates(spy);
     assert.equal(seen.length, 1);
   });
 
-  await t.test('a language in the cache gets its rows, a language with nothing gets none', async (st) => {
+  await t.test('a fresh database gets English only, whatever the translation cache holds, and never reads the language source', async (st) => {
     const info = st.mock.method(log, 'info', () => {});
     await empty();
-    reset();
-    for (const [key, text] of Object.entries(FRENCH)) {
-      await pool.query(
-        "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', $1, $2, $3) ON CONFLICT DO NOTHING",
-        [key, hash(ENGLISH[key].text), text],
-      );
-    }
-    await seedEmailTemplates(pool, { source: SOURCE });
-    const { rows } = await pool.query(
-      `SELECT e.action, t.locale, t.origin, t.subject, t.html FROM email_template_translations t JOIN email_templates e ON e.id = t.template_id`,
-    );
-    assert.deepEqual(rows.map((row) => row.action).sort(), [...TRANSLATED].sort());
-    assert.ok(rows.every((row) => row.locale === 'fr' && row.origin === 'machine'));
-    assert.deepEqual(info.mock.calls.at(-1).arguments[2], { kinds: KINDS.length, languages: 1 });
-    assert.equal(rows.find((row) => row.action === 'otp').subject, FRENCH['otp.subject']);
-    assert.match(rows.find((row) => row.action === 'waitlist_joined').html, /Merci d'avoir rejoint/);
-    await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
-    reset();
-  });
-
-  await t.test('a translation read that fails rolls the seed back, and the next boot has the language', async (st) => {
-    const errors = st.mock.method(log, 'error', () => {});
-    st.mock.method(log, 'warn', () => {});
-    await empty();
-    reset();
     await pool.query(
-      "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', 'otp.subject', $1, $2)",
-      [hash(ENGLISH['otp.subject'].text), FRENCH['otp.subject']],
-    );
-    const failing = {
-      connect: () => pool.connect(),
-      query: (sql, params) => (/FROM language_translations/.test(sql) ? Promise.reject(new Error('read failed')) : pool.query(sql, params)),
-    };
-    await seedEmailTemplates(failing, { source: SOURCE });
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), 0);
-    assert.equal(errors.mock.callCount(), 1);
-    await seedEmailTemplates(pool, { source: SOURCE });
-    assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), TRANSLATED.length);
-    await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
-    reset();
-  });
-
-  await t.test('with no language source nothing is written, it is logged, and a later boot seeds', async (st) => {
-    const errors = st.mock.method(log, 'error', () => {});
-    await empty();
-    await seedEmailTemplates(pool, { source: null });
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), 0);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 0);
-    assert.equal(errors.mock.callCount(), 1);
-    assert.match(errors.mock.calls[0].arguments[1], /language source/);
-
-    readSource.mock.mockImplementationOnce(() => null);
+      "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', 'buildReady.lead.ready', 'x', 'Prêt') ON CONFLICT DO NOTHING");
+    const reads = readSource.mock.callCount();
     await seedEmailTemplates(pool);
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), 0, 'read at boot, the same');
-    assert.equal(errors.mock.callCount(), 2);
-
-    reset();
-    await pool.query(
-      "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', 'otp.subject', $1, $2)",
-      [hash(ENGLISH['otp.subject'].text), FRENCH['otp.subject']],
-    );
-    await seedEmailTemplates(pool, { source: SOURCE });
-    assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
-    assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), TRANSLATED.length);
-    assert.equal(errors.mock.callCount(), 2);
-    await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
-  });
-
-  await t.test('a source that lists no other language is a real answer: English only is seeded', async () => {
-    await empty();
-    const noLanguages = { files: { ...SOURCE.files, 'config.json': { sourceLanguage: 'en', languages: { en: 'English' } } } };
-    await seedEmailTemplates(pool, { source: noLanguages });
     assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_template_translations'), 0);
-  });
-
-  await t.test('with nothing to seed, the 12 MB language source is not even read', async () => {
-    await seedEmailTemplates(pool);
-    const before = readSource.mock.callCount();
-    await seedEmailTemplates(pool);
-    assert.equal(readSource.mock.callCount(), before);
+    assert.equal(await count('SELECT count(*)::int AS n FROM email_layout_translations'), 0);
+    assert.deepEqual(info.mock.calls.at(-1).arguments[2], { kinds: KINDS.length });
+    assert.equal(readSource.mock.callCount(), reads);
+    await pool.query("DELETE FROM language_translations WHERE language = 'fr' AND namespace = 'email'");
   });
 
   await t.test('a failed seed changes nothing and the next boot tries again', async () => {
@@ -247,17 +187,17 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
         };
       },
     };
-    await seedEmailTemplates(failing, { source: SOURCE });
+    await seedEmailTemplates(failing);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), 0);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_layouts'), 0);
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     assert.equal(await count('SELECT count(*)::int AS n FROM email_templates'), KINDS.length);
   });
 
   await t.test('a database that cannot be reached is logged, and never fails the boot', async (st) => {
     const errors = st.mock.method(log, 'error', () => {});
     const broken = { query: () => Promise.reject(new Error('connection refused')), connect: () => Promise.reject(new Error('connection refused')) };
-    await seedEmailTemplates(broken, { source: SOURCE });
+    await seedEmailTemplates(broken);
     assert.equal(errors.mock.callCount(), 1);
     assert.equal(errors.mock.calls[0].arguments[1], 'Could not seed email templates');
   });
@@ -304,20 +244,25 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     }
   });
 
-  // ── Untouched seed rows follow the catalog and the translations ──────────
+  // ── Untouched seed rows follow the seeds, and only in English ──────────
 
-  const SOURCE_EDITED = {
-    files: {
-      ...SOURCE.files,
-      'en/email.json': { ...ENGLISH, 'otp.subject': { ...ENGLISH['otp.subject'], text: 'Your Homeroom sign-in code' } },
-    },
-  };
   const liveRow = async (action) => (await pool.query(
     "SELECT * FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL", [action])).rows[0];
+  const frRow = async (id) => (await pool.query("SELECT * FROM email_template_translations WHERE template_id = $1 AND locale = 'fr'", [id])).rows[0];
+  const reseed = async () => {
+    await pool.query("DELETE FROM platform_settings WHERE key = 'email_template_seed_fingerprint'");
+    await seedEmailTemplates(pool);
+  };
+  const machineFrench = (id, subject = 'Votre code Homeroom') => pool.query(
+    `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
+     SELECT id, 'fr', $2, preheader, 'Pourquoi', html, text, 'machine' FROM email_templates WHERE id = $1
+     ON CONFLICT (template_id, locale) DO UPDATE SET subject = EXCLUDED.subject, origin = 'machine'`, [id, subject]);
+  const NEW_SUBJECT = { otp: { subject: 'Your Homeroom sign-in code' } };
 
-  await t.test('a catalog change refreshes an untouched row in place, and an admin\'s action never', async () => {
+  await t.test('a seed change refreshes an untouched row in place, and an admin\'s action never', async (st) => {
+    st.mock.method(log, 'info', () => {});
     await empty();
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     const otp = await liveRow('otp');
     const reset = await liveRow('password_reset');
     // An admin's first save makes password_reset theirs, even with the seed's words.
@@ -327,27 +272,42 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     const { rows: [{ id: userId }] } = await pool.query('SELECT id FROM users ORDER BY id LIMIT 1');
     await pool.query("UPDATE email_templates SET created_by = $1, subject = 'Mine' WHERE action = 'account_email'", [userId]);
 
-    await seedEmailTemplates(pool, { source: SOURCE_EDITED });
+    await withSeeds({ ...NEW_SUBJECT, password_reset: { subject: 'Seeded' }, account_email: { subject: 'Seeded' } }, reseed);
     const after = await liveRow('otp');
     assert.equal(after.id, otp.id, 'in place');
     assert.equal(after.version, 1);
     assert.equal(after.subject, 'Your Homeroom sign-in code');
     assert.equal((await liveRow('password_reset')).id, theirs.id);
+    assert.equal((await liveRow('password_reset')).subject, reset.subject);
     assert.equal((await liveRow('account_email')).subject, 'Mine');
     assert.equal(await count("SELECT count(*)::int AS n FROM email_templates WHERE action = 'password_reset'"), 2);
 
     // Back to the first wording: the untouched row follows again.
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await reseed();
     assert.equal((await liveRow('otp')).subject, otp.subject);
+  });
+
+  await t.test('a change to the seeds is seen on the next boot without help: the fingerprint is the seeds\'', async (st) => {
+    st.mock.method(log, 'info', () => {});
+    await empty();
+    await seedEmailTemplates(pool);
+    const recorded = (await pool.query("SELECT value FROM platform_settings WHERE key = 'email_template_seed_fingerprint'")).rows[0].value;
+    assert.equal(recorded, FINGERPRINT);
+    // An older release's fingerprint (the catalog's) is not this one, so the first
+    // boot of this release compares every row once.
+    await pool.query("UPDATE platform_settings SET value = 'from the catalog' WHERE key = 'email_template_seed_fingerprint'");
+    await pool.query("UPDATE email_templates SET subject = 'stale' WHERE action = 'otp'");
+    await seedEmailTemplates(pool);
+    assert.equal((await liveRow('otp')).subject, englishTemplate('otp').subject);
   });
 
   await t.test('a refresh compares, and writes only what differs', async () => {
     await empty();
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
     await pool.query("UPDATE email_templates SET html = 'stale' WHERE action = 'otp'");
     await pool.query("UPDATE email_layouts SET text = 'stale'");
-    // Nothing in the catalog changed, so a fresh boot does not even look.
-    await seedEmailTemplates(pool, { source: SOURCE });
+    // Nothing in the seeds changed, so a fresh boot does not even look.
+    await seedEmailTemplates(pool);
     assert.equal((await liveRow('otp')).html, 'stale');
     await pool.query("DELETE FROM platform_settings WHERE key = 'email_template_seed_fingerprint'");
     const writes = [];
@@ -358,48 +318,44 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
         return { release: (err) => client.release(err), query: (sql, params) => { if (/^\s*(UPDATE|INSERT|DELETE)/.test(sql)) writes.push(sql.trim().split(/\s+/).slice(0, 3).join(' ')); return client.query(sql, params); } };
       },
     };
-    await seedEmailTemplates(spy, { source: SOURCE });
-    assert.equal((await liveRow('otp')).html, englishTemplate('otp', { source: SOURCE }).html);
+    await seedEmailTemplates(spy);
+    assert.equal((await liveRow('otp')).html, englishTemplate('otp').html);
     assert.equal((await pool.query('SELECT text FROM email_layouts')).rows[0].text, SEEDS.layouts[0].text);
     assert.deepEqual(writes.sort(), ['INSERT INTO platform_settings', 'UPDATE email_layouts SET', 'UPDATE email_templates SET']);
   });
 
-  await t.test('new translations reach untouched rows, and an admin\'s translation is left alone', async (st) => {
+  await t.test('the refresh leaves the translations of an unchanged row alone; new English drops the machine\'s and keeps an admin\'s', async (st) => {
     st.mock.method(log, 'info', () => {});
+    st.mock.method(log, 'warn', () => {});
     await empty();
-    reset();
-    await pool.query("DELETE FROM language_translations WHERE language = 'fr'");
-    await seedEmailTemplates(pool, { source: SOURCE });
-    assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), 0);
+    await seedEmailTemplates(pool);
     const otp = await liveRow('otp');
-    await store.saveTranslation(pool, 'template', (await liveRow('password_reset')).id, 'fr',
-      { subject: 'Admin', preheader: '', why: 'w', html: '<p>{{url}}</p>', text: '{{url}}' }, 'admin');
-    for (const [key, text] of Object.entries(FRENCH)) {
-      await pool.query(
-        "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', $1, $2, $3) ON CONFLICT DO NOTHING",
-        [key, hash(ENGLISH[key].text), text]);
-    }
-    await seedEmailTemplates(pool, { source: SOURCE });
-    const { rows } = await pool.query("SELECT origin, subject FROM email_template_translations WHERE template_id = $1 AND locale = 'fr'", [otp.id]);
-    assert.deepEqual(rows, [{ origin: 'machine', subject: FRENCH['otp.subject'] }]);
-    const { rows: admin } = await pool.query("SELECT t.origin, t.subject FROM email_template_translations t JOIN email_templates e ON e.id = t.template_id WHERE e.action = 'password_reset' AND t.locale = 'fr'");
-    assert.deepEqual(admin, [{ origin: 'admin', subject: 'Admin' }]);
-    assert.equal(await count("SELECT count(*)::int AS n FROM email_template_translations WHERE locale = 'fr'"), TRANSLATED.length);
+    const reset = await liveRow('password_reset');
+    await machineFrench(otp.id);
+    await store.saveTranslation(pool, 'template', reset.id, 'fr',
+      { subject: 'Admin', preheader: '', why: 'w', html: reset.html, text: reset.text }, 'admin');
+    // The seeds' own English: nothing is compared but the English, so the
+    // translations Translate or an admin wrote stay as they are.
+    await reseed();
+    assert.equal((await frRow(otp.id)).subject, 'Votre code Homeroom');
+    assert.equal((await frRow(reset.id)).subject, 'Admin');
+
+    await withSeeds({ ...NEW_SUBJECT, password_reset: { subject: 'Reset your Homeroom password now' } }, reseed);
+    assert.equal(await frRow(otp.id), undefined, 'the machine translated the English just replaced');
+    const admin = await frRow(reset.id);
+    assert.equal(admin.subject, 'Admin');
+    assert.equal(admin.origin, 'admin');
+    assert.equal(admin.unusable, null, 'rechecked, and it still fits');
+    await reseed();
   });
 
-  await t.test('what the stored rows send is what the code sends today, English and French', async () => {
+  await t.test('what the stored rows send is what the seeds send in memory', async () => {
     // After a seed run, read back as a send reads them: the snapshot, resolve and
-    // the stored-template render. Compared with the code templates, as the
-    // equivalence suite compares the seeds in memory.
+    // the stored-template render, against buildMessage with no template in hand.
     const mailTemplates = require('../src/services/mail/templates');
-    const { translator } = require('../src/services/push-language');
-    reset();
-    // Only what the seed wrote: the admin's translation above is meant to differ.
-    await pool.query("DELETE FROM email_template_translations WHERE origin = 'admin'");
-    await pool.query("DELETE FROM platform_settings WHERE key = 'email_template_seed_fingerprint'");
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await empty();
+    await seedEmailTemplates(pool);
     const snap = await store.snapshot(pool);
-    const t = await translator(pool, 'fr', { namespace: 'email', source: SOURCE });
     const UNSUB = 'https://app.onhomeroom.com/mail/unsubscribe?token=abc';
     const payloads = {
       otp: [{ code: '123456' }], account_email: [{ code: '123456' }], username_change: [{ code: '123456' }],
@@ -421,110 +377,82 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
         const english = store.resolve(snap, kind, null);
         assert.deepEqual(mailTemplates.buildMessage(kind, { ...payload, resolved: { ...english, t: null, readerHasLanguage: false } }),
           mailTemplates.buildMessage(kind, payload), `en ${kind}`);
-        const french = store.resolve(snap, kind, 'fr');
-        const translated = french.template !== french.english.template;
-        assert.deepEqual(mailTemplates.buildMessage(kind, { ...payload, resolved: { ...french, t: translated ? t : null, readerHasLanguage: true } }),
-          mailTemplates.buildMessage(kind, { ...payload, translate: t }), `fr ${kind}`);
-        compared += 2;
+        compared += 1;
       }
     }
-    assert.ok(compared > 30);
+    assert.ok(compared > 15);
   });
 
   // ── Translate (services/mail/template-translate.js) and the refresh ──────
 
-  const withFrench = async () => {
-    for (const [key, text] of Object.entries(FRENCH)) {
-      await pool.query(
-        "INSERT INTO language_translations (language, namespace, key, source, text) VALUES ('fr', 'email', $1, $2, $3) ON CONFLICT DO NOTHING",
-        [key, hash(ENGLISH[key].text), text]);
-    }
-  };
-  const frRow = async (id) => (await pool.query("SELECT * FROM email_template_translations WHERE template_id = $1 AND locale = 'fr'", [id])).rows[0];
-  const reseed = async (source) => {
-    await pool.query("DELETE FROM platform_settings WHERE key = 'email_template_seed_fingerprint'");
-    await seedEmailTemplates(pool, { source });
-  };
   const fresh = async () => {
     await empty();
     await pool.query('TRUNCATE email_translation_jobs');
-    reset();
-    await withFrench();
-    await seedEmailTemplates(pool, { source: SOURCE });
+    await seedEmailTemplates(pool);
   };
 
-  await t.test('a catalog translation the refresh rewrites is checked inside the layout it is sent in', async (st) => {
+  await t.test('a translation left by a refresh is checked inside the layout it is sent in', async (st) => {
     st.mock.method(log, 'info', () => {});
     st.mock.method(log, 'warn', () => {});
     await fresh();
     const otp = await liveRow('otp');
+    // An admin's French, longer than the English.
+    const french = { subject: 'Votre code Homeroom', preheader: '', why: otp.why, html: `${otp.html}<p>Merci de votre confiance.</p>`, text: otp.text };
+    await store.saveTranslation(pool, 'template', otp.id, 'fr', french, 'admin');
     const fr = await frRow(otp.id);
-    assert.ok(fr, 'the catalog gives otp in French');
     const { rows: [layout] } = await pool.query("SELECT * FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL");
     const { renderMessage } = require('../src/services/mail/render');
     const { actionFor } = require('../src/services/mail/actions');
     const size = (template) => Buffer.byteLength(renderMessage('otp', { template, layout }, actionFor('otp').sample || {}).html, 'utf8');
     const en = size(otp);
-    const french = size(fr);
-    assert.ok(french - en >= 4, `French is longer (${en} / ${french})`);
+    const longer = size(fr);
+    assert.ok(longer - en >= 4, `French is longer (${en} / ${longer})`);
     // An admin's layout, padded so the English otp fits the 100 KB limit and the French does not.
-    const filler = 100 * 1024 - en - 7 - Math.floor((french - en) / 2);
+    const filler = 100 * 1024 - en - 7 - Math.floor((longer - en) / 2);
     const padded = layout.html.replace('{{content}}', `<p>${'x'.repeat(filler)}</p>{{content}}`);
     const theirs = await store.saveLayout(pool, { name: 'Admin padded', html: padded, text: layout.text }, null);
     await pool.query('UPDATE email_templates SET layout_family_id = $2 WHERE id = $1', [otp.id, theirs.family_id]);
-    await pool.query("UPDATE email_template_translations SET subject = 'stale' WHERE template_id = $1 AND locale = 'fr'", [otp.id]);
-    await reseed(SOURCE);
+    await withSeeds({ otp: { subject: 'Your Homeroom code' } }, reseed);
     const after = await frRow(otp.id);
-    assert.equal(after.subject, fr.subject, 'rewritten from the catalog');
-    assert.ok(after.unusable, 'and marked, not sent');
+    assert.equal(after.subject, fr.subject, 'an admin\'s words stay');
+    assert.ok(after.unusable, 'and are marked, not sent');
     const snap = await store.snapshot(pool);
-    assert.equal(store.resolve(snap, 'otp', 'fr').template.subject, otp.subject);
-    // In the standard layout it works again, and the next rewrite clears the mark.
+    assert.equal(store.resolve(snap, 'otp', 'fr').template.subject, 'Your Homeroom code');
     await pool.query('UPDATE email_templates SET layout_family_id = $2 WHERE id = $1', [otp.id, layout.family_id]);
-    await pool.query("UPDATE email_template_translations SET subject = 'stale' WHERE template_id = $1 AND locale = 'fr'", [otp.id]);
-    await reseed(SOURCE);
-    assert.equal((await frRow(otp.id)).unusable, null);
   });
 
-  await t.test('Translate\'s job: a run in progress holds its version, saved languages stay, failed ones do not', async (st) => {
+  await t.test('Translate\'s job: a run in progress holds its version, and one gone quiet does not', async (st) => {
     st.mock.method(log, 'info', () => {});
     st.mock.method(log, 'warn', () => {});
     await fresh();
     const otp = await liveRow('otp');
-    const catalog = (await frRow(otp.id)).subject;
     const job = (state, perLanguage, ageSeconds = 0) => pool.query(
       `INSERT INTO email_translation_jobs (kind, version_id, state, per_language, run_id, updated_at)
        VALUES ('template', $1, $2, $3::jsonb, gen_random_uuid(), NOW() - make_interval(secs => $4))
        ON CONFLICT (kind, version_id) DO UPDATE SET state = EXCLUDED.state, per_language = EXCLUDED.per_language, updated_at = EXCLUDED.updated_at`,
       [otp.id, state, JSON.stringify(perLanguage), ageSeconds]);
-    const stale = () => pool.query("UPDATE email_template_translations SET subject = 'stale' WHERE template_id = $1 AND locale = 'fr'", [otp.id]);
     const jobs = async () => (await pool.query("SELECT count(*)::int AS n FROM email_translation_jobs WHERE version_id = $1", [otp.id])).rows[0].n;
+    await machineFrench(otp.id, 'Translated');
 
-    // Every language failed: nothing of Translate's to keep, the catalog refreshes.
-    await job('done', { fr: 'failed: the model did not answer' });
-    await stale();
-    await reseed(SOURCE);
-    assert.equal((await frRow(otp.id)).subject, catalog);
-
-    // A saved language on the same English is the admin's ask: it stays.
+    // What Translate saved on the same English stays, whatever the job says.
     await job('done', { fr: 'saved', es: 'failed: x' });
-    await stale();
-    await reseed(SOURCE);
-    assert.equal((await frRow(otp.id)).subject, 'stale');
+    await reseed();
+    assert.equal((await frRow(otp.id)).subject, 'Translated');
+    assert.equal(await jobs(), 1);
 
     // A run in progress holds the whole version, English included.
     await job('running', { fr: 'pending' });
-    await reseed(SOURCE_EDITED);
+    await withSeeds(NEW_SUBJECT, reseed);
     assert.equal((await liveRow('otp')).subject, otp.subject);
-    assert.equal((await frRow(otp.id)).subject, 'stale');
+    assert.equal((await frRow(otp.id)).subject, 'Translated');
 
     // One gone quiet does not, and new English replaces the machine's words and the job.
     await job('running', { fr: 'pending' }, 60 * 60);
-    await reseed(SOURCE_EDITED);
+    await withSeeds(NEW_SUBJECT, reseed);
     assert.equal((await liveRow('otp')).subject, 'Your Homeroom sign-in code');
-    const row = await frRow(otp.id);
-    assert.ok(!row || row.subject !== 'stale');
+    assert.equal(await frRow(otp.id), undefined);
     assert.equal(await jobs(), 0);
+    await reseed();
   });
 
   await t.test('a lost or skipped seed is found: every kind needs a live template on a live layout', async () => {

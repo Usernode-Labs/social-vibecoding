@@ -62,7 +62,9 @@ async function ensureServerBudget(config, pool) {
 // that failed or was skipped (it logs and lets the boot go on) would leave the
 // release sending plain mail or none for a kind, so the Job stops instead: the
 // release does not roll out and the running pods keep sending. A preview seeds
-// after its import, in the background, and is not checked here.
+// during its boot like any other database, but is not checked here: its mail is
+// not production's, and a reviewer may have deleted a template or a layout on
+// purpose to see the failure path, which must not stop the preview deploying.
 async function requireEmailTemplates(pool, env = process.env) {
   if (env.USERNODE_ENV === 'staging') return;
   const missing = await require('../src/db/email-template-seeds').kindsWithoutTemplate(pool);

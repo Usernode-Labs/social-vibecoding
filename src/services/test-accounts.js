@@ -630,7 +630,7 @@ async function redeemPhoneSignIn(pool, phoneNumber, code) {
 
 // ── Test release emails ─────────────────────────────────────────────────
 //
-// The waitlist's "you're in" mail (mail/templates.js waitlistReleased) and
+// The waitlist's "you're in" mail (the waitlist_released email template) and
 // the sign-up its link starts are reached only from a released waitlist row,
 // and the one way to get a mail sent used to be admitting a real person. Here
 // a full admin sends that mail to an address they read (any address, or a

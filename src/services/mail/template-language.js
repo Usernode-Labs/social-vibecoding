@@ -16,7 +16,7 @@ class TemplateSyntaxError extends Error {
   }
 }
 
-// Like `esc` in templates.js, plus the apostrophe, so a value inside a
+// Like `esc` in plain-message.js, plus the apostrophe, so a value inside a
 // single-quoted attribute cannot end the attribute early.
 function escapeHtml(s) {
   return String(s)

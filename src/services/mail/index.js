@@ -12,7 +12,8 @@
 //
 // What this module owns, in order:
 //   1. rendering: the stored templates (./template-store, read from memory)
-//      rendered by ./templates, or the owner's failure order when there are none
+//      rendered by ./templates buildMessage, or the owner's failure order when
+//      there are none
 //   2. the throttle decision (./rate-limit, fed from mail_deliveries)
 //   3. picking the transport (./select, resolved once at boot in config.js)
 //   4. recording the outcome in mail_deliveries
@@ -214,7 +215,7 @@ async function suppressionOf(pool, to) {
 // with such words, whose template is translated. `readerHasLanguage` is set for
 // every reader with a language other than English, row or no row, because their
 // subject is cleaned either way (render.js). A null template sends the owner's
-// failure order (templates.js fromStored).
+// failure order (templates.js buildMessage).
 // With no database configured at all, the first templates in memory
 // (template-store seededSnapshot); a configured database that cannot be had is
 // the failure order, never those.
