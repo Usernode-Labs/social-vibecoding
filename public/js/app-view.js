@@ -7586,10 +7586,10 @@ const AppView = {
   // B10b: Details opens at the top, or at one part (`'checks'`, from the
   // Tested line).
   openTechnicalDetails(id, part = null) {
+    window.dispatchEvent(new CustomEvent('change-details-open', { detail: part ? { id: Number(id), part } : Number(id) }));
     // #6441: its before-and-after is the change being looked at, so its
     // "ready to try" leaves the bell as opening its page does.
     if (part === 'shots') window.Notifications?.markProposalSeen?.(Number(id));
-    window.dispatchEvent(new CustomEvent('change-details-open', { detail: part ? { id: Number(id), part } : Number(id) }));
   },
 
   // #4479: a change's plan card, in request-model.ts's RequestSpecCard

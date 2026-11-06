@@ -1158,8 +1158,11 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
   // #1688: a row with an action of its own ("Still yes" on a re-confirm ask)
   // keeps the row as the tap that opens the thing, and puts the action
   // beside it as a real button — never a button inside a button.
+  // The node the kit holds on desktop, for the folded "went live" shape's own
+  // branch below (the two shapes that predate it spell it out in place).
+  const desktopRef = touch ? undefined : setRow;
   const actions = view.actions || [];
-  const row = actions.length || liveItems ? (
+  const row = actions.length ? (
     <div
       ref={touch ? undefined : setRow}
       data-notif-id={view.id}
@@ -1188,8 +1191,33 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       {/* #5580: on a card one action sits under the words too, as two do. */}
       {card && actions.length === 1 ? (
         <div className="flex items-center gap-2 ps-[3.75rem]"><RowActions view={view} actions={actions} /></div>
-      ) : actions.length ? <RowActions view={view} actions={actions} /> : null}
+      ) : <RowActions view={view} actions={actions} />}
       {liveItems ? <LiveItems view={view} items={liveItems} groupIds={groupIds} /> : null}
+    </div>
+  ) : liveItems ? (
+    // #6441: a folded "went live" row has no action of its own, but the list
+    // under its words is made of buttons, so it takes the same outer <div>
+    // and inner <button> shape as a row with actions: never a button inside
+    // a button.
+    <div
+      ref={desktopRef}
+      data-notif-id={view.id}
+      className={card
+        ? 'notifications-row col-start-1 row-start-1 w-full ps-5 pe-4 py-3 flex flex-col gap-2'
+        : 'notifications-row w-full ps-4 pe-16 py-3.5 flex flex-col gap-2'}
+    >
+      <button
+        className={card ? 'min-w-0 flex-1 w-full text-start flex items-start gap-3' : 'min-w-0 flex-1 text-start flex items-center gap-4'}
+        aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          open();
+        }}
+        {...hold}
+      >
+        {card ? <CardWords view={view} card={card} hasHistory={hasHistory} saveOnHover={cardSave && !touch} /> : body}
+      </button>
+      <LiveItems view={view} items={liveItems} groupIds={groupIds} />
     </div>
   ) : (
     <button

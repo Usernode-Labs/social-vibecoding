@@ -361,7 +361,7 @@ export function openDetail(input: {
   // to try" leaves the bell. The top document's store only (the branch above
   // has already handed the side panel's frame over to it), so it runs once.
   if (kind === 'shots' && valid(ref.changeId)) {
-    window.Notifications?.markProposalSeen?.(Number(ref.changeId));
+    if (typeof window !== 'undefined') window.Notifications?.markProposalSeen?.(Number(ref.changeId));
   }
   holder.seq += 1;
   const entry: DetailEntry = {
