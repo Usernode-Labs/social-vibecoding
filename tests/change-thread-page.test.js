@@ -447,6 +447,34 @@ test('#6237: on Homeroom\'s git host, requests and changes share one counter and
   assert.match(elsewhere, /Change #6223 for this request is on/);
 });
 
+test('#6406: a change built from v1, with a v2 on the request, says so on its plan line', () => {
+  const plan = {
+    key: 'spec:5:2', title: 'Design: Recipe home, warm and visual', version: 2, by: 'evan', at: null, time: '',
+    timeTitle: '', read: { kind: 'shared', sessionId: 5, version: 2, previewTitle: 'Design: Recipe home, warm and visual' },
+  };
+  const html = withRepo('https://git.onhomeroom.com/apps/recipe-bot', () =>
+    renderComponent(CHANGES, 'PlanLine', {
+      plan,
+      builtFrom: { sessionId: 5, version: 1, newer: { version: 2, author: 'evan', sameAuthor: true } },
+    }));
+  assert.match(html, /Built from v1 of the plan/);
+  assert.match(html, /v2 is newer/);
+  assert.ok(html.indexOf('Built from v1') < html.indexOf('v2 is newer'), 'the note follows the plan line');
+  assert.match(html, /data-thread-change-newer-plan="2"/);
+
+  const other = withRepo('https://git.onhomeroom.com/apps/recipe-bot', () =>
+    renderComponent(CHANGES, 'PlanLine', {
+      plan,
+      builtFrom: { sessionId: 5, version: 1, newer: { version: 2, author: 'ana', sameAuthor: false } },
+    }));
+  assert.match(other, /ana(?:&#x27;|')s plan is newer/);
+
+  const none = withRepo('https://git.onhomeroom.com/apps/recipe-bot', () =>
+    renderComponent(CHANGES, 'PlanLine', { plan, builtFrom: { sessionId: 5, version: 1 } }));
+  assert.match(none, /Built from v1 of the plan/);
+  assert.doesNotMatch(none, /is newer/);
+});
+
 test('#6237: a stored line\'s "PR #N" is shown as "PR N"; requests keep "#N"', () => {
   const { plainPrRefs, changesOnGithub } = loadTsx('frontend/src/lib/change-ref.ts');
   assert.equal(plainPrRefs('The staging preview for PR #4368 is ready…'), 'The staging preview for PR 4368 is ready…');

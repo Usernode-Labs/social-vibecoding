@@ -93,6 +93,29 @@ test('#3703: the prompt carries the spec the proposal was built from, the card a
   assert.ok(long.includes(`${'x'.repeat(followup.MAX_SPEC_CHARS)}…`) && !long.includes('x'.repeat(followup.MAX_SPEC_CHARS + 1)), 'a runaway spec is clipped');
 });
 
+test('#6406: the prompt carries a newer plan as untrusted content, and names the change by its number', () => {
+  const replies = [{ where: 'issue', via: 'homeroom', author: 'evan', body: 'can you update for the latest plan version?', createdAt: '2026-11-06T14:43:00Z' }];
+  const newerPlan = {
+    sessionId: 5, version: 2, author: 'evan', authorId: 7,
+    markdown: '# Recipe home\n\nWarm and visual.', html: null, enough: true,
+  };
+  const p = followup.followUpPrompt({ seed: 'S', prNumber: 178, replies, newerPlan });
+  assert.match(p, /==== THE NEWER PLAN THIS CHANGE SHOULD FOLLOW \(version 2, by @evan\) ====/);
+  assert.match(p, /<untrusted-content>[^]*Warm and visual\.[^]*<\/untrusted-content>/);
+  assert.match(p, /==== END NEWER PLAN ====/);
+  assert.match(p, /call it "Change #178"/, 'the change is named the way the screen does');
+
+  const without = followup.followUpPrompt({ seed: 'S', prNumber: 178, replies });
+  assert.doesNotMatch(without, /THE NEWER PLAN/, 'no newer plan, no block');
+  assert.match(without, /call it "Change #178"/);
+  assert.match(followup.followUpPrompt({ seed: 'S', replies }), /call it "the change"/);
+
+  // The replies are dated, never timed: a UTC clock time read as the reader's own.
+  assert.match(p, /evan, in the issue's discussion \(2026-11-06\)/);
+  assert.doesNotMatch(p, /\b\d{1,2}:\d{2}\b/);
+  assert.match(p, /Never write a clock time or a time of day/);
+});
+
 test('the action is the last fenced block; anything else is not guessed', () => {
   const text = 'notes\n```json\n{"action":"answer","reply":"x"}\n```\nmore\n```json\n{"action":"revise","reply":"Darker now.","summary":"Background is #09090b."}\n```';
   assert.deepEqual(followup.parseFollowUp(text), { action: 'revise', reply: 'Darker now.', summary: 'Background is #09090b.', planChanged: false, stopMentioning: [], resumeMentioning: [] });
