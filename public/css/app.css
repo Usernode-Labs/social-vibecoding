@@ -16702,6 +16702,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-shots p,
 .dev-request-shots .dc-p { margin: 0 0 4px; }
 .dev-request-shots strong { color: var(--text-primary); }
+/* #6387: hold a picture's or a video's place while it loads, so nothing
+   under it jumps. The box is the size the page usually shows one in (512px
+   wide, its 320px cap at 16:10) in the status card's plane colour, until
+   `data-shot-ready` says the media knows its own shape
+   (topic/request-head.tsx RequestWords); then it takes that shape. */
+.dev-request-shots .dc-inline-img:not([data-shot-ready]),
+.dev-request-shots .dc-inline-video:not([data-shot-ready]) {
+  width: 512px;
+  max-width: 100%;
+  aspect-ratio: 16 / 10;
+  background: var(--messages-surface);
+}
 .pin-shot { position: relative; display: block; width: fit-content; max-width: 100%; margin: 6px 0; }
 .pin-shot > .dc-inline-img-link,
 .pin-shot > .dc-inline-img { margin: 0; }
