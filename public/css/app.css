@@ -18261,7 +18261,11 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
 @media (max-width: 1023.98px) {
   body:has(#ai-screen:not(.hidden)) { --ai-list-min: 280px; }
 }
-#ai-screen[data-ai-docked] { padding-inline-end: var(--ai-main-w); }
+/* THE COLUMN'S LANE IS KEPT ONLY WHILE IT IS OPEN (6 Nov 2026, #6425): a
+   desktop opens on the lists alone, and they take the room the column would
+   have. A row, a link or Main Chat's row opens it, and the list gives the
+   lane up again. */
+#ai-screen[data-ai-docked][data-ai-open] { padding-inline-end: var(--ai-main-w); }
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
    beside the rail pads a gutter after it and mirrors it on the far edge, so
    a column inside centres. Here Main is the far edge, with no gutter, so the
@@ -18269,6 +18273,9 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    16px from Main. Without it they sit 16px from both, and the list centres
    between them. */
 #ai-screen[data-ai-docked] { padding-inline-start: var(--platform-rail-w, 0px); }
+/* The aside stays mounted, because a thread is opened from the place it is
+   handed (`at`); with nothing open beside the lists it is not drawn. */
+#ai-screen:not([data-ai-open]) .ai-main-pane { display: none; }
 /* #6147: 8px below the header, as the list's first card and the Workshop's
    side panel (.dev-ws-side) are, not 8px up into its rounded lower edge. The
    preview pane and Main's divider start on the same line. */
@@ -18408,13 +18415,13 @@ body:has(#ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]):no
   width: var(--ai-col-w);
   inset-inline-end: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
 }
-.side-panel-head > :is(.side-panel-main, .side-panel-place, .side-panel-more) { display: none; }
+.side-panel-head > :is(.side-panel-ai-close, .side-panel-place, .side-panel-more) { display: none; }
 body:has(#ai-screen:not(.hidden)) .side-panel :is(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close) {
   display: none;
 }
-body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-main, .side-panel-place, .side-panel-more) { display: inline-flex; }
+body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-ai-close, .side-panel-place, .side-panel-more) { display: inline-flex; }
 /* And the page in it leaves out its own way back, "‹ Workshop": the column's
-   ‹ Main Chat is the way back, and its project is beside it. The class is on the
+   × is the way back, and its project is beside it. The class is on the
    panel document's <html> while it stands beside this page (side-panel
    controller BESIDE_AI_CLASS). */
 html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) { display: none; }
@@ -25644,8 +25651,9 @@ body:has(#ai-screen:not(.hidden)) .side-panel-head {
    measures it from the screen whichever document has the focus
    (`un-kb`, `--un-kb-inset`), so the panel ends above it. */
 html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-inset, 0px); }
-/* The topic's back chip, centred in the row rather than at its top. */
-.side-panel-head > .side-panel-main { margin: 0; align-self: center; }
+/* The column's × that closes the page, centred in the row rather than at its
+   top (6 Nov 2026, #6425: it took the "‹ Main Chat" chip's place). */
+.side-panel-head > .side-panel-ai-close { margin: 0; align-self: center; }
 /* The ⋯ beside the column's heading (3 Nov 2026), at the row's end: Copy
    link, the item's own page address. It is a sibling of the heading, so it
    stays put when the heading's words are long. */

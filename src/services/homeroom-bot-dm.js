@@ -1720,6 +1720,15 @@ function requestNews(kind, dm, context) {
           + `can do it: ${clip(dm.reason, 600)}`;
       }
       if (dm.done) return doneText(line, dm);
+      // 6 Nov 2026 (#6430): a go-ahead cannot settle this kind of change, so
+      // it says a person has to build it, and never tells the person who just
+      // approved that somebody needs to approve.
+      if (dm.goAheadDecides === false) {
+        return `${line}\n\nThis needs a person to build, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
+          + 'I don\'t build changes like this myself, even with a go-ahead. A person has to build it, '
+          + 'for example you with a coding agent, and the group votes on it as usual. '
+          + require('./homeroom-bot-live').canBuildPart(dm.firstStep);
+      }
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the
       // request, and the bot looks at it again with it.
@@ -2057,7 +2066,8 @@ async function relayIssuePost({
     // message offers the move instead. Nor to a requester who does not
     // decide on the project: theirs would be read to the same answer.
     // Nor under a request that is done already: the close offer follows.
-    ...(STUCK_ACTIONS[kind] && !(kind === 'person' && (dm.platform || personDeciders(dm).length)) && !dm.done
+    ...(STUCK_ACTIONS[kind] && !dm.done
+      && !(kind === 'person' && (dm.platform || dm.goAheadDecides === false || personDeciders(dm).length))
       ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
     // one person's project (the title), who else it waits on and how many of
