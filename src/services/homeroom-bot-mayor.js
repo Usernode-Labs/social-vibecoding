@@ -4271,8 +4271,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   cards = [...ctx.cards, ...replyCards];
   const unique = [...new Map(cards.map((c) => [JSON.stringify(c), c])).values()].slice(0, MAX_CARDS);
   // What they might say next, as buttons to tap (dm.retireSuggestions
-  // closes them once the bot says something newer).
-  const next = suggestionLabels(ctx.reply?.suggestions);
+  // closes them once the bot says something newer). #4046, #6404: one set of
+  // answers at a time: a Questions card under this reply is the answer set,
+  // so the reply's suggestions are dropped rather than stored beside it.
+  const next = toolCard?.type === 'questions' ? [] : suggestionLabels(ctx.reply?.suggestions);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
