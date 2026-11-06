@@ -811,14 +811,6 @@ export async function botAllowanceFreed(db: Db, p: { appId: number; issueNumber:
   }, { requestKey: p.key, source: BOT_SOURCE('allowance'), appId: Number(p.appId) });
 }
 
-// #6423: the change a build waited for merged or closed: its overlap hold
-// is lifted and the build looks at the same files again.
-export async function botOverlapEnded(db: Db, p: { appId: number; issueNumber: number; key: string }): Promise<void> {
-  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
-    type: 'OverlapEnded', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber) } as any,
-  }, { requestKey: p.key, source: BOT_SOURCE('overlap'), appId: Number(p.appId) });
-}
-
 // A person wrote on a request's thread (in the statement's transaction).
 export async function botActivity(db: Db, p: { appId: number; issueNumber: number; messageId?: number | null }): Promise<void> {
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {

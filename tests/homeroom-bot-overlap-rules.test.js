@@ -1,9 +1,11 @@
 'use strict';
 
-// #6423: before a build starts, the files its plan names are compared with
-// the files the project's other open changes and running builds touch. The
-// rules are pure (src/workflow/rules/bot-loop.ts): which files a plan names,
-// and what the build does on an overlap.
+// #6423, #6428: before a build starts, the files its plan names are compared
+// with the files the project's other open changes really change. The rules
+// are pure (src/workflow/rules/bot-loop.ts): which files a plan names, and
+// what the build does on an overlap. Since #6428 an overlap never holds a
+// build: it builds in parallel and says what it shares, and it goes on top
+// of another change only when its request depends on that one's.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -47,41 +49,63 @@ test('no shared file: the build goes ahead as today', () => {
     'a plan that names no file overlaps nothing');
 });
 
-test('an active change touching the same file is waited for', () => {
+test('an overlap in a file that is not append-only builds in parallel, naming the file', () => {
   const d = rules.decideOverlap({
     files: ['src/a.ts', 'src/b.ts'], others: [{ ...OTHER, status: 'active', files: ['src/b.ts', 'src/c.ts'] }],
   });
-  assert.equal(d.strategy, 'wait');
-  assert.deepEqual(d.files, ['src/b.ts'], 'the files it waits on');
-  assert.equal(d.with.sessionId, 501);
+  assert.equal(d.strategy, 'parallel');
+  assert.deepEqual(d.files, ['src/b.ts'], 'the files it shares');
+  assert.equal(d.with.sessionId, 501, 'the change its note names');
 });
 
-test('a running build touching the same file is waited for the same way', () => {
-  const d = rules.decideOverlap({
-    files: ['src/a.ts'],
-    others: [{ sessionId: null, runId: 77, issueNumber: 6410, prNumber: null, status: 'building', branch: null, files: ['src/a.ts'] }],
-  });
-  assert.equal(d.strategy, 'wait');
-  assert.equal(d.with.runId, 77, 'the running build, which has no pull request yet');
+test('a running build or a person\'s open change never holds another build', () => {
+  const others = [
+    // A person's change, not up for a vote.
+    { ...OTHER, sessionId: 9, status: 'active', files: ['src/a.ts'] },
+    // A running build: its session, read by its branch's diff.
+    { ...OTHER, sessionId: 10, issueNumber: 6410, prNumber: null, status: 'active', files: ['src/a.ts'] },
+    // Up for a vote, and on top of another change itself.
+    { ...OTHER, sessionId: 11, status: 'promoted', stacked: true, files: ['src/a.ts'] },
+    // Up for a vote and buildable on: sharing files alone never stacks.
+    { ...OTHER, sessionId: 12, status: 'promoted', files: ['src/a.ts'] },
+  ];
+  for (const other of others) {
+    const d = rules.decideOverlap({ files: ['src/a.ts'], others: [other] });
+    assert.equal(d.strategy, 'parallel', `session ${other.sessionId}`);
+  }
+  const all = rules.decideOverlap({ files: ['src/a.ts'], others });
+  assert.equal(all.strategy, 'parallel', 'several overlaps at once');
+  assert.equal(all.with.sessionId, 9, 'the first one is named');
+  assert.equal(rules.OVERLAP_WAIT_MS, undefined, 'there is no wait to bound any more');
 });
 
-test('one change up for a vote, not itself stacked, is built on top of', () => {
-  const d = rules.decideOverlap({ files: ['src/a.ts'], others: [{ ...OTHER, status: 'promoted', files: ['src/a.ts'] }] });
-  assert.equal(d.strategy, 'stack');
-  assert.equal(d.with.prNumber, 6404);
-  assert.equal(d.with.branch, 'dev/x');
+test('a build is stacked only when its request depends on the other change\'s request', () => {
+  const parent = { ...OTHER, status: 'promoted', requests: [6404, 6405], files: ['src/a.ts'] };
+  const on = rules.decideOverlap({ files: ['src/a.ts'], others: [parent], dependsOn: [6405] });
+  assert.equal(on.strategy, 'stack');
+  assert.equal(on.with.prNumber, 6404);
+  assert.equal(on.with.branch, 'dev/x');
+  assert.deepEqual(on.files, ['src/a.ts']);
+  assert.equal(rules.decideOverlap({ files: [], others: [{ ...parent, files: [] }], dependsOn: [6404] }).strategy, 'stack',
+    'a dependency stacks with no shared file, and with a plan that names none');
+  assert.equal(rules.decideOverlap({ files: ['src/a.ts'], others: [parent] }).strategy, 'parallel',
+    'the same overlap with no dependency');
+  assert.equal(rules.decideOverlap({ files: ['src/a.ts'], others: [parent], dependsOn: [7000] }).strategy, 'parallel',
+    'a dependency on another request');
+  const issueOnly = { ...OTHER, status: 'promoted', requests: undefined, files: [] };
+  assert.equal(rules.decideOverlap({ files: ['src/a.ts'], others: [issueOnly], dependsOn: [6404] }).strategy, 'stack',
+    'with no linked requests, its own request number is read');
+  for (const [why, other] of [
+    ['not up for a vote', { ...parent, status: 'active' }],
+    ['on top of another change itself', { ...parent, stacked: true }],
+    ['with no pull request', { ...parent, prNumber: null }],
+    ['with no branch', { ...parent, branch: null }],
+  ]) {
+    assert.equal(rules.decideOverlap({ files: ['src/a.ts'], others: [other], dependsOn: [6404] }).strategy, 'parallel', why);
+  }
 });
 
-test('the wait is bounded, and only then does the build go on main', () => {
-  const since = new Date('2026-11-06T10:00:00Z');
-  const other = { ...OTHER, status: 'active', files: ['src/a.ts'] };
-  const before = rules.decideOverlap({ files: ['src/a.ts'], others: [other], since, now: new Date('2026-11-06T11:59:00Z') });
-  assert.equal(before.strategy, 'wait');
-  const after = rules.decideOverlap({ files: ['src/a.ts'], others: [other], since, now: new Date('2026-11-06T12:00:00Z') });
-  assert.equal(after.strategy, 'timeout', '2 hours after the first wait');
-});
-
-test('append-only shared files never block on their own', () => {
+test('append-only shared files go ahead in parallel, named only when nothing else is shared', () => {
   for (const path of APPEND_ONLY_FILES) {
     assert.ok(isAppendOnly(path), path);
     const d = rules.decideOverlap({
@@ -93,36 +117,21 @@ test('append-only shared files never block on their own', () => {
   }
   assert.equal(isAppendOnly('./tests/baselines/test-durations.json'), true);
   assert.equal(isAppendOnly('src/a.ts'), false);
-});
-
-test('an append-only file plus a real one still blocks', () => {
-  const d = rules.decideOverlap({
+  const both = rules.decideOverlap({
     files: ['tests/baselines/test-durations.json', 'src/a.ts'],
-    others: [{ ...OTHER, status: 'active', files: ['tests/baselines/test-durations.json', 'src/a.ts'] }],
-  });
-  assert.equal(d.strategy, 'wait');
-  assert.deepEqual(d.files, ['src/a.ts'], 'only the file that really conflicts');
-});
-
-test('a stacked change is never built on, and two overlaps are waited for', () => {
-  const stacked = rules.decideOverlap({
-    files: ['src/a.ts'], others: [{ ...OTHER, status: 'promoted', stacked: true, files: ['src/a.ts'] }],
-  });
-  assert.equal(stacked.strategy, 'wait');
-  const two = rules.decideOverlap({
-    files: ['src/a.ts'],
     others: [
-      { ...OTHER, sessionId: 9, status: 'promoted', files: ['src/a.ts'] },
-      { ...OTHER, sessionId: 8, status: 'promoted', files: ['src/a.ts'] },
+      { ...OTHER, sessionId: 8, files: ['tests/baselines/test-durations.json'] },
+      { ...OTHER, sessionId: 9, files: ['tests/baselines/test-durations.json', 'src/a.ts'] },
     ],
   });
-  assert.equal(two.strategy, 'wait');
-  assert.equal(two.with.sessionId, 8, 'the earliest one');
+  assert.equal(both.strategy, 'parallel');
+  assert.equal(both.with.sessionId, 9, 'the change that may really conflict is named first');
+  assert.deepEqual(both.files, ['src/a.ts'], 'only the file that may really conflict');
 });
 
-test('a promoted change with no pull request or branch is waited for', () => {
-  const d = rules.decideOverlap({
-    files: ['src/a.ts'], others: [{ ...OTHER, status: 'promoted', prNumber: null, files: ['src/a.ts'] }],
-  });
-  assert.equal(d.strategy, 'wait');
+test('a build held for an overlap before #6428 is the lane\'s to grant on its next pass', () => {
+  // The lane's candidates: a hold for the payer's week still holds; one an
+  // older build stored for an overlap does not.
+  assert.match(rules.BUILD_CANDIDATES_SQL,
+    /AND \(w\.data->'build'->>'heldUntil' IS NULL OR \(w\.data->'build'->>'heldUntil'\)::timestamptz <= NOW\(\)\s+OR w\.data->'build'->>'heldFor' = 'overlap'\)/);
 });

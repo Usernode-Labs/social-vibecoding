@@ -1102,16 +1102,7 @@ function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_numb
           WHERE app_id = ${appId} AND issue_number = ${issueNumber} AND question_status = 'open'
             ${userIdSql ? `AND user_id = ${userIdSql}` : ''}
           ORDER BY created_at DESC LIMIT 1
-       ) oq ON TRUE
-       -- #6423: the change this request's build waits for, touching the
-       -- same files (bot-request's build.overlap), if it waits for one.
-       LEFT JOIN LATERAL (
-         SELECT (b.data->'build'->'overlap'->>'prNumber')::int AS build_overlap_pr
-           FROM wf_instances b
-          WHERE b.machine = 'bot-request'
-            AND b.key = 'request:' || ${appId} || ':' || ${issueNumber}
-          LIMIT 1
-       ) ov ON TRUE`;
+       ) oq ON TRUE`;
 }
 
 /** The columns requestRecordJoinsSql provides, as both readers select them. */
@@ -1137,7 +1128,6 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             cs.source AS proposal_source,
             COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
             oq.created_at AS question_at,
-            ov.build_overlap_pr,
             -- #6284: it stopped at its own limit on this change, with no
             -- grant open: Needs you reads that, not "checking".
             EXISTS (
