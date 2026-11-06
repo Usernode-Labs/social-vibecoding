@@ -140,7 +140,7 @@ test('Me draws the list only once it is asked for', () => {
   assert.doesNotMatch(closed, /profile-feedback-sheet/);
   // Me's row is Your requests now (UI overhaul), a view of the Your work
   // screen; this card is the feedback challenge's, at its address.
-  assert.match(closed, /id="profile-row-feedback"[^>]*href="#profile\/your-requests"/);
+  assert.match(closed, /id="profile-row-feedback"[^>]*href="#homeroom-bot\/history\?kind=request"/);
   assert.doesNotMatch(closed, /3 sent · 1 counted/, 'the challenge\'s tally is the card\'s, not a row\'s');
   assert.match(render({ ...base, feedbackOpen: true }), /id="profile-feedback-sheet"/);
   // The shipped state is `open: false`, which renders nothing at all.

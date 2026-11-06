@@ -49,7 +49,6 @@ function load() {
     App: {
       user: { id: 1 },
       openAppTab: (slug, tab, opts) => { calls.push(['openAppTab', slug, tab, opts || null]); },
-      navigateToProfileProposals: (kind) => { calls.push(['navigateToProfileProposals', kind]); },
       _isScreenVisible: () => false,
     },
     UsernodeReact: {
@@ -85,11 +84,13 @@ test('a digest of one change opens that change', () => {
 });
 
 // #5404: the Monday count of the changes you voted on names none of them.
-test('the Monday row opens Your votes', () => {
-  const { N, calls } = load();
+// Me › Your votes became the bot tab's History on Votes (5 Nov 2026).
+test('the Monday row opens History on its Votes', () => {
+  const { N, calls, location } = load();
   N.items = [{ id: 4, readAt: null, kind: 'voted_digest', detail: '3', appSlug: null, sessionId: null }];
   N._onItemClick(4);
-  assert.deepEqual(nav(calls), [['navigateToProfileProposals', 'votes']]);
+  assert.deepEqual(nav(calls), []);
+  assert.equal(location.hash, '#homeroom-bot/history?kind=vote');
   assert.equal(calls[0][0], 'dismiss', 'the sheet gets out of the way first');
 });
 

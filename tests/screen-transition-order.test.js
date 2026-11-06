@@ -55,7 +55,7 @@ const nativeJs = fs.readFileSync(
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
   'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
   'settings-screen', 'messages-screen', 'agent-session-screen',
-  'profile-proposals-screen', 'ai-screen'];
+  'ai-screen'];
 
 const NAVIGATIONS = [
   { fn: 'navigateToLeaderboard', reveal: 'leaderboard-screen' },
@@ -66,13 +66,11 @@ const NAVIGATIONS = [
   { fn: 'navigateToMessages', reveal: 'messages-screen' },
   { fn: 'navigateToAgentSession', reveal: 'agent-session-screen' },
   { fn: 'navigateToWorkshop', reveal: 'workshop-screen' },
-  { fn: 'navigateToProfileProposals', reveal: 'profile-proposals-screen' },
   { fn: 'navigateToAi', reveal: 'ai-screen' },
 ];
 
 const EXITS = ['_exitLeaderboard', '_exitProfile', '_exitBrowse',
-  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitAgentSession', '_exitWorkshop',
-  '_exitProfileProposals'];
+  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitAgentSession', '_exitWorkshop'];
 
 // The body of a top-level App method, from its two-space-indented
 // definition to the closing `},` at the same indent.

@@ -1,12 +1,13 @@
 /**
  * The Workshop's row (#4457, #4486): one item, in one hairline-divided list.
  *
- * ONE ROW, FOUR SURFACES. A week's page on the Workshop tab, All items'
+ * ONE ROW, THREE SURFACES. A week's page on the Workshop tab, All items'
  * board columns and its By category lanes all draw this row now (#4486),
- * and the Workshop tab's Your work draws it in What happened's one-line
- * shape (variant `line`, #4716); the Workshop tab's New for you draws its
- * shorter sibling, `ActRow`, below (After-Workshop-B), and its What happened
- * its own one-line row (./week-pages.tsx HappenedRow). The board and By
+ * and the Workshop tab's What happened its own one-line row
+ * (./week-pages.tsx HappenedRow). (5 Nov 2026: the Workshop's Your work and
+ * New for you, which drew its `line` shape and its `ActRow` sibling, went:
+ * your work is the Homeroom bot tab's, and New for you is What happened's.)
+ * The board and By
  * category used to draw the folded card (../card/fold.tsx), which wore a
  * coloured edge and a coloured glyph the column already said, named its
  * author and its provenance twice, and unfolded in place under a ⇕. A row
@@ -51,7 +52,7 @@
  * names the item instead), as they never have.
  */
 
-import { useRef, type MouseEvent, type ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -76,7 +77,7 @@ export type CardRow = Extract<ListRow, { t: 'card' }>;
  * glyph, the title on one line and, at its end, the status pill and Vote;
  * under it a second line with the words and the tags.
  */
-export type RowVariant = 'list' | 'board' | 'line';
+export type RowVariant = 'list' | 'board';
 
 /** Which page a row opens: the kind `AppView.openTopic` takes, and its id. */
 export interface TopicRef {
@@ -182,40 +183,6 @@ function Tag({ t }: { t: RowTag }): ReactNode {
 }
 
 /**
- * Your work's tags line, most important first (#4716): what is wrong, then
- * what needs attention, what is running, what is done, then the rest. The
- * line keeps to one line and scrolls sideways, so what comes first is what
- * shows. A tag's tone says how much it matters, whatever its words.
- */
-const TAG_RANK: Record<RowTag['tone'], number> = { bad: 0, warn: 1, run: 2, ok: 3, plain: 4 };
-
-/**
- * A row's tags as the Workshop's own-work rows read them: what the work
- * needs, most important first (TAG_RANK), and apart from them who made it
- * when that is not simply you. Live work drops the tag its pill already
- * says (AppView._workshopBrief `settled`, "Going live…" on a release still
- * under way), and the preview tag stays on the item's page: these rows are
- * what the work needs, and a preview is there to open, not to act on.
- *
- * Who made it is said at most once, never as a name in the words. What you
- * made says nothing: everything here is yours unless it says otherwise.
- * Homeroom bot's change from your request says so with its tag (#4728),
- * and so does its work in hand on your request (#5385, `botTrack`). A
- * request you are working on names nobody here: it is often somebody
- * else's, its words say who asked, and its "Picked up · you" already says
- * you are on it.
- */
-export function lineTags(b: RowBrief, card: DevCardModel): { ranked: RowTag[]; maker: RowTag | null } {
-  const pill = card.pill?.state || null;
-  const said = b.kind === 'live' && pill ? pill.label : null;
-  const tags = (said !== null ? b.tags.filter((t) => t.tone !== 'ok' && t.label !== said) : b.tags)
-    .filter((t) => t.glyph !== 'eye');
-  const maker = (b.kind === 'request' && !b.botTrack) ? null
-    : tags.find((t) => t.glyph === 'bot') || (b.mine ? tags.find((t) => t.glyph === 'lock') : undefined) || null;
-  return { ranked: tags.filter((t) => t !== maker).sort((x, y) => TAG_RANK[x.tone] - TAG_RANK[y.tone]), maker };
-}
-
-/**
  * A change's vote on the Workshop tab (#4486): the card's own status pill,
  * with its own words ("0 of 1 approval"), at its words' width plus the 56px
  * the thin bar it replaces took (app.css `.dev-ws-wvote-state`), and the
@@ -251,7 +218,6 @@ export function WorkRow({
   // The line in words is read with `translate` (rowWords); subscribe the row.
   useMessages('project');
   // The line row's title link, which a click on its tags line opens (#4716).
-  const linkRef = useRef<HTMLAnchorElement>(null);
   const b = row.brief;
   if (!b) return null;
   const card = row.card;
@@ -278,68 +244,6 @@ export function WorkRow({
   const status = live || hasChip || hasChat || tags.length > 0;
   const menuKey = card.rail && card.rail.menuKey ? card.rail.menuKey : '';
   const specs = board && !live ? voteSpecs(card) : null;
-  if (variant === 'line') {
-    // #4716: Your work in This week's one-line row. The first line is the
-    // small glyph, the title on one line and, at its end, the card's status
-    // pill with Vote (live work: its "✓ Live" bar), as This week ends its
-    // line with the time; the second is the item's number and what it is
-    // for, its tags most important first, then who made it, on one line.
-    // A narrow card wraps the title and moves the pill and Vote to the
-    // row's end, under the tags, as a phone has them today (app.css
-    // `.dev-ws-lrow`).
-    const end = votes || (live && pill
-      ? <><StatePill s={pill} className="dev-ws-wrow-live" /><LiveTally s={pill} /></>
-      : null);
-    // Live work's bar is on the first line, so its tags drop the one that
-    // restates it; who made it goes after the status tags (lineTags).
-    const request = b.kind === 'request';
-    const { ranked, maker } = lineTags(b, card);
-    return (
-      <div
-        className="dev-ws-wrow dev-ws-lrow"
-        data-ws-row={row.key}
-        data-ws-kind={b.kind}
-        data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
-        data-on={on ? '1' : undefined}
-      >
-        <span className="dev-ws-hrow-glyph" data-kind={b.kind} aria-hidden="true"><Tile aria-hidden="true" /></span>
-        <span className="dev-ws-wrow-main">
-          <span className="dev-ws-lrow-line">
-            {href ? (
-              <a
-                ref={linkRef}
-                className="dev-ws-wrow-link"
-                href={href}
-                title={card.title.text}
-                aria-current={on ? 'true' : undefined}
-                onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
-              >
-                {card.title.text}
-              </a>
-            ) : <span className="dev-ws-wrow-link" title={card.title.text}>{card.title.text}</span>}
-            {end}
-          </span>
-          {/* One line that scrolls sideways (app.css), so it sits above the
-              row's stretched link; a click on it that is not on a chip opens
-              the item, as a click anywhere else on the row does. */}
-          <span
-            className="dev-ws-wrow-status"
-            onClick={(e) => {
-              if ((e.target as Element).closest('a, button')) return;
-              linkRef.current?.click();
-            }}
-          >
-            <span className="dev-ws-wrow-sub">{rowWords(b, { by: request || !(maker || b.mine), ago: false })}</span>
-            {ranked.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
-            {maker ? <Tag t={maker} /> : null}
-            {chip}
-            {chat}
-          </span>
-        </span>
-        {menuKey ? <span className="dev-ws-wrow-menu"><MenuTrigger menuKey={menuKey} /></span> : null}
-      </div>
-    );
-  }
   return (
     <div
       className={board ? 'dev-ws-wrow dev-ws-brow' : 'dev-ws-wrow'}
@@ -450,60 +354,3 @@ export function ActButton({ a, label, accent = false }: { a: ActionSpec; label?:
   );
 }
 
-/**
- * A row with one thing to do (After-Workshop-B): the Workshop's Your work
- * and New for you. The tile, the title (the item's link, stretched over the
- * row, as WorkRow's is, and opened beside the list on a wide window through
- * `onOpen`), one line in words the caller words, and at most one action at
- * the row's end: a Vote, the card's own next step, or Build it. No tags
- * line and no ☰: everything else there is to do is on the item's page, a
- * tap away. On a phone the action goes under the words (app.css).
- */
-export function ActRow({
-  row, slug, sub, act = null, tone, on = false, onOpen,
-}: {
-  row: CardRow;
-  slug: string;
-  /** The row's one line in words. */
-  sub: string;
-  act?: ReactNode;
-  /** `ask`: the item waits on the viewer, and its tile says so in the attention tint. */
-  tone?: 'ask';
-  on?: boolean;
-  onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
-}): ReactNode {
-  // The line in words is read with `translate`; subscribe the row.
-  useMessages('project');
-  const b = row.brief;
-  if (!b) return null;
-  const card = row.card;
-  const href = openHref(slug, card);
-  const ref = topicRef(card);
-  const Tile = TILE[b.kind] || PencilSquareIcon;
-  return (
-    <div
-      className="dev-ws-wrow dev-ws-arow"
-      data-ws-row={row.key}
-      data-ws-kind={b.kind}
-      data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
-      data-on={on ? '1' : undefined}
-    >
-      <span className="dev-ws-wrow-tile" data-kind={b.kind} data-tone={tone} aria-hidden="true"><Tile aria-hidden="true" /></span>
-      <span className="dev-ws-wrow-main">
-        {href ? (
-          <a
-            className="dev-ws-wrow-link"
-            href={href}
-            title={card.title.text}
-            aria-current={on ? 'true' : undefined}
-            onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
-          >
-            {card.title.text}
-          </a>
-        ) : <span className="dev-ws-wrow-link" title={card.title.text}>{card.title.text}</span>}
-        {sub ? <span className="dev-ws-wrow-sub">{sub}</span> : null}
-      </span>
-      {act ? <span className="dev-ws-arow-act">{act}</span> : null}
-    </div>
-  );
-}

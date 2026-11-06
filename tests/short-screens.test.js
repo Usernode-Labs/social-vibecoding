@@ -75,7 +75,10 @@ test('B13: the bot list\'s heading keeps its line where the list is narrow', () 
 
 test('L06: the bot\'s Needs you card shows its rows\' shape until the lists are read', () => {
   const src = read('frontend/src/features/ai/lists.tsx');
-  assert.match(src, /empty=\{ready \? <p [^>]*data-ai-empty="">\{t\('messages:ai\.work\.empty'\)\}<\/p> : \(/);
+  // A project picked from a link that has nothing of yours says so (the
+  // filter in the address, 5 Nov 2026); with no project picked it is the
+  // card's own line, as before.
+  assert.match(src, /empty=\{ready \? \(\n\s+<p [^>]*data-ai-empty=\{nothingHere \? 'project' : ''\}>\n\s+\{nothingHere && onlyApp \? t\('messages:ai\.filter\.emptyProject'[^\n]*: t\('messages:ai\.work\.empty'\)\}\n\s+<\/p>\n\s+\) : \(/);
   assert.match(src, /<SkeletonGroup label=\{t\('messages:ai\.work\.loading'\)\}[^>]*data-ai-loading="">/);
   const catalog = JSON.parse(read('frontend/locales/en/messages.json'));
   assert.equal(catalog['ai.work.loading'].text, 'Loading what needs you');

@@ -280,8 +280,6 @@ test('the Workshop\'s counted words read with a plural form for each count, and 
   // message of its own.
   for (const n of [1, 2, 21]) {
     assert.equal(message('project:workRow.replies', { count: n }), `${n} ${n === 1 ? 'comment' : 'comments'}`);
-    assert.equal(message('project:workshop.mine.open', { count: n }), `${n} open`);
-    assert.equal(message('project:workshop.fresh.count', { count: n }), `${n} since your last visit`);
     assert.equal(message('project:workshop.dash.onYou', { count: n }), `${n} on you`);
     assert.equal(message('project:workshop.dash.fromLastWeek', { count: n }), `from ${n}`);
     for (const total of [2, 5, 21]) {

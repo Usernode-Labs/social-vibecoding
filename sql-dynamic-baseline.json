@@ -1018,11 +1018,25 @@
       "preview": "`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1 AND ${replacingPreparedRetry ? `active_turn IS NOT NULL AND active_turn->>'backend' = 'codex_ope"
     },
     {
+      "source": "src/services/ai-history.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "93296debe802876c7936",
+      "count": 1,
+      "preview": "HISTORY_THREADS_SQL"
+    },
+    {
       "source": "src/services/ai-work.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "8222ba675aea28082113",
       "count": 1,
       "preview": "THREADS_SQL"
+    },
+    {
+      "source": "src/services/ai-work.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "da9e0ef3aa5f12fda97b",
+      "count": 1,
+      "preview": "YOURS_SQL"
     },
     {
       "source": "src/services/app-access.js",
@@ -2248,13 +2262,6 @@
       "fingerprint": "64f5704bd705d843a9c5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
-    },
-    {
-      "source": "src/services/workshop-waiting.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "036c23143ca2ff1e820d",
-      "count": 1,
-      "preview": "PLANS_SQL"
     },
     {
       "source": "src/services/ws-delivery.js",

@@ -147,7 +147,7 @@ test('every way on from the first-request moment moves the address before the di
   assert.deepEqual(fix.fixes, [41], 'and the fix still starts once the app is open');
   const mine = harness(); await mine.submit();
   mine.el('feedback-first-mine').click();
-  assert.deepEqual(mine.closes, [{ hash: '#profile/your-requests', navigations: 0 }]);
+  assert.deepEqual(mine.closes, [{ hash: '#homeroom-bot', navigations: 0 }]);
 });
 test('view-only access keeps the board usable and explains the disabled fix', async () => {
   const h = harness({ response: { firstFeedback: { ...moment, canFix: false } } });
@@ -179,7 +179,7 @@ test('an ordinary posted request stays on its own confirmation, with the way to 
   assert.equal(h.el('feedback-modal').classList.contains('hidden'), false, 'no auto-close');
   h.el('feedback-sent-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
-  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.equal(h.sandbox.location.hash, '#homeroom-bot');
   // The next open is the form again, not the last confirmation.
   h.sandbox.App.openFeedbackModal();
   assert.ok(sent.classList.contains('hidden'));
@@ -282,7 +282,7 @@ test('the first-request moment offers Your requests too, and replaces a sent con
   const h = harness(); await h.submit();
   h.el('feedback-first-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
-  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.equal(h.sandbox.location.hash, '#homeroom-bot');
   const q = harness({ response: {} }); await q.submit();
   q.flush();
   assert.ok(q.shown());
@@ -297,7 +297,7 @@ test('the form itself offers Your requests before anything is typed', async () =
   assert.equal(h.el('feedback-form').classList.contains('hidden'), false, 'the form, not a confirmation');
   h.el('feedback-form-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
-  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.equal(h.sandbox.location.hash, '#homeroom-bot');
   assert.deepEqual(h.calls.filter((c) => c.url === '/api/feedback').length, 0, 'nothing filed by the look');
 });
 test('a rejected submission never congratulates the user', async () => {
