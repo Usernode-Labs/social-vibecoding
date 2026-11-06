@@ -66,7 +66,7 @@ import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/com
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
-import { ChangeGates, ChangeSpentLine } from './change-head';
+import { ChangeGates } from './change-head';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView, TopicBody } from './model';
 import { ChangeSheets, readChangeDetail } from './topic-head';
@@ -538,10 +538,6 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
         // still landing, so they fill in rather than pushing the page down.
         <ChangeGatesSkeleton />
       )}
-      {/* #6116: still being built it has no cards, and its cost is still news to its author. */}
-      {(item.state === 'underway' || !hasCards(item)) && view?.v.testing.spent
-        ? <ChangeSpentLine spent={view.v.testing.spent} />
-        : null}
       {view ? <ChangeSheets id={item.id} row={view.row} body={view.body} /> : null}
     </>
   );
