@@ -84,6 +84,15 @@ const described = (id: string, errors: string[]) => (errors.length
 // banner after a save: a new version starts with no translations, so readers
 // in other languages get its English until it is translated.
 export const ENGLISH_UNTIL_TRANSLATED = 'Readers in other languages get the English of this email until it is translated.';
+// After a save that kept the English words (a new name or layout).
+export const TRANSLATIONS_KEPT = 'The English words did not change, so its translations came along.';
+
+// Whether the edit changes the English words the translations are of. A new
+// name or layout keeps them, and the server carries them to the new version.
+const WORDS = ['subject', 'preheader', 'why', 'html', 'text'] as const;
+export function wordsChanged(draft: TemplateDraft, opened?: TemplateDraft): boolean {
+  return !opened || WORDS.some((field) => (draft[field] ?? '') !== (opened[field] ?? ''));
+}
 
 export function TemplateForm({
   payload, draft, opened, isNew, canWrite, tab, failure, saving, onChange, onTab, onSave, onCancel, onReload, onRetry, preview,
@@ -144,7 +153,8 @@ export function TemplateForm({
         {canWrite ? (
           <div className="flex flex-wrap gap-2">
             <button type="button" className={AdminUI.btn.outline} disabled={saving} onClick={onCancel}>Cancel</button>
-            <button type="button" id="email-template-save" className={AdminUI.btn.primary} disabled={saving} onClick={onSave}>
+            {/* Nothing to save until something changed: a save makes a new version, and a copy of the live one would only lose its translations. */}
+            <button type="button" id="email-template-save" className={AdminUI.btn.primary} disabled={saving || (!isNew && !dirty)} onClick={onSave}>
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
@@ -156,7 +166,7 @@ export function TemplateForm({
         </p>
       )}
       {languagesCard}
-      {canWrite && dirty && action && !action.englishOnly ? (
+      {canWrite && dirty && wordsChanged(draft, opened) && action && !action.englishOnly ? (
         <p id="email-template-english-note" className="text-sm text-zinc-600 dark:text-zinc-300">{ENGLISH_UNTIL_TRANSLATED}</p>
       ) : null}
       <FailureNotice failure={failure} shownFields={SHOWN} onReload={onReload} onRetry={onRetry} />
@@ -282,7 +292,8 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
   canWrite: boolean;
   onDone: () => void;
   // The saved row, and any translations the save left unusable.
-  onSaved: (row: TemplateRow, unusable: UnusableItem[]) => void;
+  // `kept`: the English words did not change, so the translations came along.
+  onSaved: (row: TemplateRow, unusable: UnusableItem[], kept: boolean) => void;
   onReload: () => void;
   restore?: (KeptDraft & { kind: 'template' }) | null;
 }) {
@@ -348,16 +359,17 @@ export function TemplateEditor({ payload, action, isNew, canWrite, onDone, onSav
 
   const save = async () => {
     if (saving || !canWrite) return;
-    // The new version starts with no translations: say first what an admin's
-    // hand corrections of this one will need.
-    if (!(await confirmHandCorrected(lang.rows, 'email'))) return;
+    // New English words start the new version with no translations: say
+    // first what an admin's hand corrections of this one will need. A new
+    // name or layout keeps them, so there is nothing to warn about.
+    if (wordsChanged(draft, opened) && !(await confirmHandCorrected(lang.rows, 'email'))) return;
     setSaving(true);
     setFailure(null);
     const res = await request('/api/admin/email-templates', 'POST', { ...draft, expectedLiveId });
     setSaving(false);
     if (res.ok && res.data && res.data.template) {
       settled.current = true;
-      onSaved(res.data.template, unusableOf(res.data));
+      onSaved(res.data.template, unusableOf(res.data), res.data.translationsKept === true);
       return;
     }
     const refused = readFailure(res.status, res.data);

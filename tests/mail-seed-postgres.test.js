@@ -265,8 +265,9 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
     await seedEmailTemplates(pool);
     const otp = await liveRow('otp');
     const reset = await liveRow('password_reset');
-    // An admin's first save makes password_reset theirs, even with the seed's words.
-    const theirs = await store.saveTemplate(pool, { action: 'password_reset', name: reset.name, layoutFamilyId: reset.layout_family_id,
+    // An admin's first save makes password_reset theirs, even with the seed's
+    // words (a new name: a save identical to the live version is refused).
+    const theirs = await store.saveTemplate(pool, { action: 'password_reset', name: `${reset.name} (mine)`, layoutFamilyId: reset.layout_family_id,
       subject: reset.subject, preheader: reset.preheader, why: reset.why, html: reset.html, text: reset.text, expectedLiveId: reset.id }, null);
     // And a version 1 an admin wrote (created_by set) is theirs too.
     const { rows: [{ id: userId }] } = await pool.query('SELECT id FROM users ORDER BY id LIMIT 1');

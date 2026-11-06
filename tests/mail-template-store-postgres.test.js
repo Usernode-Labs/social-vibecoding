@@ -195,7 +195,7 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM email_template_translations WHERE template_id = $1', [current.id])).rows[0].n, 1);
     await rejects(store.saveTranslation(pool, 'template', current.id, 'fr', fields, 'robot'), 'invalid_origin');
     await rejects(store.saveTranslation(pool, 'template', 999999, 'fr', fields, 'admin'), 'not_found');
-    const next = await save({ action: 'password_reset', expectedLiveId: current.id });
+    const next = await save({ action: 'password_reset', subject: 'New words', expectedLiveId: current.id });
     const snap = await store.snapshot(pool);
     assert.deepEqual(snap.templates.password_reset.translations, {});
     assert.equal(snap.templates.password_reset.id, next.id);
@@ -245,7 +245,7 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
   await t.test('a check refusal inside a save, restore or delete changes nothing', async () => {
     const refuse = { check: async () => { throw Object.assign(new Error('no'), { code: 'invalid', errors: [{ field: 'html', message: 'no' }] }); } };
     const [current] = await live(OTP);
-    await rejects(store.saveTemplate(pool, body({ action: OTP, expectedLiveId: current.id }), userId, refuse), 'invalid');
+    await rejects(store.saveTemplate(pool, body({ action: OTP, subject: 'A refused change', expectedLiveId: current.id }), userId, refuse), 'invalid');
     assert.deepEqual((await live(OTP)).map((r) => r.id), [current.id]);
     let ctx = null;
     const peek = { check: async (c) => { ctx = c; } };
@@ -277,6 +277,51 @@ test('email template store against PostgreSQL', { timeout: 180000 }, async (t) =
       const client = { query: async (sql) => { if (/SELECT pg_advisory/.test(sql)) throw Object.assign(new Error('busy'), { code: pgCode }); return { rows: [] }; }, release: () => {} };
       await rejects(store.saveTemplate({ connect: async () => client }, body({ action: OTP }), userId), 'retry');
     }
+  });
+
+  await t.test('a save identical to the live version is refused and changes nothing', async () => {
+    const action = 'waitlist_joined';
+    const [current] = await live(action);
+    const same = { action, name: current.name, layoutFamilyId: current.layout_family_id, subject: current.subject, preheader: current.preheader, why: current.why, html: current.html, text: current.text, expectedLiveId: current.id };
+    await rejects(store.saveTemplate(pool, same, userId), 'unchanged');
+    assert.deepEqual((await live(action)).map((r) => r.id), [current.id]);
+    const { rows: [layout] } = await pool.query("SELECT * FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL ORDER BY id LIMIT 1");
+    await rejects(store.saveLayout(pool, { familyId: layout.family_id, name: layout.name, html: layout.html, text: layout.text, expectedLiveId: layout.id }, userId), 'unchanged');
+    const still = await pool.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL", [layout.family_id]);
+    assert.deepEqual(still.rows.map((r) => r.id), [layout.id]);
+  });
+
+  await t.test('a new name or layout keeps the translations; new English words start with none', async () => {
+    const action = 'waitlist_joined';
+    const [current] = await live(action);
+    const words = { subject: 'Hola', preheader: '', why: 'w', html: '<p>hola</p>', text: 'hola' };
+    await store.saveTranslation(pool, 'template', current.id, 'es', words, 'admin');
+    await pool.query("UPDATE email_template_translations SET unusable = 'a reason' WHERE template_id = $1 AND locale = 'es'", [current.id]);
+    await store.saveTranslation(pool, 'template', current.id, 'fr', { ...words, subject: 'Salut' }, 'machine');
+    const english = { action, layoutFamilyId: current.layout_family_id, subject: current.subject, preheader: current.preheader, why: current.why, html: current.html, text: current.text };
+    let seen = null;
+    const renamed = await store.saveTemplate(pool, { ...english, name: 'Renamed', expectedLiveId: current.id }, userId, { afterSave: async (c) => { seen = c; } });
+    assert.equal(seen.carried, true, 'afterSave is told the translations came along');
+    assert.equal(seen.row.id, renamed.id);
+    const { rows } = await pool.query('SELECT locale, subject, origin, unusable FROM email_template_translations WHERE template_id = $1 ORDER BY locale', [renamed.id]);
+    assert.deepEqual(rows, [
+      { locale: 'es', subject: 'Hola', origin: 'admin', unusable: 'a reason' },
+      { locale: 'fr', subject: 'Salut', origin: 'machine', unusable: null },
+    ], 'each translation comes along as it was, its origin and mark included');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM email_template_translations WHERE template_id = $1', [current.id])).rows[0].n, 2, 'the archived version keeps its own');
+    const reworded = await store.saveTemplate(pool, { ...english, name: 'Renamed', text: `${english.text} More.`, expectedLiveId: renamed.id }, userId, { afterSave: async (c) => { seen = c; } });
+    assert.equal(seen.carried, false);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM email_template_translations WHERE template_id = $1', [reworded.id])).rows[0].n, 0);
+  });
+
+  await t.test('a renamed layout keeps its translations; new layout words start with none', async () => {
+    const { rows: [layout] } = await pool.query("SELECT * FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL ORDER BY id LIMIT 1");
+    await store.saveTranslation(pool, 'layout', layout.id, 'es', { html: '<b>{{content}}</b>', text: '{{content}}' }, 'machine');
+    const renamed = await store.saveLayout(pool, { familyId: layout.family_id, name: `${layout.name} (renamed)`, html: layout.html, text: layout.text, expectedLiveId: layout.id }, userId);
+    const carried = await pool.query('SELECT locale, html FROM email_layout_translations WHERE layout_id = $1 ORDER BY locale', [renamed.id]);
+    assert.ok(carried.rows.some((r) => r.locale === 'es' && r.html === '<b>{{content}}</b>'));
+    const reworded = await store.saveLayout(pool, { familyId: layout.family_id, name: renamed.name, html: `${layout.html}<p>.</p>`, text: layout.text, expectedLiveId: renamed.id }, userId);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM email_layout_translations WHERE layout_id = $1', [reworded.id])).rows[0].n, 0);
   });
 
   await t.test('listAll returns every version including archived and deleted', async () => {

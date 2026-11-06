@@ -213,7 +213,9 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
 
   const save = async () => {
     if (saving || !canWrite) return;
-    if (!(await confirmHandCorrected(lang.rows, 'layout'))) return;
+    // A new name keeps the translations; only new words need the warning.
+    const reworded = draft.html !== opened.html || draft.text !== opened.text;
+    if (reworded && !(await confirmHandCorrected(lang.rows, 'layout'))) return;
     setSaving(true);
     setFailure(null);
     const res = await request('/api/admin/email-layouts', 'POST', {
@@ -275,7 +277,8 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
         {canWrite ? (
           <div className="flex flex-wrap gap-2">
             <button type="button" className={AdminUI.btn.outline} disabled={saving} onClick={leave}>Cancel</button>
-            <button type="button" id="email-layout-save" className={AdminUI.btn.primary} disabled={saving} onClick={save}>
+            {/* As for templates: nothing to save until something changed. */}
+            <button type="button" id="email-layout-save" className={AdminUI.btn.primary} disabled={saving || (live != null && !dirty)} onClick={save}>
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>

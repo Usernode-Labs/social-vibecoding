@@ -61,6 +61,7 @@ const STATUS = {
   not_found: 404,
   conflict: 409,
   retry: 409,
+  unchanged: 409,
   replacement_required: 422,
   invalid_replacement: 422,
   english_only: 400,
@@ -333,14 +334,24 @@ function emailTemplateAdminRoutes(pool, config) {
       const layoutFamilyId = optionalId(body, 'layoutFamilyId');
       const expectedLiveId = optionalId(body, 'expectedLiveId');
       let unusableTranslations = [];
+      let translationsKept = false;
       const row = await store.saveTemplate(pool, { action, ...fields, layoutFamilyId, expectedLiveId }, req.user.id, {
         check: async ({ layout, client }) => {
           refuseUnless(validateTemplate(action, fields, layout));
           unusableTranslations = await translate.recheckTranslations(client, { templates: [{ ...fields, action, id: null }], layout });
         },
+        // The English words did not change, so the live version's
+        // translations came along; the layout may have, so they are checked
+        // in the one this version is sent in.
+        afterSave: async ({ row: saved, layout, client, carried }) => {
+          if (!carried) return;
+          translationsKept = true;
+          unusableTranslations = unusableTranslations.concat(
+            await translate.recheckTranslations(client, { templates: [saved], layout }));
+        },
       });
       await changed(req, { what: 'template', change: 'saved', id: row.id, action: row.action, version: row.version });
-      res.json({ template: row, unusableTranslations });
+      res.json({ template: row, unusableTranslations, translationsKept });
     } catch (err) {
       sendError(res, err, 'save template');
     }

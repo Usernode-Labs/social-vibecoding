@@ -130,12 +130,17 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
   const liveLayout = async () => (await pool.query("SELECT * FROM email_layouts WHERE status = 'live' AND deleted_at IS NULL ORDER BY family_id LIMIT 1")).rows[0];
   const rowsOf = async (id) => Object.fromEntries((await pool.query('SELECT * FROM email_template_translations WHERE template_id = $1', [id])).rows.map((r) => [r.locale, r]));
   // A fresh version of an action, so each test starts with no translations.
+  // A save identical to the live version is refused, and one that keeps its
+  // words keeps its translations, so this goes through a version with other
+  // words and back: the result has the same English and none.
   const freshVersion = async (action, edit = (x) => x) => {
     const current = await live(action);
-    return store.saveTemplate(pool, edit({
+    const words = {
       action, name: current.name, layoutFamilyId: current.layout_family_id, subject: current.subject,
-      preheader: current.preheader, why: current.why, html: current.html, text: current.text, expectedLiveId: current.id,
-    }), user.id);
+      preheader: current.preheader, why: current.why, html: current.html, text: current.text,
+    };
+    const between = await store.saveTemplate(pool, { ...words, why: `${words.why} (in between)`, expectedLiveId: current.id }, user.id);
+    return store.saveTemplate(pool, edit({ ...words, expectedLiveId: between.id }), user.id);
   };
   const run = (kind, id, model, { deps = {}, ...extra } = {}) => translate.translateVersion(pool, kind, id, {
     ...extra, deps: { llm: model, limits: fakeLimits(), languages: LANGUAGES, glossary: GLOSSARY, ...deps },
@@ -317,7 +322,8 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
     server = app.listen(0); await new Promise((resolve) => server.once('listening', resolve));
     const res = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/email-layouts`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ familyId: layout.family_id, name: layout.name, html: layout.html, text: layout.text, expectedLiveId: layout.id }),
+      // A new name: an identical save is refused, and a rename still checks.
+      body: JSON.stringify({ familyId: layout.family_id, name: `${layout.name} (renamed)`, html: layout.html, text: layout.text, expectedLiveId: layout.id }),
     });
     const body = await res.json();
     assert.equal(res.status, 200, JSON.stringify(body));
@@ -453,7 +459,7 @@ test('email template translation against PostgreSQL', { timeout: 300000 }, async
     assert.match((await rowsOf(row.id)).fr.unusable, /over|KB|size|large/i);
     // Saving the bad layout again finds it still broken, and does not report it as new.
     const bad = await liveLayout();
-    const resaved = await call('POST', '/api/admin/email-layouts', { familyId: bad.family_id, name: bad.name, html: padded, text: bad.text, expectedLiveId: bad.id });
+    const resaved = await call('POST', '/api/admin/email-layouts', { familyId: bad.family_id, name: `${bad.name} again`, html: padded, text: bad.text, expectedLiveId: bad.id });
     assert.equal(resaved.status, 200, JSON.stringify(resaved.body));
     assert.ok(!resaved.body.unusableTranslations.some((u) => u.templateId === row.id), 'already marked');
     assert.ok((await rowsOf(row.id)).fr.unusable);
