@@ -130,6 +130,33 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     }
   };
 
+  // The workflow runtime drains its pending events in the background: with
+  // `loops: false` the pipeline's slots still run, and an accepted event's
+  // afterAccepted hook (services/work-state.js afterTransition) refreshes the
+  // request's work state in the event's own transaction. That refresh reads
+  // its facts at a moment the test does not control, and it can commit an
+  // older stage over the one the test just stored (upsert takes no row
+  // lock), so a test that reads work_states or the bell waits here first. An
+  // event is 'pending' until the transaction that applies it commits, so an
+  // event being processed still counts: no pending row means no refresh in
+  // flight either.
+  const settled = async ({ timeoutMs = 10000, everyMs = 25 } = {}) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const { rows } = await pool.query(
+        `SELECT machine, key, type FROM wf_events
+          WHERE status = 'pending' AND (retry_at IS NULL OR retry_at <= now())
+          ORDER BY id`,
+      );
+      if (!rows.length) return;
+      if (Date.now() >= deadline) {
+        const named = rows.map((r) => `${r.machine} ${r.key} ${r.type}`).join(', ');
+        throw new Error(`the workflow pipeline did not settle: ${named}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, everyMs));
+    }
+  };
+
   // The bot works for anybody Homeroom has let in (homeroom-bot-dm.js
   // hasBot): each person carries it as req.user does.
   let seq = 0;
@@ -488,6 +515,10 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id) VALUES ($1, 70, 'live', 'ready', $2)`,
       [app.id, build.id],
     );
+    // The relay's accepted event refreshes this request's state in its own
+    // transaction; wait for it so it reads the run above rather than
+    // committing an older stage after this test's refresh.
+    await settled();
     await require('../src/services/work-state').refresh(pool, [{ appId: app.id, issueNumber: 70 }]);
     // refresh returns only changed rows; a workflow refresh may have already
     // stored this stage. The request's persisted state is what people read.
@@ -984,8 +1015,13 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.ok(await conversations.leave(pool, gone, conversationId));
     untagged(await postFor(gone), 'left the bot\'s DM');
     await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, $2, 'live', 'empty')`, [app.id, issueNumber]);
+    // Let the pipeline's own refresh of this request finish first, so it
+    // cannot ring the bell from facts read before the run above, and wait
+    // again before reading so a push it made has committed.
+    await settled();
     const workState = require('../src/services/work-state');
     await workState.pushesOf(pool, await workState.refresh(pool, [{ appId: app.id, issueNumber }]));
+    await settled();
     const { rows: [rang] } = await pool.query(`SELECT id FROM notifications WHERE user_id = $1 AND kind = 'build_needs_you'`, [gone.id]);
     assert.ok(rang, 'rung');
     const bell = await require('../src/services/notifications').listForUser(pool, gone.id, { limit: 50 });
