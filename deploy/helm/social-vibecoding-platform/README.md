@@ -502,7 +502,9 @@ and [CloudNativePG labels](https://cloudnative-pg.io/docs/1.28/labels_annotation
 
 Platform upgrades use a Kubernetes-native blue/green equivalent: a
 `RollingUpdate` Deployment creates a new ReplicaSet beside the live one,
-requires two consecutive readiness successes plus `minReadySeconds`, and keeps
+requires two consecutive readiness successes plus 10 seconds of
+`minReadySeconds` for a web Pod (the conductor keeps one answer and 5 seconds),
+and keeps
 `maxUnavailable: 0`. The stable Service starts routing to the new Pod only
 after it is Ready; Kubernetes removes and terminates the old Pod after the new
 ReplicaSet is Available.

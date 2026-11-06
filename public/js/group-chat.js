@@ -494,6 +494,9 @@ const GroupChat = {
       GroupChat._flushPendingOutgoing();
       GroupChat._renderStatusLine();
       GroupChat.resyncLoaded();
+      // The socket is back: if a release raised the "Updating Homeroom"
+      // notice, it is over (issue #6403).
+      window.Offline?.restartDone();
     };
 
     ws.onmessage = (event) => {
@@ -512,7 +515,7 @@ const GroupChat = {
       // surface entirely); the existing socket reference is stale.
       if (GroupChat.ws !== ws) return;
       GroupChat._renderStatusLine();
-      GroupChat._scheduleReconnect();
+      GroupChat._scheduleReconnect(ev.code);
     };
 
     // onerror typically fires immediately before onclose; leave
@@ -524,7 +527,11 @@ const GroupChat = {
     };
   },
 
-  _scheduleReconnect() {
+  _scheduleReconnect(code) {
+    // 1012 is the server's "Service restart" on a release (src/services/ws.js
+    // closeAllForRelease): say Homeroom is updating rather than making a
+    // routine restart look like an outage (issue #6403).
+    if (code === 1012) window.Offline?.restartNotice();
     if (GroupChat._reconnectTimer) return;
     if (!GroupChat.appSlug) return;
     // 1s, 2s, 4s, 8s, 16s, capped at 30s. Plus 0–500ms jitter so a

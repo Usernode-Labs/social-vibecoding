@@ -50,6 +50,14 @@ import { publishVisibility, readVisibility } from './visibility-store';
 export const OFFLINE_BANNER_ID = 'offline-banner';
 
 /**
+ * The banner's planned-restart notice (issue #6403): while Homeroom restarts
+ * for a release, the amber strip says "Updating Homeroom..." instead of the
+ * offline words, and `body.is-offline` is never turned on. Separate store key,
+ * no DOM id: the banner element is still `#offline-banner`.
+ */
+export const RESTART_NOTICE_ID = 'offline-banner:restart';
+
+/**
  * The native shell's word on the phone's network (flutter-mobile-app, from
  * connectivity_plus): `detail` is `{ online, via }`, `via` the kinds of
  * network the phone has (`wifi`, `mobile`, …, or `none`). Sent on every
@@ -76,12 +84,27 @@ export interface OfflineApi {
   nudge(): void;
   forceOffline(): void;
   probe(): Promise<void>;
+  restartNotice(): void;
+  restartDone(): void;
+  restartNoticeVisible(): boolean;
 }
 
 let offline = false;
 let probing: Promise<void> | null = null;
 let recheckTimer: ReturnType<typeof setInterval> | null = null;
+// Consecutive failed /health checks. One slow or failed answer is not an
+// outage: a release or a busy moment can miss one, so the banner waits for a
+// second check (CONFIRM_DELAY_MS later) and a good answer resets the count
+// (issue #6403: a single failed probe showed this banner for a minute).
+let failures = 0;
+let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let restarting = false;
 const PROBE_TIMEOUT_MS = 5000;
+// How long after a first failed check the confirming one runs.
+const CONFIRM_DELAY_MS = 2000;
+// How long the update notice stands before the normal offline path takes over.
+const RESTART_NOTICE_MS = 60000;
 // Set by forceOffline() for the ?shot= deep links: the state is pinned and
 // probing is disabled, so a screenshot of the offline UI can be taken on a
 // perfectly good connection.
@@ -150,7 +173,34 @@ export function probe(): Promise<void> {
     .then(() => fetch('/health', { cache: 'no-store', signal: controller.signal }))
     .then((res) => res.ok, () => false);
   probing = Promise.race([health, deadline])
-    .then((reachable) => set(!reachable))
+    .then((reachable) => {
+      if (reachable) {
+        failures = 0;
+        if (confirmTimer) {
+          clearTimeout(confirmTimer);
+          confirmTimer = null;
+        }
+        set(false);
+        return;
+      }
+      failures += 1;
+      // Two failures in a row (or a tab already showing the banner): a real
+      // outage. One is not enough — ask again in two seconds first.
+      if (failures >= 2 || offline) {
+        if (confirmTimer) {
+          clearTimeout(confirmTimer);
+          confirmTimer = null;
+        }
+        set(true);
+        return;
+      }
+      if (!forced && !confirmTimer) {
+        confirmTimer = setTimeout(() => {
+          confirmTimer = null;
+          void probe();
+        }, CONFIRM_DELAY_MS);
+      }
+    })
     .finally(() => {
       clearTimeout(timer);
       probing = null;
@@ -165,6 +215,44 @@ export function isOffline(): boolean {
 /** Whether the banner should be showing right now (for a first render). */
 export function offlineBannerVisible(): boolean {
   return readVisibility(OFFLINE_BANNER_ID) === true;
+}
+
+/**
+ * The planned-restart notice (issue #6403): the server closed the socket with
+ * 1012, "Service restart", because a release is replacing this Pod. That is
+ * routine, not an outage, so the strip says "Updating Homeroom..." and the
+ * offline look stays off. It clears on the next connection (restartDone), or
+ * after a minute, when a probe decides whether the tab really is offline.
+ * A second call while the notice is up keeps the first timer.
+ */
+export function restartNotice(): void {
+  if (forced) return;
+  if (restarting) return;
+  restarting = true;
+  publishVisibility(RESTART_NOTICE_ID, true);
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    restarting = false;
+    publishVisibility(RESTART_NOTICE_ID, false);
+    void probe();
+  }, RESTART_NOTICE_MS);
+}
+
+/** The socket opened again: the restart is over and the strip goes at once. */
+export function restartDone(): void {
+  if (forced) return;
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+  if (!restarting) return;
+  restarting = false;
+  publishVisibility(RESTART_NOTICE_ID, false);
+}
+
+/** Whether the update notice should be showing now (for a first render). */
+export function restartNoticeVisible(): boolean {
+  return readVisibility(RESTART_NOTICE_ID) === true;
 }
 
 /**
@@ -225,6 +313,9 @@ export function initOffline(): OfflineApi {
     nudge: () => { void probe(); },
     forceOffline,
     probe,
+    restartNotice,
+    restartDone,
+    restartNoticeVisible,
   };
   (window as unknown as { Offline: OfflineApi }).Offline = api;
   if (started) return api;
