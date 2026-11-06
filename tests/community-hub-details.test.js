@@ -304,30 +304,35 @@ test('For you: Needs you counts the votes you owe, not the requests nobody has c
   assert.doesNotMatch(card(claims), /requests? nobody has picked up/, 'queue rows are not requests any more');
 });
 
-test('#3489, 5 Nov 2026: For you\'s Your work row opens the Homeroom bot tab narrowed to this project, for a signed-in viewer', () => {
+test('#6438, 6 Nov 2026: on a wide window For you draws the Workshop row, opening the project\'s Workshop, and no Your work row', () => {
   const { ForYouCard } = loadTsx(HUB);
   const card = (mine, over = {}) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine, alone: false,
     data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
   }));
-  // Your work is the Homeroom bot tab's (frontend/src/features/ai/): the row
-  // counts it there, in the tab's words, and opens it on this project. Its
-  // first render says nothing of counts; they load in an effect
-  // (../frontend/src/features/ai/desk.ts).
+  // No `places`: a wide window. 6 Nov 2026: For you's row is the Workshop's
+  // (the phone's row until then), and it opens the project's Workshop, where
+  // what happened and every item are. Your own work is the Workshop tab's
+  // own card (your-work.tsx YourWorkCard), not a row here.
   const html = card({ viewer: true });
-  const link = (html.match(/<a [^>]*href="#homeroom-bot\?project=garden"[^>]*>/) || [''])[0];
-  assert.ok(link, 'a link, the browser\'s own ways to open it included');
-  assert.match(link, /class="[^"]*dev-ws-foryou-row[^"]*"/);
-  assert.match(link, /title="Opens Homeroom bot, showing your work in Garden"/);
-  assert.match(link, /data-ws-desk-open="" data-ws-mine-card=""/);
-  assert.match(html, /<div class="[^"]*">Your work<\/div>/);
-  assert.doesNotMatch(html, /data-ws-mine-open="workshop"|No work in progress/, 'no longer a door to the Workshop\'s list');
-  // Only a signed-in viewer's hub draws it: a visitor has no work to list.
-  // A project nobody else is in draws it the same way, from its first day
-  // (15 Oct 2026, tests/hub-just-you.test.js).
-  assert.doesNotMatch(card({ viewer: false }), /data-ws-mine-card/);
-  assert.match(card({ viewer: true }, { alone: true, data: community({ audience: 'solo', member_count: 1 }) }), /href="#homeroom-bot\?project=garden"/);
-  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+places=\{drawerOn\}\s+\/>/);
+  const row = (html.match(/<button [^>]*data-ws-workshop-row=""[^>]*>/) || [''])[0];
+  assert.ok(row, 'a button: it opens the Workshop on this page, not an address');
+  assert.match(row, /class="[^"]*dev-ws-foryou-row[^"]*"/);
+  assert.match(html, /<div class="[^"]*">Workshop<\/div>/);
+  assert.match(html, /<div class="[^"]*">What happened, and every item<\/div>/);
+  // It is the Workshop's row, wired to onWork, not the Homeroom bot tab's.
+  assert.match(read(HUB), /\{work \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
+  assert.doesNotMatch(html, /data-ws-mine-card|#homeroom-bot\?project=/, 'no Your work row on the Hub, at any width');
+  // Only a signed-in viewer's hub draws it: a visitor has no work to be
+  // told about. A project nobody else is in draws it the same way, from its
+  // first day (15 Oct 2026, tests/hub-just-you.test.js).
+  assert.doesNotMatch(card({ viewer: false }), /data-ws-workshop-row/);
+  assert.match(card({ viewer: true }, { alone: true, data: community({ audience: 'solo', member_count: 1 }) }), /data-ws-workshop-row/);
+  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>/);
+  assert.doesNotMatch(LANDER, /places=\{drawerOn\}/, 'For you needs no phone-only flag');
+});
+
+test('the Your work row counts in the Homeroom bot tab\'s own words, for the Workshop tab\'s card', () => {
   // The counts: the tab's own lists for this project, by the tab's own rules.
   const { deskOf, deskWords, deskLine } = loadTsx('frontend/src/features/ai/desk.ts');
   const app = { slug: 'garden', name: 'Garden' };

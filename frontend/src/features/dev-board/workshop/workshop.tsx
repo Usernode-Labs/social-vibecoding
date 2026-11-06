@@ -3897,10 +3897,11 @@ export function DevWorkshop(): ReactNode {
       {/* ── The hub, top to bottom: for you, then what went live ──
           One column at every width, each part under its small-caps label.
           FOR YOU is one card of doors: Needs you (the first vote you owe, a
-          quiet line when none is, #3408), Your work (the first of yours and
-          how many, or "No work in progress.") and the Discussion (its last
-          line, or "No messages yet."), each opening its place, the same
-          from a project's first day. RECENTLY LIVE is the last three
+          quiet line when none is, #3408), the Workshop (6 Nov 2026: it took
+          Your work's place there, and opens where what happened and every
+          item are) and the Discussion (its last line, or "No messages
+          yet."), each opening its place, the same from a project's first
+          day. RECENTLY LIVE is the last three
           changes that went live, as pictures, and its door is the Workshop,
           where what landed since your last visit, your work in full and
           "live this week" are; before any has, it is the app itself
@@ -3923,7 +3924,6 @@ export function DevWorkshop(): ReactNode {
           onNeeds={() => openTab('needs')}
           onWork={() => openTab('workshop')}
           onDiscussion={() => openTab('discussion')}
-          places={drawerOn}
         />
       ) : null}
       {/* TOPICS, on a phone (3 Nov 2026): the Hub is the way to every place
