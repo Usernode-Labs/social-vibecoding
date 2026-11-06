@@ -3985,10 +3985,13 @@ const GroupChat = {
   // Operates only over messages the list actually references, so older
   // dotted messages outside the capped list aren't wrongly touched: a
   // referenced message's dot becomes (readAt == null).
+  // #6441: every kind a message can ring with is here, so a thread reply
+  // that arrives while the thread is open gets its dot and is then read by
+  // the transcript's on-screen observer.
   reconcileDotsFromNotifications() {
     const items = (window.Notifications && Notifications.items) || [];
     if (!Array.isArray(items)) return;
-    const KINDS = new Set(['mention', 'reply', 'reaction']);
+    const KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply', 'change_thread_reply']);
     const state = new Map(); // chatMessageId -> isUnread
     for (const n of items) {
       if (!n || !KINDS.has(n.kind) || n.chatMessageId == null) continue;

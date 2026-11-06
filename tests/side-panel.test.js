@@ -1629,6 +1629,11 @@ test('the divider is drawn on the line between the two halves, not inside the pa
     'centred on the line; beside an app the line is the panel\'s own edge');
   assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/,
     'beside the bot\'s list, on the pane\'s own edge');
+  // #6447: below 1024px the list's 16px gutter is the gap you see between the
+  // two sheets, so the handle sits in the middle of it, 8px toward the list.
+  // A desktop alone keeps the pane's edge.
+  assert.match(CSS, /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/,
+    'a narrow window centres the handle in the gap between the two cards');
   assert.match(CSS, /\.side-panel-divider::after \{[^}]*inset-inline-start: calc\(50% - 1\.5px\);/, 'the bar on the line too');
   // #6397: below the pane's 28px rounded top corner, not beside the curve.
   assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\)::after \{\s*top: 1\.75rem;\s*\}/,
