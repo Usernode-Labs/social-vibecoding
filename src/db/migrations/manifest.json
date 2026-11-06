@@ -205,6 +205,11 @@
       "id": "work-state-marks-check-phase",
       "sha256": "bc864215c9d5528939e79ec8037f49844543a2b5153e979611e66fe086c585ee",
       "schemaSha256": "54bcbe575d8c2c2ca50072f0ec50c1d0312c0d857c06374761736b09d55d70f2"
+    },
+    {
+      "id": "change-request-claims",
+      "sha256": "5428abcf77d1cb9a60cd937148ba9a65411317e777477481e181957d6f3db341",
+      "schemaSha256": "f158533bcb1446a7bc90666f9640e388a69edba214bd84f4af42b1b18a47ae25"
     }
   ]
 }

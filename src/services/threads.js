@@ -635,6 +635,26 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
     }
     items.push(item);
   }
+  // #6420: which of this thread's changes a requester has answered "This
+  // doesn't close it" to, so the change's "Also closes" line can say so.
+  // One read over the changes this page draws.
+  const changeIds = items.filter((i) => i.type === 'change').map((i) => i.id);
+  if (changeIds.length) {
+    const { rows: disputed } = await db.query(
+      `SELECT session_id, request_number FROM change_request_claims
+        WHERE session_id = ANY($1::int[]) AND disputed_at IS NOT NULL`,
+      [changeIds]
+    );
+    const byChange = new Map();
+    for (const row of disputed) {
+      const key = Number(row.session_id);
+      if (!byChange.has(key)) byChange.set(key, []);
+      byChange.get(key).push(Number(row.request_number));
+    }
+    for (const item of items) {
+      if (item.type === 'change') item.notConfirmed = (byChange.get(item.id) || []).sort((a, b) => a - b);
+    }
+  }
   const number = thread.number == null ? null : Number(thread.number);
   const leadsChange = number != null
     && items.some((i) => i.type === 'change' && i.number === number)
@@ -670,17 +690,39 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
 // thread, each with the request whose page it is on.
 const ELSEWHERE_SQL = `
 SELECT cs.id, cs.pr_number, COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, '')) AS title,
+       cs.pr_summary_md, cs.user_id AS builder_id, rq.created_by AS requester_id,
+       (c.disputed_at IS NOT NULL) AS disputed,
        t.number AS home, n.number AS request
   FROM chat_sessions cs
   JOIN threads t ON t.id = cs.thread_id
   JOIN LATERAL unnest(COALESCE(cs.linked_issues, '{}'::int[])) AS n(number) ON n.number = ANY($3::int[])
+  JOIN requests rq ON rq.app_id = cs.app_id AND rq.number = n.number
+  LEFT JOIN change_request_claims c ON c.session_id = cs.id AND c.request_number = n.number
  WHERE cs.app_id = $1 AND cs.thread_id <> $2 AND cs.is_headless = FALSE
    AND cs.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
    AND ${visibleChangeSql('cs', '$4')}
    AND t.number IS NOT NULL
    AND EXISTS (SELECT 1 FROM requests r WHERE r.thread_id = t.id AND r.number = t.number)
- ORDER BY cs.id
+ ORDER BY cs.id, n.number
  LIMIT 20`;
+
+// #6420: the first sentence of the change's plain-language summary, with
+// markdown's marks stripped. The card shows it under the title; a blank
+// summary leaves the title alone.
+function firstSentence(md) {
+  const text = String(md || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
+    .replace(/[*_~]{1,3}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return null;
+  const sentence = text.match(/^.*?[.!?](?:\s|$)/);
+  return (sentence ? sentence[0] : text).trim().slice(0, 200);
+}
 
 async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
   const wanted = (numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
@@ -691,12 +733,22 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
   for (const row of rows) {
     if (seen.has(Number(row.id))) continue;
     seen.add(Number(row.id));
+    const requesterId = row.requester_id == null ? null : Number(row.requester_id);
+    const builderId = row.builder_id == null ? null : Number(row.builder_id);
+    const mine = viewerId != null && requesterId != null && requesterId === Number(viewerId);
+    const disputed = row.disputed === true;
     out.push({
       id: Number(row.id),
       number: row.pr_number == null ? null : Number(row.pr_number),
       title: row.title || null,
+      summary: firstSentence(row.pr_summary_md),
       on: Number(row.home),
       request: Number(row.request),
+      disputed,
+      mine,
+      // Only the requester is asked, and not when the change is their own:
+      // the notice still shows, but there is nothing to answer.
+      ask: mine && requesterId !== builderId && !disputed,
     });
   }
   return out;
