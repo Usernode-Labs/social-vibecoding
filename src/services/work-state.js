@@ -32,6 +32,8 @@ const { planRecordSql } = require('./request-specs');
 // hold reasons and detail.
 
 const progress = require('./homeroom-bot-progress');
+const { syncWaits } = require('./vote-ready');
+const checksEstimate = require('./checks-estimate');
 
 const STAGES = Object.freeze([
   'reading', 'planning', 'waiting_for_you', 'building', 'checking',
@@ -109,10 +111,42 @@ const state = (stage, extra = {}) => {
 };
 
 /**
+ * Pure: the checks estimate's second line while a run is in flight (#6402).
+ * `About N min left`, from the same estimate the Testing card draws: the
+ * median build plus checks time, less how long this run has been going. No
+ * line when there is no estimate, the run has passed it, or it waits for a
+ * free checks slot (`queued`: no time can be estimated yet).
+ */
+function checksLine(row, now) {
+  if (!row || row.check_phase === 'queued') return null;
+  const running = ['building', 'testing'].includes(row.check_phase)
+    || (row.check_phase == null && (row.check_state === 'pending' || row.check_state === 'running'));
+  if (!running) return null;
+  const estimate = row.checks_estimate;
+  const buildMs = Number(estimate && estimate.buildMs);
+  const checksMs = Number(estimate && estimate.checksMs);
+  if (!Number.isFinite(buildMs) || !Number.isFinite(checksMs)) return null;
+  const at = row.checks_at || row.checks_checked_at;
+  if (!at) return null;
+  const elapsed = now.getTime() - new Date(at).getTime();
+  if (!Number.isFinite(elapsed)) return null;
+  const remaining = buildMs + checksMs - elapsed;
+  if (remaining <= 0) return null;
+  return { code: 'checks_running', minutes: Math.max(1, Math.ceil(remaining / 60000)) };
+}
+
+/** The stage word plus the two lines a checking change can carry (#6402). */
+function checkingState(row, since, now) {
+  if (syncWaits(row)) return state('checking', { since, line: { code: 'sync_wait' } });
+  const line = checksLine(row, now);
+  return state('checking', { since, ...(line ? { line } : {}) });
+}
+
+/**
  * Pure: a request's work state from one stage of homeroom-bot-progress.js
  * stageOf (the bot's own step), mapped to the ten (the plan's table).
  */
-function fromStage(s, row) {
+function fromStage(s, row, now = new Date()) {
   const since = s.since || null;
   switch (s.stage) {
     case 'reading':
@@ -158,7 +192,7 @@ function fromStage(s, row) {
     case 'followup_queued':
       return state('up_for_vote', { since, line: { code: 'update_queued' } });
     case 'checks':
-      return state('checking', { since });
+      return checkingState(row, since, now);
     case 'checks_failed': {
       const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
       return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
@@ -166,9 +200,11 @@ function fromStage(s, row) {
     case 'fix_stopped':
       return state('stopped', { since, reason: 'fix_stopped' });
     case 'vote':
-      return row.first_version === true
-        ? state('going_live', { since, line: { code: 'first_version' } })
-        : state('up_for_vote', { since });
+      if (row.first_version === true) return state('going_live', { since, line: { code: 'first_version' } });
+      // #6402: a passing change that has since stopped merging cleanly waits
+      // to sync with main, rather than asking for a vote it would throw away.
+      if (syncWaits(row)) return state('checking', { since, line: { code: 'sync_wait' } });
+      return state('up_for_vote', { since });
     case 'merging':
       return state('going_live', { since: row.merged_at || since });
     default:
@@ -200,7 +236,7 @@ function deriveFacts(row, { now = new Date() } = {}) {
   if (status === 'merged') return state('live', { since: row.merged_at || row.proposal_at });
   // The bot's own step for it, when it has one.
   const step = progress.stageOf(row, { now });
-  let out = step ? fromStage(step, row) : null;
+  let out = step ? fromStage(step, row, now) : null;
   // An update on its way holds the vote it would otherwise ask for (#6282).
   if (status === 'promoted' && row.update_coming && out && (out.stage === 'up_for_vote' || out.stage === 'checking')) {
     out = row.update_coming === 'running'
@@ -232,6 +268,9 @@ function deriveFacts(row, { now = new Date() } = {}) {
   if (!status && row.lc_status) {
     const change = deriveChange({
       status: row.lc_status, check_state: row.lc_check_state, checks_at: row.lc_checks_at,
+      check_phase: row.lc_check_phase, merge_conflict_state: row.lc_merge_conflict_state,
+      integration_merges_clean: row.lc_integration_merges_clean,
+      checks_estimate: row.checks_estimate,
       promoted_at: row.lc_promoted_at, merged_at: row.lc_merged_at, live_at: row.lc_live_at,
       last_activity_at: row.lc_last_activity_at, created_at: row.lc_created_at,
     }, { now });
@@ -282,8 +321,14 @@ function deriveChange(row, { now = new Date() } = {}) {
   if (status === 'promoted') {
     if (row.check_state !== 'passing' && row.check_state !== 'skipped') {
       const failing = row.check_state === 'failing' || row.check_state === 'error';
-      return state('checking', { since: row.checks_at || row.promoted_at, ...(failing ? { line: { code: 'checks_failing' } } : {}) });
+      if (failing) return state('checking', { since: row.checks_at || row.promoted_at, line: { code: 'checks_failing' } });
+      // #6402: deferred or conflicting heads wait to sync with main; a run in
+      // flight says about how long it has left.
+      return checkingState(row, row.checks_at || row.promoted_at, now);
     }
+    // A passing change that has since stopped merging cleanly moves back to
+    // Waiting to sync with main: its verdict no longer describes what lands.
+    if (syncWaits(row)) return state('checking', { since: row.checks_at || row.promoted_at, line: { code: 'sync_wait' } });
     return state('up_for_vote', { since: row.promoted_at });
   }
   void now;
@@ -396,6 +441,9 @@ const WORDS = Object.freeze({
   'work.line.checksFailing': 'Tests are failing',
   'work.line.checksFailingCount_one': '{{count}} test failing',
   'work.line.checksFailingCount_other': '{{count}} tests failing',
+  'work.line.checksRunning_one': 'About {{count}} min left',
+  'work.line.checksRunning_other': 'About {{count}} min left',
+  'work.line.syncWait': 'Waiting to sync with main',
   'work.line.firstVersion': 'First version: it goes live without a vote',
   'work.line.claimed': '{{username}} is building it',
   'work.line.planningWithYou': 'Planning it with you in a private thread',
@@ -435,6 +483,10 @@ function lineSays(item) {
       return line.failing
         ? fill(line.failing === 1 ? 'work.line.checksFailingCount_one' : 'work.line.checksFailingCount_other', { count: line.failing })
         : fill('work.line.checksFailing');
+    case 'checks_running':
+      return line.minutes
+        ? fill(line.minutes === 1 ? 'work.line.checksRunning_one' : 'work.line.checksRunning_other', { count: line.minutes })
+        : null;
     case 'claimed': return line.by ? fill('work.line.claimed', { username: line.by }) : null;
     case 'reason': return line.text ? fill('work.line.said', { reason: line.text }) : null;
     default: return WORDS[`work.line.${camel(line.code)}`] ? fill(`work.line.${camel(line.code)}`) : null;
@@ -475,6 +527,8 @@ const REQUEST_FACTS_SQL = `
          ${require('../workflow/rules/bot-loop.ts').planHoldSql('it.app_id', 'it.issue_number', 'NULL::int')} AS awaiting_plan,
          CASE WHEN cs.id IS NULL THEN NULL ELSE ${progress.updateComingSql('cs')} END AS update_coming,
          lc.id AS lc_id, lc.status AS lc_status, lc.check_state AS lc_check_state, lc.checks_checked_at AS lc_checks_at,
+         lc.check_phase AS lc_check_phase, lc.merge_conflict_state AS lc_merge_conflict_state,
+         lc.integration_merges_clean AS lc_integration_merges_clean,
          lc.promoted_at AS lc_promoted_at, lc.merged_at AS lc_merged_at, lc.live_at AS lc_live_at,
          lc.last_activity_at AS lc_last_activity_at, lc.created_at AS lc_created_at, lc.update_coming AS lc_update_coming,
          lc.username AS lc_by,
@@ -513,7 +567,8 @@ const REQUEST_FACTS_SQL = `
     -- person's under way holds the bot off as the bot itself reads it
     -- (homeroom-bot.js issueHolders). A posted plan is no change.
     LEFT JOIN LATERAL (
-      SELECT c.id, c.status, c.check_state, c.checks_checked_at, c.promoted_at, c.merged_at, c.live_at,
+      SELECT c.id, c.status, c.check_state, c.checks_checked_at, c.check_phase,
+             c.merge_conflict_state, c.integration_merges_clean, c.promoted_at, c.merged_at, c.live_at,
              c.last_activity_at, c.created_at,
              (SELECT u.username FROM users u WHERE u.id = c.user_id AND u.is_synthetic IS NOT TRUE) AS username,
              CASE WHEN c.status = 'promoted' THEN ${progress.updateComingSql('c')} END AS update_coming
@@ -529,6 +584,7 @@ const REQUEST_FACTS_SQL = `
 /** One row per change named by $1 (session ids) that has no request of its own. */
 const CHANGE_FACTS_SQL = `
   SELECT cs.id, cs.app_id, (SELECT a.slug FROM apps a WHERE a.id = cs.app_id) AS app_slug, cs.user_id, cs.status, cs.check_state, cs.checks_checked_at AS checks_at,
+         cs.check_phase, cs.merge_conflict_state, cs.integration_merges_clean,
          cs.promoted_at, cs.merged_at, cs.live_at, cs.created_at, cs.last_activity_at
     FROM chat_sessions cs
    WHERE cs.id = ANY($1::int[])`;
@@ -584,6 +640,24 @@ async function upsert(db, key, next, { touch = false } = {}) {
   return { prev: prev ? { stage: prev.stage, why: prev.why || null, reason: prev.reason || null } : null };
 }
 
+const IN_FLIGHT_CHECKS = (s) => s === 'pending' || s === 'running';
+
+/**
+ * Attach `checks_estimate` (the Testing card's own estimate, cached a minute
+ * per app) to facts rows whose change is promoted and still checking, so a
+ * run in flight can say "About N min left" (#6402). Best-effort: a failed
+ * read is no estimate, and no estimate is no line.
+ */
+async function attachChecksEstimate(db, rows, wants) {
+  const byApp = new Map();
+  for (const row of rows) {
+    if (!wants(row)) continue;
+    const id = Number(row.app_id);
+    if (!byApp.has(id)) byApp.set(id, await checksEstimate.forApp(db, id).catch(() => null));
+    row.checks_estimate = byApp.get(id);
+  }
+}
+
 /**
  * Derive the items again and store each that changed. `items` are
  * { appId, issueNumber } (a request) or { sessionId } (a change, which
@@ -609,6 +683,8 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
     const list = [...requests.values()];
     const { rows } = await db.query(REQUEST_FACTS_SQL, [list.map((r) => r.appId), list.map((r) => r.issueNumber)]);
     rows.sort((a, b) => Number(a.app_id) - Number(b.app_id) || Number(a.issue_number) - Number(b.issue_number));
+    await attachChecksEstimate(db, rows, (r) => (r.proposal_status === 'promoted' && IN_FLIGHT_CHECKS(r.check_state))
+      || (r.lc_status === 'promoted' && IN_FLIGHT_CHECKS(r.lc_check_state)));
     // Which of them wait for their project's first version, by the bot's
     // own rule (as its read lane and a project chat's card read it).
     const bot = require('./homeroom-bot');
@@ -629,6 +705,7 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
   if (changes.size) {
     const { rows } = await db.query(CHANGE_FACTS_SQL, [[...changes]]);
     rows.sort((a, b) => Number(a.id) - Number(b.id));
+    await attachChecksEstimate(db, rows, (r) => r.status === 'promoted' && IN_FLIGHT_CHECKS(r.check_state));
     for (const row of rows) {
       const next = { ...deriveChange(row, { now }), requesterId: row.user_id == null ? null : Number(row.user_id) };
       const key = { appId: Number(row.app_id), kind: 'change', ref: Number(row.id), issueNumber: null, sessionId: Number(row.id) };

@@ -391,6 +391,12 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   if (status === 'promoted' && theirs && row.needs_fix === true && !updating && state.stage !== 'building') {
     return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true };
   }
+  // #6402: a change still being checked asks nobody for a vote yet. Someone
+  // who would have been asked, but is not its author or a follower, sees it
+  // under Waiting while it checks rather than losing it from every list.
+  if (state.stage === 'checking' && status === 'promoted' && wouldVote && !own && !updating) {
+    return { group: 'waiting', work: stored, at };
+  }
   // One they only voted or wrote in is listed while no change of it is in
   // flight, as Waiting: it asks nothing of them, and nobody is building it.
   const place = updating

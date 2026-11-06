@@ -1120,6 +1120,7 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             -- Merged but not live yet (live_at) reads as merging: going live.
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
             cs.check_state, cs.check_phase,
+            cs.merge_conflict_state, cs.integration_merges_clean,
             cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
             -- N5: which commit the verdict is about, and the head up for
             -- approval (checksOnHead).

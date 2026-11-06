@@ -30,6 +30,7 @@ import type { SessionRoute } from '../pushes.ts';
 import * as store from '../rules/check-store.ts';
 import * as rowStore from './check-store.ts';
 import { createCheckFailedNotification } from '../rules/change-notifications.ts';
+import { createPrProposedNotifications } from '../rules/proposal-notifications.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { withinAutoRetries } from '../rules/check-retries.ts';
 import { OPEN, readFacts } from './facts.ts';
@@ -1719,6 +1720,21 @@ async function buildCardOpen(tx: Tx, sessionId: number): Promise<boolean> {
   return last?.build === 'running';
 }
 
+// #6402: the vote request goes out when the checks settle passing (or
+// skipped), not at promotion. `createPrProposedNotifications` itself checks
+// the row is promoted and ready, and dedupes per session, so a later
+// settlement of the same change never asks twice.
+async function notifyVoteReady(tx: Tx, sessionId: number, ctx: any) {
+  if (!ctx) return;
+  const { rows: [row] } = await tx.query(
+    `SELECT app_id, user_id FROM chat_sessions WHERE id = $1 AND status = 'promoted'`, [sessionId]);
+  if (!row) return;
+  const made = await createPrProposedNotifications(tx, {
+    appId: Number(row.app_id), sessionId, proposerId: row.user_id == null ? null : Number(row.user_id),
+  });
+  for (const n of made) ctx.push(toUser(Number(n.user_id), { type: 'notification_new', notificationId: Number(n.id) }));
+}
+
 const WRITES = {
   botChange: writeBotChange,
   // checks_commit_sha, 'pending', the phase and the trigger.
@@ -1827,11 +1843,14 @@ const WRITES = {
   // capture outcome, the run's media, and the app's check history (counted
   // once per run). Nothing of it is written for a verdict about a head the
   // row has since left.
-  async settled(tx: Tx, w: any) {
+  async settled(tx: Tx, w: any, ctx: any) {
     const stored = await rowStore.storeChecks(tx, w.sessionId, w.head,
       { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}),
         ...(w.unitSuiteAbsent ? { unitSuiteAbsent: true } : {}) }, w.detail);
     if (!stored) { await dropMedia(tx, w.sessionId); return; }
+    // #6402: a passing (or skipped) verdict is the moment the change becomes
+    // votable, so the "new proposal" ping goes out here.
+    if (w.state === 'passing' || w.state === 'skipped') await notifyVoteReady(tx, w.sessionId, ctx);
     if (w.console) await rowStore.storeConsoleCheck(tx, w.sessionId, w.console, w.head);
     if (w.capture) await rowStore.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
     if (w.media) await publishMedia(tx, w.sessionId, w.runId); else await dropMedia(tx, w.sessionId);
@@ -1873,7 +1892,11 @@ const WRITES = {
   carried: (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1', [w.sessionId, w.head]),
 
   // Nothing to test, against the row's pin as the transition read it.
-  skipped: (tx: Tx, w: any) => rowStore.storeChecksSkipped(tx, w.sessionId, w.head, w.reason, w.expected ?? null),
+  async skipped(tx: Tx, w: any, ctx: any) {
+    const stored = await rowStore.storeChecksSkipped(tx, w.sessionId, w.head, w.reason, w.expected ?? null);
+    if (stored) await notifyVoteReady(tx, w.sessionId, ctx);
+    return stored;
+  },
 
   // A promoted head that conflicts with main: previewed, verdict deferred.
   async deferred(tx: Tx, w: any) {
