@@ -50,6 +50,11 @@ export function botRequestServices({ config, pool }: Deps): Record<string, WorkH
         const out = await bot().startBuild(config, pool, {
           appId: Number(input.appId), issueNumber: Number(input.issueNumber), runId: Number(input.runId),
           person: input.person == null ? null : String(input.person), replyTo: { machine: MACHINE, key },
+          // #6423: a build that waited for another change keeps the moment
+          // the wait started (the two hours count from it) and which change
+          // it waited for (the note that says the wait ended names it).
+          overlapSince: input.overlapSince == null ? null : String(input.overlapSince),
+          priorOverlap: (input.overlap ?? null) as any,
         });
         return JSON.parse(JSON.stringify(out ?? { outcome: 'skipped' })) as Json;
       },
