@@ -241,8 +241,10 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // the seeded note and its suggested replies, and 9107 for #6264, the
     // request whose discussion carries the bot's promise to tell someone
     // when the update was in and the line it posted when it was, and 9112
-    // for #6399, the request whose hand-back reason a later release lifted).
-    assert.strictEqual(body.issues.length, 26);
+    // for #6399, the request whose hand-back reason a later release lifted,
+    // and 9114/9115 for #6211, the pair whose discussions show the overlap
+    // note, its three choices and the line saying what was chosen).
+    assert.strictEqual(body.issues.length, 28);
 
     // #6399: and opened by its address, as the shots do, the request whose
     // hand-back reason a later release lifted is there without ?demo=1.

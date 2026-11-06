@@ -132,7 +132,7 @@ export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github
 export interface BotOfferView {
   status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
   forMe: boolean;
-  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+  actions: { id: 'yes' | 'no' | 'first'; label: string; primary: boolean }[];
   /** #6305: 'file_many' when one request is offered on several projects. */
   kind?: string;
   rows?: BotOfferRow[] | null;

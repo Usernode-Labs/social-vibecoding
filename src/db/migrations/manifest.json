@@ -215,6 +215,11 @@
       "id": "conversation-members-last-visit",
       "sha256": "a830dfd155d9a11ffa9d2512f9b949e014d439e4b4f0d63c31655199c0d7424d",
       "schemaSha256": "9690fd969c07b70f74ae472f51a9033551fc5206ff9f9d98f6690d9bba3efff9"
+    },
+    {
+      "id": "homeroom-bot-overlap-offers",
+      "sha256": "2426b42ac74e1b2cf8b3a04ab1f84f53f7e59898fe6e131411e5951b26a04f2f",
+      "schemaSha256": "79aa7fdde06ea699fd1eda4a58de8ab7b5ed4bedd3ac065a953e885d1215e2ca"
     }
   ]
 }

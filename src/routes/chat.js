@@ -1268,7 +1268,7 @@ function chatRoutes(config) {
       }
     });
 
-  //   POST /api/apps/:slug/messages/:id/bot-offer  { choice: 'yes' | 'no' }
+  //   POST /api/apps/:slug/messages/:id/bot-offer  { choice: 'yes' | 'no' | 'first' }
   //     → a tap under one of Homeroom bot's offers in a thread
   //       (homeroom-bot-voice.js decideOffer): File it, Withdraw it or
   //       Propose to close, or Not now / Keep it. Only the person it was
@@ -1280,7 +1280,8 @@ function chatRoutes(config) {
       res.set('Cache-Control', 'private, no-store');
       if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
       const choice = req.body?.choice;
-      if (choice !== 'yes' && choice !== 'no') return res.status(400).json({ error: 'Choose yes or no.' });
+      // #6211: an overlap note's third choice (build this one first) too.
+      if (choice !== 'yes' && choice !== 'no' && choice !== 'first') return res.status(400).json({ error: 'Choose yes or no.' });
       // #6305: a many-project card's File on all says which rows are ticked.
       const rows = Array.isArray(req.body?.rows)
         ? req.body.rows.filter((r) => typeof r === 'string').slice(0, 12)

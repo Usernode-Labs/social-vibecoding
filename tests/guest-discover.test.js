@@ -147,8 +147,8 @@ const discoverProps = (over = {}) => ({
 test('every card opens its project\'s page, no card is locked, and each project is one card: featured first, then the most active (One Home, #6361)', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   // The signed-out Home's Communities: Featured first, what an admin
-  // featured in its order, as one sideways row (One Home follow-up, #6361);
-  // then the rest by people active, each project once.
+  // featured in its order, in the same wrapping grid as the rest (#6434);
+  // then the rest by people active, under their own heading, each project once.
   assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner']);
   assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['fresh-one']);
   assert.ok(html.indexOf('data-home-join-featured=""') < html.indexOf('<article data-guest-card="fresh-one"'), 'the strip leads');
@@ -306,8 +306,15 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   const html = draw();
   assert.deepEqual(featuredOf(html), ['todo-list', 'game-corner'], 'in the order an admin set');
   assert.deepEqual(cardsOf(html), ['fresh-one'], 'and not again in the grid');
-  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="[^"]*\bsnap-x\b[^"]*\boverflow-x-auto\b/);
+  // #6434: Featured wraps in the same grid as the rest, at the same size,
+  // and the rest get their own heading.
+  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="grid grid-cols-\[repeat\(auto-fill,[^"]*\] gap-3 px-1"><div role="listitem" class="flex \[&amp;&gt;article\]:flex-1">/);
+  assert.doesNotMatch(read(JOIN), /snap-x|overflow-x-auto|w-\[min\(17rem/, 'nothing in the section scrolls sideways');
   assert.equal(message('home:join.featured'), 'Featured');
+  assert.equal(message('home:join.more'), 'More communities');
+  const rest = html.indexOf('data-home-join-rest=""');
+  assert.ok(rest > html.indexOf('data-guest-featured="game-corner"') && rest < html.indexOf('<article data-guest-card="fresh-one"'), 'More communities sits between Featured and the rest');
+  assert.match(html, /<h3 class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*" data-home-join-rest="">More communities<\/h3>/);
   // Each featured card keeps what a card can do: Join, signed in.
   assert.match(cardOf(html, 'game-corner'), /data-home-join="game-corner"/);
   // A community already on this Home is in neither.
@@ -318,6 +325,7 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   assert.deepEqual(featuredOf(found), []);
   assert.deepEqual(cardsOf(found), ['todo-list', 'game-corner', 'fresh-one']);
   assert.doesNotMatch(found, /data-home-join-featured/);
+  assert.doesNotMatch(found, /data-home-join-rest/, 'one grid while searching, no second heading');
   // Signed out the same strip, with no Pin or Join on a card (#6433), and its
   // own label id (the landing and Home share a document).
   const guest = draw({ signedIn: false });
@@ -327,6 +335,11 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // Nothing featured: no strip, and the grid is everything.
   const none = draw({ apps: APPS.map((a) => ({ ...a, featured: false })) });
   assert.doesNotMatch(none, /data-home-join-featured/);
+  assert.doesNotMatch(none, /data-home-join-rest/, 'nothing featured: one grid, no second heading');
+  // Only featured ones: Featured alone, no empty second heading.
+  const onlyFeatured = draw({ apps: APPS.filter((a) => a.featured) });
+  assert.match(onlyFeatured, /data-home-join-featured/);
+  assert.doesNotMatch(onlyFeatured, /data-home-join-rest/, 'no rest: no More communities heading');
   assert.deepEqual(cardsOf(none), ['game-corner', 'todo-list', 'fresh-one']);
 });
 
