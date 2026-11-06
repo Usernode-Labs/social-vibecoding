@@ -139,7 +139,10 @@ test('the console island imports every admin module, console first', () => {
     'admin-db-export',
     // #4405: every custom domain a project has claimed.
     'admin-domains',
-    'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
+    'admin-e2e',
+    // Email templates: what every platform email says, and its layouts.
+    'admin-email-templates',
+    'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
     'admin-homeroom-bot',

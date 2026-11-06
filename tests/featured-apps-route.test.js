@@ -62,6 +62,7 @@ stub(ids.lifecycle, { drainGuard: (_req, _res, next) => next() });
 stub(ids.rateLimits, {
   dbExportLimiter: (_req, _res, next) => next(),
   mailTestLimiter: (_req, _res, next) => next(),
+  emailPreviewLimiter: (_req, _res, next) => next(),
   smsTestLimiter: (_req, _res, next) => next(),
   smsTestNumberLimiter: (_req, _res, next) => next(),
   featuredAdminLimiter: (_req, _res, next) => next(),

@@ -374,7 +374,14 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
 // drawn from the same vocabulary mail_deliveries uses:
 //   sent | skipped_staging | failed | no_transport | suppressed_rate_limit | suppressed_bounce | no_template
 // plus `invalid_recipient` for a request that never reached a provider.
-async function sendTest(config, { to } = {}) {
+//
+// `preview`, from the email template editor, sends a template that is not
+// saved: `{ kind, payload, resolved }`, the action's sample payload and the
+// words to render it with (the shape send() resolves). It goes the same way as
+// the diagnostic mail and is recorded as one (`admin_test` in the ledger), so a
+// test of a sign-in template is not counted as a sign-in mail; the transport
+// renders it as `kind`, as it would the real one.
+async function sendTest(config, { to, preview = null } = {}) {
   const startedAt = Date.now();
   const outcome = {
     status: 'failed',
@@ -426,7 +433,8 @@ async function sendTest(config, { to } = {}) {
     // that landed in their inbox to the attempt that produced it.
     const reference = require('crypto').randomBytes(4).toString('hex');
     outcome.reference = reference;
-    const payload = {
+    const kind = preview ? preview.kind : 'admin_test';
+    const payload = preview ? { ...(preview.payload || {}), messageId } : {
       provider: provider || 'none',
       from: outcome.from || '(unset)',
       sentAt: new Date().toISOString(),
@@ -436,10 +444,10 @@ async function sendTest(config, { to } = {}) {
     // Render before anything else, so the console can show the exact copy
     // that was (or would have been) delivered even on the failure paths. The
     // same stored template a send uses, and the same words reach the transport.
-    const resolved = await resolvedFor(config, pool, 'admin_test', null);
+    const resolved = preview ? preview.resolved : await resolvedFor(config, pool, 'admin_test', null);
     let message;
     try {
-      message = buildMessage('admin_test', { ...payload, resolved });
+      message = buildMessage(kind, { ...payload, resolved });
     } catch (err) {
       if (err.code !== 'no_template') throw err;
       outcome.status = 'no_template';
@@ -448,6 +456,16 @@ async function sendTest(config, { to } = {}) {
         kind: 'admin_test', to, messageId, provider, status: 'no_template', error: outcome.error,
       });
       log.error('platform-mail', 'No email template could be used for the admin test mail', { message: outcome.error });
+      return outcome;
+    }
+    // A template under test that does not render would go out as the plain
+    // fallback, which is not what the admin asked to see.
+    if (preview && message.plainBecause) {
+      outcome.status = 'no_template';
+      outcome.error = `The template could not be used: ${message.plainBecause}`.slice(0, 500);
+      outcome.deliveryId = await record(pool, {
+        kind: 'admin_test', to, messageId, provider, status: 'no_template', error: outcome.error,
+      });
       return outcome;
     }
     outcome.message = { subject: message.subject, text: message.text };
@@ -489,7 +507,7 @@ async function sendTest(config, { to } = {}) {
     }
 
     try {
-      const detail = await transport.send({ to, kind: 'admin_test', ...payload, resolved });
+      const detail = await transport.send({ to, kind, ...payload, resolved });
       if (detail && detail.providerMessageId) {
         outcome.providerMessageId = String(detail.providerMessageId).slice(0, 128);
       }
