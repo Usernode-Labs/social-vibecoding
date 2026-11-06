@@ -197,6 +197,6 @@ test('the card draws the lines under its bar and keeps its Vote button where che
   assert.ok(html.indexOf('dev-change-gate-act') < html.indexOf('dev-change-gate-facts'));
   assert.ok(html.indexOf('dev-change-gate-facts') < html.indexOf('dev-change-gate-note'));
   assert.doesNotMatch(html, /gc-merge-countdown/);
-  const repeat = renderToHtml(createElement(GateCard, { which: 'votes', g, action, id: 7, repeat: true }));
-  assert.doesNotMatch(repeat, /dev-change-gate-facts/);
+  // #6419: one card now, so its lines are drawn wherever it is, stuck or not.
+  assert.match(html, /data-change-gate="votes"/);
 });
