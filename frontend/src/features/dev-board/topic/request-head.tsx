@@ -589,6 +589,28 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           <h1 className="dev-request-title" data-issue-title={r.number}>
             <TitleContent t={{ text: shownTitle, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
+          {/* #6421: a request in a merged thread says which thread it is one of
+              and opens its lead's page. */}
+          {(() => {
+            const held = threadRead.data?.thread;
+            if (!slug || !held || Number(held.requests) <= 1 || held.number == null || held.number === r.number) return null;
+            return (
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-part-of={held.number}>
+                <RichMessage
+                  id="project:topic.thread.page.partOf"
+                  values={{ count: Number(held.requests), name: held.name || `#${held.number}` }}
+                  components={[(
+                    <a
+                      key="lead"
+                      href={`#app/${encodeURIComponent(slug)}/dev/issues/${held.number}`}
+                      className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                      data-thread-part-of-link={held.number}
+                    />
+                  )]}
+                />
+              </p>
+            );
+          })()}
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
             <RequestWords
               html={bodyHtml}

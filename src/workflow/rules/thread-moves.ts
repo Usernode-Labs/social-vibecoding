@@ -167,7 +167,7 @@ export async function applyBreakup(move: { thread_id: number | string }): Promis
 
 export async function applyMove(db: Db, moveId: number | string): Promise<number | null> {
   const { rows: [move] } = await db.query(
-    `SELECT id, app_id, thread_id, kind, input, state, proposed_by FROM thread_moves WHERE id = $1 FOR UPDATE`,
+    `SELECT id, app_id, thread_id, kind, input, state, proposed_by, for_session_id FROM thread_moves WHERE id = $1 FOR UPDATE`,
     [Number(moveId)]
   );
   if (!move || (move.state !== 'pending' && move.state !== 'voting')) return null;

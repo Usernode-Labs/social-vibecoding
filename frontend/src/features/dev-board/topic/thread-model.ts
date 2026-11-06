@@ -22,6 +22,19 @@ export interface FoldedReply {
   at?: string | null;
 }
 
+/**
+ * #6225: one request a change closes when it merges, as its Votes card lists
+ * it. `confirmed` is whether its requester agreed to it: the change was built
+ * for that request, or its filer made the change. A number the change claims
+ * that is not a request here has a null title and filer.
+ */
+export interface ClosesRequest {
+  number: number;
+  title: string | null;
+  by: string | null;
+  confirmed: boolean;
+}
+
 export interface ThreadItem {
   type: ThreadItemType;
   id: number;
@@ -55,6 +68,8 @@ export interface ThreadItem {
   target?: number | null;
   /** A change: the requests it closes when it merges (its linked_issues). */
   closes?: number[];
+  /** #6225: the same requests with their titles and filers, for the Votes card. */
+  closesRequests?: ClosesRequest[];
   /**
    * 1 Nov 2026 (C2.3), a change: the plan it was built from, by that plan's
    * session and version (a person's plan on the request, or the bot's own
@@ -81,6 +96,10 @@ export interface ThreadPayload {
     lead: 'request' | 'change' | 'decision';
     title: string | null;
     state: 'open' | 'closed';
+    /** #6421: how many requests the thread holds. */
+    requests?: number;
+    /** #6421: the thread's name: its change's title while one lives there, else its first request's. */
+    name?: string | null;
   };
   items: ThreadItem[];
   /** Null signed out: there is no one to notify. */
@@ -123,6 +142,19 @@ export function alsoCloses(item: ThreadItem, request: number): number[] {
   return [...new Set(closes)].filter((n) => Number.isInteger(n) && n > 0 && n !== here).sort((a, b) => a - b);
 }
 
+/**
+ * #6225: what a change's Votes card lists under its tally, while it is up for
+ * a vote: every request a yes would close, ascending. Nothing before it is
+ * proposed or after it merges, because the list describes what a yes would
+ * do, and nothing when it closes only the one request it was built for. Pure.
+ */
+export function closesList(item: ThreadItem): ClosesRequest[] {
+  const list = Array.isArray(item.closesRequests) ? item.closesRequests : [];
+  if (item.state !== 'review') return [];
+  if (list.length === 1 && list[0] && list[0].confirmed) return [];
+  return [...list].sort((a, b) => Number(a.number) - Number(b.number));
+}
+
 export interface ThreadMove {
   id: number;
   kind: 'merge' | 'split' | 'breakup';
@@ -135,6 +167,16 @@ export interface ThreadMove {
   deadline: string;
   agreed: number[];
   governanceId: number | null;
+  /**
+   * #6421: a change's consent question, asked of the request's other
+   * requesters (services/thread-moves.js gather). Yes gathers the thread
+   * into the change's; Keep separate leaves it linked where it is.
+   */
+  forChange?: { id: number | null; number: number | null };
+  /** #6421: the requesters still to answer, by username. */
+  askOf?: string[];
+  /** #6421: the viewer is one of them. */
+  canAnswer?: boolean;
 }
 
 /** The page the list is drawn on: a request by its number, the rest by id. */
@@ -258,6 +300,19 @@ export function followButton(follow: ThreadFollow | null): FollowButtonView | nu
  */
 export function moveLines(move: ThreadMove, now: number = Date.now()): { what: Phrase; when: Phrase } {
   const items = move.input.items || [];
+  // #6421: a change's question to a request's other askers.
+  if (move.forChange) {
+    return {
+      what: {
+        id: 'project:topic.thread.move.consentAsk',
+        values: { number: move.input.intoNumber ?? '?', change: move.forChange.number ?? '?' },
+      },
+      when: {
+        id: 'project:topic.thread.move.consentWaiting',
+        values: { names: (move.askOf || []).join(', ') },
+      },
+    };
+  }
   const what: Phrase = move.kind === 'merge'
     ? { id: 'project:topic.thread.move.merge', values: { number: move.input.intoNumber ?? '?' } }
     : move.kind === 'breakup'

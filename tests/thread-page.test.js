@@ -118,7 +118,7 @@ test('#6387 the thread read says when it is loading, and settles on success or f
 // read lands, so they fill in rather than pushing the page down.
 test('#6387 a change\'s cards keep their place until its own read lands', () => {
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
-  assert.match(src, /\) : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
+  assert.match(src, /\) : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
   assert.match(src, /export function ChangeSectionSkeleton\(\): ReactNode/);
   assert.match(src, /data-thread-change-skeleton=""/);
   assert.match(src, /label=\{t\('project:topic\.thread\.page\.changeLoading'\)\}/);
@@ -196,6 +196,14 @@ test('competing changes are one ballot; a pick is votes, cast only where they ch
   assert.equal(`${words(lines.what)}. ${words(lines.when)}`, 'Proposed: merge into #12. Happens in 24 hours unless someone objects');
   assert.equal(words(moveLines({ id: 2, kind: 'split', state: 'voting', input: { items: [{ type: 'request', number: 9 }] }, deadline: '', agreed: [], governanceId: 4 }).when),
     'Up for a vote, as someone objected');
+  // #6421: a change's question to a request's other askers, and who still
+  // has to answer.
+  const consent = moveLines({
+    id: 3, kind: 'merge', state: 'pending', input: { intoNumber: 6207 }, deadline: '', agreed: [], governanceId: null,
+    forChange: { id: 9, number: 6223 }, askOf: ['sam'], canAnswer: true,
+  });
+  assert.equal(words(consent.what), 'Move into #6207\'s thread? Change #6223 closes this request, and lives there.');
+  assert.equal(words(consent.when), 'Waiting for sam to answer');
   // A split may take anything but the lead.
   assert.deepEqual(splittable(payload([request, a])).map((i) => i.id), [51]);
 });
@@ -347,7 +355,7 @@ test('the request\'s changes are drawn from their own pages\' reads, and the bal
   assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal\)/, 'read as its own page reads it');
   assert.match(src, /const built = av\._topicViewFor\('proposal', row\);/);
   // 1 Nov 2026: folded under a ballot, without its own Vote (thread-one-page.test.js).
-  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>/, 'its own page\'s two cards');
+  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>/, 'its own page\'s two cards');
   assert.match(src, /changeDetailAsk\(\(event as CustomEvent\)\.detail, item\.id\)/, 'and it moves when its page would');
   assert.match(src, /av\.castIssueVote\?\.\(v\.issueId, 'up', \{ reason: null \}\)/, 'a close is voted the platform\'s way');
   const head = read('frontend/src/features/dev-board/topic/change-head.tsx');

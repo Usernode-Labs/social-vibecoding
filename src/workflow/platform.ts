@@ -27,6 +27,7 @@ import { MACHINE as CREATION, appCreation, creationKey } from './app-creation/ma
 import { appCreationServices } from './app-creation/services.ts';
 import { bootRelease } from './release/boot.ts';
 import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview/machine.ts';
+import { requestWake as askPreviewWake } from './preview/wake.ts';
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
 import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
 import { shotsServices } from './shots/services.ts';
@@ -808,6 +809,14 @@ export async function botAllowanceFreed(db: Db, p: { appId: number; issueNumber:
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'AllowanceFreed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber) } as any,
   }, { requestKey: p.key, source: BOT_SOURCE('allowance'), appId: Number(p.appId) });
+}
+
+// #6423: the change a build waited for merged or closed: its overlap hold
+// is lifted and the build looks at the same files again.
+export async function botOverlapEnded(db: Db, p: { appId: number; issueNumber: number; key: string }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'OverlapEnded', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber) } as any,
+  }, { requestKey: p.key, source: BOT_SOURCE('overlap'), appId: Number(p.appId) });
 }
 
 // A person wrote on a request's thread (in the statement's transaction).
@@ -1819,6 +1828,11 @@ export async function submitRevision(r: { sessionId: number; appId: number; head
   return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RevisionSubmitted', payload: {
     sessionId: r.sessionId, head: r.head, source: r.source, trigger: r.trigger ?? null, carryFrom: r.carryFrom ?? null,
   } }, { requestKey: `rev:${r.head}:${r.source}:${randomUUID()}`, source: sys(r.source), appId: r.appId, waitMs: 2000 });
+}
+
+// Web asks a conductor to wake the existing runtime and waits for its receipt.
+export function requestPreviewWake(r: Parameters<typeof askPreviewWake>[2], opts?: Parameters<typeof askPreviewWake>[3]) {
+  return askPreviewWake(running(), kernelPool!, r, opts);
 }
 
 // A person asks for the preview (ensure: the Preview click; deploy).

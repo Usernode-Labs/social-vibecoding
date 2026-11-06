@@ -2855,6 +2855,38 @@
     "text": "{{note}} <0>Watch it work</0>",
     "description": "The line under the Testing card on a change's page while the AI agent fixes the checks that failed. {{note}} is one or more whole sentences, already worded. <0></0> is a link-style button that opens the conversation where the agent is working."
   },
+  "topic.change.gate.closesHead_one": {
+    "text": "Closes {{count}} request when it merges",
+    "description": "Heading of the list under the vote count on a change's Votes card, when the change will close one request if it merges. {{count}} is that number, 1. It is the change."
+  },
+  "topic.change.gate.closesHead_other": {
+    "text": "Closes {{count}} requests when it merges",
+    "description": "Heading of the list under the vote count on a change's Votes card, when the change will close several requests if it merges. {{count}} is that number. It is the change."
+  },
+  "topic.change.gate.closesLine": {
+    "text": "<0>#{{number}}</0> {{title}} · {{by}}",
+    "description": "One request a change will close, on its Votes card. <0></0> is the request's number as a link to its page, {{number}} that number, {{title}} the request's title, and {{by}} the name of the person who filed it."
+  },
+  "topic.change.gate.closesLineNoFiler": {
+    "text": "<0>#{{number}}</0> {{title}}",
+    "description": "One request a change will close, on its Votes card, when nobody knows who filed it. <0></0> is the request's number as a link to its page, {{number}} that number, and {{title}} the request's title."
+  },
+  "topic.change.gate.closesLineUntitled": {
+    "text": "<0>#{{number}}</0>",
+    "description": "A number a change says it would close, on its Votes card, when no request in this project has that number. <0></0> is the number as a link, and {{number}} that number."
+  },
+  "topic.change.gate.closesUnconfirmed": {
+    "text": "not confirmed by its requester",
+    "description": "End of a line naming a request a change will close, on its Votes card, when the person who filed that request has not agreed to it: the change was neither built for that request nor made by that person."
+  },
+  "topic.change.gate.closesMore_one": {
+    "text": "{{count}} more",
+    "description": "Button under the list of requests a change will close, on its Votes card, when one more is hidden. Tapping it shows the hidden line in the same list."
+  },
+  "topic.change.gate.closesMore_other": {
+    "text": "{{count}} more",
+    "description": "Button under the list of requests a change will close, on its Votes card, when some more are hidden. Tapping it shows the hidden lines in the same list."
+  },
   "topic.change.shots.title": {
     "text": "Before and after",
     "description": "Name, and accessible name, of the card on a change's page that holds screenshots of the app before and after the change, or the line saying where they are."
@@ -3022,6 +3054,22 @@
   "topic.thread.move.object": {
     "text": "Object",
     "description": "Button beside a proposed merge or split of a thread: the person objects, which puts it to the project's vote."
+  },
+  "topic.thread.move.consentAsk": {
+    "text": "Move into #{{number}}'s thread? Change #{{change}} closes this request, and lives there.",
+    "description": "On a request's page, a change for several requests asks its other requester whether this request's thread should join the change's. {{number}} is the number of the thread the change lives in, {{change}} the change's number."
+  },
+  "topic.thread.move.consentYes": {
+    "text": "Yes",
+    "description": "Button beside a change's question on a request's page: the requester agrees to move this request's thread into the change's."
+  },
+  "topic.thread.move.consentSeparate": {
+    "text": "Keep separate",
+    "description": "Button beside a change's question on a request's page: the requester keeps this request's thread where it is. The change still closes the request."
+  },
+  "topic.thread.move.consentWaiting": {
+    "text": "Waiting for {{names}} to answer",
+    "description": "On a request's page, under a change's question about moving this request's thread into the change's, shown to everyone who cannot answer it: {{names}} are the requesters who still have to answer, by username."
   },
   "topic.thread.move.mergeInto": {
     "text": "Merge into another thread",
@@ -3598,6 +3646,10 @@
   "topic.request.stream.onChangeUnnumbered": {
     "text": "on a change",
     "description": "Small words after the time of a reply or a line in a request's discussion that was written on one of the request's changes that has no number yet: the request's page holds the discussion of the whole piece of work."
+  },
+  "topic.request.stream.onRequest": {
+    "text": "on #{{number}}",
+    "description": "Small words after the time of a reply in a request's discussion that was written on another request of the same merged thread: {{number}} is that other request's number."
   },
   "topic.request.stream.noReplies": {
     "text": "No replies yet",
@@ -6062,6 +6114,22 @@
   "topic.thread.page.alsoMore_other": {
     "text": "{{count}} more",
     "description": "Last item of the list of other requests a change also closes, on its request's page, when some are hidden. Tapping it shows the hidden numbers in the same line."
+  },
+  "topic.thread.page.closesOf_one": {
+    "text": "Closes {{count}} of the {{total}} requests in this thread",
+    "description": "Under a change's title on a request's page, when the thread holds several requests and the change closes only some of them: {{count}} is how many it closes, {{total}} how many the thread holds."
+  },
+  "topic.thread.page.closesOf_other": {
+    "text": "Closes {{count}} of the {{total}} requests in this thread",
+    "description": "Under a change's title on a request's page, when the thread holds several requests and the change closes only some of them: {{count}} is how many it closes, {{total}} how many the thread holds."
+  },
+  "topic.thread.page.partOf_one": {
+    "text": "One of {{count}} requests in <0>{{name}}</0>",
+    "description": "Under a request's title on its page, when its thread holds several requests: it is one of them. {{count}} is how many requests the thread holds, {{name}} the thread's name, a link to the request whose page the thread opens on."
+  },
+  "topic.thread.page.partOf_other": {
+    "text": "One of {{count}} requests in <0>{{name}}</0>",
+    "description": "Under a request's title on its page, when its thread holds several requests: it is one of them. {{count}} is how many requests the thread holds, {{name}} the thread's name, a link to the request whose page the thread opens on."
   },
   "topic.thread.ballot.close": {
     "text": "Close it",

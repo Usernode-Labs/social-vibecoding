@@ -4694,6 +4694,10 @@ async function buildAndPropose({
   // starts from that change's head (session-lifecycle.ensureSessionBranch)
   // and the request's page links them.
   fromSessionId = null,
+  // #6423: the change touching the same files this one is built on top of
+  // (`{ sessionId, branch }`): its branch is this change's base, and it
+  // waits for it the way a stacked import does.
+  stackOn = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle } = deps;
   // Each step below is a durable step of the build's work item when the
@@ -4731,15 +4735,21 @@ async function buildAndPropose({
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless,
                                   created_from_issue_number, linked_issues, issue_link_seeded,
                                   session_title, agent_backend, agent_provider, agent_model,
-                                  agent_reasoning_effort, workflow_owner, workflow_step, rebuilt_from_session_id)
+                                  agent_reasoning_effort, workflow_owner, workflow_step, rebuilt_from_session_id,
+                                  waits_for_session_id, imported_pr_base_ref)
        VALUES ($1, $2, NULL, 'active', FALSE, $3,
                CASE WHEN $3::int IS NULL THEN '{}'::int[] ELSE ARRAY[$3::int] END, TRUE, $4,
-               'codex_openrouter', 'openrouter', $5, $6, $7, $8, $9)
+               'codex_openrouter', 'openrouter', $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [app.id, bot.id, propose ? issueNumber : null,
         sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
         model, config.openrouterDefaultCodexReasoning || 'low', owner, step,
-        Number.isInteger(Number(fromSessionId)) && Number(fromSessionId) > 0 ? Number(fromSessionId) : null],
+        Number.isInteger(Number(fromSessionId)) && Number(fromSessionId) > 0 ? Number(fromSessionId) : null,
+        // #6423: a build on top of another change waits for it, as a
+        // stacked import does (rules/pr-base.ts). Never rebuilt_from: that
+        // would close the parent as an "own version".
+        Number.isInteger(Number(stackOn?.sessionId)) && Number(stackOn.sessionId) > 0 ? Number(stackOn.sessionId) : null,
+        stackOn?.branch ? String(stackOn.branch).slice(0, 255) : null],
     );
     openedRow = rows[0];
     return { id: Number(openedRow.id) };
