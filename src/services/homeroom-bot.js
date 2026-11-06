@@ -1695,6 +1695,12 @@ function readVerdict(text) {
         plan = { bullets: [], questions: [first, second] };
       }
     }
+    // #6413: its requester, or somebody who decides on the project, said in
+    // the discussion to close, drop or withdraw it. It gets the same close
+    // offer a done request does, and no Go ahead. A person or empty verdict
+    // carries it; one about Homeroom itself does not.
+    const withdrawn = (verdict === 'person' || verdict === 'empty')
+      && obj.withdrawn === true && obj.platform !== true;
     return {
       verdict,
       determined: typeof obj.determined === 'boolean' ? obj.determined : null,
@@ -1728,6 +1734,9 @@ function readVerdict(text) {
       // "person decides" with nothing to decide. A person or empty verdict
       // carries it; one about Homeroom itself is offered the move instead.
       done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true,
+      // #6413: asked to close or withdraw by its requester or a decider. Done
+      // wins when both say so (actOnVerdict).
+      withdrawn,
       // 16 Oct 2026: a request that says a named person will build it (on
       // Homeroom's own board, a dozen in a morning read "assigned to @snait,
       // not for the bot"). Only a person verdict carries it, and its news
@@ -1736,14 +1745,15 @@ function readVerdict(text) {
       // 3 Nov 2026: the smaller first step a person verdict would build, as
       // a reply in the requester's own words (at most 60 characters). The
       // note offers it as a button to tap beside Go ahead.
-      firstStep: verdict === 'person' ? firstStepOf(obj.first_step) : null,
+      firstStep: verdict === 'person' && !withdrawn ? firstStepOf(obj.first_step) : null,
       // 6 Nov 2026 (#6395): whether a go-ahead from the person the note names
       // can settle this, or it still fails `ready` for somebody else to act
       // on (credentials, auth, billing, permissions, operator work outside
       // the app, a non-append-only database change, or too big for one
       // build). Only a person verdict that is neither about Homeroom itself
-      // nor already done carries it; a missing key is today's behaviour.
-      goAheadDecides: verdict === 'person' && obj.platform !== true && obj.done !== true
+      // nor already done nor withdrawn carries it; a missing key is today's
+      // behaviour.
+      goAheadDecides: verdict === 'person' && !withdrawn && obj.platform !== true && obj.done !== true
         ? obj.go_ahead !== false : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
@@ -7601,15 +7611,20 @@ async function actOnVerdict({
       : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
     const suggestActions = live.personSuggestions({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
-      goAheadDecides: parsed.goAheadDecides,
+      withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides,
     });
+    // #6413: done wins when the read says both, so a withdrawn note is only
+    // the one without a "done".
+    const withdrawnNote = parsed.withdrawn && !parsed.done;
     // 6 Nov 2026 (#6395): a go-ahead the read says cannot settle it gets one
     // plain answer instead of this note again. The note would offer the same
     // Go ahead that was just refused.
     const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
     const noteText = goAheadCannot
       ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep })
-      : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
+      : withdrawnNote
+        ? live.withdrawnHomeroomText(parsed)
+        : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
@@ -7631,7 +7646,8 @@ async function actOnVerdict({
         }).catch(() => null)
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.
-      const threadOffer = copyOffer || (parsed.done ? await doneCloseOffer() : null);
+      // #6413: a withdrawn request gets the same close offer.
+      const threadOffer = copyOffer || (parsed.done || withdrawnNote ? await doneCloseOffer() : null);
       const noteMeta = threadOffer?.metadata
         ? { kind: 'voice', ...threadOffer.metadata }
         : (suggestActions.length && suggestFor.length
@@ -7647,6 +7663,7 @@ async function actOnVerdict({
           reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
           ...(parsed.done ? { done: true } : {}),
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
+          ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),
         },
       });
       await settleThreadOffer(threadOffer, posted);
@@ -7654,21 +7671,29 @@ async function actOnVerdict({
   } else if (parsed.verdict === 'empty') {
     // #6321: nothing to build because it is already there says that, not
     // "couldn't find anything to build", with the same buttons as a person
-    // note that says it. Its kind stays 'empty'.
+    // note that says it. Its kind stays 'empty'. #6413: a withdrawn request
+    // gets the same close offer.
+    const withdrawnNote = parsed.withdrawn && !parsed.done;
+    const closeWanted = parsed.done || withdrawnNote;
     const noteText = parsed.done
       ? live.personHomeroomText(parsed)
-      : require('./homeroom-bot-words').firstPerson(live.emptyText(parsed));
+      : withdrawnNote
+        ? live.withdrawnHomeroomText(parsed)
+        : require('./homeroom-bot-words').firstPerson(live.emptyText(parsed));
     if (await unchangedNote('empty', noteText, parsed.done ? 'person' : null)) {
       acted = 'unchanged';
       log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
         app: app.slug, issueNumber, verdict: parsed.verdict,
       });
     } else {
-      const closeOffer = parsed.done ? await doneCloseOffer() : null;
-      const posted = await say('empty', parsed.done ? live.personText(parsed) : live.emptyText(parsed), {
-        ...(parsed.done ? { homeroomText: noteText } : {}),
+      const closeOffer = closeWanted ? await doneCloseOffer() : null;
+      const posted = await say('empty', closeWanted ? live.personText(parsed) : live.emptyText(parsed), {
+        ...(closeWanted ? { homeroomText: noteText } : {}),
         ...(closeOffer?.metadata ? { metadata: { homeroomBot: { kind: 'voice', ...closeOffer.metadata } } } : {}),
-        dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet },
+        dm: {
+          reason: parsed.reason, ...(parsed.done ? { done: true } : {}),
+          ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}), ...quiet,
+        },
       });
       await settleThreadOffer(closeOffer, posted);
     }
