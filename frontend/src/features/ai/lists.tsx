@@ -614,11 +614,18 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
 }
 
 export function AiLists({
-  hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
+  hero, main, query = '', lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
   picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
+  /**
+   * #6398: what the page's search box says. The lists keep only the threads
+   * whose title, number or project name contains it, upper and lower case
+   * alike; a section with no match folds away, and Main Chat steps aside
+   * while you search. '' (the box closed or empty) filters nothing.
+   */
+  query?: string;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
   main: { lit: boolean; unread: number; open: () => void };
   /**
@@ -667,6 +674,21 @@ export function AiLists({
     const nested = p.nested ? Object.fromEntries(Object.entries(p.nested).map(([k, q]) => [k, say(q) || ''])) : null;
     return t(p.id, nested ? { ...p.values, ...nested } : p.values);
   };
+  // SEARCH (#6398, 6 Nov 2026): a row matches when its title, its number
+  // ("6011" or "#6011") or its project's name or address contains what was
+  // typed, in either case. It narrows the rows the chips already chose, so
+  // the two apply together. History is searched as far as it has loaded.
+  const q = query.trim().toLowerCase();
+  const searching = !!q;
+  function matches(line: Line): boolean {
+    if (!searching) return true;
+    const number = line.number == null ? '' : String(line.number);
+    return [line.title, number, number ? `#${number}` : '', line.app?.name || '', line.app?.slug || '']
+      .some((text) => text.toLowerCase().includes(q));
+  }
+  function kept<T extends Line>(lines: T[]): T[] {
+    return searching ? lines.filter(matches) : lines;
+  }
   // The projects in any list, the ones that need you most first; the ones
   // picked; the chips the rail shows; and More, open under its chip.
   // 5 Nov 2026: History's projects too, after the rest, and any project a
@@ -693,7 +715,7 @@ export function AiLists({
   const freshShown = freshCount(needRowsShown);
   const freshProjects = freshByProject(needRowsShown);
 
-  const needLines: Line[] = needRowsShown.map((row) => ({
+  const needLines: Line[] = kept(needRowsShown.map((row) => ({
     key: row.key,
     kind: row.key.startsWith('need:') ? 'need' : row.key.split(':')[0],
     app: row.app,
@@ -711,7 +733,7 @@ export function AiLists({
     fresh: row.unread > 0,
     open: () => openRow(row),
     done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
-  }));
+  })));
   const threadLine = (glyph: (th: AiThread) => ReactNode) => (th: AiThread): Line => ({
     key: String(th.threadId),
     kind: th.work.stage,
@@ -739,13 +761,17 @@ export function AiLists({
   const movingShown = waitingShown.filter((th) => !notMoving(th));
   const stillShown = waitingShown.filter((th) => notMoving(th));
   const waitingLine = threadLine(() => <ClockIcon className={G} />);
-  const busyLines: Line[] = [
+  // #6398: while searching, the rows nobody is moving join the ones under
+  // way in the one card, so a match is never hidden inside the fold; and
+  // nothing matching is folded away either (first = Infinity below).
+  const movingLines: Line[] = [
     ...progressShown.map(threadLine(nextGlyph)),
     ...movingShown.map(waitingLine),
   ];
-  const stillLines: Line[] = stillShown.map(waitingLine);
+  const stillLines: Line[] = searching ? [] : stillShown.map(waitingLine);
+  const busyLines: Line[] = kept(searching ? [...movingLines, ...stillShown.map(waitingLine)] : movingLines);
   const tab = useTabBuild();
-  const liveLines: Line[] = live.filter((x) => shows(x.app)).map((th) => {
+  const liveLines: Line[] = kept(live.filter((x) => shows(x.app)).map((th) => {
     if (th.kind === 'private' && th.work.stage === 'closed') {
       // #6271: a private thread marked done this week: a lock, its title, the
       // day it closed, and no number. It opens the thread, where Reopen is.
@@ -775,7 +801,7 @@ export function AiLists({
       owe: lacks,
       tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
     };
-  });
+  }));
   const liveBehind = liveLines.some((line) => line.owe);
   // A project picked with nothing of yours on any list: Needs you says so,
   // by its name, rather than the lists quietly showing every project.
@@ -785,7 +811,7 @@ export function AiLists({
   // project, in the quiet rows Live this week draws. Narrowed by the chips
   // above, as every list is; its own chips pick a kind.
   const locale = getDateLocale();
-  const historyLines = (history?.rows || []).filter((row) => shows(row.app)).map((row): Line & { at: string | null } => {
+  const historyLines = kept((history?.rows || []).filter((row) => shows(row.app)).map((row): Line & { at: string | null } => {
     const glyph = historyGlyph(row);
     return {
       key: row.key,
@@ -808,11 +834,18 @@ export function AiLists({
       left: !!row.left,
       at: row.at,
     };
-  });
+  }));
   const historyMonths = byMonth(historyLines);
-  const owedShown = picked.length ? needLines.filter((line) => line.owe).length : owed;
+  // #6398: the Needs you count over its rows is how many of them match; with
+  // no project picked the heading still counts everything, unless a search
+  // narrows it.
+  const owedShown = picked.length || searching ? needLines.filter((line) => line.owe).length : owed;
   // One project picked: its chip names it, so its name is not said again over every section.
   const heads = picked.length !== 1;
+  // Nothing on the page matches what was searched for: one short note says
+  // so, in place of the rows (the Needs you warning, if there is one, stays).
+  const noMatches = searching && ready
+    && !needLines.length && !busyLines.length && !stillLines.length && !liveLines.length && !historyLines.length;
 
   return (
     <div className="flex flex-col gap-3 pt-4" data-ai-lists="">
@@ -854,7 +887,15 @@ export function AiLists({
           </div>
         ) : <div className="pb-3" />}
       </div>
-      <MainChatRow lit={main.lit} unread={main.unread} open={main.open} />
+      {/* #6398: Main Chat is not a thread you are searching for, so it steps
+          aside while a search is on, and one short note says when nothing on
+          the page matched. */}
+      {searching ? null : <MainChatRow lit={main.lit} unread={main.unread} open={main.open} />}
+      {noMatches ? (
+        <div className={`${PLANE} px-4 py-3`} data-ai-search-empty="">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.search.none', { query: query.trim() })}</p>
+        </div>
+      ) : null}
       {more ? (
         <ProjectPicker
           sheet={phone}
@@ -866,6 +907,7 @@ export function AiLists({
           onClose={() => setMore(null)}
         />
       ) : null}
+      {!searching || !ready || needLines.length || failed ? (
       <div className={`${PLANE} pb-4`} data-ai-sheet="open">
         <Section
           list="work"
@@ -874,6 +916,9 @@ export function AiLists({
           owe={owedShown > 0}
           lines={needLines}
           note={failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
+          /* While searching, this card is drawn only when it has a match, so
+             its empty line is never the search's answer: the page says "No
+             threads match" in one note of its own (#6398). */
           empty={ready ? (
             <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty={nothingHere ? 'project' : ''}>
               {nothingHere && onlyApp ? t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug }) : t('messages:ai.work.empty')}
@@ -893,13 +938,14 @@ export function AiLists({
               </SkeletonGroup>
             )
           )}
-          first={GROUP_FIRST.needs}
+          first={searching ? Infinity : GROUP_FIRST.needs}
           heads={heads}
           fresh={freshShown}
           freshBySlug={freshProjects}
           freshStyle
         />
       </div>
+      ) : null}
       {busyLines.length || stillLines.length ? (
         <div className={`${PLANE} pb-2`} data-ai-sheet="busy">
           <Section
@@ -908,14 +954,14 @@ export function AiLists({
             head={t('messages:ai.busy.title', { count: busyLines.length + stillLines.length })}
             lines={busyLines}
             still={stillLines.length ? { head: t('messages:ai.up.stillCount', { count: stillLines.length }), lines: stillLines } : null}
-            first={GROUP_FIRST.busy}
+            first={searching ? Infinity : GROUP_FIRST.busy}
             heads={heads}
           />
         </div>
       ) : null}
       {liveLines.length ? (
         <div className={`${PLANE} pb-2`} data-ai-sheet="live">
-          <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={GROUP_FIRST.live} heads={heads} foldFresh />
+          <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={searching ? Infinity : GROUP_FIRST.live} heads={heads} foldFresh />
           {liveBehind ? (
             // #6233: one Reload under the list, for every row this tab is
             // older than.
@@ -933,7 +979,9 @@ export function AiLists({
           ) : null}
         </div>
       ) : null}
-      {history ? (
+      {/* #6398: History is searched as far as it has loaded; with no match in
+          it, its card folds away like any other section. */}
+      {history && (!searching || historyLines.length) ? (
         <div ref={historyRef} className={`${PLANE} pb-2 scroll-mt-4`} data-ai-sheet="history">
           <section className="pb-1" data-ai-list="history">
             <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
@@ -977,7 +1025,7 @@ export function AiLists({
               {historyMonths.map((month) => (
                 <div key={month.key} data-ai-history-month={month.key}>
                   <h3 className="m-0 pt-4 text-[13px] font-bold text-zinc-900 dark:text-zinc-100">{monthName(month.at, locale)}</h3>
-                  <GroupList lines={month.rows} quiet heads={heads} first={GROUP_FIRST.live} />
+                  <GroupList lines={month.rows} quiet heads={heads} first={searching ? Infinity : GROUP_FIRST.live} />
                 </div>
               ))}
               {history.ready && history.next ? (

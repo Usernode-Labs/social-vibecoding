@@ -8399,6 +8399,30 @@
     "text": "Homeroom bot is waiting for your plan.",
     "description": "The one sentence on the status card of a request's page while the viewer, who asked for it, works on it with Homeroom bot (the platform's assistant) in a private thread: the bot builds nothing until they post a plan on it or let it go ahead."
   },
+  "request.status.lead.waitingDecide": {
+    "text": "Waiting for you to decide. {{reason}}",
+    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and handed it back for a person to decide. {{reason}} is the bot's own sentence on why, which ends with a full stop."
+  },
+  "request.status.lead.waitingDecidePlain": {
+    "text": "Waiting for you to decide.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and handed it back for a person to decide, without having given a reason."
+  },
+  "request.status.lead.waitingDetail": {
+    "text": "Waiting for more detail from you. {{reason}}",
+    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and needs more detail before it can build anything. {{reason}} is the bot's own sentence on what is missing, which ends with a full stop."
+  },
+  "request.status.lead.waitingDetailPlain": {
+    "text": "Waiting for more detail from you.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and needs more detail before it can build anything, without having given a reason."
+  },
+  "request.status.lead.waitingDone": {
+    "text": "It may already work. {{reason}}",
+    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and thinks what it asks for may already work, so somebody should check before building. {{reason}} is the bot's own sentence on why, which ends with a full stop."
+  },
+  "request.status.lead.waitingDonePlain": {
+    "text": "It may already work. Close it, or say what is missing.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and thinks what it asks for may already work. Somebody can close the request, or say what is still missing from it."
+  },
   "request.status.lead.botReading": {
     "text": "Homeroom bot is reading this.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant; it has started on the request and is reading it before building."
@@ -8507,6 +8531,14 @@
     "text": "A change for it is underway.",
     "description": "Second sentence on the status card of a request's page, after the one that says where the request stands. \"It\" is the request; a change that fulfils it is being built."
   },
+  "request.status.note.outdated": {
+    "text": "Homeroom bot can do more since it said this, so this may be out of date.",
+    "description": "Small print on the status card of a request's page, under the sentence that says Homeroom bot is waiting for the viewer: the reason it gave for handing the request back may no longer be true, because a later release lifted a limit it had. \"This\" is the reason."
+  },
+  "request.status.note.outdatedPostedPlan": {
+    "text": "Homeroom bot can read posted plans now, so this may be out of date.",
+    "description": "Small print on the status card of a request's page, under the sentence that says Homeroom bot is waiting for the viewer: it handed the request back because it could not read a plan a person posted, and it can read those since 6 November 2026, so its reason may no longer be true. \"This\" is the reason."
+  },
   "request.status.fine.lapses": {
     "text": "If nothing moves by {{date}}, it opens up for someone else.",
     "description": "Small print on the status card of a request's page while somebody's claim on the request stands. {{date}} is a short date such as \"Oct 12\": with no activity by then the claim clears itself and anyone can take the request."
@@ -8522,6 +8554,22 @@
   "request.status.action.continueWorkTitle": {
     "text": "Open your agent session on this request",
     "description": "Tooltip on the Continue your work button of a request's status card. An agent session is a working conversation with an AI coding agent; \"Open\" is a verb."
+  },
+  "request.status.action.goAhead": {
+    "text": "Go ahead",
+    "description": "Main button on the status card of a request's page, while Homeroom bot (the platform's assistant) waits for a person to decide: opens a reply to the bot's note with the words \"Go ahead\" ready to send. Keep it the same as the Go ahead button in the note's own answers."
+  },
+  "request.status.action.goAheadTitle": {
+    "text": "Reply Go ahead to Homeroom bot's note",
+    "description": "Tooltip on the Go ahead button of a request's status card: opens a reply to Homeroom bot's note with \"Go ahead\" already written. \"Homeroom bot\" is the name of the platform's assistant."
+  },
+  "request.status.action.readAgain": {
+    "text": "Ask Homeroom bot to read this again",
+    "description": "Main button on the status card of a request's page, when the reason Homeroom bot gave for handing the request back is out of date: it reads the request again and replies in its thread. \"This\" is the request."
+  },
+  "request.status.action.readAgainTitle": {
+    "text": "Homeroom bot reads this request again and replies here",
+    "description": "Tooltip on the Ask Homeroom bot to read this again button of a request's status card. \"Homeroom bot\" is the name of the platform's assistant; it reads the request again and says what it found in its discussion."
   },
   "request.status.closed.plain": {
     "text": "This request was closed.",
