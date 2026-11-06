@@ -155,7 +155,7 @@ function cluster({ fence = '3', podStarts = true } = {}) {
 
 function preview(extra = {}) {
   const row = {
-    id: 7, slug: 'shop', status: 'promoted', claimable: true,
+    id: 7, app_id: 1, slug: 'shop', status: 'promoted', claimable: true,
     staging_url: 'https://shop--s7.apps.example.invalid', staging_runtime_kind: 'kubernetes', staging_runtime_name: NAME,
     staging_asleep_at: null, staging_asleep_db_bytes: null, last_activity_at: '2026-11-02T08:00:00Z',
     machine_state: 'settled', serving: { n: 3, db: 'app_shop_staging_s7_abcdef' }, ...extra,
@@ -262,6 +262,89 @@ test('two doors at once share one wake', async () => {
   ]);
   assert.equal(a, b);
   assert.deepEqual(c.writes.slice(writes), ['deployment', 'ingress'], 'one scale, one route');
+});
+
+test('web requests share a conductor wake and make no Kubernetes writes', async () => {
+  const c = cluster();
+  const row = preview();
+  await previewSleep.sleep(CONFIG, pool, row);
+  const before = c.writes.length;
+  const asks = [];
+  const previous = process.env.PROCESS_ROLE;
+  process.env.PROCESS_ROLE = 'web';
+  try {
+    const deps = { workflow: { async requestPreviewWake(request, options) {
+      asks.push({ request, options });
+      return { status: 'woke', url: row.staging_url };
+    } } };
+    const [a, b] = await Promise.all([previewSleep.wake(CONFIG, pool, 7, { deps }), previewSleep.wake(CONFIG, pool, 7, { deps })]);
+    assert.equal(a, b);
+    assert.equal(a.status, 'woke');
+    assert.deepEqual(asks, [{ request: { sessionId: 7, appId: 1, reason: 'open', repairRoute: false },
+      options: { waitMs: 285000 } }]);
+    assert.deepEqual(c.writes.slice(before), [], 'the read-only web account never scales or changes routes');
+  } finally {
+    if (previous === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = previous;
+  }
+});
+
+test('a web direct link delegates both a sleeping wake and an awake route repair', async () => {
+  const c = cluster();
+  const row = preview();
+  await previewSleep.sleep(CONFIG, pool, row);
+  const before = c.writes.length;
+  const asks = [];
+  const previous = process.env.PROCESS_ROLE;
+  process.env.PROCESS_ROLE = 'web';
+  try {
+    const deps = { workflow: { async requestPreviewWake(request) {
+      asks.push(request); return { status: 'awake', url: row.staging_url };
+    } } };
+    assert.deepEqual(await previewSleep.wakeByHost(CONFIG, pool, 'shop--s7.apps.example.invalid', { deps, now: 100000 }), { status: 'waking' });
+    await new Promise(resolve => setImmediate(resolve));
+    row.staging_asleep_at = null;
+    assert.deepEqual(await previewSleep.wakeByHost(CONFIG, pool, 'shop--s7.apps.example.invalid', { deps, now: 120000 }), { status: 'awake' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(asks.map(r => [r.reason, r.repairRoute]), [['link', false], ['link', true]]);
+    assert.deepEqual(c.writes.slice(before), []);
+  } finally {
+    if (previous === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = previous;
+  }
+});
+
+test('the conductor repairs an already-awake preview route without scaling or rebuilding it', async () => {
+  const c = cluster();
+  preview();
+  c.store.get('ingress').spec.rules[0].http.paths[1].backend.service.name = ASSETS;
+  const previous = process.env.PROCESS_ROLE;
+  process.env.PROCESS_ROLE = 'conductor';
+  try {
+    assert.equal((await previewSleep.wake(CONFIG, pool, 7, { repairRoute: true })).status, 'awake');
+    assert.equal(c.catchAll(), NAME);
+    assert.deepEqual(c.writes, ['ingress']);
+  } finally {
+    if (previous === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = previous;
+  }
+});
+
+test('a timed-out web wake retains the sleep claim and a closed preview cannot be woken', async () => {
+  const c = cluster();
+  const row = preview();
+  await previewSleep.sleep(CONFIG, pool, row);
+  const before = c.writes.length;
+  const previous = process.env.PROCESS_ROLE;
+  process.env.PROCESS_ROLE = 'web';
+  try {
+    const deps = { workflow: { async requestPreviewWake() { return { status: 'timeout', detail: 'Not ready' }; } } };
+    assert.deepEqual(await previewSleep.wake(CONFIG, pool, 7, { deps }), { status: 'timeout', detail: 'Not ready' });
+    assert.ok(row.staging_asleep_at);
+    row.status = 'archived';
+    deps.workflow.requestPreviewWake = () => { throw new Error('A closed preview must not be queued'); };
+    assert.deepEqual(await previewSleep.wake(CONFIG, pool, 7, { deps }), { status: 'none' });
+    assert.deepEqual(c.writes.slice(before), []);
+  } finally {
+    if (previous === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = previous;
+  }
 });
 
 test('a checks run\'s wake: one read when awake; a preview that does not wake in time is not ok, and stays recorded asleep', async () => {

@@ -303,6 +303,113 @@ test('thread moves against the full schema', { timeout: 120000 }, async (t) => {
     assert.deepEqual(archived.map((x) => x.sessionId), [rival], 'the other part stays up for its vote');
   });
 
+  // #6421: a change that closes requests in other threads gathers them into
+  // its own, at once for its author's own and after Yes from anyone else.
+  await t.test('a change gathers its other request threads, asking their askers', async () => {
+    const bot = await user('tm_bot');
+    await pool.query('UPDATE users SET is_synthetic = TRUE WHERE id = $1', [bot.id]);
+    const t50 = await request(50, bob, 'Night watering');
+    const t51 = await request(51, ada, 'Water at dawn');
+    const makeChange = async ({ who = bob, status = 'promoted', linked, thread, pr, shared = null }) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, thread_id, pr_number, shared_at, pr_title)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, thread_id, pr_number`,
+      [app.id, who.id, status, linked, thread, pr, shared, `Change at #${pr}`]
+    )).rows[0];
+    const change51 = await makeChange({ linked: '{50,51}', thread: t50, pr: 60 });
+    assert.equal(Number(change51.thread_id), t50, 'it lives in its first request\'s thread');
+    await moves.gather(pool, { deps });
+    const { rows: [ask] } = await pool.query(
+      'SELECT * FROM thread_moves WHERE thread_id = $1 AND for_session_id = $2', [t51, change51.id]);
+    assert.ok(ask, 'the other thread is asked');
+    assert.equal(ask.state, 'pending');
+    assert.deepEqual(ask.input.requests, [51]);
+    assert.equal(Number(ask.input.into), t50);
+    const forAda = await moves.openMoves(pool, { threadId: t51, viewerId: ada.id });
+    assert.equal(forAda[0].canAnswer, true);
+    assert.deepEqual(forAda[0].askOf, ['tm_ada']);
+    assert.deepEqual(forAda[0].forChange, { id: Number(change51.id), number: 60 });
+    const forBob = await moves.openMoves(pool, { threadId: t51, viewerId: bob.id });
+    assert.equal(forBob[0].canAnswer, false, 'the author does not answer');
+    assert.equal((await moves.consent(pool, { app, user: eve, moveId: ask.id, answer: 'yes', deps })).status, 403, 'only a requester answers');
+    assert.equal((await moves.consent(pool, { app, user: bob, moveId: ask.id, answer: 'yes', deps })).status, 403, 'nor the author');
+    assert.equal((await moves.object(pool, { app, user: ada, moveId: ask.id, deps })).status, 409, 'a consent row is not objected to');
+    assert.equal((await moves.agree(pool, { app, user: ada, moveId: ask.id, deps })).status, 409, 'nor agreed to the old way');
+    await reply(ada, 51, 'Dawn is better');
+    await pool.query(
+      `INSERT INTO thread_followers (thread_id, user_id, muted_at)
+       VALUES ($1, $2, NOW()), ($1, $3, NULL) ON CONFLICT DO NOTHING`,
+      [t51, eve.id, ada.id]
+    );
+    const yes = await moves.consent(pool, { app, user: ada, moveId: ask.id, answer: 'yes', deps });
+    assert.equal(yes.move.state, 'applied');
+    assert.equal(await threadOf(51), t50, 'Yes moved it');
+    const { rows: [moved] } = await pool.query(
+      `SELECT thread_id, thread_ref FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 51 ORDER BY id DESC LIMIT 1`, [app.id]);
+    assert.equal(Number(moved.thread_id), t50, 'its reply moved');
+    assert.equal(Number(moved.thread_ref), 51, 'and keeps the request it was written on');
+    const { rows: [kept] } = await pool.query('SELECT muted_at FROM thread_followers WHERE thread_id = $1 AND user_id = $2', [t50, eve.id]);
+    assert.ok(kept && kept.muted_at, 'followers move, mute included');
+    assert.ok((await threads.followerIds(pool, { threadId: t50, appId: app.id })).includes(ada.id));
+    assert.equal(await threadOf(51), t50, 'its old number opens the merged thread');
+    const page = await threads.threadPage(pool, { thread: await thread(t50), viewerId: ada.id });
+    assert.equal(page.thread.requests, 2);
+    assert.equal(page.thread.name, 'Change at #60', 'a merged thread is called by its change');
+    const mergedLine = (await pool.query(
+      `SELECT content FROM chat_messages WHERE app_id = $1 AND content LIKE 'tm_ada agreed to move #51%'`, [app.id])).rows;
+    assert.equal(mergedLine.length, 1, 'the merge says who agreed');
+
+    // Keep separate leaves it where it is, still linked, and asks once.
+    const t52 = await request(52, ada, 'Rain gauge');
+    const change52 = await makeChange({ linked: '{52}', thread: t50, pr: 61 });
+    await moves.gather(pool, { deps });
+    const { rows: [sep] } = await pool.query(
+      'SELECT * FROM thread_moves WHERE thread_id = $1 AND for_session_id = $2', [t52, change52.id]);
+    assert.ok(sep);
+    const keptOut = await moves.consent(pool, { app, user: ada, moveId: sep.id, answer: 'separate', deps });
+    assert.equal(keptOut.move.state, 'refused');
+    assert.equal(Number(keptOut.move.input.kept), ada.id);
+    assert.equal(await threadOf(52), t52, 'nothing moved');
+    await moves.gather(pool, { deps });
+    assert.equal(Number((await pool.query(
+      'SELECT COUNT(*) AS n FROM thread_moves WHERE thread_id = $1 AND for_session_id = $2', [t52, change52.id])).rows[0].n), 1, 'not asked again');
+    const elsewhere = await threads.changesElsewhere(pool, { thread: await thread(t52), numbers: [52], viewerId: ada.id });
+    assert.ok(elsewhere.some((e) => Number(e.id) === Number(change52.id) && Number(e.on) === 50), 'the pointer still shows');
+
+    // The author asked for everything in it: it moves at once and says why.
+    const t53 = await request(53, bob, 'Drip line');
+    await makeChange({ linked: '{53}', thread: t50, pr: 62 });
+    await moves.gather(pool, { deps });
+    assert.equal(await threadOf(53), t50, 'its author\'s own request moves without asking');
+    assert.ok((await pool.query(
+      `SELECT 1 FROM chat_messages WHERE app_id = $1 AND content LIKE 'tm_bob asked for #53 and Change #62 closes it%'`, [app.id])).rows.length);
+
+    // A bot-built change speaks for whoever asked for its thread's lead request.
+    const t54 = await request(54, ada, 'Hose reel');
+    const t55 = await request(55, ada, 'Soaker hose');
+    await makeChange({ who: bot, linked: '{54,55}', thread: t54, pr: 63 });
+    await moves.gather(pool, { deps });
+    assert.equal(await threadOf(55), t54, 'both are hers, so it moves');
+
+    // A private draft asks nobody.
+    const t56 = await request(56, ada, 'Mist');
+    const privateChange = await makeChange({ linked: '{56}', thread: t50, pr: 64, status: 'active' });
+    await moves.gather(pool, { deps });
+    assert.equal(Number((await pool.query(
+      'SELECT COUNT(*) AS n FROM thread_moves WHERE thread_id = $1 AND for_session_id = $2', [t56, privateChange.id])).rows[0].n), 0);
+
+    // The 24-hour sweep never applies a consent row.
+    const t57 = await request(57, ada, 'Tap timer');
+    const change57 = await makeChange({ linked: '{57}', thread: t50, pr: 65 });
+    await moves.gather(pool, { deps });
+    const { rows: [late] } = await pool.query(
+      'SELECT * FROM thread_moves WHERE thread_id = $1 AND for_session_id = $2', [t57, change57.id]);
+    assert.equal(late.state, 'pending');
+    await pool.query(`UPDATE thread_moves SET deadline = NOW() - INTERVAL '1 minute' WHERE id = $1`, [late.id]);
+    await moves.sweep(pool, { deps });
+    assert.equal((await pool.query('SELECT state FROM thread_moves WHERE id = $1', [late.id])).rows[0].state, 'pending');
+    assert.equal(await threadOf(57), t57, 'nothing moved on the clock');
+  });
+
   // #6422: a split carries its followers with it, and the Notify me / Mute
   // they chose on the merged thread comes too.
   await t.test('a split carries its followers\' Notify me and Mute to the thread they land in', async () => {
@@ -372,6 +479,12 @@ test('thread moves against the full schema', { timeout: 120000 }, async (t) => {
     });
     assert.equal(res.status, 403);
     assert.equal((await res.json()).code, 'join_required');
+    const consentRes = await fetch(`${base}/api/apps/${app.slug}/thread-moves/1/consent`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-test-user': String(eve.id) },
+      body: JSON.stringify({ answer: 'yes' }),
+    });
+    assert.equal(consentRes.status, 403, 'a non-member cannot answer a consent question');
+    assert.equal((await consentRes.json()).code, 'join_required');
     const page = await (await fetch(`${base}/api/apps/${app.slug}/threads/1`, { headers: { 'x-test-user': String(ada.id) } })).json();
     assert.ok(Array.isArray(page.moves), 'the page carries its open moves');
   });

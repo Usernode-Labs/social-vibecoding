@@ -196,6 +196,14 @@ test('competing changes are one ballot; a pick is votes, cast only where they ch
   assert.equal(`${words(lines.what)}. ${words(lines.when)}`, 'Proposed: merge into #12. Happens in 24 hours unless someone objects');
   assert.equal(words(moveLines({ id: 2, kind: 'split', state: 'voting', input: { items: [{ type: 'request', number: 9 }] }, deadline: '', agreed: [], governanceId: 4 }).when),
     'Up for a vote, as someone objected');
+  // #6421: a change's question to a request's other askers, and who still
+  // has to answer.
+  const consent = moveLines({
+    id: 3, kind: 'merge', state: 'pending', input: { intoNumber: 6207 }, deadline: '', agreed: [], governanceId: null,
+    forChange: { id: 9, number: 6223 }, askOf: ['sam'], canAnswer: true,
+  });
+  assert.equal(words(consent.what), 'Move into #6207\'s thread? Change #6223 closes this request, and lives there.');
+  assert.equal(words(consent.when), 'Waiting for sam to answer');
   // A split may take anything but the lead.
   assert.deepEqual(splittable(payload([request, a])).map((i) => i.id), [51]);
 });

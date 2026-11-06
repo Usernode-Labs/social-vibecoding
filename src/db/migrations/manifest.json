@@ -205,6 +205,11 @@
       "id": "work-state-marks-check-phase",
       "sha256": "bc864215c9d5528939e79ec8037f49844543a2b5153e979611e66fe086c585ee",
       "schemaSha256": "54bcbe575d8c2c2ca50072f0ec50c1d0312c0d857c06374761736b09d55d70f2"
+    },
+    {
+      "id": "thread-moves-for-change",
+      "sha256": "b413627722015a31b6570a751b46b306b24116071290953def94edd01fc7d102",
+      "schemaSha256": "cb982ba1e3e21fb9be39458133a4c19c4e3a3ebd6214b6902b6f75c830a5019d"
     }
   ]
 }

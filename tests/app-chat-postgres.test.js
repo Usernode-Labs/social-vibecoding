@@ -769,6 +769,19 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     assert.ok(!page.messages.some((m) => m.content === 'on a draft'), 'nobody else does');
     const newer = (await call('GET', `/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61&after=${onOther.id}`, alice)).body;
     assert.deepEqual(newer.messages.map((m) => m.content), ['on the change', 'after the change'], 'a catch-up reads them too');
+    // #6421: a new reply on a merged thread's page is stored on that page's
+    // request, and reads back in the one merged stream.
+    await joinCommunity(merged, alice);
+    const said = await call('POST', '/api/apps/ta-merged/messages', alice, { content: 'a new word', thread_type: 'issue', thread_ref: 61 });
+    assert.equal(said.status, 201, JSON.stringify(said.body));
+    const { rows: [stored] } = await pool.query(
+      `SELECT thread_id, thread_ref FROM chat_messages WHERE app_id = $1 AND content = 'a new word'`, [merged.id]);
+    assert.equal(Number(stored.thread_ref), 61, 'written on the page\'s request');
+    assert.equal(Number(stored.thread_id), Number(onLead.thread_id), 'in the merged thread');
+    const reread = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61', alice)).body;
+    assert.ok(reread.messages.some((m) => m.content === 'a new word'));
+    const onOtherPage = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=62', alice)).body;
+    assert.ok(onOtherPage.messages.some((m) => m.content === 'a new word'), 'the other request\'s page reads it too');
     const alone = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=63', alice)).body;
     assert.deepEqual(alone.messages, [], 'a number with no request reads only its own anchor');
   });
