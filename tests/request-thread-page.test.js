@@ -211,7 +211,7 @@ function appView(username = 'evan', globals = {}) {
 }
 
 /** app-view.js in a sandbox whose `location` and `querySelector` a test owns. */
-function sandboxAppView(location, query) {
+function sandboxAppView(location, query, fetchImpl) {
   const c = {
     console,
     App: { user: { id: 42, username: 'evan' }, currentApp: 'example' },
@@ -230,7 +230,7 @@ function sandboxAppView(location, query) {
     dispatchEvent() {},
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init && init.detail; } },
     setTimeout, clearTimeout, setInterval, clearInterval,
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    fetch: fetchImpl || (async () => ({ ok: true, json: async () => ({}) })),
     location, URLSearchParams,
   };
   c.window = c;
@@ -510,7 +510,7 @@ test('#6387 the page holds the change section\'s place while its thread loads', 
   assert.match(head, /const holding = !r\.status\.closed && !!r\.status\.changeExpected && threadRead\.loading;/);
   // The held place counts as a working section, so the status card, the plan
   // and the bot's track give way to it as they do once it has loaded.
-  assert.match(head, /const working = layout\.changes\.length > 0 \|\| !!layout\.close \|\| holding;/);
+  assert.match(head, /const working = layout\.changes\.length > 0 \|\| \(!!layout\.close && layout\.close\.status === 'open'\) \|\| holding;/);
   assert.match(head, /\) : holding \? \(\s+<ChangeSectionSkeleton \/>/);
 });
 
@@ -785,4 +785,88 @@ test('a plan Homeroom bot shared reads "Homeroom bot", not "homeroom_bot"', () =
   const { requestStream } = loadTsx(MODEL);
   const out = requestStream([row({ id: 1, kind: 'spec_share', specShare: specShare(1, { sharedBy: 'homeroom_bot' }) })]);
   assert.equal(out.specs[0].by, 'Homeroom bot');
+});
+
+// #6439: a vote to close a request is read on the request's page. Once it
+// has ended the card stays there and says how it ended, so the layout keeps
+// the latest ended close (the open one always wins) out of the list below.
+test('#6439 a request\'s page keeps the latest vote to close, open or ended', () => {
+  const { threadLayout, requestPill } = loadTsx('frontend/src/features/dev-board/topic/thread-model.ts');
+  const here = { type: 'request', id: 1 };
+  const payload = (items) => ({
+    thread: { id: 1, number: 4417, kind: 'work', lead: 'request', title: 'Add topics', state: 'open' },
+    items, follow: null,
+  });
+  const old = { type: 'close', id: 40, number: null, title: 'Close #4417', status: 'closed', replies: 2, outcome: 'closed' };
+  const newer = { type: 'close', id: 41, number: null, title: 'Close it again', status: 'closed', replies: 0, outcome: 'kept' };
+  const open = { type: 'close', id: 42, number: null, title: 'Close it', status: 'open', replies: 0, outcome: null };
+
+  const ended = threadLayout(payload([old]), here);
+  assert.equal(ended.close && ended.close.id, 40, 'an ended vote keeps its card');
+  assert.ok(!ended.listed.some((i) => i.id === 40), 'and is not listed a second time');
+  assert.equal(requestPill(ended, null, (id) => id), null, 'the header does not say a vote is on');
+
+  const many = threadLayout(payload([old, newer]), here);
+  assert.equal(many.close && many.close.id, 41, 'the latest ended vote is the one drawn');
+  assert.deepEqual(many.listed.map((i) => i.id), [40], 'older ended votes stay in the list below');
+
+  const live = threadLayout(payload([old, open]), here);
+  assert.equal(live.close && live.close.id, 42, 'an open vote wins over an ended one');
+  assert.deepEqual(live.listed.map((i) => i.id), [40]);
+  assert.equal(requestPill(live, null, (id) => id).key, 'close', 'the header says a vote is on');
+});
+
+test('#6439 a close vote\'s home is its request, and a rename keeps its own page', async () => {
+  const seen = [];
+  const av = sandboxAppView({ hash: '#app/example/dev/workshop', pathname: '/app/example/dev/workshop' }, {}, async (url) => {
+    seen.push(url);
+    if (url.includes('/governance/40')) {
+      return { ok: true, json: async () => ({ proposal: { kind: 'close_issue', payload: { issueNumber: 4417 } } }) };
+    }
+    if (url.includes('/governance/41')) {
+      return { ok: true, json: async () => ({ proposal: { kind: 'rename', payload: { newName: 'Topics' } } }) };
+    }
+    return { ok: false, json: async () => null };
+  });
+  assert.equal(await av._closeVoteHomeOf(40), 4417, 'a close vote opens the request');
+  assert.equal(await av._closeVoteHomeOf(41), null, 'a rename keeps its governance page');
+  assert.match(seen.find((u) => u.includes('/governance/40')), /^\/api\/apps\/example\/governance\/40$/);
+  // The row is read once; asking again is the same answer, not a second call.
+  assert.equal(await av._closeVoteHomeOf(40), 4417);
+  assert.equal(seen.filter((u) => u.includes('/governance/40')).length, 1);
+});
+
+// #6439: once a vote to close has ended its card stays on the request's page
+// and says how it ended, with no vote buttons and its replies under it.
+test('#6439 an ended vote to close says how it ended and keeps its replies', () => {
+  const changes = 'frontend/src/features/dev-board/topic/thread-changes.tsx';
+  const view = (outcome, status = 'closed') => {
+    const close = {
+      type: 'close', id: 40, number: null, title: 'Close it', status,
+      reason: 'Covered by #6438.', by: 'evan', myVote: 'yes', replies: 3, outcome,
+      folded: [
+        { id: 1, username: 'evan', text: '#6438 covers the rename and the link.' },
+        { id: 2, username: 'ada', text: 'Agreed, closing makes sense.' },
+      ],
+    };
+    const data = {
+      thread: { id: 1, number: 4417, kind: 'work', lead: 'request', title: 'Add topics', state: 'closed' },
+      items: [close], follow: null,
+    };
+    return renderComponent(changes, 'ThreadChanges', {
+      slug: 'example', data, number: 4417, changes: [], close, onChanged() {},
+    });
+  };
+  const closed = view('closed');
+  assert.match(closed, /data-done="true"/, 'the card is drawn as done');
+  assert.doesNotMatch(closed, /data-close-vote=/, 'no Yes or No once it has ended');
+  assert.match(closed, /Closed by vote\./, 'it says how it ended');
+  assert.match(closed, /data-thread-fold="close:40"/, 'its replies are shown under it');
+  assert.match(closed, /msgx-thread-line/);
+  assert.match(closed, /#6438 covers the rename and the link\./);
+  assert.match(closed, /Show all replies/, 'the rest are one tap away');
+  assert.match(closed, /Covered by #6438\./, 'the reason stays');
+  assert.doesNotMatch(closed, /<button[^>]*>Covered by #6438\./, 'and is plain text, not a link back to the old page');
+  assert.match(view('kept'), /Kept open\./);
+  assert.match(view('elsewhere'), /Ended: the request closed another way\./);
 });

@@ -540,7 +540,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // give way to them; a closed request still says how it ended. A change
   // section held open while the thread loads counts the same way: its own
   // outline already says where things stand.
-  const working = layout.changes.length > 0 || !!layout.close || holding;
+  const working = layout.changes.length > 0 || (!!layout.close && layout.close.status === 'open') || holding;
   const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.work.stage : null, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);

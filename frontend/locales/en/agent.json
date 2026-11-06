@@ -2173,27 +2173,11 @@
   },
   "sidePanel.close": {
     "text": "Close panel",
-    "description": "Tooltip and accessible name of the ✕ button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): a verb, closes the panel."
+    "description": "Tooltip and accessible name of the ✕ button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): a verb, closes the panel. It is also the ✕ that closes a request, a change or a decision opened in the Homeroom bot page's column."
   },
   "sidePanel.frameTitle": {
     "text": "Side panel",
     "description": "Accessible title of the embedded page inside the side panel, the pane docked beside an app on a wide screen."
-  },
-  "sidePanel.main": {
-    "text": "Main Chat",
-    "description": "Beside the AI tab's page, on the column a request or a change opened in when Main Chat is behind the page: the chip that closes it and gives Main Chat, the person's private chat with Homeroom bot, its place back. \"Main Chat\" is that chat's name; keep it the same as its title. A back chip, with a chevron before it."
-  },
-  "sidePanel.mainLabel": {
-    "text": "Back to Main Chat",
-    "description": "Screen-reader label of the \"Main Chat\" chip beside the AI tab's page: it closes the page opened in the column and shows Main Chat, the person's private chat with Homeroom bot, again."
-  },
-  "sidePanel.thread": {
-    "text": "Thread",
-    "description": "Beside the AI tab's page, on the column a request or a change opened in when a private thread is behind the page: the chip that closes it and shows that thread again. \"Thread\" is the word the app uses for a private thread; its own title is too long for the chip. A back chip, with a chevron before it."
-  },
-  "sidePanel.threadLabel": {
-    "text": "Back to the thread",
-    "description": "Screen-reader label of the \"Thread\" chip beside the AI tab's page: it closes the page opened in the column and shows the private thread that was behind it again."
   },
   "sidePanel.openProject": {
     "text": "Open {{project}}",

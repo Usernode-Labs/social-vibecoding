@@ -2205,10 +2205,10 @@
       "expectText": "Your work"
     },
     {
-      "name": "Hub: For you's Your work row opens Homeroom bot narrowed to this project",
+      "name": "Hub: For you's Workshop row opens the project's Workshop",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > a[data-ws-mine-card][data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
-      "expectText": "Your work"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-workshop-row]",
+      "expectText": "Workshop"
     },
     {
       "name": "Foreign proposal: Explore in a coding agent is a row of the sheet’s ⋯ (#827, #4455); the Votes step names who voted, with How voting works as the ? at the line’s end",
@@ -2259,9 +2259,10 @@
       "expectText": "Close pending, will retry automatically"
     },
     {
-      "name": "The closing state also renders on the proposal's own discussion page (#1010)",
+      "name": "A vote to close opens the request's page, not the old governance view (#6439)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100074",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100074'] .gc-merging-badge .dc-status-spinner-arc"
+      "expectSelector": "#gc-thread-head .dev-request-root",
+      "expectText": "Request #900011"
     },
     {
       "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
@@ -2276,15 +2277,16 @@
       "expectText": "Change the featured illustration"
     },
     {
-      "name": "An applied close proposal opens its discussion, not the board (#1115)",
+      "name": "An applied close vote's address opens the request it closed (#1115)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100060",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100060']"
+      "expectSelector": "#gc-thread-head .dev-request-root",
+      "expectText": "Request #900003"
     },
     {
-      "name": "An applied close proposal reachable only by id still opens (#1115)",
+      "name": "An applied close vote reachable only by id still opens the request (#1115)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100062",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100062']",
-      "expectText": "closed by vote"
+      "expectSelector": "#gc-thread-head .dev-request-root",
+      "expectText": "Request #900003"
     },
     {
       "name": "#2603: a governance card's vote is the same picker a change's is, so the reason box opens with it",
@@ -2293,10 +2295,10 @@
       "expectText": "Vote"
     },
     {
-      "name": "#2603: a close proposal's page lists the votes cast on it, each in the voter's own words",
+      "name": "#2603: a close vote opens the request's page, where it is discussed",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100072",
-      "expectSelector": "#gc-thread-head .dev-topic-about .dev-topic-roster .dev-ledger-reason[data-vote=\"yes\"]",
-      "expectText": "Checked it myself, nothing left to fix."
+      "expectSelector": "#gc-thread-head .dev-request-root",
+      "expectText": "Request #900001"
     },
     {
       "name": "App-admins section ships in the Members modal (#788)",
@@ -5006,11 +5008,11 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row, each with Pin then Join (One Home, #6361), and not \"could not load\" (#6003, #6015)",
+      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row, with no Pin or Join on a card (#6433), and not \"could not load\" (#6003, #6015)",
       "path": "/?shot=anon#landing",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-guest-discover] [data-home-join-featured] [data-guest-card-footer] > [data-home-pin][aria-pressed=\"false\"] + [data-home-join]):not(:has([data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-featured] [data-guest-featured]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
       "allowConsoleErrors": true
     },
     {

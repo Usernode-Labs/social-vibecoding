@@ -80,6 +80,11 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
     wf_work_attempts: ['error'],
     stream_events: ['event'],
     new_private_store: ['content'],
+    // #6427: Homeroom bot's own tables are readable for their codes, numbers
+    // and times, never for the words in them.
+    requests: ['title', 'body', 'labels', 'author_login'],
+    homeroom_bot_runs: ['reason', 'question', 'error', 'build_error', 'first_step', 'plan_change', 'builder'],
+    work_states: ['line'],
   };
   const { rows: inventory } = await pool.query(
     `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`);
@@ -116,6 +121,12 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
     [{ slug: 'fake-project', status: 'running' }]);
   assert.deepEqual((await read('SELECT status FROM wf_work LIMIT 0')).rows, []);
   assert.deepEqual((await read('SELECT state FROM wf_instances LIMIT 0')).rows, []);
+  for (const sql of [
+    'SELECT number, state, state_reason, part_of FROM requests LIMIT 0',
+    'SELECT held_until, held_reason, wait_reason, wait_until FROM homeroom_bot_queue LIMIT 0',
+    'SELECT stage, why, reason, whose_move FROM work_states LIMIT 0',
+    'SELECT verdict, cost_usd, input_tokens, go_ahead_decides FROM homeroom_bot_runs LIMIT 0',
+  ]) assert.deepEqual((await read(sql)).rows, [], sql);
   const denied = async sql => assert.rejects(read(sql), { code: '42501' }, sql);
   for (const [table, columns] of Object.entries(privateFields)) {
     for (const column of columns) await denied(`SELECT ${quote(column)} FROM ${quote(table)}`);

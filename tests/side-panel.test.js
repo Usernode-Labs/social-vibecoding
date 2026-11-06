@@ -1669,9 +1669,9 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   assert.match(menu, /\{route && workshopItemOf\(route\) \? \(/);
   assert.match(menu, /controller\.openInWorkshop\(\)/);
   // The ⋯ is in the row only beside the bot page, and at its end.
-  assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
-  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
-  assert.match(CSS, /\.side-panel-more \{ margin-inline-start: auto; align-self: center; \}/);
+  assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
+  assert.match(CSS, /\.side-panel-more \{[^}]*margin-inline-start: auto;[^}]*align-self: center;/);
   // The item's page link is what the heading draws; a page with none is plain words.
   api._resetForTests();
   api.sidePanelStore.set({
@@ -1698,6 +1698,30 @@ function besideBot(route, head) {
   api.embeddedApi.ready(route, 'Notes');
   if (head) api.embeddedApi.head(route, head);
 }
+
+test('the head store starts empty and takes, and clears, a page\'s head (#6431)', () => {
+  // The panel document's head store starts null, and the first thing that
+  // ever happens to it is the page publishing an object. createStore's
+  // change detection read the key off that null state and threw, so the
+  // pill and the page's rows never reached the column: running the app with
+  // a request in the panel logged "Cannot read properties of null (reading
+  // 'kind')" at the store's set, and the page's bar had already gone.
+  api.panelHeadStore.set(null);
+  assert.equal(api.panelHeadStore.get(), null);
+  api.panelHeadStore.set({ kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  assert.equal(api.panelHeadStore.get().kind, 'request');
+  assert.equal(api.panelHeadStore.get().pill.key, 'building');
+  assert.equal(api.panelHeadStore.get().menuKey, 'request:6431');
+  // And it is cleared the same way: null REPLACES the state rather than
+  // merging into a no-op copy of it, or the page's pill would outlive it.
+  api.panelHeadStore.set(null);
+  assert.equal(api.panelHeadStore.get(), null);
+  // A store with an object state keeps the merge contract every other
+  // plain-store user relies on.
+  api.panelHeadStore.set({ kind: 'change', pill: null, menuKey: 'detail:proposal:9' });
+  assert.equal(api.panelHeadStore.get().kind, 'change');
+  api.panelHeadStore.set(null);
+});
 
 test('beside the bot page the column\'s heading carries the page\'s own status pill (#6431)', () => {
   const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
@@ -1791,6 +1815,44 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
   assert.deepEqual(api.SidePanel.panelMenuRows(), [], 'a head for another page lists nothing here');
   api.sidePanelRefs.frame = null;
   api._resetForTests();
+});
+
+test('the column\'s ⋯ menu is a solid sheet above the page, in both looks (#6431)', () => {
+  // The menu is drawn in the shell's own document, where Messages' surface
+  // tokens are not declared (they live on .messages-layout,
+  // .dev-ws-discussion, .dev-request and #ai-screen .ai-askbar). Its fill and
+  // hover resolved to nothing, so the page's rows showed straight through it
+  // under its shadow (Evan, 6 Nov 2026: "overlapping weirdly... fully
+  // transparent"). The wrapper declares the same pair, opaque in each look,
+  // and stacks above the panel's body.
+  const rule = (sel) => {
+    const at = CSS.indexOf(`${sel} {`);
+    assert.ok(at >= 0, `${sel} is drawn`);
+    return CSS.slice(at, CSS.indexOf('}', at) + 1);
+  };
+  const more = rule('.side-panel-more');
+  assert.match(more, /position: relative;/, 'the wrapper is the menu\'s anchor');
+  assert.match(more, /z-index: 2;/, 'and its layer, above the panel\'s body');
+  // The heading is in the lists that declare Messages' tokens, so the menu's
+  // fill (and the ⋯ button's hover step) is the opaque one Messages draws.
+  const tokens = (start) => CSS.slice(CSS.indexOf(start), CSS.indexOf('}', CSS.indexOf(start)));
+  const light = tokens('.messages-layout,');
+  assert.match(light, /\.side-panel-head,/);
+  assert.match(light, /--messages-surface: #ffffff;/, 'the menu\'s fill, light');
+  assert.match(light, /--messages-surface-2: var\(--bg-secondary\);/, 'and its hover step');
+  const dark = tokens('.dark .messages-layout,');
+  assert.match(dark, /\.dark \.side-panel-head,/);
+  assert.match(dark, /--messages-surface: var\(--dc-raised\);/, 'the menu\'s fill, dark');
+  assert.match(dark, /--messages-surface-2: #3a3a3c;/, 'and its hover step');
+  // A hairline on top of the base rule's lift, so it reads as a sheet over the
+  // page rather than a hole in it. The menu itself is still Messages' absolute
+  // layer, and its base rule still paints the surface declared above.
+  assert.match(rule('.side-panel-more .messages-thread-menu'),
+    /box-shadow: 0 12px 30px rgba\(0, 0, 0, \.18\), inset 0 0 0 1px var\(--messages-hair\);/);
+  const base = rule('.messages-thread-menu');
+  assert.match(base, /position: absolute;/);
+  assert.match(base, /z-index: 30;/);
+  assert.match(base, /background: var\(--messages-surface\);/);
 });
 
 test('a new page, a new frame and leaving drop the head with the title (#6431)', () => {

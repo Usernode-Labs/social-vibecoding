@@ -506,7 +506,9 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        NULL::int AS built_from_session_id, NULL::int AS built_from_version,
        FALSE AS ready,
        NULL::timestamptz AS live_at,
-       NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id
+       NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id,
+       NULL::text AS applied_at, NULL::text AS applied_by,
+       NULL::text AS withdrawn_at, NULL::text AS superseded_by
   FROM requests r LEFT JOIN users ru ON ru.id = r.created_by
  WHERE r.thread_id = $1
 UNION ALL
@@ -538,7 +540,9 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        CASE WHEN COALESCE(cu.is_synthetic, FALSE)
             THEN (SELECT r2.created_by FROM requests r2
                    WHERE r2.app_id = cs.app_id AND r2.number = cs.created_from_issue_number)
-            ELSE cs.user_id END AS built_for_user_id
+            ELSE cs.user_id END AS built_for_user_id,
+       NULL::text AS applied_at, NULL::text AS applied_by,
+       NULL::text AS withdrawn_at, NULL::text AS superseded_by
   FROM chat_sessions cs LEFT JOIN users cu ON cu.id = cs.user_id
  WHERE cs.thread_id = $1 AND cs.is_headless = FALSE
    AND (cs.status IN ('active', 'promoted', 'merging', 'merged')
@@ -561,7 +565,14 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
             THEN (i.payload->>'issueNumber')::int END,
        NULL::int[], NULL::int, NULL::int, FALSE,
        NULL::timestamptz AS live_at,
-       NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id
+       NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id,
+       -- #6439: how an ended vote to close ended, off the governance
+       -- machine's audit in the payload (applied, refused, withdrawn or
+       -- superseded by the request closing another way).
+       i.payload->>'appliedAt' AS applied_at,
+       i.payload->>'appliedBy' AS applied_by,
+       i.payload->>'withdrawnAt' AS withdrawn_at,
+       i.payload->>'supersededBy' AS superseded_by
   FROM issues i LEFT JOIN users iu ON iu.id = i.created_by
  WHERE i.thread_id = $1 AND i.kind <> 'general'
  ORDER BY created_at, type, id`;
@@ -680,6 +691,19 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       item.reason = row.reason || null;
       item.target = row.target == null ? null : Number(row.target);
       item.myVote = row.my_vote === 'yes' || row.my_vote === 'no' ? row.my_vote : null;
+      // #6439: an ended vote to close says how it ended, so the request's
+      // page keeps its card and reads "Closed by vote", "Kept open" or
+      // "Ended: the request closed another way". Null while it is open.
+      if (row.type === 'close' && row.status !== 'open') {
+        const appliedBy = String(row.applied_by || '');
+        item.outcome = row.applied_at && !appliedBy.startsWith('refused:')
+          ? 'closed'
+          : row.superseded_by
+            ? 'elsewhere'
+            : 'kept';
+      } else {
+        item.outcome = null;
+      }
     }
     items.push(item);
   }

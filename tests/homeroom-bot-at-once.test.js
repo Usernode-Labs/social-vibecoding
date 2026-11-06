@@ -431,7 +431,7 @@ test('the lane hands each project its own build number', () => {
 test('the lane\'s build candidates are requests whose build waits for a slot, not held, not on a paused app, oldest first', () => {
   const s = rules.BUILD_CANDIDATES_SQL;
   assert.match(s, /WHERE w\.machine = 'bot-request' AND w\.state = 'building' AND w\.data->'build'->>'phase' = 'waiting'/);
-  assert.match(s, /AND \(w\.data->'build'->>'heldUntil' IS NULL OR \(w\.data->'build'->>'heldUntil'\)::timestamptz <= NOW\(\)\)/,
+  assert.match(s, /AND \(w\.data->'build'->>'heldUntil' IS NULL OR \(w\.data->'build'->>'heldUntil'\)::timestamptz <= NOW\(\)\s/,
     'a build held for its payer\'s week takes no slot until the week resets');
   assert.match(s, /AND NOT \(a\.slug = ANY\(\$1::text\[\]\)\)/);
   assert.match(s, /AND NOT EXISTS \(SELECT 1 FROM wf_events g\s+WHERE g\.machine = 'bot-request' AND g\.key = w\.key\s+AND g\.type = 'Granted'/,

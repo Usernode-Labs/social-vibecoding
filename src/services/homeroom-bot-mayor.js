@@ -4046,6 +4046,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // (homeroom-bot-thread-tools/), between its own and the platform's.
       ctx.platformTools = platformTools.length > 0;
       const threadTools = threadToolsOf(deps);
+      // #6427: what a module reads before it says what it offers (admin.js:
+      // whether this is a full admin's own chat with the bot).
+      if (typeof threadTools.beforeTurn === 'function') await threadTools.beforeTurn(pool, ctx);
       const extraTools = threadTools.toolsFor(ctx);
       const tools = [...TOOLS, ...extraTools, ...platformTools];
       // #3733: the conversation could not be read: their message alone is
@@ -4628,8 +4631,26 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
 
+// #6427: a card that posts somewhere public, offered in a thread of a
+// person's chat with the bot where a database read (query_prod_db) happened,
+// says so: its words were drafted by a turn that could have read those rows
+// (frontend bot-question.tsx draws the line). Only an admin can have run one,
+// so nobody else's offer pays for the look. `roots` are the threads the
+// offer came from (null for Main). Never throws.
+async function dbReadMark(pool, { user, conversationId, roots }) {
+  if (user?.isAdmin !== true) return {};
+  const read = await require('./homeroom-bot-thread-tools/admin').dbReadIn(pool, {
+    userId: user.id, conversationId, threadRootIds: roots,
+  });
+  return read ? { dbRead: true } : {};
+}
+
 async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps, extra = null, keySuffix = '' }) {
   const dm = dmModule(deps);
+  const dbRead = await dbReadMark(pool, {
+    user, conversationId,
+    roots: [message?.threadRootId || message?.thread_root_id || null, deps?.threadRequest?.rootId || deps?.threadRootId || null],
+  });
   // #6305: one request on several projects. It has no one project, no
   // dm_actions row and nothing to settle: its card is the whole offer, and
   // its File on all is decided by homeroom-bot-cards/file-many.js.
@@ -4652,6 +4673,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       metadata: {
         ...(extra || {}),
         ...(o.extras ? { draftExtras: o.extras } : {}),
+        ...dbRead,
       },
     });
     if (sent?.messageId) {
@@ -4753,6 +4775,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       // requests, where, Done when), kept on the message it was said in, so
       // File it can file the same. Read back by settleOffer.
       ...(o.extras ? { draftExtras: o.extras } : {}),
+      ...dbRead,
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -4982,6 +5005,12 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       ...designPlanActions(n).map((a) => (a.id === 'yes' ? { ...a, style: 'secondary' } : a)),
     ]
     : designPlanActions(n);
+  // #6427: a plan is posted publicly: the line a database read in its thread,
+  // or in the one that asked for the screen, puts on the card.
+  const dbRead = await dbReadMark(pool, {
+    user, conversationId,
+    roots: [message?.threadRootId || message?.thread_root_id || null, deps?.threadRootId || null],
+  });
   const sent = await dm.sendDm(pool, {
     bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
     content: [
@@ -4993,7 +5022,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     metadata: {
       kind: 'confirm', appSlug: app.slug, appName: name, actionId: action.id,
       question: n ? `Post version ${v} as a plan on #${n}?` : `Post version ${v} as a plan on ${name}?`,
-      answers: designPlanAnswers(n), actions, status: 'open', mirrors: false,
+      answers: designPlanAnswers(n), actions, status: 'open', mirrors: false, ...dbRead,
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -5933,7 +5962,7 @@ async function startRequest(pool, ctx, args) {
     return {
       ok: false,
       code: 'go_ahead_cannot',
-      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step }),
+      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username }),
       next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
     };
   }
@@ -6935,6 +6964,9 @@ module.exports = {
   checkProjectOffer,
   cardSentence,
   sendDesignOffer,
+  // #6427: an offer's card, and the line a database read in its thread puts on it.
+  offer,
+  dbReadMark,
   decidePostDesign,
   noteProjectMade,
   MAKE_PROJECT,

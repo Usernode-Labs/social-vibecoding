@@ -4286,9 +4286,9 @@ function registerTools(server, ctx) {
         .describe(`Why it should close, for the group to read before voting. At most ${MAX_CLOSE_REASON_CHARS} characters.`),
     },
     outputSchema: {
-      // The proposal's own id, which is what its governance page is keyed by.
-      // A close proposal has no GitHub issue of its own: the number it
-      // targets is `number`.
+      // The proposal's own id, for anyone who needs the row itself. A close
+      // proposal has no GitHub issue of its own: the number it targets is
+      // `number`, and `webPath` opens that request's page (#6439).
       closeProposalId: z.number().nullable(),
       number: z.number(),
       title: z.string(),
@@ -4350,9 +4350,10 @@ function registerTools(server, ctx) {
       title: untrusted((proposal.payload && proposal.payload.issueTitle) || state.issue.title, MAX_REQUEST_TITLE_CHARS),
       reasonChars: reasonCheck.value.length,
       inProgress,
-      webPath: proposalId
-        ? appWebPath(origin, slug, `dev/governance/${proposalId}`)
-        : appWebPath(origin, slug, `dev/issues/${wanted}`),
+      // #6439: a vote to close a request is read on the request's page,
+      // where its thread draws it; the proposal id stays for anyone who
+      // needs the row itself. Never the old governance address.
+      webPath: appWebPath(origin, slug, `dev/issues/${wanted}`),
       nextStep: `The group is now voting on closing request #${wanted}. It stays open until that vote passes, `
         + 'and the platform closes it then; nothing else is needed from you, and this connector cannot vote. '
         + (busy

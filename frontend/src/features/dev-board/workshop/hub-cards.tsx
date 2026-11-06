@@ -6,10 +6,10 @@
  * for and who is around this week), top to bottom:
  *
  *   FOR YOU, one card of doors, a row each, each opening its place: Needs
- *   you (the first vote you owe "and 3 more", "4 to vote"), Your work (the
- *   first of yours in flight, "1 in progress", or "No work in progress.")
- *   and the Discussion (#general and its last line, or "No messages yet.").
- *   ForYouCard.
+ *   you (the first vote you owe "and 3 more", "4 to vote"), the Workshop
+ *   (what happened, and every item; 6 Nov 2026: it took Your work's place
+ *   there) and the Discussion (#general and its last line, or "No messages
+ *   yet."). ForYouCard.
  *   RECENTLY LIVE, the last three changes that went live, each as its after
  *   shot, its title, and who made it and when; before any has, the app
  *   itself and since when it has been live. RecentlyLive.
@@ -41,9 +41,9 @@
  * nothing (`alone` in NothingToVote). For a while an empty Your work and
  * the Discussion left a new project's hub too, and a ready-made app's hub
  * then looked nothing like an older project's (15 Oct 2026). So For you is
- * the same card from the first day: Your work and the Discussion always,
- * each saying so when it is empty, and Needs you only when something needs
- * you.
+ * the same card from the first day: the Workshop and the Discussion always,
+ * the Discussion saying so when it is empty, and Needs you only when
+ * something needs you.
  *
  * ── The channel lives on the page ──────────────────────────────────────
  *
@@ -86,7 +86,6 @@ import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-see
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
 import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
-import { YourWorkRow } from './your-work';
 import {
   askToFit, goTo, upstreamAction, useUpstream, useVersionsSummary,
   type UpstreamState, type VersionsSummary,
@@ -587,12 +586,12 @@ function NeedsRow({ queue, slug, canPost, onOpen }: {
 }
 
 /**
- * THE WORKSHOP, on a phone (3 Nov 2026): the Hub is the way to the
- * community's places there, so the Workshop has a row of its own, named for
- * it. 5 Nov 2026: it was the Your work row as well, opening the Workshop
- * where your work was listed; your work is the Homeroom bot tab's now (the
- * Your work row beside it, ./your-work.tsx), and this row is only the door
- * to the place: what happened here, and All items.
+ * THE WORKSHOP, For you's door to the place: what happened here, and All
+ * items. It was the phone's row alone (3 Nov 2026), with Your work beside it
+ * from 5 Nov 2026; on 6 Nov 2026 it took Your work's place at every width,
+ * so the Hub's rows are the places it leads to. Your own work is the Homeroom
+ * bot tab's, and its card is on the Workshop tab (./your-work.tsx,
+ * YourWorkCard).
  */
 function WorkshopRow({ onOpen }: { onOpen: () => void }): ReactNode {
   const t = useMessages('project');
@@ -688,16 +687,20 @@ function DiscussionRow({ data, onOpen }: {
 
 /**
  * FOR YOU: what on this project is the viewer's, one card of doors under its
- * label — Needs you, Your work, the Discussion — each row a door to its
+ * label — Needs you, the Workshop, the Discussion — each row a door to its
  * place, at most one pill on it, 15 over 13. The same card from a project's
- * first day (15 Oct 2026): Your work and the Discussion are always there,
- * saying so when they are empty, and Needs you only when a vote waits on
- * you. With no vote owed, Needs you is the quiet line that says so
+ * first day (15 Oct 2026): the Workshop and the Discussion are always there,
+ * the Discussion saying so when it is empty, and Needs you only when a vote
+ * waits on you. With no vote owed, Needs you is the quiet line that says so
  * (NothingToVote, #3408), or nothing on a project nobody else is in.
  * Nothing at all when no row has anything to say.
+ *
+ * 6 Nov 2026: the Workshop's row is drawn at every width, in the place Your
+ * work had, and opens the Workshop (the phone's row until then). Your work
+ * is the Homeroom bot tab's, said on the Workshop tab's own card.
  */
 export function ForYouCard({
-  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion, places = false,
+  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion,
 }: {
   slug: string;
   queue: DevWorkshopView['queue'];
@@ -713,19 +716,17 @@ export function ForYouCard({
   onNeeds: () => void;
   onWork: () => void;
   onDiscussion: () => void;
-  /** A phone (3 Nov 2026): the Hub is the way to the community's places, so
-      the Workshop's row is always drawn, and named for the place it opens. */
-  places?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const headId = useId();
   const owes = owesVote(queue);
   const claims = Math.max(0, Number(unclaimed) || 0);
   const needs = owes || !alone || claims > 0;
-  // Your work: anyone signed in has some, or none, to be told about.
+  // The Workshop's row is for anyone signed in, whose work there may be, or
+  // not; a visitor has no work to be told about.
   const work = !!mine?.viewer;
   const talk = !!(data && data.channel);
-  if (!needs && !work && !places && !talk) return null;
+  if (!needs && !work && !talk) return null;
   return (
     <section className="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby={headId}>
       <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.forYou.title')}</SectionHeader>
@@ -733,10 +734,7 @@ export function ForYouCard({
         {owes
           ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} />
           : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
-        {work ? (
-          <YourWorkRow slug={slug} name={data?.name || slug} className="dev-ws-foryou-row" data-ws-mine-card="" />
-        ) : null}
-        {places ? <WorkshopRow onOpen={onWork} /> : null}
+        {work ? <WorkshopRow onOpen={onWork} /> : null}
         <DiscussionRow data={data} onOpen={onDiscussion} />
       </div>
     </section>

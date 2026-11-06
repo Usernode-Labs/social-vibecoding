@@ -1,9 +1,11 @@
 'use strict';
 
-// #6423: a build whose plan names files another open change or running
-// build touches waits for it (or builds on top), says so once in the
-// request's thread, and gives its building slot back; append-only shared
-// files, a timeout, and a failed diff read all let it build.
+// #6423, #6428: a build whose plan names files another open change touches
+// (a person's change, one up for a vote, or a running build's branch) is
+// never held for it: it builds now and says once, in the request's thread,
+// what it shares. Append-only shared files say Homeroom combines them, and
+// a failed diff read, or a running build with no commits yet, says nothing.
+// A build held for an overlap before #6428 starts on the next pass.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -46,7 +48,6 @@ function buildPool({ run = waitingRun(), sessions = [], posts = [], diffs = {} }
         return { rows: [] };
       }
       if (/FROM chat_sessions\s+WHERE app_id = \$1 AND is_headless = FALSE AND branch_name IS NOT NULL/.test(s)) return { rows: sessions };
-      if (/FROM wf_instances w/.test(s) && /w\.machine = \$1 AND w\.app_id/.test(s)) return { rows: [] };
       // buildOne's reads: no proposal, no other build; the issue unreadable.
       if (/SELECT id FROM chat_sessions/.test(s)) return { rows: [] };
       if (/SELECT bs\.id FROM homeroom_bot_runs b/.test(s)) return { rows: [] };
@@ -90,45 +91,71 @@ const start = (deps, pool, more = {}) => bot.startBuild({}, pool, {
 
 const OPEN = {
   id: 501, status: 'active', branch_name: 'dev/other', pr_number: 6404, waits_for_session_id: null, rebuilt_from_session_id: null,
+  created_from_issue_number: 6404, linked_issues: [6404],
 };
 
-test('a build touching a file an open change touches is held, and says why', async () => {
+const kinds = (pool) => pool.state.posts.map((p) => p.kind);
+
+test('an overlap in a file that is not append-only starts the build and posts the parallel note', async () => {
   const pool = buildPool({ sessions: [OPEN] });
   const deps = depsFor(pool, { diffs: { 'dev/other': ['src/features/ai/lists.tsx'] } });
   const out = await start(deps, pool);
-  assert.equal(out.outcome, 'held');
-  assert.equal(out.heldFor, 'overlap', 'told apart from the week\'s hold');
-  assert.equal(out.overlap.sessionId, 501);
-  assert.equal(out.overlap.prNumber, 6404);
-  const waited = Date.parse(out.until) - Date.parse(out.since);
-  assert.equal(waited, rules.OVERLAP_WAIT_MS, 'the wait is two hours from its start');
+  assert.notEqual(out.outcome, 'held', 'never held for another change');
+  assert.equal(out.outcome, 'fault', 'it went on to the build (the stubbed issue is unreadable)');
+  assert.deepEqual(kinds(pool), ['overlap_parallel']);
   assert.equal(pool.said.length, 1, 'one note in the request\'s thread');
-  assert.match(pool.said[0], /This touches `src\/features\/ai\/lists\.tsx`, which PR #6404 is also changing/);
-  assert.match(pool.said[0], /2 hours/);
-  assert.ok(!pool.log.some((l) => /INSERT INTO chat_sessions/.test(l.s)), 'nothing was built');
+  assert.equal(pool.said[0], 'This and PR #6404 both touch `src/features/ai/lists.tsx`. '
+    + 'Building now; whichever merges second gets an automatic sync with main.');
 });
 
-test('the wait is said once across rechecks', async () => {
+test('the note is said once across rechecks', async () => {
   const pool = buildPool({ sessions: [OPEN] });
   const deps = depsFor(pool, { diffs: { 'dev/other': ['src/features/ai/lists.tsx'] } });
-  const first = await start(deps, pool);
-  const second = await start(deps, pool, { overlapSince: first.since });
-  assert.equal(second.outcome, 'held');
-  assert.equal(pool.state.posts.length, 1, 'one post for one wait');
-  assert.equal(pool.said.length, 1, 'said once, not on every recheck');
+  await start(deps, pool);
+  const second = await start(deps, pool);
+  assert.notEqual(second.outcome, 'held');
+  assert.equal(pool.state.posts.length, 1, 'one post for the run');
+  assert.equal(pool.said.length, 1, 'said once, not on every start');
 });
 
-test('a build with an append-only overlap goes ahead, and says which sync it will need', async () => {
+test('a running build or a person\'s open change never holds another build', async () => {
+  // A running build's session, read by its branch's diff (it has no pull
+  // request yet), and a person's change that is not up for a vote.
+  const building = { ...OPEN, id: 502, branch_name: 'dev/building', pr_number: null, created_from_issue_number: 6410, linked_issues: [6410] };
+  const person = { ...OPEN, id: 503, branch_name: 'dev/person', pr_number: null, created_from_issue_number: null, linked_issues: [] };
+  for (const [session, subject] of [[building, 'the change for request #6410'], [person, 'another open change']]) {
+    const pool = buildPool({ sessions: [session] });
+    const deps = depsFor(pool, { diffs: { [session.branch_name]: ['src/features/ai/lists.tsx'] } });
+    const out = await start(deps, pool);
+    assert.equal(out.outcome, 'fault', `${subject}: it went on to the build`);
+    assert.match(pool.said[0], new RegExp(`^This and ${subject} both touch`));
+  }
+  // One up for a vote is not built on: sharing files alone never stacks.
+  const pool = buildPool({ sessions: [{ ...OPEN, status: 'promoted' }] });
+  const deps = depsFor(pool, { diffs: { 'dev/other': ['src/features/ai/lists.tsx'] } });
+  const out = await start(deps, pool);
+  assert.equal(out.outcome, 'fault');
+  assert.deepEqual(kinds(pool), ['overlap_parallel'], 'beside it, not on top of it');
+});
+
+test('a running build whose branch has no commits yet is skipped', async () => {
+  const pool = buildPool({ sessions: [{ ...OPEN, pr_number: null }] });
+  const deps = depsFor(pool, { diffs: { 'dev/other': [] } });
+  const out = await start(deps, pool);
+  assert.equal(out.outcome, 'fault', 'it went on to the build');
+  assert.equal((pool.said || []).length, 0, 'and nothing is said');
+});
+
+test('a build with an append-only overlap goes ahead, and says Homeroom combines it', async () => {
   const pool = buildPool({
-    sessions: [{ ...OPEN, pr_number: 6404 }],
+    sessions: [OPEN],
     run: waitingRun({ build_note: 'The plan: add a row to `tests/baselines/test-durations.json`.' }),
   });
   const deps = depsFor(pool, { diffs: { 'dev/other': ['tests/baselines/test-durations.json'] } });
   const out = await start(deps, pool, { runId: 900 });
-  assert.notEqual(out.outcome, 'held', 'never blocked by the durations list alone');
   assert.equal(out.outcome, 'fault', 'it went on to the build (the stubbed issue is unreadable)');
   assert.equal(pool.said.length, 1);
-  assert.match(pool.said[0], /Homeroom combines on its own/);
+  assert.match(pool.said[0], /, which Homeroom combines on its own\. /);
   assert.match(pool.said[0], /automatic sync with main/);
 });
 
@@ -136,60 +163,8 @@ test('a failed diff read counts as no overlap: the build goes ahead', async () =
   const pool = buildPool({ sessions: [OPEN] });
   const deps = depsFor(pool, { failDiffs: true });
   const out = await start(deps, pool);
-  assert.equal(out.outcome, 'fault', 'not held: nothing could be compared');
+  assert.equal(out.outcome, 'fault', 'nothing could be compared');
   assert.equal((pool.said || []).length, 0, 'and nothing is said');
-});
-
-test('a wait past two hours builds on main anyway, and says so', async () => {
-  const pool = buildPool({ sessions: [OPEN] });
-  const deps = depsFor(pool, { diffs: { 'dev/other': ['src/features/ai/lists.tsx'] } });
-  const since = new Date(Date.now() - rules.OVERLAP_WAIT_MS - 60_000).toISOString();
-  const out = await start(deps, pool, { overlapSince: since });
-  assert.notEqual(out.outcome, 'held');
-  assert.equal(pool.said.length, 1);
-  assert.match(pool.said[0], /has not merged after 2 hours, so I'm building this on main now/);
-});
-
-test('a change up for a vote is built on top of, and the note says so', async () => {
-  const pool = buildPool({ sessions: [{ ...OPEN, status: 'promoted' }] });
-  const deps = depsFor(pool, { diffs: { 'dev/other': ['src/features/ai/lists.tsx'] } });
-  const out = await start(deps, pool);
-  assert.notEqual(out.outcome, 'held');
-  assert.match(pool.said[0], /up for a vote, also changes\. I'm building this on top of it/);
-});
-
-test('a woken wait whose change merged says it builds on the new main', async () => {
-  const pool = buildPool({ sessions: [] });
-  const deps = depsFor(pool, { diffs: {} });
-  // The prior wait's session is merged now: read back by its id.
-  pool.query = ((orig) => async (sql, params) => {
-    if (/SELECT status FROM chat_sessions WHERE id = \$1/.test(String(sql)) && Number(params[0]) === 501) {
-      return { rows: [{ status: 'merged' }] };
-    }
-    return orig.call(pool, sql, params);
-  })(pool.query);
-  const out = await start(deps, pool, {
-    overlapSince: new Date(Date.now() - 60_000).toISOString(),
-    priorOverlap: { since: new Date(Date.now() - 60_000).toISOString(), sessionId: 501, runId: null, prNumber: 6404 },
-  });
-  assert.notEqual(out.outcome, 'held');
-  assert.match(pool.said[0], /PR #6404 merged, so I'm building this on the new main/);
-});
-
-test('a woken wait whose change was closed says it builds on main now', async () => {
-  const pool = buildPool({ sessions: [] });
-  const deps = depsFor(pool, { diffs: {} });
-  pool.query = ((orig) => async (sql, params) => {
-    if (/SELECT status FROM chat_sessions WHERE id = \$1/.test(String(sql)) && Number(params[0]) === 501) {
-      return { rows: [{ status: 'archived' }] };
-    }
-    return orig.call(pool, sql, params);
-  })(pool.query);
-  const out = await start(deps, pool, {
-    priorOverlap: { since: new Date(Date.now() - 60_000).toISOString(), sessionId: 501, runId: null, prNumber: 6404 },
-  });
-  assert.notEqual(out.outcome, 'held');
-  assert.match(pool.said[0], /PR #6404 was closed, so I'm building this on main now/);
 });
 
 // The stack is passed down the build's calls, which cannot run in a test
@@ -206,73 +181,77 @@ test('the stack a build on top makes is passed to the build and its session', ()
   assert.match(liveSrc, /stackOn\?\.branch/, 'its base is that change\'s branch');
   assert.match(read('src/services/github.js'), /base = 'main',/, 'a pull request is opened on that base');
   assert.match(read('src/services/pr-metadata.js'), /base: session\.imported_pr_base_ref/, 'a bot change opens its own that way too');
+  // Only a request's dependency stacks a build, and nothing passes one yet.
+  assert.match(startSrc, /await overlapFor\(pool, \{ app, run, issueNumber: Number\(issueNumber\), deps \}\)/);
 });
 
-// The bot-request machine's own side of a wait: its hold is told apart from
-// the week's, and only the waited-for change ending lifts it.
+// The bot-request machine's own side (#6428): it holds no build for an
+// overlap, and a build stored or reported held for one before is waiting
+// for its slot, nothing more.
 const requestMachine = require('../src/workflow/bot-request/machine.ts');
 
-function buildingState(now) {
+const CTX = (now) => ({ machine: requestMachine.MACHINE, key: rules.requestKey(101, 1), appId: 101, version: 2, now });
+const OLD_HOLD = {
+  heldUntil: '2026-11-06T12:00:00Z', heldFor: 'overlap',
+  overlap: { since: '2026-11-06T10:00:00Z', until: '2026-11-06T12:00:00Z', sessionId: 501, runId: null, prNumber: 6404 },
+};
+
+function buildingState(build = {}, slot = { grant: 4, kind: 'build', person: 'u7', appId: 101 }) {
   return {
     name: 'building',
     data: {
       appId: 101, issueNumber: 1, owed: null, look: null, n: 1, backoff: null, fix: null, spentRetry: null,
-      lastRead: null, carried: null,
-      slot: { grant: 4, kind: 'build', person: 'u7', appId: 101 },
-      build: { runId: 900, phase: 'waiting', since: '2026-11-06T09:00:00Z', key: null },
+      lastRead: null, carried: null, slot,
+      build: { runId: 900, phase: 'waiting', since: '2026-11-06T09:00:00Z', key: null, ...build },
     },
   };
 }
+const event = (type, payload, source = { kind: 'system' }) => ({
+  id: 1, type, payload, source, actor: null, requestKey: 'k', appId: 101, causedBy: null,
+});
 
-test('an overlap hold keeps the build\'s place, releases the slot, and ends at its deadline', () => {
+test('a build held for an overlap before #6428 starts on the next pass', () => {
+  const machine = requestMachine.botRequest({ staging: false });
+  const out = machine.entryFor('building', 'Granted').to(buildingState(OLD_HOLD, null),
+    event('Granted', { appId: 101, issueNumber: 1, grant: 5, kind: 'build', sessionId: null, person: 'u7' },
+      { kind: 'message', from: { machine: rules.BOT_LANE, key: rules.LANE_KEY } }),
+    {}, CTX(new Date('2026-11-06T11:00:00Z')));
+  const build = out.next.data.build;
+  assert.equal(build.phase, 'starting', 'granted before its old deadline');
+  assert.equal(build.heldUntil, null);
+  assert.ok(!('heldFor' in build) && !('overlap' in build), 'the old hold\'s fields are gone');
+  assert.equal(build.since, '2026-11-06T09:00:00Z', 'it kept its place in line');
+  assert.deepEqual(Object.keys(out.work[0].input).sort(), ['appId', 'issueNumber', 'n', 'person', 'runId']);
+});
+
+test('an older build\'s start that held it for an overlap leaves it waiting for its slot, not held', () => {
+  const machine = requestMachine.botRequest({ staging: false });
+  const result = { outcome: 'held', heldFor: 'overlap', until: '2026-11-06T12:00:00Z', since: '2026-11-06T10:00:00Z' };
+  const out = machine.entryFor('building', 'WorkSucceeded').to(buildingState({ phase: 'starting' }),
+    event('WorkSucceeded', { kind: requestMachine.WORK.build, workKey: 'build:0', result }), {}, CTX(new Date('2026-11-06T10:00:00Z')));
+  const build = out.next.data.build;
+  assert.equal(out.next.data.slot, null, 'its building slot goes back');
+  assert.equal(build.phase, 'waiting');
+  assert.ok(!build.heldUntil, 'no deadline holds it');
+  assert.ok(!('heldFor' in build) && !('overlap' in build));
+  assert.equal(out.timer, undefined, 'no clock set for it');
+  assert.ok(out.messages.some((m) => m.to?.machine === rules.BOT_LANE && m.event.type === 'Released'), 'the lane looks again');
+});
+
+test('a hold for the payer\'s week still holds, and a freed week lifts any build hold', () => {
   const machine = requestMachine.botRequest({ staging: false });
   const now = new Date('2026-11-06T10:00:00Z');
-  const until = '2026-11-06T12:00:00Z';
-  const result = {
-    outcome: 'held', heldFor: 'overlap', until, since: '2026-11-06T10:00:00Z',
-    with: { sessionId: 501, runId: null, prNumber: 6404 },
-  };
-  const out = machine.entryFor('building', 'WorkSucceeded').to(buildingState(now), {
-    id: 1, type: 'WorkSucceeded',
-    payload: { kind: requestMachine.WORK.build, workKey: 'build:0', result },
-    source: { kind: 'system' }, actor: null, requestKey: 'b', appId: 101, causedBy: null,
-  }, {}, { machine: requestMachine.MACHINE, key: rules.requestKey(101, 1), appId: 101, version: 2, now });
-  assert.equal(out.next.data.slot, null, 'its building slot goes back');
-  assert.equal(out.next.data.build.phase, 'waiting');
-  assert.equal(out.next.data.build.since, '2026-11-06T09:00:00Z', 'it keeps its place in line');
-  assert.equal(out.next.data.build.heldFor, 'overlap');
-  assert.equal(out.next.data.build.overlap.sessionId, 501);
-  assert.equal(out.next.data.build.overlap.prNumber, 6404);
-  assert.equal(Date.parse(out.next.data.build.heldUntil), Date.parse(until));
-  assert.equal(Date.parse(out.timer.at.toISOString()), Date.parse(until), 'looked at again when the wait runs out');
-  assert.ok(out.messages.some((m) => m.to?.machine === rules.BOT_LANE), 'the lane hears its freed slot');
-});
-
-test('the change a build waited for ending lifts the hold and looks again', () => {
-  const machine = requestMachine.botRequest({ staging: false });
-  const now = new Date('2026-11-06T11:00:00Z');
-  const s = buildingState(now);
-  s.data.build = { ...s.data.build, heldUntil: '2026-11-06T12:00:00Z', heldFor: 'overlap',
-    overlap: { since: '2026-11-06T10:00:00Z', until: '2026-11-06T12:00:00Z', sessionId: 501, runId: null, prNumber: 6404 } };
-  s.data.slot = null;
-  const out = machine.entryFor('building', 'OverlapEnded').to(s, {
-    id: 1, type: 'OverlapEnded', payload: { appId: 101, issueNumber: 1 },
-    source: { kind: 'system', name: 'overlap' }, actor: null, requestKey: 'o', appId: 101, causedBy: null,
-  }, {}, { machine: requestMachine.MACHINE, key: rules.requestKey(101, 1), appId: 101, version: 2, now });
-  assert.equal(out.next.data.build.heldUntil, null);
-  assert.equal(out.next.data.build.heldFor, null);
-  assert.ok(out.messages.some((m) => m.to?.machine === rules.BOT_LANE), 'the lane looks at it again');
-});
-
-test('a freed week does not lift an overlap hold', () => {
-  const machine = requestMachine.botRequest({ staging: false });
-  const now = new Date('2026-11-06T11:00:00Z');
-  const s = buildingState(now);
-  s.data.build = { ...s.data.build, heldUntil: '2026-11-06T12:00:00Z', heldFor: 'overlap' };
-  s.data.slot = null;
-  const out = machine.entryFor('building', 'AllowanceFreed').to(s, {
-    id: 1, type: 'AllowanceFreed', payload: { appId: 101, issueNumber: 1 },
-    source: { kind: 'system', name: 'allowance' }, actor: null, requestKey: 'a', appId: 101, causedBy: null,
-  }, {}, { machine: requestMachine.MACHINE, key: rules.requestKey(101, 1), appId: 101, version: 2, now });
-  assert.equal(out.next.data.build.heldUntil, '2026-11-06T12:00:00Z', 'still waiting for the other change');
+  const held = machine.entryFor('building', 'WorkSucceeded').to(buildingState({ phase: 'starting' }),
+    event('WorkSucceeded', { kind: requestMachine.WORK.build, workKey: 'build:0', result: { outcome: 'held', until: '2026-11-09T00:00:00Z' } }),
+    {}, CTX(now));
+  assert.equal(held.next.data.build.heldUntil, '2026-11-09T00:00:00.000Z', 'held until the week resets');
+  assert.ok(held.timer, 'and looked at again then');
+  for (const build of [{ heldUntil: '2026-11-09T00:00:00Z', heldFor: 'allowance' }, OLD_HOLD]) {
+    const out = machine.entryFor('building', 'AllowanceFreed').to(buildingState(build, null),
+      event('AllowanceFreed', { appId: 101, issueNumber: 1 }), {}, CTX(now));
+    assert.equal(out.next.data.build.heldUntil, null, `${build.heldFor}: lifted`);
+    assert.ok(!('heldFor' in out.next.data.build));
+    assert.ok(out.messages.some((m) => m.to?.machine === rules.BOT_LANE), 'the lane looks at it again');
+  }
+  assert.equal(machine.events.has('OverlapEnded'), false, 'no event lifts an overlap hold: there is none');
 });
