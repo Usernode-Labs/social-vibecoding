@@ -119,6 +119,64 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
     assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [dmCard.id])).status, 'expired');
   });
 
+  await t.test('#6404: answering or skipping a Questions card closes the message\'s suggested replies in one push', async () => {
+    const cards = require('../src/services/homeroom-bot-cards');
+    const bot = await one(`INSERT INTO users (username, password, is_synthetic) VALUES ('bc_bot', 'x', TRUE) RETURNING id`);
+    const conversation = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status) VALUES ($1, $2, 'member', 'member')`,
+      [conversation.id, ada.id],
+    );
+    const botMessage = async (metadata) => (await one(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+       VALUES ($1, $2, 'Which project?', $3) RETURNING id`,
+      [conversation.id, bot.id, JSON.stringify(metadata)],
+    )).id;
+    const QUESTIONS_CARD = {
+      type: 'questions', v: 1,
+      questions: [{ question: 'Which project?', answers: ['Bread Bot', 'Sheep countrr'], guess: 0 }],
+      answered: null,
+    };
+    const SUGGESTION = { id: 'ask-1', label: 'Bread Bot', style: 'secondary', type: 'prompt' };
+    const pushes = [];
+    const ws = { pushConversationEvent(to, event) { pushes.push({ to, event }); } };
+
+    const answeredId = await botMessage({ homeroomBot: { kind: 'chat', status: 'open', card: QUESTIONS_CARD, actions: [SUGGESTION] } });
+    const answered = await cards.decide(pool, {}, {
+      user: { id: ada.id }, messageId: answeredId, action: 'answer', value: ['Bread Bot'], deps: { ws },
+    });
+    assert.equal(answered.ok, true);
+    let meta = (await one('SELECT metadata FROM conversation_messages WHERE id = $1', [answeredId])).metadata;
+    assert.deepEqual(meta.homeroomBot.card.answered, ['Bread Bot'], 'the card says what was sent');
+    assert.equal(meta.homeroomBot.status, 'closed', 'and nothing else on the message is left to tap');
+    assert.deepEqual(meta.homeroomBot.actions, [SUGGESTION], 'the suggestions stay on the row, now closed');
+    assert.equal(pushes.length, 1, 'one update reaches every open tab');
+    assert.equal(pushes[0].event.type, 'conversation_message_updated');
+
+    const skippedId = await botMessage({ homeroomBot: { kind: 'chat', status: 'open', card: QUESTIONS_CARD, actions: [SUGGESTION] } });
+    await cards.decide(pool, {}, { user: { id: ada.id }, messageId: skippedId, action: 'skip', deps: { ws } });
+    meta = (await one('SELECT metadata FROM conversation_messages WHERE id = $1', [skippedId])).metadata;
+    assert.equal(meta.homeroomBot.card.skipped, true);
+    assert.equal(meta.homeroomBot.status, 'closed', 'a skip settles it too');
+
+    const quotedId = await botMessage({
+      homeroomBot: {
+        kind: 'build_failed', status: 'open', card: QUESTIONS_CARD,
+        actions: [{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }],
+      },
+    });
+    await cards.decide(pool, {}, { user: { id: ada.id }, messageId: quotedId, action: 'skip', deps: { ws } });
+    meta = (await one('SELECT metadata FROM conversation_messages WHERE id = $1', [quotedId])).metadata;
+    assert.equal(meta.homeroomBot.status, 'open', 'a step that quotes the message is not a suggestion, so it stays');
+
+    const OPTIONS_CARD = { type: 'options', v: 1, options: [{ key: 'A', title: 'Push' }, { key: 'B', title: 'Email' }], picked: null };
+    const optionsId = await botMessage({ homeroomBot: { kind: 'chat', status: 'open', card: OPTIONS_CARD, actions: [SUGGESTION] } });
+    await cards.decide(pool, {}, { user: { id: ada.id }, messageId: optionsId, action: 'pick', value: 'B', deps: { ws } });
+    meta = (await one('SELECT metadata FROM conversation_messages WHERE id = $1', [optionsId])).metadata;
+    assert.equal(meta.homeroomBot.card.picked, 'B');
+    assert.equal(meta.homeroomBot.status, 'open', 'another card type keeps its own lifecycle');
+  });
+
   await t.test('up to three offers under one reply, and the same one twice is one', () => {
     const ctx = {};
     const offerOf = (n) => ({ kind: 'file_request', app: { id: app.id }, title: `Request ${n}` });
