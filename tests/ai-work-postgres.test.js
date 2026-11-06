@@ -429,6 +429,22 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const elsewhere = await aiWork.yoursOn(pool, { user: { id: ada.id }, appId: hidden.id });
   assert.deepEqual(elsewhere.requests, [1], 'one project at a time');
 
+  // #6421: a merged thread is one row, named by its change while one lives
+  // there, and says how many requests it holds.
+  const held = await request(app, 60, ada, 'Watering times');
+  await request(app, 61, ada, 'Water at dawn');
+  await pool.query('UPDATE requests SET thread_id = $1 WHERE app_id = $2 AND number = 61', [held.thread_id, app.id]);
+  const gathered = await one(
+    `INSERT INTO chat_sessions (app_id, user_id, pr_number, linked_issues, status, shared_at, promoted_at, check_state, pr_title)
+     VALUES ($1, $2, 62, '{60,61}', 'promoted', NOW(), NOW(), 'passing', 'Water at dawn') RETURNING id`,
+    [app.id, bob.id]);
+  await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [gathered.id, ada.id]);
+  const withGathered = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
+  const mergedRow = [...withGathered.next, ...withGathered.waiting].find((r) => r.threadId === Number(held.thread_id));
+  assert.equal(mergedRow.requests, 2, 'one row for the thread, with its count');
+  assert.equal(mergedRow.title, 'Water at dawn', 'called by its change');
+  assert.equal(withGathered.waiting.filter((r) => Number(r.threadId) === Number(held.thread_id)).length, 1, 'not one row per request');
+
   // The route: signed in only.
   const httpApp = express();
   httpApp.use((req, _res, next) => { req.user = req.get('x-test-user') ? { id: Number(req.get('x-test-user')) } : null; next(); });

@@ -3023,6 +3023,22 @@
     "text": "Object",
     "description": "Button beside a proposed merge or split of a thread: the person objects, which puts it to the project's vote."
   },
+  "topic.thread.move.consentAsk": {
+    "text": "Move into #{{number}}'s thread? Change #{{change}} closes this request, and lives there.",
+    "description": "On a request's page, a change for several requests asks its other requester whether this request's thread should join the change's. {{number}} is the number of the thread the change lives in, {{change}} the change's number."
+  },
+  "topic.thread.move.consentYes": {
+    "text": "Yes",
+    "description": "Button beside a change's question on a request's page: the requester agrees to move this request's thread into the change's."
+  },
+  "topic.thread.move.consentSeparate": {
+    "text": "Keep separate",
+    "description": "Button beside a change's question on a request's page: the requester keeps this request's thread where it is. The change still closes the request."
+  },
+  "topic.thread.move.consentWaiting": {
+    "text": "Waiting for {{names}} to answer",
+    "description": "On a request's page, under a change's question about moving this request's thread into the change's, shown to everyone who cannot answer it: {{names}} are the requesters who still have to answer, by username."
+  },
   "topic.thread.move.mergeInto": {
     "text": "Merge into another thread",
     "description": "Button under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: propose merging this thread into another one about the same work."
@@ -3586,6 +3602,10 @@
   "topic.request.stream.onChangeUnnumbered": {
     "text": "on a change",
     "description": "Small words after the time of a reply or a line in a request's discussion that was written on one of the request's changes that has no number yet: the request's page holds the discussion of the whole piece of work."
+  },
+  "topic.request.stream.onRequest": {
+    "text": "on #{{number}}",
+    "description": "Small words after the time of a reply in a request's discussion that was written on another request of the same merged thread: {{number}} is that other request's number."
   },
   "topic.request.stream.noReplies": {
     "text": "No replies yet",
@@ -6050,6 +6070,22 @@
   "topic.thread.page.alsoMore_other": {
     "text": "{{count}} more",
     "description": "Last item of the list of other requests a change also closes, on its request's page, when some are hidden. Tapping it shows the hidden numbers in the same line."
+  },
+  "topic.thread.page.closesOf_one": {
+    "text": "Closes {{count}} of the {{total}} requests in this thread",
+    "description": "Under a change's title on a request's page, when the thread holds several requests and the change closes only some of them: {{count}} is how many it closes, {{total}} how many the thread holds."
+  },
+  "topic.thread.page.closesOf_other": {
+    "text": "Closes {{count}} of the {{total}} requests in this thread",
+    "description": "Under a change's title on a request's page, when the thread holds several requests and the change closes only some of them: {{count}} is how many it closes, {{total}} how many the thread holds."
+  },
+  "topic.thread.page.partOf_one": {
+    "text": "One of {{count}} requests in <0>{{name}}</0>",
+    "description": "Under a request's title on its page, when its thread holds several requests: it is one of them. {{count}} is how many requests the thread holds, {{name}} the thread's name, a link to the request whose page the thread opens on."
+  },
+  "topic.thread.page.partOf_other": {
+    "text": "One of {{count}} requests in <0>{{name}}</0>",
+    "description": "Under a request's title on its page, when its thread holds several requests: it is one of them. {{count}} is how many requests the thread holds, {{name}} the thread's name, a link to the request whose page the thread opens on."
   },
   "topic.thread.ballot.close": {
     "text": "Close it",

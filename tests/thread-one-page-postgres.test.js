@@ -205,4 +205,25 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     assert.deepEqual(elsewhere.elsewhere.map((e) => [e.id, e.title]),
       [[Number(moved.id), 'The corrected name']]);
   });
+
+  // #6421: a change gathers its other request threads. The merged thread
+  // counts its requests, is named by its change, and every old address opens
+  // it.
+  await t.test('#6421: a merged thread counts and names its requests, and old numbers open it', async () => {
+    const moves = require('../src/services/thread-moves');
+    const deps = { ws: { async sendSystemMessage() {} } };
+    const second = await threads.threadForNumber(pool, { appId: app.id, number: 11 });
+    const out = await moves.propose(pool, { app: app, user: ana, thread: second, kind: 'merge', into: 10, deps });
+    assert.equal(out.ok, true, out.error);
+    const old = await threads.threadForNumber(pool, { appId: app.id, number: 11 });
+    assert.equal(Number(old.id), Number(pin.thread_id), 'the old number opens the merged thread');
+    const page = await threads.threadPage(pool, { thread: old, viewerId: ana.id });
+    assert.equal(page.thread.requests, 2);
+    assert.equal(page.thread.number, 10, 'its lead request is still its page');
+    assert.equal(page.thread.name, 'Pin it', 'called by the change that lives there');
+    assert.deepEqual(page.elsewhere, [], 'both requests are in the one thread: no pointer');
+    assert.deepEqual(await threads.requestHome(pool, { appId: app.id, sessionId: pin.id, viewerId: ana.id }), {
+      number: 10, threadId: Number(pin.thread_id),
+    }, 'the change still lives on the lead request\'s page');
+  });
 });

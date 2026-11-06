@@ -879,7 +879,11 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       timestamp={(
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
-          {tag ? <span className="gc-msg-on-change" data-msg-on-change={msg.changeOf?.sessionId ?? ''}>{tag}</span> : null}
+          {tag ? <span
+            className="gc-msg-on-change"
+            data-msg-on-change={msg.changeOf ? (msg.changeOf.sessionId ?? '') : undefined}
+            data-msg-on-request={msg.requestOf ? (msg.requestOf.number ?? '') : undefined}
+          >{tag}</span> : null}
           {msg.editedTitle && !msg.deleted ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
@@ -1219,6 +1223,10 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   const drawn: ReactNode[] = [];
   let previous: TranscriptMessage | null = null;
   const tagOf = (msg: TranscriptMessage): string | null => {
+    // #6421: a message written on another request of a merged thread says so.
+    if (msg.requestOf && Number(msg.requestOf.number)) {
+      return t('project:topic.request.stream.onRequest', { number: msg.requestOf.number });
+    }
     const id = msg.changeOf ? Number(msg.changeOf.sessionId) : 0;
     if (!id) return null;
     const n = changes.numbers[id];

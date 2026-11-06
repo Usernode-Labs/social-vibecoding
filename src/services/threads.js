@@ -648,6 +648,15 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
     ? await followState(db, { threadId: thread.id, appId: thread.app_id, userId: viewerId, owner, repo })
     : null;
   const requests = items.filter((i) => i.type === 'request' && i.number != null).map((i) => i.number);
+  // #6421: a thread may hold several requests. Its name is its change's
+  // title while a change lives there, else its first request's (the lead
+  // first); one request keeps the page's own title, as before.
+  let name = null;
+  if (requests.length > 1) {
+    const live = items.find((i) => i.type === 'change' && i.state !== 'merged');
+    const lead = items.find((i) => i.type === 'request' && i.number === number) || items.find((i) => i.type === 'request');
+    name = (live && live.title) || (lead && lead.title) || null;
+  }
   return {
     thread: {
       id: Number(thread.id),
@@ -656,6 +665,9 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       lead,
       title: thread.title || null,
       state: thread.state,
+      // #6421: how many requests the thread holds, and its name.
+      requests: requests.length,
+      name,
     },
     items,
     follow,

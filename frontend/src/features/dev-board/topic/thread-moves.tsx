@@ -141,6 +141,36 @@ export function ThreadMoves({ slug, data, onChanged, open: chosen, onOpen, pills
   return (
     <div className="mt-2 flex flex-col gap-2" data-thread-moves={moves.length}>
       {moves.map((move) => {
+        // #6421: a change's question, answered by the request's other askers.
+        if (move.forChange) {
+          const answer = (value: 'yes' | 'separate') => {
+            void act(`/api/apps/${app}/thread-moves/${move.id}/consent`, { answer: value });
+          };
+          return (
+            <div key={move.id} className="flex flex-wrap items-center gap-2 text-[0.8125rem] text-zinc-600 dark:text-zinc-300"
+              data-thread-move={move.state} data-thread-move-consent={move.forChange.number ?? ''}>
+              <span className="min-w-0 flex-1">{t('project:topic.thread.move.consentAsk', {
+                number: move.input.intoNumber ?? '?', change: move.forChange.number ?? '?',
+              })}</span>
+              {move.state === 'pending' && move.canAnswer ? (
+                <>
+                  <Button type="button" variant="pillNeutral" size="sm" ink="neutral" disabled={busy}
+                    onClick={() => answer('yes')}>
+                    {t('project:topic.thread.move.consentYes')}
+                  </Button>
+                  <Button type="button" variant="pillNeutral" size="sm" ink="neutral" disabled={busy}
+                    onClick={() => answer('separate')}>
+                    {t('project:topic.thread.move.consentSeparate')}
+                  </Button>
+                </>
+              ) : move.state === 'pending' && (move.askOf || []).length ? (
+                <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-move-consent-waiting="">
+                  {t('project:topic.thread.move.consentWaiting', { names: (move.askOf || []).join(', ') })}
+                </span>
+              ) : null}
+            </div>
+          );
+        }
         const lines = moveLines(move);
         return (
           <div key={move.id} className="flex flex-wrap items-center gap-2 text-[0.8125rem] text-zinc-600 dark:text-zinc-300" data-thread-move={move.state}>

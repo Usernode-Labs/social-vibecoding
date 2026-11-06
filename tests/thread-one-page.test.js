@@ -316,7 +316,7 @@ test('D5: a change folded under its ballot has no Vote of its own', () => {
   const head = read(`${TOPIC}/change-head.tsx`);
   assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} \/>/);
   const src = read(`${TOPIC}/thread-changes.tsx`);
-  assert.match(src, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot request=\{request\} \/>/);
+  assert.match(src, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot request=\{request\} threadRequests=\{threadRequests\} \/>/);
   assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>/);
   assert.match(src, /querySelector<HTMLElement>\('\[data-change-gate="ballot"\]'\)/, 'a door to one of them lands on the ballot');
 });
