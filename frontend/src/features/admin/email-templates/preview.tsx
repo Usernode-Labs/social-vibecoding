@@ -48,12 +48,15 @@ function testHeadline(outcome: any, to: string): TestResult {
 
 export function PreviewView({
   result, loading, failure, mode, locale, languages, englishOnly, canWrite, testing, testResult, onLocale, onSendTest,
-  extra, stale = false,
+  extra, stale = false, localeLocked = false,
 }: {
   result: PreviewResult | null;
   // The last preview that rendered, kept on screen after a newer draft was
   // refused: dimmed and labelled so it is not read as the current draft.
   stale?: boolean;
+  // True while a language's own words are being edited: the preview shows
+  // that language, and the picker follows the editor's language switch.
+  localeLocked?: boolean;
   loading: boolean;
   failure: Failure | null;
   mode: 'html' | 'text';
@@ -74,7 +77,7 @@ export function PreviewView({
         <label className="block text-xs">
           <span className="text-zinc-500 dark:text-zinc-400">Language</span>
           <select className={`${AdminUI.select} mt-1`} value={englishOnly ? 'en' : locale}
-            disabled={englishOnly} onChange={(e) => onLocale(e.target.value)}>
+            disabled={englishOnly || localeLocked} onChange={(e) => onLocale(e.target.value)}>
             {languages.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
           </select>
         </label>
@@ -86,7 +89,7 @@ export function PreviewView({
       {result ? (
         <div className={stale ? 'opacity-50 space-y-3' : 'space-y-3'} data-email-preview-stale={stale ? '' : undefined}>
           {stale ? <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Last good preview, before your latest change</p> : null}
-          {result.untranslated && !englishOnly && locale !== 'en'
+          {result.untranslated && !englishOnly && !localeLocked && locale !== 'en'
             ? <p id="email-template-preview-untranslated" className="text-xs text-zinc-500 dark:text-zinc-400">{untranslatedNote(languages, locale)}</p>
             : null}
           <div className="text-sm">
@@ -138,7 +141,7 @@ const DEBOUNCE_MS = 500;
  * locale. Field problems from a refused test go back to the form through
  * `onFieldFailure`, so they show beside their fields.
  */
-export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite, onFieldFailure, extra }: {
+export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite, onFieldFailure, extra, fixedLocale }: {
   base: string;
   body: { action: string; fields: Record<string, unknown> };
   mode: 'html' | 'text';
@@ -147,8 +150,11 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   canWrite: boolean;
   onFieldFailure: (failure: Failure) => void;
   extra?: React.ReactNode;
+  // The language whose own words `body` holds, when the editor is on one.
+  fixedLocale?: string;
 }) {
-  const [locale, setLocale] = useState('en');
+  const [picked, setLocale] = useState('en');
+  const locale = fixedLocale || picked;
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -163,12 +169,15 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   // An email sent in English only is previewed and tested in English, whatever
   // the picker was left on for another email.
   const sentLocale = englishOnly ? 'en' : locale;
+  // With a fixed language the fields are that language's own words, which the
+  // server shows as they are, never swapped for a saved translation.
+  const own = fixedLocale ? { ownWords: true } : {};
 
   useEffect(() => {
     const mine = ++latest.current;
     const timer = setTimeout(async () => {
       setLoading(true);
-      const res = await request(`${base}/preview`, 'POST', { ...body, locale: sentLocale });
+      const res = await request(`${base}/preview`, 'POST', { ...body, locale: sentLocale, ...own });
       if (!alive.current || mine !== latest.current) return;
       setLoading(false);
       if (res.ok && res.data) {
@@ -193,7 +202,7 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
     if (testing) return;
     setTesting(true);
     setTestResult(null);
-    const res = await request(`${base}/test`, 'POST', { ...body, locale: sentLocale });
+    const res = await request(`${base}/test`, 'POST', { ...body, locale: sentLocale, ...own });
     if (!alive.current) return;
     setTesting(false);
     if (res.ok && res.data) { setTestResult(testHeadline(res.data.outcome, String(res.data.to || 'you'))); return; }
@@ -205,6 +214,6 @@ export function PreviewPane({ base, body, mode, languages, englishOnly, canWrite
   return (
     <PreviewView result={result} stale={!!failure && !!result} loading={loading} failure={failure} mode={mode} locale={locale}
       languages={languages} englishOnly={englishOnly} canWrite={canWrite} testing={testing}
-      testResult={testResult} onLocale={setLocale} onSendTest={sendTest} extra={extra} />
+      testResult={testResult} onLocale={setLocale} onSendTest={sendTest} extra={extra} localeLocked={!!fixedLocale} />
   );
 }

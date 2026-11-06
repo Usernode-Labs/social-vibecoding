@@ -12,9 +12,11 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
-test('server.js gives the email template writes a parser that fits a 100 KB template', () => {
+test('server.js gives the email template writes and corrections a parser that fits a 100 KB template', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(server, /\/\^\\\/api\\\/admin\\\/email-\(\?:templates\|layouts\)\(\?:\\\/\|\$\)\/\.test\(req\.path\)\) \{\n\s+return express\.json\(\{ limit: '1mb' \}\)/);
+  // A language's correction (PUT .../translations/:locale) carries a whole email too.
+  assert.match(server, /if \(\(req\.method === 'POST' \|\| req\.method === 'PUT'\) && \/\^\\\/api\\\/admin\\\/email-/);
 });
 
 test('admin.js mounts the routes behind its admin gate', () => {
@@ -378,6 +380,12 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
       assert.equal(edited.body.untranslated, true);
       const english = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'en', fields: otpBody(current) }, 'view');
       assert.equal(english.body.untranslated, false);
+      // A language's own words being corrected are shown as they are.
+      const own = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'fr', ownWords: true, fields: { ...otpBody(current), subject: 'Mon code {{code}}' } }, 'view');
+      assert.equal(own.body.subject, 'Mon code 123456');
+      assert.equal(own.body.untranslated, false);
+      const ownUnchanged = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'fr', ownWords: true, fields: otpBody(current) }, 'view');
+      assert.equal(ownUnchanged.body.subject, current.subject.replace('{{code}}', '123456'), 'never swapped for the saved translation');
       const untranslatedLanguage = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'es', fields: otpBody(current) }, 'view');
       assert.equal(untranslatedLanguage.body.untranslated, true, 'no Spanish translation: Spanish readers get the English');
     } finally {

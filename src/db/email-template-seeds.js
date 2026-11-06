@@ -565,6 +565,30 @@ const untouched = (rows) => (rows.length === 1 && rows[0].version === 1 && rows[
 
 const sameFields = (row, want, fields) => fields.every((field) => row[field] === want[field]);
 
+// Translate's job for this version (services/mail/template-translate.js), or
+// null, with `busy` while it runs and has not gone quiet. Read lazily: the
+// translation module is only needed where an admin has used it.
+const translateModule = () => require('../services/mail/template-translate');
+async function translateJob(client, kind, id) {
+  const { rows: [job] } = await client.query(
+    `SELECT per_language, (state = 'running' AND updated_at > NOW() - make_interval(secs => $3)) AS busy
+       FROM email_translation_jobs WHERE kind = $1 AND version_id = $2`,
+    [kind, id, translateModule().STALE_MS / 1000]);
+  return job || null;
+}
+
+// Translate saved at least one language of this English: those are what an
+// admin asked for, so the catalog leaves the translations alone.
+const translateSaved = (job) => !!job && Object.values(job.per_language || {}).includes('saved');
+
+// The live layout a template is sent in, for a recheck, or null.
+async function liveLayoutOf(client, familyId) {
+  if (familyId == null) return null;
+  const { rows: [layout] } = await client.query(
+    "SELECT id, html, text FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL", [familyId]);
+  return layout || null;
+}
+
 async function refreshUntouched(client, source, translations, families, seeded) {
   const out = { templates: [], layouts: 0, busy: 0 };
   for (const layout of SEEDS.layouts) {
@@ -575,24 +599,48 @@ async function refreshUntouched(client, source, translations, families, seeded) 
       'SELECT id, name, version, status, created_by, deleted_at, html, text FROM email_layouts WHERE family_id = $1 FOR UPDATE', [family]);
     const row = untouched(rows);
     if (!row || row.name !== layout.name || sameFields(row, layout, ['html', 'text'])) continue;
+    // A Translate run in progress is left to finish; the next boot refreshes.
+    const job = await translateJob(client, 'layout', row.id);
+    if (job && job.busy) continue;
     await client.query('UPDATE email_layouts SET html = $2, text = $3 WHERE id = $1', [row.id, layout.html, layout.text]);
+    // The machine's translations were of the English just replaced, as was
+    // the job that wrote them.
+    const { rows: machine } = await client.query("SELECT 1 FROM email_layout_translations WHERE layout_id = $1 AND origin = 'machine' LIMIT 1", [row.id]);
+    if (machine.length) await client.query("DELETE FROM email_layout_translations WHERE layout_id = $1 AND origin = 'machine'", [row.id]);
+    if (job) await client.query("DELETE FROM email_translation_jobs WHERE kind = 'layout' AND version_id = $1", [row.id]);
+    // What the templates it frames send in each language must still work in it.
+    const { rows: framed } = await client.query(
+      "SELECT * FROM email_templates WHERE layout_family_id = $1 AND status = 'live' AND deleted_at IS NULL", [family]);
+    await translateModule().recheckTranslations(client, { templates: framed, layout: { id: row.id, html: layout.html, text: layout.text }, complete: true });
     out.layouts += 1;
   }
   for (const kind of Object.keys(SEEDS.templates)) {
     if (seeded.includes(kind)) continue;
     if (!(await tryLock(client, 'email_templates', kind))) { out.busy += 1; continue; }
     const { rows } = await client.query(
-      `SELECT id, version, status, created_by, deleted_at, name, subject, preheader, why, html, text
+      `SELECT id, version, status, created_by, deleted_at, name, subject, preheader, why, html, text, layout_family_id
          FROM email_templates WHERE action = $1 FOR UPDATE`, [kind]);
     const row = untouched(rows);
     if (!row) continue;
+    // A Translate run in progress is left to finish; the next boot refreshes.
+    const job = await translateJob(client, 'template', row.id);
+    if (job && job.busy) continue;
     let changed = false;
     const english = englishTemplate(kind, { source });
-    if (!sameFields(row, english, ['name', ...FIELDS])) {
+    const englishChanged = !sameFields(row, english, ['name', ...FIELDS]);
+    if (englishChanged) {
       await client.query(
         'UPDATE email_templates SET name = $2, subject = $3, preheader = $4, why = $5, html = $6, text = $7 WHERE id = $1',
         [row.id, english.name, english.subject, english.preheader, english.why, english.html, english.text]);
       changed = true;
+      // What Translate wrote was of the English just replaced: its machine
+      // rows are replaced below like any other, and its job goes with them.
+      if (job) await client.query("DELETE FROM email_translation_jobs WHERE kind = 'template' AND version_id = $1", [row.id]);
+    }
+    // The same English, translated by Translate: those translations stay.
+    if (!englishChanged && translateSaved(job)) {
+      if (changed) out.templates.push(kind);
+      continue;
     }
     const want = translations[kind] || {};
     const { rows: have } = await client.query(
@@ -606,7 +654,7 @@ async function refreshUntouched(client, source, translations, families, seeded) 
         `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'machine')
          ON CONFLICT (template_id, locale) DO UPDATE SET subject = EXCLUDED.subject, preheader = EXCLUDED.preheader,
-           why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, updated_at = NOW()
+           why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, unusable = NULL, updated_at = NOW()
          WHERE email_template_translations.origin = 'machine'`,
         [row.id, locale, words.subject, words.preheader, words.why, words.html, words.text]);
       changed = true;
@@ -618,7 +666,17 @@ async function refreshUntouched(client, source, translations, families, seeded) 
       await client.query("DELETE FROM email_template_translations WHERE template_id = $1 AND locale = $2 AND origin = 'machine'", [row.id, current.locale]);
       changed = true;
     }
-    if (changed) out.templates.push(kind);
+    if (!changed) continue;
+    // A rewritten translation starts usable (the upsert clears its mark), and
+    // every translation of this template is checked here, in the same
+    // transaction, inside the layout it is sent in: an admin may have edited
+    // that layout, and a catalog translation that does not work in it is
+    // marked again rather than sent.
+    await translateModule().recheckTranslations(client, {
+      templates: [{ ...english, id: row.id, action: kind }],
+      layout: await liveLayoutOf(client, row.layout_family_id),
+    });
+    out.templates.push(kind);
   }
   return out;
 }

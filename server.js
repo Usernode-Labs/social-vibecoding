@@ -384,8 +384,9 @@ app.use((req, res, next) => {
   }
   // An email template or layout may be 100 KB of HTML (mail/html-safety.js
   // MAX_EMAIL_HTML_BYTES) and as much text, which JSON escaping makes larger;
-  // the routes refuse an oversized one with the reason.
-  if (req.method === 'POST' && /^\/api\/admin\/email-(?:templates|layouts)(?:\/|$)/.test(req.path)) {
+  // the routes refuse an oversized one with the reason. A language's
+  // correction is a PUT of the same size.
+  if ((req.method === 'POST' || req.method === 'PUT') && /^\/api\/admin\/email-(?:templates|layouts)(?:\/|$)/.test(req.path)) {
     return express.json({ limit: '1mb' })(req, res, next);
   }
   express.json()(req, res, next);
