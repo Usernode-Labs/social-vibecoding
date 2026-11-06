@@ -590,6 +590,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const touch = useRef<{ id: number; start: Point; moved: boolean } | null>(null);
   const viewShotKeys = useRef(0);
   const viewShotUrl = useRef<string | null>(null);
+  /** The page moved while the comment box had the keyboard: the picture is
+   *  taken once the box is left (#6448). */
+  const shotPending = useRef(false);
   // The page's size as the mode keeps it. The keyboard does not change it:
   // with the keys up iOS collapses `innerHeight` to what is above them (874
   // to 539 on an iPhone 17), and read from the window the picture shrank,
@@ -703,9 +706,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // The page as a picture, shown inset so nothing reads as clickable. Taken
   // when the mode opens, and 250ms after the last scroll or resize (the
   // redraw above bumps `view` and re-renders for the pins; this redraws the
-  // picture). Until a retake lands the last one shows faded and taps wait.
-  // When the picture cannot be taken, the mode renders as it always did,
-  // over the live page, so a comment can always be left.
+  // picture). While the comment box has the keyboard the picture is left
+  // alone: a chat that scrolls a new reply in changed what was under the
+  // words being typed (#6448). The move is remembered (`shotPending`) and
+  // taken once when the box is left. Until a retake lands the last one shows
+  // faded and taps wait. When the picture cannot be taken, the mode renders
+  // as it always did, over the live page, so a comment can always be left.
   const takeViewShot = useCallback(() => {
     const shown = visibleFrame();
     const key = ++viewShotKeys.current;
@@ -764,9 +770,36 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       });
       return () => { live = false; };
     }
-    const timer = setTimeout(takeViewShot, 250);
+    // While the box has the keyboard the picture stays as it is, and the
+    // page's move is remembered for when the box is left.
+    if (textFocused(document)) { shotPending.current = true; return; }
+    const timer = setTimeout(() => {
+      if (textFocused(document)) { shotPending.current = true; return; }
+      takeViewShot();
+    }, 250);
     return () => clearTimeout(timer);
   }, [tick, takeViewShot]);
+
+  // Leaving the box: the picture catches up, once, if the page moved while it
+  // was frozen. `activeElement` has not moved yet when focusout fires, so the
+  // check waits one frame.
+  useEffect(() => {
+    let frame = 0;
+    const onFocusOut = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!shotPending.current || textFocused(document)) return;
+        shotPending.current = false;
+        takeViewShot();
+      });
+    };
+    host.addEventListener('focusout', onFocusOut);
+    return () => {
+      host.removeEventListener('focusout', onFocusOut);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [host, takeViewShot]);
 
   useEffect(() => () => {
     if (viewShotUrl.current) URL.revokeObjectURL(viewShotUrl.current);
