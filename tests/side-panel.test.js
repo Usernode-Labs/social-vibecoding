@@ -1470,6 +1470,29 @@ test('a width is the layout\'s own knob on <html>, and none hands it back to the
   assert.equal(props.has('--side-panel-w'), false);
 });
 
+test('with a preview open both edges are handles: their own keys, every column\'s floor, the thread measured to the preview (#6359)', () => {
+  const { applyWidth, bounds, shownWidth, clampWidth, AI_MAIN_WIDTH_KEY, AI_PREVIEW_COLUMN_WIDTH_KEY, AI_PREVIEW_WIDTH_KEY } = api.resize;
+  assert.equal(new Set([AI_MAIN_WIDTH_KEY, AI_PREVIEW_COLUMN_WIDTH_KEY, AI_PREVIEW_WIDTH_KEY]).size, 3, 'three widths, three keys');
+  const props = new Map();
+  const root = { style: { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) } };
+  applyWidth(400, root, AI_PREVIEW_COLUMN_WIDTH_KEY);
+  applyWidth(700, root, AI_PREVIEW_WIDTH_KEY);
+  assert.deepEqual([...props], [['--ai-col-chosen-w', '400px'], ['--ai-preview-chosen-w', '700px']],
+    'neither touches Main\'s width');
+  // A 1600px window with a 72px rail: the list keeps 480px.
+  // The preview's edge keeps the list's floor and the thread's (480 + 320).
+  const preview = { innerWidth: 1600, appLeft: 72, neighbourMin: 480 + 320, selfMin: 360 };
+  assert.deepEqual({ ...bounds(preview) }, { min: 360, max: 728 });
+  assert.equal(shownWidth(900, preview), 700, 'the preview runs to the window\'s edge');
+  // The thread's edge keeps the list's floor and the preview's (480 + 360),
+  // and its width runs to where the preview begins, not to the window's edge.
+  const thread = { innerWidth: 1600, appLeft: 72, neighbourMin: 480 + 360, endAt: 900 };
+  assert.deepEqual({ ...bounds(thread) }, { min: 320, max: 688 });
+  assert.equal(shownWidth(500, thread), 400);
+  assert.equal(clampWidth(shownWidth(500, thread) + 100, bounds(thread)), 500, 'a 100px drag toward the list gives 100px');
+  assert.equal(clampWidth(0, bounds(preview)), 360, 'Home: the preview\'s own floor, not the panel\'s');
+});
+
 test('the bot page is what makes an edge Main Chat\'s, and a hidden page is not', () => {
   const { aiPageUp } = api.resize;
   const el = (classes = []) => ({ classList: { contains: (c) => classes.includes(c) } });
