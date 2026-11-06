@@ -1052,6 +1052,7 @@ async function conversationRow(db, user, conversationId) {
             me.role AS my_role, me.status AS membership_status, me.invited_by,
             me.invite_note,
             me.last_read_message_id,
+            me.last_visit_at,
             inviter.username AS requester_username,
             inviter_avatar.id AS requester_avatar_id,
             peer.user_id AS peer_id, peer.status AS peer_status, peer_user.username AS peer_username,
@@ -1154,9 +1155,14 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   // a member who has read nothing, which countUnread reads the same way; null
   // is "not yours to know", hidden until acceptance like the count itself.
   let lastReadMessageId = null;
+  // #6426: when the viewer last looked at this conversation, for Main Chat's
+  // "Welcome back" card. A member's own reading state, hidden like the
+  // cursor until acceptance.
+  let lastVisitAt = null;
   if (row.membership_status === 'member' && !row.deleted_peer) {
     unread = await countUnread(db, row.id, user.id, row.last_read_message_id);
     lastReadMessageId = Number(row.last_read_message_id) || 0;
+    lastVisitAt = row.last_visit_at ? new Date(row.last_visit_at).toISOString() : null;
   }
   // An invitation is a consent envelope, not conversation access. The
   // requester identity is shown so the recipient can decide; roster, peer,
@@ -1210,6 +1216,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     lastActivityAt: accepted ? (latest?.createdAt || row.created_at) : (row.updated_at || row.created_at),
     unreadCount: unread,
     lastReadMessageId,
+    lastVisitAt,
     awaitingAcceptance,
     canSend: row.membership_status === 'member' && row.status === 'active'
       && !(awaitingAcceptance && row.has_messages),
@@ -2304,8 +2311,11 @@ async function markRead(pool, user, conversationId, messageId) {
       };
     }
     const cursor = Math.max(current, messageId);
+    // #6426: this is a VISIT to the main stream. `last_visit_at` moves on
+    // every read, even when the cursor is already at the same message, so
+    // Main Chat can tell a return after hours away from a glance.
     await db.query(
-      `UPDATE conversation_members SET last_read_message_id = $1
+      `UPDATE conversation_members SET last_read_message_id = $1, last_visit_at = NOW()
         WHERE conversation_id = $2 AND user_id = $3`,
       [cursor, conversationId, user.id]
     );

@@ -1175,6 +1175,15 @@ test('Main Chat is the list\'s first row: the bot\'s mark, its name, what is new
   // The thread in the column is the lit row, where you are, and only it.
   assert.equal((quiet.match(/data-ai-lit=""/g) || []).length, 1);
   assert.match(quiet, /data-ai-line="private" data-ai-lit="" aria-current="true"><span[^>]*>[\s\S]*?A darker header/);
+  // #6424: the lit card itself is tinted, and the row inside it draws no
+  // smaller box with its own corners, so no uneven ring shows round the blue.
+  const litSheet = lit.match(/<div class="([^"]*)" data-ai-sheet="main"><button type="button" class="([^"]*)"/);
+  assert.ok(litSheet, 'Main Chat\'s card is first');
+  assert.match(litSheet[1], /bg-\[color:var\(--lit-tint\)\]/, 'the open chat\'s card takes the lit tint');
+  assert.doesNotMatch(litSheet[2], /rounded-md|--lit-tint/, 'and its row draws no tinted box of its own');
+  const quietSheet = quiet.match(/<div class="([^"]*)" data-ai-sheet="main"/);
+  assert.ok(quietSheet, 'Main Chat\'s card');
+  assert.match(quietSheet[1], /bg-\[color:var\(--dc-sheet-solid\)\]/, 'unlit, the card is the plane fill as before');
   const src = read(LISTS);
   assert.match(src, /const LIT_ROW = '[^']*bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\]';/, 'the lit tint and ink, as the rail\'s rows are');
   // The page lights what the column shows (./column.ts): Main, a thread, a

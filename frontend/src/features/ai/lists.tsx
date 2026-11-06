@@ -83,6 +83,9 @@ import { byMonth, historyGlyph, historyTooltip, historyWords, monthName, type Hi
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
 const PLANE = 'mx-4 rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
+// #6424: Main Chat's card holds one row, so when that chat is open the card
+// itself is lit. A tinted box inside the round card left an uneven white ring.
+const MAIN_LIT = 'mx-4 rounded-[20px] bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 // A chip on a sheet: the sheet's own hairline round it, so a white chip does not melt into it.
 const CHIP_EDGE = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
@@ -152,6 +155,9 @@ const GLYPH_OWE = 'flex shrink-0 text-violet-600 dark:text-violet-300';
 const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 // Where you are: the row whose chat is in the column, on the lit tint.
 const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
+// #6424: the row inside a lit card: the lit row's layout without its own
+// fill and radius, so the card's edges are the only ones on screen.
+const MAIN_LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start';
 
 function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   // #6159: a private thread's row has its ⋯ beside it, with Mark done.
@@ -317,10 +323,10 @@ function FreshBadge({ count, className = '' }: { count: number; className?: stri
 function MainChatRow({ lit, unread, open }: { lit: boolean; unread: number; open: () => void }): ReactNode {
   const t = useMessages('messages');
   return (
-    <div className={`${PLANE} px-2 py-1.5`} data-ai-sheet="main">
+    <div className={`${lit ? MAIN_LIT : PLANE} px-2 py-1.5`} data-ai-sheet="main">
       <button
         type="button"
-        className={`${lit ? LIT_ROW : ROW} px-2`}
+        className={`${lit ? MAIN_LIT_ROW : ROW} px-2`}
         onClick={open}
         data-ai-main-row=""
         data-ai-lit={lit ? '' : undefined}

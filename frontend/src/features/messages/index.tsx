@@ -1,6 +1,6 @@
 import { openReport } from '../dialogs/report';
 import {
-  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState,
+  Fragment, createContext, memo, useDeferredValue, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -48,6 +48,7 @@ import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledR
 import { isPlusThreadOpener, isRequestNews, requestKey } from './bot-request';
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
+import { WelcomeBack } from './welcome-back';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
@@ -1787,6 +1788,14 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
 
 
 /**
+ * #6426: whether this embedded thread is Main Chat, where the "Welcome
+ * back" card shows. EmbeddedConversation provides it and ConversationThread
+ * reads it here, so the thread's signature and its one-copy gate stay as
+ * #3494 left them.
+ */
+const MainChatContext = createContext(false);
+
+/**
  * The open conversation. `embedded` is the copy a community's page mounts
  * (#3494, EmbeddedConversation below): the same thread, drawn without this
  * screen's header because the page's own header and tabs already name it.
@@ -1795,6 +1804,7 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
  */
 function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useMessages('messages');
+  const mainChat = useContext(MainChatContext);
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
@@ -1849,6 +1859,16 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // and #4564 its rows draw as change blocks (see the memo below).
   const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
     && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
+  // #6426: Main Chat's "Welcome back" card takes the place of the bot's
+  // leftover suggested replies on its newest main-stream message.
+  const [welcomeShown, setWelcomeShown] = useState(false);
+  const newestMainBotId = useMemo(() => {
+    for (let index = snap.messages.length - 1; index >= 0; index -= 1) {
+      const message = snap.messages[index];
+      if (message.sender.bot && !message.threadRootId) return message.id;
+    }
+    return null;
+  }, [snap.messages]);
   // THE BOT'S CHAT OPENS AT ITS FINAL SHAPE (./open-hold.ts): its rows are
   // laid out but hidden, under the spinner, until its tray has answered and
   // the screen is full or nothing older is left. `shownFor` is the
@@ -2228,7 +2248,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       threadOpen={snap.route.threadRootId === message.id}
       focused={flashId === message.id}
       planCardId={plans.cardOf.get(message.id) ?? null}
-      hidePrompts={(plans.answersOpen || asksWithQuestionsCard(message)) && !!message.sender.bot}
+      hidePrompts={(plans.answersOpen || asksWithQuestionsCard(message) || (welcomeShown && message.id === newestMainBotId)) && !!message.sender.bot}
       // #4564: this row's part of its change's block, in the bot's DM alone.
       block={blocks?.get(message.id) ?? null}
       botChat={botDm}
@@ -2345,6 +2365,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
       <ChatStatusLine className="messages-typing">{typingLine(t, typing)}</ChatStatusLine>
+      {mainChat && botDm && conversationId ? <WelcomeBack conversationId={conversationId} onShown={setWelcomeShown} /> : null}
       <MessageComposer />
       {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </section>
@@ -3112,11 +3133,13 @@ export function EmbeddedConversation({ conversationId, active, at = null, mainCh
   // #6071 follow-up: a blank thread from Homeroom bot's "+", in the thread's place.
   const blank = useNewThread(conversationId) && here && !snap.route.threadRootId;
   return (
-    <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
-      {here ? <ConversationThread embedded /> : <ChannelLoading />}
-      {here && snap.route.threadRootId ? <ReplyThreadPanel inMain={mainChat} onBack={onBack} /> : null}
-      {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
-    </div>
+    <MainChatContext.Provider value={mainChat}>
+      <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
+        {here ? <ConversationThread embedded /> : <ChannelLoading />}
+        {here && snap.route.threadRootId ? <ReplyThreadPanel inMain={mainChat} onBack={onBack} /> : null}
+        {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
+      </div>
+    </MainChatContext.Provider>
   );
 }
 
