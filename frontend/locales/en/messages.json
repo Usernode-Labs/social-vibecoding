@@ -3027,14 +3027,6 @@
     "text": "No messages yet",
     "description": "Second line of a row in the conversation list for a conversation or channel in which nothing has been written."
   },
-  "inbox.unread_one": {
-    "text": "{{count}} unread",
-    "description": "Accessible name of the number badge on a row of the conversation list: how many unread messages that conversation or channel has. {{count}} is that number."
-  },
-  "inbox.unread_other": {
-    "text": "{{count}} unread",
-    "description": "Accessible name of the number badge on a row of the conversation list: how many unread messages that conversation or channel has. {{count}} is that number."
-  },
   "inbox.memberCount_one": {
     "text": "{{count}} member",
     "description": "Spoken name and hover text of the people glyph and number on a group conversation's row in the conversation list: how many people are in the group. {{count}} is that number."

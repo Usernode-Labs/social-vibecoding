@@ -24334,7 +24334,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
    The parts only the sidebar draws are in the markup at every width and
    drawn only here. */
 .platform-rail-communities,
-.platform-rail-conversations,
 .platform-tab-all-glyph,
 .platform-tab-all-label,
 .platform-tab-all-votes,
@@ -24729,26 +24728,21 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   /* ── v3: WHAT THE SECOND COLUMN HELD, NESTED UNDER ITS ROW ────────────
      features/nav/rail-nest.tsx. The community whose page is up opens its
      places under its row (features/nav/rail-communities.tsx: the section
-     column's own list, ../dev-board/workshop/project-places.tsx), and the
-     inbox opens its five latest conversations and All messages under
-     Messages (features/nav/rail-conversations.tsx). So there is no second
-     column from here: the page has the 264px it took.
+     column's own list, ../dev-board/workshop/project-places.tsx). So there
+     is no second column from here: the page has the 264px it took. Messages
+     nested its five latest conversations here too until 7 Nov 2026; the
+     inbox draws its own list beside a conversation now.
 
      ONE INDENT A LEVEL, ONE LINE. A nested row's glyph starts 30px in; a
-     group under a sub-header (Channels, Topics, Agents, People) is tabbed in
-     a step further, its sub-header where the rows above it start. One
-     hairline runs unbroken from under the parent's tile to the last row,
-     past the sub-headers, All messages included. The sub-headers are
-     sentence case: the section headings' small capitals are a level up.
+     group under a sub-header (Channels, Topics) is tabbed in a step
+     further, its sub-header where the rows above it start. One hairline runs
+     unbroken from under the parent's tile to the last row, past the
+     sub-headers. The sub-headers are sentence case: the section headings'
+     small capitals are a level up.
 
      THE PARENT ROW GIVES ITS FILL TO THE ROW LIT UNDER IT. It keeps
      `aria-current` (the declared checks and a screen reader read it), and is
      named in the ink and a heavier weight instead, so one row is lit. */
-  .platform-rail-conversations {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-  }
   /* The part's one grid row is what features/nav/rail-nest.tsx animates
      (`0fr` to `1fr`, which is the rows' own height on every frame). */
   /* ITS ONE COLUMN IS THE RAIL'S WIDTH (N19). With no column size the
@@ -24841,29 +24835,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   }
   .platform-rail-nest [aria-current="page"] :is(.dev-ws-place-glyph, .platform-rail-sub-glyph) {
     color: inherit;
-  }
-  .platform-rail-face {
-    flex: none;
-    display: grid;
-    width: 18px;
-    height: 18px;
-    place-items: center;
-  }
-  /* Over the avatar's own size utilities, which load after this file (#938). */
-  .platform-rail-nest .platform-rail-face > * {
-    width: 18px;
-    height: 18px;
-    border-radius: 5px;
-    font-size: 9px;
-  }
-  .platform-rail-face .messages-inbox-agent-tile {
-    background: none;
-    border: 0;
-    color: var(--text-muted);
-  }
-  .platform-rail-face svg {
-    width: 16px;
-    height: 16px;
   }
   .platform-rail-nest :is(.dev-ws-place-label, .platform-rail-sub-name) {
     flex: 1 1 auto;
@@ -24976,17 +24947,11 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   .platform-rail-nest .platform-rail-places > .platform-rail-nest-in::before {
     display: none;
   }
-  /* The parent: lit by its page, filled by none, its count said under it.
-     Messages only while a row under it is lit (#21): a conversation that is
-     not among the five adds no row now, and Messages keeps its fill. */
-  .platform-rail-community[data-rail-open][aria-current="page"],
-  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] {
+  /* The parent: lit by its page, filled by none, its count said under it. */
+  .platform-rail-community[data-rail-open][aria-current="page"] {
     background: transparent;
     color: var(--text-primary);
     font-weight: 650;
-  }
-  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] .platform-tab-glyph {
-    color: var(--text-primary);
   }
   /* The places are in the sidebar, so the place bar's button to the tray has
      nothing to open beside it. Folded, the sidebar is away and the button
@@ -24995,26 +24960,17 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
     display: none;
   }
 
-  /* ── MESSAGES, ONE PANE AT A TIME (v3) ───────────────────────────────
-     features/messages/index.tsx. The list is in the sidebar, so an open
-     conversation has the page to itself (`messages-list-in-rail`: the list
-     and its full-width toggle step aside, as on a strip too narrow for
-     both), and with nothing open the whole list is the page
-     (`messages-list-page`, All messages): its search, its headings, its rows
-     with their previews and times, in a readable column. */
-  .messages-layout.messages-list-in-rail > .messages-list-pane {
-    display: none;
-  }
-  .messages-layout.messages-list-in-rail .messages-list-toggle {
-    display: none;
-  }
-  .messages-layout.messages-list-in-rail > .messages-thread-pane {
-    margin-inline-start: 0;
-  }
+  /* ── MESSAGES ON A DESKTOP: THE LIST AS THE PAGE ─────────────────────
+     features/messages/index.tsx. With nothing open the whole list is the
+     page (`messages-list-page`, All messages): its search, its headings, its
+     rows with their previews and times, in a readable column. An open
+     conversation has the list beside it (from v3 until 7 Nov 2026 the list
+     sat in the sidebar instead, and the conversation had the page alone). */
   /* AUDIT C04 (2 Nov 2026): a conversation with nothing beside it keeps a
      reading width, as All messages keeps its column, rather than running
-     about 1500px wide at 1920, its bubbles a screen apart. */
-  .messages-layout.messages-list-in-rail > .messages-thread-pane:last-child {
+     about 1500px wide at 1920, its bubbles a screen apart. Since the list
+     came back beside it, that is a conversation set to Full width. */
+  .messages-layout.messages-list-collapsed > .messages-thread-pane:last-child {
     max-width: 960px;
     margin-inline: auto;
   }
