@@ -9810,7 +9810,8 @@ function personKeyOf(row) {
  * `first_version_pending`. In the order the loop meets them:
  *   - its own wait (`wait_reason` and `wait_until`, its bot-request
  *     instance's backoff on a refusal or a platform fault, projected onto
- *     the row), then its payer's week (`allowance`, held_until), then the
+ *     the row), then its payer's week (`allowance`, held_until) or a day's
+ *     pause after repeated errors (`cooldown`, held_reason), then the
  *     whole bot's pause on a platform fault (`platform_fault`, the lane's);
  *   - `bot_paused`: the bot is off (`off`), or its weekly budget is spent
  *     (`budgetUntil`; dispatch starts nothing until then);
@@ -9847,8 +9848,10 @@ function queueWait(row, {
   const at = (ms) => new Date(ms).toISOString();
   const own = toMs(row.wait_until);
   if (row.wait_reason && own > now) return { reason: String(row.wait_reason), until: at(own) };
-  const held = toMs(row.held_until);
-  if (held > now) return { reason: 'allowance', until: at(held) };
+  // #6357: its payer's week, or a day's pause after its look threw again
+  // and again (`cooldown`), which is no money at all.
+  const hold = require('./homeroom-bot-progress').holdOf(row, { now: new Date(now) });
+  if (hold) return { reason: hold.kind, until: hold.until };
   if (fault && Number(fault.until) > now) return { reason: 'platform_fault', until: at(Number(fault.until)) };
   if (off) return { reason: 'bot_paused', until: null };
   if (Number(budgetUntil) > now) return { reason: 'bot_paused', until: at(Number(budgetUntil)) };
@@ -9894,7 +9897,7 @@ const QUEUE_SNAPSHOT_SQL = `
       FROM homeroom_bot_queue q
   )
   SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.enqueued_at, q.started_at,
-         q.held_until, q.wait_reason, q.wait_until, q.waiting_total, q.running_total,
+         q.held_until, q.held_reason, q.wait_reason, q.wait_until, q.waiting_total, q.running_total,
          a.slug AS app_slug, a.name AS app_name,
          (a.slug = ANY($1::text[])) AS app_paused,
          COALESCE(r.user_id, i.created_by) AS person_id,

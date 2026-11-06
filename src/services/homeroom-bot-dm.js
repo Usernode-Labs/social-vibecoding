@@ -1272,10 +1272,14 @@ async function noteOverAllowance(pool, { settings, requester, payer = null, app,
        FROM apps a WHERE a.id = $1`,
     [app.id],
   ).catch(() => ({ rows: [] }));
+  // #6357: held for the week, never a day's pause after repeated errors
+  // (homeroom-bot-progress.js HOLD_IS_ALLOWANCE_SQL, written out the same).
   const { rows: [held] = [] } = await pool.query(
     `SELECT COUNT(*)::int AS n FROM homeroom_bot_queue q
        JOIN homeroom_bot_requesters r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
-      WHERE r.user_id = $1 AND q.held_until > NOW()`,
+      WHERE r.user_id = $1 AND q.held_until > NOW()
+        AND (q.held_reason = 'allowance' OR (q.held_reason IS NULL
+        AND q.held_until = date_trunc('week', q.held_until AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))`,
     [who.userId],
   ).catch(() => ({ rows: [] }));
   const appName = app.name || app.slug;

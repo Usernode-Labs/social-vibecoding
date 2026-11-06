@@ -175,6 +175,11 @@
       "id": "email-translation-jobs",
       "sha256": "5d7edda2d64f1509c1a56f1b822cef3a60e2186cc53652300d5bb92e4d83787e",
       "schemaSha256": "1eeda40e135285bf2ee6749e452e5f3db1168a8a16022e824fbc5fcfa1e7b18e"
+    },
+    {
+      "id": "bot-queue-hold-reason",
+      "sha256": "b0611af64343975ef9263c0f0f9da37660de0f5937af3585b01f8800d88dba42",
+      "schemaSha256": "d9ce456b28758dbad1b1c2d603d8ae2ddd026577063550b37c0d675d3612519c"
     }
   ]
 }

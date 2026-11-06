@@ -821,7 +821,9 @@ function cardOf(row, entry, { firstVersion = null } = {}) {
   return {
     ...base,
     state: 'working',
-    stage: entry.stage || null,
+    // #6357: a day's pause after repeated errors is its own stage on the
+    // card, never the week's "On hold until Monday".
+    stage: entry.stage === 'on_hold' && entry.hold === 'cooldown' ? 'cooldown' : entry.stage || null,
     step: Number.isInteger(entry.step) ? entry.step : null,
     of: Number.isInteger(entry.of) ? entry.of : null,
     stepName: entry.stepName || null,

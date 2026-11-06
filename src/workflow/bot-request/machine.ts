@@ -54,7 +54,12 @@ export interface Owed {
   threadSeenAt: string | null;
   enqueuedAt: string;
   heldUntil: string | null;
+  // #6357: why it is held: its payer's week is spent (`allowance`), or its
+  // look threw THROWN_TRIES times in a row (`cooldown`). Absent on a hold
+  // stored before it was recorded (readers infer it: progress holdOf).
+  heldFor?: HoldReason | null;
 }
+export type HoldReason = 'allowance' | 'cooldown';
 // A look under way: its work `look:<n>`, the slot the lane granted it, the
 // session it runs on (one of its project's triage sessions, its read
 // slot's, or its change's).
@@ -399,7 +404,7 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       // whose work threw pauses nothing else (THROWN_TRIES).
       const failures = (d.faults || 0) + 1;
       back = failed && failures >= THROWN_TRIES
-        ? { ...lk.owed, heldUntil: later(ctx, THROWN_HOLD_MS).toISOString() }
+        ? { ...lk.owed, heldUntil: later(ctx, THROWN_HOLD_MS).toISOString(), heldFor: 'cooldown' }
         : lk.owed;
       backoff = { failures, until: later(ctx, backoffMs(failures)).toISOString(), reason: String(failed ? 'look_failed' : r.error || 'platform').slice(0, 64) };
       lane = failed ? {} : { fault: true };
@@ -410,7 +415,7 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
     // grants nothing until it resets.
     case 'github': back = lk.owed; lane = { github: optTime(r.until) }; break;
     case 'held': {
-      back = { ...lk.owed, heldUntil: optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString() };
+      back = { ...lk.owed, heldUntil: optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString(), heldFor: 'allowance' };
       lane = {};
       break;
     }
@@ -518,7 +523,7 @@ function fixAsked(s: RState, e: Event<any>, f: Facts, ctx: TransitionContext): O
   if (s.name === 'queued') {
     // A hold for its payer's week does not hold an uncharged fix (trace L7).
     const o = merged(d.owed, debt, ctx);
-    return queue({ ...d, owed: { ...o, heldUntil: null } }, ctx);
+    return queue({ ...d, owed: { ...o, heldUntil: null, heldFor: null } }, ctx);
   }
   if (LOOKING.has(s.name as string) || s.name === 'building') {
     return step(s.name as Name, { ...d, owed: merged(d.owed, debt, ctx) });
@@ -678,15 +683,17 @@ export function botRequest(deps: Deps = { staging: false }) {
       const started = looking ? d.look?.startedAt ?? null : null;
       await tx.query(
         `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at, requested_by, enqueued_at,
-                                         started_at, held_until, payer_user_id, changed_by, wait_reason, wait_until)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                                         started_at, held_until, payer_user_id, changed_by, wait_reason, wait_until,
+                                         held_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          ON CONFLICT (app_id, issue_number) DO UPDATE SET
            priority = EXCLUDED.priority, reason = EXCLUDED.reason, thread_seen_at = EXCLUDED.thread_seen_at,
            requested_by = EXCLUDED.requested_by, enqueued_at = EXCLUDED.enqueued_at, started_at = EXCLUDED.started_at,
            held_until = EXCLUDED.held_until, payer_user_id = EXCLUDED.payer_user_id, changed_by = EXCLUDED.changed_by,
-           wait_reason = EXCLUDED.wait_reason, wait_until = EXCLUDED.wait_until`,
+           wait_reason = EXCLUDED.wait_reason, wait_until = EXCLUDED.wait_until, held_reason = EXCLUDED.held_reason`,
         [d.appId, d.issueNumber, o.priority, o.reason, o.threadSeenAt, o.requestedBy, o.enqueuedAt, started, o.heldUntil,
-          o.payer, o.changedBy, looking ? null : d.backoff?.reason ?? null, looking ? null : d.backoff?.until ?? null]);
+          o.payer, o.changedBy, looking ? null : d.backoff?.reason ?? null, looking ? null : d.backoff?.until ?? null,
+          o.heldUntil ? o.heldFor ?? null : null]);
       void before;
     },
   });

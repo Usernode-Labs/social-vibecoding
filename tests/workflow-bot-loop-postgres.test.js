@@ -23,6 +23,7 @@ const lane = require('../src/workflow/bot-lane/machine.ts');
 const { requestKey, lookCardKey, SLOTS_IN_USE_SQL, NEXT_ELIGIBLE_SQL } = require('../src/workflow/rules/bot-loop.ts');
 const { TURN_STOP } = require('../src/workflow/rules/turn-stop.ts');
 const { TURN_OWNER_SQL, syncWorkingSql } = require('../src/workflow/session-work.ts');
+const progress = require('../src/services/homeroom-bot-progress');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -506,9 +507,17 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     }
     const d = (await inst(request.MACHINE, requestKey(app2.id, 112))).data;
     assert.ok(Date.parse(d.owed.heldUntil) - Date.now() > 23 * 3600 * 1000, 'held a day');
+    // #6357: a cooldown, recorded and projected as one, with its own end:
+    // never read as the payer's week being used up.
+    assert.equal(d.owed.heldFor, 'cooldown');
+    const q = await row(app2.id, 112);
+    assert.equal(q.held_reason, 'cooldown');
+    assert.deepEqual(progress.holdOf(q), { kind: 'cooldown', until: new Date(d.owed.heldUntil).toISOString() });
+    assert.equal(progress.stageOf({ ...q, queue_id: q.id }).hold, 'cooldown');
     work.answer.set(request.WORK.look, { outcome: 'done' });
     await oweOnly(app2.id, 112, { reason: 'dm_answer', priority: 0 });
     assert.equal((await inst(request.MACHINE, requestKey(app2.id, 112))).data.owed.heldUntil, null, 'a person\'s ask lifts it');
+    assert.equal((await row(app2.id, 112)).held_reason, null, 'and its reason with it');
     work.answer.set(request.WORK.look, { outcome: 'done' });
   });
 
@@ -669,6 +678,7 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     await owe(app.id, 11);
     await send(lane.MACHINE, lane.KEY, 'Look', {});
     assert.ok((await row(app.id, 11)).held_until, 'held');
+    assert.equal((await row(app.id, 11)).held_reason, 'allowance', '#6357: recorded as the payer\'s week');
     work.answer.set(request.WORK.look, { outcome: 'done' });
     await sendOnly(request.MACHINE, requestKey(app.id, 11), 'FixAsked', { appId: app.id, issueNumber: 11, sessionId: 778, head: 'd'.repeat(40) }, { kind: 'system' });
     assert.equal((await row(app.id, 11)).held_until, null);
