@@ -1669,8 +1669,8 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   assert.match(menu, /\{route && workshopItemOf\(route\) \? \(/);
   assert.match(menu, /controller\.openInWorkshop\(\)/);
   // The ⋯ is in the row only beside the bot page, and at its end.
-  assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
-  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
+  assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
   assert.match(CSS, /\.side-panel-more \{ margin-inline-start: auto; align-self: center; \}/);
   // The item's page link is what the heading draws; a page with none is plain words.
   api._resetForTests();

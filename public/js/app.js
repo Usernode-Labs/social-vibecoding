@@ -5787,6 +5787,13 @@ const App = {
         // not fit.
         App.setChromeless(false);
         App.navigateToAi();
+        // 6 Nov 2026 (#6425): on a desktop the tab's own page is its lists
+        // alone. The bare address closes whatever was open beside them — the
+        // tab pressed, or Back to `#homeroom-bot` — and the page takes it
+        // once, as it takes every ask.
+        if (parts.length === 1) {
+          window.UsernodeReact?.ai?.closeColumn?.();
+        }
         if (parts[1] === 'request' || parts[1] === 'change' || parts[1] === 'decision') {
           window.UsernodeReact?.ai?.openItem?.('#' + parts.join('/'));
         }
