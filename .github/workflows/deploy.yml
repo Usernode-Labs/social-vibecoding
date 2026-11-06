@@ -235,7 +235,6 @@ jobs:
           USERNODE_DB_PASSWORD=${{ secrets.USERNODE_DB_PASSWORD }}
           GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}
           GITHUB_PRIVATE_KEY='${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}'
-          GITHUB_BOT_TOKEN=${{ secrets.USERNODE_GITHUB_BOT_TOKEN }}
           ANTHROPIC_API_KEY=${{ secrets.USERNODE_ANTHROPIC_API_KEY }}
           # Organization-level OpenRouter management credential. It remains
           # in the mode-0600 platform .env and is never propagated to
