@@ -80,7 +80,6 @@ END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep ev
   "build_note": "a few lines: files and approach (verdict ready; for question, the build if the default were accepted)",
   "assumptions": ["one short line per choice you made (verdict ready)"],
   "complicated": true (verdict ready, by the test above; never a first version),
-  "plan_variant": "the version of a posted plan whose after side draws several that the plan marks (at most 80 characters, verdict ready)" (verdict ready),
   "plan": ["a first version or complicated change: 3 to 5 short lines, one point each, at most 60 characters, what people will see or do"] (verdict ready),
   "choices": [{"question": "a first version or complicated change only, at most 2", "answers": ["the suggested answer, first", "another"]}] (verdict ready),
   "platform": true (verdict person, only when the request is about the Homeroom platform itself, not this app),

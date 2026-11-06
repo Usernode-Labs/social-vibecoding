@@ -193,7 +193,10 @@ test('#6407: the triage reads which version of a multi-version plan is marked', 
   assert.match(note, /after side draws more than one version/);
   assert.match(note, /a column merely titled "after"[\s\S]*?NOT marked/);
   assert.match(note, /Which version of the plan should I build\?/);
-  assert.match(read('src/prompts/homeroom-bot-triage.md'), /"plan_variant"/);
+  // The key is named by the note, not by the format block every request
+  // pays for: the triage prompt was one character under its size ceiling
+  // (tests/homeroom-bot.test.js), and a request with no plan needs neither.
+  assert.match(note, /`plan_variant`/);
   const marked = bot.parseVerdict(JSON.stringify({
     verdict: 'ready', determined: true, build_note: 'Files: history.ts', plan_variant: 'With date headings',
   }));
