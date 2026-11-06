@@ -426,22 +426,25 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
  * between it and its rivals keeps its Votes card without its own Vote
  * button, so there is one way to vote.
  *
- * 6 Nov 2026 (#6419): `stick`, on the change's own page only, makes this same
- * pair stay caught under the sheet's header as the reader scrolls, instead of
- * a second Votes card appearing above the replies (#5725, removed). It is
- * the pair, not the Votes card alone, that sticks: a sticky box travels only
- * within its parent, and the Votes card's parent is this pair, exactly as
- * tall as the two cards. The pair's parent is the article's content column,
- * which ends with the change's own content, above the replies, so the pair
- * lets go there with no extra code, and the real Testing card rides under the
- * Votes card, so the checks' state is always in sight.
+ * 6 Nov 2026 (#6419): on the change's own page this same pair stays caught
+ * under the sheet's header as the reader scrolls, instead of a second Votes
+ * card appearing above the replies (#5725, removed). It is the pair, not the
+ * Votes card alone, that sticks: a sticky box travels only within its
+ * parent, and the Votes card's parent is this pair, exactly as tall as the
+ * two cards. The pair's parent is the article's content column, which ends
+ * with the change's own content, above the replies, so the pair lets go there
+ * with no extra code, and the real Testing card rides under the Votes card,
+ * so the checks' state is always in sight. The page that holds the pair
+ * decides it: only the change's own article carries `dev-change-root`, so a
+ * change section on a request's page draws the pair as before.
  */
 export const ChangeGates = forwardRef<HTMLDivElement, {
-  id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean; stick?: boolean;
-}>(function ChangeGates({ id, card, v, ballot = false, stick = false }, ref) {
+  id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean;
+}>(function ChangeGates({ id, card, v, ballot = false }, ref) {
   const { voteAction, testAction, withFix, testingActions, stopped } = gateActions(card, v);
   const pair = useRef<HTMLDivElement>(null);
   const mark = useRef<HTMLSpanElement>(null);
+  const [stick, setStick] = useState(false);
   const [stuck, setStuck] = useState(false);
   // What the pair gives up when it shrinks, kept as margin so the words under
   // it do not jump up and the page's scroll height does not change.
@@ -452,6 +455,12 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
     if (typeof ref === 'function') ref(node);
     else if (ref) (ref as { current: HTMLDivElement | null }).current = node;
   }, [ref]);
+  // Only the change's own page holds the pair in `dev-change-root`; a change
+  // section on a request's page does not, and keeps the pair as it was. Found
+  // from the pair itself so every caller writes the same element.
+  useEffect(() => {
+    setStick(!!pair.current?.closest('.dev-change-root'));
+  }, [id]);
   // Stuck is where the mark above the pair has left the top of the thread's
   // own scroller. The scroller is found from the mark itself, never by a
   // document-wide id: another pane can hold the same id (#4640). A browser
@@ -581,7 +590,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
-          <ChangeGates ref={pair} id={id} card={card} v={v} stick />
+          <ChangeGates ref={pair} id={id} card={card} v={v} />
           {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
           {v.shots ? <ShotsCard s={v.shots} /> : null}
           {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392:

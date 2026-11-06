@@ -167,9 +167,11 @@ test('a change page’s gate pair sticks and shrinks instead of repeating', () =
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.doesNotMatch(src, /dev-change-gate-repeat|topInView|gc-thread-pin/);
   assert.doesNotMatch(src, /repeat\?: boolean/);
-  // Only the change's own page asks its pair to stick; a change section on a
-  // request's page draws it as before.
-  assert.match(src, /<ChangeGates ref=\{pair\} id=\{id\} card=\{card\} v=\{v\} stick \/>/);
+  // Only the change's own page holds the pair in `dev-change-root`, which is
+  // what asks it to stick; a change section on a request's page draws it as
+  // before. The caller stays one plain element either way.
+  assert.match(src, /<ChangeGates ref=\{pair\} id=\{id\} card=\{card\} v=\{v\} \/>/);
+  assert.match(src, /setStick\(!!pair\.current\?\.closest\('\.dev-change-root'\)\);/);
   // The scroller comes from the mark itself, never by a document-wide id:
   // another pane can hold the same id (#4640).
   assert.match(src, /const scroller = el \? el\.closest<HTMLElement>\('#gc-thread-scroll'\) : null;/);
@@ -182,7 +184,7 @@ test('a change page’s gate pair sticks and shrinks instead of repeating', () =
   assert.doesNotMatch(css, /\.dev-change-gate-repeat|#gc-thread-pin/);
 });
 
-test('the gate pair draws its stuck sentinel only when its page asked for it', () => {
+test('the gate pair paints plain and decides in the browser whether it sticks', () => {
   const gate = (name, figure, tone) => ({
     name, figure, tone, done: false, label: `x`, note: [], segments: [{ weight: 1, pct: 0, state: 'moving' }],
   });
@@ -190,20 +192,14 @@ test('the gate pair draws its stuck sentinel only when its page asked for it', (
     votes: gate('Votes', 'Needs 1 more yes', 'ask'),
     testing: gate('Testing', 'Checking it', 'muted'),
   };
-  // The mark comes first, then the pair in its stick form, at full size: the
-  // first paint has no data-stuck (it is set from an observer in the browser).
-  const stuck = renderComponent('frontend/src/features/dev-board/topic/change-head.tsx', 'ChangeGates', {
-    id: 7, card: {}, v, stick: true,
-  });
-  assert.match(stuck, /^<span class="dev-change-pair-mark" aria-hidden="true"><\/span><div class="dev-change-pair" data-stick="">/);
-  assert.ok(stuck.indexOf('data-change-gate="votes"') < stuck.indexOf('data-change-gate="testing"'), 'Votes leads');
-  assert.doesNotMatch(stuck, /data-stuck/);
-  // A change section on a request's page asks for nothing, and draws as today.
+  // Effects do not run under renderToStaticMarkup, so the first paint is the
+  // plain pair at full size; `data-stick` and the sentinel follow on mount.
   const plain = renderComponent('frontend/src/features/dev-board/topic/change-head.tsx', 'ChangeGates', {
     id: 7, card: {}, v,
   });
   assert.doesNotMatch(plain, /dev-change-pair-mark|data-stick/);
   assert.match(plain, /^<div class="dev-change-pair">/);
+  assert.ok(plain.indexOf('data-change-gate="votes"') < plain.indexOf('data-change-gate="testing"'), 'Votes leads');
 });
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {
