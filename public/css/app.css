@@ -18415,11 +18415,11 @@ body:has(#ai-screen[data-ai-preview="halves"]:not(.hidden)) {
 #ai-screen[data-ai-preview="three"] {
   padding-inline-end: calc(var(--ai-col-w) + var(--ai-preview-w));
 }
-/* The edges' lines: the thread's in the list's 16px gutter, as Main's is
-   (and outweighing that rule, at THE DIVIDER below), the preview's on the
-   hairline where it meets the thread. */
+/* The edges' lines: the thread's and Main's on their pane's own hairline, the
+   edge each drags (and outweighing that rule, at THE DIVIDER below), the
+   preview's on the hairline where it meets the thread. */
 body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-divider {
-  --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px) + 8px);
+  --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px));
 }
 #ai-preview-divider {
   --divider-at: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
@@ -25455,8 +25455,9 @@ html.dark .messages-inbox-change-tile {
      hides and shows with it; centred on `--divider-at`, the line's distance
      from the window's right edge. Beside an app that is the panel's own edge,
      where the two sheets meet; beside the Homeroom bot's list it is the
-     middle of the gutter between the list and Main (below). Inside the panel
-     the bar and the grip sat on the panel's side of the gap. Nothing between
+     pane's own edge too, the hairline it drags (below), with half the handle
+     in the gutter and half over the pane. Inside the panel the bar and the
+     grip sat on the panel's side of the gap. Nothing between
      it and the window may take a transform or a filter, which would make
      that ancestor its frame instead. */
   --divider-w: 10px;
@@ -25472,18 +25473,20 @@ html.dark .messages-inbox-change-tile {
   outline: none;
 }
 /* Beside the bot's list: Main (and a page in Main's place) is
-   `--ai-main-w` wide plus the Duo's column it runs under, and the list's
-   16px padding is the gutter before it. Main's own handle starts where Main
-   does, which is not under the banner the side panel clears. */
+   `--ai-main-w` wide plus the Duo's column it runs under. #6397: the handle
+   is centred on that pane's own edge, the hairline it drags, so it reads as
+   the edge moving and not as a line floating in the list's 16px gutter.
+   Main's own handle starts where Main does, which is not under the banner
+   the side panel clears. */
 body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
-  --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px) + 8px);
+  --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px));
 }
 /* #6394: with a plan open beside the page the panel holds, the panel's edge
    is the thread's edge of three columns, on the line where the panel begins.
    In halves the list has stepped aside and the preview's own handle is the
    one that drags, so this edge is not drawn (as .ai-main-pane's is not). */
 body:has(#ai-screen[data-ai-preview="three"]:not(.hidden)) #side-panel-divider {
-  --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px) + 8px);
+  --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px));
 }
 body:has(#ai-screen[data-ai-preview="halves"]:not(.hidden)) #side-panel-divider {
   display: none;
@@ -25502,6 +25505,14 @@ body:has(#ai-screen[data-ai-preview="halves"]:not(.hidden)) #side-panel-divider 
   opacity: 0;
   transition: opacity 120ms ease;
 }
+/* #6397: the bar starts where the pane's rounded top corner ends (28px), so it
+   meets the straight part of the edge instead of standing beside the curve.
+   Only the panes that have that corner: Main and the side panel beside the bot
+   page. #ai-preview-divider has none, and neither does the side panel beside a
+   running app (its top-left corner is square). */
+body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider)::after {
+  top: 1.75rem;
+}
 /* Under a pointer that hovers only: a finger's tap leaves iOS holding
    :hover on the handle, which kept the bar lit after the drag (iPhone Duo,
    1 November 2026). */
@@ -25516,8 +25527,8 @@ html.side-panel-resizing .side-panel-divider::after {
    2026). The bar above shows only under a pointer, which a finger never
    hovers over, and 10px is narrower than a fingertip, so the edge read as
    no handle at all. With a coarse pointer the handle is 24px across the
-   line, reaching 4px into Main past the gutter (its rows and the reply box
-   begin 12 to 18px in), and a short grip on the line is drawn at rest.
+   line, reaching 12px into the pane (its rows and the reply box begin 12 to
+   18px in), and a short grip on the line is drawn at rest.
    THE GRIP IS THE WHOLE MARK. The full-height bar is a pointer's hover
    cue; under a finger it ran the screen's height beside the grip, held or
    focused, and read as a second divider. The grip darkens while held. */
