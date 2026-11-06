@@ -640,3 +640,48 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   assert.deepEqual([queued.stage, queued.line, ws.placeFor(queued, { own: true })], ['up_for_vote', { code: 'update_queued' }, 'waiting']);
   assert.equal(require('../src/services/homeroom-bot-track').STEP_OF_STAGE[fixing.stage], 'build', 'its track lights Build');
 });
+
+// #6357 (evan): "homeroom bot says building time used up, but i think we're
+// still under budget?" A request whose look threw THROWN_TRIES times in a
+// row is held for a day (src/workflow/bot-request/machine.ts), and every
+// reader said that hold was the week's building time, until Monday.
+test('#6357: a hold says why: the week\'s building time, or a day\'s pause after repeated errors', () => {
+  const inADay = new Date(NOW.getTime() + 24 * 3600 * 1000).toISOString();
+  const monday = '2026-10-05T00:00:00.000Z';
+  const queued = { queue_id: 4, enqueued_at: ago(30) };
+  // Recorded by the workflow.
+  assert.deepEqual(progress.holdOf({ held_until: inADay, held_reason: 'cooldown' }, { now: NOW }), { kind: 'cooldown', until: inADay });
+  assert.deepEqual(progress.holdOf({ held_until: monday, held_reason: 'allowance' }, { now: NOW }), { kind: 'allowance', until: monday });
+  // Stored before it was: only an end on the week's reset is the allowance's.
+  assert.deepEqual(progress.holdOf({ held_until: inADay }, { now: NOW }), { kind: 'cooldown', until: inADay });
+  assert.deepEqual(progress.holdOf({ held_until: monday }, { now: NOW }), { kind: 'allowance', until: monday });
+  assert.equal(require('../src/services/limits').weeklyResetAt(NOW), monday, 'the boundary is the week\'s reset');
+  // No hold, or one over.
+  assert.equal(progress.holdOf({ held_until: null }, { now: NOW }), null);
+  assert.equal(progress.holdOf({ held_until: ago(1), held_reason: 'cooldown' }, { now: NOW }), null);
+  // The stage: on hold either way, saying which, with its own end.
+  assert.deepEqual(stage({ ...queued, held_until: inADay, held_reason: 'cooldown' }), {
+    stage: 'on_hold', hold: 'cooldown', until: inADay, since: ago(30), waitingOn: 'time',
+    doing: 'paused after repeated errors: trying again at 2026-10-03 16:04 UTC',
+  });
+  assert.deepEqual(stage({ ...queued, held_until: monday, held_reason: 'allowance' }), {
+    stage: 'on_hold', until: monday, since: ago(30), waitingOn: 'time',
+    doing: 'on hold until Monday: this week\'s building time is used up',
+  });
+  // Every screen's line (services/work-state.js) keeps them apart.
+  const ws = require('../src/services/work-state');
+  const cool = ws.fromStage(stage({ ...queued, held_until: inADay }), {});
+  assert.deepEqual(cool.line, { code: 'cooldown' });
+  assert.equal(ws.says(cool), 'Not started yet · Paused after repeated errors: Homeroom bot tries again later');
+  const week = ws.fromStage(stage({ ...queued, held_until: monday }), {});
+  assert.deepEqual(week.line, { code: 'on_hold' });
+  assert.equal(ws.lineSays(week), 'On hold until Monday: this week\'s building time is used up');
+  assert.equal(ws.placeFor(cool, { own: true }), 'waiting');
+  assert.equal(ws.placeFor(week, { own: true }), 'waiting');
+  // The same rule in SQL: the week's reset, Monday 00:00 UTC.
+  assert.match(progress.HOLD_IS_ALLOWANCE_SQL, /q\.held_reason = 'allowance'/);
+  const flat = (sql) => sql.replace(/\s+/g, ' ');
+  assert.ok(flat(require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8'))
+    .includes(flat(progress.HOLD_IS_ALLOWANCE_SQL)), 'the week\'s DM counts only the week\'s holds, by the same rule');
+  assert.match(progress.HOLD_IS_ALLOWANCE_SQL, /q\.held_reason IS NULL\s+AND q\.held_until = date_trunc\('week', q\.held_until AT TIME ZONE 'UTC'\) AT TIME ZONE 'UTC'/);
+});

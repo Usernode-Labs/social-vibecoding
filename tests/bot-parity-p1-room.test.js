@@ -389,6 +389,9 @@ test('what a turn looked at, in plain words, each once, code read as one line pe
   assert.equal(mayor.lookedItems([{ tool: 'list_source', project: 'gym' }], { names: new Map([['gym', 'Gym Tracker']]) })[0].what,
     'Looked through the files of Gym Tracker');
   assert.equal(mayor.lookedItems([{ tool: 'read_source', project: 'gym', path: 'a' }])[0].what, 'Read 1 file in gym');
+  // #6384: a plan read is said as a plan on its request.
+  assert.equal(mayor.lookedItems([{ tool: 'get_spec', project: 'gym', number: 12 }],
+    { names: new Map([['gym', 'Gym Tracker']]) })[0].what, 'Read the plan on Gym Tracker request #12');
   const many = Array.from({ length: 40 }, (_, i) => ({ tool: 'get_request', project: 'gym', number: i + 1 }));
   assert.equal(mayor.lookedItems(many).length, 20, 'at most twenty');
 });

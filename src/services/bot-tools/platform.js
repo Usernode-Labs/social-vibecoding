@@ -19,10 +19,10 @@ const { define } = require('./registry');
 // Mayor's connector reads, offered as they are.
 const MAIN_READS = Object.freeze([
   'get_platform_conventions', 'list_apps', 'get_app', 'list_requests', 'get_request',
-  'get_discussion', 'get_message', 'get_proposal', 'list_my_proposals', 'get_change',
+  'get_discussion', 'get_message', 'get_proposal', 'list_my_proposals', 'get_change', 'get_spec',
 ]);
 // What a project's own thread reads, about that project only.
-const THREAD_READS = Object.freeze(['get_change', 'get_discussion', 'list_requests', 'get_request', 'get_message']);
+const THREAD_READS = Object.freeze(['get_change', 'get_discussion', 'list_requests', 'get_request', 'get_message', 'get_spec']);
 
 let specs = null;
 /** The connector's tool specs, by name, read off its registry once. */

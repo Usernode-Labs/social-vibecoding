@@ -95,8 +95,8 @@ function replyLateralSql({
  * (newest by id, any mode) waits: live, ready, nothing built from it, not
  * held by a limit, on a request still open. Null otherwise. The aliases are
  * the caller's, as replyLateralSql's are, so the bot page (ai-work.js
- * FACTS_SQL) and the Workshop (workshop-waiting.js PLANS_SQL) ask the same
- * question one way. planWaits below mirrors it field by field.
+ * FACTS_SQL) and anything else that asks the same question asks it one way.
+ * planWaits below mirrors it field by field.
  */
 function planWaitingSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
   return `(SELECT CASE WHEN run.mode = 'live' AND run.verdict = 'ready'
@@ -129,6 +129,34 @@ function planWaits(row) {
     && !row.run_proposal && !!row.plan_waiting_at && !row.build_waiting_at
     && !row.build_session_id && !row.cap_suppressed && row.request_closed !== true;
 }
+
+/**
+ * Pure (#6357): why a queue row is held and until when, or null when it is
+ * not held (no held_until, or one already past): { kind, until }. `kind` is
+ * `allowance` (its payer's building time for the week is used up, held
+ * until the week resets) or `cooldown` (its look threw THROWN_TRIES times
+ * in a row, held for a day: src/workflow/bot-request/machine.ts), as the
+ * workflow recorded it (held_reason). A hold stored before that has no
+ * reason, and is not guessed as the allowance: an allowance hold always ends
+ * at the week's reset (limits.weeklyResetAt, Monday 00:00 UTC), so only a
+ * hold ending exactly there is one, and any other is a cooldown.
+ * HOLD_IS_ALLOWANCE_SQL is the same rule in SQL.
+ */
+function holdOf(row, { now = new Date() } = {}) {
+  const until = row && row.held_until ? new Date(row.held_until) : null;
+  if (!until || Number.isNaN(until.getTime()) || until.getTime() <= new Date(now).getTime()) return null;
+  const said = row.held_reason === 'allowance' || row.held_reason === 'cooldown' ? row.held_reason : null;
+  const weekBoundary = until.getUTCDay() === 1 && until.getUTCHours() === 0 && until.getUTCMinutes() === 0
+    && until.getUTCSeconds() === 0 && until.getUTCMilliseconds() === 0;
+  return { kind: said || (weekBoundary ? 'allowance' : 'cooldown'), until: until.toISOString() };
+}
+
+/**
+ * holdOf's allowance, in SQL, for the queue row aliased `q`. Written out the
+ * same in homeroom-bot-dm.js noteOverAllowance, whose query stays static.
+ */
+const HOLD_IS_ALLOWANCE_SQL = `(q.held_reason = 'allowance' OR (q.held_reason IS NULL
+  AND q.held_until = date_trunc('week', q.held_until AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))`;
 
 /**
  * Pure (#6228): whether a person's reply on a request is newer than the
@@ -760,10 +788,18 @@ function stageOf(input, { now = new Date() } = {}) {
   if (row.queue_id) {
     // One story: held until the week resets, because its payer's building
     // time is used up (homeroom-bot.js runTriage): On hold until Monday.
-    const held = row.held_until ? new Date(row.held_until) : null;
-    if (held && !Number.isNaN(held.getTime()) && held > now) {
+    // #6357: or held for a day after its look threw again and again, which
+    // is no money at all: paused, and tried again then.
+    const hold = holdOf(row, { now });
+    if (hold && hold.kind === 'cooldown') {
       return {
-        stage: 'on_hold', since: row.enqueued_at, waitingOn: 'time',
+        stage: 'on_hold', hold: 'cooldown', until: hold.until, since: row.enqueued_at, waitingOn: 'time',
+        doing: `paused after repeated errors: trying again at ${hold.until.slice(0, 16).replace('T', ' ')} UTC`,
+      };
+    }
+    if (hold) {
+      return {
+        stage: 'on_hold', until: hold.until, since: row.enqueued_at, waitingOn: 'time',
         doing: 'on hold until Monday: this week\'s building time is used up',
       };
     }
@@ -1054,7 +1090,7 @@ function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_numb
 }
 
 /** The columns requestRecordJoinsSql provides, as both readers select them. */
-const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until,
+const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until, q.held_reason,
             run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
             run.cap_suppressed,
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
@@ -1851,6 +1887,8 @@ module.exports = {
   // #6228: a reply on a request waiting to be read.
   REPLY_WAIT_MS,
   replyWaits,
+  holdOf,
+  HOLD_IS_ALLOWANCE_SQL,
   replyLateralSql,
   // #6280: one record read for the bot page's rows and a request's track.
   requestClosedSql,

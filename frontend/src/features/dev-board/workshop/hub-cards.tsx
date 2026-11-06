@@ -86,6 +86,7 @@ import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-see
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
 import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
+import { YourWorkRow } from './your-work';
 import {
   askToFit, goTo, upstreamAction, useUpstream, useVersionsSummary,
   type UpstreamState, type VersionsSummary,
@@ -586,48 +587,25 @@ function NeedsRow({ queue, slug, canPost, onOpen }: {
 }
 
 /**
- * YOUR WORK, as the card's second row: the first of your items in flight
- * (newest activity first, the Workshop's order) and how many there are,
- * opening the Workshop, where they are listed in full. With nothing in
- * progress it says so (#3489), "No work in progress.", on every project
- * from its first day (15 Oct 2026). No row for a visitor, who has no work
- * to have none of.
+ * THE WORKSHOP, on a phone (3 Nov 2026): the Hub is the way to the
+ * community's places there, so the Workshop has a row of its own, named for
+ * it. 5 Nov 2026: it was the Your work row as well, opening the Workshop
+ * where your work was listed; your work is the Homeroom bot tab's now (the
+ * Your work row beside it, ./your-work.tsx), and this row is only the door
+ * to the place: what happened here, and All items.
  */
-function WorkRow({ mine, onOpen, place = false }: {
-  mine: DevWorkshopView['mine'] | null | undefined;
-  onOpen: () => void;
-  /** On a phone the row is the way to the Workshop, and is named for it. */
-  place?: boolean;
-}): ReactNode {
+function WorkshopRow({ onOpen }: { onOpen: () => void }): ReactNode {
   const t = useMessages('project');
-  const cards = (mine?.rows || []).filter((row): row is Extract<BoardRow, { t: 'card' }> => row.t === 'card');
-  if (!cards.length && !mine?.viewer) return null;
-  const first = cards[0] || null;
-  const sub = first ? (
-    <span
-      data-ws-mine-first={first.key}
-      // The viewer's own session (#1887): `?shot=mine-session` leads with one.
-      data-ws-mine-session={first.card.attrs && first.card.attrs['data-session-chip'] ? '' : undefined}
-    >
-      {first.card.title.text || first.card.title.title}
-    </span>
-  ) : (
-    <span data-ws-mine-empty="">{t('project:hub.work.empty')}</span>
-  );
   return (
     <ListRow
       as="button"
       inset="none"
       className="dev-ws-foryou-row"
-      data-ws-mine-card=""
-      data-ws-mine-open="workshop"
+      data-ws-workshop-row=""
       onClick={onOpen}
       leading={<IconTile size="xs"><BoardIcon aria-hidden="true" /></IconTile>}
-      title={place ? placeName('workshop') : t('project:hub.work.title')}
-      subtitle={sub}
-      trailing={cards.length ? (
-        <span className="dev-ws-foryou-count">{t('project:hub.forYou.work.inProgress', { count: cards.length })}</span>
-      ) : undefined}
+      title={placeName('workshop')}
+      subtitle={t('project:hub.workshop.sub')}
     />
   );
 }
@@ -744,10 +722,10 @@ export function ForYouCard({
   const owes = owesVote(queue);
   const claims = Math.max(0, Number(unclaimed) || 0);
   const needs = owes || !alone || claims > 0;
-  const cards = (mine?.rows || []).some((row) => row.t === 'card');
-  const work = cards || !!mine?.viewer || places;
+  // Your work: anyone signed in has some, or none, to be told about.
+  const work = !!mine?.viewer;
   const talk = !!(data && data.channel);
-  if (!needs && !work && !talk) return null;
+  if (!needs && !work && !places && !talk) return null;
   return (
     <section className="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby={headId}>
       <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.forYou.title')}</SectionHeader>
@@ -755,7 +733,10 @@ export function ForYouCard({
         {owes
           ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} />
           : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
-        <WorkRow mine={mine} onOpen={onWork} place={places} />
+        {work ? (
+          <YourWorkRow slug={slug} name={data?.name || slug} className="dev-ws-foryou-row" data-ws-mine-card="" />
+        ) : null}
+        {places ? <WorkshopRow onOpen={onWork} /> : null}
         <DiscussionRow data={data} onOpen={onDiscussion} />
       </div>
     </section>

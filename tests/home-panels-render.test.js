@@ -872,11 +872,15 @@ test('a numeric challenge at full target is a finished line, not a count (#4563)
 test("Home draws the Challenges tab's card, not a card of its own", () => {
   const src = challengesSrc();
   assert.match(src, /import \{ ChallengeCard \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
-  assert.match(src, /<ChallengeCard[\s\S]*?className="home-challenge-card"/);
+  // One Home (#6361): one row that scrolls sideways, each card a fixed width
+  // so the next one peeks in, snapped to the section's gutter, and still the
+  // row's own child, which the declared checks select.
+  assert.match(src, /<ChallengeCard[\s\S]*?className="home-challenge-card w-\[min\(19rem,82vw\)\] shrink-0 snap-start"/);
+  assert.match(src, /<div className="home-panel-rows -mx-3 flex snap-x snap-mandatory scroll-px-3 gap-2\.5 overflow-x-auto px-3 pb-1 [^"]*">/);
   const card = cardOf(renderWith({ registry: [], hidden: [], panels: [panel()] }).html);
   // S8: the card's corners are 24px and the tile's 11px, concentric inside
   // the card's 12px padding and 1px border.
-  assert.match(card, /^home-challenge-card flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl/);
+  assert.match(card, /^home-challenge-card w-\[min\(19rem,82vw\)\] shrink-0 snap-start flex items-center gap-3 bg-white dark:bg-zinc-900 rounded-3xl/);
   assert.match(card, /h-20 w-20 [^"]*rounded-\[0\.6875rem\]"/, "the tab's 80px tile");
   assert.match(card, /data-challenge-id="1"/);
 });
@@ -1744,7 +1748,9 @@ test('index.html stacks the two section hosts below the grid, in order', () => {
   const grid = INDEX.indexOf('id="app-list"');
   assert.ok(grid > 0, 'the launcher grid is there');
   const at = (id) => INDEX.indexOf(`id="${id}"`);
-  const order = ['home-discover-section', 'home-challenges-section'];
+  // One Home (#6361): Pinned communities, Challenges, then Communities to
+  // join. Discover's lane is no section of Home's any more.
+  const order = ['home-communities-section', 'home-challenges-section', 'home-join-section'];
   let prev = grid;
   for (const id of order) {
     const here = at(id);
@@ -1752,13 +1758,13 @@ test('index.html stacks the two section hosts below the grid, in order', () => {
     assert.ok(here > prev, `${id} sits below what precedes it`);
     prev = here;
   }
+  assert.equal(at('home-discover-section'), -1, 'no Discover lane on Home');
   // Outside the grid, or its wholesale re-render would destroy them.
-  assert.ok(INDEX.indexOf('id="app-list"', 0) < at('home-discover-section'));
-  assert.doesNotMatch(INDEX.slice(grid, at('home-discover-section')), /<\/section>[\s\S]*<div id="app-list"/);
+  assert.doesNotMatch(INDEX.slice(grid, at('home-communities-section')), /<\/section>[\s\S]*<div id="app-list"/);
 
-  // Each host names the block it is for, which is what the dapp.json checks
-  // and the screenshot assertions select on.
-  for (const key of ['discover', 'challenges']) {
+  // The panels' host names the block it is for, which is what the dapp.json
+  // checks and the screenshot assertions select on.
+  for (const key of ['challenges']) {
     assert.match(INDEX, new RegExp(`data-panel-slot="${key}"`), `${key} host is named`);
   }
   // The third, #home-create-section, is retired: Create is the launcher grid's
@@ -2037,7 +2043,7 @@ test('the Discover card carries data-join, the three pill states and the fallbac
 
   // A member whose app is NOT on Home yet: a plain pin to My apps.
   assert.match(html, /data-slug="delta" data-added="false" data-join="add"/);
-  assert.match(html, /aria-label="Add Delta to My apps"/);
+  assert.match(html, /aria-label="Add Delta to Pinned apps"/);
   assert.match(html, />Add<\/span>/);
 
   // The pill's own name is still a pill's; the card keeps its own.
@@ -2222,49 +2228,17 @@ test('every discovery lane is handed to Home._wireDiscoveryCards', () => {
 // in dapp.json so a markup change and the check can't drift apart. (The
 // Create checks moved to the grid's trailing tile, and are pinned against it
 // in tests/home-create-tile.test.js.)
-test('dapp.json’s home-widget checks describe markup this module emits', () => {
+test('dapp.json declares no check of Home\'s Discover lane, which Home no longer draws (One Home, #6361)', () => {
   const declared = JSON.parse(read('dapp.json')).tests || [];
-  const find = (frag) => declared.find((t) => (t.expectSelector || '').includes(frag));
-
-  // ONE Discover check covers the populated widget (#949). It requires BOTH
-  // halves to be non-empty via the mirrored stamps, then asserts the block
-  // drew them as one lane — so it is stronger than the old second-rail
-  // selector it replaced: that one proved the popular apps painted, this one
-  // proves they painted with nothing separating them from the curated ones.
-  const discover = find('[data-panel-slot="discover"]:not([data-featured="0"])');
-  assert.ok(discover, 'the discover check is declared');
-  for (const cls of ['home-panel', 'home-discover-rail', 'app-card']) {
-    assert.ok(discover.expectSelector.includes(cls), cls);
-  }
-  assert.equal(discover.expectText, 'See all');
-  const desktop = renderDiscover();
-  assert.ok(desktop.includes('home-discover-rail') && desktop.includes('app-card'),
-    'and this module emits both classes that selector chains');
-  // The tile-face invariant rides along on this selector rather than having
-  // a check of its own — it dates from when the manifest parsed only the
-  // first MAX_TESTS entries and a slot was a real cost. #1019 runs every
-  // declared check, so a separate entry would be free now; folding it in is
-  // still the tighter assertion (one navigation proves both), so it stays.
-  assert.match(discover.expectSelector, /:not\(:has\(\.users-badge\)\)/);
-  // The check is the merge's own guard: the block draws the cards, and
-  // neither a caption row nor a second lane comes back beside them.
-  assert.match(discover.expectSelector, /:not\(:has\(\.home-discover-divider\)\)/);
-  assert.match(discover.expectSelector, /:not\(:has\(\.home-discover-lane ~ \.home-discover-lane\)\)/);
-  const desktopLanes = (desktop.match(/home-discover-lane/g) || []).length;
-  assert.equal(desktopLanes, 1, 'and the block really does draw one');
-  assert.doesNotMatch(desktop, /users-badge/,
-    'a discovery tile states popularity by its rank, not by a badge');
-
-  // The empty state's check selects on the mirrored host attribute plus the
-  // browse control, and asserts the note's own copy.
-  const bare = find('[data-panel-slot="discover"][data-featured="0"][data-popular="0"]');
-  assert.ok(bare, 'the empty-state check is declared');
-  assert.match(bare.path, /shot=discover-empty/, 'reached by the deep link, not by luck');
-  assert.match(bare.expectSelector, /\.home-panel-browse/);
-  const emptyHtml = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
-  assert.ok(emptyHtml.includes('data-featured="0"'), 'the widget stamps it');
-  assert.ok(emptyHtml.includes('home-panel-browse'), 'and still offers the browse control');
-  assert.ok(emptyHtml.includes(bare.expectText), `the note says "${bare.expectText}"`);
+  // The lane's two checks (populated, #949, and empty, ?shot=discover-empty)
+  // and the drag-a-card check went with the section: Home's Communities to
+  // join is the directory now, and its own check is the order one.
+  assert.ok(!declared.some((t) => /data-panel-slot="discover"|home-discover-rail|shot=discover-(?:empty|add|drag)/
+    .test(`${t.expectSelector || ''} ${t.path || ''}`)), 'no check selects the lane');
+  const home = declared.find((t) => (t.expectSelector || '').includes('#home-communities-section ~ #home-join-section'));
+  assert.ok(home, 'the One Home order check is declared');
+  assert.match(home.expectSelector, /:not\(:has\(#home-discover-section\)\)/);
+  assert.equal(read('frontend/src/features/home/index.tsx').includes('<DiscoverSection />'), false);
 });
 
 // The rail's geometry, derived by hand in app.css and pinned here exactly as

@@ -10,9 +10,10 @@
 // next year:
 //
 //   1. Every kind is framed — logo, card, footer.
-//   2. The frame is applied in ONE place. Templates return fragments and
-//      `buildMessage` wraps them, so a seventh template cannot ship unbranded
-//      by copying the wrong neighbour, and no mail can be wrapped twice.
+//   2. The frame is applied in ONE place: the stored layout every template
+//      wears. Templates hold fragments and the layout holds the document, so
+//      a seventh template cannot ship unbranded by copying the wrong
+//      neighbour, and no mail can be wrapped twice.
 //
 // Run with: node --test tests/mail-branding.test.js
 'use strict';
@@ -66,18 +67,19 @@ test('every kind is framed, and framed exactly once', () => {
 });
 
 test('the frame is applied in one place, not by the templates', () => {
-  // The arrangement this replaces is the bug: six wrappers plus one in the
-  // switch is how a seventh template ships unbranded.
-  assert.match(SRC, /const HTML_SHELL = \(body, why = WHY_DEFAULT, preheader = null\) =>/, 'defined once');
-  assert.equal((SRC.match(/HTML_SHELL\(/g) || []).length, 1,
-    'and called from exactly one place');
-  const build = SRC.slice(SRC.indexOf('function buildMessage'));
-  // A template may say why its mail arrived (`why`) and set its inbox
-  // preview line (`preheader`); the frame still wraps every kind, here and
-  // only here.
-  // WP-E: and the extra headers a kind needs (activity mail's
-  // List-Unsubscribe) ride beside the framed html, never inside it.
-  assert.match(build, /const \{ why, preheader, headers, \.\.\.message \} = template\(tracking\.attributedPayload\(kind, payload\)\);\s*return tracking\.decorate\(kind, \{\s*\.\.\.message,\s*html: HTML_SHELL\(message\.html, why, preheader\),/);
+  // The arrangement this replaced is the bug: six wrappers plus one in the
+  // switch is how a seventh template ships unbranded. The frame is now the
+  // stored layout, and every first template wears the one seeded layout,
+  // which holds the document; a template holds only its own fragment.
+  const { SEEDS, STANDARD_LAYOUT } = require(path.join(ROOT, 'src/db/email-template-seeds.js'));
+  assert.equal(SEEDS.layouts.length, 1);
+  assert.match(SEEDS.layouts[0].html, /^<!doctype html>/);
+  for (const [kind, seed] of Object.entries(SEEDS.templates)) {
+    assert.equal(seed.layout, STANDARD_LAYOUT, kind);
+    assert.doesNotMatch(seed.html, /<!doctype|<html|<body/i, kind);
+  }
+  // And no frame or markup is written in the code that renders.
+  assert.doesNotMatch(SRC, /<!doctype|HTML_SHELL/i);
 });
 
 test('an unknown kind still throws rather than sending a blank frame', () => {
@@ -89,8 +91,8 @@ test('an unknown kind still throws rather than sending a blank frame', () => {
   assert.throws(() => templates.buildMessage('toString', {}), /unknown mail kind/);
 });
 
-test('KINDS is derived from the templates, so the two cannot drift', () => {
-  assert.match(SRC, /const KINDS = Object\.keys\(TEMPLATES\);/);
+test('KINDS is derived from the actions, so the two cannot drift', () => {
+  assert.match(SRC, /const KINDS = Object\.keys\(ACTIONS\);/);
   for (const kind of templates.KINDS) {
     assert.doesNotThrow(() => templates.buildMessage(kind, PAYLOAD), `${kind} renders`);
   }

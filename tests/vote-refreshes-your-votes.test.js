@@ -1,18 +1,18 @@
 'use strict';
 
-// #5452: a vote lands in Your votes the moment the server saved it, without
-// a page refresh.
+// #5452: a vote lands in the Kudos My history tab the moment the server
+// saved it, without a page refresh. (It landed in Me › Your votes too, until
+// 5 Nov 2026: that screen is the Homeroom bot tab's History now, read fresh
+// each time it is shown.)
 //
-// Your votes reads once per open, and a vote button answers ahead of the row
-// being written (a deciding vote can hold its POST for seconds), so the
-// three call sites that cast a vote each tell the profile screen's controller
-// and drop the Kudos My history cache — only after the server has said yes:
+// A vote button answers ahead of the row being written (a deciding vote can
+// hold its POST for seconds), so the three call sites that cast a vote each
+// drop the Kudos My history cache, only after the server has said yes:
 //
 //   - AppView.castVote (public/js/app-view.js): the change page's vote;
 //   - AppView.castIssueVote: a group decision's vote;
 //   - approveChange (frontend/src/features/messages/api.ts): the Yes on a
-//     Homeroom bot's ready card, through the window bridge so the messages
-//     chunk does not pull in the profile screen.
+//     Homeroom bot's ready card, through the window bridge.
 //
 // Run with: node --test tests/vote-refreshes-your-votes.test.js
 
@@ -32,22 +32,16 @@ function appViewMethod(view, head) {
   return view.slice(at, view.indexOf('\n  },\n', at));
 }
 
-test('castVote tells Your votes and the Kudos history, only after the server took the vote', () => {
+test('castVote tells the Kudos history, only after the server took the vote', () => {
   const fn = appViewMethod(
     read('public/js/app-view.js'),
     '  async castVote(sessionId, vote, expectedEpoch = null, opts = null) {',
   );
-  assert.match(fn, /window\.UsernodeReact\?\.profileProposals\?\.voted\?\.\(\);/);
   assert.match(fn, /window\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
-  // #6101: a refusal that means "not up for a vote any more" DOES re-read
-  // Your votes, so the row moves to Decided. Every ordinary refusal still
-  // returns before the ok-path call below.
+  assert.doesNotMatch(fn, /profileProposals/, 'the Your work screen is gone');
   const refused = fn.indexOf('return false;', fn.indexOf('if (!res.ok)'));
-  const settledCall = fn.indexOf('profileProposals?.voted', fn.indexOf("data.code === 'not_up_for_vote'"));
-  assert.ok(settledCall > -1 && settledCall < refused,
-    'the settled refusal names the profile controller before it returns');
-  const ordinary = fn.indexOf('profileProposals?.voted', fn.indexOf('await AppView.refreshDevData(\'vote\');'));
-  assert.ok(ordinary > refused, 'an ordinary refusal still returns before it');
+  const ordinary = fn.indexOf('Leaderboard?.invalidateHistory', fn.indexOf('await AppView.refreshDevData(\'vote\');'));
+  assert.ok(ordinary > refused, 'an ordinary refusal returns before it');
   // The network catch is the function's last one; the reason resolver's own
   // try/catch sits ahead of the vote and must not be mistaken for it.
   const caught = fn.lastIndexOf('} catch {');
@@ -59,17 +53,16 @@ test('castIssueVote does the same, only on an ok response', () => {
     read('public/js/app-view.js'),
     '  async castIssueVote(issueId, vote, opts = null) {',
   );
-  assert.match(fn, /window\.UsernodeReact\?\.profileProposals\?\.voted\?\.\(\);/);
   assert.match(fn, /window\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
   const refused = fn.indexOf('PlatformUI.toast(PlatformI18n.errorText(data) ||');
-  const called = fn.indexOf('profileProposals?.voted');
+  const called = fn.indexOf('Leaderboard?.invalidateHistory');
   const caught = fn.indexOf('} catch (err) {');
   assert.ok(refused > -1, 'the refusal branch is found');
   assert.ok(called > refused, 'never on a refused vote');
   assert.ok(caught > -1 && called < caught, 'and never in the catch');
 });
 
-test('approveChange tells Your votes under response.ok, through the window bridge', () => {
+test('approveChange tells the Kudos history under response.ok, through the window bridge', () => {
   const src = read('frontend/src/features/messages/api.ts');
   const at = src.indexOf('export async function approveChange(');
   assert.ok(at > -1);
@@ -84,33 +77,6 @@ test('approveChange tells Your votes under response.ok, through the window bridg
   const helper = src.indexOf('function announceApprovalVote()');
   assert.ok(helper > -1, 'the announcement helper exists');
   const helperBody = src.slice(helper, src.indexOf('\n}\n', helper));
-  assert.match(helperBody, /\(window as any\)\.UsernodeReact\?\.profileProposals\?\.voted\?\.\(\);/,
-    'the window bridge, not an import');
-  assert.match(helperBody, /\(window as any\)\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
-  assert.doesNotMatch(src, /my-proposals/, 'the messages chunk does not pull in the profile screen');
-});
-
-// #5456: a vote cast just before Your votes opens is missing from the list
-// the worker served on its 1s deadline, and the correction that arrives a
-// moment later never reached the screen — every branch of
-// App.refreshActiveScreen fell through on it, because no app is open there.
-// The same slice workshop-live-refresh.test.js pins the workshop branch by:
-// the body of refreshActiveScreen, from its head to the `},` that closes it.
-test('#5456: the late-arrival correction re-reads the Your work screen', () => {
-  const appJs = read('public/js/app.js');
-  const start = appJs.indexOf('  refreshActiveScreen() {');
-  assert.ok(start >= 0, 'App.refreshActiveScreen is defined');
-  const body = appJs.slice(start, appJs.indexOf('\n  },', start));
-  assert.match(body, /window\.UsernodeReact\?\.profileProposals/,
-    'the correction names the profile screen\'s controller');
-  assert.match(body, /visible\('profile-proposals-screen'\)/,
-    'only while the Your work screen is the one showing');
-  assert.match(body, /profileProposals\?\.isOpen\?\.\(\)/,
-    'and the controller holds one of its three views open');
-  assert.match(body, /profileProposals\.reload\?\.\(\)/,
-    'through its own reload, the same loader Try again uses');
-  const branch = body.indexOf("visible('profile-proposals-screen')");
-  const appTab = body.indexOf("App.currentApp && App.currentTab === 'app'");
-  assert.ok(branch > -1 && appTab > -1 && branch < appTab,
-    'before the App.currentApp branches: this screen holds no app view to fall through to');
+  assert.match(helperBody, /\(window as any\)\.Leaderboard\?\.invalidateHistory\?\.\(\);/, 'the window bridge, not an import');
+  assert.doesNotMatch(helperBody, /profileProposals/, 'the Your work screen is gone');
 });

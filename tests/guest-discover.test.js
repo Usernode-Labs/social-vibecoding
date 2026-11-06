@@ -30,6 +30,7 @@ const DISCOVER = 'frontend/src/features/guest/guest-discover.tsx';
 const PROJECT = 'frontend/src/features/guest/guest-project.tsx';
 const STORY = 'frontend/src/features/auth/story.tsx';
 const LANDING = 'frontend/src/features/auth/landing.tsx';
+const JOIN = 'frontend/src/features/home/communities-to-join.tsx';
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const text = (html) => html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
   .map((t) => t.replace(/&#x27;/g, "'").replace(/&amp;/g, '&'));
@@ -143,10 +144,12 @@ const discoverProps = (over = {}) => ({
   apps: APPS, failed: false, hero: null, primaryClass: 'pill', onOpenInside() {}, ...over,
 });
 
-test('every card opens its project\'s page, no card is locked, and Featured is not repeated below it', () => {
+test('every card opens its project\'s page, no card is locked, and each project is one card: featured first, then the most active (One Home, #6361)', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
-  assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['game-corner']);
-  assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'fresh-one']);
+  // The signed-out Home's Communities: one list, what an admin featured (in
+  // its order) first, then the rest by people active. No Featured lane.
+  assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), []);
+  assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner', 'fresh-one']);
   // ONE link per card, its name, at the page's clean address a search
   // engine can follow; it stretches over the whole card, so the picture and
   // the gaps open it too, and nothing is nested in a link.
@@ -206,21 +209,22 @@ test('a card is its picture, its name and its own sentence; how many used it lat
   // Under it, nothing: no pill and the link is the name alone.
   const quiet = cardOf(html, 'quiet');
   assert.doesNotMatch(quiet, /data-guest-card-people/);
-  assert.doesNotMatch(quiet, /aria-label=/);
+  assert.doesNotMatch(quiet, /data-guest-card-link="" aria-label=/, 'the link is the name alone');
   // Members, votes and what changed lately are the project page's, not a card's.
   for (const slug of ['busy', 'some', 'quiet']) {
     const words = text(cardOf(html, slug));
     assert.ok(!words.some((w) => /member|people active|up for a vote|voted in|Updated|Latest change/.test(w)), `${slug}: ${words}`);
     assert.doesNotMatch(cardOf(html, slug), /data-guest-card-(?:fact|activity|votes)=/);
   }
-  assert.deepEqual(text(quiet).slice(1), ['Quiet'], 'the letter tile, then the name');
+  assert.deepEqual(text(quiet).slice(1), ['Quiet', message('home:join.pin'), message('home:join.button')],
+    'the letter tile, then the name, then Home\'s Pin and Join (One Home, #6361)');
 });
 
-test('Featured and All apps are one grid that reflows, two columns at least, and the cards look worth tapping', () => {
+test('the cards are one grid that reflows, two columns at least, and the cards look worth tapping', () => {
   const src = read(DISCOVER);
-  assert.match(src, /const CARD_GRID = 'grid grid-cols-\[repeat\(auto-fill,minmax\(min\(190px,calc\(50%_-_6px\)\),1fr\)\)\] gap-3';/);
-  assert.match(src, /<CardGrid apps=\{featured\} featured \/>/);
-  assert.match(src, /<CardGrid apps=\{cards\} \/>/);
+  assert.match(src, /export const CARD_GRID = 'grid grid-cols-\[repeat\(auto-fill,minmax\(min\(190px,calc\(50%_-_6px\)\),1fr\)\)\] gap-3';/);
+  // One Home (#6361): Home's Communities to join draws them, signed in or out.
+  assert.match(read(JOIN), /<div className=\{`\$\{CARD_GRID\} px-1`\}>\s*\{list\.slice\(0, shown\)\.map\(\(app, i\) => \(\s*<Card/);
   assert.doesNotMatch(src, /snap-x|overflow-x-auto/, 'nothing scrolls sideways');
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   const card = cardOf(html, 'todo-list');
@@ -239,13 +243,25 @@ test('Featured and All apps are one grid that reflows, two columns at least, and
   assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 end-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
 });
 
-test('no card carries a button: Try it is the project page\'s, and a waitlisted account still sees everything featured', () => {
+test('a card\'s only buttons are Pin and Join, under its words: Try it is the project page\'s, and a waitlisted account still sees every project (One Home, #6361)', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   assert.doesNotMatch(html, /data-guest-try=/);
   assert.doesNotMatch(html, /<button[^>]*>Try it/);
-  // A waitlisted account is signed in: every project opens for it, nothing asks it to sign up.
+  for (const slug of ['todo-list', 'game-corner', 'fresh-one']) {
+    const card = cardOf(html, slug);
+    const buttons = [...card.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
+    assert.equal(buttons.length, 2, `${slug}: two buttons`);
+    assert.match(buttons[0], new RegExp(`data-home-pin="${slug}"`));
+    assert.match(buttons[0], /aria-pressed="false"/, 'nothing pinned on this device yet');
+    assert.match(buttons[1], new RegExp(`data-home-join="${slug}"`));
+    // Over the card's stretched link, so they take their own taps.
+    assert.match(card, /<span class="relative z-\[2\] mt-2\.5 flex items-center gap-2" data-guest-card-footer="">/);
+  }
+  // Pin keeps it on this device; Join asks the landing to sign up for it.
+  assert.match(read(DISCOVER), /onPin=\{\(app\) => \{ toggleDevicePin\('communities', app\.slug\); \}\}\s*onJoin=\{\(app\) => \{ onIntent\?\.\(\{ kind: 'join', app \}\); \}\}/);
+  // A waitlisted account is signed in: every project is still there.
   const signedIn = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ signedIn: true }));
-  assert.deepEqual([...signedIn.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner']);
+  assert.deepEqual([...signedIn.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner', 'fresh-one']);
   assert.doesNotMatch(signedIn, /data-guest-join=/);
 });
 
@@ -255,17 +271,20 @@ const MANY = Array.from({ length: 20 }, (_, i) => ({
   created_at: ago(200), requires_login: i % 2 !== 0, guest_ready: false, url: `https://a${i + 1}.example`, contributors: [],
 }));
 
-test('All apps is the same cards, most active first, ten at a time on a phone and twenty on a wide screen, then Show more', () => {
+test('the list is the same cards, most active first, eight at a time, more as you scroll near its end (One Home, #6361)', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: MANY }));
   assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), [], 'nothing featured by an admin');
   assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]),
-    ['a01', 'a02', 'a03', 'a04', 'a05', 'a06', 'a07', 'a08', 'a09', 'a10'], 'in order of people active, tryable or not');
-  assert.match(html, /data-guest-show-more=""/);
-  // The rows of "More projects" are gone.
-  assert.doesNotMatch(html, /data-guest-(?:more|row)=/);
-  const src = read(DISCOVER);
-  assert.match(src, /const CARDS_STEP = 10;\nconst CARDS_STEP_WIDE = 20;/);
-  assert.match(src, /onClick=\{\(\) => setShown\(cards\.length \+ step\)\}/);
+    ['a01', 'a02', 'a03', 'a04', 'a05', 'a06', 'a07', 'a08'], 'in order of people active, tryable or not');
+  // No Show more: a sentinel under the cards, which the scroller's own
+  // IntersectionObserver reads (Home scrolls #home-screen, not the window).
+  assert.match(html, /data-home-join-more=""/);
+  assert.doesNotMatch(html, /data-guest-show-more=|data-guest-(?:more|row)=/);
+  const src = read(JOIN);
+  assert.match(src, /export const JOIN_PAGE = 8;/);
+  assert.match(src, /const root = document\.getElementById\('home-screen'\);/);
+  assert.match(src, /setShown\(\(n\) => n \+ JOIN_PAGE\)/);
+  assert.doesNotMatch(read(DISCOVER), /CARDS_STEP|setShown\(cards\.length/);
   const catalog = JSON.parse(read('frontend/locales/en/auth.json'));
   assert.equal(catalog['guest.more'], undefined, 'its heading went with it');
 });
@@ -331,13 +350,14 @@ test('the card grows into its project\'s page and back: a view transition with o
   assert.match(read('public/css/app.css'), /::view-transition-group\(guest-hero\) \{\s+animation-duration: 0\.4s;/);
 });
 
-test('the kinds and the sort; what an account adds is the hero\'s, not a card in the grid', () => {
+test('the kinds, and no sort; what an account adds is the hero\'s, not a card in the grid', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
-  assert.match(html, /data-guest-category="all"[^>]*>All</);
-  assert.match(html, /data-guest-category="games"/);
-  assert.match(html, /data-guest-category="tools"/);
-  assert.doesNotMatch(html, /data-guest-category="learning"/, 'only kinds some app has');
-  assert.match(html, /aria-pressed="true" data-guest-sort="trending"/);
+  assert.match(html, /aria-pressed="true"[^>]*data-home-join-kind="all"[^>]*>All</);
+  assert.match(html, /data-home-join-kind="games"/);
+  assert.match(html, /data-home-join-kind="tools"/);
+  assert.doesNotMatch(html, /data-home-join-kind="learning"/, 'only kinds some app has');
+  // One Home (#6361): one order, featured then most active; no sort control.
+  assert.doesNotMatch(html, /data-guest-sort=/);
   // The "Want to join in?" card is gone (Evan, 22 Oct 2026): it said what
   // the hero says, with a second way in, partway down the grid.
   assert.doesNotMatch(html, /data-guest-join=|data-guest-join-continue=/);

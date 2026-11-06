@@ -79,7 +79,8 @@ const { requireAdultAttestation } = require('../services/adult-attestation');
 const SESSION_DAYS = 90;
 
 // Email password-reset magic link. The 30-minute figure is repeated in the
-// password_reset mail template copy (src/services/mail/templates.js).
+// password_reset email template's words (admin console, Email templates; its
+// first version is in src/db/email-template-seeds.js).
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 // Staging mock data (#555): llm_usage is staging:private, so in a

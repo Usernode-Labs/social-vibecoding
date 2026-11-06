@@ -41,7 +41,9 @@
 //   yours  member (app_collaborators status 'member') and not hidden from
 //          Your apps (an app_favorites row with hidden = TRUE), OR favorited
 //          (an app_favorites row with hidden = FALSE) — a favorited app you
-//          are not a member of included.
+//          are not a member of included — OR its community pinned to Home
+//          (home_community_pins; One Home, #6361, where joining pins the
+//          community rather than the app).
 //   more   every other app the viewer has taken part in: posted or reacted
 //          in its chat (any thread), voted on one of its proposals or
 //          governance questions, proposed a change to it (a non-headless
@@ -134,18 +136,21 @@ const DISCUSSIONS_SQL = `
            CASE
              WHEN (member.app_id IS NOT NULL AND NOT COALESCE(fav.hidden, FALSE))
                OR (fav.app_id IS NOT NULL AND NOT fav.hidden)
+               OR home_pin.community_id IS NOT NULL
              THEN 'yours'
              ELSE 'more'
            END AS section
       FROM apps a
       LEFT JOIN member ON member.app_id = a.id
       LEFT JOIN app_favorites fav ON fav.app_id = a.id AND fav.user_id = $1
+      LEFT JOIN home_community_pins home_pin ON home_pin.community_id = a.community_id AND home_pin.user_id = $1
      WHERE a.moderation_suspended_at IS NULL
        AND (NOT a.self_hosted OR $2::boolean)
        AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $1 AND b.app_id = a.id)
        AND ($2::boolean OR a.view_visibility = 'public' OR member.app_id IS NOT NULL)
        AND (member.app_id IS NOT NULL
             OR (fav.app_id IS NOT NULL AND NOT fav.hidden)
+            OR home_pin.community_id IS NOT NULL
             OR a.id IN (SELECT activity.app_id FROM activity))
   ),
   latest AS (

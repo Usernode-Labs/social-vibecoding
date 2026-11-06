@@ -218,9 +218,10 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
       sessionId = rows[0].id;
       createdRecord = true;
     }
-    // last_activity_at keeps the request showing its author at work on it,
-    // the way a paused session does for 7 days after its last turn
-    // (issue-progress.js): each revision is activity.
+    // last_activity_at records the revision, the way a paused session's turn
+    // does. It is NOT "at work on the request": in-progress readers
+    // (routes/issues.js, issue-progress.js) leave a planning record with no
+    // branch out (#6385).
     await client.query(
       'UPDATE chat_sessions SET spec_md = $2, spec_html = $3, last_activity_at = NOW() WHERE id = $1',
       [sessionId, prepared.markdown, html]

@@ -771,13 +771,13 @@
     "text": "Only items the group voted onto you",
     "description": "Explanation under the \"Assigned to you\" switch in the board filters dialog: the group assigns an item to a person by vote."
   },
-  "boardFilters.created.title": {
-    "text": "Created by you",
-    "description": "Label of a switch in the board filters dialog: show only items this person opened."
+  "boardFilters.yours.title": {
+    "text": "Yours",
+    "description": "Title of a switch in the board's Filters dialog: show only the person's own work as the Homeroom bot tab reads it: everything they filed, built, claimed, voted on, wrote in or chose Notify me on."
   },
-  "boardFilters.created.description": {
-    "text": "Only items you opened yourself",
-    "description": "Explanation under the \"Created by you\" switch in the board filters dialog. To open an item is to file it."
+  "boardFilters.yours.description": {
+    "text": "Only what you filed, built, voted on, wrote in or follow",
+    "description": "Second line under the Yours switch in the board's Filters dialog, saying what it keeps: the person's own work as the Homeroom bot tab reads it: everything they filed, built, claimed, voted on, wrote in or chose Notify me on."
   },
   "createProgress.title.creating": {
     "text": "Creating {{app}}",

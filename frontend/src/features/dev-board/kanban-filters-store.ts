@@ -41,7 +41,7 @@ export interface KanbanFiltersState {
    * #1935: the "Assigned to you" / "Created by you" quick toggles' state, or
    * null when signed out (there is no "you", so they do not render).
    */
-  quick?: { assignedToMe: boolean; createdByMe: boolean } | null;
+  quick?: { assignedToMe: boolean; yours: boolean } | null;
 }
 
 export const EMPTY_KANBAN_FILTERS: KanbanFiltersState = {

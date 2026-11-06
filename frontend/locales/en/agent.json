@@ -1745,23 +1745,23 @@
   },
   "appContext.about.open.resume": {
     "text": "Resume",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": a verb, goes back to this app, which is still open in the background."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": a verb, goes back to this app, which is still open in the background."
   },
   "appContext.about.open.open": {
     "text": "Open",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": a verb, opens the app."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": a verb, opens the app."
   },
   "appContext.about.open.spinningUp": {
     "text": "Spinning up…",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled while the app is being created and cannot be opened yet."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": shown disabled while the app is being created and cannot be opened yet."
   },
   "appContext.about.open.notRunning": {
     "text": "Not running",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled when the app failed to start."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": shown disabled when the app failed to start."
   },
   "appContext.about.open.unavailable": {
     "text": "Unavailable",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled when the app cannot be opened and its state is not known."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": shown disabled when the app cannot be opened and its state is not known."
   },
   "appContext.invite.error.generic": {
     "text": "Something went wrong. Try again.",
@@ -2025,15 +2025,15 @@
   },
   "appContext.about.added": {
     "text": "Added",
-    "description": "Text of the disabled button in the About pane of the app menu, beside a check mark, once the app is in the person's My apps list."
+    "description": "Text of the disabled button in the About pane of the app menu, beside a check mark, once the app is in the person's Pinned apps list."
   },
   "appContext.about.addToMyApps": {
-    "text": "Add to My apps",
-    "description": "Button in the About pane of the app menu: adds this app to the person's own list of apps on Home. \"My apps\" is that list's name."
+    "text": "Pin to Home",
+    "description": "Button in the About pane of the app menu: adds this app to the person's own list of apps on Home. \"Pinned apps\" is that list's name."
   },
   "appContext.about.invite": {
     "text": "Invite",
-    "description": "Button in the About pane of the app menu, beside Added or Add to My apps, for a member of the app's community. A verb: opens the pane that makes an invite link to the community."
+    "description": "Button in the About pane of the app menu, beside Added or Pin to Home, for a member of the app's community. A verb: opens the pane that makes an invite link to the community."
   },
   "appContext.about.contributors.heading": {
     "text": "Contributors",
@@ -2221,7 +2221,11 @@
   },
   "sidePanel.menu.copyLink": {
     "text": "Copy link",
-    "description": "The one row of the ⋯ menu in the heading beside the AI tab's page: copies a link to the request's, change's or decision's own page, which can be shared with anyone who can see the project."
+    "description": "The first row of the ⋯ menu in the heading beside the AI tab's page: copies a link to the request's, change's or decision's own page, which can be shared with anyone who can see the project."
+  },
+  "sidePanel.menu.openInWorkshop": {
+    "text": "Open in workshop",
+    "description": "The second row of the ⋯ menu in the heading beside the AI tab's page: leaves the AI tab and opens the project's Workshop, with this request, change or decision open in the panel beside its list. 'Workshop' is the name the project's own page gives that place; keep the word sentence-cased as here."
   },
   "sidePanel.linkCopied": {
     "text": "Link copied",

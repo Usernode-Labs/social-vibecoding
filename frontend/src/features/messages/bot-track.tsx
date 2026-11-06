@@ -103,6 +103,14 @@ export function trackLine(track: BotTrack): string {
       return translate('messages:bot.track.line.held.until', { date: when });
     }
   }
+  // #6357: paused for a day after repeated errors, which is not building time.
+  if (work.line?.code === 'cooldown' && track.retryAt) {
+    const date = new Date(track.retryAt);
+    if (!Number.isNaN(date.getTime())) {
+      const when = date.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      return translate('messages:bot.track.line.cooldown.until', { date: when });
+    }
+  }
   if (work.stage === 'waiting_for_you' && track.waitingFor && work.why && NAMED_WAITING_LINES[work.why]) {
     return translate(NAMED_WAITING_LINES[work.why], { username: track.waitingFor });
   }
@@ -233,7 +241,7 @@ const TINT: Record<Tone, string> = {
 const WAIT_GLYPHS: Record<string, Glyph> = {
   question: ChatIcon, plan: ListLinesIcon, needs_detail: PencilSquareIcon, decide: UserIcon, already_works: CheckIcon,
 };
-const HELD_LINES: ReadonlySet<string> = new Set(['held_builds', 'held_waiting', 'on_hold']);
+const HELD_LINES: ReadonlySet<string> = new Set(['held_builds', 'held_waiting', 'on_hold', 'cooldown']);
 const WAITING_LINES: ReadonlySet<string> = new Set(['queued', 'waiting']);
 
 /** Pure: a track's tone and glyph, for its badge and its bar, by its stage. */

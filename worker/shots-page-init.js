@@ -48,3 +48,55 @@ try {
 } catch {
   /* No storage, so no stamp to drop. */
 }
+// #6379: the picture was sometimes taken while the page was still loading,
+// so a request's or change's conversation was missing from it. The patched
+// browser_take_screenshot (patch-playwright-mcp-screenshot.js) waits until
+// the page's own requests are done and its markup has stopped changing;
+// this counts them. Top-level pages only: a frame's requests are not the
+// page's own. Without fetch or XMLHttpRequest the counter stays absent, and
+// the wait reads it as zero.
+try {
+  if (window.top === window) {
+    if (window.__usernodeShotsInFlight == null) window.__usernodeShotsInFlight = 0;
+    const started = () => { window.__usernodeShotsInFlight += 1; };
+    const finished = () => { window.__usernodeShotsInFlight = Math.max(0, window.__usernodeShotsInFlight - 1); };
+    if (typeof window.fetch === 'function') {
+      const originalFetch = window.fetch;
+      window.fetch = function fetch(...args) {
+        started();
+        let answered;
+        try {
+          answered = originalFetch.apply(this, args);
+        } catch (error) {
+          finished();
+          throw error;
+        }
+        return Promise.resolve(answered).finally(finished);
+      };
+    }
+    if (typeof window.XMLHttpRequest === 'function' && window.XMLHttpRequest.prototype
+        && typeof window.XMLHttpRequest.prototype.send === 'function') {
+      const proto = window.XMLHttpRequest.prototype;
+      const originalSend = proto.send;
+      proto.send = function send(...args) {
+        started();
+        // loadend fires once whether it loaded, failed or was aborted.
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          finished();
+        };
+        if (typeof this.addEventListener === 'function') this.addEventListener('loadend', done);
+        try {
+          return originalSend.apply(this, args);
+        } catch (error) {
+          done();
+          throw error;
+        }
+      };
+    }
+  }
+} catch {
+  /* A page whose fetch cannot be wrapped is photographed as it is. */
+}

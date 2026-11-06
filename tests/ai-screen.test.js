@@ -1484,7 +1484,8 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // the keyboard the kit measures from the screen.
   assert.match(css, /html\.un-kb body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{ bottom: var\(--un-kb-inset, 0px\); \}/);
   assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-col-w: calc\(var\(--ai-room\) \/ 2\);/);
+  assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-preview-w: max\(320px, min\(var\(--ai-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 320px\)\)\);\s+--ai-col-w: calc\(var\(--ai-room\) - var\(--ai-preview-w\)\);/,
+    'halves until the preview\'s edge is dragged, the thread the rest');
   const page = css.slice(css.indexOf('body:has(#ai-screen:not(.hidden)) {'), css.indexOf('/* A phone: the whole of the page, over the drawer'));
   assert.equal((page.match(/100vw/g) || []).length, 0,
     'no width here is taken from the window: the room is the page\'s usable box, and every other is taken from the room');
@@ -1500,20 +1501,45 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // 2026 it sets Main's own width under its own key.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
-  assert.match(src, /import \{ AI_MAIN_WIDTH_KEY \} from '\.\.\/side-panel\/resize';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider panelRef=\{mainRef\} shown=\{docked\} id="ai-main-divider" controls="ai-main-pane" widthKey=\{AI_MAIN_WIDTH_KEY\} \/>/);
+  assert.match(src, /import \{\n\s+AI_MAIN_WIDTH_KEY,\n\s+AI_PREVIEW_COLUMN_WIDTH_KEY,\n\s+AI_PREVIEW_WIDTH_KEY,[^}]*\} from '\.\.\/side-panel\/resize';/);
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{docked\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeUp \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeUp \? threadProbe : undefined\}\s+watch=\{threeUp \? previewRef : undefined\}\s+\/>/);
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
+});
+
+test('a preview beside the thread: both edges drag, each the width of the column after it (#6359)', () => {
+  const css = read('public/css/app.css');
+  const src = read('frontend/src/features/ai/index.tsx');
+  // The thread's edge was hidden while a preview was open; now only in halves,
+  // where the list has stepped aside.
+  assert.doesNotMatch(css, /#ai-screen\[data-ai-preview\] \.ai-main-pane > \.side-panel-divider \{ display: none; \}/);
+  assert.match(css, /#ai-screen:not\(\[data-ai-preview="three"\]\)\[data-ai-preview\] \.ai-main-pane > \.side-panel-divider \{ display: none; \}/);
+  assert.doesNotMatch(css, /its edge is no\s+handle then/);
+  // The chosen widths are honoured, held to every column's floor.
+  assert.match(css, /--ai-preview-w: max\(360px, min\(var\(--ai-preview-chosen-w, var\(--ai-preview-auto\)\), calc\(var\(--ai-room\) - 800px\)\)\);/);
+  assert.match(css, /--ai-col-w: max\(320px, min\(var\(--ai-col-chosen-w, /);
+  // Each handle sits on its own line.
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="three"\] #ai-main-divider \{\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);/);
+  assert.match(css, /#ai-preview-divider \{\s+--divider-at: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
+  // The preview's own divider, not drawn where the preview is the whole screen.
+  assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{docked\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
+  assert.match(src, /const threeUp = detailHere && layout === 'three';/);
+  assert.match(src, /const endAt = inlineStartOf\(box\);/, 'the thread is measured to where the preview begins');
+  assert.match(src, /neighbourMin: \(probe\.neighbourMin \?\? 0\) \+ Math\.max\(0, roomEnd - endAt\), endAt/,
+    'and its bound keeps the preview as it is drawn, the room app.css leaves the thread');
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /new ResizeObserver\(\(\) => settle\(\)\)/,
+    'read again when the preview is resized');
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /probe: measure = probeLayout,/);
 });
 
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {
   assert.equal(message('core:tabs.ai'), 'Homeroom bot');
   const css = read('public/css/app.css');
-  // Measured in the bar's font: 77px of label in a 94px seat at 375, 70 in 88 at 360.
-  // Home and You give Messages and the bot room (overnight audit M01): a lit
-  // Messages pill clears the bot's name by about 10px.
-  assert.match(css, /#platform-tabs \{ grid-template-columns: \.85fr 1\.3fr 1\.4fr 1\.1fr \.85fr; \}/,
-    'Communities, second, and Homeroom bot, third, take the wide seats');
-  assert.match(css, /#platform-tabs \{ grid-template-columns: \.85fr 1\.25fr 1\.35fr 1\.1fr \.85fr; \}/, 'a little less on the smallest phones');
+  // One Home (#6361): four seats, Home · Homeroom bot · Messages · You. The
+  // bot's holds the longest word, so it is the widest; Messages next, so a
+  // lit Messages pill still clears the bot's name (overnight audit M01).
+  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.4fr 1\.15fr 1fr; \}/,
+    'Homeroom bot, second, takes the wide seat');
+  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.35fr 1\.15fr 1fr; \}/, 'a little less on the smallest phones');
   assert.match(css, /:is\(#platform-tab-workshop, #platform-tab-ai\) \.platform-tab-label \{\s+letter-spacing: -\.02em;\s+overflow: visible;\s+text-overflow: clip;\s+\}/,
     'tightened and let out of the cell rather than cut');
   assert.match(css, /html\[data-side-strip\] #platform-tab-ai \.platform-tab-label \{\s+font-size: 9\.5px;\s+letter-spacing: -\.02em;\s+line-height: 1\.05;\s+white-space: normal;\s+text-align: center;\s+\}/,
@@ -1690,8 +1716,12 @@ test('one column state: where each row goes, the row it lights, its address and 
   // The page reads it once; nothing else keeps a copy.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /: panelRoute \? \{ at: 'page', route: panelRoute \}/);
-  assert.match(src, /showAddress\(columnAddress\(columnShown\)\);/);
-  assert.equal((src.match(/showAddress\(/g) || []).length, 2, 'one writer of the address, besides its definition');
+  // 5 Nov 2026: the column's address carries the filter the chips set
+  // (./filter-address.ts), and the chips write it back in place: two writers,
+  // the column's and the filter's, besides its definition.
+  assert.match(src, /showAddress\(withFilter\(columnAddress\(columnShown\), \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
+  assert.match(src, /showAddress\(withFilter\(window\.location\.hash, \{ projects: next\.picked, kind: next\.historyKind \}\)\);/);
+  assert.equal((src.match(/showAddress\(/g) || []).length, 3, 'the column\'s writer and the filter\'s, besides its definition');
   assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(row\) === lit,/);
   assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(th\) === lit,/);
 });

@@ -85,7 +85,9 @@ function fromStage(s, row) {
         ? state('planning', { since, line: { code: 'retry_plan' } })
         : state('reading', { since, line: { code: 'queued', ...(row.queue_place ? { place: Number(row.queue_place) } : {}) } });
     case 'on_hold':
-      return state('reading', { since, line: { code: 'on_hold' } });
+      // #6357: a day's pause after its look threw again and again is not
+      // the week's building time (homeroom-bot-progress.js holdOf).
+      return state('reading', { since, line: { code: s.hold === 'cooldown' ? 'cooldown' : 'on_hold' } });
     case 'held':
       return state('building', { since, line: { code: row.cap_suppressed === 'builds_per_app' ? 'held_builds' : 'held_waiting' } });
     case 'build_queued':
@@ -281,7 +283,7 @@ function placeFor(item, viewer = {}) {
       if (!own) return null;
       // Waiting its turn, or held: Waiting. Under way: In progress.
       const code = item.line && item.line.code;
-      const waiting = code === 'queued' || code === 'held_builds' || code === 'held_waiting' || code === 'on_hold'
+      const waiting = code === 'queued' || code === 'held_builds' || code === 'held_waiting' || code === 'on_hold' || code === 'cooldown'
         || code === 'waiting' || code === 'update_queued' || code === 'planning_with_you' || code === 'retry_plan'
         || item.stage === 'checking';
       return waiting ? 'waiting' : 'next';
@@ -345,6 +347,7 @@ const WORDS = Object.freeze({
   'work.line.heldBuilds': "Waiting for one of the project's builds to finish",
   'work.line.heldWaiting': 'Waiting for changes up for a vote to be decided',
   'work.line.onHold': "On hold until Monday: this week's building time is used up",
+  'work.line.cooldown': 'Paused after repeated errors: Homeroom bot tries again later',
   'work.line.reply': 'Reading your reply',
   'work.line.retryPlan': 'Trying the plan again',
   'work.line.reviewing': 'Reviewing, round {{round}} of {{of}}',
@@ -365,7 +368,7 @@ const WORDS = Object.freeze({
 
 // A request in the reading stage nobody has started on yet, and one ready to
 // build that waits its turn, are said so (the same stages, in plainer words).
-const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'first_version_wait']);
+const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'cooldown', 'first_version_wait']);
 const READY = new Set(['queued', 'held_builds', 'held_waiting']);
 
 const camel = (s) => String(s).replace(/_([a-z])/g, (_m, c) => c.toUpperCase());

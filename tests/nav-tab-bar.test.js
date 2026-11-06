@@ -73,8 +73,9 @@ test('the tabs are the ones the bar renders', () => {
   assert.equal(tabForScreen('home-screen', true), 'home', 'and answers as the phone everywhere else');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   const keys = [...bar.matchAll(/key: '([a-z]+)' as const/g)].map((m) => m[1]);
-  // The rail's order is the markup's; app.css orders the phone's five.
-  assert.deepEqual(keys, ['home', 'discover', 'messages', 'ai', 'workshop', 'me']);
+  // The rail's order is the markup's; app.css orders the phone's four and
+  // draws neither Discover nor Communities (One Home, #6361: AI above Messages).
+  assert.deepEqual(keys, ['home', 'discover', 'ai', 'messages', 'workshop', 'me']);
   assert.match(bar, /const tab = routedTab === 'messages' && bot \? 'ai' : routedTab;/);
   assert.match(read('frontend/src/features/messages/store.ts'),
     /bot: !!state\.route\.open && !!botId && state\.route\.conversationId === botId,/);
@@ -1283,7 +1284,7 @@ test('the still-open dot only on the apps kept alive, said aloud; the app on scr
   // heading, no rows, and hidden.
   const html = renderComponent(PINNED, 'RailPinned', {});
   assert.equal(html, '<div id="platform-rail-pinned" class="platform-rail-pinned hidden" role="group" aria-labelledby="platform-rail-pinned-label">'
-    + '<div class="platform-rail-head"><span id="platform-rail-pinned-label" class="platform-rail-head-label">Pinned</span></div></div>');
+    + '<div class="platform-rail-head"><span id="platform-rail-pinned-label" class="platform-rail-head-label">Recents</span></div></div>');
   // A closed app shrinks into its App row, and a resumed one grows out of it.
   const motion = read('frontend/src/features/nav/resume-motion.ts');
   assert.match(motion, /doc\.querySelectorAll\('#platform-tabs a\.platform-rail-app\[data-rail-app\]'\)/);
@@ -1392,15 +1393,16 @@ test('the folded Duo\'s corner shifts the bar\'s cells, never its shape (6072)',
 
 test('the phone\'s bar is read in the order it is drawn; the markup keeps the rail\'s (audit N01)', () => {
   const { PHONE_TAB_ORDER, phoneReadingOrder } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
-  // The same five, in the order app.css's `order` draws them (TWO ORDERS, ONE MARKUP).
+  // The four, in the order app.css's `order` draws them (TWO ORDERS, ONE
+  // MARKUP); One Home (#6361) took the Communities tab off the bar.
   assert.deepEqual([...PHONE_TAB_ORDER],
-    ['platform-tab-home', 'platform-tab-workshop', 'platform-tab-ai', 'platform-tab-messages', 'platform-tab-me']);
+    ['platform-tab-home', 'platform-tab-ai', 'platform-tab-messages', 'platform-tab-me']);
   const css = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
   const block = css.slice(css.indexOf('/* TWO ORDERS, ONE MARKUP'));
-  const drawn = ['home', 'workshop', 'ai', 'messages']
+  const drawn = ['home', 'ai', 'messages']
     .map((k) => [k, Number(new RegExp(`#platform-tab-${k} \\{ order: (-?\\d+); \\}`).exec(block)[1])])
     .sort((a, b) => a[1] - b[1]).map(([k]) => `platform-tab-${k}`);
-  assert.deepEqual(PHONE_TAB_ORDER.slice(0, 4), drawn, 'aria-owns follows the bar\'s own order');
+  assert.deepEqual(PHONE_TAB_ORDER.slice(0, 3), drawn, 'aria-owns follows the bar\'s own order');
   assert.equal(phoneReadingOrder(true, false), PHONE_TAB_ORDER.join(' '));
   assert.equal(phoneReadingOrder(false, false), null, 'the rail reads in its markup order');
   assert.equal(phoneReadingOrder(true, true), null, 'the Duo strip is left alone');
@@ -1421,12 +1423,12 @@ test('the Communities ring overhangs instead of pushing its label down (audit N0
 
 test('on a phone the Tab key moves through the bar in its drawn order (audit N01 follow-up)', () => {
   const { nextPhoneTab } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
-  assert.equal(nextPhoneTab('platform-tab-home', false), 'platform-tab-workshop');
-  assert.equal(nextPhoneTab('platform-tab-workshop', false), 'platform-tab-ai');
+  assert.equal(nextPhoneTab('platform-tab-home', false), 'platform-tab-ai');
   assert.equal(nextPhoneTab('platform-tab-ai', false), 'platform-tab-messages');
   assert.equal(nextPhoneTab('platform-tab-messages', false), 'platform-tab-me');
   assert.equal(nextPhoneTab('platform-tab-me', false), null, 'out of You: the browser\'s, as before');
-  assert.equal(nextPhoneTab('platform-tab-workshop', true), 'platform-tab-home');
+  assert.equal(nextPhoneTab('platform-tab-ai', true), 'platform-tab-home');
+  assert.equal(nextPhoneTab('platform-tab-workshop', false), null, 'not drawn on the bar since One Home (#6361)');
   assert.equal(nextPhoneTab('platform-tab-home', true), null, 'back out of Home: the browser\'s');
   assert.equal(nextPhoneTab('platform-tab-discover', false), null, 'the rail\'s alone');
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/nav/tab-bar.tsx'), 'utf8');

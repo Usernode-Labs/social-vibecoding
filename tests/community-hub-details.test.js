@@ -177,8 +177,11 @@ test('the hub draws no charts: who is around is faces, a count and names, and no
   // #3969 added the Accessibility settings check above it, so it moved
   // 288 → 289; #5992 removed the two feedback destination checks above it,
   // so it moved 289 → 287; #6000 added the Propose reopening check above it,
-  // so it moved 287 → 288.)
-  const declared = JSON.parse(read('dapp.json')).tests[288];
+  // so it moved 287 → 288; One Home, #6361, retired three Discover checks
+  // above it, so it is found by what it reads now, not by its place.)
+  const declared = JSON.parse(read('dapp.json')).tests
+    .find((t) => (t.expectSelector || '').includes(':has(.dev-ws-hero [data-ws-active-people])'));
+  assert.ok(declared, 'the check is declared');
   assert.match(declared.expectSelector, /:has\(\.dev-ws-hero \[data-ws-active-people\]\) > \.dev-ws-tabbody > \[data-ws-hub-for-you\] > \.dev-ws-foryou > \[data-ws-hub-needs-votes\] > button\[data-ws-hub-needs-open\]$/);
   assert.equal(declared.expectText, 'to vote');
 });
@@ -301,30 +304,49 @@ test('For you: Needs you counts the votes you owe, not the requests nobody has c
   assert.doesNotMatch(card(claims), /requests? nobody has picked up/, 'queue rows are not requests any more');
 });
 
-test('#3489: Your work stays on the hub with nothing in progress, and says so', () => {
+test('#3489, 5 Nov 2026: For you\'s Your work row opens the Homeroom bot tab narrowed to this project, for a signed-in viewer', () => {
   const { ForYouCard } = loadTsx(HUB);
   const card = (mine, over = {}) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine, alone: false,
     data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
   }));
-  const empty = card({ viewer: true, count: 0, shown: 3, rows: [] });
-  assert.match(empty, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop">/,
-    'a door to the Workshop, where your work is listed in full');
-  assert.match(empty, /<div class="[^"]*">Your work<\/div><div class="[^"]*"><span data-ws-mine-empty="">No work in progress\.<\/span><\/div>/);
-  assert.doesNotMatch(empty, /dev-ws-foryou-count|in progress<\/span>/, 'no count of zero');
+  // Your work is the Homeroom bot tab's (frontend/src/features/ai/): the row
+  // counts it there, in the tab's words, and opens it on this project. Its
+  // first render says nothing of counts; they load in an effect
+  // (../frontend/src/features/ai/desk.ts).
+  const html = card({ viewer: true });
+  const link = (html.match(/<a [^>]*href="#homeroom-bot\?project=garden"[^>]*>/) || [''])[0];
+  assert.ok(link, 'a link, the browser\'s own ways to open it included');
+  assert.match(link, /class="[^"]*dev-ws-foryou-row[^"]*"/);
+  assert.match(link, /title="Opens Homeroom bot, showing your work in Garden"/);
+  assert.match(link, /data-ws-desk-open="" data-ws-mine-card=""/);
+  assert.match(html, /<div class="[^"]*">Your work<\/div>/);
+  assert.doesNotMatch(html, /data-ws-mine-open="workshop"|No work in progress/, 'no longer a door to the Workshop\'s list');
   // Only a signed-in viewer's hub draws it: a visitor has no work to list.
-  // A project nobody else is in says it the same way, from its first day
+  // A project nobody else is in draws it the same way, from its first day
   // (15 Oct 2026, tests/hub-just-you.test.js).
-  assert.doesNotMatch(card({ viewer: false, count: 0, shown: 3, rows: [] }), /data-ws-mine-card/);
-  assert.match(card({ viewer: true, count: 0, shown: 3, rows: [] }, { alone: true, data: community({ audience: 'solo', member_count: 1 }) }),
-    /data-ws-mine-open="workshop"[\s\S]*<span data-ws-mine-empty="">No work in progress\.<\/span>/);
-  // With work: the first of it, and how many, in words.
-  const work = (key, title, attrs = {}) => ({ t: 'card', key, card: { title: { text: title }, attrs } });
-  const busy = card({ viewer: true, count: 2, shown: 3, rows: [work('mine:proposal:7', 'Add multi-language support across platform and apps'), work('mine:issue:9', 'Tags')] });
-  assert.match(busy, /<span data-ws-mine-first="mine:proposal:7">Add multi-language support across platform and apps<\/span>/);
-  assert.match(busy, /<span class="dev-ws-foryou-count">2 in progress<\/span>/);
-  assert.doesNotMatch(busy, />Tags</, 'the rest are the Workshop\'s');
+  assert.doesNotMatch(card({ viewer: false }), /data-ws-mine-card/);
+  assert.match(card({ viewer: true }, { alone: true, data: community({ audience: 'solo', member_count: 1 }) }), /href="#homeroom-bot\?project=garden"/);
   assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+places=\{drawerOn\}\s+\/>/);
+  // The counts: the tab's own lists for this project, by the tab's own rules.
+  const { deskOf, deskWords, deskLine } = loadTsx('frontend/src/features/ai/desk.ts');
+  const app = { slug: 'garden', name: 'Garden' };
+  const other = { slug: 'other', name: 'Other' };
+  // Each row where its work state puts it (lib/work-state.ts).
+  const thread = (id, work, group, a = app) => ({ threadId: id, number: id, kind: 'work', title: `T${id}`, app: a, change: null, href: `#app/${a.slug}/dev/issues/${id}`, group, work: { why: null, reason: null, line: null, since: null, ...work }, at: null });
+  const d = deskOf('garden', [{ kind: 'proposal', id: 1, number: 40, title: 'Dark mode', app }], {
+    private: [], needs: [thread(2, { stage: 'waiting_for_you', why: 'plan' }, 'needs')],
+    next: [thread(3, { stage: 'building' }, 'next'), thread(4, { stage: 'building' }, 'next', other)],
+    waiting: [thread(5, { stage: 'up_for_vote' }, 'waiting')], live: [],
+  });
+  assert.deepEqual([d.ready, d.needs, d.progress, d.waiting, d.first], [true, 2, 1, 1, 'Dark mode'], 'this project\'s share, the first thing owed first');
+  assert.deepEqual(deskWords(d), { id: 'project:workshop.desk.both', values: { needs: 2, progress: 1 } });
+  assert.deepEqual(deskLine(d), { id: 'project:workshop.desk.next', values: { title: 'Dark mode' } });
+  const none = deskOf('garden', [], { private: [], needs: [], next: [], waiting: [], live: [] });
+  assert.equal(deskWords(none), null, 'a zero says nothing');
+  assert.deepEqual(deskLine(none), { id: 'project:workshop.desk.empty' });
+  assert.equal(deskWords(deskOf('garden', null, null)), null, 'nothing read yet: nothing said');
+  assert.equal(message('project:workshop.desk.empty'), 'Nothing of yours here right now.');
 });
 
 test('the hub\'s channel record names each room\'s own write route, which the Discussion reads', () => {

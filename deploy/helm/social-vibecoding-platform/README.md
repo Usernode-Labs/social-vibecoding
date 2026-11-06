@@ -388,6 +388,50 @@ These values render as explicit environment variables and take precedence over
 the same keys in an imported Secret or ConfigMap. Zero idle-timeout values are
 preserved, including the supported `sessionAutopauseIdleMs: 0` disable switch.
 
+`config.previewSleepAfterMs` defaults to one hour. It scales idle preview
+Deployments to zero while retaining their routes, image and database for the
+existing wake path. Active coding, builds, checks and shots retain their
+exclusions. Zero disables preview sleeping; this is separate from six-hour
+staging teardown and worker eviction.
+
+`config.appResourceProfiles` is an explicit map of production app IDs to
+`small` or `standard`. Standard requests 100m CPU / 128 MiB; small requests
+25m / 64 MiB. Both keep the existing 1 CPU / 1 GiB ceilings. Previews,
+Homeroom, self-hosted apps and internal capture fixtures keep standard
+resources. Choose small only after measuring startup and steady traffic:
+CPU requests also determine the app's share during contention. The controller
+changes at most one ready app per minute, preserving existing ceilings and
+storage settings. Removing an assignment restores a previously small app to
+standard. A request change rolls that app's Pod using its existing rollout
+strategy; it does not change quotas or authorize additional app slots.
+
+Production sleeping is a separate, opt-in policy. `config.appSleepAppIds`
+defaults to `[]`; `config.appSleepAfterMs` defaults to one hour. Select only
+request-driven apps with durable external state and no timers, scheduled
+work, subscriptions or background queues. Homeroom, previews and deployments
+in progress are excluded. All live gateway Pods must supply fresh activity
+data over private port 3001: active HTTP requests, streams and WebSockets
+prevent sleep; missing telemetry keeps apps awake. The database records
+authorized access, and health probes neither count as activity nor wake apps.
+
+An authorized visit schedules a conductor wake, bounded to two apps globally.
+The gateway holds the original request for up to 45 seconds and forwards it
+once when ready. A longer browser cold start shows `/__app_starting` with
+automatic retries; API clients receive 503 and `Retry-After: 5`. Scale-to-zero
+releases the Pod's reservations, processes and database connections, but
+retains its Service, Ingress, image and database. Check the first sleep and
+wake, concurrent visits, a POST and a persistent connection before expanding
+the allowlist. To roll back, set `appSleepAfterMs: 0`, verify every recorded
+sleeping app is ready at one replica, then clear the allowlist. Keep the
+gateway and its telemetry rules until all apps are awake. Existing deployments
+whose routes bypass the gateway stay awake until their normal redeploy.
+
+A lost scale-down response is treated as an uncertain write. The SQL wake
+claim is retained and a bounded conductor wake is requested, even if the
+provider already accepted zero replicas. Access and rollback can retry that
+wake if its first enqueue fails. Only a definitive conflict/not-found
+rejection clears the failed sleep claim immediately.
+
 The session ceiling counts logical active/promoted coding sessions, including
 sessions with evicted workers. It does not reserve a worker or preview for each
 session. Raising it requires matching namespace compute/object/PVC budgets,
@@ -564,8 +608,8 @@ drafts, first come first served within each. Main-watch's run of the unit
 suite on a merge commit has one slot of its own besides these and goes first
 for any free one. The count is the live `check_runs` rows, so it survives a
 platform restart, and a run that was waiting keeps its place when the next
-leader re-drives it. Size it so the check Jobs' requests (4 CPU each, two per
-run) leave room in the worker namespace's ResourceQuota for coding workers,
+leader re-drives it. Size it so all configured shard requests
+leave room in the worker namespace's ResourceQuota for coding workers,
 and so the previews under test do not saturate the shared Postgres primary.
 `0` turns the queue off.
 
@@ -574,12 +618,49 @@ node pool for check Jobs as the pool nodes' label `key=value`, for example
 `usernodelabs.org/node-pool=cpu-heavy`. Label the pool's nodes with that pair
 and taint them with the same pair and `NoSchedule`, so nothing else is
 scheduled there. Capture and unit-suite Jobs then tolerate the taint and
-prefer those nodes. It is a preference, so checks still run on the other nodes
-when the pool is full or down. With a pool set, checks drop their hostname
+prefer those nodes by default. With a pool set, checks drop their hostname
 spread: on a pool of one large node it would push Pods back onto the small
-nodes. A value that is not a valid label pair is logged once and ignored.
-Coding workers, builds, apps and previews are not affected. Changes apply to
-newly created check Jobs.
+nodes. In this default mode a full or unavailable pool can spill work onto
+other nodes, and an invalid label pair is logged once and ignored.
+
+Set `config.checkNodePoolRequired: true` to require that pool for capture,
+unit-suite, kpack and BuildKit Pods. An invalid label then fails configuration
+instead of falling back. New work waits for a usable node before creating its
+Job or Build, retrying transient monitoring failures within that wait. Build
+admission waits at most 15 minutes, then reports an infrastructure failure;
+malformed pool labels or metrics URLs fail immediately. The distributed
+checks queue keeps waiting until admitted or cancelled. Previously built
+images can still be reused. Existing work
+finishes under its original scheduling rules. Coding workers, apps and
+preview servers keep their existing placement.
+
+Required-pool mode also requires a positive checks-queue limit and disables
+speculative early unit suites (`EARLY_UNIT_SUITE=0`). The runtime enforces
+this even when an imported environment enables early suites. Every unit suite
+then runs after its build, within the admitted checks run, so the early
+launcher cannot race past the shared budget. This can lengthen proposal
+checks; it does not skip tests. Non-required mode keeps its existing early
+suite switch. Let previously started early Jobs finish before evaluating the
+new steady-state envelope.
+
+In required mode, `config.checkPoolMetricsUrl` should name the existing
+Prometheus base URL. Export only the pool label with kube-state-metrics'
+`metricLabelsAllowlist`, for example `nodes=[usernodelabs.org/node-pool]`, and
+allow the platform to reach Prometheus. Admission reads allocatable CPU,
+memory, Pod slots, readiness, cordoning and taints without cluster-wide node
+permissions. Missing, stale or invalid metrics pause admission. Generic
+installations without this URL may instead grant their runtime identity
+`list` on nodes themselves; the chart does not grant it.
+
+The admission envelope reserves 8 CPU / 8 GiB for node services, 8 CPU /
+16 GiB for each of the kpack and BuildKit namespaces, and the main-watch
+suite before admitting proposal runs. Keep both namespaces' request quotas
+within those budgets. It derives each proposal's cost from configured unit
+and capture shards and caps it at `checksMaxConcurrentRuns`. With defaults,
+a proposal requests 10.5 CPU / 12 GiB. These are scheduling reservations;
+hard ceilings can still oversubscribe the batch node and require monitoring.
+Deploy the metric label first, then require the pool. A pool outage queues
+work instead of consuming app-serving nodes; it does not bypass checks.
 
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker

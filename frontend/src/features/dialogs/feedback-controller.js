@@ -381,7 +381,9 @@ export function init() {
     // traversal and the viewer ended up back where they sent the report from.
     // Closing second finds the page already moved off the record, and
     // lib/back-stack.ts leaves a record it is not standing on alone.
-    const SEE_MINE_ROUTE = '#profile/your-requests';
+    // 5 Nov 2026: your requests are the Homeroom bot tab's (History lists the
+    // finished ones; the lists above it what is still moving).
+    const SEE_MINE_ROUTE = '#homeroom-bot';
     const openMine = () => {
       location.hash = SEE_MINE_ROUTE;
       closeFeedback();

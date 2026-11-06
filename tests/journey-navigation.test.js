@@ -62,8 +62,9 @@ test('every screen root maps to a navigation code the server accepts', () => {
   const overlays = ['username_sheet', 'terms_sheet', 'join_sheet', 'tour'];
   // `assistant` was Global Chat's screen. Nothing reports it since Global
   // Chat was removed; the collector keeps the code so the visits already
-  // recorded still read (src/services/ui-telemetry.js).
-  const retired = ['assistant'];
+  // recorded still read (src/services/ui-telemetry.js). `my_proposals` was
+  // Me › Your work's screen, which History on the Homeroom bot tab replaced.
+  const retired = ['assistant', 'my_proposals'];
   assert.deepEqual([...codes, ...overlays, ...retired].sort(), [...serverTelemetry.NAV_SCREENS].sort(),
     'the shell and the collector name the same screens');
   for (const code of retired) assert.ok(!codes.has(code), `${code} is no screen's any more`);

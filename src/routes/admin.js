@@ -47,6 +47,8 @@ const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const { featuredAppsAdminRoutes } = require('./admin-featured-apps');
+const { emailTemplateAdminRoutes } = require('./admin-email-templates');
+const { emailImageAdminRoutes } = require('./email-images');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
 const previewProjectsSetting = require('../services/preview-projects-setting');
@@ -2063,6 +2065,16 @@ function adminRoutes(config) {
   // (routes/featured-admin.js).
   router.use(featuredAppsAdminRoutes(pool));
 
+  // ── Email templates ────────────────────────────────────────
+  //
+  // The templates and layouts every platform email is written from
+  // (routes/admin-email-templates.js), behind the router-level
+  // adminMiddleware above; writes and test sends need a full admin.
+  router.use(emailTemplateAdminRoutes(pool, config));
+  // The images those templates show (routes/email-images.js): the upload
+  // needs a full admin; the bytes are served publicly from server.js.
+  router.use(emailImageAdminRoutes(pool));
+
   // ── Anthropic credits (#555) ───────────────────────────────
   //
   // The organisation's remaining Anthropic credit, for the drawer's
@@ -2246,6 +2258,11 @@ function adminRoutes(config) {
       } catch (err) {
         log.warn('admin', 'managed OpenRouter allowance sync skipped', { userId, err: err.message });
       }
+      // #6377: a limit raised may give this person's week room again; what it
+      // held back is released now. Best-effort: the limit is already saved and
+      // a release that fails never changes this answer.
+      await homeroomBot.releaseAllowanceHolds(pool).catch((err) =>
+        log.warn('admin', 'Could not release requests held for a weekly limit change', { userId, err: err.message }));
       res.json({ ok: true, weekly_limit_cents: rows[0].weekly_limit_cents });
     } catch (err) {
       log.error('admin', 'Per-user weekly limit update failed', { message: err.message });

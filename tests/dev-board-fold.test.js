@@ -1730,7 +1730,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // 752 → 753: #6134's Needs attention card. It needs its own ?demo= fixture
   // (connectors-attention), so it has no check to fold into.
-  checkCap.assertPinned(DAPP.tests.length, 753);
+  // 753 → 748: −5 (One Home, #6361) Home's Discover lane went, and its three
+  // checks with it (populated empty note, the add round trip, the drag onto
+  // the grid), the Communities tab's glyph on All communities (the tab is
+  // drawn on neither bar), and the places nested under a sidebar row (the
+  // hub lists them). Its new states folded into existing checks instead.
+  //
+  // 748 → 749: +1 (5 Nov 2026, the Homeroom bot tab is the one place for
+  // your work) a link's project filter (#homeroom-bot?project=<slug>) lights
+  // that project's chip. The checks of the removed Workshop lists and Me ›
+  // Your work were retargeted in place; the address is a route of its own,
+  // so it has no check to fold into.
+  checkCap.assertPinned(DAPP.tests.length, 749);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

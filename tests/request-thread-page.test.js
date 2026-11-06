@@ -314,6 +314,28 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
 });
 
+// #6385: posting a plan writes a branchless planning record, and that is not
+// work on the request. With the route no longer reporting it as in_progress
+// or as myPrSessionId, the card reads like any request nobody has started:
+// "Nobody is working on this yet." and the start it would offer anyway.
+test('a request where you only posted a plan offers a start, not Continue your work', () => {
+  const i18n = require('./lib/platform-i18n').englishPlatformI18n();
+  const av = appView();
+  const onlyPlan = issue({ in_progress: null, myPrSessionId: null });
+  const view = av._requestStatusView(onlyPlan);
+  assert.equal(view.lead, i18n.t('changes:request.status.lead.nobody'));
+  assert.ok(view.action, 'the card still offers the next step');
+  assert.notEqual(view.action.label, i18n.t('changes:request.status.action.continueWork'));
+  assert.notEqual(view.action.act && view.action.act.fn, 'openChangeWorkspace',
+    'nothing opens a change workspace that does not exist');
+  // "Build it with your own Claude Code" is offered again, as for anyone else.
+  assert.equal(view.ownAgent, true);
+  av._ghIssues = [onlyPlan];
+  const labels = JSON.parse(JSON.stringify(av._requestMenuItems(onlyPlan).map((item) => item.label)));
+  assert.ok(!labels.includes(i18n.t('changes:issue.menu.startMore')),
+    '⋯ does not offer Start more work because of a posted plan');
+});
+
 // #5987: "Build it with your own Claude Code" is offered only where starting
 // work on the request is still open to this viewer.
 test('the status card offers your own Claude Code only on a request still open to start', () => {

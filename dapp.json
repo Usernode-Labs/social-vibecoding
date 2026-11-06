@@ -891,10 +891,10 @@
       ]
     },
     {
-      "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions)",
+      "name": "Me: Your work's rows open the Homeroom bot tab's History on Changes, Requests and Votes",
       "path": "/?demo=1#profile",
       "expectText": "Your work",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
+      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#homeroom-bot/history?kind=change\"] + #profile-row-feedback[href=\"#homeroom-bot/history?kind=request\"] + #profile-row-votes[href=\"#homeroom-bot/history?kind=vote\"]"
     },
     {
       "name": "The retired History address opens the Challenges tab, and the tabs are Challenges and Standings",
@@ -919,16 +919,16 @@
       "expectSelector": "#profile-friends-sheet #profile-friends:has(#profile-friend-search-input):has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
     },
     {
-      "name": "Your changes groups what you started: in progress, then merged, then closed (UI overhaul)",
+      "name": "Your changes' old address lands on History, narrowed to changes",
       "path": "/?demo=1#profile/your-changes",
-      "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"changes\"] [data-profile-work-group=\"inProgress\"] ~ [data-profile-work-group=\"merged\"] ~ [data-profile-work-group=\"closed\"]",
-      "expectText": "In progress"
+      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-kind=\"change\"][aria-pressed=\"true\"]",
+      "expectText": "Changes"
     },
     {
-      "name": "Your requests lists what you asked for, open then done, with Suggest an improvement at the foot (UI overhaul)",
+      "name": "Your requests' old address lands on History, narrowed to requests",
       "path": "/?demo=1#profile/your-requests",
-      "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"requests\"] [data-profile-work-group=\"open\"] ~ [data-profile-work-group=\"done\"] ~ div > button[data-profile-work-ask]",
-      "expectText": "someone is on it"
+      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-kind=\"request\"][aria-pressed=\"true\"]",
+      "expectText": "Requests"
     },
     {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Linked accounts (#982, #1939)",
@@ -1512,22 +1512,22 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "Create an app is the launcher grid's last tile, not a section below Challenges (re-pointed: Create moved into the grid)",
+      "name": "New community is the last tile of Home's Pinned communities, the one way Home makes a project now (One Home, #6361; it was the launcher grid's last tile)",
       "path": "/?demo=1&shot=create-enabled",
-      "expectSelector": "#home-body:not(:has(#home-create-section)) #home-apps-section #app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
-      "expectText": "New project"
+      "expectSelector": "#home-body #home-apps-section:not(:has(#home-create-tile)) ~ #home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
+      "expectText": "New community"
     },
     {
-      "name": "The Create an app tile is present but locked without app quota, still last in the grid (re-pointed: Create moved into the grid)",
+      "name": "The New community tile is present but locked without app quota, still the last of Pinned communities (One Home, #6361)",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"false\"]:last-child:not([disabled])",
-      "expectText": "New project"
+      "expectSelector": "#home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"false\"][aria-label^=\"New community. \"]:last-child:not([disabled])",
+      "expectText": "New community"
     },
     {
-      "name": "Discover is one flat lane: curated cards then popular, with no sub-group label",
+      "name": "One Home (#6361): Home's last section is Communities to join, after Pinned apps and Pinned communities, and Home draws no Discover lane or continue card",
       "path": "/?demo=1",
-      "expectSelector": "[data-panel-slot=\"discover\"]:not([data-featured=\"0\"]):not([data-popular=\"0\"]) .home-panel:not(:has(.home-discover-divider)):not(:has(.home-discover-lane ~ .home-discover-lane)) .home-discover-rail .app-card.home-discover-card:not(:has(.users-badge))",
-      "expectText": "See all"
+      "expectSelector": "#home-body:not(:has(#home-discover-section)):not(:has(#home-continue-card)) #home-apps-section ~ #home-communities-section ~ #home-join-section:not([hidden]) > h2.home-area-label",
+      "expectText": "Communities to join"
     },
     {
       "name": "Directory leads with Featured and leaves a flagged app out (#1523, #5267, #5928)",
@@ -1547,28 +1547,16 @@
       "expectText": "Show less"
     },
     {
-      "name": "With nothing to discover, the block shows its compact note (?shot=discover-empty)",
-      "path": "/?demo=1&shot=discover-empty",
-      "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"][data-popular=\"0\"]:has(.home-panel-browse) .home-panel:not(:has(.home-discover-rail)) .home-discover-empty",
-      "expectText": "No communities to suggest right now"
-    },
-    {
-      "name": "Adding from Discover lands in My apps with no reload, and removing takes it out again (#1567)",
-      "path": "/?shot=discover-add",
-      "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
-      "expectText": "Discover communities"
-    },
-    {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section #home-apps-more:not(.hidden) button",
       "expectText": "Show all"
     },
     {
-      "name": "Each home area is introduced by its own label (#1478)",
+      "name": "Each home area is introduced by its own label (#1478; One Home #6361 calls the first Pinned apps)",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
-      "expectText": "My apps"
+      "expectText": "Pinned apps"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -1582,11 +1570,6 @@
       "expectSelector": "#app-list.un-reordering .home-item-displaced[style*=\"translate\"]"
     },
     {
-      "name": "A Discover card can be dragged onto the launcher grid, which previews the drop (?shot=discover-drag)",
-      "path": "/?demo=1&shot=discover-drag",
-      "expectSelector": "#home-body:has(.home-discover-rail .app-card.un-reorder-slot) #app-list.un-reordering #home-grid-overlay .home-grid-cell--on"
-    },
-    {
       "name": "A Your-apps tile can be dragged into the open Homeroom widget strip, which lights up as the target (?shot=widget-drop, #2894)",
       "path": "/?demo=1&shot=widget-drop",
       "expectSelector": "#home-body:has(#widget-strip[data-drop=\"ok\"] .widget-tile) #app-list .app-card.un-reorder-slot"
@@ -1597,9 +1580,9 @@
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "Discover renders app-store rows with a Join button, under a bar with no back slot on the desktop rail, where Discover is a tab of its own and lit (#2639, #2718; #6019)",
+      "name": "#apps still opens Discover's app-store rows with a Join button, under a bar with no back slot (#2639, #2718); no tab draws it since One Home (#6361), whose Communities to join is the directory",
       "path": "/#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden):has(#platform-tabs #platform-tab-discover[aria-current=\"page\"]) #browse-list .browse-row .browse-add-btn",
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list .browse-row .browse-add-btn",
       "expectText": "Discover"
     },
     {
@@ -2267,16 +2250,16 @@
       "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"overview\"] + [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] + [data-ws-dash-cell=\"votes\"] + [data-ws-dash-cell=\"shipped\"] > b"
     },
     {
-      "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), first under What's happening",
-      "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine]:first-child [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
-      "expectText": "You have no work going on."
+      "name": "Workshop: Your work is one row under Overview, opening Homeroom bot narrowed to this project",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
+      "expectText": "Your work"
     },
     {
-      "name": "Hub: Your work stays when nothing is in progress, and says so (#3489)",
-      "path": "/?demo=1&shot=mine-empty&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card] [data-ws-mine-empty=\"\"]",
-      "expectText": "No work in progress."
+      "name": "Hub: For you's Your work row opens Homeroom bot narrowed to this project",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > a[data-ws-mine-card][data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
+      "expectText": "Your work"
     },
     {
       "name": "Foreign proposal: Explore in a coding agent is a row of the sheet’s ⋯ (#827, #4455); the Votes step names who voted, with How voting works as the ? at the line’s end",
@@ -2473,8 +2456,8 @@
     {
       "name": "With room on the line the strip keeps them, and Filters does not offer them",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-filter-row [data-quick-filter=\"assignedToMe\"] ~ [data-quick-filter=\"createdByMe\"]",
-      "expectText": "Created by you"
+      "expectSelector": "#dev-filter-row [data-quick-filter=\"assignedToMe\"] ~ [data-quick-filter=\"yours\"]",
+      "expectText": "Yours"
     },
     {
       "name": "The board person filter lives in the Filters dialog (matches assignees or authors, #1404)",
@@ -2599,9 +2582,9 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
-      "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417)",
+      "name": "Workshop: the Workshop is the place named on the place bar, with the bar's button to the places beside it, and All items' search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417; One Home #6361 put the places behind that button on a wide window too)",
       "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"] .dev-ws-places-btn + [data-place-title]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
       "expectText": "All items"
     },
     {
@@ -2687,22 +2670,16 @@
       "expectText": "Recently live"
     },
     {
-      "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels and its topics under Topics, in the column beside the strip (#4417)",
+      "name": "On a wide window a project page's place bar names the Hub and carries the button to its places (Hub, Needs you, Workshop, #general and its topics), now that the sidebar nests none (#4417; One Home, #6361)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "[data-places=\"usernode-2d5619\"] > nav > [data-place=\"status\"][aria-current=\"page\"] + [data-place=\"needs\"] + [data-place=\"workshop\"] + [role=\"separator\"] + [data-places-group=\"channels\"] + [data-places-group=\"topics\"] > [data-place=\"c:onboarding\"]",
-      "expectText": "general"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > [data-place-bar=\"status\"] .dev-ws-places-btn[aria-expanded=\"false\"] + h2[data-place-title]",
+      "expectText": "Hub"
     },
     {
-      "name": "On a wide window the sidebar lists your communities with the one you are on lit, above the Communities tab, which is their All row there and named by its own words; on a phone's bar the tab still wears the community's tile (#3709, D)",
+      "name": "On a wide window the sidebar's Recents lists your communities with the one you are on lit, each row carrying its pin after the link (#3709, D; One Home #6361)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#platform-tabs > #platform-rail-communities:has(> a.platform-rail-community[data-rail-community=\"usernode-2d5619\"][aria-current=\"page\"]) + #platform-tab-workshop[aria-current=\"page\"]:not([aria-label]) > .platform-tab-all-label",
+      "expectSelector": "#platform-tabs > #platform-rail-communities > .platform-rail-row[data-rail-row=\"usernode-2d5619\"] > a.platform-rail-community[aria-current=\"page\"] + .platform-rail-pin[aria-pressed]",
       "expectText": "Homeroom"
-    },
-    {
-      "name": "On All communities the Communities tab is its own people glyph (in the ring on a phone's bar)",
-      "path": "/?demo=1#communities",
-      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"] .platform-tab-ring.platform-tab-ring-all > svg.platform-tab-glyph",
-      "expectText": "Communities"
     },
     {
       "name": "The hub's discussion is For you's Discussion row (its last line, a door to the Discussion place, with no composer on the hub), and Suggest an improvement leads the hero's ⋯, Build it now next, rather than ending the hub (#852 review, B8)",
@@ -2717,9 +2694,9 @@
       "expectText": "Staging demo private request"
     },
     {
-      "name": "The Workshop tab opens on its Overview: All items with the approval rule as its last line, then What's happening, with no notices panel (#3487, #3528)",
+      "name": "The Workshop tab opens on its Overview: All items with the approval rule as its last line, then Your work, with no notices panel (#3487, #3528)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-part=\"overview\"]:first-child + [data-ws-dashboard]:has(> [data-ws-approval-rules]:last-child > [data-ws-community-rule]) + [data-ws-part=\"happening\"]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-part=\"overview\"]:first-child + [data-ws-dashboard]:has(> [data-ws-approval-rules]:last-child > [data-ws-community-rule]) + [data-ws-desk]",
       "expectText": "goes live when its checks pass"
     },
     {
@@ -2755,10 +2732,10 @@
       "expectText": "is working on this"
     },
     {
-      "name": "A card about your own session: the hub's Your work leads with it, and opens the Workshop, whose row opens its page (#1887)",
-      "path": "/?demo=1&shot=mine-session&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card][data-ws-mine-open=\"workshop\"] [data-ws-mine-first^=\"mine:my-session:\"][data-ws-mine-session]",
-      "expectText": "[Mock] Busy own session"
+      "name": "Homeroom bot's History: your finished work by month below Live this week, with kind chips for Me › Your work's old tabs",
+      "path": "/?demo=1#homeroom-bot/history",
+      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-month] [data-ai-line=\"history-change\"]",
+      "expectText": "Staging demo: a calendar sync, closed"
     },
     {
       "name": "Visible own session renders under the Yours-visible divider",
@@ -3085,9 +3062,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The desktop rail's destination order: Home, Discover, Messages, AI, Communities, then you (#6019; the markup is the rail's order and app.css lays the phone's bar out as Home, Communities, AI, Messages, You); Messages' nested conversations follow it, and the communities you pinned, then your others, sit just above the Communities tab (D, v3)",
+      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages and its conversations, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Discover and Communities nodes stay in the markup, drawn on neither bar, for the routes that name them)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3675,7 +3652,7 @@
       "expectSelector": "#settings-section-content [data-settings-section]:not(.hidden)"
     },
     {
-      "name": "Home's My apps section renders for the seeded admin",
+      "name": "Home's Pinned apps section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
     },
@@ -3804,7 +3781,7 @@
       "expectSelector": ".app-card[data-yours].cursor-grab"
     },
     {
-      "name": "A persisted staging sample appears in expanded My apps",
+      "name": "A persisted staging sample appears in expanded Pinned apps",
       "path": "/?demo=1&shot=home-apps",
       "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },
@@ -4907,15 +4884,9 @@
       "expectSelector": "#platform-tabs > #platform-rail-pinned.hidden[role=\"group\"][aria-labelledby=\"platform-rail-pinned-label\"] + #platform-rail-communities"
     },
     {
-      "name": "#2800: you are the sidebar's foot, straight after the Communities tab (its All row), with your Settings beside you (#6019: the rail ends Messages, AI, Communities)",
+      "name": "#2800: you are the sidebar's foot, with your Settings beside you (#6019; One Home #6361 draws no Communities row above you, its node kept for #communities)",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs > #platform-tab-workshop + a#platform-tab-me + a#platform-rail-settings:last-child"
-    },
-    {
-      "name": "#4417, v3: on a desktop a project's places are nested under its row in the sidebar, the place on show lit there (Needs you), with no column beside it",
-      "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "body:not(:has(#platform-section-column)) #platform-rail-communities > a[data-rail-community=\"usernode-2d5619\"][aria-current=\"page\"][data-rail-open] + .platform-rail-nest [data-places=\"usernode-2d5619\"] [data-place=\"needs\"][aria-current=\"page\"]",
-      "expectText": "Needs you"
     },
     {
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
@@ -4933,7 +4904,7 @@
       "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
     },
     {
-      "name": "On a desktop a running app keeps the sidebar beside it, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138; the sidebar's All row names no community, D)",
+      "name": "On a desktop a running app keeps the sidebar beside it, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138; the Communities node names no community, D)",
       "path": "/#app/staging-demo-forkable",
       "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden) #platform-tab-workshop:not([aria-label])):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
     },
@@ -5098,9 +5069,16 @@
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
     },
     {
-      "name": "Workshop: What's happening files your work in sections of one card, one line a row: Waiting on you, then Up next, going live before up for a vote (#4772, #6019)",
-      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine-section=\"waiting\"]:has(.dev-ws-hrow) ~ [data-ws-mine-section=\"next\"] .dev-ws-hrow[data-ws-row]"
+      "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks",
+      "path": "/?demo=1#homeroom-bot",
+      "expectSelector": "#ai-screen [data-ai-sheet=\"open\"] [data-ai-line=\"fix_yours\"]",
+      "expectText": "Fix it"
+    },
+    {
+      "name": "Homeroom bot opened from a project's Your work is narrowed to that project: its chip is picked",
+      "path": "/?demo=1#homeroom-bot?project=staging-demo-your-app",
+      "expectSelector": "#ai-screen [data-ai-project-chips] [data-ai-chip=\"staging-demo-your-app\"][aria-pressed=\"true\"]",
+      "expectText": "Staging demo app"
     },
     {
       "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026)",
@@ -5151,19 +5129,19 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards and not \"could not load\" (#6003, #6015)",
+      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards, each with Pin then Join (One Home, #6361), and not \"could not load\" (#6003, #6015)",
       "path": "/?shot=anon#landing",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-guest-discover] [data-guest-card]):not(:has([data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-guest-discover] [data-guest-card-footer] > [data-home-pin][aria-pressed=\"false\"] + [data-home-join]):not(:has([data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: Discover shows project cards, each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015)",
+      "name": "Signed out, 3 loads: #apps opens the same Home, its community cards each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015; One Home, #6361)",
       "path": "/?shot=anon#apps",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover] [data-guest-card=\"staging-landing-open\"]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href=\"/app/staging-landing-open\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover] [data-guest-card]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href^=\"/app/\"]",
       "allowConsoleErrors": true
     },
     {
@@ -5174,10 +5152,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out: a public project's page loads (#6003)",
+      "name": "Signed out: a public project's page loads (#6003), with Pin beside Join, unpressed (One Home, #6361: it pins to this device's Home)",
       "path": "/app/staging-landing-open?shot=anon",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-landing-open\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-landing-open\"] [data-guest-join-project] + button[data-guest-pin-project][aria-pressed=\"false\"]",
       "allowConsoleErrors": true
     },
     {

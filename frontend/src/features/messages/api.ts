@@ -1217,13 +1217,12 @@ export async function setMessageSaved(
  * so), with the version it is at now.
  */
 /**
- * #5452: a saved Yes belongs in Your votes and the Kudos My history tab.
- * Both listen on the window bridge, so this says the vote landed without
- * this chunk importing the profile screen. Optional at every link: neither
- * listener needs to be up for the Yes itself to be counted.
+ * #5452: a saved Yes belongs in the Kudos My history tab. It listens on the
+ * window bridge, so this says the vote landed without this chunk importing
+ * that screen. Optional: the listener need not be up for the Yes itself to
+ * be counted.
  */
 function announceApprovalVote() {
-  (window as any).UsernodeReact?.profileProposals?.voted?.();
   (window as any).Leaderboard?.invalidateHistory?.();
 }
 
@@ -1514,6 +1513,7 @@ export function normalizeBotTrack(input: unknown): BotTrack | null {
         ...(text(pick(held, 'limit')) === 'taken' ? { by: text(pick(held, 'by')) || null } : {}),
       },
     } : {}),
+    ...(text(pick(row, 'retryAt')) ? { retryAt: text(pick(row, 'retryAt')) } : {}),
     ...(pick(queue, 'ahead') !== undefined ? { queue: { ahead: Math.max(0, Number(pick(queue, 'ahead')) || 0) } } : {}),
     ...(work.stage === 'closed' && pick(row, 'doneBy') ? {
       doneBy: { username: text(pick(doneBy, 'username')) || null, prNumber: strictId(pick(doneBy, 'prNumber')) },
@@ -1643,7 +1643,8 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
       ...(working && from && to && from <= to && to <= 120 ? { typicalMinutes: { from, to } } : {}),
       // Who the work waits on while it waits (`them`: the viewer), so the card can say it needs them.
       ...(working && text(pick(row, 'waitingOn')) ? { waitingOn: text(pick(row, 'waitingOn')).slice(0, 40) } : {}),
-      // The stage it is at while it works (`on_hold`: until Monday), a short word.
+      // The stage it is at while it works (`on_hold`: until Monday; `cooldown`:
+      // paused after repeated errors), a short word.
       ...(working && /^[a-z_]{1,40}$/.test(text(pick(row, 'stage'))) ? { stage: text(pick(row, 'stage')) } : {}),
       // Why a build stopped, and which limit holds a request back: known words only.
       ...(!working && outcome === 'build_failed' && STOP_CAUSES.has(text(pick(row, 'stopCause')))

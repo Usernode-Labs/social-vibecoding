@@ -104,8 +104,8 @@
     "description": "Accessible name and tooltip of the cog at the foot of the desktop rail: opens Settings."
   },
   "rail.communities": {
-    "text": "Communities",
-    "description": "Heading over the person's communities in the desktop sidebar (a window 1024px or wider), above the five they opened last. A community is a group that owns projects."
+    "text": "Recents",
+    "description": "Heading over the desktop sidebar's list of communities: the ones pinned to its top, then the ones the viewer opened lately, each staying where it first arrived."
   },
   "rail.search": {
     "text": "Search your communities",
@@ -144,8 +144,8 @@
     "description": "Link shown only to keyboard users at the top of the page: moves focus to the main navigation."
   },
   "rail.pinned": {
-    "text": "Pinned",
-    "description": "Heading in the desktop sidebar (a window 768px or wider) over the communities the person pinned there, above their other communities."
+    "text": "Recents",
+    "description": "Heading over the desktop sidebar's list of communities when some are pinned to its top; the same heading as the list under it."
   },
   "rail.app": {
     "text": "App",
@@ -157,7 +157,7 @@
   },
   "rail.pin.here": {
     "text": "Pin here",
-    "description": "The dashed slot the desktop sidebar draws under Pinned while an app's tile is dragged over from My apps: dropping the tile there pins the app's community to the sidebar."
+    "description": "The dashed slot the desktop sidebar draws under Pinned while an app's tile is dragged over from Pinned apps: dropping the tile there pins the app's community to the sidebar."
   },
   "rail.pin.already": {
     "text": "Already pinned",
@@ -623,10 +623,6 @@
     "text": "Your recording could not be transcribed. Your existing text is safe. Try again.",
     "description": "Dictation error for an unsuccessful transcription request."
   },
-  "header.drawer.allCommunities": {
-    "text": "All communities",
-    "description": "On a phone, the grid button at the left of the header on a community's Hub: opens the page of every community the person is in, drawn as a grid. Its accessible name and tooltip."
-  },
   "header.drawer.toHub": {
     "text": "Back to {{community}}'s Hub",
     "description": "On a phone, the header's back arrow on one of a community's places (Needs you, Workshop, a channel): goes up to the community's Hub, the page that leads to all of them. {{community}} is the community's name. Its accessible name and tooltip."
@@ -779,6 +775,10 @@
     "text": "On hold until Monday: this week's building time is used up",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: the project's building time for the week is used up."
   },
+  "work.line.cooldown": {
+    "text": "Paused after repeated errors: Homeroom bot tries again later",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot's tries at reading the request failed several times in a row, so it waits a day before trying again. Nothing to do with building time."
+  },
   "work.line.reply": {
     "text": "Reading your reply",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot is reading what the person replied."
@@ -842,5 +842,17 @@
   "work.line.said": {
     "text": "Homeroom bot: {{reason}}",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot's own one-line reason. {{reason}} is its sentence, already in the person's language or English."
+  },
+  "rail.pin.keepTop": {
+    "text": "Keep {{name}} at the top of Recents",
+    "description": "Accessible name of the pin button on a row of the desktop sidebar's Recents. {{name}} is the community's name."
+  },
+  "rail.pin.unpinTop": {
+    "text": "Unpin {{name}} from the top of Recents",
+    "description": "Accessible name of the pin button on a pinned row of the desktop sidebar's Recents. {{name}} is the community's name."
+  },
+  "header.drawer.toHome": {
+    "text": "Back to Home",
+    "description": "Accessible name of the back button in the header on a community's Hub on a phone: returns to Home, where the viewer's communities are."
   }
 }

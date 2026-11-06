@@ -47,9 +47,9 @@ async function migrate(config) {
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool);
   await seedReferenceData(pool);
-  // Never fails a boot, and costs one query once every email has its row. A
-  // preview seeds later, below, once its translations have come in.
-  if (process.env.USERNODE_ENV !== 'staging') await require('./email-template-seeds').seedEmailTemplates(pool);
+  // Never fails a boot, and costs one query once every email has its row. The
+  // seeds are English and read no translation, so a preview seeds here too.
+  await require('./email-template-seeds').seedEmailTemplates(pool);
   await require('../services/moderation-migration').importLegacyReports(pool);
   await require('../services/moderation').purgeExpired(pool);
   // The verified-identity rule's one-time production rollout: on, with $20
@@ -141,11 +141,8 @@ async function migrate(config) {
   finishPhase('coreSeedMs');
   // In the background: a slow or unreachable production never holds up the
   // preview's boot (it logs either way).
-  // The email templates are seeded with whatever translations there are then,
-  // once only, so in a preview they wait for the import. Neither can reject.
-  void seedStagingTranslations(pool).finally(() => (
-    process.env.USERNODE_ENV === 'staging' ? require('./email-template-seeds').seedEmailTemplates(pool) : undefined
-  ));
+  // It cannot reject.
+  void seedStagingTranslations(pool);
   await seedStagingNotifications(pool, config);
   // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
   // off a notification id that seeder owns.
@@ -8866,6 +8863,19 @@ async function seedStagingYourApps(pool, config) {
          SELECT 900031, $1, 1
          WHERE EXISTS (SELECT 1 FROM apps WHERE id = 900031)
          ON CONFLICT (app_id, user_id) DO NOTHING`,
+        [viewerId]
+      );
+      // One Home (#6361): Home's Pinned communities. The demo app's
+      // community (one the viewer is in) and Chess Arena's (followed, not
+      // joined: a pin is not a join), so the shots and the checks see both
+      // kinds of tile. The other demo apps stay Communities to join.
+      await pool.query(
+        `INSERT INTO home_community_pins (community_id, user_id, position)
+         SELECT a.community_id, $1, CASE a.slug WHEN 'staging-demo-app' THEN 0 ELSE 1 END
+           FROM apps a
+          WHERE a.slug IN ('staging-demo-app', 'staging-demo-chess-arena')
+            AND a.community_id IS NOT NULL
+         ON CONFLICT (user_id, community_id) DO NOTHING`,
         [viewerId]
       );
     }

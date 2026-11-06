@@ -510,6 +510,16 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    name: 'production-sleep', everyMs: MIN, leaseMs: 5 * MIN,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) =>
+      legacy('services/production-sleep').sweep(config, pool, { shouldStop: stopped(ctx) }),
+  },
+  {
+    name: 'app-resource-profiles', everyMs: MIN, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) =>
+      legacy('services/app-resource-profiles').reconcile(config, pool),
+  },
+  {
     // #6233: Homeroom's own release is Live once the web Deployment reports
     // its rollout finished (every serving process on a build containing the
     // merge), not when the first Pod boots one. Reads the same rollout the

@@ -4090,32 +4090,19 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       const appId = appRows[0].id;
-      // #4600: whether this pin JOINED the app's community. A pin joins
-      // through the app_favorites trigger (schema.sql,
-      // sync_favorite_community_member), so Home's featured list's ⊕ is a
-      // join as much as /membership is, and is counted the same way: on the
-      // spot (scoreOnJoin), not on the rule's next pass, and said so in the
-      // answer (`joined`) so the client can tell its Challenges block to
-      // read again.
-      let joined = false;
+      // One Home (#6361): pinning an app is only that. It joined the app's
+      // community until the app_favorites trigger went (one-home-pins.sql);
+      // joining is POST /membership now, and pins the community instead.
+      // `joined` stays in the answer, always false, for clients that read it.
+      const joined = false;
       if (favorited) {
-        const { rows: joinRows } = await pool.query(
-          `SELECT (a.community_id IS NOT NULL AND NOT EXISTS (
-                    SELECT 1 FROM community_members m
-                     WHERE m.community_id = a.community_id AND m.user_id = $2)) AS joins
-             FROM apps a WHERE a.id = $1`,
-          [appId, req.user.id]
-        );
         // DO UPDATE (not DO NOTHING) so the same statement also clears a
-        // member's hidden=TRUE opt-out row — "Add to Your apps" un-hides.
+        // member's hidden=TRUE opt-out row — "Pin to Home" un-hides.
         await pool.query(
           `INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)
            ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
           [appId, req.user.id]
         );
-        joined = joinRows[0]?.joins === true;
-        // Never throws, so the pin answers the same either way.
-        if (joined) await challengeScorer.scoreOnJoin(pool, config);
       } else if (await appAccess.isCollaborator(pool, appId, req.user.id)) {
         // #618: membership (creator or accepted invite) pins the app into
         // "Your apps", so a member's "remove" must persist as an explicit

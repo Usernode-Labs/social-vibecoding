@@ -1673,39 +1673,39 @@
   },
   "firstSession.walk.communities.title": {
     "text": "Communities",
-    "description": "Third card of the walk on Home, pointing at the Communities tab, which lists every community the person is in."
+    "description": "Third card of the walk on Home, pointing at the project's community tile under Pinned communities on Home, which opens its hub."
   },
   "firstSession.walk.communities.text": {
     "text": "{{app}}'s hub is here. Invite people and decide what changes.",
-    "description": "Line on the walk's Communities card, which points at the Communities tab: the project's hub page is there, where its people are invited and decide together which changes to its app go in. {{app}} is the project's name. \"Invite\" and \"decide\" are verbs."
+    "description": "Line on the walk's Communities card, which points at the project's community tile on Home: the project's hub page is behind it, where its people are invited and decide together which changes to its app go in. {{app}} is the project's name. \"Invite\" and \"decide\" are verbs."
   },
   "firstSession.walk.goToCommunity": {
     "text": "Go to community",
-    "description": "Button on the last card of a new member's walk on Home, which points at the Communities tab: ends the walk and opens their project's hub page under that tab, so they see why the screen changes. \"Go to\" is a verb; \"community\" is the project's community, as the app menu's \"Go to community\" row says it."
+    "description": "Button on the last card of a new member's walk on Home, which points at their project's community tile: ends the walk and opens their project's hub page. \"Go to\" is a verb; \"community\" is the project's community, as the app menu's \"Go to community\" row says it."
   },
   "firstSession.tour.look.make.title": {
     "text": "Make something any time",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the tile on Home that starts a new project."
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the New community tile on Home, which starts a new project."
   },
   "firstSession.tour.look.make.text": {
-    "text": "New project starts a community and its app.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the tile on Home labelled \"New project\". Write New project as that tile is named."
+    "text": "New community starts a community and its app.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the tile on Home labelled \"New community\". Write New community as that tile is named."
   },
   "firstSession.tour.look.discover.title": {
-    "text": "Find apps in Discover",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the Discover section on Home, which opens the Discover page. Discover is the page's name."
+    "text": "Find a community to join",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the list of communities to join at the foot of Home."
   },
   "firstSession.tour.look.discover.text": {
-    "text": "Open any app, or join its community.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the Discover section on Home. \"Open\" and \"join\" are verbs."
+    "text": "Open any one, pin it, or join it.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the communities to join on Home. \"Open\", \"pin\" and \"join\" are verbs; \"one\" is a community."
   },
   "firstSession.tour.look.communities.title": {
     "text": "Communities you join show up here",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the Communities tab."
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at Pinned communities on Home, where a community goes when you join it."
   },
   "firstSession.tour.look.communities.text": {
     "text": "Each one has its own hub and discussion.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the Communities tab. \"Each one\" is a community; its hub is its main page."
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about Pinned communities on Home. \"Each one\" is a community; its hub is its main page."
   },
   "firstSession.tour.look.bot.title": {
     "text": "Homeroom bot has its own tab",
@@ -1745,19 +1745,19 @@
   },
   "tour.step.communities.title": {
     "text": "Communities",
-    "description": "Title of the first card of the welcome tour on the Home screen, started from Settings: points at the Communities tab. The tab's name."
+    "description": "Title of the first card of the welcome tour on the Home screen, started from Settings: points at Home's Pinned communities, where the communities the person is in are."
   },
   "tour.step.communities.body": {
     "text": "Communities here build apps together. Anyone can propose a change, and the community votes on it. Find yours here.",
-    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, pointing at the Communities tab. \"change\" is a noun: a change to an app. \"here\" in \"Find yours here\" is the tab."
+    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, pointing at Home's Pinned communities. \"change\" is a noun: a change to an app. \"here\" in \"Find yours here\" is that section of Home."
   },
   "tour.step.apps.title": {
-    "text": "My apps",
+    "text": "Pinned apps",
     "description": "Title of the second card of the welcome tour on the Home screen, started from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
   },
   "tour.step.apps.body": {
-    "text": "Open apps from your communities here, or select + New project to start your own.",
-    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the My apps section. \"+ New project\" is the label of the last tile in the grid; write New project as that tile is named."
+    "text": "Open the apps you pin here, in one tap. To start your own, select New community.",
+    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the Pinned apps section. \"New community\" is the label of the last tile under Pinned communities; write New community as that tile is named."
   },
   "tour.step.appMenu.title": {
     "text": "The Homeroom menu",
