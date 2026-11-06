@@ -992,6 +992,7 @@ const WAIT_WORDS: Record<string, string> = {
   session_busy: 'a turn is running on its session',
   reads_per_app: 'its project is already reading as many requests as it may at once',
   allowance: 'its payer\'s week is used up',
+  cooldown: 'its look failed several times in a row, so it waits a day',
   platform_fault: 'the bot is backing off a platform fault',
   bot_paused: 'the bot is off or its weekly budget is spent',
   app_paused: 'its app is paused',

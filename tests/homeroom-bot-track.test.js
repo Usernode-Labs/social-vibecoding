@@ -110,6 +110,14 @@ test('held says which line it waits in, its place there, and for the week\'s bui
   assert.deepEqual(turn.held, { limit: 'builds', position: 1, until: null });
   const week = track.trackOf({ job: job(), work: work('reading', { line: { code: 'on_hold' } }), until: '2026-10-19T00:00:00.000Z' });
   assert.deepEqual(week.held, { limit: 'allowance', position: null, until: '2026-10-19T00:00:00.000Z' });
+  // #6357: paused a day after repeated errors: no limit held, no week, but
+  // when it is tried again, its hold's own end.
+  const cool = track.trackOf({ job: job(), work: work('reading', { line: { code: 'cooldown' } }), until: '2026-10-13T09:41:00.000Z' });
+  assert.equal(cool.held, undefined);
+  assert.equal(cool.retryAt, '2026-10-13T09:41:00.000Z');
+  assert.equal(cool.step, null, 'not started');
+  assert.equal(cool.busy, false);
+  assert.equal(track.standingOf(cool).say, 'builds', 'the bot still has it in hand');
   // In the bot's line: how many are ahead.
   assert.deepEqual(track.trackOf({ job: job(), work: work('reading', { line: { code: 'queued', place: 3 } }) }).queue, { ahead: 2 });
   // 16 Oct 2026: a person has it now: theirs, with no place in a line.

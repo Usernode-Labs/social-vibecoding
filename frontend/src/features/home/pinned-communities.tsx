@@ -51,6 +51,7 @@ export const CORNER_PIN = 'bg-white text-violet-700 dark:bg-zinc-800 dark:text-v
 export function MinusGlyph() {
   return <span aria-hidden="true" className="text-[15px] leading-none font-semibold">&minus;</span>;
 }
+const FACE_WRAP = 'relative z-[1] inline-flex';
 const WIGGLE = 'animate-[home-wiggle_260ms_ease-in-out_infinite_alternate] motion-reduce:animate-none';
 const ACTION_FACE = 'flex h-[62px] w-[62px] shrink-0 items-center justify-center rounded-[18px]';
 
@@ -95,7 +96,12 @@ function PinTile({ pin, votes, editing, faded = false, onUnpin, onPin }: {
       data-home-community-pinned={faded ? undefined : ''}
       onClick={(event) => { if (editing) { event.preventDefault(); return; } openHub(event, pin.slug); }}
     >
-      <span className={editing ? `relative inline-flex ${WIGGLE}` : 'relative inline-flex'}>
+      {/* z-[1] (#6372): the tile's own hit area (un-touch-target's ::after)
+          paints after its children and covered the corner discs, so a press
+          on − or + reached the tile, a no-op while editing. The lift is on
+          this wrapper, not the discs: the wiggle's transform makes it a
+          stacking context a disc's own z-index cannot leave. */}
+      <span className={editing ? `${FACE_WRAP} ${WIGGLE}` : FACE_WRAP}>
         <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />
         {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
         {editing && onUnpin ? (

@@ -303,7 +303,8 @@ test('the preview: its own column beside the thread, three where they fit, halve
   // #6230: the preview is one kind of the detail column, drawn by
   // ../detail/detail-pane.tsx; the page still sets data-ai-preview for it.
   assert.match(ai, /data-ai-preview=\{detailHere \? layout : undefined\}/);
-  assert.match(ai, /<aside className="ai-preview-pane" data-ai-preview-pane=\{layout\} aria-label=\{t\('messages:design\.pane\.label'\)\}>\n\s+<DetailPane layout=\{layout\} \/>/);
+  assert.match(ai, /<aside\n\s+ref=\{previewRef\}\n\s+id="ai-preview-pane"\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{t\('messages:design\.pane\.label'\)\}\n\s+>/);
+  assert.match(ai, /probe=\{previewProbe\}\n\s+\/>\n\s+\)\}\n\s+<DetailPane layout=\{layout\} \/>/);
   assert.match(read('frontend/src/features/detail/detail-pane.tsx'),
     /onClose=\{closeDetail\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
   assert.match(ai, /const detailHere = !!detail && !!botId && \(detail\.kind === 'design'\n\s+\? detail\.ref\.conversationId === botId && openRoot === detail\.ref\.rootId/,
@@ -311,7 +312,9 @@ test('the preview: its own column beside the thread, three where they fit, halve
   assert.match(ai, /if \(detail\.kind === 'design' && openRoot && openRoot !== detail\.ref\.rootId\) closeDetail\(\);/, 'another thread in the column closes it');
   assert.match(ai, /if \(window\.location\.hash === BOT_TAB\) closeDetail\(\);/, 'the tab brings the list back');
   const css = read('public/css/app.css');
-  assert.match(css, /#ai-screen\[data-ai-preview="three"\] \{\n\s+--ai-col-w: min\(var\(--ai-main-w\), 440px\);/);
+  assert.match(css, /#ai-screen\[data-ai-preview="three"\] \{\n\s+--ai-preview-auto: max\(360px, calc\(var\(--ai-room\) - 480px - min\(var\(--ai-main-w\), 440px\)\)\);/);
+  assert.match(css, /\n\s+--ai-col-w: max\(320px, min\(var\(--ai-col-chosen-w, min\(var\(--ai-main-w\), 440px\)\), calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)\)\);/,
+    'until its edge is dragged the thread is Main\'s width, 440px at most');
   assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \.ai-screen-body \{ display: none; \}/, 'the list steps aside');
   assert.match(css, /#ai-screen\[data-ai-preview="full"\] \.ai-preview-pane \{\n\s+position: absolute;\n\s+inset: 0;/);
 });

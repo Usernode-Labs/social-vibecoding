@@ -775,6 +775,10 @@
     "text": "On hold until Monday: this week's building time is used up",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: the project's building time for the week is used up."
   },
+  "work.line.cooldown": {
+    "text": "Paused after repeated errors: Homeroom bot tries again later",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot's tries at reading the request failed several times in a row, so it waits a day before trying again. Nothing to do with building time."
+  },
   "work.line.reply": {
     "text": "Reading your reply",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot is reading what the person replied."

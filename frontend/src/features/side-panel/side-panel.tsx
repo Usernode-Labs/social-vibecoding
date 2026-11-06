@@ -89,6 +89,7 @@ import {
   inlineStartOf,
   shownWidth,
   writeStoredWidth,
+  type LayoutProbe,
 } from './resize';
 import { sidePanelRefs, sidePanelStore } from './store.js';
 import { dirSign } from '../../lib/i18n/direction';
@@ -399,6 +400,8 @@ export function SidePanelDivider({
   id = 'side-panel-divider',
   controls = 'platform-side-panel',
   widthKey,
+  probe: measure = probeLayout,
+  watch,
 }: {
   panelRef: RefObject<HTMLElement | null>;
   shown: boolean;
@@ -407,6 +410,13 @@ export function SidePanelDivider({
   /** Which stored width this edge sets; by default Main's while the bot
    *  page is up, the side panel's everywhere else. */
   widthKey?: string;
+  /** The layout as this edge reads it, for a column that is not the last or
+   *  has more than one neighbour (the bot page with a preview open, #6359);
+   *  the side panel's own reading by default. Keep it stable (useCallback). */
+  probe?: () => LayoutProbe;
+  /** A neighbour whose width this edge's bound is read from: its range is
+   *  read again whenever that one is resized (the preview beside the thread). */
+  watch?: RefObject<HTMLElement | null>;
 }): ReactNode {
   const t = useMessages('agent');
   const [range, setRange] = useState<WidthRange | null>(null);
@@ -425,7 +435,7 @@ export function SidePanelDivider({
   // window that narrows gives the width back, and one that grows returns it.
   const settle = useCallback(() => {
     const key = resolveKey();
-    const probe = probeLayout();
+    const probe = measure();
     const b = bounds(probe);
     const stored = readStoredWidth(undefined, key);
     applyWidth(stored == null ? null : clampWidth(stored, b), undefined, key);
@@ -435,14 +445,20 @@ export function SidePanelDivider({
     const box = panel ? panel.getBoundingClientRect() : null;
     const now = box && box.width > 0 ? shownWidth(inlineStartOf(box), probe) : 0;
     setRange(now > 0 ? { now, ...b } : null);
-  }, [panelRef, resolveKey]);
+  }, [panelRef, resolveKey, measure]);
 
   useEffect(() => {
     settle();
     if (!shown) return undefined;
     window.addEventListener('resize', settle);
-    return () => window.removeEventListener('resize', settle);
-  }, [shown, settle]);
+    const other = watch?.current;
+    const observer = other && typeof ResizeObserver === 'function' ? new ResizeObserver(() => settle()) : null;
+    if (observer && other) observer.observe(other);
+    return () => {
+      window.removeEventListener('resize', settle);
+      observer?.disconnect();
+    };
+  }, [shown, settle, watch]);
 
   // A drag that never ended (the island unmounting mid-drag) must not leave
   // the whole document stuck in the resize cursor.
@@ -452,7 +468,7 @@ export function SidePanelDivider({
 
   const set = (width: number, persist: boolean): number => {
     const key = resolveKey();
-    const b = bounds(probeLayout());
+    const b = bounds(measure());
     const next = clampWidth(width, b);
     applyWidth(next, undefined, key);
     setRange({ now: next, ...b });
@@ -469,7 +485,7 @@ export function SidePanelDivider({
     drag.current = {
       id: e.pointerId,
       startX: e.clientX,
-      startW: shownWidth(inlineStartOf(panel.getBoundingClientRect()), probeLayout()),
+      startW: shownWidth(inlineStartOf(panel.getBoundingClientRect()), measure()),
       width: null,
     };
     // Frames swallow pointer events that cross them; while a drag is on, the
@@ -503,7 +519,7 @@ export function SidePanelDivider({
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const panel = panelRef.current;
     if (!panel) return;
-    const now = shownWidth(inlineStartOf(panel.getBoundingClientRect()), probeLayout());
+    const now = shownWidth(inlineStartOf(panel.getBoundingClientRect()), measure());
     const step = e.shiftKey ? KEY_STEP * 4 : KEY_STEP;
     let next: number | null = null;
     if (e.key === 'ArrowLeft') next = now + step * dirSign();
