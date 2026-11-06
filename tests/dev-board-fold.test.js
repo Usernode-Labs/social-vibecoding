@@ -1745,7 +1745,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 749 → 750: +1 (One Home follow-up, #6361) the places nested under a
   // community's row in the desktop sidebar come back, and their check with
   // them (the hub still lists them too).
-  checkCap.assertPinned(DAPP.tests.length, 750);
+  // 750 → 732: −18 (One Home follow-up, #6361) Discover's screen went: 19
+  // checks of its list, details, filters, sort and search are retired (two
+  // more now follow its old addresses: #apps opens Home's Communities to
+  // join, #apps/<slug> its project's hub), and +1 brings the details page's
+  // up-arrow check (#1036) back on Challenges, which goes up to Me. 732
+  // leaves 148 slots.
+  checkCap.assertPinned(DAPP.tests.length, 732);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

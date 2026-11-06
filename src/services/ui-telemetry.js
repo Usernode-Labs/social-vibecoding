@@ -46,7 +46,8 @@ const JOURNEY_SCREENS = Object.freeze(new Set([
 // was removed, but it stays a code so the visits already recorded still read
 // as steps (journey.js) and as landings in the page-load report. So does
 // `my_proposals`, Me › Your work's screen, which the Homeroom bot tab's
-// History replaced on 5 Nov 2026.
+// History replaced on 5 Nov 2026, and `discover`, since One Home (#6361)
+// retired Discover's screen.
 const NAV_SCREENS = Object.freeze(new Set([
   'home', 'discover', 'communities', 'challenges', 'profile', 'my_proposals',
   'settings', 'messages', 'assistant', 'agent_session', 'ai', 'app', 'project',

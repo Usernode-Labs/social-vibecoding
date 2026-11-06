@@ -83,8 +83,7 @@ const App = {
   _inSettings: false,
   // Same for the #apps browse screen (home-screen split: home is "Your
   // apps" only, every other app lives there) — set by
-  // navigateToBrowse() / _exitBrowse() / navigateHome().
-  _inBrowse: false,
+  // navigateHome().
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
   _inMessages: false,
@@ -2773,7 +2772,6 @@ const App = {
         AppView.refreshDevData('api-update');
         return;
       }
-      if (visible('browse-screen') && window.Browse) { Browse._load(); return; }
       if (visible('leaderboard-screen')) { App._refreshLeaderboard(); return; }
       if (visible('home-screen') && window.Home) { Home.load(); }
     } catch (err) {
@@ -3457,7 +3455,6 @@ const App = {
             window.dispatchEvent(new CustomEvent('app-blocks-changed', { detail: data }));
             if (data.blocked && window.AppView?.appData?.slug === data.slug) App.navigateHome();
             window.Home?.load?.();
-            window.Browse?._load?.();
             break;
           case 'user_blocks_changed':
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
@@ -4562,13 +4559,6 @@ const App = {
           Home.load(),
         ])));
     }
-    // The #apps browse screen (home-screen split). Its own scroller and
-    // its own fetch, so it must not be routed through Home.load().
-    const browse = document.getElementById('browse-screen');
-    if (browse) {
-      PlatformUI.pullToRefresh(browse,
-        () => App._refreshOrReload(() => (window.Browse ? Browse._load() : Promise.resolve())));
-    }
     // The Leaderboard screen hosts three panes; refresh whichever is
     // active. The two Topochain panes keep their own event/page state and
     // their own fetches, so they must NOT be routed through
@@ -4629,9 +4619,6 @@ const App = {
       e.preventDefault();
       if (App._inAdmin && window.AdminConsole?.handleBack?.()) return;
       if (App._inSettings && window.Settings?.handleBack?.()) return;
-      // Browse's detail level (#apps/<slug>) claims the button as "up to
-      // the list"; on the list itself it declines and we leave the screen.
-      if (App._inBrowse && window.Browse?.handleBack?.()) return;
       // A challenge's detail page claims it as "up to the grid".
       if (App._inLeaderboard && window.TopochainChallenges?.handleBack?.()) return;
       // A running app's ✕: back to the page it was opened from (closeApp).
@@ -5410,7 +5397,6 @@ const App = {
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
-        else if (App._inBrowse) App.navigateHome();
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
@@ -5440,7 +5426,7 @@ const App = {
         App.setChromeless(false);
         // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
-          || App._inAdmin || App._inSettings || App._inBrowse
+          || App._inAdmin || App._inSettings
           || App._inAgentSession
           || App._inMessages || App._inWorkshop) {
           App.navigateHome();
@@ -5548,27 +5534,23 @@ const App = {
         App.navigateToWorkshop();
         return;
       }
-      if (parts[0] === 'discover') {
-        // Discover's OLD NAME (UX audit, 20 Oct 2026): its own address is
-        // `#apps`, so this is an ALIAS, as `#workshop` is for `#communities`.
-        // Rewrite the address in place before handing off — replaceState
-        // fires no hashchange, so it neither re-routes nor adds a Back step
-        // — and a shared link settles on the canonical address.
-        try {
-          history.replaceState(null, '', '#apps' + (parts[1] ? '/' + parts[1] : ''));
-        } catch (err) { /* non-fatal: navigation below still works */ }
+      if (parts[0] === 'apps' || parts[0] === 'discover') {
+        // ONE HOME (#6361): Discover's screen is retired. Its directory is
+        // Home's Communities to join, and an app's details page is its
+        // project's hub. Both addresses still arrive (shared links, the
+        // first-run challenges, an old bookmark), so they are rewritten in
+        // place, which adds no Back step: `#apps` and `#discover` to Home,
+        // `#apps/<slug>` to that project's hub.
         App.setChromeless(false);
-        App.navigateToBrowse(parts[1] ? decodeURIComponent(parts[1]) : null);
-        return;
-      }
-      if (parts[0] === 'apps') {
-        // Browse-all-apps screen (home-screen split). No gate: the list
-        // is the visibility-filtered /api/apps payload, and the
-        // anonymous-shell branch above already handled a signed-out
-        // visitor. An optional second segment (#apps/<slug>) deep-links
-        // that app's detail page — the screen's level 2.
-        App.setChromeless(false);
-        App.navigateToBrowse(parts[1] ? decodeURIComponent(parts[1]) : null);
+        const slug = parts[1] ? decodeURIComponent(parts[1]) : '';
+        if (slug) {
+          try { history.replaceState(null, '', App._rootUrl(App._hubHref(slug))); } catch (err) { /* non-fatal */ }
+          try { window.AppView?._landOnHub?.(slug); } catch (err) { /* the page opens on what it remembers */ }
+          App.restoreFromHash();
+          return;
+        }
+        try { history.replaceState(null, '', App._rootUrl('')); } catch (err) { /* non-fatal */ }
+        App.navigateHome();
         return;
       }
       if (parts[0] === 'admin') {
@@ -6039,7 +6021,6 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
-            if (App._inBrowse) App._exitBrowse();
             if (App._inWorkshop) App._exitWorkshop();
         App._showOnlyScreen('home-screen');
         App.setHeaderTitle('Homeroom');
@@ -6257,18 +6238,9 @@ const App = {
   _TAB_REVEAL_WAIT_MS: 250,
 
   // The rail's own places: the roots its tabs navigate to. #6019: AI is the
-  // Messages screen's bot chat. Discover is one of them: the rail keeps its
-  // tab (29 Oct 2026), and this list is only read at the rail's width.
-  _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
+  // Messages screen's bot chat. This list is only read at the rail's width.
+  _RAIL_ROOTS: ['home-screen', 'messages-screen',
     'workshop-screen', 'profile-screen', 'ai-screen'],
-
-  // Whether Discover is a tab of its own: on the desktop rail, from 768px,
-  // it is (lit, a root, no back arrow); on a phone it is a page of Home's,
-  // with an arrow back to Home (#6019). nav-store.js RAIL_TAB_FOR_SCREEN
-  // lights the tab by the same width, and browse.js asks this too.
-  _discoverIsTab() {
-    return !App._isPhoneLayout();
-  },
 
   // Whether entering `screenEl` with `preferred` is a switch between places
   // on the desktop rail. The rail has to be on screen now (not hidden inside
@@ -6298,7 +6270,7 @@ const App = {
   // visible at a time (they are `flex-1` siblings in the body column, so
   // two visible roots split the viewport 50/50 — see the #764 note on
   // the zoom transition).
-  SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
+  SCREEN_IDS: ['app-view', 'home-screen',
     'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen',
     'agent-session-screen', 'ai-screen'],
@@ -6896,7 +6868,6 @@ const App = {
   // is reported then.
   _NAV_CODE_FOR_SCREEN: Object.freeze({
     'home-screen': 'home',
-    'browse-screen': 'discover',
     'workshop-screen': 'communities',
     'leaderboard-screen': 'challenges',
     'profile-screen': 'profile',
@@ -7351,8 +7322,8 @@ const App = {
     'auth-more-screen',
     // #1082 chunk E — the Admin & moderation console.
     'admin-screen',
-    // #1083 chunk F — the four app/community screens, converted in order.
-    'browse-screen',
+    // #1083 chunk F — the four app/community screens, converted in order
+    // (the first, #browse-screen, retired with One Home, #6361).
     'profile-screen',
     'leaderboard-screen',
     // ...and home last. This is the first converted root that ships
@@ -7552,7 +7523,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
@@ -7708,7 +7678,6 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('profile-screen');
     App._inProfile = true;
@@ -7774,58 +7743,6 @@ const App = {
     return kind ? `#homeroom-bot/history?kind=${kind}` : '#homeroom-bot/history';
   },
 
-  // Show the browse-all-apps screen (#apps). Sibling to
-  // navigateToProfile — hides home + app, reveals #browse-screen, lets
-  // the Browse module (public/js/browse.js) render into #browse-list.
-  //
-  // No permission gate: the grid is built from GET /api/apps, which is
-  // already visibility-filtered per viewer, and restoreFromHash's
-  // anonymous-shell branch bounced a signed-out visitor to login before
-  // this can run. The top-level header matches Home, which stays accessible
-  // through the navigation menu. Browser/OS back returns here from an app
-  // opened out of this grid, because the screen has its own hash entry.
-  navigateToBrowse(slug) {
-    // Already mounted: this is an in-screen level change (#apps ↔
-    // #apps/<slug>, the back button, a hand-typed hash), not a screen
-    // entry. Hand it to the module — re-running the screen swap below
-    // would re-hide every sibling and replay the entry animation on what
-    // is really a level change. Same idiom as navigateToAdminConsole.
-    if (App._inBrowse && window.Browse?.isOpen?.()) {
-      Browse.route(slug || null);
-      return;
-    }
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    const leavingApp = !!App.currentApp;
-    App.currentApp = null;
-    if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inProfile) App._exitProfile();
-    if (App._inAdmin) App._exitAdminConsole();
-    if (App._inSettings) App._exitSettings();
-    if (App._inWorkshop) App._exitWorkshop();
-    const screen = document.getElementById('browse-screen');
-    App._inBrowse = true;
-    // Renders into the still-hidden screen; `chrome: false` holds back its
-    // level-dependent title/back-icon so the header only changes inside
-    // the transition callback below (#979).
-    if (window.Browse?.open) Browse.open(slug || null, { chrome: false });
-    PlatformUI.transition(() => {
-      if (leavingApp) AppView.close();
-      App._showOnlyScreen('browse-screen');
-      App._enterScreenChrome();
-      App.setHeaderTitle(PlatformI18n.t('shell:title.allApps'));
-      // Browse owns the header title / back icon for whichever level the
-      // slug selected, so its sync runs after setHeaderTitle above.
-      if (window.Browse?.syncChrome) Browse.syncChrome();
-    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
-  },
-
-  // State-only (#979) — see _exitLeaderboard. The back chevron the detail
-  // level borrowed is handed back by the next screen's _showOnlyScreen.
-  _exitBrowse() {
-    App._inBrowse = false;
-    if (window.Browse?.close) Browse.close();
-  },
-
   // The Workshop screen (#workshop): every app you have, with how much of its
   // own Workshop page is addressed to you.
   //
@@ -7865,7 +7782,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('workshop-screen');
     App._inWorkshop = true;
@@ -7898,7 +7814,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inMessages) App._exitMessages();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('ai-screen');
@@ -8186,7 +8101,6 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
@@ -8237,7 +8151,6 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
@@ -8298,7 +8211,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('messages-screen');
     App._inMessages = true;
@@ -8471,7 +8383,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('agent-session-screen');
@@ -8725,9 +8636,8 @@ const App = {
   // #app-list (home's "Your apps") and #home-featured-list (home's
   // featured row). NOT the anonymous landing directory (#landing-apps),
   // which renders `.app-card[data-slug]` tiles too and lives in this same
-  // document after a reload-free login; and NOT #browse-list, which
-  // renders app-store `.browse-row` rows rather than tiles, so there is no
-  // tile rect to zoom out of there (the kit falls back to a push).
+  // document after a reload-free login. (Discover's #browse-list, rows
+  // rather than tiles, went with One Home, #6361.)
   //
   // Whichever grid the tap came from is the one whose tile is on screen,
   // so a single query across both lands on the right rect.
@@ -8908,7 +8818,6 @@ const App = {
     // hidden detail page intercepts the app's Home button, and returning to
     // #apps takes the in-screen shortcut without revealing the directory.
     // This exit is state-only; `departing` stays painted for the transition.
-    if (App._inBrowse) App._exitBrowse();
     // Real screen navigation. From a launcher grid (home's "Your apps" /
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
@@ -9137,7 +9046,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
@@ -9270,8 +9178,6 @@ const App = {
     // #6019: on a phone Discover is a page of Home's (its Discover block
     // opens it), so its list level has an arrow back to Home. On the desktop
     // rail it is a tab, a root, and _backSlotFor answers 'none' there.
-    // browse.js publishes the same.
-    'browse-screen': ['arrow', '/'],
     'messages-screen': ['none'],
     'workshop-screen': ['none'],
     // #6019 follow-up: the AI tab's page is a tab root; Main is a level
@@ -9372,9 +9278,6 @@ const App = {
   _backSlotFor(revealId) {
     const slot = App._BACK_SLOT[revealId];
     if (!slot) return ['home'];
-    // The table says the phone's answer for Discover, a page of Home's. On
-    // the desktop rail it is a tab of its own, a root: nothing in the slot.
-    if (revealId === 'browse-screen' && App._discoverIsTab()) return ['none'];
     if (revealId === 'app-view') {
       // THE DISCUSSION IS A LEVEL INSIDE MESSAGES, not a program to step out
       // of (#2718 review, twice). `/app/<slug>/dev/chat` is a ROW IN THE
@@ -10029,8 +9932,10 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
 
   switch (head) {
     case '': return null;                    // home: the prerender is right
-    case 'apps': return 'browse-screen';
-    case 'discover': return 'browse-screen'; // its old name (see restoreFromHash)
+    // One Home (#6361): #apps and #discover rewrite to Home, #apps/<slug>
+    // to its project's hub (restoreFromHash).
+    case 'apps': return frag.split('/')[1] ? 'app-view' : null;
+    case 'discover': return frag.split('/')[1] ? 'app-view' : null;
     case 'profile': return 'profile-screen';
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';

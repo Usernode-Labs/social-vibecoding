@@ -63,8 +63,9 @@ test('every screen root maps to a navigation code the server accepts', () => {
   // `assistant` was Global Chat's screen. Nothing reports it since Global
   // Chat was removed; the collector keeps the code so the visits already
   // recorded still read (src/services/ui-telemetry.js). `my_proposals` was
-  // Me › Your work's screen, which History on the Homeroom bot tab replaced.
-  const retired = ['assistant', 'my_proposals'];
+  // Me › Your work's screen, which History on the Homeroom bot tab replaced,
+  // and `discover` Discover's, retired with One Home (#6361) the same way.
+  const retired = ['assistant', 'my_proposals', 'discover'];
   assert.deepEqual([...codes, ...overlays, ...retired].sort(), [...serverTelemetry.NAV_SCREENS].sort(),
     'the shell and the collector name the same screens');
   for (const code of retired) assert.ok(!codes.has(code), `${code} is no screen's any more`);
@@ -97,12 +98,12 @@ test('each screen swap reports one step; an app is split into the running app an
 test('nothing is reported under a first-run sheet; the screen showing when it closes is', async () => {
   const { App, calls, releaseGate } = harness({ gate: 'pending' });
   App._syncPlatformTabs('home-screen');
-  App._syncPlatformTabs('browse-screen');
+  App._syncPlatformTabs('leaderboard-screen');
   await tick();
   assert.deepEqual(calls, [], 'Home under the username, terms or join sheet was never seen');
   releaseGate();
   await tick();
-  assert.deepEqual(calls, [['navigate', 'discover', null]], 'only the latest screen, once');
+  assert.deepEqual(calls, [['navigate', 'challenges', null]], 'only the latest screen, once');
   App._syncPlatformTabs('workshop-screen');
   assert.deepEqual(calls.at(-1), ['navigate', 'communities', null], 'later steps go straight through');
 });
