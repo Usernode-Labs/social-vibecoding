@@ -22,8 +22,13 @@ const PLACE_KIND = Object.freeze({ issue: 'request', session: 'change', chat: 'c
 const CHAT_LIMITS = Object.freeze({
   rounds: 16,
   readsPerTurn: 8,
-  outputTokens: 4000,
-  retryOutputTokens: 8000,
+  // Task 2020: a long answer's reply carries its words and the same answer
+  // laid out as HTML (homeroom-bot-html.js), so a round has twice the room
+  // it had (4000, retried at 8000). Every provider of the bot's model takes
+  // far more (OpenRouter's endpoints list 131,072 and up, 6 Nov 2026), and
+  // room that is not written is not paid for.
+  outputTokens: 8000,
+  retryOutputTokens: 16000,
   requestTimeoutMs: 90_000,
   turnsPerHour: 120,
   history: 24,

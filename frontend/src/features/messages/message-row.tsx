@@ -27,6 +27,7 @@ import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { DesignVersionCard, designVersionOf } from './design-card';
 import { BotRichCard, botCardOf } from './bot-cards';
 import { BotLookedLine } from './bot-looked';
+import { BotHtmlReply, botReplyHtml } from './bot-html';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -395,9 +396,13 @@ export const MessageRow = memo(function MessageRow({
   // #6151: a design filed as a request says what happens to it next, after
   // its line, in the reader's language (./bot-track.tsx filedNextLine).
   const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
+  // Task 2020: a bot answer laid out is drawn in place of its words, which
+  // stay its fallback (./bot-html.tsx).
+  const richHtml = head ? null : botReplyHtml(message);
+  const markdown = <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
   const words = !message.content ? null : head
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
-    : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
+    : richHtml ? <BotHtmlReply html={richHtml} fallback={markdown} /> : markdown;
 
   // #5680: which rows have a side. A DM and a group do; a channel does not
   // (#2783), and neither does a row that is not something a person said: the
@@ -624,7 +629,8 @@ export const MessageRow = memo(function MessageRow({
         {/* #5680: in a conversation the words sit in a bubble on their
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}
-        {sided ? <div className="messages-bubble" dir="auto">{translatedBody || body}</div> : translatedBody || body}
+        {/* Task 2020: a laid-out answer takes the bubble's full width (app.css .messages-bubble-rich). */}
+        {sided ? <div className={richHtml && !translatedBody && !editing ? 'messages-bubble messages-bubble-rich' : 'messages-bubble'} dir="auto">{translatedBody || body}</div> : translatedBody || body}
         {/* #6081: under the words, the way back to them, or why they stayed. */}
         {canTranslate ? <TranslateNote view={translation} className="mt-1" /> : null}
         {extras}

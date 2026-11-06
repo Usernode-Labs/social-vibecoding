@@ -185,12 +185,15 @@ test('each section groups its rows by project, and a project shows its first few
   // #6262: Needs you orders its rows with the new ones first, before the
   // drawn order is held, then folds through the same pure rule (which never
   // hides a fresh row either).
-  assert.match(lists, /const ordered = freshStyle \? freshFirst\(lines\) : lines;/);
+  assert.match(lists, /const ordered = freshStyle \|\| foldFresh \? freshFirst\(lines\) : lines;/);
   assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'the new first, then the drawn order held');
-  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open\);/,
+  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, !foldFresh\);/,
     'the group draws through the pure order rule');
-  assert.match(lists, /\{\(hidden \? items\.slice\(0, shown\) : items\)\.map\(/);
+  // 6 Nov 2026: the drawn rows carry their day divider, and the fold splits
+  // the same drawn list (a day past the fold stays inside it).
+  assert.match(lists, /const visible = hidden \? drawn\.slice\(0, shown\) : drawn;/);
+  assert.match(lists, /const folded = hidden \? drawn\.slice\(shown\) : \[\];/);
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
   assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
   assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
@@ -331,6 +334,62 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
 });
 
+// #6408 (6 Nov 2026, Evan): Live this week showed 50 of a project's 76 rows
+// before Show more, because every "it's live" row was new and #6262 never
+// folds a fresh row. New in Live only means a change went live since the
+// viewer last looked, so Live folds after its first few whatever is new: its
+// rows put the new ones first, and the fold says how many of them it holds.
+// Needs you and Waiting & in progress keep the never-fold rule.
+test('#6408: Live this week folds after its first few rows whatever is new', () => {
+  const { groupRows, GROUP_FIRST } = loadTsx(MODEL);
+  // Eight rows, six of them new. Folded to Live's first three, five fold.
+  const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i < 6 }));
+  const folded = groupRows(many, GROUP_FIRST.live, false, false);
+  assert.deepEqual(folded.items.map((r) => r.key), many.map((r) => r.key), 'the order is the one the section gave');
+  assert.deepEqual([folded.shown, folded.hidden], [3, 5], 'the first three show; the new rows fold with the rest');
+  // The row you are on is still lifted out of the fold, folded.
+  const lit = many.map((r, i) => ({ ...r, lit: i === 6 }));
+  const withLit = groupRows(lit, GROUP_FIRST.live, false, false);
+  assert.deepEqual([withLit.shown, withLit.hidden], [4, 4], 'where you are is never hidden');
+  assert.equal(withLit.items[3].key, 'r7');
+  // By default #6262 holds: a new row past the first few is never folded
+  // away, which is what Needs you and Waiting & in progress draw.
+  const held = groupRows(many, GROUP_FIRST.live, false);
+  assert.deepEqual([held.shown, held.hidden], [6, 2], 'a fresh row is lifted by default');
+
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const freshHidden = foldFresh \? items\.slice\(shown\)\.filter\(\(line\) => line\.fresh\)\.length : 0;/,
+    'the fold counts the new rows it holds');
+  assert.match(lists, /<Section list="live" quiet head=\{t\('messages:ai\.live\.title', \{ count: liveLines\.length \}\)\} lines=\{liveLines\}[^>]*foldFresh \/>/,
+    'Live this week is the section that folds what is new');
+  assert.equal(message('messages:ai.work.showMoreFresh', { count: 73, fresh: 44 }), 'Show 73 more · 44 new');
+
+  // Rendered: a project's eight live rows, six new, show three rows and the
+  // fold that holds the other three new ones.
+  const live = Array.from({ length: 8 }, (_, i) => thread(30 + i, 410 + i, 'going_live', {
+    group: 'live', at: '2026-11-06T10:00:00Z', unread: i < 6 ? 1 : 0,
+  }));
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], lit: null, progress: [], waiting: [], live, openRow() {}, openThread() {},
+  });
+  const sheet = html.slice(html.indexOf('data-ai-sheet="live"'));
+  const shown = sheet.slice(0, sheet.indexOf('data-ai-group-rest'));
+  assert.equal((shown.match(/data-ai-line=/g) || []).length, 3, 'three rows before the fold');
+  assert.match(sheet, /Show 5 more · 3 new/, 'the fold says how many new rows it holds');
+  // None of the folded rows new: the plain words, as every other list says them.
+  const older = live.map((t) => ({ ...t, unread: 0 }));
+  const calm = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], lit: null, progress: [], waiting: [], live: older, openRow() {}, openThread() {},
+  });
+  const calmSheet = calm.slice(calm.indexOf('data-ai-sheet="live"'));
+  assert.match(calmSheet, /Show 5 more/, 'nothing new in the fold says only how many');
+  assert.ok(!/Show 5 more ·/.test(calmSheet), 'and does not mention new ones');
+});
+
+
 // #6312 (4 Nov 2026, Evan): "Show 11 more" made two rows' blue dots disappear
 // the instant it was pressed. Folded, a new row is lifted above the fold, so
 // its dot shows. Opened, every row keeps its own order, so a new row past the
@@ -391,6 +450,81 @@ test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded o
   const at = Number(/const DOT = '[^']*-start-(\d+)/.exec(src)[1]);
   const room = Number(/ps-(\d+)/.exec(groupClip[1])[1]);
   assert.ok(room >= at, `the fold keeps ${room * 4}px for a dot ${at * 4}px outside its row`);
+});
+
+// 6 Nov 2026 (Evan): "in Needs you and Waiting & in progress, keep the
+// project groups, and inside each group split the rows by day with the small
+// caps dividers and a thin rule ... Leave History's month headings as they
+// are." A project's rows are split by the reader's own calendar day: Today,
+// Yesterday, then the weekday and date. Nothing else grows a day heading.
+test('6 Nov 2026: Needs you and Waiting & in progress split each project by day, History keeps its months', () => {
+  const { dayKey, byDay } = loadTsx(MODEL);
+  // Noon, so the test's own clock cannot turn a day into its neighbour.
+  const at = (daysAgo) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - daysAgo); return d.toISOString(); };
+  const today = at(0);
+  const yesterday = at(1);
+  const older = at(9);
+  assert.notEqual(dayKey(today), dayKey(yesterday), 'a day apart is a different day');
+  assert.equal(dayKey(null), '', 'no moment, no day');
+  assert.deepEqual([dayKey(today).length, dayKey(today).split('-').length], [10, 3], 'the key is YYYY-MM-DD');
+  // A day's rows are one run: newest day first, the order within a day kept.
+  assert.deepEqual(byDay([{ k: 'a', at: today }, { k: 'b', at: yesterday }, { k: 'c', at: today }, { k: 'd', at: null }])
+    .map((r) => r.k), ['a', 'c', 'b', 'd'], 'Today, then Yesterday, then the undated row');
+
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const line = (key, title, when) => ({
+    key, title, app, who: 'all', at: when, unread: 0, threadId: null,
+    sub: { id: 'messages:ai.row.where', values: { project: app.name, number: 1 } },
+    pill: { id: 'messages:ai.pill.vote' }, href: '#app/garden/dev/issues/1', rootId: null,
+  });
+  const html = renderComponent(LISTS, 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 3,
+    rows: [line('need:proposal:1', 'Today one', today), line('need:proposal:3', 'Yesterday one', yesterday),
+      line('need:proposal:2', 'Today two', today), line('need:proposal:4', 'Older one', older)],
+    lit: null,
+    progress: [thread(1, 71, 'vote', { at: today, group: 'next' }), thread(2, 72, 'building', { at: yesterday, group: 'next' })],
+    waiting: [], live: [],
+    openRow() {}, openThread() {},
+  });
+  const sheet = (name) => html.slice(html.indexOf(`data-ai-sheet="${name}"`), html.indexOf('data-ai-sheet="', html.indexOf(`data-ai-sheet="${name}"`) + 1));
+  const needs = sheet('open');
+  const busy = sheet('busy');
+  // Inside the project group, one divider each day, in the order the rows come.
+  assert.ok(needs.indexOf('data-ai-group="garden"') < needs.indexOf('data-ai-day='), 'the day sits inside the project group');
+  assert.equal((needs.match(/data-ai-day="/g) || []).length, 3, 'Today, Yesterday and the older day, once each');
+  assert.ok(needs.indexOf(message('messages:ai.short.today')) < needs.indexOf('Today one'));
+  assert.ok(needs.indexOf('Today one') < needs.indexOf('Today two'), 'the day\'s rows are one run, whatever order they came in');
+  assert.ok(needs.indexOf('Today two') < needs.indexOf(message('messages:ai.short.yesterday')), 'a second row of the same day adds no divider');
+  assert.ok(needs.indexOf(message('messages:ai.short.yesterday')) < needs.indexOf('Yesterday one'));
+  assert.ok(needs.indexOf('Yesterday one') < needs.indexOf('Older one'));
+  const label = (key) => {
+    const found = new RegExp(`data-ai-day="${key}"><span[^>]*>([^<]+)</span>`).exec(needs);
+    return found ? found[1] : '';
+  };
+  assert.equal(label(dayKey(today)), message('messages:ai.short.today'));
+  assert.equal(label(dayKey(yesterday)), message('messages:ai.short.yesterday'));
+  assert.match(label(dayKey(older)), /\d/, 'an older day says its date');
+  // Waiting & in progress splits the same way, under its own project group.
+  assert.match(busy, /data-ai-group="garden"/);
+  assert.equal((busy.match(/data-ai-day="/g) || []).length, 2);
+  assert.ok(busy.indexOf(message('messages:ai.short.today')) < busy.indexOf(message('messages:ai.short.yesterday')));
+
+  // History keeps its month headings, and Live this week keeps none of these.
+  const history = {
+    rows: [{ key: 'thread:9', threadId: 9, number: 392, title: 'Watering reminders', app, href: '#app/garden/dev/issues/392', at: older, kind: 'change', outcome: 'live', by: 'bot' }],
+    next: null, ready: true, loading: false, failed: false, more() {}, retry() {},
+  };
+  const withHistory = renderComponent(LISTS, 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], progress: [], waiting: [], live: [thread(3, 73, 'live', { at: today })],
+    history, openRow() {}, openThread() {}, openHistory() {},
+  });
+  const historySheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="history"'));
+  assert.match(historySheet, /data-ai-history-month="/, 'History still groups by month');
+  assert.doesNotMatch(historySheet, /data-ai-day=/, 'and grows no day divider');
+  const liveSheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="live"'), withHistory.indexOf('data-ai-sheet="history"'));
+  assert.doesNotMatch(liveSheet, /data-ai-day=/, 'Live this week keeps its day on the right');
 });
 
 test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {

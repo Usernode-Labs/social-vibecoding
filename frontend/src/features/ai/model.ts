@@ -157,6 +157,8 @@ export interface NeedItem {
   /** #6262: the thread its page is, and how many messages in it are new. */
   threadId?: number | null;
   unread?: number;
+  /** When it started needing the viewer: the day its row is grouped under. */
+  at?: string | null;
 }
 
 /** Homeroom bot's account: its changes up for a vote hold a project's build slots. */
@@ -223,6 +225,12 @@ export interface WorkRow {
    */
   threadId: number | null;
   unread: number;
+  /**
+   * When it first needed the viewer: the day its row is grouped under (6 Nov
+   * 2026, Needs you and Waiting & in progress split each project's rows by
+   * day). A private thread's last activity; absent from an older server.
+   */
+  at: string | null;
 }
 
 /**
@@ -243,6 +251,37 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
     groups[at.get(key)!].items.push(row);
   }
   return groups;
+}
+
+/**
+ * Pure (6 Nov 2026): the reader's own calendar day a row belongs to, as
+ * `YYYY-MM-DD`, or '' when its moment is missing or unreadable. Needs you and
+ * Waiting & in progress split each project's rows by it (./lists.tsx), so a
+ * row joins the day it first needed the viewer, read in their own time zone.
+ */
+export function dayKey(at: string | null | undefined): string {
+  const d = new Date(String(at || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Pure (6 Nov 2026): rows by their day, the newest day first and each day's
+ * rows in the order they came in, so a project's day headings are one run
+ * each rather than Today, Yesterday, Today. A row with no day goes last.
+ */
+export function byDay<T extends { at?: string | null }>(rows: readonly T[]): T[] {
+  return rows
+    .map((row, i) => ({ row, i, key: dayKey(row.at) }))
+    .sort((a, b) => {
+      if (!a.key || !b.key) {
+        if (a.key) return -1;
+        if (b.key) return 1;
+        return a.i - b.i;
+      }
+      return a.key === b.key ? a.i - b.i : (a.key < b.key ? 1 : -1);
+    })
+    .map(({ row }) => row);
 }
 
 /**
@@ -267,16 +306,20 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  *
  * #6262: a row with something new is never folded either. Show more is for
  * what you have already seen; hiding a new row behind it is what the dot was
- * meant to stop.
+ * meant to stop. That fits Needs you, where new means it wants you.
+ *
+ * #6408: Live this week calls it with `liftFresh` false. There, new only
+ * means a change went live since the viewer last looked, which is most of the
+ * list on a busy day, so it folds after its first few whatever is new.
  */
-export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
   // Which rows past the first few must still be shown: the fresh ones and
   // the one you are on. They keep their order; the rest folds away.
   const lifted = new Set<number>();
   if (!open) {
     if (litAt >= first) lifted.add(litAt);
-    items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
+    if (liftFresh) items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
   }
   const rest = items.slice(first);
   const drawn = open
@@ -561,6 +604,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // #6262: a feed item's thread, and what is new in it.
       threadId: item.threadId ?? null,
       unread: Math.max(0, Number(item.unread) || 0),
+      at: item.at || null,
     });
   }
   for (const t of work?.needs || []) {
@@ -589,6 +633,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       rootId: null,
       threadId: t.threadId,
       unread: Math.max(0, Number(t.unread) || 0),
+      at: t.at,
     });
   }
   for (const p of work?.private || []) {
@@ -634,6 +679,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // A private thread is not a `threads` row: Main Chat's "N new" counts it.
       threadId: null,
       unread: 0,
+      at: p.at || null,
     });
   }
   return rows;
