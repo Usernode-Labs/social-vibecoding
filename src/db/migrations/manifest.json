@@ -205,6 +205,11 @@
       "id": "work-state-marks-check-phase",
       "sha256": "bc864215c9d5528939e79ec8037f49844543a2b5153e979611e66fe086c585ee",
       "schemaSha256": "54bcbe575d8c2c2ca50072f0ec50c1d0312c0d857c06374761736b09d55d70f2"
+    },
+    {
+      "id": "homeroom-bot-overlap-offers",
+      "sha256": "2426b42ac74e1b2cf8b3a04ab1f84f53f7e59898fe6e131411e5951b26a04f2f",
+      "schemaSha256": "b567e4b5fc137d8c9745a7646bcefb4aba159cffeb2f30382d7b62c0cbafa598"
     }
   ]
 }

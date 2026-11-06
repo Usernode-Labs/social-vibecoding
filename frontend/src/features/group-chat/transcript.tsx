@@ -124,7 +124,8 @@ function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView
   if (id == null) return null;
   const many = offer.kind === 'file_many' && rows.length > 0;
   const picks = many ? picksOf(rows, ticked, chosen) : [];
-  const decide = async (choice: 'yes' | 'no') => {
+  // #6211: an overlap note's three choices include `first` (this one first).
+  const decide = async (choice: 'yes' | 'no' | 'first') => {
     if (busy) return;
     setBusy(true);
     try {

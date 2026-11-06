@@ -115,6 +115,10 @@ async function migrate(config) {
   // #6264: a request whose bot kept its word, for the before & after shots
   // of "tell me when it's done" (the promise, then the line it posted).
   await seedStagingBotFollowUp(pool);
+  // #6211's shots: a request the bot read as part of another one, so its
+  // discussion has the overlap note and its three choices. Nothing here runs
+  // a model, so the note is stored as the bot would have said it.
+  await seedStagingBotOverlap(pool);
   // #6255's shots: the member asks the bot, in Main Chat, to say when a
   // request it is still building is made, and it agrees. Nothing here runs
   // a model, so a fresh staging copy has no such exchange to show.
@@ -2895,6 +2899,81 @@ async function seedStagingBotFollowUp(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot follow-up seeding failed', { message: err.message });
+  }
+}
+
+// #6211: two obviously fake requests on the staging demo app, the smaller
+// one's discussion carrying the note Homeroom bot says when its read finds
+// it part of the other, with the three choices under it for the capture
+// member. A fresh staging copy has no model, so the note is stored rather
+// than asked for: nothing here reads it to decide anything. Idempotent
+// through each request's number and the note's words; a no-op outside
+// staging.
+async function seedStagingBotOverlap(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bots = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!apps.rows.length || !people.rows.length || !bots.rows.length) return;
+    const app = apps.rows[0];
+    const appId = Number(app.id);
+    const member = Number(people.rows[0].id);
+    const bot = Number(bots.rows[0].id);
+    if (!appId || !member || !bot || member === bot) return;
+    // The larger request first, then the one that is part of it.
+    const bigger = 9112;
+    const smaller = 9113;
+    const requests = [
+      [bigger, 'Staging demo: Main Chat keeps only what you said there', 'Staging demo: obviously fake. A request a smaller one is part of.'],
+      [smaller, 'Staging demo: a plan row opens Main Chat', 'Staging demo: obviously fake. One piece of the larger request.'],
+    ];
+    for (const [number, title, body] of requests) {
+      await pool.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+         SELECT $1, $2, $3, $4, $5, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+          WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+        [appId, number, title, body, member],
+      );
+    }
+    const domain = require('../services/caddy').USERNODE_DOMAIN;
+    const link = (n) => `https://${domain}/#app/${app.slug}/dev/issues/${n}`;
+    const note = `This looks like part of [#${bigger}](${link(bigger)}) `
+      + '(Staging demo: Main Chat keeps only what you said there). Both move a request\'s news out of Main Chat. '
+      + `You can fold it into #${bigger}, build this one first, or keep them separate.`;
+    const { rows: [said] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+       SELECT $1, $2, $3, 'message', 'issue', $4, NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                             AND user_id = $2 AND content = $3 AND deleted_at IS NULL)
+       RETURNING id`,
+      [appId, bot, note, smaller],
+    );
+    // The message was there already (a later boot): nothing more to seed.
+    if (!said) return;
+    const { rows: [card] } = await pool.query(
+      `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id)
+       VALUES ('thread', $1, 'overlap', $2, $3, $4) RETURNING id`,
+      [appId, JSON.stringify({ issueNumber: smaller, other: bigger, overlap: 'part_of' }), member, Number(said.id)],
+    );
+    const actions = [
+      { id: 'yes', label: `Fold it into #${bigger}`, style: 'primary', offerId: Number(card.id) },
+      { id: 'first', label: 'Build this one first', style: 'secondary', offerId: Number(card.id) },
+      { id: 'no', label: 'Keep separate', style: 'secondary', offerId: Number(card.id) },
+    ];
+    await pool.query(
+      'UPDATE chat_messages SET metadata = $2 WHERE id = $1',
+      [Number(said.id), JSON.stringify({
+        homeroomBot: {
+          kind: 'voice',
+          offer: { id: Number(card.id), kind: 'overlap', status: 'open', forUserId: member },
+          actions,
+        },
+      })],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot overlap seeding failed', { message: err.message });
   }
 }
 
