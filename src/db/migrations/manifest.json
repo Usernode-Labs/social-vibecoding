@@ -178,8 +178,8 @@
     },
     {
       "id": "bot-queue-hold-reason",
-      "sha256": "b0611af64343975ef9263c0f0f9da37660de0f5937af3585b01f8800d88dba42",
-      "schemaSha256": "d9ce456b28758dbad1b1c2d603d8ae2ddd026577063550b37c0d675d3612519c"
+      "sha256": "29608c3fdb3684f7390ec4f1a9898729c7d24956ea01cc67d72194886c5a7f93",
+      "schemaSha256": "eaed222f973b113cd143a767f1bff447f74dbfb3b0863c4fcf39bbf4e6a0a07f"
     }
   ]
 }

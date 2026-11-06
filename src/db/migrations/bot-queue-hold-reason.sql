@@ -12,5 +12,8 @@
 -- other is a cooldown.
 ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS held_reason TEXT;
 ALTER TABLE homeroom_bot_queue DROP CONSTRAINT IF EXISTS homeroom_bot_queue_held_reason_check;
+-- NOT VALID: every existing row is NULL here, so there is nothing to check,
+-- and skipping the scan keeps the hot queue's exclusive lock to an instant.
+-- New and updated rows are still checked.
 ALTER TABLE homeroom_bot_queue ADD CONSTRAINT homeroom_bot_queue_held_reason_check
-  CHECK (held_reason IS NULL OR held_reason IN ('allowance', 'cooldown'));
+  CHECK (held_reason IS NULL OR held_reason IN ('allowance', 'cooldown')) NOT VALID;
