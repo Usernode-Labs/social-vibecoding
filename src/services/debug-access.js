@@ -262,6 +262,23 @@ const READABLE_COLUMNS = Object.freeze(Object.fromEntries(Object.entries({
   session_workers: ['session_id', 'last_used_at', 'created_at'],
   check_runs: ['run_id', 'session_id', 'commit_sha', 'kind', 'app_id', 'queued_at',
     'admitted_at', 'started_at', 'heartbeat_at'],
+  // #6427: Homeroom bot's own records, for debugging it (Homeroom bot's
+  // query_prod_db, homeroom-bot-thread-tools/admin.js, reads these as dev
+  // sessions do). Ids, numbers, timestamps and the platform's own short codes
+  // only: never a title, a body, a label, a GitHub login, the model's words
+  // (runs.reason, question, error, first_step, …) or JSON (work_states.line).
+  homeroom_bot_queue: ['id', 'app_id', 'issue_number', 'priority', 'reason', 'thread_seen_at',
+    'requested_by', 'enqueued_at', 'started_at', 'held_until', 'held_reason', 'payer_user_id',
+    'changed_by', 'wait_reason', 'wait_until'],
+  homeroom_bot_runs: ['id', 'app_id', 'issue_number', 'session_id', 'mode', 'verdict', 'determined',
+    'posted_at', 'model', 'cost_usd', 'input_tokens', 'output_tokens', 'duration_ms', 'created_at',
+    'budget_stop', 'limit_stop', 'read_reason', 'proposal_session_id', 'build_ok', 'build_queued_at',
+    'build_at', 'build_attempts', 'build_cost_usd', 'build_session_id', 'live_build_waiting_at',
+    'go_ahead_at', 'awaiting_go_at', 'go_ahead_decides', 'charged', 'payer_user_id'],
+  work_states: ['app_id', 'item_kind', 'item_ref', 'issue_number', 'session_id', 'stage', 'why',
+    'reason', 'whose_move', 'requester_id', 'since', 'updated_at', 'checked_at'],
+  requests: ['id', 'app_id', 'number', 'state', 'state_reason', 'created_by', 'created_at',
+    'updated_at', 'closed_at', 'closed_by', 'source', 'recovered_partial', 'thread_id', 'part_of'],
 }).map(([table, columns]) => [table, Object.freeze(columns)])));
 
 // ── Container-log allowlist (used by the prod-debug logs endpoint) ─────

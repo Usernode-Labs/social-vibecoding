@@ -100,6 +100,21 @@ export function postedNote(meta: HomeroomBotMeta, what: keyof typeof POSTED_NOTE
   return project ? translate(ids.request, { project, number }) : translate(ids.requestUnnamed, { number });
 }
 
+/**
+ * #6427: the line an offer that posts somewhere public carries when a
+ * database read happened in its thread (an admin's query_prod_db, whose rows
+ * the drafted words could quote). Shown until the offer is decided.
+ */
+function DbReadNote() {
+  const t = useMessages('messages');
+  return (
+    <p className="messages-bot-note" data-bot-db-read="">
+      <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span>{t('messages:bot.dbRead.note')}</span>
+    </p>
+  );
+}
+
 export function BotQuestion({ message, conversationId, hidePrompts = false }: {
   message: ConversationMessage;
   conversationId: number;
@@ -149,6 +164,7 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
           {offer ? null : <button type="button" className="messages-bot-other" onClick={writeOwn}>{t('messages:bot.question.writeOwn')}</button>}
         </div>
       ) : null}
+      {open && offer && meta.dbRead === true ? <DbReadNote /> : null}
       {answered && offer ? <p className="messages-bot-answered">{t('messages:bot.question.youChose', { answer: answered })}</p> : null}
       {answered && !offer ? <AnsweredChoices items={[{ question: t('messages:bot.question.youAnswered'), answer: answered }]} /> : null}
       {(open || chosen) && mirrorsReplies(meta) ? (
@@ -289,6 +305,7 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
           <span>{postedNote(meta, 'answer')}</span>
         </p>
       ) : null}
+      {open && meta.dbRead === true ? <DbReadNote /> : null}
       {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? t('messages:bot.actions.youAsked', { question: chosen }) : t('messages:bot.actions.youChose', { choice: chosen })}</p> : null}
       {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered" data-bot-closed-why={closedWhy ? '' : undefined}>{closedWhy || t('messages:bot.actions.closed')}</p> : null}
       {inviting && invite ? (

@@ -1223,9 +1223,7 @@ async function releaseAllowanceHolds(pool, { deps = {} } = {}) {
        FROM wf_instances w
       WHERE w.machine = $1
         AND ((w.data->'owed'->>'heldUntil' IS NOT NULL AND (w.data->'owed'->>'heldUntil')::timestamptz > NOW())
-          OR (w.data->'build'->>'heldUntil' IS NOT NULL AND (w.data->'build'->>'heldUntil')::timestamptz > NOW()
-              -- #6423: an overlap hold is another change's, not a week's.
-              AND w.data->'build'->>'heldFor' IS DISTINCT FROM 'overlap'))
+          OR (w.data->'build'->>'heldUntil' IS NOT NULL AND (w.data->'build'->>'heldUntil')::timestamptz > NOW()))
       ORDER BY COALESCE((w.data->'owed'->>'priority')::int, 99) ASC,
                (w.data->'owed'->>'enqueuedAt') ASC NULLS LAST,
                w.app_id, issue_number`,
@@ -10897,6 +10895,7 @@ async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
 
 const { AsyncLocalStorage } = require('node:async_hooks');
 const loopRules = require('../workflow/rules/bot-loop.ts');
+const { isAppendOnly } = require('../workflow/rules/append-only-files.ts');
 
 // The look under way in this call chain (lookAt), for the effects deep in
 // it that must happen once across its item's attempts (insertRun, the
@@ -11065,13 +11064,16 @@ function expectedBuildFiles(run) {
   return loopRules.filesNamed([run?.build_note, run?.build_spec_md].filter(Boolean).join('\n'));
 }
 
-// The sessions of this project whose files a new build compares against:
-// being worked on, up for a vote or merging. Never a merged one, never a
-// headless (shadow/bench) one, never one linked to this request (its own
-// change is bot-request's `build_pending` business), never a build still
-// waiting in line (so two waiting builds never wait on each other).
+// The sessions of this project whose diffs a new build compares with its
+// own files: being worked on, up for a vote or merging. Never a merged one,
+// never a headless (shadow/bench) one, never one linked to this request
+// (its own change is bot-request's `build_pending` business). A running
+// build is its session, read by its branch's diff once the branch has
+// commits; before it has a branch it is skipped, since what its plan names
+// is no change yet (#6428).
 const OVERLAP_SESSIONS_SQL = `
-  SELECT id, status, branch_name, pr_number, waits_for_session_id, rebuilt_from_session_id
+  SELECT id, status, branch_name, pr_number, waits_for_session_id, rebuilt_from_session_id,
+         created_from_issue_number, linked_issues
     FROM chat_sessions
    WHERE app_id = $1 AND is_headless = FALSE AND branch_name IS NOT NULL
      AND status = ANY('{active,promoted,merging}'::text[])
@@ -11079,21 +11081,9 @@ const OVERLAP_SESSIONS_SQL = `
    ORDER BY id DESC
    LIMIT 30`;
 
-// The project's builds under way (their files are their run's plan, and
-// their session's diff once it has one).
-const OVERLAP_BUILDING_SQL = `
-  SELECT (w.data->'build'->>'runId')::int AS run_id, (w.data->>'issueNumber')::int AS issue_number
-    FROM wf_instances w
-   WHERE w.machine = $1 AND w.app_id = $2 AND w.state = 'building'
-     AND w.data->'build'->>'phase' IN ('starting', 'running')
-     AND (w.data->>'issueNumber')::int IS DISTINCT FROM $3::int
-   ORDER BY w.app_id, issue_number
-   LIMIT 30`;
-
-/** The open changes and running builds of one project, with the files each touches. */
+/** The open changes of one project (running builds among them), with the files each one's diff changes. */
 async function overlapOthers(pool, { app, issueNumber, github }) {
   const repo = parseRepo(app.repo_url);
-  const out = new Map();
   const diff = async (branch) => {
     if (!repo || !github?.isEnabled() || typeof github.listChangedFiles !== 'function') return [];
     try {
@@ -11105,33 +11095,15 @@ async function overlapOthers(pool, { app, issueNumber, github }) {
   };
   const { rows } = await pool.query(OVERLAP_SESSIONS_SQL, [app.id, Number(issueNumber)]);
   const read = await Promise.all(rows.map(async (r) => ({ r, files: await diff(r.branch_name) })));
-  for (const { r, files } of read) {
-    out.set(`s${Number(r.id)}`, {
-      sessionId: Number(r.id), runId: null, issueNumber: null, prNumber: r.pr_number == null ? null : Number(r.pr_number),
-      status: r.status, branch: r.branch_name, stacked: !!(r.waits_for_session_id || r.rebuilt_from_session_id), files,
-    });
-  }
-  const { rows: builds } = await pool.query(OVERLAP_BUILDING_SQL, [loopRules.BOT_REQUEST, app.id, Number(issueNumber)]);
-  for (const b of builds) {
-    const { rows: [run] = [] } = await pool.query(
-      'SELECT build_note, build_spec_md, build_session_id FROM homeroom_bot_runs WHERE id = $1', [Number(b.run_id)],
-    );
-    if (!run) continue;
-    const files = loopRules.filesNamed([run.build_note, run.build_spec_md].filter(Boolean).join('\n'));
-    const sessionId = run.build_session_id == null ? null : Number(run.build_session_id);
-    const known = sessionId ? out.get(`s${sessionId}`) : null;
-    if (known) {
-      known.files = [...new Set([...(known.files || []), ...files])];
-      known.runId = known.runId ?? Number(b.run_id);
-      known.issueNumber = known.issueNumber ?? Number(b.issue_number);
-      continue;
-    }
-    out.set(`r${Number(b.run_id)}`, {
-      sessionId, runId: Number(b.run_id), issueNumber: Number(b.issue_number), prNumber: null,
-      status: 'building', branch: null, stacked: true, files,
-    });
-  }
-  return [...out.values()];
+  return read.filter(({ files }) => files.length).map(({ r, files }) => {
+    const requests = (Array.isArray(r.linked_issues) ? r.linked_issues : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    const from = Number(r.created_from_issue_number);
+    return {
+      sessionId: Number(r.id), runId: null, issueNumber: Number.isInteger(from) && from > 0 ? from : (requests[0] ?? null),
+      prNumber: r.pr_number == null ? null : Number(r.pr_number), status: r.status, branch: r.branch_name, requests,
+      stacked: !!(r.waits_for_session_id || r.rebuilt_from_session_id), files,
+    };
+  });
 }
 
 /** At most three file names, then "and N more". */
@@ -11141,18 +11113,42 @@ function filesListed(files) {
   return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
 }
 
-// What an overlap names as the other side: its pull request, or the build
+// What an overlap names as the other side: its pull request, or the change
 // for its request until it has one.
-const overlapSubject = (w) => (w?.prNumber ? `PR #${Number(w.prNumber)}` : `the build for request #${Number(w?.issueNumber)}`);
+const overlapSubject = (w) => (w?.prNumber ? `PR #${Number(w.prNumber)}`
+  : w?.issueNumber ? `the change for request #${Number(w.issueNumber)}` : 'another open change');
 
-// #6423: whether this build waits for, stacks on, or runs beside the
-// project's other work, and what it keeps about the wait.
-async function overlapFor(pool, { app, run, issueNumber, since = null, deps = {} }) {
+// #6423, #6428: what this build shares with the project's other open
+// changes, and whether it goes on top of one. `dependsOn` names the requests
+// its own depends on (a "build first" link, #6211); nothing passes it yet,
+// so nothing is stacked today.
+async function overlapFor(pool, { app, run, issueNumber, dependsOn = [], deps = {} }) {
   const files = expectedBuildFiles(run);
-  if (!files.length) return { decision: null };
+  if (!files.length && !dependsOn.length) return { decision: null };
   const github = deps.github || require('./github');
   const others = await overlapOthers(pool, { app, issueNumber, github }).catch(() => []);
-  return { decision: loopRules.decideOverlap({ files, others, since, now: new Date() }) };
+  return { decision: loopRules.decideOverlap({ files, others, dependsOn }) };
+}
+
+// The note a build's thread gets about what it shares, said once per run:
+// building now beside the other change, or on top of it.
+function overlapNote(decision) {
+  if (decision?.strategy === 'stack' && decision.with) {
+    return {
+      kind: 'overlap_stack',
+      text: `This depends on ${overlapSubject(decision.with)}, so I'm building it on top of that change. `
+        + 'Once that merges, this change moves onto main and its checks run again.',
+    };
+  }
+  if (decision?.strategy === 'parallel' && decision.with) {
+    const combined = decision.files.every(isAppendOnly) ? ', which Homeroom combines on its own' : '';
+    return {
+      kind: 'overlap_parallel',
+      text: `This and ${overlapSubject(decision.with)} both touch ${filesListed(decision.files)}${combined}. `
+        + 'Building now; whichever merges second gets an automatic sync with main.',
+    };
+  }
+  return null;
 }
 
 /**
@@ -11163,7 +11159,7 @@ async function overlapFor(pool, { app, run, issueNumber, since = null, deps = {}
  * instance asked for, which tells `replyTo` its end. Resolves { outcome }:
  * requested (with its `key`), skipped, held (`until`), budget, fault.
  */
-async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, person = null, overlapSince = null, priorOverlap = null, deps = {} }) {
+async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, person = null, deps = {} }) {
   const settings = await readSettings(pool, { strict: true });
   if (settings.mode === 'off') return { outcome: 'skipped', why: 'off' };
   // A build reads GitHub and opens a pull request: held, as a look is,
@@ -11205,77 +11201,29 @@ async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, pe
       app, issueNumber: Number(issueNumber), requester, bot, payerUserId: payerId, settings, deps: { dm },
     });
   }
-  // #6423: before the build takes its slot, the files its plan names are
-  // compared with the project's other open changes and builds under way.
-  // A first version skips it: there is nothing else open on a project
-  // without a first version. A plan-only pass never reaches a build start.
+  // #6423, #6428: before the build takes its slot, the files its plan names
+  // are compared with what the project's other open changes change. A shared
+  // file never holds it: it builds now, and its thread says what it shares
+  // (said once per run). It goes on top of another change only when its
+  // request depends on that one's. A first version skips it: there is
+  // nothing else open on a project without a first version. A plan-only
+  // pass never reaches a build start.
   let stackOn = null;
   if (!requester?.firstVersion) {
-    const sayNote = async (kind, text) => {
-      // Said once per run and kind: a recheck of the same wait says nothing.
-      if (await runPosted(pool, Number(runId), kind)) return false;
-      return postThreadNoteNow({
-        pool, ws: deps.ws || liveDeps().ws, app, issueNumber: Number(issueNumber), runId: Number(runId), kind, text, bot,
-      });
-    };
-    const { decision } = await overlapFor(pool, { app, run, issueNumber: Number(issueNumber), since: overlapSince, deps })
+    const { decision } = await overlapFor(pool, { app, run, issueNumber: Number(issueNumber), deps })
       .catch((err) => {
         log.warn('homeroom-bot', 'Could not compare a build\'s files with the project\'s other work', {
           app: app.slug, issueNumber, runId, err: err.message,
         });
         return { decision: null };
       });
-    const strat = decision?.strategy || 'none';
-    // The change the last wait named, read for how its wait ended.
-    let prior = null;
-    if (priorOverlap && (strat === 'none' || strat === 'parallel')) {
-      const priorSessionId = priorOverlap.sessionId
-        ?? (priorOverlap.runId
-          ? (await pool.query('SELECT build_session_id FROM homeroom_bot_runs WHERE id = $1', [Number(priorOverlap.runId)])
-            .then((r) => r.rows[0]?.build_session_id).catch(() => null))
-          : null);
-      if (priorSessionId) {
-        const { rows: [s] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [Number(priorSessionId)]);
-        prior = { ...priorOverlap, status: s?.status || null };
-      }
+    const note = overlapNote(decision);
+    if (note && !(await runPosted(pool, Number(runId), note.kind))) {
+      await postThreadNoteNow({
+        pool, ws: deps.ws || liveDeps().ws, app, issueNumber: Number(issueNumber), runId: Number(runId), kind: note.kind, text: note.text, bot,
+      });
     }
-    if (strat === 'wait' || strat === 'timeout') {
-      const startedAt = overlapSince || new Date().toISOString();
-      const until = new Date(Date.parse(startedAt) + loopRules.OVERLAP_WAIT_MS).toISOString();
-      if (strat === 'wait') {
-        const subject = overlapSubject(decision.with);
-        await sayNote(`overlap_wait:${decision.with?.sessionId ? `s${decision.with.sessionId}` : `r${decision.with?.runId}`}`,
-          `This touches ${filesListed(decision.files)}, which ${subject} is also changing. `
-          + 'I\'ll wait for it to merge, then build this on the new main. If it has not merged in 2 hours, I\'ll build on main anyway.');
-        log.info('homeroom-bot', 'A build waits for a change touching the same files', {
-          app: app.slug, issueNumber, runId, with: decision.with?.sessionId ?? decision.with?.runId, files: decision.files,
-        });
-        return {
-          outcome: 'held', heldFor: 'overlap', until, since: startedAt,
-          overlap: {
-            since: startedAt, until,
-            sessionId: decision.with?.sessionId ?? null, runId: decision.with?.runId ?? null, prNumber: decision.with?.prNumber ?? null,
-          },
-        };
-      }
-      await sayNote('overlap_timeout',
-        `${overlapSubject(decision.with)} has not merged after 2 hours, so I'm building this on main now. `
-        + 'It may need a sync with main later.');
-    } else if (strat === 'stack' && decision.with) {
-      await sayNote('overlap_stack',
-        `This touches ${filesListed(decision.files)}, which ${overlapSubject(decision.with)}, up for a vote, also changes. `
-        + 'I\'m building this on top of it. Once it merges, this change moves onto main and its checks run again.');
-      stackOn = { sessionId: decision.with.sessionId, branch: decision.with.branch };
-    } else if (strat === 'parallel' && decision.with) {
-      await sayNote('overlap_parallel',
-        `This and ${overlapSubject(decision.with)} both touch ${filesListed(decision.files)}, which Homeroom combines on its own. `
-        + 'Building now; whichever merges second gets an automatic sync with main.');
-    } else if (prior) {
-      const was = prior.prNumber ? `PR #${Number(prior.prNumber)}` : `The change for request #${Number(prior.issueNumber)}`;
-      await sayNote('overlap_ended', prior.status === 'merged'
-        ? `${was} merged, so I'm building this on the new main.`
-        : `${was} was closed, so I'm building this on main now.`);
-    }
+    if (decision?.strategy === 'stack' && decision.with) stackOn = { sessionId: decision.with.sessionId, branch: decision.with.branch };
   }
   const r = await buildOne(pool, config, { bot, app, run, settings, stackOn, deps: { ...deps, replyTo } });
   if (r?.requested) return { outcome: 'requested', key: r.requested };
@@ -11336,8 +11284,6 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('unproposedLooked', () => (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null }));
   await each('strandedAsks', () => sweepStrandedAsks(pool, bot, settings, deps));
   await each('buildsOwed', () => sweepWaitingBuilds(pool, deps));
-  // #6423: a build waiting on a change that has since merged or closed.
-  await each('overlapsEnded', () => sweepOverlapsEnded(pool, deps));
   // #6267: a build finished while GitHub refused its upload.
   await each('pushesWaiting', () => sweepWaitingPushes(pool, config, deps));
   // #6209: bot changes that add only documents stop linking the requests
@@ -11403,51 +11349,6 @@ async function sweepWaitingBuilds(pool, deps = {}) {
     told += 1;
   }
   return told;
-}
-
-// #6423: the builds waiting on a change that is over. The change merging or
-// closing is no event the request's instance hears of otherwise (a merge
-// reaches it only for its own request), so the five-minute sweep looks: the
-// session it waited for is no longer open, or the running build's run has
-// ended. Each is told OverlapEnded, which lifts the hold and looks again.
-// A change still open: one a build may still wait for (rules/pr-base.ts's
-// OPEN_STATUSES, as an overlap sees it).
-const OPEN_OVERLAP_STATUSES = Object.freeze(['active', 'paused', 'promoted', 'merging']);
-const OVERLAP_HOLDS_SQL = `
-  SELECT w.app_id, (w.data->>'issueNumber')::int AS issue_number,
-         w.data->'build'->'overlap'->>'sessionId' AS session_id,
-         w.data->'build'->'overlap'->>'runId' AS run_id
-    FROM wf_instances w
-   WHERE w.machine = $1 AND w.state = 'building'
-     AND w.data->'build'->>'heldFor' = 'overlap'
-     AND w.data->'build'->'overlap' IS NOT NULL
-   ORDER BY w.app_id, issue_number
-   LIMIT 100`;
-async function sweepOverlapsEnded(pool, deps = {}) {
-  const { rows } = await pool.query(OVERLAP_HOLDS_SQL, [loopRules.BOT_REQUEST]);
-  let ended = 0;
-  for (const r of rows) {
-    let over = false;
-    if (r.session_id != null) {
-      const { rows: [s] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [Number(r.session_id)]);
-      over = !s || !OPEN_OVERLAP_STATUSES.includes(s.status);
-    } else if (r.run_id != null) {
-      const { rows: [run] } = await pool.query(
-        'SELECT build_ok, build_session_id FROM homeroom_bot_runs WHERE id = $1', [Number(r.run_id)]);
-      if (!run || run.build_ok != null) over = true;
-      else if (run.build_session_id != null) {
-        const { rows: [s] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [Number(run.build_session_id)]);
-        over = !s || !OPEN_OVERLAP_STATUSES.includes(s.status);
-      }
-    }
-    if (!over) continue;
-    await (deps.platform || platform()).botOverlapEnded(pool, {
-      appId: Number(r.app_id), issueNumber: Number(r.issue_number),
-      key: `overlap:${r.app_id}:${r.issue_number}:${crypto.randomUUID()}`,
-    });
-    ended += 1;
-  }
-  return ended;
 }
 
 // When GitHub's hourly budget, nearly used up, resets (an ISO time), or null
