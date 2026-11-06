@@ -758,6 +758,18 @@ test('the bar shows the request\'s own title under a kicker that says its number
   assert.match(page, /<h1 class="dev-request-title" data-issue-title="4417">Add topics as discussion containers<\/h1>/);
 });
 
+test('the request bar publishes the page\'s pill and its ⋯ key for the column beside the bot page (#6431)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8');
+  // The bar itself does not change: the column's heading draws the pill and
+  // the rows beside the bot page, and this is what tells it which.
+  assert.match(src, /const menuKey = r\.menuKey \|\| threadMenu \? requestMenuKey\(r\.menuKey, r\.number\) : null;/);
+  assert.match(src, /usePanelHead\(\{ kind: 'request', pill, menuKey \}\);/);
+  assert.match(src, /data-card-menu=\{menuKey\}/, 'the page\'s ⋯ carries the same key it publishes');
+  const store = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/side-panel/head-store.ts'), 'utf8');
+  assert.match(store, /if \(!isEmbeddedPanel\(\)\) return undefined;/,
+    'and nothing is published where the page keeps its own bar');
+});
+
 test('the plan card\'s title and byline wrap in full rather than being cut off', () => {
   const html = renderComponent(HEAD, 'SpecCard', { card: {
     key: 's7296', title: 'Let cashiers split one bill between two payment methods', version: 1,

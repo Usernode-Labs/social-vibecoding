@@ -18419,13 +18419,17 @@ body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-main, .side-panel-
    controller BESIDE_AI_CLASS). */
 html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) { display: none; }
 /* AND THE COLUMN IS ONE SHEET (30 Oct 2026), as Main is: the page lies flat
-   under the column's heading rather than lifting its own sheets off it. The
-   heading names what is open and its number, so a request's or a change's own
-   bar keeps only its status, its category and its ⋯ here, and goes when it
-   has none of them. */
+   under the column's heading rather than lifting its own sheets off it.
+   AND, SINCE #6431, ONE HEADER: the column's heading names what is open, its
+   number, where it stands (the page's own status pill) and everything its ⋯
+   holds, so the page's bar is not drawn here at all — a request's or a
+   change's, its number included. Two rows and two ⋯ buttons, with the
+   actions split between them, were what Evan reported (6 Nov 2026). The page
+   itself, everywhere else (the full page, the Workshop's side panel), keeps
+   its bar exactly as it was. */
 html.in-side-panel.side-panel-beside-ai .dc-lift { border-radius: 0; border-top: 0; box-shadow: none; }
-html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title) { display: none; }
-html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu-btn, [data-request-status], [data-request-category])) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title, [data-request-category], [data-change-category]) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
 /* AND THE PAGE ITSELF REACHES THE COLUMN'S EDGES (3 Nov 2026). The 30 Oct
    rule above took the sheet's radius, top edge and shadow, but three things
    still drew a second box inside the column: #dev-topic-thread's 12px
@@ -25666,9 +25670,24 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
   color: var(--text-primary);
 }
 .side-panel-place-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 13px;
   line-height: 18px;
   color: var(--text-faint);
+}
+/* The project and the number truncate; the pill after them never does
+   (#6431 — it is the page's own, at the size the page's bar drew it). */
+.side-panel-place-where-text { min-width: 0; }
+.side-panel-place-status { flex: none; display: inline-flex; }
+/* The thin divider between the column's own two rows and the page's (#6431):
+   Copy link and Open in workshop, then everything the page's ⋯ holds. */
+.side-panel-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--app-sheet-line);
 }
 .side-panel-place-link { color: inherit; text-decoration: none; border-radius: 4px; }
 .side-panel-place-link:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }

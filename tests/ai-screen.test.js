@@ -1536,7 +1536,8 @@ test('beside this page the panel is the page\'s own column: ‹ Main and the pro
     '‹ Main gives Main its place back, in the topic\'s own chip; a thread behind the page is named instead');
   assert.match(panel, /<span>\{toThread \? t\('agent:sidePanel\.thread'\) : t\('agent:sidePanel\.main'\)\}<\/span>/,
     'the chip says Thread when a private thread is behind the page');
-  assert.match(panel, /<PanelHeading route=\{s\.route\} place=\{s\.place\} reported=\{s\.reported\} label=\{s\.label\} \/>/);
+  // #6431: the heading takes the page's own head too — its status pill.
+  assert.match(panel, /<PanelHeading route=\{s\.route\} place=\{s\.place\} reported=\{s\.reported\} label=\{s\.label\} head=\{s\.head\} \/>/);
   assert.match(panel, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`\}/, 'the project, as a door to its page');
   assert.match(panel, /\(window as any\)\.AppView\?\._landOnHub\?\.\(slug\)/, 'which opens on its Hub');
   assert.equal(message('agent:sidePanel.main'), 'Main Chat', 'the chat\'s name, as its title says it');
@@ -1576,6 +1577,23 @@ test('a request opened beside the bot list fills the column, not a box inside it
     'and lifts no shadow off it');
   assert.match(css, new RegExp(`${scope} :is\\(\\.dev-request-bar, \\.dev-request-scroll\\) \\{\\s*padding-inline: 12px;\\s*\\}`),
     'the 12px the wrapper gave the content stays on the bar and the transcript');
+});
+
+test('beside the bot page a request or a change has one header, so its own bar is not drawn (#6431)', () => {
+  const css = read('public/css/app.css');
+  // The column's heading carries the page's status pill and everything its ⋯
+  // holds (side-panel.tsx), so the page's own bar — which repeated the number,
+  // the pill, a category and a second ⋯ — is hidden outright.
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-request-bar \{ display: none; \}/,
+    'the bar goes, for a request and a change alike');
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-request-bar :is\(\[data-request-kicker\], \.dev-request-bar-title, \[data-request-category\], \[data-change-category\]\) \{ display: none; \}/,
+    'nothing of it is drawn through, both categories and a change\'s number included');
+  assert.doesNotMatch(css, /\.side-panel-beside-ai \.dev-request-bar:not\(:has\(/,
+    'the "only when it has nothing left" rule it replaces is gone');
+  // Everywhere else the page keeps its bar: the full page and the Workshop's
+  // own side panel are the top document, and the column's heading is not there.
+  assert.doesNotMatch(css, /:is\(html\.in-side-panel\.side-panel-beside-ai, \.dev-ws-side\) \.dev-request-bar \{ display: none; \}/,
+    'the Workshop\'s panel is untouched');
 });
 
 test('Main\'s column is held inside the window, and the panel takes its place at its width', () => {
