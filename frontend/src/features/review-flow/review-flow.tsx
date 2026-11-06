@@ -604,6 +604,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const page = pageRef.current;
     if (!open || !page) return undefined;
     const measure = () => {
+      // A hidden pane (the Communities screen keeps it mounted) has no top to
+      // measure from: keep the last size, and measure again once it shows.
+      if (!page.getClientRects().length) return;
       // From 768px the panel is as tall as what it holds, up to its room:
       // app.css's, read with this page's own clamp taken off, then clamped to
       // what the window leaves below the panel's top (pageRoom). The clamp is
@@ -629,9 +632,15 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     // can land a frame later and move the panel's top), and on every resize.
     const frame = window.requestAnimationFrame(measure);
     window.addEventListener('resize', measure);
+    // And when a hidden pane comes back into view.
+    const seen = typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) measure(); })
+      : null;
+    if (seen) seen.observe(page);
     return () => {
       window.cancelAnimationFrame(frame);
       window.removeEventListener('resize', measure);
+      if (seen) seen.disconnect();
     };
   }, [open]);
 

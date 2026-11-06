@@ -258,6 +258,8 @@ test('#6356: from 768px the panel\'s room stops at the window\'s foot, whatever 
   assert.match(src, /if \(max !== css && Number\.isFinite\(max\)\) page\.style\.setProperty\('--rf-room', `\$\{max\}px`\);/);
   assert.match(src, /const h = \(Number\.isFinite\(max\) && max > 0 \? max : pr\.height\) - bar - safe;/);
   assert.match(src, /window\.addEventListener\('resize', measure\);/, 'measured again on a resize');
+  assert.match(src, /if \(!page\.getClientRects\(\)\.length\) return;/, 'a hidden pane keeps its last size');
+  assert.match(src, /new IntersectionObserver\(/, 'measured again when a hidden pane shows');
 });
 // ── 2b. The preview card ────────────────────────────────────────────────
 
