@@ -185,6 +185,11 @@
       "id": "production-app-sleep",
       "sha256": "ec7a043e2e2298faa72c07424eb2b9b6bd48fbdb4bc84c0386490dca291c4df1",
       "schemaSha256": "1c4c9809d3c5a4a594ef3c8960cd28724b7b0e6371350c9819e89206eb552574"
+    },
+    {
+      "id": "bot-own-version",
+      "sha256": "79cb1bd427bbdbd282572d4e0d1b9298e3e2f968d37058a118fe422b3596f586",
+      "schemaSha256": "103dfb9b54ec889c6b0831a469596d6a13d6498a8b0aac3c4aed5cceccf33b58"
     }
   ]
 }

@@ -4640,6 +4640,10 @@ async function buildAndPropose({
   // its merge deploys over its container, so it waits for the project to
   // run. Every other build passes none.
   setupCheck = null,
+  // #6389: the change this build makes its own version of, so its branch
+  // starts from that change's head (session-lifecycle.ensureSessionBranch)
+  // and the request's page links them.
+  fromSessionId = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle } = deps;
   // Each step below is a durable step of the build's work item when the
@@ -4677,14 +4681,15 @@ async function buildAndPropose({
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless,
                                   created_from_issue_number, linked_issues, issue_link_seeded,
                                   session_title, agent_backend, agent_provider, agent_model,
-                                  agent_reasoning_effort, workflow_owner, workflow_step)
+                                  agent_reasoning_effort, workflow_owner, workflow_step, rebuilt_from_session_id)
        VALUES ($1, $2, NULL, 'active', FALSE, $3,
                CASE WHEN $3::int IS NULL THEN '{}'::int[] ELSE ARRAY[$3::int] END, TRUE, $4,
-               'codex_openrouter', 'openrouter', $5, $6, $7, $8)
+               'codex_openrouter', 'openrouter', $5, $6, $7, $8, $9)
        RETURNING *`,
       [app.id, bot.id, propose ? issueNumber : null,
         sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
-        model, config.openrouterDefaultCodexReasoning || 'low', owner, step],
+        model, config.openrouterDefaultCodexReasoning || 'low', owner, step,
+        Number.isInteger(Number(fromSessionId)) && Number(fromSessionId) > 0 ? Number(fromSessionId) : null],
     );
     openedRow = rows[0];
     return { id: Number(openedRow.id) };
@@ -5702,6 +5707,23 @@ async function unlinkDocOnlyProposals(pool, deps = {}) {
   return { unlinked };
 }
 
+/**
+ * #6389: the two lines on the changes' threads once the bot's own version of
+ * somebody's change is proposed: on the original, that a version exists and
+ * the votes do not carry over; on the new one, who it was made from. Each
+ * names its change's own thread, as AGENTS.md requires.
+ */
+async function sayOwnVersionProposed(pool, { app, ws, originalId, originalNumber, newId, newNumber, author }) {
+  const send = (ws && ws.sendSystemMessage) || require('./ws').sendSystemMessage;
+  const from = author ? `@${author}'s change` : 'a person\'s change';
+  await send(pool, app.id,
+    `Homeroom bot made its own version of this change${newNumber ? `, change #${newNumber}` : ''}. Votes on this one do not carry over to it. This one closes if that one goes live.`,
+    'system', null, { type: 'session', ref: Number(originalId) }).catch(() => {});
+  await send(pool, app.id,
+    `Made from ${from}${originalNumber ? ` #${originalNumber}` : ''}. Votes on that one do not carry over.`,
+    'system', null, { type: 'session', ref: Number(newId) }).catch(() => {});
+}
+
 module.exports = {
   FAILURE_KINDS,
   THREAD_KINDS,
@@ -5884,4 +5906,5 @@ module.exports = {
   publishSpec,
   specShaped,
   MAX_SPEC_COMMENT_CHARS,
+  sayOwnVersionProposed,
 };

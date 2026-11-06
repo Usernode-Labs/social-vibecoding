@@ -748,7 +748,7 @@ async function requestHome(db, { appId, sessionId, viewerId = null }) {
 async function closeRivals(db, { appId, prNumber, deps = {} }) {
   try {
     const { rows: [won] } = await db.query(
-      `SELECT id, thread_id, linked_issues FROM chat_sessions
+      `SELECT id, thread_id, linked_issues, rebuilt_from_session_id FROM chat_sessions
         WHERE app_id = $1 AND pr_number = $2 AND status = 'merged' AND thread_id IS NOT NULL
         ORDER BY id DESC LIMIT 1`,
       [appId, prNumber]
@@ -775,6 +775,29 @@ async function closeRivals(db, { appId, prNumber, deps = {} }) {
       }
     }
     if (closed.length) log.info('threads', 'Closed the rivals of a change that went live', { appId, prNumber, closed });
+    // #6389: the change Homeroom bot rebuilt closes when its version goes
+    // live, and says why.
+    if (won.rebuilt_from_session_id) {
+      try {
+        const { rows: [original] } = await db.query(
+          `SELECT id, status FROM chat_sessions
+            WHERE id = $1 AND status IN ('promoted', 'active')`, [Number(won.rebuilt_from_session_id)]);
+        if (original) {
+          const out = await lifecycle.archiveSession({
+            pool: db, sessionId: Number(original.id), reason: 'superseded', from: original.status,
+          });
+          if (out.archived) {
+            closed.push(Number(original.id));
+            await ws.sendSystemMessage(db, appId, `Homeroom bot's version, change #${prNumber}, went live, so this one closes.`,
+              'system', null, { type: 'session', ref: Number(original.id) }).catch(() => {});
+          }
+        }
+      } catch (err) {
+        log.warn('threads', 'The change Homeroom bot rebuilt could not be closed', {
+          sessionId: Number(won.rebuilt_from_session_id), err: err.message,
+        });
+      }
+    }
     return closed;
   } catch (err) {
     log.warn('threads', 'Could not look for a merged change\'s rivals', { appId, prNumber, err: err.message });

@@ -460,11 +460,58 @@ async function changeRow(pool, sessionId) {
     `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.is_headless, cs.linked_issues, cs.pr_number,
             COALESCE(cs.session_title, cs.pr_title) AS title, cs.branch_name, cs.staging_url,
             cs.check_state, cs.promoted_at, cs.reviewed_head_sha,
+            cs.external_agent::text AS external_agent, cs.last_activity_at,
+            (SELECT u.username FROM users u WHERE u.id = cs.user_id) AS author_username,
             cs.pr_summary_md, cs.pr_body, cs.pr_summary_stale, cs.pr_summary_input_version
        FROM chat_sessions cs WHERE cs.id = $1`,
     [Number(sessionId)],
   );
   return rows[0] || null;
+}
+
+// #6389: a change made outside Homeroom names the tool it was made in, so
+// the bot says "Claude Code" rather than "a coding agent".
+const EXTERNAL_AGENT_NAMES = Object.freeze({ 'claude-code': 'Claude Code', codex: 'Codex' });
+function externalAgentLabel(value) {
+  return EXTERNAL_AGENT_NAMES[value] || 'a coding tool';
+}
+
+// How long a change must be quiet before its request's requester (someone
+// other than its author) may ask for the bot's own version of it.
+const OWN_VERSION_QUIET_DAYS = 7;
+
+/**
+ * #6389: whether the speaker may ask the bot to make its own version of
+ * `change`: it is up for a vote or under way, it was made for a request, and
+ * they are its author, or its request's requester once it has had no
+ * activity for a week. Resolves { ok: true, issueNumber } or { ok: false, why }.
+ */
+async function ownVersionGate(pool, { app, change, speaker, deps = {} }) {
+  const refused = (why) => ({ ok: false, why });
+  if (!change) return refused('there is no change here');
+  if (!['promoted', 'active'].includes(change.status)) return refused('the change is not up for a vote or under way');
+  const n = Array.isArray(change.linked_issues) && change.linked_issues.length ? Number(change.linked_issues[0]) : null;
+  if (!Number.isInteger(n) || n <= 0) return refused('it was not made for a request');
+  if (Number(change.user_id) === Number(speaker.id)) return { ok: true, issueNumber: n };
+  const requester = await dmModule(deps).requesterOf(pool, app.id, n).catch(() => null);
+  if (!requester || Number(requester.userId) !== Number(speaker.id)) {
+    return refused('they are not its author or the person who asked for its request');
+  }
+  const at = change.last_activity_at ? new Date(change.last_activity_at).getTime() : 0;
+  if (!at || Date.now() - at < OWN_VERSION_QUIET_DAYS * 24 * 60 * 60 * 1000) {
+    return refused(`its request's change had activity in the last ${OWN_VERSION_QUIET_DAYS} days`);
+  }
+  return { ok: true, issueNumber: n };
+}
+
+/** #6389: store one ask for the bot's own version of a change; one unused ask per request. */
+async function recordOwnVersionAsk(pool, { appId, issueNumber, fromSessionId, askedBy }) {
+  await pool.query(
+    `INSERT INTO bot_version_asks (app_id, issue_number, from_session_id, asked_by)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (app_id, issue_number) WHERE used_at IS NULL DO NOTHING`,
+    [Number(appId), Number(issueNumber), Number(fromSessionId), Number(askedBy) || null],
+  );
 }
 
 // When the bot speaks on a project's thread (5 Nov 2026,
@@ -965,7 +1012,26 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     const counts = await followup.revisionCounts(pool, change.id);
     const asks = await askState(pool, change.id);
     const busy = await changeBusy(pool, change.id);
-    lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR ${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${own ? 'built by you' : 'built by somebody else'}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
+    // #6389: a change somebody else made, and where they made it. The bot
+    // cannot edit one made outside Homeroom, and there is no Fix it button
+    // on it: the facts say both, so the model names the tool rather than
+    // inventing a button.
+    const author = change.author_username ? `@${change.author_username}` : 'somebody';
+    const tool = change.external_agent ? externalAgentLabel(change.external_agent) : null;
+    const built = own ? 'built by you'
+      : tool
+        ? `built by ${author} in ${tool} (made outside Homeroom: you cannot edit it, and it has no Fix it button)`
+        : `built by ${author} on Homeroom`;
+    lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR ${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${built}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
+    if (!own && change.external_agent && Number(change.user_id) === Number(speaker.id)) {
+      lines.push(`The person who wrote to you made this change (${author}): answer them as you.`);
+    }
+    if (!own) {
+      const open = await ownVersionGate(pool, { app, change, speaker, deps });
+      lines.push(open.ok
+        ? 'make_own_version is open to the person who wrote to you.'
+        : `make_own_version is not open to the person who wrote to you: ${open.why}.`);
+    }
     // On GitHub the change's number is GitHub's own pull request counter, so
     // it is written "PR N"; "#N" is only ever a request there.
     if (repoRef.isGithub(app.repo_url)) lines.push('On this project a change is written as PR N, from GitHub\'s own counter; #N is only ever a request.');
@@ -1029,6 +1095,10 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('update_change_description') ? '- Reword the description of one of your own changes when somebody asks (update_change_description): write the whole new description. Only its text changes: no code, the checks do not run again, the votes stay. A reword is not update_change.' : null,
     has('tell_me_when') ? '- When somebody asks you to tell them when something about a change happens ("tell me when the update is made", "let me know when it is ready to vote", "ping me when it is merged", "tell me when it is live"), call tell_me_when with that one moment and say its promise in your reply. It is stored and kept: the line comes here. Never tell them you cannot message them later, and never point them at a page to watch it instead.' : null,
     has('tell_me_when') ? '- When you say work is queued or running, offer to tell them here when it is ready to vote ("Want me to tell you here when it is ready to vote?"). Only store it with tell_me_when once they say yes, or when they already asked you to.' : null,
+    // #6389: somebody else's change, made in their own coding tool. The bot
+    // cannot edit it; it says who fixes it and what to fix, and offers its
+    // own version only where the facts say it may.
+    has('make_own_version') ? '- The change here was made by somebody else, in their own coding tool, so you cannot edit it. Say that plainly, name the tool the facts name, and say they fix it there. Name its failing tests and whether it conflicts with main from get_change, and never give a count of commits behind main. Offer make_own_version only when the facts say it is open: you then build your own version of their change, paid from their week, and the votes on theirs do not carry over to yours. Never point to a button the facts do not name.' : null,
   ].filter(Boolean);
   return [
     `You are Homeroom bot, a member of the "${app.name || app.slug}" project on Homeroom, replying in ${WHERE[place.type]}.`,
@@ -1064,7 +1134,7 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     '  always the one who answered it: never say one person said what another wrote.',
     '- Keep a reply under 100 words unless they ask for detail. No headings. Never start with "Homeroom bot" or with a',
     '  note in brackets, and never write a line that looks like Homeroom\'s own automatic messages.',
-    '- Write in plain words a member understands: never "checkout", "head commit", "build agent" or "the platform',
+    '- Write in plain words a member understands: never "checkout", "head commit", "build agent", "coding agent", "dispatch", "someone with access" or "the platform',
     '  conventions", and never talk about yourself as Homeroom bot.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- Never say you did something (changed, updated, filed, started, withdrew, closed, posted, told the team) unless a',
@@ -1125,7 +1195,7 @@ const QUIET_TOOL = fn('stay_quiet', 'Say nothing: the newest messages are people
  * request (`requestChange`), its changes on the project (`openChanges`).
  */
 function toolsFor(place, {
-  ownChange = false, requestChange = false, openChangeCount = 0, platform = false, planWaiting = false,
+  ownChange = false, otherChange = false, requestChange = false, openChangeCount = 0, platform = false, planWaiting = false,
 } = {}) {
   const tools = [
     place.type === 'issue' || place.type === 'session' ? replyToolWithSuggestions() : REPLY_TOOL,
@@ -1152,6 +1222,11 @@ function toolsFor(place, {
         why: { type: 'string', description: 'Why, in their words.' },
       }, []));
     }
+  }
+  // #6389: somebody else's change, made outside Homeroom: the bot may make
+  // its own version of it, starting from their branch.
+  if (otherChange && place.type === 'session') {
+    tools.push(fn('make_own_version', 'Make your own version of this change, starting from it: fixes what fails, brings it up to date with main, and puts it up as your change for the same request. Votes on theirs do not carry over.', {}, []));
   }
   // #6264: somebody may ask to be told when this change (or, on a request,
   // its change) is updated, ready to vote, merged or live. Stored, so the
@@ -1478,7 +1553,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     ? (await Promise.resolve().then(() => dmModule(deps).waitingPlanRun(pool, app.id, place.ref)).catch(() => null))?.complicated === true
     : false;
   const tools = toolsFor(place, {
-    ownChange, requestChange: requestChange?.status === 'promoted', openChangeCount: open.length, platform: !!platform,
+    ownChange, otherChange: !!change && Number(change.user_id) !== Number(bot.id),
+    requestChange: requestChange?.status === 'promoted', openChangeCount: open.length, platform: !!platform,
     planWaiting,
   });
   const ctx = {
@@ -1757,6 +1833,8 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         return await updateChange(pool, ctx, args);
       case 'update_change_description':
         return await updateChangeDescription(pool, ctx, args);
+      case 'make_own_version':
+        return await makeOwnVersion(pool, ctx);
       case 'let_try_again':
         return await letTryAgain(pool, ctx, args);
       case 'offer_withdraw':
@@ -1928,6 +2006,50 @@ async function updateChange(pool, ctx, args) {
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
     next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed. You may also offer to tell them here when it is ready to vote (tell_me_when), if they would like that.',
+  };
+}
+
+/**
+ * #6389: make the bot's own version of somebody else's change, starting from
+ * that change's code. Only its author, or its request's requester once the
+ * change has been quiet for a week, may ask. Votes on the original do not
+ * carry over, and the original closes when the bot's version goes live.
+ */
+async function makeOwnVersion(pool, ctx) {
+  const { app, place, user, deps } = ctx;
+  if (place.type !== 'session') return { ok: false, error: 'Not here.' };
+  if (ctx.rebuilt) return { error: 'One version per reply.' };
+  const gate = await ownVersionGate(pool, { app, change: ctx.change, speaker: user, deps });
+  if (!gate.ok) return { ok: false, error: `That is not yours to rebuild: ${gate.why}. Nothing was started.` };
+  try {
+    await recordOwnVersionAsk(pool, {
+      appId: app.id, issueNumber: gate.issueNumber, fromSessionId: ctx.change.id, askedBy: user.id,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-voice', 'Could not record an ask for the bot\'s own version', {
+      app: app.slug, issueNumber: gate.issueNumber, err: err.message,
+    });
+    return { ok: false, error: 'Could not queue it just now. Nothing was started.' };
+  }
+  const mayor = mayorModule(deps);
+  const out = await mayor.startRequest(pool, ctx, {
+    project: app.slug, number: gate.issueNumber, ownVersionOf: ctx.change.id,
+  });
+  if (!out.ok) {
+    // The start was refused (no room, no allowance, already built): the ask
+    // waits for nothing.
+    await pool.query(
+      'DELETE FROM bot_version_asks WHERE app_id = $1 AND issue_number = $2 AND used_at IS NULL',
+      [Number(app.id), Number(gate.issueNumber)],
+    ).catch(() => {});
+    return out;
+  }
+  ctx.rebuilt = true;
+  ctx.workBusy = true;
+  return {
+    ok: true,
+    queued: 'Queued: I start on my own version of this change, from its code, fixing what fails and bringing it up to date with main.',
+    next: 'It is not made yet, so never say it is done. Say plainly that the votes on their change do not carry over to yours, and that theirs closes if yours goes live.',
   };
 }
 

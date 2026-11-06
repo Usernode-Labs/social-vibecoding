@@ -4663,6 +4663,18 @@
     "text": "{{project}} · #{{number}} · Your change needs a fix",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a change the person made themselves that waits on them: its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
   },
+  "ai.row.waitsOnFixTests": {
+    "text": "{{project}} · #{{number}} · It has its votes; its tests fail, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail. {{project}} is the project's name and {{number}} the request or change number."
+  },
+  "ai.row.waitsOnFixConflict": {
+    "text": "{{project}} · #{{number}} · It has its votes; it conflicts with main, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but which conflicts with main. {{project}} is the project's name and {{number}} the request or change number."
+  },
+  "ai.row.waitsOnFixBoth": {
+    "text": "{{project}} · #{{number}} · It has its votes; its tests fail and it conflicts with main, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail and which conflicts with main. {{project}} is the project's name and {{number}} the request or change number."
+  },
   "ai.row.fixYoursPr": {
     "text": "{{project}} · PR {{number}} · Your change needs a fix",
     "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\"). Its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
@@ -4706,6 +4718,14 @@
   "ai.pill.vote": {
     "text": "Vote",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a vote on it."
+  },
+  "ai.pill.testsFailing": {
+    "text": "Tests failing",
+    "description": "The AI tab's main view, Needs you: pill at the end of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail. It says what the change waits on instead of Vote."
+  },
+  "ai.pill.conflicts": {
+    "text": "Conflicts with main",
+    "description": "The AI tab's main view, Needs you: pill at the end of the row of the person's own change, made through a coding agent, whose votes are in but which conflicts with main. It says what the change waits on instead of Vote."
   },
   "ai.pill.approve": {
     "text": "Approve",
@@ -4910,6 +4930,18 @@
   "ai.why.fixYours": {
     "text": "Checks failed, its preview did not build, or it conflicts",
     "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a change the person made themselves that waits on their fix."
+  },
+  "ai.why.fixTests": {
+    "text": "Tests failing",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but whose tests fail."
+  },
+  "ai.why.fixConflict": {
+    "text": "Conflicts with main",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but which conflicts with main."
+  },
+  "ai.why.fixBoth": {
+    "text": "Tests failing · conflicts with main",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but whose tests fail and which conflicts with main."
   },
   "ai.history.title": {
     "text": "History",

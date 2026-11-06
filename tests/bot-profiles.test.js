@@ -47,7 +47,7 @@ test('every thread kind has its profile, and every place its kind', () => {
 
 test('no surface offers a tool its profile does not list, and every rule named is run', () => {
   const voice = require('../src/services/homeroom-bot-voice');
-  const flags = [{}, { ownChange: true, requestChange: true, openChangeCount: 2, platform: true, planWaiting: true }];
+  const flags = [{}, { ownChange: true, requestChange: true, openChangeCount: 2, platform: true, planWaiting: true }, { otherChange: true }];
   for (const type of ['issue', 'session', 'chat', 'category', 'message']) {
     const listed = profiles.profileOfPlace({ type }).tools;
     for (const f of flags) {
@@ -63,6 +63,14 @@ test('no surface offers a tool its profile does not list, and every rule named i
     assert.deepEqual(speaks.slice(0, profiles.THREAD_CHECKS.length), profiles.THREAD_CHECKS, `${kind}: the common checks first`);
     for (const rule of speaks) assert.equal(typeof voice.SPEAK_RULES[rule], 'function', `${kind}: ${rule}`);
   }
+});
+
+test('#6389: the change thread may make its own version of somebody else\'s change', () => {
+  assert.ok(profiles.profileOf('change').tools.includes('make_own_version'));
+  const voice = require('../src/services/homeroom-bot-voice');
+  const names = (f) => voice.toolsFor({ type: 'session', ref: 1 }, f).map((t) => t.function.name);
+  assert.ok(names({ otherChange: true }).includes('make_own_version'));
+  assert.ok(!names({ ownChange: true }).includes('make_own_version'), 'never on the bot\'s own change');
 });
 
 test('#6384: a plan is read in the chat, on a request and on a change, and nowhere else', () => {
