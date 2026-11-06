@@ -8331,6 +8331,14 @@
     "text": "Before and after",
     "description": "Title of the card on a change's page that holds its before and after screenshots, and the accessible name of that card's contents."
   },
+  "shots.pane.close": {
+    "text": "Close the before and after",
+    "description": "The × at the right of the head above a change's before and after screenshots, shown beside a thread on the Homeroom bot tab, in the Workshop's request panel or on a request's page: closes those screenshots and returns the column to the thread. Its accessible name and tooltip."
+  },
+  "shots.pane.back": {
+    "text": "Back to the thread",
+    "description": "On a phone, the arrow at the top left of a change's before and after screenshots, which cover the screen: goes back to the thread the change is in. Its accessible name and tooltip."
+  },
   "request.page.askerUnknown": {
     "text": "someone",
     "description": "Stands in for the name of the person who filed a request, at the top of the request's page, when that person is not known. Lower case, as a username would sit there."
