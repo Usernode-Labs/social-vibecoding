@@ -1948,8 +1948,8 @@ async function seedStagingBotWaitingRows(pool) {
   }
 }
 
-// #6420's shots: a change that lives on request #9101's page and names
-// request #9102 among the ones it closes, so #9102's page shows "Change says
+// #6420's shots: a change that lives on request #9140's page and names
+// request #9141 among the ones it closes, so #9141's page shows "Change says
 // it closes this" and, for the request's requester (usernode-capture), "This
 // doesn't close it". Built by the staging demo person so the requester is not
 // the change's own builder. Obviously fake; idempotent by its change number;
@@ -1962,10 +1962,26 @@ async function seedStagingChangeClaim(pool) {
     const builder = await pool.query("SELECT id FROM users WHERE username = 'staging-demo-user' LIMIT 1");
     if (!apps.rows.length || !builder.rows.length) return;
     const appId = apps.rows[0].id;
+    // The pages the shots open: #9141 is the request the change names (asked
+    // by usernode-capture, so the requester sees the answer), #9140 the
+    // request whose page the change lives on.
+    const capture = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!capture.rows.length) return;
+    for (const [number, title, createdBy] of [
+      [9140, 'Staging demo: show who replied last on each request row', Number(builder.rows[0].id)],
+      [9141, 'Staging demo: a request another change says it closes', Number(capture.rows[0].id)],
+    ]) {
+      await pool.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+         SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+          WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+        [appId, number, title, createdBy],
+      );
+    }
     await pool.query(
       `INSERT INTO chat_sessions
          (app_id, user_id, status, shared_at, linked_issues, pr_number, pr_title, pr_summary_md, branch_name, created_at)
-       SELECT $1, $2, 'active', NOW() - INTERVAL '2 days', '{9101,9102}', 9901,
+       SELECT $1, $2, 'active', NOW() - INTERVAL '2 days', '{9140,9141}', 9901,
               'Staging demo: tidy the request rows',
               'Request rows show who replied last. Staging demo: obviously fake.',
               'feature/staging-demo-request-rows', NOW() - INTERVAL '2 days'
@@ -1980,29 +1996,27 @@ async function seedStagingChangeClaim(pool) {
     // stored below, as a fresh staging copy has no model to write it.
     await pool.query(
       `INSERT INTO change_request_claims (session_id, app_id, request_number, announced_at)
-       VALUES ($1, $2, 9102, NOW() - INTERVAL '2 days') ON CONFLICT DO NOTHING`,
+       VALUES ($1, $2, 9141, NOW() - INTERVAL '2 days') ON CONFLICT DO NOTHING`,
       [Number(change.id), appId],
     );
     const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
     if (!bot.rows.length) return;
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
-       SELECT $1, $2, 'Change PR 9901 says it closes your request #9102.', 'message', 'issue', 9102,
+       SELECT $1, $2, 'Change PR 9901 says it closes your request #9141.', 'message', 'issue', 9141,
               $3, NOW() - INTERVAL '2 days'
         WHERE NOT EXISTS (SELECT 1 FROM chat_messages
-                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9102
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9141
                              AND metadata->>'stagingDemo' = 'change-claim')`,
-      [appId, Number(bot.rows[0].id), JSON.stringify({ stagingDemo: 'change-claim', kind: 'change_claim', sessionId: Number(change.id), request: 9102 })],
+      [appId, Number(bot.rows[0].id), JSON.stringify({ stagingDemo: 'change-claim', kind: 'change_claim', sessionId: Number(change.id), request: 9141 })],
     );
     // The requester's bell row for that line, so the notice is visible there
     // too. No push is sent for a seeded row.
-    const capture = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
-    if (!capture.rows.length) return;
     await pool.query(
       `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, detail)
-       SELECT $3, $1, m.id, $2, 'issue_thread_reply', '9102'
+       SELECT $3, $1, m.id, $2, 'issue_thread_reply', '9141'
          FROM chat_messages m
-        WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = 9102
+        WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = 9141
           AND m.metadata->>'stagingDemo' = 'change-claim'
           AND NOT EXISTS (SELECT 1 FROM notifications n
                            WHERE n.chat_message_id = m.id AND n.user_id = $3)`,
