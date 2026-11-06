@@ -118,7 +118,7 @@ test('#6387 the thread read says when it is loading, and settles on success or f
 // read lands, so they fill in rather than pushing the page down.
 test('#6387 a change\'s cards keep their place until its own read lands', () => {
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
-  assert.match(src, /\) : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
+  assert.match(src, /\) : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
   assert.match(src, /export function ChangeSectionSkeleton\(\): ReactNode/);
   assert.match(src, /data-thread-change-skeleton=""/);
   assert.match(src, /label=\{t\('project:topic\.thread\.page\.changeLoading'\)\}/);
@@ -355,7 +355,7 @@ test('the request\'s changes are drawn from their own pages\' reads, and the bal
   assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal\)/, 'read as its own page reads it');
   assert.match(src, /const built = av\._topicViewFor\('proposal', row\);/);
   // 1 Nov 2026: folded under a ballot, without its own Vote (thread-one-page.test.js).
-  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>/, 'its own page\'s two cards');
+  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>/, 'its own page\'s two cards');
   assert.match(src, /changeDetailAsk\(\(event as CustomEvent\)\.detail, item\.id\)/, 'and it moves when its page would');
   assert.match(src, /av\.castIssueVote\?\.\(v\.issueId, 'up', \{ reason: null \}\)/, 'a close is voted the platform\'s way');
   const head = read('frontend/src/features/dev-board/topic/change-head.tsx');

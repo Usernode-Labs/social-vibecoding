@@ -22,6 +22,19 @@ export interface FoldedReply {
   at?: string | null;
 }
 
+/**
+ * #6225: one request a change closes when it merges, as its Votes card lists
+ * it. `confirmed` is whether its requester agreed to it: the change was built
+ * for that request, or its filer made the change. A number the change claims
+ * that is not a request here has a null title and filer.
+ */
+export interface ClosesRequest {
+  number: number;
+  title: string | null;
+  by: string | null;
+  confirmed: boolean;
+}
+
 export interface ThreadItem {
   type: ThreadItemType;
   id: number;
@@ -55,6 +68,8 @@ export interface ThreadItem {
   target?: number | null;
   /** A change: the requests it closes when it merges (its linked_issues). */
   closes?: number[];
+  /** #6225: the same requests with their titles and filers, for the Votes card. */
+  closesRequests?: ClosesRequest[];
   /**
    * 1 Nov 2026 (C2.3), a change: the plan it was built from, by that plan's
    * session and version (a person's plan on the request, or the bot's own
@@ -125,6 +140,19 @@ export function alsoCloses(item: ThreadItem, request: number): number[] {
   const here = Number(request);
   if (!closes.includes(here)) return [];
   return [...new Set(closes)].filter((n) => Number.isInteger(n) && n > 0 && n !== here).sort((a, b) => a - b);
+}
+
+/**
+ * #6225: what a change's Votes card lists under its tally, while it is up for
+ * a vote: every request a yes would close, ascending. Nothing before it is
+ * proposed or after it merges, because the list describes what a yes would
+ * do, and nothing when it closes only the one request it was built for. Pure.
+ */
+export function closesList(item: ThreadItem): ClosesRequest[] {
+  const list = Array.isArray(item.closesRequests) ? item.closesRequests : [];
+  if (item.state !== 'review') return [];
+  if (list.length === 1 && list[0] && list[0].confirmed) return [];
+  return [...list].sort((a, b) => Number(a.number) - Number(b.number));
 }
 
 export interface ThreadMove {
